@@ -1,3 +1,5 @@
+English | [简体中文](README.zh-CN.md)
+
 # Agent Collaboration Workbench
 
 A self-hosted workbench that turns the AI coding CLIs and accounts you already have (Codex, Claude Code, Grok Build, Antigravity) into one collaborating team. You talk to a project group chat, `@mention` roles, and the workbench launches the real CLI on the right machine, streams the progress back, and keeps the results, reviews and hand-offs in one place.
@@ -13,6 +15,10 @@ The project started from a practical situation: one person, several AI subscript
 - **Multiple servers and devices work together.** A *Home* node keeps the project state, and any number of *Worker* nodes (your laptop, a Linux server, a cloud box) connect to it and run the CLIs installed there. Code moves between devices as fixed Git commits, files move as attachments, and a supervisor role can coordinate roles that live on different machines.
 
 The workbench does not replace the CLIs and does not proxy model APIs. It drives the CLIs you have already installed and logged in to, and it stores no vendor credentials of its own.
+
+## Language
+
+The app has a **Settings > Language** option (English / 简体中文) that localizes the UI and the built-in prompts. This README and the [operating guide](docs/OPERATING-GUIDE.md) are also available in Simplified Chinese: [README.zh-CN.md](README.zh-CN.md) and [docs/OPERATING-GUIDE.zh-CN.md](docs/OPERATING-GUIDE.zh-CN.md).
 
 ## Key features
 

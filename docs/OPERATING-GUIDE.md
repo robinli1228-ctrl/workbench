@@ -1,3 +1,5 @@
+English | [简体中文](OPERATING-GUIDE.zh-CN.md)
+
 # Operating Guide: Publishing and Iterating Together
 
 This guide is for maintainers and contributors. It explains what is public, what must never be committed, how to configure your own accounts, models and servers, how to run the project on one machine or several, how to contribute, and how to sanitize the repository before publishing.
