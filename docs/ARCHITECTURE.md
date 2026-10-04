@@ -26,6 +26,8 @@ The shared collaboration prompt says: when information is sufficient, execute di
 
 ### Three-column workspace and recent artifacts
 
+The project navigation buttons are excluded from automatic DOM translation because their titles and accessible labels contain user-supplied names; repository counts inside them are translated explicitly when rendered. The shared top heading opts out only when displaying a project name, while settings headings and the empty-state label remain translatable. This avoids treating a project named after a UI label as interface text.
+
 The three tabs at the bottom right use line icons for roles, files and resources with no button text, and keep title and aria-label text, a selected state and keyboard switching, shared by desktop and mobile. The brand, project and right-column headers share a light blue-white background (`#f0f5fc`) and a subtle lower shadow; the color applies to headers only.
 
 Projects use ten built-in shapes and colors from `role-icons.js`. They are assigned by project ID and persisted in the current browser's localStorage; renaming, reordering and refreshing do not change an existing identity. A new project prefers an unused icon and beyond ten they are reused evenly. The cache is not synchronized across devices. When the desktop sidebar is collapsed a 44 px column of clickable project icons remains, with `title`/`aria-label` for the full name and `aria-current` plus a blue bar marking the current project. The mobile drawer still shows icons and text.

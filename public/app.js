@@ -613,6 +613,8 @@ function renderProjects() {
   for (const project of app.data.projects) {
     const button = create('button', `project-item${project.id === app.selectedProjectId ? ' active' : ''}`);
     button.type = 'button';
+    // Names, titles and accessible labels are user data; the count below is translated explicitly.
+    button.translate = false;
     const count = project.supervisorRoleId ? (app.data.repositories || []).filter(r => r.projectId === project.id).length : (app.data.workspaces || []).filter(w => w.projectId === project.id).length;
     const icon = projectIconEl(icons[project.id]);
     const copy = create('span', 'project-item-copy');
@@ -1365,6 +1367,7 @@ function renderWorkspace() {
   dom.settingsPage.hidden = !settingsOpen;
   dom.emptyState.hidden = settingsOpen || hasProjects || !dom.projectFormPanel.hidden;
   dom.contentGrid.hidden = settingsOpen || !project || !dom.projectFormPanel.hidden;
+  dom.workspaceTitle.translate = settingsOpen || !project;
   dom.workspaceTitle.textContent = settingsOpen ? settingsView(app.settingsTab).title : (project?.name || 'Select a project');
   document.querySelector('#show-project-settings').disabled = !project;
   const repoBar = document.querySelector('#project-repository'); repoBar.replaceChildren(); repoBar.hidden = settingsOpen || !project?.repository;
