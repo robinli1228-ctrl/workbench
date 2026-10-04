@@ -20,6 +20,8 @@ The workbench does not replace the CLIs and does not proxy model APIs. It drives
 
 The app has a **Settings > Language** option (English / 简体中文) that localizes the UI and the built-in prompts. This README and the [operating guide](docs/OPERATING-GUIDE.md) are also available in Simplified Chinese: [README.zh-CN.md](README.zh-CN.md) and [docs/OPERATING-GUIDE.zh-CN.md](docs/OPERATING-GUIDE.zh-CN.md).
 
+Project names remain user-defined text in the sidebar, its accessible labels and the workspace heading; switching the interface language does not rename them.
+
 ## Key features
 
 All items below exist in the current code. Items that are only designed are listed separately under [Limitations and roadmap](#limitations-and-roadmap).
@@ -28,6 +30,7 @@ All items below exist in the current code. Items that are only designed are list
 
 - Project group chat with `@role` dispatch. Messages without an `@` are stored but do not start a model; messages from agents never trigger other agents implicitly.
 - Per-project roles with their own device, CLI, model, reasoning effort and Markdown prompt. Built-in templates (reviewer, planner, developer, tester) are only starting points.
+- Role names are mention identifiers (letters, digits, underscores or hyphens, without spaces); `all` and `everyone` are reserved for broadcasts. Existing role names are kept verbatim. Default intake follows the configured supervisor ID, not an English display name, and mentions support both ASCII and full-width punctuation.
 - A fixed per-project *supervisor* that receives requests without an `@`, proposes repository/role configuration cards (applied only after you confirm) and can schedule multi-stage work (`wb schedule`) with parallel independent reviews and sequential or merge stages.
 - Structured role-to-role tools exposed to every managed CLI through one `wb` command: consult another role (`wb call` / `wb wait`), report a business verdict (`wb report`), write a hand-off note (`wb handoff`), and request a Git delivery (`wb deliver`). An `@` inside model output never dispatches work.
 - Queueing, per-role and per-node concurrency limits, cancel, "steer now" for queued human messages, pause for remote dispatch, and explicit stop with confirmation from the Worker.

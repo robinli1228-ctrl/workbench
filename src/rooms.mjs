@@ -2,7 +2,7 @@ import { tr } from './i18n.mjs';
 import { randomUUID } from 'node:crypto';
 import { terminal } from './store.mjs';
 import { runtimeIssue } from './runtime-probe.mjs';
-import { defaultRoleTemplates, isRoleConfigured, isSupervisorName } from './default-roles.mjs';
+import { defaultRoleTemplates, isRoleConfigured, isSupervisorName, isBroadcastName } from './default-roles.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
 import { executionConflict } from './execution-workspace.mjs';
 import { steeringWaitReason } from './role-steering.mjs';
@@ -11,8 +11,6 @@ import {RoleDiscussions} from './role-discussions.mjs';
 
 const now = () => new Date().toISOString();
 
-// Accepts both languages; the Chinese words are \u-escaped.
-const EVERYONE = /^(everyone|all|\u6240\u6709\u4eba|\u5168\u4f53)$/i;
 /** Give a result continuation priority once at a turn boundary; after that, ordinary messages go first in their original FIFO order. */
 export function orderRoleQueue(tasks,priorityUsed,discussionUsed=()=>false) {
   const rank=t=>t.steering ? -1 : (t.discussionDeliveryId||t.discussionIntentId) ? (discussionUsed(t.roleSnapshot?.nodeId)?1:0) : t.continuationRunId && !priorityUsed(t.roleId) ? 0 : t.scheduledJobId ? 2 : 1;
@@ -79,6 +77,7 @@ export class Rooms {
     if (old && input.revision !== undefined && input.revision !== (old.revision || 1)) throw new Error(tr('rooms.roleConfigurationHasChangedReopen'));
     const name = typeof input.name === 'string' ? input.name.trim() : '';
     if (!/^[\p{L}\p{N}_-]{1,32}$/u.test(name)) throw new Error(tr('rooms.roleNamesMustBe1'));
+    if (isBroadcastName(name) && old?.name !== name) throw new Error(tr('rooms.broadcastNameReserved'));
     if (isSupervisorName(name) && old?.name !== name) throw new Error(tr('rooms.supervisorFixedSystemRoleUse'));
     if (this.db.list('roles').some(r => r.projectId === projectId && r.name === name && r.id !== old?.id)) throw new Error(tr('rooms.projectAlreadyHasRoleWith'));
     const runtime = typeof input.runtime === 'string' ? input.runtime.trim() : '';
@@ -136,8 +135,8 @@ export class Rooms {
       const fixedRole=targetRoleId?this.db.get('roles',targetRoleId):null;
       if(targetRoleId && fixedRole?.projectId!==projectId) throw new Error(tr('rooms.specifiedRoleDoesNotBelong'));
       const mentioned = fixedRole ? [fixedRole.name] : mentionNames(text);
-      const pingAll = mentioned.some(name => EVERYONE.test(name));
-      const names = mentioned.filter(name => !EVERYONE.test(name));
+      const pingAll = !fixedRole && mentioned.some(isBroadcastName);
+      const names = mentioned.filter(name => fixedRole || !isBroadcastName(name));
       const project = this.db.get('projects', projectId);
       const supervisorRole = project.supervisorRoleId ? this.db.get('roles', project.supervisorRoleId) : null;
       if (!mentioned.length && project.supervisorRoleId) names.push(supervisorRole?.name || tr('rooms.supervisor'));
@@ -147,8 +146,8 @@ export class Rooms {
       if (names.length) {
         roles = names.map(name => {
           // The fixed Supervisor may have been created under a different display-name language, so @Supervisor / @\u603b\u7ba1 resolve through the project record.
-          const role = this.db.list('roles').find(r => r.projectId === projectId && r.name === name) || (isSupervisorName(name) ? supervisorRole : null);
-          if (!role) throw new Error(tr('rooms.roleDoesNotExist', { name }));
+          const role = fixedRole || (!mentioned.length && project.supervisorRoleId ? supervisorRole : this.db.list('roles').find(r => r.projectId === projectId && r.name === name) || (isSupervisorName(name) ? supervisorRole : null));
+          if (!role || role.projectId !== projectId) throw new Error(tr('rooms.roleDoesNotExist', { name }));
           if (!isRoleConfigured(role)) throw new Error(tr('rooms.roleHasNoDeviceCli', { name }));
           if (!role.enabled) throw new Error(tr('rooms.roleDisabled', { name }));
           if (!roleWorkspace(this.db, projectId, role.nodeId, role.repositoryId)) throw new Error(tr('rooms.roleHasNoRepositoryDirectory', { name }));

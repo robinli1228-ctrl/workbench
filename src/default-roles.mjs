@@ -39,6 +39,11 @@ export function isSupervisorName(name) {
   return typeof name === 'string' && SUPERVISOR_NAMES.some(n => n.toLowerCase() === name.trim().toLowerCase());
 }
 
+/** Broadcast labels cannot also identify a new working role, regardless of the selected language. */
+export function isBroadcastName(name) {
+  return typeof name === 'string' && /^(everyone|all|\u6240\u6709\u4eba|\u5168\u4f53)$/i.test(name);
+}
+
 export function isRoleConfigured(role) {
   return role?.configured !== false && Boolean(role?.nodeId && role?.runtime && role?.model);
 }

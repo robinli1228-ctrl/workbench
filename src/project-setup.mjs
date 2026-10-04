@@ -4,7 +4,7 @@ import { roleWorkspace } from './project-repositories.mjs';
 import { giteeRepository } from './repository.mjs';
 import { buildTeamContext } from './team-context.mjs';
 import { tr } from './i18n.mjs';
-import { isSupervisorName } from './default-roles.mjs';
+import { isSupervisorName, isBroadcastName } from './default-roles.mjs';
 
 /** The supervisor may be on any device, but the CLI, model, and login state must be confirmed by the target Worker. */
 export function validateLocalSupervisor(worker, input, online) {
@@ -98,7 +98,7 @@ export class ProjectSetup {
         return { type: a.type, key: a.key, repoUrl: a.repoUrl, nodeId: a.nodeId, clone: a.clone !== false,
           baseBranch:a.baseBranch || null,baseCommit:a.baseCommit || null,publishBaseline:a.publishBaseline!==false };
       }
-      if (isSupervisorName(a.name) || !/^[\p{L}\p{N}_-]{1,32}$/u.test(a.name || '') || typeof a.instructions !== 'string' || a.instructions.length > 12000) throw new Error(tr('projectSetup.workingRoleNeedsValidName'));
+      if (isSupervisorName(a.name) || isBroadcastName(a.name) || !/^[\p{L}\p{N}_-]{1,32}$/u.test(a.name || '') || typeof a.instructions !== 'string' || a.instructions.length > 12000) throw new Error(tr('projectSetup.workingRoleNeedsValidName'));
       const issue = runtimeIssue(this.db.get('workers', a.nodeId), a.runtime, a.model);
       if (issue) throw new Error(issue);
       return { type: a.type, name: a.name, nodeId: a.nodeId,
