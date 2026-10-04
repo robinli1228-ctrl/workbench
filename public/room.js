@@ -1,3 +1,4 @@
+import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName } from './role-icons.js';
 import { renderMarkdown, linkRunDocuments } from './markdown.js';
 import { createHistoryViewer } from './history-view.js';
@@ -16,7 +17,7 @@ export function createRoleRefresh({api,refreshState,getData,getProject,button,fe
   const notices=new Map(),checks=new Map();
   const binding=role=>JSON.stringify([role.nodeId,role.runtime,role.model]);
   const setCheck=(role,state)=>checks.set(role.id,{...state,binding:binding(role),checkedAt:new Date().toISOString()});
-  const transient=error=>![401,403,429].includes(error.status)&&(error.isNetworkError||error.status>=500||/timed? ?out|disconnect|ECONNRESET|ETIMEDOUT|temporarily unavailable/i.test(error.message||''));
+  const transient=error=>![401,403,429].includes(error.status)&&(error.isNetworkError||error.status>=500||/timed? ?out|disconnect|ECONNRESET|ETIMEDOUT|temporarily unavailable|超时|断开|暂时不可用/i.test(error.message||''));
   const rolesFor=id=>(getData().roles||[]).filter(role=>role.projectId===id&&!role.archivedAt);
   function update() {
     const project=getProject(),notice=notices.get(project?.id);
@@ -34,9 +35,9 @@ export function createRoleRefresh({api,refreshState,getData,getProject,button,fe
     const warnings=[];let checked=0,retried=0;
     try {
       await Promise.all([...groups].map(async([nodeId,members])=>{
-        const worker=workers.find(item=>item.id===nodeId),label=worker?.name||members.map(role=>role.name).join(', ');
-        if(!worker?.online){warnings.push(`${label}: device offline or not connected`);for(const role of members)setCheck(role,{state:'failed',error:'Device offline or not connected'});return;}
-        if(!worker.capabilities?.runtimeDiscovery){warnings.push(`${label}: Worker does not support status refresh`);for(const role of members)setCheck(role,{state:'failed',error:'Worker does not support status refresh; please update the device'});return;}
+        const worker=workers.find(item=>item.id===nodeId),label=worker?.name||members.map(role=>role.name).join(t(', '));
+        if(!worker?.online){warnings.push(t('{label}: device offline or not connected', { label }));for(const role of members)setCheck(role,{state:'failed',error:'Device offline or not connected'});return;}
+        if(!worker.capabilities?.runtimeDiscovery){warnings.push(t('{label}: Worker does not support status refresh', { label }));for(const role of members)setCheck(role,{state:'failed',error:'Worker does not support status refresh; please update the device'});return;}
         try {
           let result;
           for(let attempt=0;attempt<2;attempt++){
@@ -51,15 +52,16 @@ export function createRoleRefresh({api,refreshState,getData,getProject,button,fe
           for(const role of members){const report=result.runtimes?.find(r=>r.type===role.runtime);setCheck(role,report?{state:'checked',report}:{state:'failed',error:'No check result returned for this CLI'});}
           for(const runtime of new Set(members.map(role=>role.runtime))) {
             const report=result.runtimes?.find(item=>item.type===runtime);
-            const names=members.filter(role=>role.runtime===runtime).map(role=>role.name).join(', ');
-            if(!report?.available)warnings.push(`${names}: CLI unavailable`);
-            else if(report.quotaStatus!=='ok'||report.quotaStale||!report.quota)warnings.push(`${names}: latest quota not obtained`);
+            const names=members.filter(role=>role.runtime===runtime).map(role=>role.name).join(t(', '));
+            if(!report?.available)warnings.push(t('{names}: CLI unavailable', { names }));
+            else if(report.quotaStatus!=='ok'||report.quotaStale||!report.quota)warnings.push(t('{names}: latest quota not obtained', { names }));
           }
-        }catch(error){warnings.push(`${label}: ${error.message}`);for(const role of members)setCheck(role,{state:'failed',error:error.message});}
+        }catch(error){warnings.push(t('{label}: {message}', { label, message: error.message }));for(const role of members)setCheck(role,{state:'failed',error:error.message});}
       }));
       await refreshState({quiet:true});
-      notices.set(project.id,`${warnings.length?`Checked ${checked} ${checked===1?'device':'devices'}; ${warnings.join('; ')}. Quota that could not be obtained keeps its previous value or is unknown`:`Refreshed role status and quota on ${checked} ${checked===1?'device':'devices'} · ${new Date().toLocaleTimeString('en-US')}`}${retried?` · ${retried} transient check ${retried===1?'failure was':'failures were'} retried`:''}. Old tasks were not re-run; history is preserved.`);
-    }catch(error){notices.set(project.id,`Refresh incomplete: ${error.message}`);}
+      const devices = t(checked===1?'{count} device':'{count} devices', { count: checked });
+      notices.set(project.id,`${warnings.length?t('Checked {devices}; {warnings}. Quota that could not be obtained keeps its previous value or is unknown', { devices, warnings: warnings.join(t('; ')) }):t('Refreshed role status and quota on {devices} · {time}', { devices, time: new Date().toLocaleTimeString(dateLocale()) })}${retried?t(retried===1?' · {count} transient check failure was retried':' · {count} transient check failures were retried', { count: retried }):''}${t('. Old tasks were not re-run; history is preserved.')}`);
+    }catch(error){notices.set(project.id,t('Refresh incomplete: {message}', { message: error.message }));}
     finally{busy=false;update();onUpdate();}
   }
   button.addEventListener('click',()=>void refresh());
@@ -78,7 +80,7 @@ export function extractLiveText(events) {
       else { if(paragraphs.at(-1)!==text)paragraphs.push(text); pending=''; }
     } else if(event.type==='tool')tool=p.text || p.name || 'Working';
   }
-  return [...paragraphs,pending].filter(Boolean).join('\n\n').trim() || (tool?`${tool}…`:'');
+  return [...paragraphs,pending].filter(Boolean).join('\n\n').trim() || (tool?t('{tool}…', { tool }):'');
 }
 
 /** A chat notice for a failed final state must not overwrite the streamed body already received. */
@@ -138,10 +140,10 @@ function createMessageQueue({api,refreshState,create,setError}) {
     if(currentProject!==projectId){panel.open=false;currentProject=projectId;}
     const tasks=(data.tasks||[]).filter(t=>t.projectId===projectId&&t.origin==='chat'&&t.status==='ready'&&!t.currentRunId)
       .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering)));
-    panel.hidden=!tasks.length;summary.textContent=`Queue · ${tasks.length}`;list.replaceChildren();
+    panel.hidden=!tasks.length;summary.textContent=t('Queue · {v}', { v: tasks.length });list.replaceChildren();
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
-      const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||'Role'} · ${task.title||task.prompt}`);title.title=task.prompt||task.title;
+      const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||t('Role')} · ${task.title||task.prompt}`);title.title=task.prompt||task.title;
       info.append(title,create('span','',task.steering?(task.waitingReason||'Continuing with the new instruction first'):(task.waitingReason||'Waiting to run')));row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
       if(!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination) {
@@ -158,7 +160,7 @@ function createMessageQueue({api,refreshState,create,setError}) {
         };
         row.append(steer);
       }
-      const cancel=create('button','icon-button','×');cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',`Cancel queued item ${task.roleSnapshot?.name||'Role'} ${task.title||''}`);
+      const cancel=create('button','icon-button','×');cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
       cancel.disabled=pending.has(task.id);cancel.onclick=async()=>{
         cancel.disabled=true;try{await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`,{method:'POST',json:{}});await refreshState({quiet:true});}catch(error){setError(error.message);cancel.disabled=false;}
       };row.append(cancel);list.append(row);
@@ -275,7 +277,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const select=create('select');select.setAttribute('aria-label','Target device');
     const bindings=(data.workspaces||[]).filter(w=>w.projectId===item.projectId);
     const workers=(data.workers||[]).filter(w=>bindings.some(b=>b.nodeId===w.id)).sort((a,b)=>Number(b.nodeKind==='cloud')-Number(a.nodeKind==='cloud'));
-    for(const worker of workers){const ready=worker.online&&worker.capabilities?.attachmentTransfer===1;const option=create('option','',`${workerDisplayName(worker)}${!worker.online?' · Offline':!ready?' · Upgrade required':''}`);option.value=worker.id;option.disabled=!ready;select.append(option);}
+    for(const worker of workers){const ready=worker.online&&worker.capabilities?.attachmentTransfer===1;const option=create('option','',`${workerDisplayName(worker)}${!worker.online?t(' · Offline'):!ready?t(' · Upgrade required'):''}`);option.value=worker.id;option.disabled=!ready;select.append(option);}
     select.value=workers.find(w=>w.online&&w.capabilities?.attachmentTransfer===1)?.id||'';
     const status=create('p','workspace-note');status.setAttribute('role','status');
     const paths=create('div','attachment-transfer-paths');
@@ -288,7 +290,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         const result=await api(`/api/projects/${encodeURIComponent(item.projectId)}/attachment-transfers`,{method:'POST',json:{clientTransferId:id,nodeId,attachmentIds:[item.id]}});
         await refreshState({quiet:true});
         status.textContent='Transfer complete; file size and SHA-256 verified.';showPaths(result.files);b.textContent='Send another';requestIds.delete(nodeId);
-      } catch(e) {status.textContent=`Transfer incomplete: ${e.message}. Click retry to reuse the same batch.`;b.textContent='Retry transfer';}
+      } catch(e) {status.textContent=t('Transfer incomplete: {message}. Click retry to reuse the same batch.', { message: e.message });b.textContent='Retry transfer';}
       finally {b.disabled=false;select.disabled=false;}
     },'primary');
     const requestIds=new Map();
@@ -299,7 +301,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     function targetChanged() {
       action.disabled=!select.value;action.textContent='Transfer file';paths.replaceChildren();
       const binding=bindings.find(b=>b.nodeId===select.value);
-      status.textContent=binding?`Target folder: ${binding.localRoot}/.workbench/tmp/attachments/. Files only; no model is started.`:'No device can receive files right now. Prepare a folder in Project Settings and confirm the device is online in Basic Settings.';
+      status.textContent=binding?t('Target folder: {localRoot}/.workbench/tmp/attachments/. Files only; no model is started.', { localRoot: binding.localRoot }):'No device can receive files right now. Prepare a folder in Project Settings and confirm the device is online in Basic Settings.';
       const recent=(data.attachmentTransfers||[]).filter(t=>t.projectId===item.projectId&&t.nodeId===select.value&&t.attachmentIds.includes(item.id)).at(-1);
       if(recent?.status==='completed'){showPaths(recent.files);action.textContent='Send another';}
       else if(recent && recent.attachmentIds.length===1 && ['failed','transferring'].includes(recent.status)){requestIds.set(select.value,recent.id);action.textContent='Retry transfer';}
@@ -443,7 +445,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     attachTray.hidden = !attachTray.childElementCount;
     resizeInput();
     quoteBar.replaceChildren(); quoteBar.hidden = !d.replyToId;
-    if (d.replyToId) quoteBar.append(create('span', '', `Quoting ${d.replyLabel}`), button('Cancel', () => {
+    if (d.replyToId) quoteBar.append(create('span', '', t('Quoting {replyLabel}', { replyLabel: d.replyLabel })), button('Cancel', () => {
       if (d.pending || busy) return;
       d.replyToId = null; d.replyLabel = ''; delete d.discussion;saveDrafts(); composer();
     }));
@@ -477,7 +479,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
 
   function quoteReply(m) {
     if (draft().pending || sendingProject === projectId) return;
-    Object.assign(draft(), { replyToId: m.id, replyLabel: `${m.senderName}: ${m.text.slice(0, 100)}` });
+    Object.assign(draft(), { replyToId: m.id, replyLabel: t('{senderName}: {v}', { senderName: m.senderName, v: m.text.slice(0, 100) }) });
     delete draft().discussion;
     saveDrafts(); composer(); input.focus();
   }
@@ -548,12 +550,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const message=histories.get(view.projectId)?.messages.find(m=>m.id===`result-${view.runId}`);
     const text=fullRunReply(run,liveText(view.runId),message);
     const label=run?status(run):task?.waitingReason || (task?.status==='cancelled'?'Cancelled':'Waiting to start');
-    view.heading.textContent=`${view.name || 'Role'} · ${label}`;
+    view.heading.textContent=`${view.name || t('Role')} · ${label}`;
     view.copy.disabled=!text;
     if(text===view.text && view.label===label)return;
     const top=view.body.scrollTop;
     view.text=text;view.label=label;
-    view.content.replaceChildren(text?renderLinkedMarkdown(text,view.runId):create('p','workspace-note',`${label}; no reply content received yet.`));
+    view.content.replaceChildren(text?renderLinkedMarkdown(text,view.runId):create('p','workspace-note',t('{label}; no reply content received yet.', { label })));
     view.body.scrollTop=view.follow?view.body.scrollHeight:top;
   }
   /** Open the full-screen reading layer on demand; no extra overlays are permanently shown on the normal chat page. */
@@ -568,7 +570,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const header = create('div', 'message-fullscreen-heading');
       const close = iconAction('close', 'Close', () => messageFullscreen.close());
       close.autofocus = true;
-      const heading=create('strong', '', `${name || 'Message'} · Full reply`);
+      const heading=create('strong', '', t('{v} · Full reply', { v: name || t('Message') }));
       const view={text,name,taskId,projectId,follow:true,runId};
       const copy=copyMessageButton(()=>view.text);
       header.append(heading,copy,close);
@@ -601,7 +603,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     for (const approval of list) {
       const card = create('div', 'chat-approval');
       const method = approval.method?.includes('fileChange') ? 'File change' : approval.method?.includes('command') ? 'Command' : 'Action';
-      card.append(create('p', '', `Confirmation needed: ${method}`));
+      card.append(create('p', '', t('Confirmation needed: {method}', { method })));
       const actions = create('div', 'chat-approval-actions');
       const accept = button('Approve', b => decideApproval(approval, 'accept', b, decline), 'primary compact');
       const decline = button('Reject', b => decideApproval(approval, 'decline', b, accept), 'secondary compact');
@@ -620,7 +622,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     row.append(avatarFor(role, role.name));
     const col = create('div', 'chat-col');
     const label = run ? status(run) : task.status === 'cancelled' ? 'Cancelled' : task.status === 'blocked' ? (task.error || 'Blocked') : task.waitingReason || 'Waiting to be scheduled';
-    col.append(create('div', 'chat-name', `@${role.name || 'Role'} · ${label}`));
+    col.append(create('div', 'chat-name', `@${role.name || t('Role')} · ${label}`));
     const bubble = create('div', 'chat-bubble');
     const preview = run ? liveText(run.id) : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id));
@@ -665,10 +667,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const col = create('div', 'chat-col');
     col.append(create('div', 'chat-name', agent ? `@${m.senderName}` : m.broadcast ? 'Me · notify everyone' : 'Me'));
     const bubble = create('div', `chat-bubble${handoff || replyDirection ? ' handoff-card' : ''}`);
-    if(discussion){const title=create('div','handoff-title');title.append(create('strong','',`${m.senderName||'Me'} → @${discussion.to}`));bubble.append(title,create('div','handoff-label',`Peer discussion · ${discussion.state}`));}
+    if(discussion){const title=create('div','handoff-title');title.append(create('strong','',`${m.senderName||t('Me')} → @${discussion.to}`));bubble.append(title,create('div','handoff-label',t('Peer discussion · {state}', { state: discussion.state })));}
     if (m.replyToId) {
       const source = messages.find(q => q.id === m.replyToId);
-      bubble.append(create('div', 'quoted-message', source ? `${source.senderName}: ${source.text.slice(0, 180)}` : 'Quoting an earlier message'));
+      bubble.append(create('div', 'quoted-message', source ? t('{senderName}: {v}', { senderName: source.senderName, v: source.text.slice(0, 180) }) : 'Quoting an earlier message'));
     }
     if (handoff) {
       const title = create('div', 'handoff-title');
@@ -695,7 +697,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         const target=data.roles?.find(r=>r.id===request.targetRoleId)?.name;
         const note=create('div',`message-progress${progress.attention?' needs-attention':''}`,`${target?`@${target} · `:''}${progress.label}`);
         const times={registeredAt:'Registered',sentAt:'Sent',receivedAt:'Device acknowledged',startedAt:'Run started',resultAt:'Run ended',resumeStartedAt:'Initiator resumed'};
-        note.dataset.stage=progress.stage;note.title=[progress.reason,...Object.entries(progress.timestamps||{}).filter(([,v])=>v).map(([k,v])=>`${times[k]||k}: ${formatTime(v)}`)].filter(Boolean).join('\n');
+        note.dataset.stage=progress.stage;note.title=[progress.reason,...Object.entries(progress.timestamps||{}).filter(([,v])=>v).map(([k,v])=>t('{v}: {time}', { v: times[k]||k, time: formatTime(v) }))].filter(Boolean).join('\n');
         bubble.append(note);
       }
     }
@@ -719,7 +721,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if(m.runId&&!discussion) {
       const report=data.runReports?.find(r=>r.id===m.runId);
       const run=data.runs?.find(r=>r.id===m.runId);
-      if(!run?.discussionWaiting&&(report||run?.reportRequired)) bubble.append(create('div','report-verdict',`Business verdict: ${({passed:'Passed',failed:'Not passed',blocked:'Blocked',needs_input:'User decision needed'}[report?.verdict])||'To verify'}`));
+      if(!run?.discussionWaiting&&(report||run?.reportRequired)) bubble.append(create('div','report-verdict',t('Business verdict: {v}', { v: ({passed:t('Passed'),failed:t('Not passed'),blocked:t('Blocked'),needs_input:t('User decision needed')}[report?.verdict])||t('To verify') })));
     }
     if (m.runId) {
       const run = data.runs?.find(r => r.id === m.runId);
@@ -789,7 +791,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       histories.set(id, { ...result, messages: [...(current?.messages || []).filter(m => !recentIds.has(m.id)), ...result.messages],
         hasMore: current ? current.hasMore : result.hasMore, nextBefore: current?.nextBefore || result.nextBefore, revision });
       if (id === projectId) renderMessages();
-    } catch (e) { if (id === projectId) setError(`Failed to load chat: ${e.message}`); }
+    } catch (e) { if (id === projectId) setError(t('Failed to load chat: {message}', { message: e.message })); }
     finally { pendingReads.delete(key); }
   }
 
@@ -931,7 +933,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const presets = roleForm.elements.preset;
     presets.replaceChildren();
     for (const template of [customPreset, ...(data.roleTemplates || [])]) {
-      const option = create('option', '', template.key === 'custom' ? 'Blank role' : template.name);
+      const option = create('option', '', template.key === 'custom' ? 'Blank role' : t(template.name));
       option.value = template.key; presets.append(option);
     }
     presets.disabled = Boolean(role);
@@ -957,7 +959,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const bound = Boolean(roleBinding(w.id));
       const system = { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }[w.platform] || w.platform || 'Unknown system';
       const usable = w.runtimes?.some(r => r.supported && r.available);
-      const option = create('option', '', `${workerDisplayName(w)} · ${system} · ${w.online ? 'Online' : 'Offline'}${usable ? '' : ' · CLI not ready'}${bound ? '' : ' · Folder not bound'}`);
+      const option = create('option', '', `${workerDisplayName(w)} · ${system} · ${w.online ? t('Online') : t('Offline')}${usable ? '' : t(' · CLI not ready')}${bound ? '' : t(' · Folder not bound')}`);
       option.value = w.id; option.disabled = !w.online; select.append(option);
     }
     select.value = selected !== undefined ? selected : workers.find(w => w.online && w.runtimes?.some(r => r.available && r.supported))?.id || '';
@@ -974,7 +976,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     runtimeSelect.replaceChildren();
     const placeholder = create('option', '', w?.runtimes?.some(r => r.available && r.supported) ? 'Select an available CLI…' : 'No CLI available on this device'); placeholder.value = ''; runtimeSelect.append(placeholder);
     for (const r of w?.runtimes || []) {
-      const o = create('option', '', `${r.label || r.type} · ${r.available && r.supported ? r.version || 'Available' : r.reason || 'Unavailable'}`);
+      const o = create('option', '', `${r.label || r.type} · ${r.available && r.supported ? r.version || t('Available') : r.reason || t('Unavailable')}`);
       o.value = r.type; o.disabled = !r.available || !r.supported; runtimeSelect.append(o);
     }
     const usable = [...runtimeSelect.options].filter(o => o.value && !o.disabled);
@@ -988,7 +990,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const w = data.workers?.find(w => w.id === roleForm.elements.nodeId.value), r = w?.runtimes?.find(r => r.type === roleForm.elements.runtime.value);
     const select = roleForm.elements.model; select.replaceChildren();
     select.disabled = !w?.online || !r?.available;
-    const blank = create('option', '', preferredModel && !r?.models?.some(m => m.id === preferredModel) ? `Previously selected model ${preferredModel} is not listed; please choose` : 'Select model…'); blank.value = ''; select.append(blank);
+    const blank = create('option', '', preferredModel && !r?.models?.some(m => m.id === preferredModel) ? t('Previously selected model {preferredModel} is not listed; please choose', { preferredModel }) : 'Select model…'); blank.value = ''; select.append(blank);
     for (const m of r?.models || []) { const o = create('option', '', m.name || m.id); o.value = m.id; select.append(o); }
     select.value = r?.models?.some(m => m.id === preferredModel) ? preferredModel : '';
     renderEffortOptions(r?.models?.find(m => m.id === select.value) || null, r);
@@ -996,7 +998,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const binding = roleBinding(w?.id);
     const ready = w?.online && w.capabilities?.runtimeDiscovery && r?.supported && r.available && fresh && select.value && binding;
     const reason = !w?.online ? 'Please select an online device' : !w.capabilities?.runtimeDiscovery ? 'Please upgrade the Worker on this device' : !r?.available ? (w.runtimes?.[0]?.reason || 'No connected and available CLI Agent') : !fresh ? 'CLI check is stale; refresh it in "Basic Settings > Devices, CLIs and Models"' : !select.value ? 'Select a model actually returned by this CLI; the previously selected model is not replaced automatically' : !binding ? 'First bind the project folder in "Project Settings > Project Workspace"' : 'Device, CLI, model and project folder match; they are checked again on save';
-    document.querySelector('#role-runtime-note').textContent = `${reason}${r?.checkedAt ? `. Checked ${formatTime(r.checkedAt)}` : ''}. The check does not invoke model inference; actual runs may still be limited by network or quota.`;
+    document.querySelector('#role-runtime-note').textContent = t('{reason}{v}. The check does not invoke model inference; actual runs may still be limited by network or quota.', { reason, v: r?.checkedAt ? t('. Checked {time}', { time: formatTime(r.checkedAt) }) : '' });
     document.querySelector('#role-save').disabled = savingRole || checkingRuntime || (!ready && !(editingRoleId && !roleForm.elements.enabled.checked));
     renderAutoApproveNote();
     syncRoleSelectTitles();
@@ -1053,7 +1055,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (editingRoleId) return;
     const preset = rolePreset(roleForm.elements.preset.value);
     if (preset) {
-      for (const key of ['name', 'mode', 'instructions']) roleForm.elements[key].value = preset[key];
+      for (const key of ['name', 'mode', 'instructions']) roleForm.elements[key].value = key === 'mode' ? preset[key] : t(preset[key]);
       roleForm.elements.autoApprove.checked = preset.autoApprove !== false;
       renderModelOptions();
     }
@@ -1086,7 +1088,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       await refreshState({ quiet: true });
     } catch (error) {
       if (roleDialog.open) { roleError.textContent = error.message; roleError.hidden = false; }
-      else setError(`Role saved, but refreshing the list failed: ${error.message}`);
+      else setError(t('Role saved, but refreshing the list failed: {message}', { message: error.message }));
     }
     finally { savingRole = false; document.querySelector('#role-save').textContent = 'Save role'; renderModelOptions(); }
   });

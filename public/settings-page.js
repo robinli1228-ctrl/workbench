@@ -1,4 +1,4 @@
-export const SETTINGS_TABS = Object.freeze(['devices', 'hosting', 'assistant', 'prompts', 'connection']);
+export const SETTINGS_TABS = Object.freeze(['general', 'devices', 'hosting', 'assistant', 'prompts', 'connection']);
 
 export function normalizeSettingsTab(value) {
   if (value === 'models') return 'devices';

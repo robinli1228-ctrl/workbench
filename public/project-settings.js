@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import { workerDisplayName } from './role-icons.js';
 
 /** Node folder selection and repository settings share the existing authenticated API and never upload local browser files. */
@@ -121,7 +122,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
     if (!worker?.online || !worker.capabilities?.projectBrowser) return setError('Please select an online, upgraded node');
     workerId = nodeId; callback = apply; current = null;
     allowedRoots = Array.isArray(worker.allowedRoots) ? worker.allowedRoots.slice() : [];
-    document.querySelector('#folder-title').textContent = `Select folder · ${workerDisplayName(worker)}`;
+    document.querySelector('#folder-title').textContent = t('Select folder · {v}', { v: workerDisplayName(worker) });
     filterText = ''; filterInput.value = '';
     picker.showModal();
     const start = selected && allowedRoots.some(r => selected === r || selected.startsWith(r.endsWith('/') ? r : `${r}/`))
@@ -142,7 +143,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
 
   function refreshNodes() {
     const select = projectForm.elements.nodeId, previous = select.value;
-    select.replaceChildren(option('Bind node later', ''), ...getData().workers.map(w => option(`${workerDisplayName(w)} · ${w.online ? 'Online' : 'Offline'}`, w.id)));
+    select.replaceChildren(option('Bind node later', ''), ...getData().workers.map(w => option(`${workerDisplayName(w)} · ${w.online ? t('Online') : t('Offline')}`, w.id)));
     select.value = previous || '';
   }
   projectForm.elements.nodeId.addEventListener('change', () => {
@@ -158,7 +159,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
     const previous = preferredNodeId || workspaceNode.value;
     workspaceNode.replaceChildren(
       option(workers.length ? 'Select device…' : 'No devices support binding', ''),
-      ...workers.map(w => option(`${workerDisplayName(w)} · ${w.online ? 'Online' : 'Offline'}`, w.id))
+      ...workers.map(w => option(`${workerDisplayName(w)} · ${w.online ? t('Online') : t('Offline')}`, w.id))
     );
     const bound = getData().workspaces.filter(b => b.projectId === projectId);
     const pick = workers.find(w => w.id === previous)
@@ -173,7 +174,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
   function fillGitCheckNodes(projectId) {
     const nodes = getData().workers.filter(w => getData().workspaces.some(b => b.nodeId === w.id && b.projectId === projectId));
     const previous = form.elements.nodeId.value;
-    form.elements.nodeId.replaceChildren(option('Select node to check…', ''), ...nodes.map(w => option(`${workerDisplayName(w)} · ${w.online ? 'Online' : 'Offline'}`, w.id)));
+    form.elements.nodeId.replaceChildren(option('Select node to check…', ''), ...nodes.map(w => option(`${workerDisplayName(w)} · ${w.online ? t('Online') : t('Offline')}`, w.id)));
     form.elements.nodeId.value = nodes.some(w => w.id === previous) ? previous : (nodes[0]?.id || '');
   }
 
@@ -218,7 +219,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
       );
       localRoot.value = binding.localRoot;
       const git = binding.git ? ` · Git ${binding.git.branch} @ ${String(binding.git.head || '').slice(0, 8)}` : '';
-      feedback.textContent = `Local folder saved: ${binding.localRoot}${git}`;
+      feedback.textContent = t('Local folder saved: {localRoot}{git}', { localRoot: binding.localRoot, git });
       feedback.hidden = false;
       await refreshState({ quiet: true });
       fillWorkspaceFields(settingsId, workspaceNode.value);
@@ -231,7 +232,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
     if (busy) return;
     const p = getData().projects.find(x => x.id === settingsId) || getProject();
     const name = p?.name || form.elements.name.value || 'this project';
-    if (!confirm(`Delete project "${name}"? This cannot be undone.`)) return;
+    if (!confirm(t('Delete project "{name}"? This cannot be undone.', { name }))) return;
     busy = true;
     const del = document.querySelector('#delete-project'), save = document.querySelector('#save-project-settings');
     del.disabled = true; if (save) save.disabled = true; feedback.hidden = true;
@@ -282,7 +283,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
   form.addEventListener('submit', event => { event.preventDefault(); void saveProjectSettings(); });
   document.querySelector('#save-project-settings').addEventListener('click', () => { void saveProjectSettings(); });
   function showCheck(check) {
-    feedback.textContent = `${check.message}\n${check.origin ? `Node origin: ${check.origin}\n${check.remoteMatches ? 'Matches the project link' : 'Differs from the project link; not modified automatically'}` : 'No Gitee origin detected; only the link entered for the project was checked'}\nChecked at: ${new Date(check.checkedAt).toLocaleString()}`;
+    feedback.textContent = t('{message}\n{v}\nChecked at: {v2}', { message: check.message, v: check.origin ? t('Node origin: {origin}\n{v}', { origin: check.origin, v: check.remoteMatches ? t('Matches the project link') : t('Differs from the project link; not modified automatically') }) : t('No Gitee origin detected; only the link entered for the project was checked'), v2: new Date(check.checkedAt).toLocaleString() });
     feedback.hidden = false;
   }
   form.elements.nodeId.addEventListener('change', () => {

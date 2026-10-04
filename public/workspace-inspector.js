@@ -1,8 +1,9 @@
+import { t, dateLocale } from './i18n.js';
 import {renderMarkdown} from './markdown.js';
 import {UI_ICON,deviceIconEl,workerDisplayName} from './role-icons.js';
 
 const el=(tag,className,text)=>Object.assign(document.createElement(tag),{className:className||'',...(text!==undefined?{textContent:text}:{})});
-const date=value=>value?new Date(value).toLocaleString('en-US',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'Modified time unknown';
+const date=value=>value?new Date(value).toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'Modified time unknown';
 
 /** Reuses existing file reading; late responses must not overwrite new content after switching projects or closing the dialog. */
 export function createWorkspaceInspector({api,getProject,getData,openDevices}) {
@@ -21,7 +22,7 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices}) {
     const version=++detailVersion;
     document.querySelector('#artifact-detail-title').textContent=file.name;
     const worker=getData().workers.find(w=>w.id===file.nodeId);
-    document.querySelector('#artifact-detail-meta').textContent=`${file.type} · ${file.runtime||'Modifying CLI unknown'} · ${date(file.modifiedAt)} · ${worker?.name||file.nodeId}\n${file.path}`;
+    document.querySelector('#artifact-detail-meta').textContent=`${file.type} · ${file.runtime||t('Modifying CLI unknown')} · ${date(file.modifiedAt)} · ${worker?.name||file.nodeId}\n${file.path}`;
     content.textContent='Reading file…';dialog.showModal();
     // An older Worker may only lack the metadata query; the existing content API still works, so details are not blocked.
     const markdown=/\.(md|markdown)$/i.test(file.path),text=/\.(md|markdown|txt)$/i.test(file.path);
@@ -29,7 +30,7 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices}) {
       const result=await api(`/api/runs/${encodeURIComponent(file.runId)}/${text?'document':'file'}?path=${encodeURIComponent(file.path)}`);
       if(version!==detailVersion||!dialog.open)return;
       content.replaceChildren(markdown?renderMarkdown(result.content):el('pre','artifact-code',result.content));
-    }catch(error){if(version===detailVersion&&dialog.open)content.textContent=`Unable to preview online: ${error.message}. File info is kept; view it in the workspace of the corresponding device.`;}
+    }catch(error){if(version===detailVersion&&dialog.open)content.textContent=t('Unable to preview online: {message}. File info is kept; view it in the workspace of the corresponding device.', { message: error.message });}
   }
   async function load(force=false){
     if(selected!=='artifacts'||!projectId||busy||(!force&&Date.now()-loadedAt<30000))return;
@@ -42,13 +43,13 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices}) {
       for(const file of result.items){
         const button=el('button','artifact-row');button.type='button';
         const type=el('span','artifact-filetype',file.type.slice(0,6));type.dataset.kind=/MD|TXT|DOCX|PDF/.test(file.type)?'document':'code';
-        const body=el('span','artifact-row-body');body.append(el('strong','',file.name),el('small','',`${file.runtime||'CLI unknown'} · ${date(file.modifiedAt)}`));
+        const body=el('span','artifact-row-body');body.append(el('strong','',file.name),el('small','',`${file.runtime||t('CLI unknown')} · ${date(file.modifiedAt)}`));
         if(file.error)body.append(el('small','artifact-warning',file.error));
         button.title=`${file.path}\n${file.source}${file.roleName?` · ${file.roleName}`:''}`;
         button.append(type,body);button.addEventListener('click',()=>void detail(file));list.append(button);
       }
       if(!result.items.length)list.append(el('div','inspector-empty','No recognizable outputs yet. File write records and file links in replies will appear here.'));
-    }catch(error){if(version===generation){note.textContent=`Read failed: ${error.message}`;loadedAt=Date.now();}}
+    }catch(error){if(version===generation){note.textContent=t('Read failed: {message}', { message: error.message });loadedAt=Date.now();}}
     finally{if(version===generation){busy=false;refresh.disabled=false;}}
   }
   function select(name){

@@ -1086,6 +1086,7 @@ body[data-workspace-view="settings"] #settings-usage-panel .settings-panel-headi
 .settings-overview-card button { margin-top: auto; }
 .connection-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 16px; }
 .connection-settings-grid .settings-overview-card { min-height: 210px; }
+.language-setting select { width: 100%; max-width: 280px; margin-top: auto; }
 .connection-settings-grid .settings-connection-note { margin: 0 0 16px; }
 #api-token-dialog > label { display: block; margin: 20px 0 7px; color: #4e657b; font-size: 12px; font-weight: 700; }
 #api-token-dialog > .form-actions { margin-top: 20px; }

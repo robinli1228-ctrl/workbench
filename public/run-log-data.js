@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 /** Business acceptance belongs to the Task; a past discussion keeps its own outcome and is not rewritten by the original task's acceptance. */
 export function taskRunDisplayStatus(task,run) {
   if(run?.discussionDeliveryId)return run.status;
@@ -47,8 +48,8 @@ export function displayRunInput(task, input) {
 export function contextUsageLabel(context) {
   if(!context || context.uncoveredCount===undefined)return '';
   const state={running:'Organizing',queued:'Queued for background organizing',idle:'Idle',failed:'Update failed'}[context.organizer?.status]||'Not enabled';
-  const summary=context.version?`Summary ${context.version.slice(0,8)} · covers through ${context.coveredThroughMessageId||'no complete message yet'}`:'No summary available';
-  return `At dispatch: ${state} · ${summary} · ${context.sentUncoveredCount??context.uncoveredCount} supplemental messages this round${context.inheritedMessageCount?` · ${context.inheritedMessageCount} inherited`:''}${context.excerptCount?` (${context.excerptCount} excerpted, with a link to the full text)`:''}${context.omittedCount?` · ${context.omittedCount} more viewable by page`:''}${context.partialThrough?' · long-message organizing incomplete':''}`;
+  const summary=context.version?t('Summary {v} · covers through {v2}', { v: context.version.slice(0,8), v2: context.coveredThroughMessageId||t('no complete message yet') }):'No summary available';
+  return t('At dispatch: {state} · {summary} · {uncoveredCount} supplemental messages this round{v}{v2}{v3}{v4}', { state, summary, uncoveredCount: context.sentUncoveredCount??context.uncoveredCount, v: context.inheritedMessageCount?t(' · {inheritedMessageCount} inherited', { inheritedMessageCount: context.inheritedMessageCount }):'', v2: context.excerptCount?t(' ({excerptCount} excerpted, with a link to the full text)', { excerptCount: context.excerptCount }):'', v3: context.omittedCount?t(' · {omittedCount} more viewable by page', { omittedCount: context.omittedCount }):'', v4: context.partialThrough?t(' · long-message organizing incomplete'):'' });
 }
 
 /** SSE and concurrent delta requests may overlap; merge by stable event ID, then display by Run sequence. */

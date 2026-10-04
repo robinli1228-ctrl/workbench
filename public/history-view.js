@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -52,13 +53,13 @@ export function createHistoryViewer({ api }) {
 
   function showError(view, state, error) {
     if (activeState !== state) return;
-    view.parts.status.textContent = `Load failed: ${error?.message || String(error)}`;
+    view.parts.status.textContent = t('Load failed: {v}', { v: error?.message || String(error) });
     view.parts.next.hidden = true;
   }
 
   function render(view, state) {
     view.parts.content.textContent = state.text;
-    view.parts.status.textContent = state.complete ? `Full text, ${state.totalLength} characters` : `Loaded ${state.offset} / ${state.totalLength} characters`;
+    view.parts.status.textContent = state.complete ? t('Full text, {totalLength} characters', { totalLength: state.totalLength }) : t('Loaded {offset} / {totalLength} characters', { offset: state.offset, totalLength: state.totalLength });
     view.parts.next.hidden = state.complete;
   }
 
@@ -102,7 +103,7 @@ export function createHistoryViewer({ api }) {
         while (!state.complete) if (!await requestPart(state)) return;
         render(view, state);
         await navigator.clipboard.writeText(state.text);
-        if (activeState === state) view.parts.status.textContent = `Full text copied, ${state.totalLength} characters`;
+        if (activeState === state) view.parts.status.textContent = t('Full text copied, {totalLength} characters', { totalLength: state.totalLength });
       } catch (error) { showError(view, state, error); }
       finally {
         if (activeState === state) {

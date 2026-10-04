@@ -125,6 +125,7 @@
             <button class="secondary" id="close-settings-page" type="button">Back</button>
           </div>
           <nav class="settings-tabs" role="tablist" aria-label="Settings categories">
+            <button type="button" role="tab" data-settings-tab="general">General</button>
             <button type="button" role="tab" data-settings-tab="devices">Devices, CLIs and Models</button>
             <button type="button" role="tab" data-settings-tab="hosting">Code Hosting Accounts</button>
             <button type="button" role="tab" data-settings-tab="assistant">Configuration Assistant</button>
@@ -207,6 +208,20 @@
               <div class="settings-panel-heading"><h3>Project Scheduled Jobs</h3><p>View across projects; ordinary jobs are dispatched when due, and progress checks wake the supervisor only on new anomalies. Home must stay online; missed runs are merged into a single check.</p></div>
               <div id="global-scheduled-jobs"></div>
               <dialog id="scheduled-job-dialog" class="settings-edit-dialog timer-edit-dialog" aria-label="Edit scheduled job"></dialog>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="general" id="settings-general-panel" hidden>
+              <div class="settings-panel-heading"><h3>General</h3><p>Preferences for how the workbench is displayed in this browser.</p></div>
+              <div class="connection-settings-grid">
+                <section class="settings-overview-card language-setting" aria-labelledby="language-section-title">
+                  <span class="settings-kicker">INTERFACE</span><h4 id="language-section-title">Language</h4>
+                  <p class="workspace-note">Choose the language of the workbench interface. The choice applies immediately, is remembered in this browser and is also saved on Home.</p>
+                  <select id="language-select" aria-labelledby="language-section-title">
+                    <option value="en" translate="no">English</option>
+                    <option value="zh" translate="no">简体中文</option>
+                  </select>
+                </section>
+              </div>
             </section>
 
             <section class="settings-panel" data-settings-panel="devices" id="settings-devices-panel" hidden>

@@ -1,3 +1,4 @@
+import { t, getLanguage, setLanguage, onLanguageChange, syncLanguageWithBackend, dateLocale } from './i18n.js';
 import { createRoomUI, createRoleRefresh } from './room.js';
 import { projectSettings } from './project-settings.js';
 import { agentIconEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl } from './role-icons.js';
@@ -326,7 +327,7 @@ async function api(path, options = {}) {
       body: options.json === undefined ? options.body : JSON.stringify(options.json)
     });
   } catch (error) {
-    const networkError = new Error(`Unable to connect to Home: ${error.message}`);
+    const networkError = new Error(t('Unable to connect to Home: {message}', { message: error.message }));
     networkError.isNetworkError = true;
     throw networkError;
   }
@@ -361,14 +362,14 @@ async function fetchFile(path) {
   try {
     response = await fetch(path, { headers });
   } catch (error) {
-    throw new Error(`Unable to read file: ${error.message}`);
+    throw new Error(t('Unable to read file: {message}', { message: error.message }));
   }
   const contentType = response.headers.get('content-type') || '';
   const body = contentType.includes('application/json')
     ? await response.json().catch(() => ({}))
     : await response.text();
   if (!response.ok) {
-    throw new Error(body?.error || `Failed to read file (HTTP ${response.status})`);
+    throw new Error(body?.error || t('Failed to read file (HTTP {status})', { status: response.status }));
   }
   return typeof body === 'object' && 'content' in body ? body.content : String(body);
 }
@@ -383,7 +384,7 @@ function create(tag, className, text) {
 function formatTime(value) {
   if (!value) return 'Unknown';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat('en-US', {
+  return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat(dateLocale(), {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
   }).format(date);
 }
@@ -558,7 +559,7 @@ function renderExecutionPlans() {
   const details=document.createElement('details');details.open=open;
   const summary=document.createElement('summary');
   const status={running:'Running',succeeded:'Completed',blocked:'Blocked',cancelled:'Cancelled',pending:'Not started',failed:'Failed',completed_with_issues:'Ended · with issues'};
-  const title=document.createElement('strong');title.textContent=`Supervisor plan · ${state.currentStage}`;
+  const title=document.createElement('strong');title.textContent=t('Supervisor plan · {currentStage}', { currentStage: t(state.currentStage) });
   const progress=document.createElement('span');progress.className='execution-progress';progress.textContent=`${state.completed}/${state.total}`;
   const badge=document.createElement('span');badge.className='execution-status';badge.textContent=status[state.current.status]||state.current.status;
   summary.append(title,progress,badge);details.append(summary);panel.append(details);
@@ -577,7 +578,7 @@ function renderExecutionPlans() {
   list.append(count);
   for(const plan of state.plans) {
     const item=document.createElement('section');item.className='execution-plan-item';
-    const heading=document.createElement('h3');heading.textContent=`${plan.reason} · ${status[plan.status]||plan.status}`;
+    const heading=document.createElement('h3');heading.textContent=`${plan.reason} · ${t(status[plan.status]||plan.status)}`;
     item.append(heading);
     const note=plan.error||plan.waitingReason||plan.fallbackReason;
     if(note){const p=document.createElement('p');p.textContent=note;item.append(p);}
@@ -591,14 +592,14 @@ function renderExecutionPlans() {
       const row=document.createElement('div');row.className='execution-stage';
       const label=document.createElement('span');
       const mode=stage.exclusive?'Exclusive serial':stage.mode==='parallel' && plan.isolated!==false?'Parallel':'Sequential';
-      label.textContent=`${stage.index+1}. ${stage.title} · ${mode} · ${plan.failurePolicy==='collect_reviews'&&stage.status==='failed'?'Some failed or missing':status[stage.status]||stage.status}`;
+      label.textContent=`${stage.index+1}. ${stage.title} · ${t(mode)} · ${plan.failurePolicy==='collect_reviews'&&stage.status==='failed'?t('Some failed or missing'):t(status[stage.status]||stage.status)}`;
       const members=document.createElement('small');
       members.textContent=(stage.members||[]).map(m=>{
         let request=(app.data.requests||[]).find(r=>r.id===m.requestId);
         for(let i=0;request?.continuationRequestId&&i<20;i++)request=(app.data.requests||[]).find(r=>r.id===request.continuationRequestId);
         const task=app.data.tasks.find(t=>t.id===request?.taskId);
         const run=(app.data.runs||[]).find(r=>r.id===request?.currentRunId);
-        return `@${m.role} ${planMemberLabel(request,run,task)}`;
+        return `@${m.role} ${t(planMemberLabel(request,run,task))}`;
       }).join(' · ');
       row.append(label,members);item.append(row);
     }
@@ -615,7 +616,7 @@ function renderProjects() {
     const count = project.supervisorRoleId ? (app.data.repositories || []).filter(r => r.projectId === project.id).length : (app.data.workspaces || []).filter(w => w.projectId === project.id).length;
     const icon = projectIconEl(icons[project.id]);
     const copy = create('span', 'project-item-copy');
-    copy.append(create('strong', '', project.name), create('small', '', `${count} ${project.supervisorRoleId ? (count===1?'code repository':'code repositories') : (count===1?'node workspace':'node workspaces')}`));
+    copy.append(create('strong', '', project.name), create('small', '', project.supervisorRoleId ? t(count===1?'{count} code repository':'{count} code repositories', { count }) : t(count===1?'{count} node workspace':'{count} node workspaces', { count })));
     button.title = project.name;
     button.setAttribute('aria-label', project.name);
     if (project.id === app.selectedProjectId) button.setAttribute('aria-current', 'page');
@@ -639,7 +640,7 @@ function renderOnlineDevices() {
   list.replaceChildren();
   const online = (app.data.workers || []).filter(w => w.online)
     .sort((a, b) => Number(workerKind(a) !== 'local') - Number(workerKind(b) !== 'local'));
-  document.querySelector('#mobile-device-count').textContent = `${online.length} ${online.length===1?'device':'devices'} online`;
+  document.querySelector('#mobile-device-count').textContent = t(online.length===1?'{count} device online':'{count} devices online', { count: online.length });
   if (!online.length) {
     const empty = create('span', 'sidebar-device is-empty');
     empty.title = 'No devices online';
@@ -653,8 +654,8 @@ function renderOnlineDevices() {
     row.type = 'button';
     const name = workerDisplayName(worker);
     const desktopDevice = app.data.homePlatform === 'darwin' && workerKind(worker) === 'cloud' ? (app.data.devices || []).find(device => device.nodeId === worker.id) : null;
-    row.title = desktopDevice ? `Open remote desktop for ${name}` : name;
-    row.setAttribute('aria-label', desktopDevice ? `Open remote desktop for ${name}` : name);
+    row.title = desktopDevice ? t('Open remote desktop for {name}', { name }) : name;
+    row.setAttribute('aria-label', desktopDevice ? t('Open remote desktop for {name}', { name }) : name);
     row.append(deviceIconEl(worker), create('span', 'sidebar-device-label', workerKind(worker) === 'cloud' ? 'Cloud' : 'Local'), create('span', 'device-online-dot'));
     row.addEventListener('click', () => {
       if (desktopDevice) { void openRemoteDesktop(desktopDevice, row); return; }
@@ -744,7 +745,7 @@ async function startDesktopChain() {
     start.textContent = 'Reopen';
   } catch (error) {
     if (!current()) return;
-    const stage = document.querySelector('#desktop-step-app').dataset.state === 'active' ? 'app' : /tunnel|\bport\b/i.test(error.message) ? 'tunnel' : 'check';
+    const stage = document.querySelector('#desktop-step-app').dataset.state === 'active' ? 'app' : /tunnel|\bport\b|隧道|端口/i.test(error.message) ? 'tunnel' : 'check';
     setDesktopStep(stage, 'error', 'Failed');
     dom.desktopFeedback.textContent = error.message;
   } finally {
@@ -760,18 +761,18 @@ function openRoleSessions(role) {
   if(!roleSessionDialog){roleSessionDialog=create('dialog','settings-edit-dialog role-session-dialog');document.body.append(roleSessionDialog);}
   const sessions=(app.data.roleSessions||[]).filter(item=>item.projectId===role.projectId&&item.roleId===role.id).reverse();
   roleSessionDialog.replaceChildren();
-  const heading=create('div','dialog-heading');heading.append(create('h3','',`${role.name} · Session History`));
+  const heading=create('div','dialog-heading');heading.append(create('h3','',t('{name} · Session History', { name: role.name })));
   const close=create('button','icon-button','×');close.type='button';close.setAttribute('aria-label','Close');close.addEventListener('click',()=>roleSessionDialog.close());heading.append(close);roleSessionDialog.append(heading);
   if(!sessions.length)roleSessionDialog.append(create('p','workspace-note','No managed session yet; one is created automatically on the first dispatch.'));
   for(const session of sessions) {
     const card=create('section','settings-block');
-    card.append(create('strong','',`${session.status==='archived'?'Past':'Current'} session #${session.generation} · ${session.id.slice(0,8)}`),
-      create('p','workspace-note',`${session.runtime} · ${session.nodeId} · Last updated ${session.updatedAt?formatTime(session.updatedAt):'unknown'}`),
-      create('p','workspace-note',`Folder: ${session.workspace||session.workspaceRoot||'not determined yet'}`));
+    card.append(create('strong','',t('{v} session #{generation} · {v2}', { v: session.status==='archived'?t('Past'):t('Current'), generation: session.generation, v2: session.id.slice(0,8) })),
+      create('p','workspace-note',t('{runtime} · {nodeId} · Last updated {v}', { runtime: session.runtime, nodeId: session.nodeId, v: session.updatedAt?formatTime(session.updatedAt):t('unknown') })),
+      create('p','workspace-note',t('Folder: {v}', { v: session.workspace||session.workspaceRoot||t('not determined yet') })));
     const summary=create('p','workspace-note','Summary not loaded yet');card.append(summary);
     void api(`/api/projects/${encodeURIComponent(role.projectId)}/sessions/${encodeURIComponent(session.id)}/summary`).then(result=>{
-      if(summary.isConnected)summary.textContent=result.status==='ready'?`Summary: ${result.text}`:'Summary not generated yet';
-    }).catch(error=>{if(summary.isConnected)summary.textContent=`Summary unavailable: ${error.message}`;});
+      if(summary.isConnected)summary.textContent=result.status==='ready'?t('Summary: {text}', { text: result.text }):'Summary not generated yet';
+    }).catch(error=>{if(summary.isConnected)summary.textContent=t('Summary unavailable: {message}', { message: error.message });});
     const details=create('details');const label=create('summary','','View the original text visible to the platform');details.append(label);
     const content=create('pre','prompt-preview');const more=create('button','secondary compact','Load more');more.type='button';
     let offset=0,version=null,loaded=false;
@@ -781,7 +782,7 @@ function openRoleSessions(role) {
         const params=new URLSearchParams({offset:String(offset),limit:'4000',...(version?{version}:{})});
         const page=await api(`/api/projects/${encodeURIComponent(role.projectId)}/sessions/${encodeURIComponent(session.id)}/read?${params}`);
         content.textContent+=page.content||'';offset=page.nextOffset??offset;version=page.version;more.hidden=page.complete;
-      } catch(error) {content.textContent+=`\nRead failed: ${error.message}`;}
+      } catch(error) {content.textContent+=t('\nRead failed: {message}', { message: error.message });}
       finally {more.disabled=false;}
     };
     details.addEventListener('toggle',()=>{if(details.open&&!loaded){loaded=true;void load();}});
@@ -833,7 +834,7 @@ function renderRoles() {
     const card = create('article', `worker-card role-card is-${activity.tone}${role.enabled ? '' : ' disabled'}`);
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
-    card.setAttribute('aria-label', `Edit role ${role.name}`);
+    card.setAttribute('aria-label', t('Edit role {name}', { name: role.name }));
     const head = create('div', 'role-card-head');
     const title = create('div', 'role-card-title');
     title.append(create('strong', 'role-card-name', role.name));
@@ -845,11 +846,11 @@ function renderRoles() {
     head.append(title);
     const terminalButton=create('button','chat-icon-btn role-terminal');
     terminalButton.type='button';terminalButton.innerHTML=UI_ICON.terminal;
-    terminalButton.title='Continue the original session in iTerm';terminalButton.setAttribute('aria-label',`Terminal session ${role.name}`);
+    terminalButton.title='Continue the original session in iTerm';terminalButton.setAttribute('aria-label',t('Terminal session {name}', { name: role.name }));
     terminalButton.addEventListener('click',e=>{e.stopPropagation();openRoleTerminal(role);});
     head.append(terminalButton);
     const sessionsButton=create('button','chat-icon-btn role-terminal');sessionsButton.type='button';sessionsButton.innerHTML=UI_ICON.history;
-    sessionsButton.title='View role sessions and history';sessionsButton.setAttribute('aria-label',`Session history ${role.name}`);
+    sessionsButton.title='View role sessions and history';sessionsButton.setAttribute('aria-label',t('Session history {name}', { name: role.name }));
     sessionsButton.addEventListener('click',e=>{e.stopPropagation();openRoleSessions(role);});head.append(sessionsButton);
     if (activity.label !== 'Idle') head.append(create('span', `role-badge is-${activity.tone}`, activity.label));
     const ids = create('div', 'role-id-row');
@@ -893,7 +894,7 @@ async function refreshProjectGitVersion(projectId,{force=false}={}) {
   if(!repositories.length)return;
   gitVersionRequests.add(projectId);gitVersionAttemptedAt.set(projectId,Date.now());renderProjectGitVersion();
   try {await api(`/api/projects/${encodeURIComponent(projectId)}/git-versions`,{method:'POST',json:{}});await refreshState({quiet:true});}
-  catch(error){setError(`Git version check failed: ${error.message}`);}
+  catch(error){setError(t('Git version check failed: {message}', { message: error.message }));}
   finally{gitVersionRequests.delete(projectId);renderProjectGitVersion();}
 }
 
@@ -940,9 +941,9 @@ function openGitVersionDetails(project,status) {
       const name=create('div','git-version-row-name');
       name.append(create('span','git-version-index',`${number+1}.`),create('strong','',item.key||item.repositoryId));
       top.append(name,create('span','git-version-state',formatGitVersionStatus(item)));
-      const syncLabel=item.checkedAt?`${item.stale?'Cached sync at':'Synced at'} ${formatTime(item.checkedAt)}`:(item.stale?'Cached sync time unknown':'Sync time unknown');
+      const syncLabel=item.checkedAt?`${item.stale?t('Cached sync at'):t('Synced at')} ${formatTime(item.checkedAt)}`:(item.stale?'Cached sync time unknown':'Sync time unknown');
       row.append(top,create('code','git-version-commit',String(item.localCommit||'Version not obtained').slice(0,10)),
-        create('p','workspace-note',`${item.branch||'Unknown branch'} · ${syncLabel}`));
+        create('p','workspace-note',`${item.branch||t('Unknown branch')} · ${syncLabel}`));
       if(item.error)row.append(create('p','inline-error',item.error));
       section.append(row);
     }
@@ -969,8 +970,8 @@ function renderProjectGitVersion() {
   refresh.onclick=event=>{event.stopPropagation();void refreshProjectGitVersion(project.id,{force:true});};head.append(refresh);
   const summary=create('p','git-summary-value',busy&&!status?'Syncing remote versions…':formatProjectGitSummary(status?.summary||{repositoryCount:repositories.length,unknown:repositories.length}));
   const cached=status?.items?.some(item=>item.stale);
-  const timeText=status?.summary?.checkedAt ? `${cached?'Cached sync at':'Synced at'} ${formatTime(status.summary.checkedAt)}`
-    : cached ? `Cached sync time unknown · checked ${formatTime(status.updatedAt)}` : repositories.length?'Not synced yet':'No repository configured';
+  const timeText=status?.summary?.checkedAt ? `${cached?t('Cached sync at'):t('Synced at')} ${formatTime(status.summary.checkedAt)}`
+    : cached ? t('Cached sync time unknown · checked {time}', { time: formatTime(status.updatedAt) }) : repositories.length?'Not synced yet':'No repository configured';
   const synced=create('small','git-summary-time',timeText);
   panel.append(head,summary,synced);
   panel.tabIndex=status?0:-1;panel.setAttribute('role',status?'button':'group');
@@ -989,16 +990,16 @@ function openRoleTerminal(role) {
     const runs=app.data.runs.filter(r=>r.projectId===role.projectId&&r.roleId===role.id).slice().reverse();
     const heading=create('div','dialog-heading');
     const close=create('button','secondary compact','Close');close.type='button';close.onclick=()=>terminalDialog.close();
-    heading.append(create('h2','',`${role.name} · Terminal Session`),close);terminalDialog.append(heading);
+    heading.append(create('h2','',t('{name} · Terminal Session', { name: role.name })),close);terminalDialog.append(heading);
     terminalDialog.append(create('p','workspace-note','Continues the native history of the chosen CLI without forking or creating a blank session. After resuming, project dispatch on this device is paused; return it to the platform after closing the CLI. New terminal conversation is not posted back to the chat automatically, and the original managed wb tools are unavailable.'));
     const select=create('select');select.setAttribute('aria-label','Select past run');
-    for(const run of runs){const option=create('option','',`${formatTime(run.createdAt)} · ${run.status} · ${(run.nativeSession?.id||run.threadId||'no native ID').slice(0,16)}`);option.value=run.id;select.append(option);}
+    for(const run of runs){const option=create('option','',`${formatTime(run.createdAt)} · ${run.status} · ${(run.nativeSession?.id||run.threadId||t('no native ID')).slice(0,16)}`);option.value=run.id;select.append(option);}
     select.value=selectedId || claim?.runId || runs[0]?.id || '';select.disabled=!!claim;
     terminalDialog.append(select);
     const run=claim?app.data.runs.find(r=>r.id===claim.runId):runs.find(r=>r.id===select.value);
     select.onchange=()=>render(select.value);
     const info=create('p','workspace-note');
-    info.textContent=run?`Device: ${app.data.workers.find(w=>w.id===run.nodeId)?.name||run.nodeId}\nFolder: ${claim?.workspace||run.workspace||'not recorded'}\nRun user: ${claim?.user||run.nativeSession?.user||'verified by Worker'}\nSession ID: ${claim?.sessionId||run.nativeSession?.id||run.threadId||'not recorded; resume cannot be guaranteed'}`:'This role has no run records to view yet.';
+    info.textContent=run?t('Device: {v}\nFolder: {v2}\nRun user: {v3}\nSession ID: {v4}', { v: app.data.workers.find(w=>w.id===run.nodeId)?.name||run.nodeId, v2: claim?.workspace||run.workspace||t('not recorded'), v3: claim?.user||run.nativeSession?.user||t('verified by Worker'), v4: claim?.sessionId||run.nativeSession?.id||run.threadId||t('not recorded; resume cannot be guaranteed') }):'This role has no run records to view yet.';
     info.style.whiteSpace='pre-wrap';terminalDialog.append(info);
     const feedback=create('p','inline-error',claim?.error || '');feedback.setAttribute('role','status');terminalDialog.append(feedback);
     const actions=create('div','form-actions');terminalDialog.append(actions);
@@ -1046,20 +1047,20 @@ function renderSettingsDevices() {
     const edit = create('button', 'secondary compact device-edit-button', 'Edit');
     edit.type = 'button';
     edit.setAttribute('aria-haspopup', 'dialog');
-    edit.setAttribute('aria-label', `Edit ${workerDisplayName(worker)}`);
+    edit.setAttribute('aria-label', t('Edit {v}', { v: workerDisplayName(worker) }));
     setActionIcon(edit,'edit');
     head.append(edit);
     if (app.data.homePlatform === 'darwin' && workerKind(worker) === 'cloud' && device) {
       const desktop = create('button', 'secondary compact device-open-desktop', 'Open remote desktop');
       desktop.type = 'button';
-      setActionIcon(desktop,'desktop',`Open remote desktop for ${workerDisplayName(worker)}`);
+      setActionIcon(desktop,'desktop',t('Open remote desktop for {v}', { v: workerDisplayName(worker) }));
       desktop.addEventListener('click', () => void openRemoteDesktop(device, desktop));
       head.append(desktop);
     }
     const meta = create('div', 'worker-meta');
     meta.append(
-      create('span', '', `${worker.platform || 'Unknown platform'} · ${worker.online ? 'Online' : entry.worker ? 'Offline' : 'Awaiting connection'}`),
-      create('span', '', `Last seen: ${formatTime(worker.lastSeen)}`)
+      create('span', '', `${worker.platform || t('Unknown platform')} · ${worker.online ? t('Online') : entry.worker ? t('Offline') : t('Awaiting connection')}`),
+      create('span', '', t('Last seen: {time}', { time: formatTime(worker.lastSeen) }))
     );
     card.append(head, meta);
     const detail = platformUI.deviceDetails(entry);
@@ -1098,7 +1099,7 @@ function renderSettingsDevices() {
     detail.append(actions);
     edit.addEventListener('click', () => {
       const dialog = document.querySelector('#device-edit-dialog');
-      document.querySelector('#device-edit-title').textContent = `Edit ${workerDisplayName(worker)}`;
+      document.querySelector('#device-edit-title').textContent = t('Edit {v}', { v: workerDisplayName(worker) });
       document.querySelector('#device-edit-content').replaceChildren(detail);
       dialog.showModal();
     });
@@ -1119,14 +1120,14 @@ function renderPlatformPromptPreview() {
   if (!dom.promptsForm || !dom.promptsPreview) return;
   const platform = dom.promptsForm.elements.platformPrompt.value.trim();
   dom.promptsPreview.textContent = [
-    '[Platform hard rules (built in, not editable)]',
-    'Permissions, workspace, approvals and cross-role call boundaries',
+    t('[Platform hard rules (built in, not editable)]'),
+    t('Permissions, workspace, approvals and cross-role call boundaries'),
     '',
-    '[Platform prompt]',
-    platform || '(not configured)',
+    t('[Platform prompt]'),
+    platform || t('(not configured)'),
     '',
-    '[Current role prompt]',
-    '(added at run time from the role configuration)'
+    t('[Current role prompt]'),
+    t('(added at run time from the role configuration)')
   ].join('\n');
 }
 
@@ -1134,7 +1135,7 @@ function setSupervisorDefaultOptions(name, values, selected, blank) {
   const select = dom.promptsForm?.elements[name];
   if (!select) return '';
   const unique = [...new Map(values.filter(value => value?.id).map(value => [value.id, value])).values()];
-  if (selected && !unique.some(value => value.id === selected)) unique.push({ id: selected, name: `${selected} (currently unavailable)` });
+  if (selected && !unique.some(value => value.id === selected)) unique.push({ id: selected, name: t('{selected} (currently unavailable)', { selected }) });
   select.replaceChildren();
   for (const value of [{ id: '', name: blank }, ...unique]) {
     const option = create('option', '', value.name || value.id);
@@ -1180,20 +1181,20 @@ function renderPlatformPrompts() {
   dom.promptsForm.elements.platformPrompt.value = settings.platformPrompt ?? app.data.promptDefaults?.platformPrompt ?? '';
   dom.promptsForm.elements.supervisorPrompt.value = settings.supervisorPrompt ?? app.data.promptDefaults?.supervisorPrompt ?? '';
   renderSupervisorDefaultChoices(settings);
-  dom.promptsUpdated.textContent = settings.promptsUpdatedAt ? `Last saved: ${formatTime(settings.promptsUpdatedAt)}` : 'Not saved separately; using the default';
+  dom.promptsUpdated.textContent = settings.promptsUpdatedAt ? t('Last saved: {time}', { time: formatTime(settings.promptsUpdatedAt) }) : 'Not saved separately; using the default';
   document.querySelector('#platform-prompt-summary').textContent = dom.promptsForm.elements.platformPrompt.value.trim() || 'Not set; using the platform default rules.';
   document.querySelector('#supervisor-prompt-summary').textContent = dom.promptsForm.elements.supervisorPrompt.value.trim() || 'Not set; using the default supervisor instructions.';
   document.querySelector('#supervisor-defaults-summary').textContent = [
-    dom.promptsForm.elements.defaultSupervisorRuntime.selectedOptions[0]?.textContent || 'Choose CLI manually',
-    dom.promptsForm.elements.defaultSupervisorModel.selectedOptions[0]?.textContent || 'Choose model manually',
-    dom.promptsForm.elements.defaultSupervisorEffort.selectedOptions[0]?.textContent || 'CLI default reasoning effort'
+    dom.promptsForm.elements.defaultSupervisorRuntime.selectedOptions[0]?.textContent || t('Choose CLI manually'),
+    dom.promptsForm.elements.defaultSupervisorModel.selectedOptions[0]?.textContent || t('Choose model manually'),
+    dom.promptsForm.elements.defaultSupervisorEffort.selectedOptions[0]?.textContent || t('CLI default reasoning effort')
   ].join(' · ');
   dom.promptsFeedback.hidden = true;
   renderPlatformPromptPreview();
   const organizer=settings.conversationOrganizer||{};
   const worker=app.data.workers?.find(item=>item.id===organizer.nodeId);
   document.querySelector('#conversation-organizer-summary').textContent=organizer.nodeId
-    ? `${worker?.name||organizer.nodeId} · ${organizer.runtime} · ${organizer.model}${organizer.effort?` · ${organizer.effort}`:''}\nLast updated: ${organizer.updatedAt?formatTime(organizer.updatedAt):'not recorded'}`
+    ? t('{v} · {runtime} · {model}{v2}\nLast updated: {v3}', { v: worker?.name||organizer.nodeId, runtime: organizer.runtime, model: organizer.model, v2: organizer.effort?` · ${organizer.effort}`:'', v3: organizer.updatedAt?formatTime(organizer.updatedAt):t('not recorded') })
     : 'Not configured; dispatch uses original excerpts.';
 }
 
@@ -1243,7 +1244,7 @@ function appendRuntimeModels(parent, worker, runtime) {
   );
   details.append(summary);
   const auth = runtime.authReady === true ? 'Signed in' : runtime.authReady === false ? 'Not signed in' : 'Sign-in status unknown';
-  details.append(create('p', 'workspace-note runtime-meta', `${auth}${runtime.version ? ` · ${runtime.version}` : ''}${runtime.checkedAt ? ` · Checked ${formatTime(runtime.checkedAt)}` : ''}`));
+  details.append(create('p', 'workspace-note runtime-meta', `${auth}${runtime.version ? ` · ${runtime.version}` : ''}${runtime.checkedAt ? t(' · Checked {time}', { time: formatTime(runtime.checkedAt) }) : ''}`));
   const models = Array.isArray(runtime.models) ? runtime.models : [];
   const modelList = create('div', 'inline-model-list');
   if (!models.length) {
@@ -1257,7 +1258,7 @@ function appendRuntimeModels(parent, worker, runtime) {
       quota.append(create('span', 'model-mgmt-quota-label', 'Quota remaining'), create('strong', 'model-mgmt-quota-value', modelQuotaLabel(runtime, model)));
       row.append(head, quota);
       const last = lastRunUsageForModel(worker.id, runtime.type, model.id);
-      if (last) row.append(create('p', 'workspace-note model-mgmt-last-usage', `Last run usage: ${last.text} · ${formatTime(last.at)}`));
+      if (last) row.append(create('p', 'workspace-note model-mgmt-last-usage', t('Last run usage: {text} · {time}', { text: last.text, time: formatTime(last.at) })));
       modelList.append(row);
     }
   }
@@ -1292,7 +1293,7 @@ function modelQuotaLabel(runtime, model) {
   if (quota && typeof quota === 'object') {
     const parts = [];
     if (quota.fiveHour?.remainingPercent != null) parts.push(`5h ${Math.round(quota.fiveHour.remainingPercent)}%`);
-    if (quota.weekly?.remainingPercent != null) parts.push(`Week ${Math.round(quota.weekly.remainingPercent)}%`);
+    if (quota.weekly?.remainingPercent != null) parts.push(t('Week {v}%', { v: Math.round(quota.weekly.remainingPercent) }));
     if (quota.credits?.balance != null) parts.push(`Credits ${quota.credits.balance}`);
     if (parts.length) return parts.join(' · ');
   }
@@ -1308,9 +1309,9 @@ function modelQuotaLabel(runtime, model) {
 function renderWechat() {
   const state = app.data.wechat || { links: [] };
   const summary = document.querySelector('#wechat-summary');
-  summary.textContent = !state.client ? 'WeChat service needs an update; currently not enabled' : !state.configured ? 'Home-specific client configuration not installed' : `${state.enabled ? 'Enabled' : 'Disabled'} · ${state.health || 'Connection not checked yet'}`;
+  summary.textContent = !state.client ? 'WeChat service needs an update; currently not enabled' : !state.configured ? 'Home-specific client configuration not installed' : `${state.enabled ? t('Enabled') : t('Disabled')} · ${state.health || t('Connection not checked yet')}`;
   const dialog = document.querySelector('#wechat-dialog'); if (!dialog.open) return;
-  document.querySelector('#wechat-health').textContent = `${summary.textContent}. Client: ${state.client || 'not configured'}; a connection check does not guarantee actual delivery.`;
+  document.querySelector('#wechat-health').textContent = t('{textContent}. Client: {v}; a connection check does not guarantee actual delivery.', { textContent: summary.textContent, v: state.client || t('not configured') });
   const toggle = document.querySelector('#toggle-wechat'); toggle.textContent = state.enabled ? 'Pause WeChat messaging' : 'Enable WeChat'; toggle.disabled = !state.configured;
   document.querySelector('#check-wechat').disabled = !state.configured;
   const select = document.querySelector('#wechat-project'), selected = select.value || app.selectedProjectId;
@@ -1323,11 +1324,11 @@ function renderWechat() {
     const card = create('section', 'settings-overview-card');
     const project = app.data.projects.find(p => p.id === link.projectId);
     const kind = { question: 'Pending question', approval: 'CLI approval', project: 'Project entry' }[link.kind] || 'Message';
-    card.append(create('strong', '', `${link.code ? `[${link.code}]` : 'Pending send'} ${project?.name || 'Project removed'} · ${kind}`));
+    card.append(create('strong', '', `${link.code ? t('[{code}]', { code: link.code }) : t('Pending send')} ${project?.name || t('Project removed')} · ${kind}`));
     if (link.preview) card.append(create('p', 'settings-overview-preview', link.preview));
-    const status = link.state === 'closed' ? link.closedReason : link.error || (link.deliveryStatus === 'sent' ? `Sent · ${link.lastSeq ? 'reply received; you can keep giving numbered instructions' : 'awaiting reply'}` : 'Sending');
+    const status = link.state === 'closed' ? link.closedReason : link.error || (link.deliveryStatus === 'sent' ? t('Sent · {v}', { v: link.lastSeq ? t('reply received; you can keep giving numbered instructions') : t('awaiting reply') }) : 'Sending');
     card.append(create('p', 'workspace-note', `${status} · ${formatTime(new Date(link.createdAt).toISOString())}`));
-    if (link.followupUntil && link.state !== 'closed') card.append(create('p', 'workspace-note', `This answered number accepts follow-up instructions until ${formatTime(new Date(link.followupUntil).toISOString())}; after that, get the entry again. Unanswered questions have no local wait timeout.`));
+    if (link.followupUntil && link.state !== 'closed') card.append(create('p', 'workspace-note', t('This answered number accepts follow-up instructions until {time}; after that, get the entry again. Unanswered questions have no local wait timeout.', { time: formatTime(new Date(link.followupUntil).toISOString()) })));
     if (link.error === 'weixin_context_expired') card.append(create('p', 'workspace-note', 'Send ClawBot a new message first, then retry the original request.'));
     if (link.state !== 'closed') {
       const actions = create('div', 'form-actions');
@@ -1436,7 +1437,7 @@ function renderTaskDetail() {
   const latestRun = getDetailRun(task.id);
   dom.runTitle.textContent = latestRun?.inputTask?.title||task.title;
   dom.runTitle.title = dom.runTitle.textContent;
-  dom.runCreated.textContent = `Created ${formatTime(task.createdAt)}`;
+  dom.runCreated.textContent = t('Created {time}', { time: formatTime(task.createdAt) });
   dom.runStatus.replaceChildren(statusChip(taskDisplayStatus(task, latestRun)));
 
   renderRunToolbar(task, latestRun);
@@ -1549,8 +1550,8 @@ function renderRunTabs(task, run) {
   const logs = partitionRunLog(app.events);
   const tabs = [
     ['input', 'Prompt input'],
-    ['output', `CLI output${logs.output.length ? ` ${logs.output.length}` : ''}`],
-    ['tools', `Tool calls${logs.tools.length ? ` ${logs.tools.length}` : ''}`],
+    ['output', t('CLI output{v}', { v: logs.output.length ? ` ${logs.output.length}` : '' })],
+    ['tools', t('Tool calls{v}', { v: logs.tools.length ? ` ${logs.tools.length}` : '' })],
     ['artifacts', 'Artifacts']
   ];
   const wrapper = create('div', 'run-log-tabs');
@@ -1590,7 +1591,7 @@ function renderRunInput(task, snapshot,run) {
   if(contextNote)section.append(create('p','run-log-note',contextNote));
   if (!input.complete) section.append(create('p', 'run-log-note', 'The full CLI input was not saved for this past run; below is only the recorded task request.'));
   else section.append(create('p', 'run-log-note', 'This is the input the platform sent to the CLI this round; it excludes history kept by the CLI itself and vendor built-in prompts.'));
-  if(input.instructionsInheritedFrom)section.append(create('p','run-log-note',`Fixed rules are inherited from the original session run ${input.instructionsInheritedFrom} and are not appended again this round; execution boundaries and tool entries are still shown in full below.`));
+  if(input.instructionsInheritedFrom)section.append(create('p','run-log-note',t('Fixed rules are inherited from the original session run {instructionsInheritedFrom} and are not appended again this round; execution boundaries and tool entries are still shown in full below.', { instructionsInheritedFrom: input.instructionsInheritedFrom })));
   if (input.instructions) {
     section.append(create('h3', '', 'Platform and Role Work Instructions'), create('pre', 'run-log-pre', input.instructions));
   }
@@ -1607,7 +1608,7 @@ function renderRunOutput(run, events) {
     if (event.type === 'text') { text += stripAnsi(eventPayloadText(event)); continue; }
     flushText();
     const block = create('div', `run-output-entry${event.type === 'error' ? ' error' : ''}`);
-    block.append(create('small', '', `${event.type === 'error' ? 'Error' : event.type === 'log' ? 'CLI log' : 'Reply'} · ${formatTime(event.createdAt)}`),
+    block.append(create('small', '', `${event.type === 'error' ? t('Error') : event.type === 'log' ? t('CLI log') : t('Reply')} · ${formatTime(event.createdAt)}`),
       create('pre', 'run-log-pre', stripAnsi(eventPayloadText(event))));
     section.append(block);
   }
@@ -1637,7 +1638,7 @@ function renderRunTools(run, tools) {
       detail.append(create('h4', '', label), create('pre', 'run-log-pre', stripAnsi(typeof value === 'string' ? value : safeJson(value))));
       card.append(detail);
     }
-    if (item.exitCode != null) card.append(create('p', 'run-log-note', `Exit code ${item.exitCode}`));
+    if (item.exitCode != null) card.append(create('p', 'run-log-note', t('Exit code {exitCode}', { exitCode: item.exitCode })));
     section.append(card);
   }
   return section;
@@ -1653,7 +1654,7 @@ function renderRunArtifacts(run) {
   }
   if (run) section.append(renderDeliveries(run));
   const files = create('details', 'run-workspace-files');
-  files.append(create('summary', '', `Browse workspace files${app.files.length ? ` (${app.files.length})` : ''}`), renderFiles());
+  files.append(create('summary', '', t('Browse workspace files{v}', { v: app.files.length ? t(' ({v})', { v: app.files.length }) : '' })), renderFiles());
   section.append(files);
   return section;
 }
@@ -1689,11 +1690,11 @@ function renderApprovals(run) {
   const approvals = app.data.approvals.filter((approval) => approval.runId === run.id && ['pending', 'waiting'].includes(approval.status));
   if (!approvals.length) return section;
   const heading = create('div', 'subsection-heading');
-  heading.append(create('h3', '', 'Pending Approvals'), create('span', 'subsection-note', `${approvals.length}`));
+  heading.append(create('h3', '', 'Pending Approvals'), create('span', 'subsection-note', t('{v}@@approvals', { v: approvals.length })));
   section.append(heading);
   for (const approval of approvals) {
     const card = create('div', 'approval-card');
-    const detail = [approval.method, approval.params ? safeJson(approval.params) : '', approval.expiresAt ? `Valid until ${formatTime(approval.expiresAt)}` : '']
+    const detail = [approval.method, approval.params ? safeJson(approval.params) : '', approval.expiresAt ? t('Valid until {time}', { time: formatTime(approval.expiresAt) }) : '']
       .filter(Boolean).join('\n');
     card.append(create('p', '', detail || 'Runtime requests manual confirmation'));
     const actions = create('div', 'approval-actions');
@@ -1712,7 +1713,7 @@ function renderApprovals(run) {
 function renderFiles() {
   const section = create('section', 'subsection');
   const heading = create('div', 'subsection-heading');
-  heading.append(create('h3', '', 'Workspace Files'), create('span', 'subsection-note', `${app.files.length}`));
+  heading.append(create('h3', '', 'Workspace Files'), create('span', 'subsection-note', t('{v}@@files', { v: app.files.length })));
   const list = create('div', 'file-list');
   if (!app.files.length) {
     list.append(create('div', 'event-empty', 'No workspace files to browse'));
@@ -1755,10 +1756,10 @@ function formatUsage(usage) {
   const output = usage.outputTokens ?? usage.output_tokens;
   const total = usage.totalTokens ?? usage.total_tokens;
   const parts = [];
-  if (input !== undefined) parts.push(`Input ${input}`);
-  if (cachedInput !== undefined) parts.push(`Cached input ${cachedInput}`);
-  if (output !== undefined) parts.push(`Output ${output}`);
-  if (total !== undefined) parts.push(`Total ${total}`);
+  if (input !== undefined) parts.push(t('Input {input}', { input }));
+  if (cachedInput !== undefined) parts.push(t('Cached input {cachedInput}', { cachedInput }));
+  if (output !== undefined) parts.push(t('Output {output}', { output }));
+  if (total !== undefined) parts.push(t('Total {total}', { total }));
   return parts.join(' / ') || safeJson(usage);
 }
 
@@ -1791,7 +1792,7 @@ async function refreshRunDetails() {
         const detail=await pending.promise;
         if(version!==app.requestVersion||app.selectedTaskId!==task.id||!dom.runDialog.open)return;
         app.fullTask=detail.task;
-      }catch(error){if(version===app.requestVersion&&app.selectedTaskId===task.id)app.detailError=`Details: ${error.message}`;}
+      }catch(error){if(version===app.requestVersion&&app.selectedTaskId===task.id)app.detailError=t('Details: {message}', { message: error.message });}
       finally{if(app.detailFetch===pending)app.detailFetch=null;}
     }
     renderTaskDetail();
@@ -1806,7 +1807,7 @@ async function refreshRunDetails() {
       const detail=await pending.promise;
       if(!stillCurrent())return;
       app.fullRun=detail.run;app.fullTask=detail.task;renderTaskDetail();
-    }catch(error){if(stillCurrent())app.detailError=`Details: ${error.message}`;}
+    }catch(error){if(stillCurrent())app.detailError=t('Details: {message}', { message: error.message });}
     finally{if(app.detailFetch===pending)app.detailFetch=null;}
   }
   if(!stillCurrent())return;
@@ -1814,21 +1815,21 @@ async function refreshRunDetails() {
   const events = api(`/api/runs/${encodeURIComponent(run.id)}/events?after=${after}`).then(result => {
     if (!stillCurrent()) return;
     app.events = mergeRunEvents(app.events, Array.isArray(result.events) ? result.events : []);
-    if (app.detailError.startsWith('Events: ')) app.detailError = '';
+    if ((app.detailError.startsWith('Events: ') || app.detailError.startsWith(t('Events: ')))) app.detailError = '';
     renderTaskDetail();
   }).catch(error => {
     if (!stillCurrent()) return;
-    app.detailError = `Events: ${error.message}`;
+    app.detailError = t('Events: {message}', { message: error.message });
     renderTaskDetail();
   });
   const files = api(`/api/runs/${encodeURIComponent(run.id)}/files`).then(result => {
     if (!stillCurrent()) return;
     app.files = Array.isArray(result.files) ? result.files : [];
-    if (app.detailError.startsWith('Files: ')) app.detailError = '';
+    if ((app.detailError.startsWith('Files: ') || app.detailError.startsWith(t('Files: ')))) app.detailError = '';
     renderTaskDetail();
   }).catch(error => {
     if (!stillCurrent()) return;
-    app.detailError = `Files: ${error.message}`;
+    app.detailError = t('Files: {message}', { message: error.message });
     renderTaskDetail();
   });
   await Promise.allSettled([events, files]);
@@ -1855,7 +1856,7 @@ async function commandRequest(key, path, json, button) {
       delete app.commands[key];
       saveCommands();
     }
-    setError(error.isNetworkError ? `${error.message}\nClick again; the system will reuse the same commandId to look up the original operation.` : error.message);
+    setError(error.isNetworkError ? t('{message}\nClick again; the system will reuse the same commandId to look up the original operation.', { message: error.message }) : error.message);
     return null;
   } finally {
     button.disabled = false;
@@ -1910,7 +1911,7 @@ async function openFile(path) {
     const content = await fetchFile(`/api/runs/${encodeURIComponent(run.id)}/file?path=${encodeURIComponent(path)}`);
     if (current()) dom.fileContent.textContent = content;
   } catch (error) {
-    if (current()) dom.fileContent.textContent = `Read failed: ${error.message}`;
+    if (current()) dom.fileContent.textContent = t('Read failed: {message}', { message: error.message });
   }
 }
 
@@ -2033,10 +2034,10 @@ dom.saveToken?.addEventListener('click', async () => {
   dom.saveToken.disabled=true;feedback.hidden=true;
   try {
     const response=await fetch('/api/state',{headers:candidate?{Authorization:`Bearer ${candidate}`}:{}});
-    if(!response.ok)throw new Error(response.status===401?'Incorrect Home access token; please enter it again.':`Home verification failed (HTTP ${response.status})`);
+    if(!response.ok)throw new Error(response.status===401?'Incorrect Home access token; please enter it again.':t('Home verification failed (HTTP {status})', { status: response.status }));
     app.token=candidate;app.authPromptShown=false;
     if(app.token)sessionStorage.setItem(TOKEN_KEY,app.token);else sessionStorage.removeItem(TOKEN_KEY);
-    connectUpdates();await refreshState();document.querySelector('#api-token-dialog').close();
+    connectUpdates();await refreshState();document.querySelector('#api-token-dialog').close();void syncLanguage();
   } catch(error) {feedback.textContent=error.message;feedback.hidden=false;}
   finally {dom.saveToken.disabled=false;}
 });
@@ -2114,7 +2115,7 @@ dom.promptsForm?.addEventListener('submit', async event => {
   try {
     app.data.settings = await api('/api/settings/prompts', { method: 'POST', json: values });
     renderSupervisorDefaultChoices(app.data.settings);
-    dom.promptsUpdated.textContent = `Last saved: ${formatTime(app.data.settings.promptsUpdatedAt)}`;
+    dom.promptsUpdated.textContent = t('Last saved: {time}', { time: formatTime(app.data.settings.promptsUpdatedAt) });
     dom.promptsDialog.close();
   } catch (error) {
     dom.promptsFeedback.textContent = error.message;
@@ -2146,7 +2147,7 @@ dom.projectForm.addEventListener('submit', async (event) => {
       try {
         const result=await api(`/api/projects/${project.id}/repositories`,{method:'POST',json:{key:'code',mode:values.repositoryMode,repoUrl:values.repositoryUrl,
           baseBranch:values.baseBranch,accountId:values.hostingAccountId,remoteName:values.folderName,nodeIds:[values.supervisor.nodeId]}});
-        if(result.status==='blocked')repositoryError=result.results.filter(r=>r.error).map(r=>r.error).join('; ');
+        if(result.status==='blocked')repositoryError=result.results.filter(r=>r.error).map(r=>r.error).join(t('; '));
       }catch(e){repositoryError=e.message;}
     }
     app.drafts.project = {};
@@ -2155,7 +2156,7 @@ dom.projectForm.addEventListener('submit', async (event) => {
     selectProject(project.id);
     showProjectForm(false);
     await refreshState();
-    if(repositoryError){openSettings('project');setError(`Project created, but the repository is not finished: ${repositoryError}`);}
+    if(repositoryError){openSettings('project');setError(t('Project created, but the repository is not finished: {repositoryError}', { repositoryError }));}
   } catch (error) {
     setError(error.message);
   } finally {
@@ -2202,5 +2203,30 @@ dom.bindingForm.addEventListener('submit', async event => {
   }
 });
 
+/* Language setting: i18n.js owns the choice (localStorage 'wb.language'); Home keeps a copy via GET/PUT /api/language. */
+const languageSelect = document.querySelector('#language-select');
+function showLanguageChoice() { if (languageSelect) languageSelect.value = getLanguage(); }
+languageSelect?.addEventListener('change', () => setLanguage(languageSelect.value));
+onLanguageChange(() => {
+  showLanguageChoice();
+  // Text built in JavaScript is regenerated from the current state; static text is handled by the DOM translator.
+  // Each step is independent so one failing renderer cannot leave the rest of the page in the old language.
+  for (const step of [
+    render,
+    () => { if (dom.promptsDialog?.open) renderPlatformPromptPreview(); else renderPlatformPrompts(); },
+    () => tokenUI.refresh(),
+    () => { if (app.view === 'settings' && app.settingsTab === 'usage') tokenUI.show(); }
+  ]) {
+    try { step(); } catch (error) { console.warn('Re-render after language change failed', error); }
+  }
+});
+showLanguageChoice();
+function syncLanguage() {
+  return syncLanguageWithBackend({
+    get: () => api('/api/language'),
+    put: language => api('/api/language', { method: 'PUT', json: { language } })
+  }).then(showLanguageChoice);
+}
+
 connectUpdates();
-refreshState();
+refreshState().finally(() => void syncLanguage());

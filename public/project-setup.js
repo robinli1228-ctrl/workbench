@@ -1,3 +1,4 @@
+import { t, getLanguage } from './i18n.js';
 /** Keep the user's current selection; with no draft use platform defaults, and only then auto-select a sole option. */
 export function preferredSelectValue(values, current, preferred) {
   if (values.some(value => value.id === current)) return current;
@@ -25,7 +26,7 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     const data = getData(), settings = data.settings || {};
     const workers = (data.workers || []).filter(w => w.online && w.capabilities?.projectSpace === 1);
     select('supervisorNodeId', workers, 'Select supervisor device');
-    select('hostingAccountId',(data.hostingAccounts || []).map(a=>({id:a.id,name:`${a.label} · ${a.private?'Private':'Public'}`})),'Use existing device Git credentials',settings.hostingAccountId);
+    select('hostingAccountId',(data.hostingAccounts || []).map(a=>({id:a.id,name:`${a.label} · ${a.private?t('Private'):t('Public')}`})),'Use existing device Git credentials',settings.hostingAccountId);
     const worker = workers.find(w => w.id === form.elements.supervisorNodeId.value);
     const runtimes = (worker?.runtimes || []).filter(r => r.supported && r.available && r.authReady === true);
     select('supervisorRuntime', runtimes.map(r => ({ id: r.type, name: r.label || r.type })), 'Select a signed-in CLI', settings.defaultSupervisorRuntime);
@@ -53,12 +54,12 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
       const card = create('div', 'repository-card');
       card.append(create('strong', '', repo.name), create('p', 'workspace-note', repo.repoUrl));
       const bindings = (data.repositoryWorkspaces || []).filter(b => b.repositoryId === repo.id);
-      for (const b of bindings) card.append(create('p', 'workspace-note', `${workerName(b.nodeId)} · ${b.baselineBranch || 'Original folder'} · ${b.localRoot} · ${b.git?.head?.slice(0, 10) || 'To check'}`));
+      for (const b of bindings) card.append(create('p', 'workspace-note', `${workerName(b.nodeId)} · ${b.baselineBranch || t('Original folder')} · ${b.localRoot} · ${b.git?.head?.slice(0, 10) || t('To check')}`));
       if (!bindings.length) card.append(create('p', 'workspace-note', 'No device folder bound successfully yet; see the configuration records for the failure reason.'));
       repositories.append(card);
     }
     const proposals = (data.setupProposals || []).filter(r => r.projectId === p?.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const nextSignature = JSON.stringify([p?.id, proposals, [...busy]]);
+    const nextSignature = JSON.stringify([p?.id, proposals, [...busy], getLanguage()]);
     cards.hidden = !proposals.length;
     if (nextSignature === signature) return;
     signature = nextSignature; cards.replaceChildren();
@@ -69,11 +70,11 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
       card.append(create('summary', '', `${state} · ${proposal.summary}`));
       for (const action of proposal.actions) {
         const line = action.type === 'repository'
-          ? `Prepare repository ${action.key}: ${action.repoUrl}\nDevice: ${workerName(action.nodeId)}\nFolder is computed by project settings`
-          : `Configure role ${action.name} · all project repositories\nDevice: ${workerName(action.nodeId)} · ${action.runtime} · ${action.model}\nPrompt: ${action.instructions || 'Not specified'}`;
+          ? t('Prepare repository {key}: {repoUrl}\nDevice: {v}\nFolder is computed by project settings', { key: action.key, repoUrl: action.repoUrl, v: workerName(action.nodeId) })
+          : t('Configure role {name} · all project repositories\nDevice: {v} · {runtime} · {model}\nPrompt: {v2}', { name: action.name, v: workerName(action.nodeId), runtime: action.runtime, model: action.model, v2: action.instructions || t('Not specified') });
         card.append(create('pre', 'setup-action', line));
       }
-      if (proposal.error) card.append(create('p', 'inline-error', `${proposal.error}. Completed ${proposal.completed?.length || 0}/${proposal.actions.length}; nothing is rolled back or overwritten automatically. Ask the supervisor to review before proposing a new suggestion.`));
+      if (proposal.error) card.append(create('p', 'inline-error', t('{error}. Completed {v}/{v2}; nothing is rolled back or overwritten automatically. Ask the supervisor to review before proposing a new suggestion.', { error: proposal.error, v: proposal.completed?.length || 0, v2: proposal.actions.length })));
       if (proposal.status === 'pending') {
         const actions = create('div', 'form-actions');
         for (const [action, label] of [['approve', 'Confirm and run'], ['reject', 'Reject']]) {

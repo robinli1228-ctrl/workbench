@@ -1,3 +1,4 @@
+import { t, getLanguage } from './i18n.js';
 /** Product marks and CLI icons are all SVG so they stay crisp at small sizes. */
 /** Project marks differ in both shape and color, so they are recognizable in the collapsed sidebar without text or color alone. */
 export const PROJECT_ICONS = [
@@ -105,8 +106,8 @@ export function workerKind(worker) {
 }
 
 export function workerDisplayName(worker) {
-  const kind = workerKind(worker) === 'cloud' ? 'Cloud server' : 'This machine';
-  return `${kind} · ${worker?.name || worker?.id || 'Unnamed device'}`;
+  const kind = workerKind(worker) === 'cloud' ? t('Cloud server') : t('This machine');
+  return `${kind} · ${worker?.name || worker?.id || t('Unnamed device')}`;
 }
 
 /** The role bar shows only states that need user judgment; Runtime details and logs are not spread across the list. */
@@ -123,9 +124,9 @@ export function roleActivity(role, tasks = [], runs = [], {requests=[],warm=fals
   if (run?.status === 'waiting_user') return { tone: 'waiting', label: 'Awaiting approval', detail: task.title || 'Needs user action' };
   if (run?.status === 'reconciling') return { tone: 'blocked', label: 'To reconcile', detail: task.title || 'Execution state needs reconciling' };
   if (['queued', 'starting', 'running', 'stopping'].includes(run?.status)) {
-    return { tone: 'working', label: run.status === 'stopping' ? 'Stopping' : 'Working', detail: `${task.title || 'Running'}${queued.length?` · ${queued.length} queued`:''}` };
+    return { tone: 'working', label: run.status === 'stopping' ? 'Stopping' : 'Working', detail: `${task.title || t('Running')}${queued.length?t(' · {v} queued', { v: queued.length }):''}` };
   }
-  if (task?.status === 'ready') return { tone: 'waiting', label: 'Waiting', detail: `${queued.length} queued · ${task.waitingReason || 'Waiting to be scheduled'}` };
+  if (task?.status === 'ready') return { tone: 'waiting', label: 'Waiting', detail: t('{v} queued · {v2}', { v: queued.length, v2: task.waitingReason || t('Waiting to be scheduled') }) };
   if(task?.status==='waiting_discussion')return {tone:'waiting',label:task.discussionWait?'Awaiting reply':'Awaiting continuation',detail:task.waitingReason||'Waiting for the current question to be handled'};
   // A Task's blocked status is a legacy summary state; it must not override the real Run final state or reuse a pre-start lock wait reason.
   if (run?.status === 'failed') return currentRuntimeActivity(role,worker,check,run.updatedAt||run.createdAt) || { tone: 'blocked', label: 'Execution failed', detail: run.error || 'This round failed; see the logs' };
@@ -278,7 +279,9 @@ function parseQuotaResetDate(raw) {
 export function formatQuotaReset(raw) {
   const date = parseQuotaResetDate(raw);
   if (!date) return raw ? String(raw).replace(/\s*\([^)]*\)\s*$/, '').trim() : '';
-  return `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][date.getMonth()]} ${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  const clock = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  if (getLanguage() === 'zh') return `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`;
+  return `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][date.getMonth()]} ${date.getDate()} ${clock}`;
 }
 
 /** Remaining >=50% green; 20-50% (50-80% used) orange; <20% (>80% used) red. On the last day of the weekly quota with >30% remaining, use a green smiley. */
@@ -321,7 +324,7 @@ export function roleNameQuota(quota) {
     const windowClass = weekly ? 'is-weekly' : 'is-five-hour';
     const mark = el('span', `role-quota-mark ${windowClass} is-${tone}`);
     const reset = known ? formatQuotaReset(bucket.resetsAt) : '';
-    mark.title = reset ? `${kind} ${pct}% left · resets ${reset}` : `${kind} ${pct}% left`;
+    mark.title = reset ? t('{kind} {pct}% left · resets {reset}', { kind, pct, reset }) : t('{kind} {pct}% left', { kind, pct });
     mark.setAttribute('aria-label', mark.title);
     mark.textContent = String(pct);
     wrap.append(mark);

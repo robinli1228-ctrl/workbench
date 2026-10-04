@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 /** Configuration panel for the fixed supervisor; saves node settings and project intake settings separately and does not create work roles. */
 export function supervisorSettings({ api, getData, getProject, refreshState, create }) {
   const form = document.querySelector('#supervisor-form');
@@ -35,7 +36,7 @@ export function supervisorSettings({ api, getData, getProject, refreshState, cre
     document.querySelector('#supervisor-settings').hidden = !p;
     if (!p) return;
     projectRevision = p.coordinationRevision || 0;
-    selectOptions(form.elements.nodeId, data.workers.map(w => ({ id: w.id, name: `${w.name} · ${w.online ? 'Online' : 'Offline'}` })), p.supervisorNodeId, 'Select supervisor device');
+    selectOptions(form.elements.nodeId, data.workers.map(w => ({ id: w.id, name: `${w.name} · ${w.online ? t('Online') : t('Offline')}` })), p.supervisorNodeId, 'Select supervisor device');
     form.elements.nodeId.disabled = false;
     form.elements.enabled.disabled = !!p.supervisorRoleId;
     nodeChanged();

@@ -1,3 +1,4 @@
+import { t, dateLocale } from './i18n.js';
 import { setActionIcon } from './role-icons.js';
 
 /** Converts a stored UTC value to the browser-local wall clock needed by datetime-local; the ISO string cannot be sliced directly. */
@@ -43,7 +44,7 @@ export function createScheduledJobsUI({ api, getData, getProject, refreshState, 
   };
   const format = value => {
     const date = value && new Date(value);
-    return date && !Number.isNaN(date.getTime()) ? new Intl.DateTimeFormat('en-US', { dateStyle: 'short', timeStyle: 'short' }).format(date) : '—';
+    return date && !Number.isNaN(date.getTime()) ? new Intl.DateTimeFormat(dateLocale(), { dateStyle: 'short', timeStyle: 'short' }).format(date) : '—';
   };
   const status = value => ({ queued: 'Queued', running: 'Running', succeeded: 'Passed', unverified: 'To verify', failed: 'Failed', cancelled: 'Cancelled', dispatching: 'Dispatching' }[value] || value || 'Unknown');
   const projectName = id => getData().projects?.find(project => project.id === id)?.name || id;
@@ -124,7 +125,7 @@ export function createScheduledJobsUI({ api, getData, getProject, refreshState, 
     editing = job;
     form.reset();
     dialogFeedback.hidden = true;
-    dialogTitle.textContent = job ? `Edit · ${job.name}` : 'Add scheduled job';
+    dialogTitle.textContent = job ? t('Edit · {name}', { name: job.name }) : 'Add scheduled job';
     formProject.value = job?.projectId || selectedProjectId || getProject()?.id || '';
     formProject.disabled = Boolean(job);
     jobType.value = job?.jobType || 'dispatch';
@@ -157,21 +158,21 @@ export function createScheduledJobsUI({ api, getData, getProject, refreshState, 
       ? detail.occurrences : data.scheduledOccurrences || [];
     const count = allJobs.length, enabledCount = allJobs.filter(job => job.enabled).length;
     const monitorCount = allJobs.filter(job => job.jobType === 'monitor').length;
-    summary.replaceChildren(create('div', 'timer-overview-number', `${count} ${count===1?'job':'jobs'}`),
-      create('span', '', `${enabledCount} enabled · ${monitorCount} progress ${monitorCount===1?'check':'checks'} · ${data.projects?.length || 0} ${(data.projects?.length || 0)===1?'project':'projects'}`));
+    summary.replaceChildren(create('div', 'timer-overview-number', t(count===1?'{count} job':'{count} jobs', { count })),
+      create('span', '', t('{enabled} enabled · {checks} · {projects}', { enabled: enabledCount, checks: t(monitorCount===1?'{count} progress check':'{count} progress checks', { count: monitorCount }), projects: t((data.projects?.length || 0)===1?'{count} project':'{count} projects', { count: data.projects?.length || 0 }) })));
     list.replaceChildren();
     if (!jobs.length) { list.append(create('p', 'timer-empty', selectedProjectId ? 'This project has no scheduled jobs yet.' : 'No scheduled jobs yet.')); return; }
     for (const job of jobs) {
       const card = create('article', 'timer-job-card');
       const head = create('div', 'timer-job-head');
-      head.append(create('div', '', `${job.name} · ${job.jobType === 'monitor' ? 'Progress check' : 'Scheduled dispatch'}`),
+      head.append(create('div', '', `${job.name} · ${job.jobType === 'monitor' ? t('Progress check') : t('Scheduled dispatch')}`),
         create('span', job.enabled ? 'timer-status is-on' : 'timer-status', job.enabled ? 'Enabled' : 'Paused'));
       card.append(head, create('p', 'timer-job-description', job.description),
-        create('p', 'timer-job-meta', `${projectName(job.projectId)} · Next ${format(job.nextRunAt)} · Last ${format(job.lastCheckAt || job.lastRunAt)}`));
-      if (job.jobType === 'monitor') card.append(create('p', 'timer-job-meta', `Last check: ${job.lastCheckResult === 'deferred' ? 'new anomaly; supervisor will be notified when idle' : job.lastCheckResult === 'alerted' ? 'new anomaly found' : job.lastCheckAt ? 'no new anomalies' : 'not checked yet'}`));
+        create('p', 'timer-job-meta', t('{v} · Next {v2} · Last {v3}', { v: projectName(job.projectId), v2: format(job.nextRunAt), v3: format(job.lastCheckAt || job.lastRunAt) })));
+      if (job.jobType === 'monitor') card.append(create('p', 'timer-job-meta', t('Last check: {v}', { v: job.lastCheckResult === 'deferred' ? t('new anomaly; supervisor will be notified when idle') : job.lastCheckResult === 'alerted' ? t('new anomaly found') : job.lastCheckAt ? t('no new anomalies') : t('not checked yet') })));
       const controls = create('div', 'timer-actions');
       const immediate = button(job.jobType === 'monitor' ? 'Check now' : 'Run now', control => {
-        if (!window.confirm(`Run "${job.name}" now? ${job.jobType === 'monitor' ? 'This only checks current progress; new anomalies will notify the supervisor.' : 'This dispatches to the role and consumes model quota.'}`)) return;
+        if (!window.confirm(t('Run "{name}" now? {v}', { name: job.name, v: job.jobType === 'monitor' ? t('This only checks current progress; new anomalies will notify the supervisor.') : t('This dispatches to the role and consumes model quota.') }))) return;
         return act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/run`, { method: 'POST', json: {} }));
       });
       if (job.jobType === 'monitor' && !job.enabled) immediate.disabled = true;
@@ -179,16 +180,16 @@ export function createScheduledJobsUI({ api, getData, getProject, refreshState, 
         button(job.enabled ? 'Pause' : 'Resume', control => act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/toggle`, { method: 'POST', json: { enabled: !job.enabled, revision: job.revision } }))),
         immediate,
         button('Delete', control => {
-          if (!window.confirm(`Delete scheduled job "${job.name}"? Existing run records are kept.`)) return;
+          if (!window.confirm(t('Delete scheduled job "{name}"? Existing run records are kept.', { name: job.name }))) return;
           return act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/delete`, { method: 'POST', json: { revision: job.revision } }));
         }, 'secondary danger-text'));
       card.append(controls);
       const history = recentTimerOccurrences(occurrences, data, job.id);
       if (history.length) {
-        const details = create('details', 'timer-history'); details.append(create('summary', '', `Last ${history.length} ${history.length===1?'trigger':'triggers'}`));
+        const details = create('details', 'timer-history'); details.append(create('summary', '', t(history.length===1?'Last {count} trigger':'Last {count} triggers', { count: history.length })));
         for (const item of history) {
           const row = create('div', 'timer-history-row');
-          row.append(create('span', '', `${item.kind === 'manual' ? 'Manual' : item.kind === 'monitor' ? 'Check' : 'Scheduled'} · ${format(item.createdAt)} · ${status(item.status)}${item.error ? ` · ${item.error}` : ''}`));
+          row.append(create('span', '', `${item.kind === 'manual' ? t('Manual') : item.kind === 'monitor' ? t('Check') : t('Scheduled')} · ${format(item.createdAt)} · ${status(item.status)}${item.error ? ` · ${item.error}` : ''}`));
           const taskId = item.taskIds?.[0];
           if (taskId) row.append(button('View conversation', () => openTask(job.projectId, taskId)));
           details.append(row);

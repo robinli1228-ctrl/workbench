@@ -1,3 +1,4 @@
+import { t, dateLocale } from './i18n.js';
 import {renderMarkdown} from './markdown.js';
 
 const title=document.querySelector('#document-title');
@@ -18,15 +19,15 @@ async function openDocument(){
   const headers={};if(token)headers.Authorization=`Bearer ${token}`;
   const response=await fetch(`/api/runs/${encodeURIComponent(runId)}/document?path=${encodeURIComponent(path)}`,{headers});
   const result=await response.json();
-  if(!response.ok)throw new Error(result.error||`Read failed (HTTP ${response.status})`);
+  if(!response.ok)throw new Error(result.error||t('Read failed (HTTP {status})', { status: response.status }));
   const text=String(result.content||'');
   content.replaceChildren(/\.(?:md|markdown)$/i.test(name)?renderMarkdown(text):Object.assign(document.createElement('pre'),{textContent:text}));
-  status.textContent=`Full text loaded · ${text.length.toLocaleString('en-US')} characters`;
+  status.textContent=t('Full text loaded · {v} characters', { v: text.length.toLocaleString(dateLocale()) });
   copy.hidden=false;
   copy.addEventListener('click',async()=>{
-    try {await navigator.clipboard.writeText(text);status.textContent=`Full text copied · ${text.length.toLocaleString('en-US')} characters`;}
-    catch(error){status.textContent=`Copy failed: ${error.message}`;}
+    try {await navigator.clipboard.writeText(text);status.textContent=t('Full text copied · {v} characters', { v: text.length.toLocaleString(dateLocale()) });}
+    catch(error){status.textContent=t('Copy failed: {message}', { message: error.message });}
   });
 }
 
-openDocument().catch(error=>{status.textContent=`Unable to open document: ${error.message}`;title.textContent='Document unavailable';});
+openDocument().catch(error=>{status.textContent=t('Unable to open document: {message}', { message: error.message });title.textContent='Document unavailable';});
