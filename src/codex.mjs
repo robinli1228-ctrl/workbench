@@ -1,6 +1,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
+import { tr } from './i18n.mjs';
 
 const git = promisify(execFile);
 
@@ -34,7 +35,7 @@ export class CodexSession {
   }
   /** After the turn has completed and the Worker has cleaned up the old bridge, rebind the events and instructions of the new Run. */
   reuse(options) {
-    if(!this.done || !this.proc || this.proc.killed || this.proc.exitCode!==null || this.proc.signalCode!==null)throw new Error('The Codex process cannot be reused');
+    if(!this.done || !this.proc || this.proc.killed || this.proc.exitCode!==null || this.proc.signalCode!==null)throw new Error(tr('codex.codexProcessCannotBeReused'));
     Object.assign(this,options);this.done=false;this.stopping=false;this.turnId=null;
     this.items.clear();this.textBuffer='';
   }
@@ -44,13 +45,13 @@ export class CodexSession {
     this.proc.on('error', e => this.transportError(e));
     this.proc.stdin.on('error', e => this.transportError(e));
     this.proc.on('exit', (code, signal) => {
-      for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('Codex App Server has exited')); }
+      for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error(tr('codex.codexAppServerHasExited'))); }
       this.pending.clear();
-      if (!this.done) this.finish(!this.turnId ? (this.stopping ? 'interrupted' : 'failed') : 'reconciling', this.turnId ? 'App Server exited unexpectedly; tool process state needs to be reconciled' : `App Server exited ${code ?? signal}`);
+      if (!this.done) this.finish(!this.turnId ? (this.stopping ? 'interrupted' : 'failed') : 'reconciling', this.turnId ? tr('codex.appServerExitedUnexpectedlyTool') : tr('codex.appServerExited', { p1: code ?? signal }));
     });
     this.proc.stderr.on('data', bytes => this.emit('log', { text: bytes.toString().slice(0, 6000) }));
     const lines = createInterface({ input: this.proc.stdout });
-    lines.on('line', line => { try { this.receive(JSON.parse(line)); } catch (e) { this.emit('log', { text: `Event handling error ${e.message}` }); } });
+    lines.on('line', line => { try { this.receive(JSON.parse(line)); } catch (e) { this.emit('log', { text: tr('codex.eventHandlingError', { message: e.message }) }); } });
     await this.request('initialize', { clientInfo: { name: 'agent_collaboration_worker', version: '0.3.0' } });
     this.write({ method: 'initialized' });
     }
@@ -65,7 +66,7 @@ export class CodexSession {
     } catch(error) {
       // turn/started may arrive before the RPC reply; a tool state that is already out of control must not be overwritten by an ordinary Worker start failure.
       if(this.turnId){
-        if(!this.done)this.finish('reconciling',`Codex turn has started but the start reply was not confirmed: ${error.message}`);
+        if(!this.done)this.finish('reconciling',tr('codex.codexTurnHasStartedBut', { message: error.message }));
         this.shutdown();return;
       }
       throw error;
@@ -87,10 +88,10 @@ export class CodexSession {
       // Git sync and cross-device wb communication need network access; the workspace write boundary is kept and re-applied on resume.
       config: { ...Object.fromEntries(['GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT', 'WB_TURN_CONTEXT', 'WB_PROJECT_ROOT', 'WB_KNOWLEDGE', 'WB_WORKSPACE', 'WB_RUN_ID', 'WB_ROLE_SESSION_ID', 'WB_CONVERSATION_ID', 'WB_REQUEST_ID', 'WB_ROLE', 'WB_HOP', 'WB_HOME', 'WB_MODE', 'WB_BRIDGE', 'WB_CLI', 'WB_REPOSITORIES']
         .filter(key => typeof this.env[key] === 'string').map(key => [`shell_environment_policy.set.${key}`, this.env[key]])), 'sandbox_workspace_write.writable_roots':writableRoots, 'sandbox_workspace_write.network_access':true },
-      developerInstructions: `You are ${this.roleName ? `the "${this.roleName}" role in the project group chat` : 'the executor of this task'}. ${this.roleInstructions || ''}`
+      developerInstructions: tr('codex.you', { p1: this.roleName ? tr('codex.roleInProjectGroupChat', { roleName: this.roleName }) : tr('codex.executorTask'), p2: this.roleInstructions || '' })
     };
     const response = await this.request(this.resumeSessionId?'thread/resume':'thread/start',this.resumeSessionId?{threadId:this.resumeSessionId,...options}:options);
-    if(this.resumeSessionId && response.thread?.id!==this.resumeSessionId)throw new Error('The resumed Codex session ID does not match');
+    if(this.resumeSessionId && response.thread?.id!==this.resumeSessionId)throw new Error(tr('codex.resumedCodexSessionIdDoes'));
     return response.thread;
   }
   /** The pipe may close after the writable check; neither a synchronous failure nor an asynchronous EPIPE may crash the whole Worker. */
@@ -103,15 +104,15 @@ export class CodexSession {
   transportError(error) {
     for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(error);}
     this.pending.clear();
-    if(!this.done)this.finish(this.turnId?'reconciling':'failed',`Codex communication was interrupted: ${error.message}`);
+    if(!this.done)this.finish(this.turnId?'reconciling':'failed',tr('codex.codexCommunicationWasInterrupted', { message: error.message }));
     this.shutdown();
   }
   request(method, params) {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Codex ${method} timed out`)); }, 45000);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(tr('codex.codexTimedOut', { method }))); }, 45000);
       this.pending.set(id, { resolve, reject, timer });
-      if(!this.write({ id, method, params })) {clearTimeout(timer);this.pending.delete(id);reject(new Error('Codex input connection is closed'));}
+      if(!this.write({ id, method, params })) {clearTimeout(timer);this.pending.delete(id);reject(new Error(tr('codex.codexInputConnectionClosed')));}
     });
   }
   /** Native permission requests are held for a single manual decision; unknown server requests are rejected to avoid waiting indefinitely. */
@@ -125,7 +126,7 @@ export class CodexSession {
       if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(m.method)) {
         if (this.autoApprove) {
           this.write({ id: m.id, result: { decision: 'accept' } });
-          this.emit('log', { text: `Auto-approved ${m.method.includes('fileChange') ? 'file change' : 'command'}` });
+          this.emit('log', { text: tr('codex.autoApproved', { p1: m.method.includes('fileChange') ? tr('codex.fileChange') : tr('codex.command') }) });
           return;
         }
         const id = String(m.id);
@@ -135,8 +136,8 @@ export class CodexSession {
         this.emit('approval', { id, method: m.method, params: { ...m.params, item: this.items.get(m.params.itemId) || null }, expiresAt });
         this.emit('status', { status: 'waiting_user' });
       } else {
-        this.write({ id: m.id, error: { code: -32601, message: 'This interaction is not implemented on the current platform; the operation is not authorized' } });
-        this.emit('log', { text: `Unsupported interaction ${m.method} was rejected` });
+        this.write({ id: m.id, error: { code: -32601, message: tr('codex.interactionNotImplementedOnCurrent') } });
+        this.emit('log', { text: tr('codex.unsupportedInteractionWasRejected', { method: m.method }) });
       }
       return;
     }
@@ -148,7 +149,7 @@ export class CodexSession {
     }
     if (m.method === 'item/started' && p.item?.id) this.items.set(p.item.id, p.item);
     if (m.method === 'item/completed' && p.item?.type === 'agentMessage') { this.flushText(); this.emit('message', { text: p.item.text, phase: p.item.phase || 'final_answer' }); }
-    if (m.method === 'item/started' && p.item?.type !== 'agentMessage') this.emit('tool', { text: p.item?.command || p.item?.type || 'Working', item: p.item });
+    if (m.method === 'item/started' && p.item?.type !== 'agentMessage') this.emit('tool', { text: p.item?.command || p.item?.type || tr('codex.working'), item: p.item });
     // Save the completion state; file write attribution and tool logs must not rely on the intent of a single call alone.
     if (m.method === 'item/completed' && p.item?.type==='fileChange') this.emit('tool', {text:p.item.type,item:p.item});
     if (m.method === 'thread/tokenUsage/updated') this.emit('usage', { ...(p.tokenUsage?.total || p.tokenUsage || p), source: 'runtime', modelContextWindow: p.tokenUsage?.modelContextWindow });
@@ -158,10 +159,10 @@ export class CodexSession {
       this.finish(status === 'completed' ? 'succeeded' : status === 'interrupted' ? 'interrupted' : 'failed', p.turn?.error?.message);
       if(!this.keepAlive || status!=='completed')this.shutdown();
     }
-    if (m.method === 'error') this.emit('log', { text: p.error?.message || 'Runtime error' });
+    if (m.method === 'error') this.emit('log', { text: p.error?.message || tr('codex.runtimeError') });
   }
   approve(id, decision) {
-    const a = this.approvals.get(id); if (!a) throw new Error('Approval request does not exist or has expired');
+    const a = this.approvals.get(id); if (!a) throw new Error(tr('codex.approvalRequestDoesNotExist'));
     clearTimeout(a.timer); this.approvals.delete(id);
     this.write({ id: a.rpcId, result: { decision: decision === 'accept' ? 'accept' : 'decline' } });
     this.emit('approval_resolved', { id, status: decision === 'accept' ? 'accepted' : 'declined' });
@@ -176,7 +177,7 @@ export class CodexSession {
       catch (e) { this.emit('log', { text: e.message }); }
     } else this.shutdown();
     if (!this.done) {
-      this.stopTimer = setTimeout(() => { if (!this.done) this.emit('status', { status: 'reconciling', error: 'No Runtime stop confirmation received yet; needs to be reconciled' }); }, 15000);
+      this.stopTimer = setTimeout(() => { if (!this.done) this.emit('status', { status: 'reconciling', error: tr('codex.noRuntimeStopConfirmationReceived') }); }, 15000);
       this.stopTimer.unref();
     }
   }

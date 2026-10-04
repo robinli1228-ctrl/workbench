@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { progressFindings } from './timer-monitor.mjs';
+import { tr } from './i18n.mjs';
 
 const SYSTEM_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -47,7 +48,7 @@ function nextWallClock(after, schedule) {
     const next = candidates.find(candidate => candidate > after);
     if (next) return next;
   }
-  throw new Error('Unable to calculate the next run time');
+  throw new Error(tr('scheduledJobs.unableCalculateNextRunTime'));
 }
 
 function nextRun(schedule, after) {
@@ -62,29 +63,29 @@ function nextRun(schedule, after) {
 function normalizeSchedule(input, now, previous, jobType = 'dispatch') {
   const raw = input.schedule ? { ...input.schedule } : { ...input };
   const type = raw.type;
-  if (!TYPES.has(type)) throw new Error('Schedule type must be once, interval, daily, or weekly');
-  if (jobType === 'monitor' && type !== 'interval') throw new Error('Progress inspection can only use an interval schedule');
+  if (!TYPES.has(type)) throw new Error(tr('scheduledJobs.scheduleTypeMustBeOnce'));
+  if (jobType === 'monitor' && type !== 'interval') throw new Error(tr('scheduledJobs.progressInspectionCanOnlyUse'));
   if (type === 'once') {
     const match = typeof raw.onceAt === 'string' && raw.onceAt.match(/^(\d{4})-(\d\d)-(\d\d)T\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?(?:Z|[+-]\d\d:\d\d)$/);
     const calendar = match && new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
     const validCalendar = calendar && calendar.getUTCFullYear() === Number(match[1]) && calendar.getUTCMonth() + 1 === Number(match[2]) && calendar.getUTCDate() === Number(match[3]);
-    if (!match || !validCalendar || Number.isNaN(Date.parse(raw.onceAt))) throw new Error('One-time schedule must be a valid ISO time with a time zone');
+    if (!match || !validCalendar || Number.isNaN(Date.parse(raw.onceAt))) throw new Error(tr('scheduledJobs.oneTimeScheduleMustBe'));
     return { type, onceAt: iso(new Date(raw.onceAt)) };
   }
   if (type === 'interval') {
     const intervalMinutes = Number(raw.intervalMinutes);
     const minimum = jobType === 'monitor' ? 10 : 15;
-    if (!Number.isSafeInteger(intervalMinutes) || intervalMinutes < minimum || intervalMinutes > 525600) throw new Error(`Interval must be at least ${minimum} minutes and at most one year`);
+    if (!Number.isSafeInteger(intervalMinutes) || intervalMinutes < minimum || intervalMinutes > 525600) throw new Error(tr('scheduledJobs.intervalMustBeAtLeast', { minimum }));
     const same = previous?.type === type && previous.intervalMinutes === intervalMinutes;
     return { type, intervalMinutes, anchorAt: same ? previous.anchorAt : iso(now) };
   }
   const time = typeof raw.time === 'string' ? raw.time : '';
-  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error('Local time must be HH:mm');
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error(tr('scheduledJobs.localTimeMustBeHh'));
   const timezone = typeof raw.timezone === 'string' && raw.timezone.trim() ? raw.timezone.trim() : SYSTEM_TIME_ZONE;
-  if (!validZone(timezone)) throw new Error('Invalid IANA time zone');
+  if (!validZone(timezone)) throw new Error(tr('scheduledJobs.invalidIanaTimeZone'));
   if (type === 'daily') return { type, time, timezone };
   const weekday = Number(raw.weekday);
-  if (!Number.isSafeInteger(weekday) || weekday < 0 || weekday > 6) throw new Error('Weekday must be 0-6');
+  if (!Number.isSafeInteger(weekday) || weekday < 0 || weekday > 6) throw new Error(tr('scheduledJobs.weekdayMustBe06'));
   return { type, weekday, time, timezone };
 }
 
@@ -106,23 +107,23 @@ export class ScheduledJobs {
 
   save(projectId, input) {
     this.#project(projectId);
-    if (!input || typeof input !== 'object') throw new Error('Schedule configuration is required');
+    if (!input || typeof input !== 'object') throw new Error(tr('scheduledJobs.scheduleConfigurationRequired'));
     const old = input.id ? this.db.get('scheduledJobs', input.id) : null;
-    if (input.id && old?.projectId !== projectId) throw new Error('The scheduled job does not belong to this project');
-    if (old && input.revision !== old.revision) throw new Error('The scheduled job configuration has changed; refresh and save again');
+    if (input.id && old?.projectId !== projectId) throw new Error(tr('scheduledJobs.scheduledJobDoesNotBelong'));
+    if (old && input.revision !== old.revision) throw new Error(tr('scheduledJobs.scheduledJobConfigurationHasChanged'));
     const name = typeof input.name === 'string' ? input.name.trim() : '';
     const description = typeof input.description === 'string' ? input.description.trim() : '';
-    if (!name || name.length > 80) throw new Error('Name must be 1-80 characters');
-    if (!description || description.length > 12000) throw new Error('Description must be 1-12000 characters');
+    if (!name || name.length > 80) throw new Error(tr('scheduledJobs.nameMustBe180'));
+    if (!description || description.length > 12000) throw new Error(tr('scheduledJobs.descriptionMustBe112000'));
     const jobType = input.jobType || old?.jobType || 'dispatch';
-    if (!['dispatch', 'monitor'].includes(jobType)) throw new Error('Invalid scheduled job type');
+    if (!['dispatch', 'monitor'].includes(jobType)) throw new Error(tr('scheduledJobs.invalidScheduledJobType'));
     const role = this.#role(projectId, input.roleId);
-    if (jobType === 'monitor' && role.id !== this.#project(projectId).supervisorRoleId) throw new Error('Progress inspection can only be assigned to the project Supervisor');
+    if (jobType === 'monitor' && role.id !== this.#project(projectId).supervisorRoleId) throw new Error(tr('scheduledJobs.progressInspectionCanOnlyBe'));
     const now = this.#now();
     const schedule = normalizeSchedule(input, now, old?.schedule, jobType);
     const scheduleChanged = !old || JSON.stringify(schedule) !== JSON.stringify(old.schedule);
     const enabled = input.enabled === undefined ? old?.enabled ?? true : input.enabled;
-    if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
+    if (typeof enabled !== 'boolean') throw new Error(tr('scheduledJobs.enabledMustBeBoolean'));
     const job = {
       id: old?.id || randomUUID(), projectId, name, description, roleId: role.id, jobType, schedule, enabled,
       revision: (old?.revision || 0) + 1, manualSequence: old?.manualSequence || 0,
@@ -138,8 +139,8 @@ export class ScheduledJobs {
   /** enabled=false pauses and enabled=true resumes; resuming does not generate multiple backlogged runs from the offline period. */
   pause(projectId, id, enabled, revision) {
     const job = this.#job(projectId, id);
-    if (revision !== undefined && revision !== job.revision) throw new Error('The scheduled job configuration has changed; refresh and save again');
-    if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
+    if (revision !== undefined && revision !== job.revision) throw new Error(tr('scheduledJobs.scheduledJobConfigurationHasChanged2'));
+    if (typeof enabled !== 'boolean') throw new Error(tr('scheduledJobs.enabledMustBeBoolean2'));
     const updated = this.db.put('scheduledJobs', { ...job, enabled, revision: job.revision + 1, updatedAt: iso(this.#now()) });
     if (!enabled) this.#cancelPending(id);
     return updated;
@@ -147,7 +148,7 @@ export class ScheduledJobs {
 
   remove(projectId, id, revision) {
     const job = this.#job(projectId, id);
-    if (revision !== undefined && revision !== job.revision) throw new Error('The scheduled job configuration has changed; refresh and save again');
+    if (revision !== undefined && revision !== job.revision) throw new Error(tr('scheduledJobs.scheduledJobConfigurationHasChanged3'));
     this.#cancelPending(id);
     this.db.remove('scheduledJobs', id);
     return { id: job.id, deleted: true };
@@ -155,8 +156,8 @@ export class ScheduledJobs {
 
   runNow(projectId, id) {
     const job = this.#job(projectId, id);
-    if (this.db.get('settings', 'main')?.paused || (job.jobType === 'monitor' && !job.enabled)) throw new Error('Scheduled jobs or remote execution are paused');
-    if (job.jobType !== 'monitor' && this.#hasActive(job.id)) throw new Error('The previous scheduled run or its collaboration sub-chain has not finished');
+    if (this.db.get('settings', 'main')?.paused || (job.jobType === 'monitor' && !job.enabled)) throw new Error(tr('scheduledJobs.scheduledJobsRemoteExecutionPaused'));
+    if (job.jobType !== 'monitor' && this.#hasActive(job.id)) throw new Error(tr('scheduledJobs.previousScheduledRunItsCollaboration'));
     return this.db.transaction(() => {
       const current = this.#job(projectId, id);
       const manualNumber = (current.manualSequence || 0) + 1;
@@ -194,7 +195,7 @@ export class ScheduledJobs {
           if (this.db.get('scheduledOccurrences', occurrenceId)) return;
           let next = null, message = error instanceof Error ? error.message : String(error);
           try { next = nextRun(job.schedule, now); }
-          catch (scheduleError) { message = `${message}; subsequent schedule is invalid: ${scheduleError instanceof Error ? scheduleError.message : String(scheduleError)}`; }
+          catch (scheduleError) { message = tr('scheduledJobs.subsequentScheduleInvalid', { message, p2: scheduleError instanceof Error ? scheduleError.message : String(scheduleError) }); }
           const role = this.db.get('roles', job.roleId);
           this.db.put('scheduledJobs', { ...job, nextRunAt: next?.toISOString() || null, lastRunAt: iso(now), updatedAt: iso(now) });
           this.db.put('scheduledOccurrences', {
@@ -221,7 +222,7 @@ export class ScheduledJobs {
       nextRunAt: advance ? nextRun(job.schedule, now)?.toISOString() || null : job.nextRunAt
     });
     if (!fresh.length || deferred) return updated;
-    const text = `${job.description}\n\nInspection found new anomalies. Verify the actual state and do not retry blindly:\n${fresh.map(item => `- ${item.text}`).join('\n')}`.slice(0, 12000);
+    const text = tr('scheduledJobs.inspectionFoundNewAnomaliesVerify', { description: job.description, p2: fresh.map(item => `- ${item.text}`).join('\n') }).slice(0, 12000);
     return this.#dispatch(updated, key, { ...extra, kind: 'monitor', text });
   }
 
@@ -281,27 +282,27 @@ export class ScheduledJobs {
 
   #project(projectId) {
     const project = this.db.get('projects', projectId);
-    if (!project) throw new Error('Project not found');
+    if (!project) throw new Error(tr('scheduledJobs.projectNotFound'));
     return project;
   }
 
   #job(projectId, id) {
     const job = this.db.get('scheduledJobs', id);
-    if (!job || job.projectId !== projectId) throw new Error('Scheduled job not found');
+    if (!job || job.projectId !== projectId) throw new Error(tr('scheduledJobs.scheduledJobNotFound'));
     return job;
   }
 
   #role(projectId, roleId) {
     const role = this.db.get('roles', roleId);
-    if (!role || role.projectId !== projectId || role.archivedAt) throw new Error('Scheduled job role not found');
-    if (!role.enabled || role.configured === false) throw new Error('The scheduled job role is not enabled or not fully configured');
+    if (!role || role.projectId !== projectId || role.archivedAt) throw new Error(tr('scheduledJobs.scheduledJobRoleNotFound'));
+    if (!role.enabled || role.configured === false) throw new Error(tr('scheduledJobs.scheduledJobRoleNotEnabled'));
     return role;
   }
 
   #now() {
     const value = this.clock();
     const date = value instanceof Date ? new Date(value) : new Date(value);
-    if (Number.isNaN(date.getTime())) throw new Error('clock returned an invalid time');
+    if (Number.isNaN(date.getTime())) throw new Error(tr('scheduledJobs.clockReturnedInvalidTime'));
     return date;
   }
 }

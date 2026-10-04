@@ -1,5 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {writeFile,rename} from 'node:fs/promises';
+import { tr } from './i18n.mjs';
 
 const keys=['WB_PROJECT_ROOT','WB_KNOWLEDGE','WB_WORKSPACE','WB_RUN_ID','WB_ROLE_SESSION_ID','WB_CONVERSATION_ID','WB_REQUEST_ID','WB_ROLE','WB_SYSTEM_SUPERVISOR','WB_CLI','WB_BRIDGE','WB_HOP','WB_HOME','WB_MODE','WB_REPOSITORIES'];
 keys.push('WB_TURN_PURPOSE','WB_DISCUSSION_PROTOCOL');
@@ -12,7 +13,7 @@ export async function writeTurnContext(path,env) {
 export function loadTurnContext(env=process.env) {
   if(!env.WB_TURN_CONTEXT)return;
   const current=JSON.parse(readFileSync(env.WB_TURN_CONTEXT,'utf8'));
-  if(!current.WB_RUN_ID || !current.WB_BRIDGE)throw new Error('The tool context for this turn is no longer valid');
+  if(!current.WB_RUN_ID || !current.WB_BRIDGE)throw new Error(tr('turnContext.toolContextForTurnNo'));
   for(const key of keys)env[key]=String(current[key]||'');
 }
 

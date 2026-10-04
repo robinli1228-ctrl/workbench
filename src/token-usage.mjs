@@ -2,6 +2,7 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { tr } from './i18n.mjs';
 
 const SYSTEM_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 const exec=promisify(execFile);
@@ -13,8 +14,8 @@ const dateKey=(value,timezone)=>new Intl.DateTimeFormat('en-CA',{year:'numeric',
 
 /** The Worker only runs the ccusage installed with the app or found on PATH; it never downloads the program over the network on demand. */
 export async function collectCcusageReport({base,since=null,until=null,timezone=SYSTEM_TIME_ZONE,execute=exec,exists=async file=>{try{await access(file);return true;}catch{return false;}},now=()=>new Date()}){
-  if(since&&!validDate(since)||until&&!validDate(until))throw new Error('Invalid ccusage date');
-  try{new Intl.DateTimeFormat('en',{timeZone:timezone});}catch{throw new Error('Invalid ccusage time zone');}
+  if(since&&!validDate(since)||until&&!validDate(until))throw new Error(tr('tokenUsage.invalidCcusageDate'));
+  try{new Intl.DateTimeFormat('en',{timeZone:timezone});}catch{throw new Error(tr('tokenUsage.invalidCcusageTimeZone'));}
   const bundled=join(base,'node_modules','.bin','ccusage'),command=await exists(bundled)?bundled:(process.env.CCUSAGE_BIN||'ccusage');
   const args=['daily','--offline','--json','--timezone',timezone];
   if(since)args.push('--since',since.replaceAll('-',''));if(until)args.push('--until',until.replaceAll('-',''));
@@ -23,12 +24,12 @@ export async function collectCcusageReport({base,since=null,until=null,timezone=
     const today=dateKey(now(),timezone);
     return {available:true,throughDate:until&&until<today?until:today,report:JSON.parse(stdout)};
   }catch(error){
-    if(error.code==='ENOENT')return {available:false,error:'ccusage is not installed on this device; upgrade or reconnect the Worker'};
-    if(error instanceof SyntaxError)throw new Error('Unable to parse the JSON returned by ccusage');
-    if(error.killed)throw new Error('ccusage timed out (120 seconds)');
-    if(error.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER')throw new Error('ccusage output is too large and exceeds the collection limit');
-    if(typeof error.code==='number')throw new Error(`ccusage failed (exit code ${error.code})`);
-    throw new Error(`ccusage failed to start (${error.code||error.signal||'unknown reason'})`);
+    if(error.code==='ENOENT')return {available:false,error:tr('tokenUsage.ccusageNotInstalledOnDevice')};
+    if(error instanceof SyntaxError)throw new Error(tr('tokenUsage.unableParseJsonReturnedBy'));
+    if(error.killed)throw new Error(tr('tokenUsage.ccusageTimedOut120Seconds'));
+    if(error.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER')throw new Error(tr('tokenUsage.ccusageOutputTooLargeExceeds'));
+    if(typeof error.code==='number')throw new Error(tr('tokenUsage.ccusageFailedExitCode', { code: error.code }));
+    throw new Error(tr('tokenUsage.ccusageFailedStart', { p1: error.code||error.signal||tr('tokenUsage.unknownReason') }));
   }
 }
 
@@ -53,9 +54,9 @@ export function normalizeCcusageDaily(report,nodeId,collectedAt=new Date().toISO
 }
 
 function dates(from,to){
-  if(!validDate(from)||!validDate(to)||from>to)throw new Error('Invalid statistics date range');
+  if(!validDate(from)||!validDate(to)||from>to)throw new Error(tr('tokenUsage.invalidStatisticsDateRange'));
   const out=[],cursor=new Date(`${from}T00:00:00Z`),end=new Date(`${to}T00:00:00Z`);
-  while(cursor<=end){if(out.length>=366)throw new Error('At most 366 days can be viewed at a time');out.push(cursor.toISOString().slice(0,10));cursor.setUTCDate(cursor.getUTCDate()+1);}
+  while(cursor<=end){if(out.length>=366)throw new Error(tr('tokenUsage.atMost366DaysCan'));out.push(cursor.toISOString().slice(0,10));cursor.setUTCDate(cursor.getUTCDate()+1);}
   return out;
 }
 
@@ -67,13 +68,13 @@ export class TokenUsage{
     const job=this.#collect(nodeId,{from,to}).finally(()=>this.running.delete(nodeId));this.running.set(nodeId,job);return job;
   }
   async #collect(nodeId,{from,to}){
-    const worker=this.db.get('workers',nodeId);if(!worker)throw new Error('Device not found');
+    const worker=this.db.get('workers',nodeId);if(!worker)throw new Error(tr('tokenUsage.deviceNotFound'));
     const state=this.db.get('tokenUsageStates',nodeId)||{id:nodeId,nodeId};
     const until=to||dateKey(this.clock(),this.timezone),since=from||state.lastCollectedDate||null,attemptedAt=this.clock().toISOString();
-    if(!this.online(nodeId)){const next=this.db.put('tokenUsageStates',{...state,lastAttemptAt:attemptedAt,status:'offline',error:'Device is offline; usage will be backfilled automatically once it is back online'});this.change();return next;}
+    if(!this.online(nodeId)){const next=this.db.put('tokenUsageStates',{...state,lastAttemptAt:attemptedAt,status:'offline',error:tr('tokenUsage.deviceOfflineUsageWillBe')});this.change();return next;}
     try{
       const result=await this.query({nodeId},'token_usage',{since,until,timezone:this.timezone},120000);
-      if(result?.available!==true)throw new Error(result?.error||'Device does not provide ccusage');
+      if(result?.available!==true)throw new Error(result?.error||tr('tokenUsage.deviceDoesNotProvideCcusage'));
       const rows=normalizeCcusageDaily(result.report,nodeId,attemptedAt);
       const lastCollectedDate=[state.lastCollectedDate,result.throughDate||until].filter(Boolean).sort().at(-1);
       this.db.transaction(()=>{for(const row of rows)this.db.put('tokenUsageDaily',row);this.db.put('tokenUsageStates',{...state,lastAttemptAt:attemptedAt,lastCollectedDate,status:'ready',error:null,version:result.version||null});});
@@ -82,10 +83,10 @@ export class TokenUsage{
   }
   report({from,to,nodeIds}){
     const range=dates(from,to),wanted=[...new Set(nodeIds||[])];
-    if(wanted.length!==2)throw new Error('Select two different devices');
+    if(wanted.length!==2)throw new Error(tr('tokenUsage.selectTwoDifferentDevices'));
     const rows=this.db.list('tokenUsageDaily');
     const devices=wanted.map(id=>{
-      const worker=this.db.get('workers',id);if(!worker)throw new Error('Statistics device not found');
+      const worker=this.db.get('workers',id);if(!worker)throw new Error(tr('tokenUsage.statisticsDeviceNotFound'));
       const daily=range.map(date=>rows.find(row=>row.nodeId===id&&row.date===date)||{id:`${id}:${date}`,nodeId:id,date,inputTokens:0,outputTokens:0,cacheCreationTokens:0,cacheReadTokens:0,totalTokens:0,costUSD:0,agents:[],models:[]});
       return {id,name:worker.name,nodeKind:worker.nodeKind,online:this.online(id),state:this.db.get('tokenUsageStates',id)||null,total:total(daily),daily};
     });

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { tr } from './i18n.mjs';
 
 const MAX_SEARCH_LIMIT = 100;
 const MAX_READ_LIMIT = 20000;
@@ -7,13 +8,13 @@ const DEFAULT_READ_LIMIT = 4000;
 
 function positiveLimit(value, fallback, maximum) {
   if (value === undefined) return fallback;
-  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) throw new Error(`limit must be an integer from 1 to ${maximum}`);
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) throw new Error(tr('history.limitMustBeIntegerFrom', { maximum }));
   return value;
 }
 
 function offsetValue(value) {
   if (value === undefined) return 0;
-  if (!Number.isSafeInteger(value) || value < 0) throw new Error('offset must be a non-negative integer');
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(tr('history.offsetMustBeNonNegative'));
   return value;
 }
 
@@ -41,7 +42,7 @@ function decodeCursor(cursor) {
     if (!Array.isArray(value) || value.length !== 3 || value.some(part => typeof part !== 'string')) throw new Error();
     return value;
   } catch {
-    throw new Error('Invalid cursor');
+    throw new Error(tr('history.invalidCursor'));
   }
 }
 
@@ -59,9 +60,9 @@ export class History {
   constructor(db) { this.db = db; }
 
   search(projectId, { query = '', cursor = null, limit } = {}) {
-    if (!this.db.get('projects', projectId)) throw new Error('Project not found');
-    if (typeof query !== 'string') throw new Error('query must be a string');
-    if (query.length > 1000) throw new Error('query must be at most 1000 characters');
+    if (!this.db.get('projects', projectId)) throw new Error(tr('history.projectNotFound'));
+    if (typeof query !== 'string') throw new Error(tr('history.queryMustBeString'));
+    if (query.length > 1000) throw new Error(tr('history.queryMustBeAtMost'));
     const pageLimit = positiveLimit(limit, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
     const after = decodeCursor(cursor);
     const needle = query.trim().toLocaleLowerCase('zh');
@@ -93,16 +94,16 @@ export class History {
   }
 
   read(projectId, { kind, id, offset, limit, version } = {}) {
-    if (!this.db.get('projects', projectId)) throw new Error('Project not found');
-    if (!['message', 'result'].includes(kind)) throw new Error('kind must be message or result');
-    if (typeof id !== 'string' || !id) throw new Error('id is required');
+    if (!this.db.get('projects', projectId)) throw new Error(tr('history.projectNotFound2'));
+    if (!['message', 'result'].includes(kind)) throw new Error(tr('history.kindMustBeMessageResult'));
+    if (typeof id !== 'string' || !id) throw new Error(tr('history.idRequired'));
     const start = offsetValue(offset);
     const pageLimit = positiveLimit(limit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
-    if (start && !version) throw new Error('version is required when offset is greater than 0');
+    if (start && !version) throw new Error(tr('history.versionRequiredWhenOffsetGreater'));
     const resolved = kind === 'message' ? this.#message(projectId, id) : this.#result(projectId, id);
     const content = String(resolved.content || '');
     const currentVersion = versionOf(`${kind}:${resolved.identity}`, content);
-    if (version && version !== currentVersion) throw new Error('The source text version has changed; read again from the beginning');
+    if (version && version !== currentVersion) throw new Error(tr('history.sourceTextVersionHasChanged'));
     const parts = graphemes(content);
     const end = Math.min(parts.length, start + pageLimit);
     return { kind, id, messageId: resolved.messageId || null, runId: resolved.runId || null,
@@ -112,31 +113,31 @@ export class History {
 
   #message(projectId, id) {
     const message = this.db.get('roomMessages', id);
-    if (!message || message.projectId !== projectId) throw new Error('Content does not exist or does not belong to this project');
+    if (!message || message.projectId !== projectId) throw new Error(tr('history.contentDoesNotExistDoes'));
     return { identity: message.id, messageId: message.id, runId: message.runId || null, content: message.text || '' };
   }
 
   #result(projectId, id) {
     let run = this.db.get('runs', id), request = this.db.get('coordinationRequests', id);
-    if (run && run.projectId !== projectId || request && request.projectId !== projectId) throw new Error('Content does not exist or does not belong to this project');
+    if (run && run.projectId !== projectId || request && request.projectId !== projectId) throw new Error(tr('history.contentDoesNotExistDoes2'));
     // An explicit Run is an immutable historical reference; only a request ID means reading the final result of the whole continuation chain.
     if (run) return { identity: run.id, requestId: run.requestId || null, runId: run.id, content: run.result ?? run.error ?? '' };
     if (!run && request?.currentRunId) run = this.db.get('runs', request.currentRunId);
-    if (!run && !request) throw new Error('Content does not exist or does not belong to this project');
-    if ((run && run.projectId !== projectId) || (request && request.projectId !== projectId)) throw new Error('Content does not exist or does not belong to this project');
+    if (!run && !request) throw new Error(tr('history.contentDoesNotExistDoes3'));
+    if ((run && run.projectId !== projectId) || (request && request.projectId !== projectId)) throw new Error(tr('history.contentDoesNotExistDoes4'));
 
     const seen = new Set();
     while (request?.continuationRequestId) {
-      if (seen.has(request.id) || seen.size >= 20) throw new Error('Invalid continuation chain');
+      if (seen.has(request.id) || seen.size >= 20) throw new Error(tr('history.invalidContinuationChain'));
       seen.add(request.id);
       const next = this.db.get('coordinationRequests', request.continuationRequestId);
-      if (!next || next.projectId !== projectId) throw new Error('Content does not exist or does not belong to this project');
+      if (!next || next.projectId !== projectId) throw new Error(tr('history.contentDoesNotExistDoes5'));
       request = next;
     }
     if (request?.currentRunId) {
       const finalRun = this.db.get('runs', request.currentRunId);
       if (finalRun) {
-        if (finalRun.projectId !== projectId) throw new Error('Content does not exist or does not belong to this project');
+        if (finalRun.projectId !== projectId) throw new Error(tr('history.contentDoesNotExistDoes6'));
         run = finalRun;
       }
     }

@@ -1,4 +1,5 @@
 import { selectGitVersionBindings, summarizeGitVersions } from './git-version.mjs';
+import { tr } from './i18n.mjs';
 
 /** Home stores only displayable version results; Git credentials are passed only within a single Worker query. */
 export class ProjectGitVersions {
@@ -6,7 +7,7 @@ export class ProjectGitVersions {
 
   async refresh(projectId) {
     const project = this.db.get('projects',projectId);
-    if (!project) throw new Error('Project not found');
+    if (!project) throw new Error(tr('projectGitVersions.projectNotFound'));
     const repositories = this.db.list('repositories').filter(repo=>repo.projectId===projectId);
     const bindings = this.db.list('repositoryWorkspaces').filter(binding=>binding.projectId===projectId);
     const workers = this.db.list('workers').map(worker=>({...worker,online:this.online(worker.id) && worker.capabilities?.gitVersions===1}));
@@ -16,12 +17,12 @@ export class ProjectGitVersions {
     const grouped = new Map();
     for (const item of selected) {
       if (!item.binding) {
-        items.push({ repositoryId:item.repository.id,key:item.repository.key,status:'unknown',ahead:0,behind:0,checkedAt:new Date().toISOString(),error:'No repository copy on an online device' });
+        items.push({ repositoryId:item.repository.id,key:item.repository.key,status:'unknown',ahead:0,behind:0,checkedAt:new Date().toISOString(),error:tr('projectGitVersions.noRepositoryCopyOnOnline') });
         continue;
       }
       if (!item.online) {
         items.push({repositoryId:item.repository.id,key:item.repository.key,nodeId:item.binding.nodeId,localRoot:item.binding.localRoot,
-          status:'offline',ahead:0,behind:0,checkedAt:null,error:'Device offline; this device\'s version cannot be checked right now'});
+          status:'offline',ahead:0,behind:0,checkedAt:null,error:tr('projectGitVersions.deviceOfflineDeviceSVersion')});
         continue;
       }
       const list = grouped.get(item.binding.nodeId) || [];

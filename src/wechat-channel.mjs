@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
 import { terminal } from './store.mjs';
 import { acceptsBusinessReport } from './run-reports.mjs';
+import { tr } from './i18n.mjs';
 
 const API = '/api/v1/confirmations';
 const mentions = /(?:^|[\s\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a,!?;:(\uff08])@[\p{L}\p{N}_-]+/u;
@@ -23,18 +24,18 @@ export function parseApprovalReply(text) {
 /** Credentials are read by Home only; tokens are never passed through the browser or a Worker, and external redirects are not followed. */
 export function wechatTransport() {
   const client = process.env.WECHAT_CLIENT || 'agent-remote';
-  if (!/^[a-z][a-z0-9_-]{0,39}$/.test(client)) throw new Error('Invalid WeChat client name');
+  if (!/^[a-z][a-z0-9_-]{0,39}$/.test(client)) throw new Error(tr('wechatChannel.invalidWechatClientName'));
   const directory = join(homedir(), '.config/agent-hub/wechat-confirm');
   const installed = join(directory, `${client}.json`);
   const configFile = process.env.WECHAT_CLIENT_CONFIG || (existsSync(installed) ? installed : join(directory, `${client}.bundle`, `${client}.json`));
   return { client, configured: existsSync(configFile), request: async (path, body) => {
     const config = JSON.parse(await readFile(configFile, 'utf8'));
     const url = new URL(config.base_url);
-    if (config.client !== client || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('Invalid WeChat client configuration');
+    if (config.client !== client || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error(tr('wechatChannel.invalidWechatClientConfiguration'));
     const tokenFile = resolve(dirname(configFile), config.token_file);
-    if ((await stat(tokenFile)).mode & 0o077) throw new Error('WeChat credential file permissions must be 0600');
+    if ((await stat(tokenFile)).mode & 0o077) throw new Error(tr('wechatChannel.wechatCredentialFilePermissionsMust'));
     const token = (await readFile(tokenFile, 'utf8')).trim();
-    if (!token) throw new Error('WeChat credential is empty');
+    if (!token) throw new Error(tr('wechatChannel.wechatCredentialEmpty'));
     const response = await fetch(`${url.origin}${API}${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
       headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const result = await response.json();
@@ -51,8 +52,8 @@ export class WechatChannel {
   }
   settings() { return this.db.get('wechatSettings', 'main') || { id: 'main', enabled: false }; }
   configure(enabled) {
-    if (typeof enabled !== 'boolean') throw new Error('Invalid WeChat toggle');
-    if (enabled && !this.configured) throw new Error('Home does not have a dedicated WeChat client configuration installed yet');
+    if (typeof enabled !== 'boolean') throw new Error(tr('wechatChannel.invalidWechatToggle'));
+    if (enabled && !this.configured) throw new Error(tr('wechatChannel.homeDoesNotHaveDedicated'));
     const old = this.settings();
     this.db.put('wechatSettings', { ...old, enabled, enabledAt: old.enabledAt || this.now(), authBlocked: false });
     this.change(); return this.status();
@@ -65,8 +66,8 @@ export class WechatChannel {
   async health() {
     try {
       const result = await this.request('/health');
-      if (!result.ok || result.client !== this.client || !result.target?.available) throw new Error('WeChat target is not available yet');
-      this.db.put('wechatSettings', { ...this.settings(), health: 'Reachable', healthAt: this.now(), authBlocked: false });
+      if (!result.ok || result.client !== this.client || !result.target?.available) throw new Error(tr('wechatChannel.wechatTargetNotAvailableYet'));
+      this.db.put('wechatSettings', { ...this.settings(), health: tr('wechatChannel.reachable'), healthAt: this.now(), authBlocked: false });
     } catch (error) {
       this.db.put('wechatSettings', { ...this.settings(), health: String(error.message).slice(0, 200), healthAt: this.now() });
     }
@@ -77,29 +78,29 @@ export class WechatChannel {
     const existing = this.db.list('wechatLinks').find(link => link.sourceKey === sourceKey);
     if (existing) return existing;
     const project = this.db.get('projects', projectId), role = this.db.get('roles', roleId);
-    if (!project || project.systemConfig || role?.projectId !== projectId) throw new Error('Invalid WeChat target project or role');
+    if (!project || project.systemConfig || role?.projectId !== projectId) throw new Error(tr('wechatChannel.invalidWechatTargetProjectRole'));
     const text = `[${project.name}] @${role.name}\n${summary}`;
     const link = this.db.put('wechatLinks', { id: randomUUID(), sourceKey, kind, projectId, roleId, runId, approvalId, approvalFingerprint, remoteApproval, reportRevision,
-      conversationRef: `wb:${runId || projectId}`, summary: text.length > 1800 ? `${text.slice(0, 1800)}\n... The question is long; see the full content in the project group chat.` : text,
+      conversationRef: `wb:${runId || projectId}`, summary: text.length > 1800 ? tr('wechatChannel.questionLongSeeFullContent', { p1: text.slice(0, 1800) }) : text,
       state: 'pending', createdAt: this.now(), lastSeq: 0 });
     this.change(); return link;
   }
   openProject(projectId) {
-    if (!this.settings().enabled) throw new Error('Enable WeChat notifications first');
+    if (!this.settings().enabled) throw new Error(tr('wechatChannel.enableWechatNotificationsFirst'));
     const existing = this.db.list('wechatLinks').find(link => link.projectId === projectId && link.kind === 'project' && link.state !== 'closed');
     if (existing) return existing;
     const project = this.db.get('projects', projectId);
     return this.create({ sourceKey: `entry:${randomUUID()}`, kind: 'project', projectId, roleId: project?.supervisorRoleId,
-      summary: 'Project WeChat entry. Reply "this number + instruction" to hand it to the Supervisor, or "this number + @role + instruction". Only this project is handled. It keeps waiting until you reply; after the first reply it can be used for another 23 hours, after which please get a new entry to avoid reusing an old number.' });
+      summary: tr('wechatChannel.projectWechatEntryReplyNumber') });
   }
-  close(id, reason = 'Follow-up closed on the web') {
-    const row = this.db.get('wechatLinks', id); if (!row) throw new Error('WeChat record not found');
+  close(id, reason = tr('wechatChannel.followUpClosedOnWeb')) {
+    const row = this.db.get('wechatLinks', id); if (!row) throw new Error(tr('wechatChannel.wechatRecordNotFound'));
     this.db.put('wechatLinks', { ...row, state: 'closed', closedReason: reason, cancelRequested: Boolean(row.hubId), error: null });
     this.change();
   }
   retry(id) {
     const row = this.db.get('wechatLinks', id);
-    if (!row || row.state === 'closed') throw new Error('WeChat record is closed or does not exist');
+    if (!row || row.state === 'closed') throw new Error(tr('wechatChannel.wechatRecordClosedDoesNot'));
     this.db.put('wechatLinks', { ...row, state: 'pending', error: null, nextAttemptAt: 0,
       resendRequested: Boolean(row.hubId && row.deliveryStatus === 'failed') });
     this.db.put('wechatSettings', { ...this.settings(), authBlocked: false }); this.change();
@@ -112,7 +113,7 @@ export class WechatChannel {
       this.db.put('wechatResolvedQuestions', { id: runId, projectId: message.projectId, revision: report.revision, messageId: message.id, resolvedAt: this.now() });
     }
     for (const link of this.db.list('wechatLinks')) {
-      if (link.kind === 'question' && link.projectId === message.projectId && message.replyToId === `result-${link.runId}` && link.state !== 'closed') this.close(link.id, 'Replied on the web');
+      if (link.kind === 'question' && link.projectId === message.projectId && message.replyToId === `result-${link.runId}` && link.state !== 'closed') this.close(link.id, tr('wechatChannel.repliedOnWeb'));
     }
   }
   discover() {
@@ -123,7 +124,7 @@ export class WechatChannel {
       if (this.db.get('wechatResolvedQuestions', run.id)?.revision === report.revision) continue;
       if (this.db.get('projects', run.projectId)?.systemConfig || !this.db.get('roles', run.roleId)) continue;
       this.create({ sourceKey: `question:${run.id}:${report.revision}`, kind: 'question', projectId: run.projectId, roleId: run.roleId,
-        runId: run.id, reportRevision: report.revision, summary: `${report.summary}\n${report.next || ''}\nPlease reply with this number. It keeps waiting until you reply; if you have already answered this question by reference on the web, a late reply will not be executed. After the first answer, this number can be used to give further instructions for 23 hours, after which please get a new project entry.` });
+        runId: run.id, reportRevision: report.revision, summary: tr('wechatChannel.pleaseReplyWithNumberIt', { summary: report.summary, p2: report.next || '' }) });
     }
     for (const approval of this.db.list('approvals')) {
       const run = this.db.get('runs', approval.runId);
@@ -132,7 +133,7 @@ export class WechatChannel {
       const remoteApproval = Boolean(approval.params && action.length <= 1000 && !/token|password|secret|authorization|api.?key/i.test(action));
       this.create({ sourceKey: `approval:${approval.id}`, kind: 'approval', projectId: run.projectId, roleId: run.roleId, runId: run.id, approvalId: approval.id,
         approvalFingerprint: JSON.stringify([approval.method, approval.params, approval.expiresAt]), remoteApproval,
-        summary: `CLI permission approval: ${approval.method || 'run operation'}\n${remoteApproval ? action + '\nReply only "Approve" or "Reject".' : 'The operation details are too long or may contain sensitive information; approve on the web execution details page. WeChat does not accept approval.'}\nOriginal approval expires at: ${approval.expiresAt}; expired old replies will not grant authorization.` });
+        summary: tr('wechatChannel.cliPermissionApprovalOriginalApproval', { p1: approval.method || tr('wechatChannel.runOperation'), p2: remoteApproval ? action + tr('wechatChannel.replyOnlyApproveReject') : tr('wechatChannel.operationDetailsTooLongMay'), expiresAt: approval.expiresAt }) });
     }
   }
   current(id) {
@@ -141,15 +142,15 @@ export class WechatChannel {
     if (link.kind === 'approval') {
       const a = this.db.get('approvals', link.approvalId), run = this.db.get('runs', link.runId);
       if (a?.status !== 'pending' || !run || terminal.has(run.status) || run.status === 'stopping' || !Number.isFinite(Date.parse(a.expiresAt)) || Date.parse(a.expiresAt) <= this.now() || JSON.stringify([a.method, a.params, a.expiresAt]) !== link.approvalFingerprint) {
-        this.close(id, 'The original approval was handled, expired, or the execution has ended'); return null;
+        this.close(id, tr('wechatChannel.originalApprovalWasHandledExpired')); return null;
       }
     }
     if (link.kind === 'question') {
       const report = this.db.get('runReports', link.runId);
       const run=this.db.get('runs',link.runId);
-      if(!run){this.close(id,'The original run record does not exist');return null;}
-      if(!acceptsBusinessReport(run)){this.close(id,'A discussion round is not a business confirmation entry; refer to the original task question');return null;}
-      if (report?.verdict !== 'needs_input' || report.revision !== link.reportRevision || this.db.get('wechatResolvedQuestions', link.runId)?.revision === link.reportRevision) { this.close(id, 'The original question was updated or handled'); return null; }
+      if(!run){this.close(id,tr('wechatChannel.originalRunRecordDoesNot'));return null;}
+      if(!acceptsBusinessReport(run)){this.close(id,tr('wechatChannel.discussionRoundNotBusinessConfirmation'));return null;}
+      if (report?.verdict !== 'needs_input' || report.revision !== link.reportRevision || this.db.get('wechatResolvedQuestions', link.runId)?.revision === link.reportRevision) { this.close(id, tr('wechatChannel.originalQuestionWasUpdatedHandled')); return null; }
     }
     return link;
   }
@@ -178,19 +179,19 @@ export class WechatChannel {
       link = this.db.put('wechatLinks', { ...link, code: remote.code, hubStatus: remote.status, deliveryStatus: remote.deliveryStatus, resendRequested: false,
         checkedAt: this.now(), nextAttemptAt: 0, attempts: 0, error: null });
       if (remote.deliveryStatus === 'failed') throw new Error(remote.deliveryError || 'delivery_failed');
-      if (remote.status === 'cancelled') { this.close(link.id, 'WeChat request cancelled'); return; }
+      if (remote.status === 'cancelled') { this.close(link.id, tr('wechatChannel.wechatRequestCancelled')); return; }
       if (this.db.get('settings', 'main')?.paused) return;
       if (link.kind === 'approval') {
         if (!['approved', 'rejected'].includes(remote.status)) return;
-        if (remote.status === 'approved' && !link.remoteApproval) throw new Error('View the full operation on the web before approving');
+        if (remote.status === 'approved' && !link.remoteApproval) throw new Error(tr('wechatChannel.viewFullOperationOnWeb'));
         this.respondApproval(link.approvalId, remote.status === 'approved' ? 'accept' : 'decline', `wechat-${link.id}`);
-        this.db.put('wechatLinks', { ...link, state: 'closed', closedReason: 'Approval reply submitted; the web shows the execution result', error: null });
+        this.db.put('wechatLinks', { ...link, state: 'closed', closedReason: tr('wechatChannel.approvalReplySubmittedWebShows'), error: null });
       } else {
         for (const reply of [...(remote.replies || [])].sort((a, b) => a.seq - b.seq)) {
           if (!Number.isSafeInteger(reply.seq) || reply.seq <= link.lastSeq) continue;
-          if (typeof reply.answer !== 'string' || !reply.answer.trim()) throw new Error('WeChat reply is empty');
+          if (typeof reply.answer !== 'string' || !reply.answer.trim()) throw new Error(tr('wechatChannel.wechatReplyEmpty'));
           const sentAt = Number(reply.createdAt) || Date.parse(reply.createdAt) || this.now();
-          if (link.followupUntil && sentAt > link.followupUntil) { this.close(link.id, 'The follow-up window for the answered number has ended; get a new project entry'); break; }
+          if (link.followupUntil && sentAt > link.followupUntil) { this.close(link.id, tr('wechatChannel.followUpWindowForAnswered')); break; }
           this.db.transaction(() => {
             const latest = this.current(link.id); if (!latest) return;
             const explicit = mentions.test(reply.answer);
@@ -198,14 +199,14 @@ export class WechatChannel {
             const quoteId = !explicit && source?.status === 'succeeded' && source.workspace && this.db.get('roomMessages', `result-${source.id}`) ? `result-${source.id}` : null;
             const message = this.rooms.post(latest.projectId, { clientMessageId: `wechat-${latest.id}-${reply.seq}`, text: reply.answer,
               targetRoleId: explicit ? null : latest.roleId, replyToId: quoteId });
-            this.db.put('roomMessages', { ...message, senderName: 'Me · WeChat', wechatRequestId: latest.id, wechatReplySeq: reply.seq });
+            this.db.put('roomMessages', { ...message, senderName: tr('wechatChannel.meWechat'), wechatRequestId: latest.id, wechatReplySeq: reply.seq });
             link = this.db.put('wechatLinks', { ...latest, lastSeq: reply.seq, answeredAt: latest.answeredAt || sentAt,
               followupUntil: latest.followupUntil || Math.min(sentAt, this.now()) + 23 * 60 * 60 * 1000, error: null });
           });
           this.schedule(); this.change();
         }
         // Only limits the window for extra instructions after the first answer; the first reply received while offline is always processed first.
-        if (link.followupUntil && link.followupUntil <= this.now()) this.close(link.id, 'The follow-up window for the answered number has ended; get a new project entry');
+        if (link.followupUntil && link.followupUntil <= this.now()) this.close(link.id, tr('wechatChannel.followUpWindowForAnswered2'));
       }
       this.change();
     } catch (error) {
@@ -214,7 +215,7 @@ export class WechatChannel {
       const network = /fetch failed|timeout|Timeout|abort|network|ECONN/i.test(message);
       this.db.put('wechatLinks', { ...latest, state: network ? 'pending' : 'error', error: message, checkedAt: this.now(), attempts: (latest.attempts || 0) + 1,
         nextAttemptAt: this.now() + Math.min(300000, 30000 * 2 ** Math.min(latest.attempts || 0, 4)) });
-      if (/unauthorized|wechat_http_401|wechat_http_403/.test(message)) this.db.put('wechatSettings', { ...this.settings(), authBlocked: true, health: 'WeChat client authentication failed; check the configuration and test again' });
+      if (/unauthorized|wechat_http_401|wechat_http_403/.test(message)) this.db.put('wechatSettings', { ...this.settings(), authBlocked: true, health: tr('wechatChannel.wechatClientAuthenticationFailedCheck') });
       this.change();
     }
   }
@@ -228,7 +229,7 @@ export class WechatChannel {
         try { await this.request(`/${row.hubId}/cancel`, {}); }
         catch (error) {
           if (/unauthorized|wechat_http_401|wechat_http_403/.test(error.message)) {
-            this.db.put('wechatSettings', { ...this.settings(), authBlocked: true, health: 'WeChat client authentication failed; check the configuration and test again' }); this.change(); return;
+            this.db.put('wechatSettings', { ...this.settings(), authBlocked: true, health: tr('wechatChannel.wechatClientAuthenticationFailedCheck2') }); this.change(); return;
           }
           if (!/not_pending/.test(error.message)) { this.db.put('wechatLinks', { ...this.db.get('wechatLinks', row.id), cancelRetryAt: this.now() + 30000 }); continue; }
         }

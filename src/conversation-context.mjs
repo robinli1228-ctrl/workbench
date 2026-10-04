@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { organizerInput } from './conversation-organizer.mjs';
+import { tr, isMessage } from './i18n.mjs';
 
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const now=()=>new Date().toISOString();
@@ -15,7 +16,7 @@ export class ConversationContext {
   snapshot(projectId,conversationId,sourceMessageId=null) {
     const all=this.db.list('roomMessages').filter(m=>m.projectId===projectId && (m.conversationId||m.projectId)===conversationId && m.kind!=='summary');
     const cutoff=sourceMessageId?all.findIndex(m=>m.id===sourceMessageId):all.length;
-    if(cutoff<0)throw new Error('The source message for this round does not exist');
+    if(cutoff<0)throw new Error(tr('conversationContext.sourceMessageForRoundDoes'));
     const messages=all.slice(0,cutoff);
     let prior=this.read(projectId,conversationId);
     if(prior?.coveredThroughMessageId && !messages.some(m=>m.id===prior.coveredThroughMessageId))prior=null;
@@ -37,7 +38,7 @@ export class ConversationContext {
       while(!fits) {
         if(end<=start && start<text.length) {
           snapshot.delta.pop();
-          if(!snapshot.delta.length)throw new Error('The fixed summary background has used up the input budget; the next full character cannot be read');
+          if(!snapshot.delta.length)throw new Error(tr('conversationContext.fixedSummaryBackgroundHasUsed'));
           break;
         }
         try {organizerInput(snapshot);fits=true;}
@@ -77,17 +78,17 @@ export class ConversationContext {
   accept(jobId,output) {
     return this.db.transaction(()=>{
       const job=this.db.get('summaryJobs',jobId);
-      if(!job || job.status!=='running')throw new Error('The organizing job does not exist or has already finished');
+      if(!job || job.status!=='running')throw new Error(tr('conversationContext.organizingJobDoesNotExist'));
       const {snapshot}=job,current=this.read(job.projectId,job.conversationId);
-      if((current?.version||null)!==(snapshot.prior?.version||null))throw new Error('The organizing result is stale');
-      if(!output || !Array.isArray(output.constraints) || !Array.isArray(output.openItems) || !Array.isArray(output.roleSummaries) || typeof output.recentSummary!=='string')throw new Error('Invalid organizing result structure');
-      if(output.constraints.length>12 || output.openItems.length>12 || output.roleSummaries.length>30 || output.recentSummary.length>1500)throw new Error('The organizing result exceeds the field limits');
-      if(JSON.stringify(output).length>12000)throw new Error('The organizing result is too long; compress it and retry');
-      if(output.coveredThroughMessageId!==snapshot.lastMessageId)throw new Error('The organizing coverage does not match the sources');
+      if((current?.version||null)!==(snapshot.prior?.version||null))throw new Error(tr('conversationContext.organizingResultStale'));
+      if(!output || !Array.isArray(output.constraints) || !Array.isArray(output.openItems) || !Array.isArray(output.roleSummaries) || typeof output.recentSummary!=='string')throw new Error(tr('conversationContext.invalidOrganizingResultStructure'));
+      if(output.constraints.length>12 || output.openItems.length>12 || output.roleSummaries.length>30 || output.recentSummary.length>1500)throw new Error(tr('conversationContext.organizingResultExceedsFieldLimits'));
+      if(JSON.stringify(output).length>12000)throw new Error(tr('conversationContext.organizingResultTooLongCompress'));
+      if(output.coveredThroughMessageId!==snapshot.lastMessageId)throw new Error(tr('conversationContext.organizingCoverageDoesNotMatch'));
       const known=new Set([...snapshot.delta,...snapshot.recent].map(m=>m.id));
       for(const value of [output.goal,...output.constraints,...output.openItems,...output.roleSummaries]) {
         if(value==null)continue;
-        if(typeof value.text!=='string' || value.text.length>1200 || !Array.isArray(value.sourceMessageIds) || value.sourceMessageIds.length>20 || value.sourceMessageIds.some(source=>!known.has(source) && !snapshot.prior?.sourceMessageIds?.includes(source)))throw new Error('Invalid organizing source ID');
+        if(typeof value.text!=='string' || value.text.length>1200 || !Array.isArray(value.sourceMessageIds) || value.sourceMessageIds.length>20 || value.sourceMessageIds.some(source=>!known.has(source) && !snapshot.prior?.sourceMessageIds?.includes(source)))throw new Error(tr('conversationContext.invalidOrganizingSourceId'));
       }
       const validRoleSummaries=output.roleSummaries.filter(item=>{
         const session=this.db.get('roleSessions',item.roleSessionId);
@@ -100,7 +101,7 @@ export class ConversationContext {
         inputFingerprint:job.inputFingerprint,sourceFingerprint:snapshot.fingerprint,configFingerprint:digest(job.config),
         version:digest([job.inputFingerprint,output]),status:'ready',goal:output.goal||null,
         constraints:output.constraints.slice(0,12),openItems:output.openItems.slice(0,12),recentSummary,roleSummaries,
-        warnings:validRoleSummaries.length===output.roleSummaries.length?[]:['The model referenced an unknown role session; that optional role summary was ignored'],
+        warnings:validRoleSummaries.length===output.roleSummaries.length?[]:[tr('conversationContext.modelReferencedUnknownRoleSession')],
         sourceMessageIds,coveredThroughMessageId:snapshot.lastMessageId,partialThrough:snapshot.partialThrough||null,updatedAt:now()};
       this.db.put('conversationContexts',value);
       this.db.put('summaryJobs',{...job,status:'succeeded',updatedAt:now()});
@@ -110,7 +111,7 @@ export class ConversationContext {
 
   fail(jobId,error) {
     const job=this.db.get('summaryJobs',jobId);
-    if(job?.status==='running')this.db.put('summaryJobs',{...job,status:'failed',error:String(error||'Organizing failed').slice(0,300),updatedAt:now()});
+    if(job?.status==='running')this.db.put('summaryJobs',{...job,status:'failed',error:String(error||tr('conversationContext.organizingFailed')).slice(0,300),updatedAt:now()});
   }
 
   /** Register the background queue only for conversations actually in use; do not organize all historical projects automatically on upgrade. */
@@ -122,7 +123,7 @@ export class ConversationContext {
   /** A Home restart interrupts the organizing process, not the messages; accepted batches and unfinished cursors are kept. */
   recover() {
     for(const job of this.db.list('summaryJobs').filter(j=>j.status==='running')) {
-      this.db.put('summaryJobs',{...job,status:'interrupted',error:'Home restarted; the unconfirmed batch will be organized again',updatedAt:now()});
+      this.db.put('summaryJobs',{...job,status:'interrupted',error:tr('conversationContext.homeRestartedUnconfirmedBatchWill'),updatedAt:now()});
       this.enqueue(job.projectId,job.conversationId);
     }
     for(const queue of this.db.list('summaryQueues').filter(q=>q.status==='running'))this.db.put('summaryQueues',{...queue,status:'queued'});
@@ -152,7 +153,7 @@ export class ConversationContext {
           this.db.put('summaryQueues',{...working,status:'queued',failures:0,updatedAt:now()});
         } catch(error) {
           if(!this.db.get('projects',queue.projectId))return;
-          if(job && error.message==='Conversation organizing yielded to a work task') {
+          if(job && isMessage(error.message,'conversationOrganizer.conversationOrganizingYieldedWorkTask')) {
             this.db.put('summaryJobs',{...job,status:'interrupted',error:error.message,updatedAt:now()});
             this.db.put('summaryQueues',{...queue,status:'queued',targetMessageId:latest,configKey,error:null,retryAt:new Date(Date.now()+5000).toISOString(),updatedAt:now()});
             change();return;

@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { realpath } from 'node:fs/promises';
 import { gitCredentialEnv } from './hosting.mjs';
+import { tr } from './i18n.mjs';
 
 const exec = promisify(execFile);
 
@@ -28,16 +29,16 @@ export function selectGitVersionBindings(repositories, bindings, workers, superv
 /** The remote comparison only updates FETCH_HEAD; it does not pull, switch branches, or modify the working tree. */
 export async function inspectGitRepositoryVersion({ localRoot, repoUrl, credential }) {
   const root = await realpath(localRoot);
-  if (await realpath(await git(root, ['rev-parse','--show-toplevel'], repoUrl, credential)) !== root) throw new Error('The directory is not an independent Git repository root');
+  if (await realpath(await git(root, ['rev-parse','--show-toplevel'], repoUrl, credential)) !== root) throw new Error(tr('gitVersion.directoryNotIndependentGitRepository'));
   const branch = await git(root, ['symbolic-ref','--short','HEAD'], repoUrl, credential).catch(() => 'detached');
   const localCommit = await git(root, ['rev-parse','HEAD'], repoUrl, credential);
   const dirty = Boolean(await git(root, ['status','--porcelain','--untracked-files=all'], repoUrl, credential));
-  if (branch === 'detached') return { branch, localCommit, remoteCommit:null, ahead:0, behind:0, status:'unknown', dirty, checkedAt:new Date().toISOString(), error:'The repository is in a detached HEAD state' };
+  if (branch === 'detached') return { branch, localCommit, remoteCommit:null, ahead:0, behind:0, status:'unknown', dirty, checkedAt:new Date().toISOString(), error:tr('gitVersion.repositoryInDetachedHeadState') };
   await git(root, ['check-ref-format','--branch',branch], repoUrl, credential);
   if(branch.startsWith('agentwb/')) {
     const published=await git(root,['ls-remote','--heads','origin',`refs/heads/${branch}`],repoUrl,credential).catch(()=>null);
     if(published==='')return {branch,localCommit,remoteCommit:null,ahead:0,behind:0,status:'unpublished',dirty,
-      checkedAt:new Date().toISOString(),error:'The project collaboration branch has not been published to the remote yet'};
+      checkedAt:new Date().toISOString(),error:tr('gitVersion.projectCollaborationBranchHasNot')};
   }
   const remoteRef=`refs/remotes/origin/${branch}`;
   let stale=false,error=null,checkedAt;
@@ -45,9 +46,9 @@ export async function inspectGitRepositoryVersion({ localRoot, repoUrl, credenti
     await git(root, ['fetch','--no-tags','--','origin',`+refs/heads/${branch}:${remoteRef}`], repoUrl, credential,8000);
     checkedAt=new Date().toISOString();
   } catch {
-    stale=true;error='The remote is temporarily unavailable; using the local remote cache';
+    stale=true;error=tr('gitVersion.remoteTemporarilyUnavailableUsingLocal');
     try {await git(root,['show-ref','--verify',remoteRef],repoUrl,credential);}
-    catch {throw new Error('The remote is unavailable and there is no local cache to compare');}
+    catch {throw new Error(tr('gitVersion.remoteUnavailableThereNoLocal'));}
     const reflog=await git(root,['reflog','show','-1','--date=iso-strict','--format=%gD',remoteRef],repoUrl,credential).catch(()=>null);
     checkedAt=reflog?.match(/@\{(.+)\}$/)?.[1] || null;
   }

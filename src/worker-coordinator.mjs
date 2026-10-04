@@ -1,12 +1,13 @@
+import { tr } from './i18n.mjs';
 /** Deterministic gate of the node supervisor; communication may be forwarded, but the role binding and the designated commit cannot be changed. */
 export function validateLaunch({ request, roleSnapshot, delivery, currentPlanVersion }) {
-  if (!request || request.projectId !== roleSnapshot?.projectId || request.targetRoleId !== roleSnapshot.id) throw new Error('Call does not match the role');
-  if (['cancelled', 'succeeded', 'failed'].includes(request.status)) throw new Error('Call has already ended');
-  if (request.planVersion && request.planVersion !== currentPlanVersion) throw new Error('Plan version has changed');
+  if (!request || request.projectId !== roleSnapshot?.projectId || request.targetRoleId !== roleSnapshot.id) throw new Error(tr('workerCoordinator.callDoesNotMatchRole'));
+  if (['cancelled', 'succeeded', 'failed'].includes(request.status)) throw new Error(tr('workerCoordinator.callHasAlreadyEnded'));
+  if (request.planVersion && request.planVersion !== currentPlanVersion) throw new Error(tr('workerCoordinator.planVersionHasChanged'));
   for (const key of ['nodeId', 'runtime', 'model', 'revision']) {
-    if ((request.targetSnapshot?.[key] ?? (key === 'revision' ? 1 : null)) !== (roleSnapshot[key] ?? (key === 'revision' ? 1 : null))) throw new Error('Role execution configuration differs from the assignment snapshot');
+    if ((request.targetSnapshot?.[key] ?? (key === 'revision' ? 1 : null)) !== (roleSnapshot[key] ?? (key === 'revision' ? 1 : null))) throw new Error(tr('workerCoordinator.roleExecutionConfigurationDiffersFrom'));
   }
-  if (request.kind === 'handoff' && (delivery?.status !== 'ready' || delivery.projectId !== request.projectId)) throw new Error('Delivery is not ready yet');
+  if (request.kind === 'handoff' && (delivery?.status !== 'ready' || delivery.projectId !== request.projectId)) throw new Error(tr('workerCoordinator.deliveryNotReadyYet'));
   return true;
 }
 
@@ -32,19 +33,19 @@ export function recordDeliveryResult(db, commandId, result) {
 
 export function recoverDeliveryCommands(db) {
   for (const command of db.list('commands').filter(c => c.type === 'delivery_publish' && !c.result)) {
-    recordDeliveryResult(db, command.id, { deliveryId: command.deliveryId, status: 'blocked', error: 'Worker restarted; delivery result unconfirmed; verify the remote commit, it will not be pushed again automatically' });
+    recordDeliveryResult(db, command.id, { deliveryId: command.deliveryId, status: 'blocked', error: tr('workerCoordinator.workerRestartedDeliveryResultUnconfirmed') });
   }
 }
 
 /** A continuation keeps the code state of a finished run; it cannot take over another role's directory or one already occupied by a later run. */
 export function continuationSource(db, run, retained=()=>false) {
   const source = db.get('runs', run.continuationRunId);
-  if (!source || source.projectId !== run.projectId || source.roleId !== run.roleId || source.status !== 'succeeded' || !source.workspace) throw new Error('Continuation source is not finished or does not belong to the current role');
+  if (!source || source.projectId !== run.projectId || source.roleId !== run.roleId || source.status !== 'succeeded' || !source.workspace) throw new Error(tr('workerCoordinator.continuationSourceNotFinishedDoes'));
   const owner = db.get('workspaceOwners', source.workspace);
-  if (!source.projectScope && owner && owner.runId !== source.id) throw new Error('Continuation workspace has been taken over by another run');
-  if (db.list('runs').some(r => r.id !== run.id && r.workspace === source.workspace && !['succeeded', 'failed', 'interrupted'].includes(r.status))) throw new Error('Continuation workspace still has an unfinished run');
+  if (!source.projectScope && owner && owner.runId !== source.id) throw new Error(tr('workerCoordinator.continuationWorkspaceHasBeenTaken'));
+  if (db.list('runs').some(r => r.id !== run.id && r.workspace === source.workspace && !['succeeded', 'failed', 'interrupted'].includes(r.status))) throw new Error(tr('workerCoordinator.continuationWorkspaceStillHasUnfinished'));
   if (source.pid && !retained(source.pid)) {
-    try { process.kill(source.pid, 0); throw new Error('Source process is still running; cannot continue'); }
+    try { process.kill(source.pid, 0); throw new Error(tr('workerCoordinator.sourceProcessStillRunningCannot')); }
     catch (error) { if (error.code !== 'ESRCH') throw error; }
   }
   return source;

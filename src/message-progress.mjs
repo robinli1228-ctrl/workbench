@@ -1,4 +1,5 @@
 import {terminal} from './store.mjs';
+import { tr } from './i18n.mjs';
 
 /** Message progress is derived from existing request, command, and run evidence; no separate, possibly contradictory state table is created. */
 export function messageProgress(db,request,online,launch) {
@@ -9,26 +10,26 @@ export function messageProgress(db,request,online,launch) {
   const nextRun=db.get('runs',next?.currentRunId||'');
   const timestamps={registeredAt:request.createdAt,sentAt:command?.firstSentAt,receivedAt:command?.ackedAt,startedAt:run?.startedAt,resultAt:run?.finishedAt,resumeStartedAt:nextRun?.startedAt};
   const result=(stage,label,reason='',attention=false)=>({stage,label,reason,attention,timestamps});
-  if(request.status==='cancelled'||task?.status==='cancelled')return result('cancelled','Cancelled');
-  if(parent?.steeringTaskId||parent?.status==='cancelled'||request.steeringTaskId)return result('historical','Historical result; no longer resumed');
-  if(run?.status==='failed'||run?.status==='interrupted'||request.status==='failed')return result('failed',run?.status==='succeeded'?'Run ended; business conclusion not passed':'Run not completed',request.error||run?.error||request.notExecutedReason||'',true);
-  if(request.status==='waiting_call')return result('waiting_reply','Waiting for assistance results',request.waitingReason||'');
+  if(request.status==='cancelled'||task?.status==='cancelled')return result('cancelled',tr('messageProgress.cancelled'));
+  if(parent?.steeringTaskId||parent?.status==='cancelled'||request.steeringTaskId)return result('historical',tr('messageProgress.historicalResultNoLongerResumed'));
+  if(run?.status==='failed'||run?.status==='interrupted'||request.status==='failed')return result('failed',run?.status==='succeeded'?tr('messageProgress.runEndedBusinessConclusionNot'):tr('messageProgress.runNotCompleted'),request.error||run?.error||request.notExecutedReason||'',true);
+  if(request.status==='waiting_call')return result('waiting_reply',tr('messageProgress.waitingForAssistanceResults'),request.waitingReason||'');
   if(run?.status==='succeeded'||request.status==='succeeded') {
-    if(request.kind==='consult'&&!String(run?.result||request.result||'').trim())return result('no_response','Run ended without a reply','Verify the original run; it will not be rerun automatically',true);
-    if(nextRun?.startedAt||['running','waiting_user','succeeded'].includes(nextRun?.status))return result('resumed','Result returned; the initiator has started the continuation',terminal.has(nextRun.status)?`Continuation run ended: ${nextRun.status}`:'');
-    if(next)return result('waiting_resume','Result returned; waiting for the initiator to continue');
-    return result('result_saved','Result saved',parent?.status==='waiting_call'?'Waiting for other assistance results or for the initiator to end this turn':'');
+    if(request.kind==='consult'&&!String(run?.result||request.result||'').trim())return result('no_response',tr('messageProgress.runEndedWithoutReply'),tr('messageProgress.verifyOriginalRunItWill'),true);
+    if(nextRun?.startedAt||['running','waiting_user','succeeded'].includes(nextRun?.status))return result('resumed',tr('messageProgress.resultReturnedInitiatorHasStarted'),terminal.has(nextRun.status)?tr('messageProgress.continuationRunEnded', { status: nextRun.status }):'');
+    if(next)return result('waiting_resume',tr('messageProgress.resultReturnedWaitingForInitiator'));
+    return result('result_saved',tr('messageProgress.resultSaved'),parent?.status==='waiting_call'?tr('messageProgress.waitingForOtherAssistanceResults'):'');
   }
-  if(request.status==='waiting_delivery')return result('waiting_files','Waiting for file delivery');
+  if(request.status==='waiting_delivery')return result('waiting_files',tr('messageProgress.waitingForFileDelivery'));
   const nodeId=run?.nodeId||request.targetSnapshot?.nodeId;
-  if(nodeId&&!online(nodeId))return result('waiting_device','Waiting for the device to connect',run?'The run scene needs verification; it will not be redispatched automatically':'Message saved; it will continue when the device recovers');
-  if(run?.status==='reconciling')return result('reconciling','Run state needs verification',run.error||'',true);
-  if(run?.status==='stopping')return result('stopping','Waiting for stop confirmation');
-  if(run?.status==='waiting_user')return result('waiting_user','Waiting for user confirmation');
-  if(run?.status==='running')return result('running','CLI running');
-  if(command?.acked)return result('worker_received','Received by the Worker; CLI starting');
-  if(command?.lastSentAt)return result('sent','Sent; waiting for Worker confirmation');
-  return result('queued','Registered; waiting for the role',task?.waitingReason||request.waitingReason||'');
+  if(nodeId&&!online(nodeId))return result('waiting_device',tr('messageProgress.waitingForDeviceConnect'),run?tr('messageProgress.runSceneNeedsVerificationIt'):tr('messageProgress.messageSavedItWillContinue'));
+  if(run?.status==='reconciling')return result('reconciling',tr('messageProgress.runStateNeedsVerification'),run.error||'',true);
+  if(run?.status==='stopping')return result('stopping',tr('messageProgress.waitingForStopConfirmation'));
+  if(run?.status==='waiting_user')return result('waiting_user',tr('messageProgress.waitingForUserConfirmation'));
+  if(run?.status==='running')return result('running',tr('messageProgress.cliRunning'));
+  if(command?.acked)return result('worker_received',tr('messageProgress.receivedByWorkerCliStarting'));
+  if(command?.lastSentAt)return result('sent',tr('messageProgress.sentWaitingForWorkerConfirmation'));
+  return result('queued',tr('messageProgress.registeredWaitingForRole'),task?.waitingReason||request.waitingReason||'');
 }
 
 /** Only repairs missed wrap-up for runs already in a final state; it creates no replacement run and does not retry business work with an unknown outcome. */

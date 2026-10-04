@@ -11,6 +11,7 @@ import { buildRunContext } from './run-context.mjs';
 import { steeringWaitReason } from './role-steering.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
+import { tr } from './i18n.mjs';
 
 export const terminal = new Set(['succeeded', 'failed', 'interrupted']);
 const now = () => new Date().toISOString();
@@ -39,33 +40,33 @@ export class Store {
     finally {this.transactionDepth=depth;}
   }
   createProject({ id = randomUUID(), name, root = '', description = '', repoUrl = '' }) {
-    if (typeof name !== 'string' || !name.trim()) throw new Error('Project name is required');
-    if (typeof root !== 'string' || (root && !root.startsWith('/'))) throw new Error('Project directory must be an absolute path');
+    if (typeof name !== 'string' || !name.trim()) throw new Error(tr('store.projectNameRequired'));
+    if (typeof root !== 'string' || (root && !root.startsWith('/'))) throw new Error(tr('store.projectDirectoryMustBeAbsolute'));
     const repository = giteeRepository(repoUrl);
     return this.put('projects', { id, name: name.trim(), root, description, repoUrl: repository?.url || '', repository, createdAt: now() });
   }
   /** Project metadata never changes any node's Git remote or account credentials. */
   updateProject(id, { name, description = '', repoUrl = '' }) {
-    const p = this.get('projects', id); if (!p) throw new Error('Project not found');
-    if (typeof name !== 'string' || !name.trim()) throw new Error('Project name is required');
-    if (typeof description !== 'string' || description.length > 12000) throw new Error('Description must be at most 12000 characters');
+    const p = this.get('projects', id); if (!p) throw new Error(tr('store.projectNotFound'));
+    if (typeof name !== 'string' || !name.trim()) throw new Error(tr('store.projectNameRequired2'));
+    if (typeof description !== 'string' || description.length > 12000) throw new Error(tr('store.descriptionMustBeAtMost'));
     const repository = giteeRepository(repoUrl);
     return this.put('projects', { ...p, name: name.trim(), description, repoUrl: repository?.url || '', repository });
   }
   deleteProject(id) {
     return this.transaction(() => {
       const project = this.get('projects', id);
-      if (!project) throw new Error('Project not found');
+      if (!project) throw new Error(tr('store.projectNotFound2'));
       if(this.list('discussionThreads').some(t=>t.projectId===id&&t.status==='open')
         ||this.list('discussionDeliveries').some(d=>d.projectId===id&&['queued','dispatched','runtime_accepted','reconciling'].includes(d.status))
-        ||this.list('discussionIntents').some(i=>i.projectId===id&&i.status==='queued'))throw new Error('The project still has unfinished discussions');
-      if(this.list('terminalSessions').some(s=>s.projectId===id&&!['released','cancelled'].includes(s.status)))throw new Error('The project is still under manual terminal takeover; return control to the platform first');
+        ||this.list('discussionIntents').some(i=>i.projectId===id&&i.status==='queued'))throw new Error(tr('store.projectStillHasUnfinishedDiscussions'));
+      if(this.list('terminalSessions').some(s=>s.projectId===id&&!['released','cancelled'].includes(s.status)))throw new Error(tr('store.projectStillUnderManualTerminal'));
       if (this.list('coordinationRequests').some(r => r.projectId === id && !['succeeded', 'failed', 'cancelled'].includes(r.status))
-        || this.list('plans').some(p => p.projectId === id && !['completed', 'cancelled'].includes(p.status))) throw new Error('The project still has unfinished calls or plans');
-      if (this.list('deliveries').some(d => d.projectId === id && !['ready', 'cancelled', 'blocked'].includes(d.status))) throw new Error('The project still has unfinished Git deliveries');
+        || this.list('plans').some(p => p.projectId === id && !['completed', 'cancelled'].includes(p.status))) throw new Error(tr('store.projectStillHasUnfinishedCalls'));
+      if (this.list('deliveries').some(d => d.projectId === id && !['ready', 'cancelled', 'blocked'].includes(d.status))) throw new Error(tr('store.projectStillHasUnfinishedGit'));
       const runs = this.list('runs').filter(r => r.projectId === id);
       if (runs.some(r => !terminal.has(r.status))) {
-        throw new Error('The project still has executions in progress; stop them or wait for them to finish before deleting');
+        throw new Error(tr('store.projectStillHasExecutionsIn'));
       }
       for (const run of runs) {
         // Keep minimal ownership credentials so that old events from a disconnected Worker can be acknowledged and discarded, and cannot resurrect a deleted project.
@@ -80,7 +81,7 @@ export class Store {
       for (const r of this.list('roles').filter(r => r.projectId === id)) this.remove('roles', r.id);
       for (const w of this.list('workspaces').filter(w => w.projectId === id)) this.remove('workspaces', w.id);
       for (const g of this.list('gitChecks').filter(g => g.projectId === id)) this.remove('gitChecks', g.id);
-      if (this.list('setupProposals').some(p => p.projectId === id && p.status === 'running')) throw new Error('A project setup operation is still running');
+      if (this.list('setupProposals').some(p => p.projectId === id && p.status === 'running')) throw new Error(tr('store.projectSetupOperationStillRunning'));
       for (const kind of ['repositories', 'repositoryWorkspaces', 'repositoryOperations', 'setupProposals', 'rolePromptChanges', 'supervisorConfigs', 'coordinationRequests', 'deliveries', 'plans', 'planVersions', 'planSteps', 'reports', 'executionPlans', 'attachments', 'scheduledJobs', 'scheduledOccurrences', 'timerActions', 'runReports', 'runAlerts', 'projectGitVersions', 'roleSessions']) {
         for (const record of this.list(kind).filter(r => r.projectId === id)) this.remove(kind, record.id);
       }
@@ -93,41 +94,41 @@ export class Store {
   }
   /** Only stores the node directory the Worker actually checks; the legacy project root is only a configuration hint and takes no part in new dispatches. */
   bindWorkspace(projectId, nodeId, { localRoot, git = null }) {
-    if (!this.get('projects', projectId)) throw new Error('Project not found');
-    if (!this.get('workers', nodeId)) throw new Error('Node not found');
-    if (typeof localRoot !== 'string' || !localRoot.startsWith('/') || localRoot.includes('\0')) throw new Error('Node directory must be an absolute path');
+    if (!this.get('projects', projectId)) throw new Error(tr('store.projectNotFound3'));
+    if (!this.get('workers', nodeId)) throw new Error(tr('store.nodeNotFound'));
+    if (typeof localRoot !== 'string' || !localRoot.startsWith('/') || localRoot.includes('\0')) throw new Error(tr('store.nodeDirectoryMustBeAbsolute'));
     return this.put('workspaces', { id: `${projectId}:${nodeId}`, projectId, nodeId, localRoot, git, checkedAt: now() });
   }
   createTask({ projectId, title, prompt, model = 'gpt-5.6-sol' }) {
-    if (!this.get('projects', projectId)) throw new Error('Project not found');
-    if (!title?.trim() || !prompt?.trim()) throw new Error('Task title and requirements are required');
-    if (typeof model !== 'string' || !model.trim() || model.length > 200 || /[\r\n]/.test(model)) throw new Error('Invalid model ID');
+    if (!this.get('projects', projectId)) throw new Error(tr('store.projectNotFound4'));
+    if (!title?.trim() || !prompt?.trim()) throw new Error(tr('store.taskTitleRequirementsRequired'));
+    if (typeof model !== 'string' || !model.trim() || model.length > 200 || /[\r\n]/.test(model)) throw new Error(tr('store.invalidModelId'));
     return this.put('tasks', { id: randomUUID(), projectId, title: title.trim(), prompt: prompt.trim(), model, mode: 'workspace-write', status: 'ready', createdAt: now() });
   }
   startDiscussionRun(options,context) {return new RoleDiscussions(this,context).startRun(options);}
   resumeDiscussionTask(options,context) {return new RoleDiscussions(this,context).resumeTask(options);}
   /** The same commandId returns the same Run; reassignment is not allowed while an unverified execution exists. */
   startTask(taskId, { commandId, nodeId }) {
-    if (!commandId || !nodeId) throw new Error('commandId and nodeId are required');
+    if (!commandId || !nodeId) throw new Error(tr('store.commandidNodeidRequired'));
     return this.transaction(() => {
       const fingerprint = JSON.stringify({ taskId, nodeId });
       const prior = this.get('commands', commandId);
-      if (prior) { if (prior.fingerprint !== fingerprint) throw new Error('commandId parameter conflict'); return this.get('runs', prior.runId); }
-      if (this.get('settings', 'main')?.paused) throw new Error('Remote commands are paused');
-      if (this.get('workers',nodeId)?.capabilities?.projectSpace !== 1) throw new Error('Upgrade the target Worker to support the shared project workspace');
+      if (prior) { if (prior.fingerprint !== fingerprint) throw new Error(tr('store.commandidParameterConflict')); return this.get('runs', prior.runId); }
+      if (this.get('settings', 'main')?.paused) throw new Error(tr('store.remoteCommandsPaused'));
+      if (this.get('workers',nodeId)?.capabilities?.projectSpace !== 1) throw new Error(tr('store.upgradeTargetWorkerSupportShared'));
       const task = this.get('tasks', taskId);
-      if (!task) throw new Error('Task not found');
+      if (!task) throw new Error(tr('store.taskNotFound'));
       const steeringReason=steeringWaitReason(this,task);
       if(steeringReason)throw new Error(steeringReason);
-      if(task.origin==='chat' && this.get('workers',nodeId)?.capabilities?.managedResume!==1)throw new Error('Upgrade the target Worker to support role session resumption');
-      if (projectTerminalLock(this,task.projectId,nodeId)) throw new Error('This project is under manual terminal takeover; return control to the platform first');
-      if (task.origin === 'chat' && (task.status !== 'ready' || task.roleSnapshot.nodeId !== nodeId)) throw new Error('Group chat assignment status or node does not match');
-      if (this.list('runs').some(r => r.taskId === taskId && !terminal.has(r.status))) throw new Error('The task is running or unverified and cannot be started again');
+      if(task.origin==='chat' && this.get('workers',nodeId)?.capabilities?.managedResume!==1)throw new Error(tr('store.upgradeTargetWorkerSupportRole'));
+      if (projectTerminalLock(this,task.projectId,nodeId)) throw new Error(tr('store.projectUnderManualTerminalTakeover'));
+      if (task.origin === 'chat' && (task.status !== 'ready' || task.roleSnapshot.nodeId !== nodeId)) throw new Error(tr('store.groupChatAssignmentStatusNode'));
+      if (this.list('runs').some(r => r.taskId === taskId && !terminal.has(r.status))) throw new Error(tr('store.taskRunningUnverifiedCannotBe'));
       const repositoryId = null;
       const binding = roleWorkspace(this, task.projectId, nodeId, repositoryId);
-      if (!binding) throw new Error('Bind the project workspace on this node first');
+      if (!binding) throw new Error(tr('store.bindProjectWorkspaceOnNode'));
       const repositories = projectRepositories(this, task.projectId, nodeId).filter(r=>!task.execution?.repositoryKeys||task.execution.repositoryKeys.includes(r.key));
-      if (!task.roleSnapshot?.systemSupervisor && repositories.some(repo => !repo.localRoot)) throw new Error('The project repositories on this device are not fully prepared; prepare them in the project settings');
+      if (!task.roleSnapshot?.systemSupervisor && repositories.some(repo => !repo.localRoot)) throw new Error(tr('store.projectRepositoriesOnDeviceNot'));
       const roleSession = task.origin === 'chat' && (task.roleSnapshot?.id || task.roleId)
         ? new RoleSessions(this).getOrCreate({projectId:task.projectId,conversationId:task.conversationId||task.projectId,
           roleId:task.roleSnapshot?.id||task.roleId,nodeId,runtime:task.roleSnapshot?.runtime||'codex',model:task.model,workspaceRoot:binding.localRoot}) : null;
@@ -159,7 +160,7 @@ export class Store {
       this.put('tasks', { ...task, status: 'in_progress', currentRunId: run.id });
       if (task.requestId) {
         const request = this.get('coordinationRequests', task.requestId);
-        if (!request || request.status !== 'queued') throw new Error('The call was cancelled or its status changed');
+        if (!request || request.status !== 'queued') throw new Error(tr('store.callWasCancelledItsStatus'));
         this.put('coordinationRequests', { ...request, status: 'running', currentRunId: run.id, updatedAt: now() });
       }
       this.put('commands', { id: commandId, type: 'launch', runId: run.id, nodeId, fingerprint, acked: false, createdAt: now() });
@@ -167,12 +168,12 @@ export class Store {
     });
   }
   requestStop(runId, commandId) {
-    if (!commandId) throw new Error('commandId is required');
+    if (!commandId) throw new Error(tr('store.commandidRequired'));
     return this.transaction(() => {
       const r = this.get('runs', runId);
-      if (!r) throw new Error('Run not found');
+      if (!r) throw new Error(tr('store.runNotFound'));
       const prior = this.get('commands', commandId);
-      if (prior && (prior.runId !== runId || prior.type !== 'stop')) throw new Error('commandId parameter conflict');
+      if (prior && (prior.runId !== runId || prior.type !== 'stop')) throw new Error(tr('store.commandidParameterConflict2'));
       if (terminal.has(r.status)) return r;
       this.put('commands', { id: commandId, type: 'stop', runId, nodeId: r.nodeId, acked: false, createdAt: now() });
       return this.put('runs', { ...r, status: 'stopping', stopRequested: true, updatedAt: now() });
@@ -182,8 +183,8 @@ export class Store {
   event(event) {
     return this.transaction(() => {
       const r = this.get('runs', event.runId);
-      if (!r) throw new Error('Unknown Run');
-      if (!event.id || !Number.isSafeInteger(event.seq) || event.seq < 1) throw new Error('Invalid event ID');
+      if (!r) throw new Error(tr('store.unknownRun'));
+      if (!event.id || !Number.isSafeInteger(event.seq) || event.seq < 1) throw new Error(tr('store.invalidEventId'));
       const e = { ...event, createdAt: event.createdAt || now() };
       const inserted = this.db.prepare('INSERT OR IGNORE INTO events VALUES(?,?,?,?)').run(e.id, e.runId, e.seq, JSON.stringify(e));
       if (!inserted.changes) return r;
@@ -223,7 +224,7 @@ export class Store {
     return this.transaction(() => {
       const task = this.get('tasks', taskId), run = this.get('runs', runId);
       const latest = this.list('runs').filter(r => r.taskId === taskId).at(-1);
-      if (!task || !run || latest?.id !== runId || run.status !== 'succeeded') throw new Error('Only the latest successful execution can be accepted');
+      if (!task || !run || latest?.id !== runId || run.status !== 'succeeded') throw new Error(tr('store.onlyLatestSuccessfulExecutionCan'));
       return this.put('tasks', { ...task, status: 'done', acceptedRunId: runId, acceptedAt: now() });
     });
   }

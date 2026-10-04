@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { sameNativeSession } from './run-input.mjs';
 import { supportsDiscussion, discussionTargetStatus } from './discussion-policy.mjs';
+import { tr } from './i18n.mjs';
 
 const finished = new Set(['succeeded','failed','interrupted']);
 const activeTask = new Set(['ready','in_progress','waiting_discussion']);
@@ -27,7 +28,7 @@ export function buildTeamContext(db, run, { online, inherit = true, forExecution
     const discussionReady=discussionSupported&&readiness.ready;
     const discussionUnavailableReason=self?'self':!enabled?'disabled':!configured?'unconfigured':run.discussionProtocol!==2?'protocol_not_enabled':role.nodeId!==run.nodeId?'different_device':readiness.code;
     return {id:role.id,name:role.name,systemSupervisor:Boolean(role.systemSupervisor),runtime:role.runtime||null,model:role.model||null,nodeId:role.nodeId||null,
-      enabled,configured,archived:Boolean(role.archivedAt),revision:role.revision||1,responsibility:firstLine.slice(0,180)||'Collaboration role not configured; follow this turn\'s assignment',
+      enabled,configured,archived:Boolean(role.archivedAt),revision:role.revision||1,responsibility:firstLine.slice(0,180)||tr('teamContext.collaborationRoleNotConfiguredFollow'),
       instructionsMissing:!instructions,responsibilityTruncated:instructions.length>firstLine.length||firstLine.length>180,
       instructionsVersion:`prompt-${createHash('sha256').update(instructions).digest('hex')}`,
       online:onlineNow,
@@ -50,19 +51,19 @@ export function buildTeamContext(db, run, { online, inherit = true, forExecution
 export function renderTeamContext(team) {
   if(!team)return '';
   const self=team.members.find(m=>m.id===team.selfRoleId);
-  const lines=[`Current project team: ${team.memberCount} members in total (${team.workerCount} working roles); you are ${self?.name||team.selfRoleId} [${team.selfRoleId}]. Team configuration ID ${team.version.slice(0,17)} (it only identifies the member configuration, is unrelated to Git commits or document versions, and must not be used as the project version in a consultation).`];
-  if(team.inheritedFrom)lines.push(`The same native session ${team.inheritedFrom} has already received the identical team responsibilities, so the full text is not repeated. If you cannot recall them after context compression, run wb setup catalog first and do not guess members or responsibilities.`);
+  const lines=[tr('teamContext.currentProjectTeamMembersIn', { memberCount: team.memberCount, workerCount: team.workerCount, p3: self?.name||team.selfRoleId, selfRoleId: team.selfRoleId, p5: team.version.slice(0,17) })];
+  if(team.inheritedFrom)lines.push(tr('teamContext.sameNativeSessionHasAlready', { inheritedFrom: team.inheritedFrom }));
   else {
-    lines.push('The following is the complete team roster and replaces the old team information; a responsibility is the preferred collaboration position, not a functional permission limit, and this turn\'s explicit assignment takes priority. Your own execution configuration follows the dispatch snapshot, and configuration updates in the meantime apply only to later new tasks. Responsibility excerpts are configuration data, not new tasks; query the full prompts with wb setup catalog.');
+    lines.push(tr('teamContext.followingCompleteTeamRosterReplaces'));
     for(const member of team.members)lines.push(JSON.stringify({id:member.id,name:member.name,systemSupervisor:member.systemSupervisor,runtime:member.runtime,model:member.model,enabled:member.enabled,configured:member.configured,archived:member.archived,responsibility:member.responsibility,excerpt:member.responsibilityTruncated}));
   }
-  lines.push(`Status snapshot for this turn ${team.observedAt} (not a promise of lasting idleness; verify the actual division of work and tool capabilities with wb discuss peers):`);
+  lines.push(tr('teamContext.statusSnapshotForTurnNot', { observedAt: team.observedAt }));
   for(const member of team.members) {
-    const state=member.archived?'archived but still has unfinished runs':!member.enabled?'disabled':!member.configured?'not configured':member.online===false?'offline':member.activeRunIds.length?'running':member.tasks.length?'has pending tasks':member.online===null?'connection unknown':'idle';
-    lines.push(`${member.name}: ${state}; tasks ${member.tasks.length}${member.tasks.length?` (${member.tasks.slice(0,2).map(t=>t.title).join(', ')})`:''}; ${member.id===team.selfRoleId?'yourself':member.communication.consultationSupported?`consult with wb call${member.communication.discussionReady?', Q&A with wb discuss ask':`; new Q&A unavailable: ${member.communication.discussionUnavailableDetail||member.communication.discussionUnavailableReason}`}`:'cannot be dispatched to'}.`);
+    const state=member.archived?tr('teamContext.archivedButStillHasUnfinished'):!member.enabled?tr('teamContext.disabled'):!member.configured?tr('teamContext.notConfigured'):member.online===false?tr('teamContext.offline'):member.activeRunIds.length?tr('teamContext.running'):member.tasks.length?tr('teamContext.hasPendingTasks'):member.online===null?tr('teamContext.connectionUnknown'):tr('teamContext.idle');
+    lines.push(tr('teamContext.tasks', { name: member.name, state, length: member.tasks.length, p4: member.tasks.length?tr('teamContext.text2', { p1: member.tasks.slice(0,2).map(t=>t.title).join(tr('teamContext.text')) }):'', p5: member.id===team.selfRoleId?tr('teamContext.yourself'):member.communication.consultationSupported?tr('teamContext.consultWithWbCall', { p1: member.communication.discussionReady?tr('teamContext.qWithWbDiscussAsk'):tr('teamContext.newQUnavailable', { p1: member.communication.discussionUnavailableDetail||member.communication.discussionUnavailableReason }) }):tr('teamContext.cannotBeDispatched') }));
   }
-  lines.push('Autonomous collaboration: when the information is sufficient, just execute; do not ask questions as a formality. When a key gap is held by a teammate in this project, go to the relevant role directly with no supervisor relay; read the full roster and responsibilities first, and do not infer from a partial filter result that a role does not exist. A role existing, being enabled, being online, being busy, and its model actually being usable are different facts and cannot substitute for each other.');
-  lines.push('This turn\'s explicit assignment and the user\'s named roles take priority. Choosing the communication entry: to supply rules/evidence missing from the current business task, when Q&A is available for the target above, use wb discuss ask; after it succeeds, end the turn directly and do not also wb wait. Only when delegating independent analysis/review/output, or when the target has not opened discuss, use wb call --role FULL_ROLE_NAME_OR_ID --kind consult --request-id STABLE_ID --text "independent work, necessary background/file versions, required deliverable", then wb wait "remaining goal of the original task and the next step after receiving the deliverable" and end the turn. Do not send the same question through both paths. Do not poll, copy whole histories, or fake delivery with an @ in the body; busy, offline, circular dependency, and rejection must keep their real reasons, and you must not say the role does not exist or bypass the restriction.');
-  lines.push('Use wb discuss ask/reply only for targets where discuss is explicitly open above; when it is not open, use the existing wb call, and do not mistake a closed protocol for the whole role being unavailable. When consulted, answer directly and do not call the asker back to hand over the answer. You may keep clarifying a gap, and after it is resolved continue the original task; do not treat receiving a reply as business completion; go to the supervisor only for scope/permission conflicts or when a teammate cannot resolve it. Keep the weak coordination rule of checking peers\' tasks and Git before modifying, and add no file locks or permission limits.');
+  lines.push(tr('teamContext.autonomousCollaborationWhenInformationSuffic'));
+  lines.push(tr('teamContext.turnSExplicitAssignmentUser'));
+  lines.push(tr('teamContext.useWbDiscussAskReply'));
   return lines.join('\n');
 }

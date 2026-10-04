@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile, rename, lstat, unlink, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { tr } from './i18n.mjs';
 
 const allowed = new Set(['/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/roles/prompt', '/api/agent/schedule', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/ask', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/report', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/sessions/list', '/api/agent/sessions/summary', '/api/agent/sessions/read', '/api/agent/conversation/summary']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -15,7 +16,7 @@ export function agentProcessEnv(base, additions) {
 
 /** The CLI sandbox needs no network access; requests can only land in this workspace and are sent on its behalf by the Worker that holds the connection. */
 export async function agentRequest(pathname, payload) {
-  if (!allowed.has(pathname)) throw new Error('This operation is not an Agent tool');
+  if (!allowed.has(pathname)) throw new Error(tr('agentBridge.operationNotAgentTool'));
   const directory = process.env.WB_BRIDGE;
   if (!directory) return homeRequest(process.env.WB_HOME, process.env.WB_TOKEN, pathname, payload);
   const id = randomUUID(), temporary = join(directory, `${id}.tmp`), requestFile = join(directory, `${id}.request`);
@@ -30,12 +31,12 @@ export async function agentRequest(pathname, payload) {
     } catch (e) { if (e.code !== 'ENOENT') throw e; }
     await delay(150);
   }
-  throw new Error('Worker communication timed out; the outcome of the operation needs to be verified. Do not resubmit the proposal');
+  throw new Error(tr('agentBridge.workerCommunicationTimedOutOutcome'));
 }
 
 /** Only allowlisted Agent endpoints can pass through the bridge; there is no user-confirmation, arbitrary-URL, or Shell endpoint. */
 export async function homeRequest(home, token, pathname, payload) {
-  if (!home || !allowed.has(pathname)) throw new Error('Invalid Home or tool path');
+  if (!home || !allowed.has(pathname)) throw new Error(tr('agentBridge.invalidHomeToolPath'));
   const response = await fetch(new URL(pathname, home), { method: 'POST', signal: AbortSignal.timeout(20000),
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token || ''}` }, body: JSON.stringify(payload) });
   const data = await response.json();
@@ -60,10 +61,10 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend 
           let response;
           try {
             const path = join(directory, file), info = await lstat(path);
-            if (!info.isFile() || info.size > 65536) throw new Error('Tool request file is invalid or too large');
+            if (!info.isFile() || info.size > 65536) throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
             const input = JSON.parse(await readFile(path, 'utf8'));
-            if (!canSend()) throw new Error('Execution has stopped or remote operations are paused');
-            if(input.payload?.runId&&input.payload.runId!==runId)throw new Error('A tool request cannot impersonate another Run');
+            if (!canSend()) throw new Error(tr('agentBridge.executionHasStoppedRemoteOperations'));
+            if(input.payload?.runId&&input.payload.runId!==runId)throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));
             response = { result: await homeRequest(home, token, input.pathname, { ...input.payload, runId }) };
           } catch (error) { response = { error: error.message }; }
           await writeFile(join(directory, file.replace('.request', '.response')), JSON.stringify(response), { flag: 'wx', mode: 0o600 }).catch(() => {});

@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { mkdir, realpath, cp, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { within } from './project-space.mjs';
+import { tr } from './i18n.mjs';
 
 const exec = promisify(execFile);
 const git = async (root,args) => (await exec('git',args,{cwd:root,timeout:30000,maxBuffer:1024*1024})).stdout.trim();
@@ -12,9 +13,9 @@ const internal = [':(exclude).workbench',':(exclude).attachments',':(exclude).wo
 export async function verifyExecutionVersions(repositories,versions) {
   for(const v of versions) {
     const repo=repositories.find(r=>r.id===v.id);
-    if(!repo || !/^[a-f0-9]{40,64}$/.test(v.commit||'')) throw new Error('Invalid input repository or pinned version');
+    if(!repo || !/^[a-f0-9]{40,64}$/.test(v.commit||'')) throw new Error(tr('executionWorkspace.invalidInputRepositoryPinnedVersion'));
     try { await git(repo.localRoot,['cat-file','-e',`${v.commit}^{commit}`]); }
-    catch {throw new Error(`${repo.key} is missing version ${v.commit.slice(0,12)}; deliver it through Git and receive it on the target device, then reschedule the later steps`);}
+    catch {throw new Error(tr('executionWorkspace.missingVersionDeliverItThrough', { key: repo.key, p2: v.commit.slice(0,12) }));}
   }
   return {ready:true};
 }
@@ -28,7 +29,7 @@ export async function inspectExecutionRepositories(repositories) {
       if(e.code!=='ENOENT') throw e;
       result.push({id:repository.id,key:repository.key,nonGit:true,dirty:true});continue;
     }
-    if (await realpath(await git(root,['rev-parse','--show-toplevel'])) !== root) throw new Error(`${repository.key} is not an independent repository root`);
+    if (await realpath(await git(root,['rev-parse','--show-toplevel'])) !== root) throw new Error(tr('executionWorkspace.notIndependentRepositoryRoot', { key: repository.key }));
     const commit=await git(root,['rev-parse','HEAD']);
     const dirty=Boolean(await git(root,['status','--porcelain','--untracked-files=all','--','.',...internal]));
     result.push({id:repository.id,key:repository.key,commit,dirty});
@@ -39,13 +40,13 @@ export async function inspectExecutionRepositories(repositories) {
 /** Each run creates an independent branch for every repository; the original directory and other roles' LATEST do not take part in writes. */
 export async function prepareExecutionWorkspace(root,run,repositories) {
   const parent=join(root,'.worktrees'); await mkdir(parent,{recursive:true});
-  if (!within(root,await realpath(parent))) throw new Error('The worktree directory is out of bounds');
+  if (!within(root,await realpath(parent))) throw new Error(tr('executionWorkspace.worktreeDirectoryOutBounds'));
   const folder=join(parent,`run-${run.id}`); await mkdir(folder,{recursive:false});
   const result=[];
   for (const repo of repositories) {
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(repo.key)) throw new Error('Invalid repository identifier');
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(repo.key)) throw new Error(tr('executionWorkspace.invalidRepositoryIdentifier'));
     const commit=run.execution.baselines?.find(b=>b.id===repo.id)?.commit;
-    if (!/^[a-f0-9]{40,64}$/.test(commit||'')) throw new Error(`${repo.key} has no pinned version`);
+    if (!/^[a-f0-9]{40,64}$/.test(commit||'')) throw new Error(tr('executionWorkspace.hasNoPinnedVersion', { key: repo.key }));
     await git(repo.localRoot,['cat-file','-e',`${commit}^{commit}`]);
     for(const source of run.execution.inputs||[]) for(const v of source.versions||[]) {
       if(v.id===repo.id) await git(repo.localRoot,['cat-file','-e',`${v.commit}^{commit}`]);

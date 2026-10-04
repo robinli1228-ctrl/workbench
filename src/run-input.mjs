@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { tr } from './i18n.mjs';
 
 /** Only a successful prior turn in the same native session proves the input was received; failed or unknown states always send everything. */
 export function sameNativeSession(run,prior) {
@@ -18,6 +19,6 @@ export function instructionDelivery({runtime,run,prior,instructions,roleName,pro
 export function createRunInput({ taskPrompt, boundary, context = '', runtimeGuidance = '', setupHint = '', attachmentHint = '', roleInstructions, executionInstructions = '' }) {
   return {
     instructions: roleInstructions,
-    prompt: `${taskPrompt}\n\n${boundary} The current workspace has been designated by the Worker.${context}\n${executionInstructions}\n${runtimeGuidance}${setupHint}${attachmentHint}`
+    prompt: tr('runInput.currentWorkspaceHasBeenDesignated', { taskPrompt, boundary, context, executionInstructions, runtimeGuidance, setupHint, attachmentHint })
   };
 }

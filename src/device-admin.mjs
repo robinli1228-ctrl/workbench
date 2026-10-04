@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
 import { desktopTunnelSpec, normalizeDesktopConfig } from './remote-desktop.mjs';
+import { tr } from './i18n.mjs';
 
 /** Probes only the local loopback listener and never touches the public desktop port. */
 function localPortOpen(port) {
@@ -103,18 +104,18 @@ export class DeviceAdmin {
 
   /** Check the server desktop port first, then set up a dedicated tunnel; a local listener must not be misreported as the remote xrdp being available. */
   async prepareDesktop(id) {
-    if (this.hostPlatform !== 'darwin') throw new Error('One-click remote desktop is only supported when Home runs on the local Mac');
+    if (this.hostPlatform !== 'darwin') throw new Error(tr('deviceAdmin.oneClickRemoteDesktopOnly'));
     const device = this.db.get('devices', id);
-    if (!device) throw new Error('Device not found');
+    if (!device) throw new Error(tr('deviceAdmin.deviceNotFound'));
     const config = normalizeDesktopConfig(device);
-    if (!config) throw new Error('Configure the remote desktop user in the device settings first');
+    if (!config) throw new Error(tr('deviceAdmin.configureRemoteDesktopUserIn'));
     const credential = await this.credentials.get(id);
-    if (!credential?.keyPath) throw new Error('One-click remote desktop needs the device SSH key; configure it in the device settings first');
+    if (!credential?.keyPath) throw new Error(tr('deviceAdmin.oneClickRemoteDesktopNeeds'));
     const remote = await this.ssh(device, `import {connect} from 'node:net';
 const socket=connect({host:'127.0.0.1',port:${config.desktopPort}});
 const finish=ready=>{socket.destroy();console.log(JSON.stringify({ready}));};
 socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('error',()=>finish(false));socket.once('timeout',()=>finish(false));`, 15000);
-    if (!remote.ready) throw new Error(`The server xrdp is not listening on 127.0.0.1 port ${config.desktopPort}; start the remote desktop service first`);
+    if (!remote.ready) throw new Error(tr('deviceAdmin.serverXrdpNotListeningOn', { desktopPort: config.desktopPort }));
     let tunnel = this.desktopTunnels.get(id);
     if (tunnel && (tunnel.exitCode !== null || !(await this.probePort(config.desktopLocalPort)))) {
       this.desktopTunnels.delete(id);
@@ -122,7 +123,7 @@ socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('err
       tunnel = null;
     }
     if (!tunnel) {
-      if (await this.probePort(config.desktopLocalPort)) throw new Error(`Local port ${config.desktopLocalPort} is in use by another program, so it cannot be confirmed that it connects to this device`);
+      if (await this.probePort(config.desktopLocalPort)) throw new Error(tr('deviceAdmin.localPortInUseBy', { desktopLocalPort: config.desktopLocalPort }));
       const spec = desktopTunnelSpec(device, credential.keyPath);
       tunnel = this.spawnProcess(spec.command, spec.args, { stdio: 'ignore' });
       this.desktopTunnels.set(id, tunnel);
@@ -138,25 +139,25 @@ socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('err
       if (!ready) {
         this.desktopTunnels.delete(id);
         try { tunnel.kill('SIGTERM'); } catch {}
-        throw new Error('The SSH desktop tunnel was not established; check the key, the server connection, and the local port');
+        throw new Error(tr('deviceAdmin.sshDesktopTunnelWasNot'));
       }
     }
     return { localPort: config.desktopLocalPort, deviceName: device.name };
   }
   /** Windows App only opens the saved connection list and does not create a new RDP configuration that loses the saved credentials. */
   async launchDesktop(id) {
-    if (this.hostPlatform !== 'darwin') throw new Error('One-click remote desktop is only supported when Home runs on the local Mac');
+    if (this.hostPlatform !== 'darwin') throw new Error(tr('deviceAdmin.oneClickRemoteDesktopOnly2'));
     const device = this.db.get('devices', id);
-    if (!device) throw new Error('Device not found');
+    if (!device) throw new Error(tr('deviceAdmin.deviceNotFound2'));
     const config = normalizeDesktopConfig(device);
     const tunnel = this.desktopTunnels.get(id);
-    if (!config || !tunnel || tunnel.exitCode !== null || !(await this.probePort(config.desktopLocalPort))) throw new Error('The SSH desktop tunnel is not ready yet; recheck the connection');
+    if (!config || !tunnel || tunnel.exitCode !== null || !(await this.probePort(config.desktopLocalPort))) throw new Error(tr('deviceAdmin.sshDesktopTunnelNotReady'));
     await new Promise((resolve, reject) => {
       // A new connection would not reuse the desktop credentials saved in Windows App; only launch the client and let the user click an existing connection.
       const child = this.spawnProcess('open', ['-a', 'Windows App'], { stdio: 'ignore' });
-      const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('The local remote desktop client timed out while starting')); }, 10000);
-      child.once('error', () => { clearTimeout(timer); reject(new Error('Could not start the local Windows App')); });
-      child.once('close', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error('Windows App failed to start')); });
+      const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error(tr('deviceAdmin.localRemoteDesktopClientTimed'))); }, 10000);
+      child.once('error', () => { clearTimeout(timer); reject(new Error(tr('deviceAdmin.couldNotStartLocalWindows'))); });
+      child.once('close', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(tr('deviceAdmin.windowsAppFailedStart'))); });
     });
     return { opened: true, localPort: config.desktopLocalPort };
   }
@@ -167,13 +168,13 @@ socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('err
   }
   async save(input) {
     const old = input.id ? this.db.get('devices', input.id) : null;
-    if (input.id && !old) throw new Error('Device not found');
-    if (!/^[a-zA-Z0-9._:-]+$/.test(input.host || '') || input.host.startsWith('-')) throw new Error('Invalid server address');
-    if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(input.user || '')) throw new Error('Invalid SSH user');
-    if (!Number.isInteger(Number(input.port || 22)) || Number(input.port || 22) < 1 || Number(input.port || 22) > 65535) throw new Error('Invalid SSH port');
-    if (typeof input.workspaceRoot !== 'string' || !input.workspaceRoot.startsWith('/') || input.workspaceRoot.includes('\0')) throw new Error('The default workspace must be an absolute path');
+    if (input.id && !old) throw new Error(tr('deviceAdmin.deviceNotFound3'));
+    if (!/^[a-zA-Z0-9._:-]+$/.test(input.host || '') || input.host.startsWith('-')) throw new Error(tr('deviceAdmin.invalidServerAddress'));
+    if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(input.user || '')) throw new Error(tr('deviceAdmin.invalidSshUser'));
+    if (!Number.isInteger(Number(input.port || 22)) || Number(input.port || 22) < 1 || Number(input.port || 22) > 65535) throw new Error(tr('deviceAdmin.invalidSshPort'));
+    if (typeof input.workspaceRoot !== 'string' || !input.workspaceRoot.startsWith('/') || input.workspaceRoot.includes('\0')) throw new Error(tr('deviceAdmin.defaultWorkspaceMustBeAbsolute'));
     const url = new URL(input.homeUrl);
-    if (!['ws:', 'wss:'].includes(url.protocol) || url.pathname !== '/worker' || url.username || url.password || url.search) throw new Error('Enter a Home address reachable from the device, ending with /worker');
+    if (!['ws:', 'wss:'].includes(url.protocol) || url.pathname !== '/worker' || url.username || url.password || url.search) throw new Error(tr('deviceAdmin.enterHomeAddressReachableFrom'));
     const desktop = normalizeDesktopConfig(input);
     const id = old?.id || randomUUID();
     const priorSecret = await this.credentials.get(id);
@@ -206,28 +207,23 @@ socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('err
       const timer = setTimeout(() => child.kill('SIGTERM'), timeout);
       child.stdout.on('data', b => { if (output.length < 100000) output += b; });
       child.stderr.on('data', b => { if (failure.length < 10000) failure += b; });
-      child.on('error', () => { clearTimeout(timer); reject(new Error('Home could not start the SSH client')); });
+      child.on('error', () => { clearTimeout(timer); reject(new Error(tr('deviceAdmin.homeCouldNotStartSsh'))); });
       child.on('close', code => {
         clearTimeout(timer);
-        if (code !== 0) return reject(new Error(`SSH check failed (${code ?? 'timed out'}). Check the connection, credentials, and remote Node.js 22.16+; the password and command output are not recorded`));
-        try { resolve(JSON.parse(output.trim().split('\n').at(-1))); } catch { reject(new Error('The device returned no valid check result')); }
+        if (code !== 0) return reject(new Error(tr('deviceAdmin.sshCheckFailedCheckConnection', { p1: code ?? tr('deviceAdmin.timedOut') })));
+        try { resolve(JSON.parse(output.trim().split('\n').at(-1))); } catch { reject(new Error(tr('deviceAdmin.deviceReturnedNoValidCheck'))); }
       });
       child.stdin.on('error', () => {}); child.stdin.end(script);
     });
   }
   async check(id) {
-    const d = this.db.get('devices', id); if (!d) throw new Error('Device not found');
-    const r = await this.ssh(d, `import {hostname,platform} from 'node:os'; import {stat,access,constants} from 'node:fs/promises'; import {execFileSync} from 'node:child_process';
-const root=${JSON.stringify(d.workspaceRoot)};
-const [major,minor]=process.versions.node.split('.').map(Number); if(major<22 || (major===22&&minor<16)) throw Error('Node 22.16+ is required');
-let directory='does not exist; will be created on onboarding'; try { if(!(await stat(root)).isDirectory()) throw Error('Invalid directory'); await access(root,constants.R_OK|constants.W_OK|constants.X_OK); directory='readable and writable'; } catch(e){if(e.code!=='ENOENT')throw e;}
-execFileSync('git',['--version']); execFileSync('npm',['--version']);
-console.log(JSON.stringify({hostname:hostname(),platform:platform(),node:process.versions.node,directory}));`);
+    const d = this.db.get('devices', id); if (!d) throw new Error(tr('deviceAdmin.deviceNotFound4'));
+    const r = await this.ssh(d, tr('deviceAdmin.importHostnamePlatformFromNode', { p1: JSON.stringify(d.workspaceRoot) }));
     this.db.put('devices', { ...d, status:'checked', check:r, checkedAt:new Date().toISOString(), error:null }); this.change(); return r;
   }
   async provision(id) {
-    const d = this.db.get('devices', id); if (!d) throw new Error('Device not found');
-    if (this.running.has(id)) throw new Error('The device is being onboarded');
+    const d = this.db.get('devices', id); if (!d) throw new Error(tr('deviceAdmin.deviceNotFound5'));
+    if (this.running.has(id)) throw new Error(tr('deviceAdmin.deviceBeingOnboarded'));
     this.running.add(id);
     this.db.put('devices', { ...d, status:'installing', error:null }); this.change();
     try {

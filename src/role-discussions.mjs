@@ -6,6 +6,7 @@ import {projectTerminalLock} from './terminal-resume.mjs';
 import {executionConflict} from './execution-workspace.mjs';
 import {discussionPolicy,supportsDiscussion,discussionTargetStatus} from './discussion-policy.mjs';
 import {buildTeamContext} from './team-context.mjs';
+import { tr, isMessage } from './i18n.mjs';
 
 const now=()=>new Date().toISOString();
 const closed=new Set(['succeeded','failed','interrupted','stopping','reconciling']);
@@ -19,12 +20,12 @@ function resumeConfirmed(db,intent,run) {
     &&evidence.discussion.threadId===intent.threadId&&evidence.discussion.afterRunId===run?.id;
 }
 function text(value,label) {
-  if(typeof value!=='string'||!value.trim()||value.length>12000)throw new Error(`${label} must be 1-12000 characters`);
+  if(typeof value!=='string'||!value.trim()||value.length>12000)throw new Error(tr('roleDiscussions.mustBe112000Characters', { label }));
   return value;
 }
 function fields(input,allowed) {
-  if(!input||typeof input!=='object'||Array.isArray(input))throw new Error('Invalid discussion parameters');
-  if(Object.keys(input).some(k=>!allowed.includes(k)))throw new Error('Discussion parameters contain unauthorized fields');
+  if(!input||typeof input!=='object'||Array.isArray(input))throw new Error(tr('roleDiscussions.invalidDiscussionParameters'));
+  if(Object.keys(input).some(k=>!allowed.includes(k)))throw new Error(tr('roleDiscussions.discussionParametersContainUnauthorizedField'));
 }
 
 /** Discussions share the Home transaction; messages do not create business call edges, and the current question decides whether resuming is allowed. */
@@ -40,20 +41,20 @@ export class RoleDiscussions {
   /** A handling turn is not a business subtask: it locks the recipient role session and does not overwrite the original Task. */
   startRun({deliveryId,commandId,nodeId}) {
     return this.db.transaction(()=>{
-      if(!commandId||!nodeId)throw new Error('commandId and nodeId are required');
+      if(!commandId||!nodeId)throw new Error(tr('roleDiscussions.commandidNodeidRequired'));
       const fingerprint=canonical({deliveryId,nodeId}),prior=this.db.get('commands',commandId);
-      if(prior){if(prior.fingerprint!==fingerprint)throw new Error('commandId conflicts with different parameters');return this.db.get('runs',prior.runId);}
+      if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('roleDiscussions.commandidConflictsWithDifferentParameters'));return this.db.get('runs',prior.runId);}
       const delivery=this.db.get('discussionDeliveries',deliveryId),message=this.db.get('discussionMessages',delivery?.messageId);
       const thread=this.db.get('discussionThreads',delivery?.threadId),task=this.db.get('tasks',delivery?.taskId);
-      if(!delivery||delivery.status!=='queued'||!message||!thread||!task)throw new Error('Invalid discussion delivery state');
+      if(!delivery||delivery.status!=='queued'||!message||!thread||!task)throw new Error(tr('roleDiscussions.invalidDiscussionDeliveryState'));
       this.assertCurrent(thread,task,message.kind==='question'?message.id:message.replyTo);
       const source=message.sourceRunId?this.db.get('runs',message.sourceRunId):null;
-      if(source&&(!terminal.has(source.status)||source.controlLost||source.discussionCleanup?.turnEnded!==true||source.discussionCleanup?.toolsClosed!==true))throw new Error('Waiting for the source turn to end safely');
+      if(source&&(!terminal.has(source.status)||source.controlLost||source.discussionCleanup?.turnEnded!==true||source.discussionCleanup?.toolsClosed!==true))throw new Error(tr('roleDiscussions.waitingForSourceTurnEnd'));
       const role=this.db.get('roles',delivery.recipientRoleId),session=this.db.get('roleSessions',delivery.recipientSessionId);
       this.assertStart(role,nodeId,task);
-      if(!session||session.status==='archived'||session.projectId!==thread.projectId||session.conversationId!==thread.conversationId||session.roleId!==role.id||session.nodeId!==nodeId||session.runtime!==role.runtime)throw new Error('The recipient session binding has changed');
+      if(!session||session.status==='archived'||session.projectId!==thread.projectId||session.conversationId!==thread.conversationId||session.roleId!==role.id||session.nodeId!==nodeId||session.runtime!==role.runtime)throw new Error(tr('roleDiscussions.recipientSessionBindingHasChanged'));
       const binding=roleWorkspace(this.db,thread.projectId,nodeId,null);
-      if(!binding||binding.localRoot!==session.workspaceRoot)throw new Error('The recipient workspace has changed');
+      if(!binding||binding.localRoot!==session.workspaceRoot)throw new Error(tr('roleDiscussions.recipientWorkspaceHasChanged'));
       const purpose=message.kind==='question'?'clarification':'answer_resume';
       const run={id:randomUUID(),taskId:task.id,businessTaskId:task.id,projectId:thread.projectId,nodeId,roleId:role.id,roleSnapshot:{...role},
         roleSessionId:session.id,resumeNativeSessionId:session.nativeSessionId||null,resumeNativeSession:session.nativeSession||null,resumeWorkspace:session.workspace||null,
@@ -62,7 +63,7 @@ export class RoleDiscussions {
         repositories:projectRepositories(this.db,thread.projectId,nodeId),model:role.model,mode:role.mode||'workspace-write',reportRequired:false,status:'queued',lastSeq:0,createdAt:now(),updatedAt:now(),
         discussionContext:{threadId:thread.id,questionId:thread.currentQuestionId,revision:thread.revision,message,attempt:delivery.attempts.length+1,
           actionRequestIds:purpose==='clarification'?{reply:`reply:${message.id}`}:{resolve:`resolve:${thread.currentQuestionId}`}}};
-      run.inputTask={title:purpose==='clarification'?'Reply to a peer question':'Handle a peer answer',prompt:JSON.stringify(run.discussionContext),model:role.model,mode:run.mode,roleSnapshot:run.roleSnapshot};
+      run.inputTask={title:purpose==='clarification'?tr('roleDiscussions.replyPeerQuestion'):tr('roleDiscussions.handlePeerAnswer'),prompt:JSON.stringify(run.discussionContext),model:role.model,mode:run.mode,roleSnapshot:run.roleSnapshot};
       new RoleSessions(this.db).claim(session.id,run.id);
       this.db.put('runs',run);
       this.db.put('discussionDeliveries',{...delivery,status:'dispatched',waitingReason:null,processingRunId:run.id,attempts:[...delivery.attempts,{runId:run.id,startedAt:now()}],updatedAt:now()});
@@ -72,40 +73,40 @@ export class RoleDiscussions {
   }
 
   assertCurrent(thread,task,questionId) {
-    if(task.status==='cancelled'||thread.status!=='open'||thread.directionRevision!==(task.directionRevision||1)||thread.currentQuestionId!==questionId||task.discussionWait?.questionId!==questionId)throw new Error('The current question, direction, or task state has changed');
+    if(task.status==='cancelled'||thread.status!=='open'||thread.directionRevision!==(task.directionRevision||1)||thread.currentQuestionId!==questionId||task.discussionWait?.questionId!==questionId)throw new Error(tr('roleDiscussions.currentQuestionDirectionTaskState'));
   }
 
   /** Even when called directly, bypassing the scheduler, the capacity, exclusivity, and manual-takeover gates are kept. */
   assertStart(role,nodeId,task) {
-    if(!role?.enabled||role.archivedAt||role.nodeId!==nodeId)throw new Error('The role is disabled or the device has changed');
+    if(!role?.enabled||role.archivedAt||role.nodeId!==nodeId)throw new Error(tr('roleDiscussions.roleDisabledDeviceHasChanged'));
     const worker=this.db.get('workers',nodeId),active=this.db.list('runs').filter(r=>!terminal.has(r.status));
-    if(this.db.get('settings','main')?.paused)throw new Error('Remote execution is paused');
+    if(this.db.get('settings','main')?.paused)throw new Error(tr('roleDiscussions.remoteExecutionPaused'));
     this.assertReady(role);
-    if(active.some(r=>r.nodeId===nodeId&&r.status==='reconciling')||active.filter(r=>r.nodeId===nodeId).length>=(worker.capacity||1)||active.some(r=>r.roleId===role.id))throw new Error('Waiting for the role to finish or node capacity to free up');
-    if(projectTerminalLock(this.db,task.projectId,nodeId))throw new Error('The project is under manual takeover');
-    if(executionConflict({projectId:task.projectId,nodeId},active))throw new Error('Waiting for the exclusive project operation to finish');
+    if(active.some(r=>r.nodeId===nodeId&&r.status==='reconciling')||active.filter(r=>r.nodeId===nodeId).length>=(worker.capacity||1)||active.some(r=>r.roleId===role.id))throw new Error(tr('roleDiscussions.waitingForRoleFinishNode'));
+    if(projectTerminalLock(this.db,task.projectId,nodeId))throw new Error(tr('roleDiscussions.projectUnderManualTakeover'));
+    if(executionConflict({projectId:task.projectId,nodeId},active))throw new Error(tr('roleDiscussions.waitingForExclusiveProjectOperation'));
   }
 
   /** An intent is redeemed only once, after the consuming run reaches a final state, and continues the original Task, role, and native session. */
   resumeTask({intentId,commandId,nodeId}) {
     return this.db.transaction(()=>{
       const intent=this.db.get('discussionIntents',intentId);
-      if(!intent)throw new Error('Resume intent not found');
+      if(!intent)throw new Error(tr('roleDiscussions.resumeIntentNotFound'));
       if(intent.status==='started')return this.db.get('runs',intent.runId);
       const task=this.db.get('tasks',intent.taskId),thread=this.db.get('discussionThreads',intent.threadId),after=this.db.get('runs',intent.afterRunId);
-      if(intent.status!=='queued'||!task||task.status==='cancelled'||task.discussionWait||thread?.status!=='resolved'||intent.directionRevision!==(task.directionRevision||1))throw new Error('The resume intent is no longer valid');
-      if(!terminal.has(after?.status)||after.stopRequested||after.controlLost||after.discussionCleanup?.turnEnded!==true||after.discussionCleanup?.toolsClosed!==true)throw new Error('Waiting for the consuming turn to end safely');
-      if(after.status!=='succeeded'&&!resumeConfirmed(this.db,intent,after))throw new Error('The answer-consuming turn ended abnormally; verify the actual changes and then continue explicitly');
+      if(intent.status!=='queued'||!task||task.status==='cancelled'||task.discussionWait||thread?.status!=='resolved'||intent.directionRevision!==(task.directionRevision||1))throw new Error(tr('roleDiscussions.resumeIntentNoLongerValid'));
+      if(!terminal.has(after?.status)||after.stopRequested||after.controlLost||after.discussionCleanup?.turnEnded!==true||after.discussionCleanup?.toolsClosed!==true)throw new Error(tr('roleDiscussions.waitingForConsumingTurnEnd'));
+      if(after.status!=='succeeded'&&!resumeConfirmed(this.db,intent,after))throw new Error(tr('roleDiscussions.answerConsumingTurnEndedAbnormally'));
       const role=this.db.get('roles',task.roleId);this.assertStart(role,nodeId,task);
-      if(['nodeId','runtime','model'].some(k=>role[k]!==task.roleSnapshot?.[k]))throw new Error('The original task role configuration has changed; verify before continuing');
+      if(['nodeId','runtime','model'].some(k=>role[k]!==task.roleSnapshot?.[k]))throw new Error(tr('roleDiscussions.originalTaskRoleConfigurationHas'));
       const session=this.db.get('roleSessions',thread.ownerSessionId);
-      if(!session||session.status==='archived'||session.roleId!==task.roleId||session.nodeId!==nodeId)throw new Error('The original business session is no longer valid');
-      if(this.db.list('runs').some(r=>r.businessTaskId===task.id&&!terminal.has(r.status)))throw new Error('Waiting for the discussion turn to end');
+      if(!session||session.status==='archived'||session.roleId!==task.roleId||session.nodeId!==nodeId)throw new Error(tr('roleDiscussions.originalBusinessSessionNoLonger'));
+      if(this.db.list('runs').some(r=>r.businessTaskId===task.id&&!terminal.has(r.status)))throw new Error(tr('roleDiscussions.waitingForDiscussionTurnEnd'));
       this.db.put('tasks',{...task,status:'ready',waitingReason:null,discussionResumeBlocked:null,discussionResolution:{threadId:thread.id,questionId:thread.currentQuestionId,conclusion:thread.conclusion,basis:thread.resolutionBasis}});
       if(task.requestId){
         const request=this.db.get('coordinationRequests',task.requestId);
-        if(!request||['cancelled','failed','succeeded'].includes(request.status))throw new Error('The original business call has ended');
-        if(request.status==='waiting_call'&&(this.db.list('coordinationRequests').some(r=>r.parentRequestId===request.id&&!r.continuationOf&&!['succeeded','failed','cancelled'].includes(r.status))||this.db.list('executionPlans').some(p=>p.parentRequestId===request.id&&['running','cancelled'].includes(p.status))))throw new Error('Still waiting for the original business child calls or plan wrap-up');
+        if(!request||['cancelled','failed','succeeded'].includes(request.status))throw new Error(tr('roleDiscussions.originalBusinessCallHasEnded'));
+        if(request.status==='waiting_call'&&(this.db.list('coordinationRequests').some(r=>r.parentRequestId===request.id&&!r.continuationOf&&!['succeeded','failed','cancelled'].includes(r.status))||this.db.list('executionPlans').some(p=>p.parentRequestId===request.id&&['running','cancelled'].includes(p.status))))throw new Error(tr('roleDiscussions.stillWaitingForOriginalBusiness'));
         this.db.put('coordinationRequests',{...request,status:'queued'});
       }
       const run=this.db.startTask(task.id,{commandId,nodeId});
@@ -148,7 +149,7 @@ export class RoleDiscussions {
           &&thread.currentQuestionId===(message?.kind==='question'?message.id:message?.replyTo)&&session?.status!=='archived'&&session;
         if(!valid&&!['consumed','cancelled','superseded'].includes(delivery.status)) {
           const status=run&&!terminal.has(run.status)?'reconciling':'superseded';
-          if(delivery.status!==status||delivery.error!=='The question or session is no longer valid'){this.db.put('discussionDeliveries',{...delivery,status,error:'The question or session is no longer valid',updatedAt:now()});changed=true;}
+          if(delivery.status!==status||!isMessage(delivery.error,'roleDiscussions.questionSessionNoLongerValid')){this.db.put('discussionDeliveries',{...delivery,status,error:tr('roleDiscussions.questionSessionNoLongerValid'),updatedAt:now()});changed=true;}
           if(run&&!terminal.has(run.status)&&!run.stopRequested)this.db.requestStop(run.id,`discussion-stale:${run.id}`);
           continue;
         }
@@ -159,7 +160,7 @@ export class RoleDiscussions {
         if(!task||task.status==='cancelled'||intent.directionRevision!==(task.directionRevision||1)||thread?.status!=='resolved'||session?.status==='archived') {this.db.put('discussionIntents',{...intent,status:'cancelled',updatedAt:now()});changed=true;continue;}
         const after=this.db.get('runs',intent.afterRunId);
         if(intent.status==='queued'&&terminal.has(after?.status)&&after.status!=='succeeded'&&!resumeConfirmed(this.db,intent,after)) {
-          const reason='The answer-consuming turn ended abnormally; the conclusion is preserved. Verify the logs and actual changes and then continue, or stop the original task';
+          const reason=tr('roleDiscussions.answerConsumingTurnEndedAbnormally2');
           this.db.put('discussionIntents',{...intent,status:'blocked',waitingReason:reason,updatedAt:now()});
           this.db.put('tasks',{...task,status:'blocked',waitingReason:reason,discussionResumeBlocked:{threadId:thread.id,afterRunId:after.id}});changed=true;
         }
@@ -180,17 +181,17 @@ export class RoleDiscussions {
       (task.discussionWait?.threadId===thread.id&&(run.discussionWaiting?task.discussionWait.sourceRunId===run.id:task.discussionWait.questionId===questionId)
       ||this.db.list('discussionIntents').some(i=>i.threadId===thread.id&&(i.afterRunId===run.id||run.discussionWaiting&&task.currentRunId===run.id)&&['queued','blocked'].includes(i.status)));
     if(!current)return {current:false,stopRunIds:[]};
-    if(run.turnPurpose!=='clarification')return {current:true,...this.invalidateTask(task.id,{reason:'The user stopped the discussion'})};
+    if(run.turnPurpose!=='clarification')return {current:true,...this.invalidateTask(task.id,{reason:tr('roleDiscussions.userStoppedDiscussion')})};
     const stopRunIds=[];
     for(const item of this.db.list('discussionDeliveries').filter(d=>d.threadId===thread.id)) {
       const m=this.db.get('discussionMessages',item.messageId);
       if((m?.kind==='question'?m.id:m?.replyTo)!==thread.currentQuestionId)continue;
       const active=this.db.get('runs',item.processingRunId||'');
       if(active&&!terminal.has(active.status))stopRunIds.push(active.id);
-      if(!['consumed','cancelled','superseded'].includes(item.status))this.db.put('discussionDeliveries',{...item,status:'failed',error:'Clarification stopped; reply manually or mark it as handled',updatedAt:now()});
+      if(!['consumed','cancelled','superseded'].includes(item.status))this.db.put('discussionDeliveries',{...item,status:'failed',error:tr('roleDiscussions.clarificationStoppedReplyManuallyMark'),updatedAt:now()});
     }
     this.db.put('discussionThreads',{...thread,revision:thread.revision+1,updatedAt:now()});
-    this.db.put('tasks',{...task,status:'blocked',waitingReason:'Clarification stopped; reply to the original question, mark it as handled, or stop the original task'});
+    this.db.put('tasks',{...task,status:'blocked',waitingReason:tr('roleDiscussions.clarificationStoppedReplyOriginalQuestion')});
     return {current:true,stopRunIds};
   }
 
@@ -207,23 +208,23 @@ export class RoleDiscussions {
 
   /** Quota changes are accepted only from the fixed supervisor or an authenticated user, with two-level CAS in one transaction, and the question is not resent automatically. */
   extendBudget(actor,input) {
-    fields(input,['requestId','rootTaskId','reason','root','thread']);text(input.reason,'Reason');
-    if(!/^[a-zA-Z0-9:_-]{1,200}$/.test(input.requestId||''))throw new Error('Invalid request ID');
+    fields(input,['requestId','rootTaskId','reason','root','thread']);text(input.reason,tr('roleDiscussions.reason'));
+    if(!/^[a-zA-Z0-9:_-]{1,200}$/.test(input.requestId||''))throw new Error(tr('roleDiscussions.invalidRequestId'));
     return this.db.transaction(()=>{
       let projectId=actor.projectId,actorId='human';
       if(actor.kind!=='human') {
         const run=this.db.get('runs',actor.runId);this.context(run,'discuss.budget_extend');
-        if(this.db.get('projects',run.projectId)?.supervisorRoleId!==run.roleId||!run.roleSnapshot?.systemSupervisor)throw new Error('Only the fixed supervisor can increase the quota');
+        if(this.db.get('projects',run.projectId)?.supervisorRoleId!==run.roleId||!run.roleSnapshot?.systemSupervisor)throw new Error(tr('roleDiscussions.onlyFixedSupervisorCanIncrease'));
         projectId=run.projectId;actorId=run.roleId;
       }
       const id=key(projectId,actorId,input.requestId),fingerprint=canonical({name:'budget_extend',input});
-      const prior=this.db.get('discussionActions',id);if(prior){if(prior.fingerprint!==fingerprint)throw new Error('Request ID conflicts with different parameters');return prior.result;}
+      const prior=this.db.get('discussionActions',id);if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('roleDiscussions.requestIdConflictsWithDifferent'));return prior.result;}
       const root=this.db.get('tasks',input.rootTaskId),thread=input.thread?this.db.get('discussionThreads',input.thread.threadId):null;
-      if(!root||root.projectId!==projectId||(!input.root&&!input.thread)||input.thread&&(!thread||thread.rootTaskId!==root.id))throw new Error('Invalid quota target');
+      if(!root||root.projectId!==projectId||(!input.root&&!input.thread)||input.thread&&(!thread||thread.rootTaskId!==root.id))throw new Error(tr('roleDiscussions.invalidQuotaTarget'));
       const update=(old,change)=>{
         fields(change,['revision','limit','threadId']);
-        if(change.revision!==old.revision)throw new Error('The quota version has changed');
-        if(!Number.isSafeInteger(change.limit)||change.limit<=old.limit||change.limit>100)throw new Error('The new quota must exceed the old quota and be at most 100');
+        if(change.revision!==old.revision)throw new Error(tr('roleDiscussions.quotaVersionHasChanged'));
+        if(!Number.isSafeInteger(change.limit)||change.limit<=old.limit||change.limit>100)throw new Error(tr('roleDiscussions.newQuotaMustExceedOld'));
         return {...old,limit:change.limit,revision:old.revision+1};
       };
       const rootBudget=input.root?update(root.discussionBudget||{used:0,limit:6,revision:0},input.root):root.discussionBudget;
@@ -254,7 +255,7 @@ export class RoleDiscussions {
   consume(run) {
     if(!run.discussionDeliveryId)return;
     const delivery=this.db.get('discussionDeliveries',run.discussionDeliveryId);
-    if(!delivery||delivery.processingRunId!==run.id)throw new Error('The discussion handling ownership has changed');
+    if(!delivery||delivery.processingRunId!==run.id)throw new Error(tr('roleDiscussions.discussionHandlingOwnershipHasChanged'));
     this.db.put('discussionDeliveries',{...delivery,status:'consumed',updatedAt:now()});
   }
 
@@ -264,7 +265,7 @@ export class RoleDiscussions {
     const runs=this.db.list('runs').filter(r=>r.projectId===ctx.run.projectId&&!terminal.has(r.status));
     const tasks=this.db.list('tasks').filter(t=>t.projectId===ctx.run.projectId);
     const messages=this.db.list('roomMessages').filter(m=>m.projectId===ctx.run.projectId);
-    return {observedAt:team.observedAt,teamVersion:team.version,memberCount:team.memberCount,selfRoleId:team.selfRoleId,notice:'Snapshot of managed role status, not a file lock; CLIs not connected to the platform are invisible, and an empty list does not mean nobody is making changes. discussionSupported only indicates the new Q&A protocol and does not mean whether the role can accept ordinary consultations; offline or busy roles are queued and this does not mean the role does not exist.',
+    return {observedAt:team.observedAt,teamVersion:team.version,memberCount:team.memberCount,selfRoleId:team.selfRoleId,notice:tr('roleDiscussions.snapshotManagedRoleStatusNot'),
       items:this.db.list('roles').filter(r=>r.projectId===ctx.run.projectId&&(!r.archivedAt||runs.some(run=>run.roleId===r.id))).map(r=>{
         const member=team.members.find(m=>m.id===r.id);
         const activeRuns=runs.filter(run=>run.roleId===r.id).map(run=>({id:run.id,taskId:run.taskId,turnPurpose:run.turnPurpose||'task',status:run.status,
@@ -274,7 +275,7 @@ export class RoleDiscussions {
         const activeTasks=tasks.filter(t=>t.roleId===r.id&&(['in_progress','waiting_discussion','ready'].includes(t.status)||activeRuns.some(run=>run.taskId===t.id)))
           .map(t=>({id:t.id,title:t.title,status:t.status,waitingReason:t.waitingReason||null}));
         return {id:r.id,name:r.name,nodeId:r.nodeId,runtime:r.runtime,model:r.model||null,enabled:Boolean(r.enabled&&!r.archivedAt),online:member?.online??null,
-          responsibility:member?.responsibility||'Archived role; active run records are retained',instructionsMissing:member?.instructionsMissing??true,responsibilityTruncated:member?.responsibilityTruncated??false,
+          responsibility:member?.responsibility||tr('roleDiscussions.archivedRoleActiveRunRecords'),instructionsMissing:member?.instructionsMissing??true,responsibilityTruncated:member?.responsibilityTruncated??false,
           activeRuns,tasks:activeTasks,taskIds:activeTasks.map(t=>t.id),
           recentMessages:messages.filter(m=>m.roleId===r.id).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,3)
             .map(m=>({id:m.id,runId:m.runId,createdAt:m.createdAt,excerpt:String(m.text||'').slice(0,400),truncated:String(m.text||'').length>400})),
@@ -286,20 +287,20 @@ export class RoleDiscussions {
   read(run,input) {
     fields(input,['threadId','unread','cursor','limit']);
     const ctx=this.context(run,'discuss.read');
-    if(Boolean(input.threadId)===Boolean(input.unread))throw new Error('Choose exactly one read mode');
+    if(Boolean(input.threadId)===Boolean(input.unread))throw new Error(tr('roleDiscussions.chooseExactlyOneReadMode'));
     const limit=input.limit??10;
-    if(!Number.isSafeInteger(limit)||limit<1||limit>20)throw new Error('limit must be 1-20');
+    if(!Number.isSafeInteger(limit)||limit<1||limit>20)throw new Error(tr('roleDiscussions.limitMustBe120'));
     let thread=null;
     if(input.threadId) {
       thread=this.db.get('discussionThreads',input.threadId);
-      if(!thread||thread.projectId!==ctx.run.projectId||!thread.participants.includes(ctx.run.roleId))throw new Error('Not allowed to read this thread');
+      if(!thread||thread.projectId!==ctx.run.projectId||!thread.participants.includes(ctx.run.roleId))throw new Error(tr('roleDiscussions.notAllowedReadThread'));
     }
     const unread=new Set(this.db.list('discussionDeliveries').filter(d=>d.projectId===ctx.run.projectId&&d.recipientRoleId===ctx.run.roleId&&['queued','dispatched','runtime_accepted','reconciling'].includes(d.status)).map(d=>d.messageId));
     const messages=this.db.list('discussionMessages').filter(m=>m.projectId===ctx.run.projectId&&(thread?m.threadId===thread.id:unread.has(m.id)));
     let start=0;
     if(input.cursor) {
       const i=messages.findIndex(m=>m.id===input.cursor);
-      if(i<0)throw new Error('The read cursor is no longer valid; read again');
+      if(i<0)throw new Error(tr('roleDiscussions.readCursorNoLongerValid'));
       start=i+1;
     }
     const items=messages.slice(start,start+limit);
@@ -308,22 +309,22 @@ export class RoleDiscussions {
 
   context(run,action) {
     const current=this.db.get('runs',run?.id);
-    if(!current||closed.has(current.status)||this.db.get('settings','main')?.paused)throw new Error('The current run is invalid or paused');
+    if(!current||closed.has(current.status)||this.db.get('settings','main')?.paused)throw new Error(tr('roleDiscussions.currentRunInvalidPaused'));
     const task=this.db.get('tasks',current.businessTaskId||current.taskId);
-    if(!task||task.projectId!==current.projectId||task.status==='cancelled'||current.stopRequested)throw new Error('The original task is no longer valid');
+    if(!task||task.projectId!==current.projectId||task.status==='cancelled'||current.stopRequested)throw new Error(tr('roleDiscussions.originalTaskNoLongerValid'));
     const session=this.db.get('roleSessions',current.roleSessionId);
-    if(!session||session.status==='archived'||session.projectId!==current.projectId||session.roleId!==current.roleId||session.nodeId!==current.nodeId)throw new Error('The current role session binding is no longer valid');
+    if(!session||session.status==='archived'||session.projectId!==current.projectId||session.roleId!==current.roleId||session.nodeId!==current.nodeId)throw new Error(tr('roleDiscussions.currentRoleSessionBindingNo'));
     return {run:current,task};
   }
 
   action(run,input,name,work) {
-    if(typeof input.requestId!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(input.requestId))throw new Error('Invalid request ID');
+    if(typeof input.requestId!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(input.requestId))throw new Error(tr('roleDiscussions.invalidRequestId2'));
     return this.db.transaction(()=>{
       const ctx=this.context(run,`discuss.${name}`);
       const id=key(ctx.run.projectId,ctx.run.roleId,input.requestId);
       const fingerprint=canonical({name,input,taskId:ctx.task.id});
       const prior=this.db.get('discussionActions',id);
-      if(prior){if(prior.fingerprint!==fingerprint)throw new Error('Request ID conflicts with different parameters');return prior.result;}
+      if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('roleDiscussions.requestIdConflictsWithDifferent2'));return prior.result;}
       const result=work(ctx);
       this.db.put('discussionActions',{id,projectId:ctx.run.projectId,roleId:ctx.run.roleId,requestId:input.requestId,fingerprint,result,createdAt:now()});
       return result;
@@ -332,16 +333,16 @@ export class RoleDiscussions {
 
   thread(ctx,id) {
     const thread=this.db.get('discussionThreads',id);
-    if(!thread||thread.projectId!==ctx.run.projectId||thread.taskId!==ctx.task.id)throw new Error('The thread does not belong to the current business task');
-    if(!thread.participants.includes(ctx.run.roleId))throw new Error('Not a participant of the thread');
-    if(thread.directionRevision!==(ctx.task.directionRevision||1))throw new Error('The task direction has changed');
+    if(!thread||thread.projectId!==ctx.run.projectId||thread.taskId!==ctx.task.id)throw new Error(tr('roleDiscussions.threadDoesNotBelongCurrent'));
+    if(!thread.participants.includes(ctx.run.roleId))throw new Error(tr('roleDiscussions.notParticipantThread'));
+    if(thread.directionRevision!==(ctx.task.directionRevision||1))throw new Error(tr('roleDiscussions.taskDirectionHasChanged'));
     return thread;
   }
 
   session(role,conversationId=role?.projectId) {
-    if(!role||!role.enabled||role.archivedAt)throw new Error('The target role is disabled');
+    if(!role||!role.enabled||role.archivedAt)throw new Error(tr('roleDiscussions.targetRoleDisabled'));
     const binding=roleWorkspace(this.db,role.projectId,role.nodeId,null);
-    if(!binding)throw new Error('The target role workspace has not been created yet');
+    if(!binding)throw new Error(tr('roleDiscussions.targetRoleWorkspaceHasNot'));
     return new RoleSessions(this.db).getOrCreate({projectId:role.projectId,conversationId,roleId:role.id,nodeId:role.nodeId,runtime:role.runtime,model:role.model,workspaceRoot:binding.localRoot}).id;
   }
 
@@ -358,7 +359,7 @@ export class RoleDiscussions {
     if(!late) {
       const recipientSessionId=thread.participantSessions?.[toRoleId]||this.session(to,thread.conversationId||thread.projectId);
       const recipientSession=this.db.get('roleSessions',recipientSessionId);
-      if(!recipientSession||recipientSession.status==='archived'||recipientSession.nodeId!==to.nodeId||recipientSession.runtime!==to.runtime)throw new Error('The recipient session has changed; reconfirm the question');
+      if(!recipientSession||recipientSession.status==='archived'||recipientSession.nodeId!==to.nodeId||recipientSession.runtime!==to.runtime)throw new Error(tr('roleDiscussions.recipientSessionHasChangedReconfirm'));
       this.db.put('discussionDeliveries',{id:key(message.id,toRoleId,thread.directionRevision),projectId:thread.projectId,threadId:thread.id,taskId:thread.taskId,
         messageId:message.id,recipientRoleId:toRoleId,recipientSessionId,directionRevision:thread.directionRevision,status:'queued',deliveryMode:'next_turn',processingRunId:null,recoveryCount:0,attempts:[],createdAt:now(),updatedAt:now()});
     }
@@ -366,30 +367,30 @@ export class RoleDiscussions {
   }
 
   ask(run,input) {
-    fields(input,['requestId','toRoleId','text','threadId','revision','replyTo']);text(input.text,'Question');
+    fields(input,['requestId','toRoleId','text','threadId','revision','replyTo']);text(input.text,tr('roleDiscussions.question'));
     return this.action(run,input,'ask',ctx=>{
       if(ctx.run.execution?.exclusive)throw new Error('exclusive_operation_active');
       // A report and a wait cannot both be the conclusion of this turn; reject before creating a message or session or deducting budget.
-      if(this.db.get('runReports',ctx.run.id))throw new Error('A business report was already submitted this turn; end the turn. If further clarification is needed, ask in a later business turn');
+      if(this.db.get('runReports',ctx.run.id))throw new Error(tr('roleDiscussions.businessReportWasAlreadySubmitted'));
       const role=this.db.get('roles',input.toRoleId);
-      if(!role||role.projectId!==ctx.run.projectId||!role.enabled||role.archivedAt||role.id===ctx.run.roleId)throw new Error('Invalid target role');
-      if(role.nodeId!==ctx.run.nodeId||!supportsDiscussion(this.db.get('workers',role.nodeId),role.runtime))throw new Error('At this stage only roles on the same device with discussion protocol v2 enabled are supported');
+      if(!role||role.projectId!==ctx.run.projectId||!role.enabled||role.archivedAt||role.id===ctx.run.roleId)throw new Error(tr('roleDiscussions.invalidTargetRole'));
+      if(role.nodeId!==ctx.run.nodeId||!supportsDiscussion(this.db.get('workers',role.nodeId),role.runtime))throw new Error(tr('roleDiscussions.atStageOnlyRolesOn'));
       this.assertReady(role);
       const targetSessionId=this.session(role,ctx.task.conversationId||ctx.task.projectId);
       const request=this.db.get('coordinationRequests',ctx.run.requestId||'');
       const rootTaskId=ctx.task.rootTaskId||this.db.get('coordinationRequests',request?.rootRequestId||'')?.taskId||ctx.task.id;
       const root=this.db.get('tasks',rootTaskId);
-      if(!root||root.projectId!==ctx.run.projectId)throw new Error('Invalid root task');
+      if(!root||root.projectId!==ctx.run.projectId)throw new Error(tr('roleDiscussions.invalidRootTask'));
       let thread;
       if(input.threadId) {
         thread=this.thread(ctx,input.threadId);
-        if(thread.participantSessions?.[role.id]&&thread.participantSessions[role.id]!==targetSessionId)throw new Error('The recipient session has changed; reconfirm the question');
+        if(thread.participantSessions?.[role.id]&&thread.participantSessions[role.id]!==targetSessionId)throw new Error(tr('roleDiscussions.recipientSessionHasChangedReconfirm2'));
         const reply=this.db.get('discussionMessages',input.replyTo);
-        if(thread.status!=='open'||thread.ownerRoleId!==ctx.run.roleId||thread.revision!==input.revision)throw new Error('The thread version or state has changed');
-        if(ctx.task.discussionWait?.questionId!==thread.currentQuestionId||!reply||reply.kind!=='answer'||reply.threadId!==thread.id||reply.replyTo!==thread.currentQuestionId||reply.late)throw new Error('Not a reply to the current question');
-        if(ctx.run.turnPurpose==='answer_resume'&&ctx.run.discussionMessageId!==reply.id)throw new Error('The reply does not belong to this turn');
+        if(thread.status!=='open'||thread.ownerRoleId!==ctx.run.roleId||thread.revision!==input.revision)throw new Error(tr('roleDiscussions.threadVersionStateHasChanged'));
+        if(ctx.task.discussionWait?.questionId!==thread.currentQuestionId||!reply||reply.kind!=='answer'||reply.threadId!==thread.id||reply.replyTo!==thread.currentQuestionId||reply.late)throw new Error(tr('roleDiscussions.notReplyCurrentQuestion'));
+        if(ctx.run.turnPurpose==='answer_resume'&&ctx.run.discussionMessageId!==reply.id)throw new Error(tr('roleDiscussions.replyDoesNotBelongTurn'));
       } else {
-        if(ctx.run.turnPurpose!=='task'&&ctx.run.turnPurpose)throw new Error('New questions can only be asked in the original business turn');
+        if(ctx.run.turnPurpose!=='task'&&ctx.run.turnPurpose)throw new Error(tr('roleDiscussions.newQuestionsCanOnlyBe'));
         if(ctx.task.discussionWait)throw new Error('blocking_question_exists');
         thread={id:randomUUID(),projectId:ctx.run.projectId,conversationId:ctx.task.conversationId||ctx.task.projectId,taskId:ctx.task.id,rootTaskId,ownerRoleId:ctx.run.roleId,ownerSessionId:ctx.run.roleSessionId,participants:[ctx.run.roleId,role.id],status:'open',revision:0,
           directionRevision:ctx.task.directionRevision||1,currentQuestionId:null,budget:{used:0,limit:3,revision:0},createdAt:now()};
@@ -401,7 +402,7 @@ export class RoleDiscussions {
       thread.currentQuestionId=message.id;
       this.db.put('discussionThreads',thread);
       this.db.put('tasks',{...root,discussionBudget:{...rootBudget,used:rootBudget.used+1}});
-      this.db.put('tasks',{...this.db.get('tasks',ctx.task.id),discussionWait:{threadId:thread.id,questionId:message.id,sourceRunId:ctx.run.id,directionRevision:thread.directionRevision},waitingReason:`Waiting for ${role.name} to reply`});
+      this.db.put('tasks',{...this.db.get('tasks',ctx.task.id),discussionWait:{threadId:thread.id,questionId:message.id,sourceRunId:ctx.run.id,directionRevision:thread.directionRevision},waitingReason:tr('roleDiscussions.waitingForReply', { name: role.name })});
       this.db.put('runs',{...ctx.run,discussionWaiting:true,discussionThreadId:thread.id});
       this.consume(ctx.run);
       for(const d of this.db.list('discussionDeliveries').filter(d=>d.threadId===thread.id&&d.status==='queued'&&d.messageId!==message.id))this.db.put('discussionDeliveries',{...d,status:'superseded',updatedAt:now()});
@@ -411,21 +412,21 @@ export class RoleDiscussions {
 
   /** A user reply and an explicit resolution are two separate actions; a reply is delivered only to the original asker. */
   userReply(projectId,input) {
-    fields(input,['requestId','threadId','revision','expectedQuestionId','directionRevision','text']);text(input.text,'Reply');
-    if(typeof input.requestId!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(input.requestId))throw new Error('Invalid request ID');
+    fields(input,['requestId','threadId','revision','expectedQuestionId','directionRevision','text']);text(input.text,tr('roleDiscussions.reply'));
+    if(typeof input.requestId!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(input.requestId))throw new Error(tr('roleDiscussions.invalidRequestId3'));
     return this.db.transaction(()=>{
       const id=key(projectId,'human',input.requestId),fingerprint=canonical({name:'userReply',input});
       const prior=this.db.get('discussionActions',id);
-      if(prior){if(prior.fingerprint!==fingerprint)throw new Error('Request ID conflicts with different parameters');return prior.result;}
+      if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('roleDiscussions.requestIdConflictsWithDifferent3'));return prior.result;}
       const thread=this.db.get('discussionThreads',input.threadId),task=this.db.get('tasks',thread?.taskId);
-      if(!thread||thread.projectId!==projectId||!task||task.status==='cancelled'||thread.status!=='open')throw new Error('The thread state has changed');
-      if(thread.revision!==input.revision||thread.directionRevision!==input.directionRevision||thread.directionRevision!==(task.directionRevision||1))throw new Error('The thread version or direction has changed');
-      if(thread.currentQuestionId!==input.expectedQuestionId||task.discussionWait?.questionId!==input.expectedQuestionId)throw new Error('The current question has changed');
+      if(!thread||thread.projectId!==projectId||!task||task.status==='cancelled'||thread.status!=='open')throw new Error(tr('roleDiscussions.threadStateHasChanged'));
+      if(thread.revision!==input.revision||thread.directionRevision!==input.directionRevision||thread.directionRevision!==(task.directionRevision||1))throw new Error(tr('roleDiscussions.threadVersionDirectionHasChanged'));
+      if(thread.currentQuestionId!==input.expectedQuestionId||task.discussionWait?.questionId!==input.expectedQuestionId)throw new Error(tr('roleDiscussions.currentQuestionHasChanged'));
       const session=this.db.get('roleSessions',thread.ownerSessionId);
-      if(!session||session.status==='archived')throw new Error('The original asker session is no longer valid');
+      if(!session||session.status==='archived')throw new Error(tr('roleDiscussions.originalAskerSessionNoLonger'));
       const message=this.message({run:{id:null,roleId:null}},thread,{requestId:input.requestId,kind:'answer',toRoleId:thread.ownerRoleId,replyTo:thread.currentQuestionId,text:input.text});
       const visible=this.db.get('roomMessages',`discussion:${message.id}`);
-      this.db.put('roomMessages',{...visible,sender:'human',senderName:'Me'});
+      this.db.put('roomMessages',{...visible,sender:'human',senderName:tr('roleDiscussions.me')});
       this.db.put('discussionThreads',{...thread,revision:thread.revision+1,updatedAt:now()});
       const result={threadId:thread.id,messageId:message.id,replyTo:thread.currentQuestionId,late:false,status:'queued'};
       this.db.put('discussionActions',{id,projectId,actor:'human',fingerprint,result,createdAt:now()});return result;
@@ -433,15 +434,15 @@ export class RoleDiscussions {
   }
 
   reply(run,input) {
-    fields(input,['requestId','threadId','replyTo','text','evidenceRefs']);text(input.text,'Reply');
+    fields(input,['requestId','threadId','replyTo','text','evidenceRefs']);text(input.text,tr('roleDiscussions.reply2'));
     return this.action(run,input,'reply',ctx=>{
       const thread=this.thread(ctx,input.threadId),question=this.db.get('discussionMessages',input.replyTo);
-      if(input.evidenceRefs&&(!Array.isArray(input.evidenceRefs)||input.evidenceRefs.length>20||input.evidenceRefs.some(v=>typeof v!=='string'||v.length>1500)))throw new Error('At most 20 evidence text entries are allowed in a reply');
-      if(!question||question.threadId!==thread.id||question.kind!=='question'||question.toRoleId!==ctx.run.roleId||ctx.run.discussionMessageId!==question.id)throw new Error('The question does not belong to this turn');
+      if(input.evidenceRefs&&(!Array.isArray(input.evidenceRefs)||input.evidenceRefs.length>20||input.evidenceRefs.some(v=>typeof v!=='string'||v.length>1500)))throw new Error(tr('roleDiscussions.atMost20EvidenceText'));
+      if(!question||question.threadId!==thread.id||question.kind!=='question'||question.toRoleId!==ctx.run.roleId||ctx.run.discussionMessageId!==question.id)throw new Error(tr('roleDiscussions.questionDoesNotBelongTurn'));
       const late=thread.status!=='open'||thread.currentQuestionId!==question.id||ctx.task.discussionWait?.questionId!==question.id;
       const message=this.message(ctx,thread,{...input,kind:'answer',toRoleId:thread.ownerRoleId,late});
       const incoming=this.db.list('discussionDeliveries').find(d=>d.messageId===question.id&&d.recipientRoleId===ctx.run.roleId);
-      if(ctx.run.discussionDeliveryId&&(incoming?.id!==ctx.run.discussionDeliveryId||incoming.processingRunId!==ctx.run.id))throw new Error('The question handling ownership has changed');
+      if(ctx.run.discussionDeliveryId&&(incoming?.id!==ctx.run.discussionDeliveryId||incoming.processingRunId!==ctx.run.id))throw new Error(tr('roleDiscussions.questionHandlingOwnershipHasChanged'));
       if(incoming)this.db.put('discussionDeliveries',{...incoming,status:'consumed',responseMessageId:message.id,updatedAt:now()});
       if(!late)this.db.put('discussionThreads',{...thread,revision:thread.revision+1,updatedAt:now()});
       return {threadId:thread.id,messageId:message.id,replyTo:question.id,late,status:late?'historical':'queued'};
@@ -449,26 +450,26 @@ export class RoleDiscussions {
   }
 
   resolve(run,input) {
-    fields(input,['requestId','threadId','revision','expectedQuestionId','conclusion','basedOnReplyIds','evidenceRefs']);text(input.conclusion,'Conclusion');
+    fields(input,['requestId','threadId','revision','expectedQuestionId','conclusion','basedOnReplyIds','evidenceRefs']);text(input.conclusion,tr('roleDiscussions.conclusion'));
     return this.action(run,input,'resolve',ctx=>{
-      if(ctx.run.turnPurpose!=='answer_resume')throw new Error('A question can only be resolved in the answer-consuming turn');
+      if(ctx.run.turnPurpose!=='answer_resume')throw new Error(tr('roleDiscussions.questionCanOnlyBeResolved'));
       const thread=this.thread(ctx,input.threadId);
-      if(thread.ownerRoleId!==ctx.run.roleId||thread.status!=='open'||thread.revision!==input.revision)throw new Error('The thread version or state has changed');
-      if(thread.currentQuestionId!==input.expectedQuestionId||ctx.task.discussionWait?.questionId!==input.expectedQuestionId)throw new Error('The current question has changed');
+      if(thread.ownerRoleId!==ctx.run.roleId||thread.status!=='open'||thread.revision!==input.revision)throw new Error(tr('roleDiscussions.threadVersionStateHasChanged2'));
+      if(thread.currentQuestionId!==input.expectedQuestionId||ctx.task.discussionWait?.questionId!==input.expectedQuestionId)throw new Error(tr('roleDiscussions.currentQuestionHasChanged2'));
       const ids=input.basedOnReplyIds||[],refs=input.evidenceRefs||[];
-      if(!Array.isArray(ids)||!Array.isArray(refs)||ids.length+refs.length===0||ids.length+refs.length>20)throw new Error('Valid resolution evidence is required');
+      if(!Array.isArray(ids)||!Array.isArray(refs)||ids.length+refs.length===0||ids.length+refs.length>20)throw new Error(tr('roleDiscussions.validResolutionEvidenceRequired'));
       for(const id of ids) {
         const reply=this.db.get('discussionMessages',id);
-        if(!reply||reply.threadId!==thread.id||reply.kind!=='answer'||reply.replyTo!==thread.currentQuestionId||reply.late)throw new Error('The resolution evidence is not the current reply');
+        if(!reply||reply.threadId!==thread.id||reply.kind!=='answer'||reply.replyTo!==thread.currentQuestionId||reply.late)throw new Error(tr('roleDiscussions.resolutionEvidenceNotCurrentReply'));
       }
       for(const id of refs) {
         const evidence=this.db.get('roomMessages',id)||this.db.get('runs',id);
-        if(!evidence||evidence.projectId!==ctx.run.projectId)throw new Error('The resolution evidence does not exist or is not readable');
+        if(!evidence||evidence.projectId!==ctx.run.projectId)throw new Error(tr('roleDiscussions.resolutionEvidenceDoesNotExist'));
       }
       const resumeIntentId=`discussion-resume:${thread.id}`;
       this.consume(ctx.run);
       this.db.put('discussionThreads',{...thread,status:'resolved',revision:thread.revision+1,conclusion:input.conclusion,resolutionBasis:{questionId:thread.currentQuestionId,basedOnReplyIds:ids,evidenceRefs:refs,runId:ctx.run.id},updatedAt:now()});
-      this.db.put('tasks',{...ctx.task,discussionWait:null,waitingReason:'Waiting for the reply-handling turn to end'});
+      this.db.put('tasks',{...ctx.task,discussionWait:null,waitingReason:tr('roleDiscussions.waitingForReplyHandlingTurn')});
       this.db.put('discussionIntents',{id:resumeIntentId,projectId:thread.projectId,taskId:thread.taskId,threadId:thread.id,questionId:thread.currentQuestionId,directionRevision:thread.directionRevision,afterRunId:ctx.run.id,status:'queued',createdAt:now()});
       return {threadId:thread.id,questionId:thread.currentQuestionId,revision:thread.revision+1,resumeIntentId,status:'resolved'};
     });
@@ -476,32 +477,32 @@ export class RoleDiscussions {
 
   /** Callable only from the authenticated web entry point; user identity is never accepted through an agent request. */
   userResolve(projectId,input) {
-    fields(input,['requestId','threadId','revision','expectedQuestionId','directionRevision','conclusion','resumeAfterRunId']);text(input.conclusion,'Conclusion');
-    if(typeof input.requestId!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(input.requestId))throw new Error('Invalid request ID');
+    fields(input,['requestId','threadId','revision','expectedQuestionId','directionRevision','conclusion','resumeAfterRunId']);text(input.conclusion,tr('roleDiscussions.conclusion2'));
+    if(typeof input.requestId!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(input.requestId))throw new Error(tr('roleDiscussions.invalidRequestId4'));
     return this.db.transaction(()=>{
       const id=key(projectId,'human',input.requestId),fingerprint=canonical({name:'userResolve',input});
       const prior=this.db.get('discussionActions',id);
-      if(prior){if(prior.fingerprint!==fingerprint)throw new Error('Request ID conflicts with different parameters');return prior.result;}
+      if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('roleDiscussions.requestIdConflictsWithDifferent4'));return prior.result;}
       const thread=this.db.get('discussionThreads',input.threadId),task=this.db.get('tasks',thread?.taskId);
-      if(!thread||thread.projectId!==projectId||!task||task.status==='cancelled'||!['open','resolved'].includes(thread.status))throw new Error('The thread state has changed');
-      if(thread.revision!==input.revision||thread.directionRevision!==input.directionRevision||thread.directionRevision!==(task.directionRevision||1))throw new Error('The thread version or direction has changed');
+      if(!thread||thread.projectId!==projectId||!task||task.status==='cancelled'||!['open','resolved'].includes(thread.status))throw new Error(tr('roleDiscussions.threadStateHasChanged2'));
+      if(thread.revision!==input.revision||thread.directionRevision!==input.directionRevision||thread.directionRevision!==(task.directionRevision||1))throw new Error(tr('roleDiscussions.threadVersionDirectionHasChanged2'));
       if(thread.status==='resolved') {
         const intent=this.db.list('discussionIntents').find(i=>i.threadId===thread.id&&i.status==='blocked');
         const after=this.db.get('runs',intent?.afterRunId||'');
-        if(!intent||task.discussionResumeBlocked?.afterRunId!==after?.id||input.resumeAfterRunId!==after?.id||input.expectedQuestionId!==thread.currentQuestionId)throw new Error('Verify the current abnormal turn and then continue explicitly');
-        if(!terminal.has(after?.status)||after.stopRequested||after.controlLost||after.discussionCleanup?.turnEnded!==true||after.discussionCleanup?.toolsClosed!==true)throw new Error('The original run has not ended safely and cannot continue; verify the scene or start an explicit new task');
+        if(!intent||task.discussionResumeBlocked?.afterRunId!==after?.id||input.resumeAfterRunId!==after?.id||input.expectedQuestionId!==thread.currentQuestionId)throw new Error(tr('roleDiscussions.verifyCurrentAbnormalTurnThen'));
+        if(!terminal.has(after?.status)||after.stopRequested||after.controlLost||after.discussionCleanup?.turnEnded!==true||after.discussionCleanup?.toolsClosed!==true)throw new Error(tr('roleDiscussions.originalRunHasNotEnded'));
         const evidenceId=`discussion-user:${randomUUID()}`;
-        this.db.put('roomMessages',{id:evidenceId,projectId,sender:'human',senderName:'Me',text:input.conclusion,taskIds:[],discussion:{threadId:thread.id,questionId:thread.currentQuestionId,action:'resume',afterRunId:after.id},createdAt:now()});
+        this.db.put('roomMessages',{id:evidenceId,projectId,sender:'human',senderName:tr('roleDiscussions.me2'),text:input.conclusion,taskIds:[],discussion:{threadId:thread.id,questionId:thread.currentQuestionId,action:'resume',afterRunId:after.id},createdAt:now()});
         this.db.put('discussionIntents',{...intent,status:'queued',waitingReason:null,recoveryEvidenceId:evidenceId,updatedAt:now()});
-        this.db.put('tasks',{...task,discussionResumeBlocked:{...task.discussionResumeBlocked,confirmed:true},waitingReason:'Verified; waiting for the original task to continue'});
+        this.db.put('tasks',{...task,discussionResumeBlocked:{...task.discussionResumeBlocked,confirmed:true},waitingReason:tr('roleDiscussions.verifiedWaitingForOriginalTask')});
         const result={threadId:thread.id,questionId:thread.currentQuestionId,revision:thread.revision,resumeIntentId:intent.id,status:'resolved'};
         this.db.put('discussionActions',{id,projectId,actor:'human',fingerprint,result,createdAt:now()});return result;
       }
-      if(thread.currentQuestionId!==input.expectedQuestionId||task.discussionWait?.questionId!==input.expectedQuestionId)throw new Error('The current question has changed');
+      if(thread.currentQuestionId!==input.expectedQuestionId||task.discussionWait?.questionId!==input.expectedQuestionId)throw new Error(tr('roleDiscussions.currentQuestionHasChanged3'));
       const evidenceId=`discussion-user:${randomUUID()}`,resumeIntentId=`discussion-resume:${thread.id}`;
-      this.db.put('roomMessages',{id:evidenceId,projectId,sender:'human',senderName:'Me',text:input.conclusion,taskIds:[],discussion:{threadId:thread.id,questionId:thread.currentQuestionId,action:'resolve'},createdAt:now()});
+      this.db.put('roomMessages',{id:evidenceId,projectId,sender:'human',senderName:tr('roleDiscussions.me3'),text:input.conclusion,taskIds:[],discussion:{threadId:thread.id,questionId:thread.currentQuestionId,action:'resolve'},createdAt:now()});
       this.db.put('discussionThreads',{...thread,status:'resolved',revision:thread.revision+1,conclusion:input.conclusion,resolutionBasis:{source:'human',questionId:thread.currentQuestionId,evidenceRefs:[evidenceId]},updatedAt:now()});
-      this.db.put('tasks',{...task,discussionWait:null,waitingReason:'Waiting for the original turn to end safely'});
+      this.db.put('tasks',{...task,discussionWait:null,waitingReason:tr('roleDiscussions.waitingForOriginalTurnEnd')});
       this.db.put('discussionIntents',{id:resumeIntentId,projectId,taskId:task.id,threadId:thread.id,questionId:thread.currentQuestionId,directionRevision:thread.directionRevision,afterRunId:task.discussionWait.sourceRunId,status:'queued',createdAt:now()});
       const result={threadId:thread.id,questionId:thread.currentQuestionId,revision:thread.revision+1,resumeIntentId,status:'resolved'};
       this.db.put('discussionActions',{id,projectId,actor:'human',fingerprint,result,createdAt:now()});

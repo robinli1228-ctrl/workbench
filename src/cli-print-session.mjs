@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { nativeSessionId } from './terminal-resume.mjs';
+import { tr } from './i18n.mjs';
 
 function extractText(content) {
   if (typeof content === 'string') return content;
@@ -13,7 +14,7 @@ function extractText(content) {
 }
 
 function roleRules(roleName, roleInstructions) {
-  return `You are ${roleName ? `the "${roleName}" role in the project group chat` : 'the executor of this task'}. ${roleInstructions || ''}`;
+  return tr('cliPrintSession.you', { p1: roleName ? tr('cliPrintSession.roleInProjectGroupChat', { roleName }) : tr('cliPrintSession.executorTask'), p2: roleInstructions || '' });
 }
 
 /** print/stream CLI adapter: tools are auto-approved, with no native per-item approval. */
@@ -64,7 +65,7 @@ export class CliPrintSession {
   }
   /** Claude/Agy keep the process with bidirectional input; Grok keeps using single-turn resume with the specified native ID. */
   reuse(options) {
-    if(!this.keepAlive || !this.done || !this.proc || this.proc.killed || this.proc.exitCode!==null || this.proc.signalCode!==null)throw new Error('The CLI process cannot be reused');
+    if(!this.keepAlive || !this.done || !this.proc || this.proc.killed || this.proc.exitCode!==null || this.proc.signalCode!==null)throw new Error(tr('cliPrintSession.cliProcessCannotBeReused'));
     Object.assign(this,options);this.done=false;this.stopping=false;
     this.answer='';this.textBuffer='';this.finalText='';this.bestAnswer='';this.runtimeError='';this.emittedFinal=false;
     this.lastThinkingAt=0;
@@ -75,7 +76,7 @@ export class CliPrintSession {
       this.sendTurn(prompt);return;
     }
     this.proc = spawn(this.bin(), this.args(prompt), { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: this.env });
-    this.proc.stdin.on('error',e=>{if(!this.done){this.finish('failed',`CLI input stream is closed: ${e.message}`);this.shutdown();}});
+    this.proc.stdin.on('error',e=>{if(!this.done){this.finish('failed',tr('cliPrintSession.cliInputStreamClosed', { message: e.message }));this.shutdown();}});
     // Grok uses stdin EOF as a user-cancel signal while headless tools are running.
     if (this.runtime !== 'grok' && !this.keepAlive) try { this.proc.stdin.end(); } catch {}
     this.emit('status', { status: 'running', workspace: this.cwd });
@@ -84,7 +85,7 @@ export class CliPrintSession {
       if (this.done) return;
       if (this.stopping) this.finish('interrupted');
       else if (code === 0 && !this.runtimeError) this.finish('succeeded');
-      else this.finish('failed', this.runtimeError || `Process exited ${code ?? signal}`);
+      else this.finish('failed', this.runtimeError || tr('cliPrintSession.processExited', { p1: code ?? signal }));
     });
     this.proc.stderr.on('data', bytes => {
       const text = bytes.toString().slice(0, 6000);
@@ -95,7 +96,7 @@ export class CliPrintSession {
       this.emit('log', { text });
     });
     const lines = createInterface({ input: this.proc.stdout });
-    lines.on('line', line => { try { this.receiveLine(line); } catch (e) { this.emit('log', { text: `Event handling error ${e.message}` }); } });
+    lines.on('line', line => { try { this.receiveLine(line); } catch (e) { this.emit('log', { text: tr('cliPrintSession.eventHandlingError', { message: e.message }) }); } });
     if(this.keepAlive)this.sendTurn(prompt);
   }
   /** Agy uses event:user and Claude uses type:user; the rules are attached to Agy only on the first turn or when the rules change. */
@@ -127,10 +128,10 @@ export class CliPrintSession {
     if (usage && typeof usage === 'object') this.emit('usage', { ...usage, source: 'runtime' });
     // The native thinking stream is also evidence of activity; only a throttled signal is reported, and private reasoning content is not recorded and tokens are not estimated.
     if(type==='content_block_delta'&&m.delta?.type==='thinking_delta'&&(!this.lastThinkingAt||Date.now()-this.lastThinkingAt>=15000)) {
-      this.lastThinkingAt=Date.now();this.emit('log',{text:'Model is thinking (native progress event received)'});
+      this.lastThinkingAt=Date.now();this.emit('log',{text:tr('cliPrintSession.modelThinkingNativeProgressEvent')});
     }
     if (type === 'error' || m.error) {
-      const errText = m.error?.message || m.message || extractText(m.error) || 'Runtime error';
+      const errText = m.error?.message || m.message || extractText(m.error) || tr('cliPrintSession.runtimeError');
       this.runtimeError = this.runtimeError || errText;
       this.emit('log', { text: errText });
     }
@@ -149,7 +150,7 @@ export class CliPrintSession {
       if (text) this.finalText = text;
       if (m.is_error || m.status==='ERROR') {
         // result/response is partial body text, not the error reason; keep the real diagnostics received earlier.
-        this.runtimeError = this.runtimeError || extractText(m.error) || 'Runtime returned an error result; check the CLI log';
+        this.runtimeError = this.runtimeError || extractText(m.error) || tr('cliPrintSession.runtimeReturnedErrorResultCheck');
         this.emit('log', { text: this.runtimeError });
       } else if(m.status==='SUCCESS' || m.subtype==='success') this.runtimeError='';
       if(this.keepAlive) {
@@ -159,7 +160,7 @@ export class CliPrintSession {
     }
     // Agy 1.2.x reports the tool lifecycle via step_update; a stable ID lets the page merge start and end.
     if(this.runtime==='agy' && type==='step_update' && m.step_type==='tool' && m.tool_info && m.step_index!==undefined) {
-      this.emit('tool',{text:m.tool_name||m.tool_info.name||'Tool call',item:{
+      this.emit('tool',{text:m.tool_name||m.tool_info.name||tr('cliPrintSession.toolCall'),item:{
         id:`agy:${m.conversation_id||this.nativeSessionId}:${m.step_index}`,type:'tool_call',
         name:m.tool_name||m.tool_info.name,arguments:m.tool_info.parameters,output:m.tool_info.output,
         status:m.state==='DONE'?'completed':['ERROR','FAILED'].includes(m.state)?'failed':'inProgress'
@@ -167,12 +168,12 @@ export class CliPrintSession {
     }
     const tool = m.tool_use || m.toolCall || (type === 'tool_use' || type === 'tool_call' || type === 'tool' ? m : null);
     if (tool && (tool.name || tool.title || tool.command || type === 'tool_call')) {
-      this.emit('tool', { text: tool.name || tool.title || tool.command || tool.kind || 'Working', item: tool });
+      this.emit('tool', { text: tool.name || tool.title || tool.command || tool.kind || tr('cliPrintSession.working'), item: tool });
     }
     if (Array.isArray(m.message?.content)) {
       for (const block of m.message.content) {
-        if (block?.type === 'tool_use' || block?.name) this.emit('tool', { text: block.name || block.type || 'Working', item: block });
-        if(block?.type==='tool_result'&&block.tool_use_id)this.emit('tool',{text:'Tool result',item:{id:block.tool_use_id,status:block.is_error?'failed':'completed',is_error:Boolean(block.is_error)}});
+        if (block?.type === 'tool_use' || block?.name) this.emit('tool', { text: block.name || block.type || tr('cliPrintSession.working2'), item: block });
+        if(block?.type==='tool_result'&&block.tool_use_id)this.emit('tool',{text:tr('cliPrintSession.toolResult'),item:{id:block.tool_use_id,status:block.is_error?'failed':'completed',is_error:Boolean(block.is_error)}});
       }
     }
   }
@@ -190,7 +191,7 @@ export class CliPrintSession {
     else this.appendText(text);
   }
   flushText() { clearTimeout(this.textTimer); this.textTimer = null; if (this.textBuffer) { this.emit('text', { text: this.textBuffer }); this.textBuffer = ''; } }
-  approve() { throw new Error('This Runtime auto-approves in print mode and does not support per-item approval'); }
+  approve() { throw new Error(tr('cliPrintSession.runtimeAutoApprovesInPrint')); }
   async stop() {
     if (this.done) return;
     this.stopping = true;

@@ -1,3 +1,4 @@
+import { tr } from './i18n.mjs';
 const MAX_REMOTE_DESKTOP_URL = 512;
 
 /**
@@ -17,19 +18,19 @@ export function normalizeRemoteDesktopUrl(value) {
 export function normalizeDesktopConfig(input) {
   const desktopUser = String(input?.desktopUser || '').trim();
   if (!desktopUser) return null;
-  if (!/^[a-zA-Z0-9._-]{1,80}$/.test(desktopUser)) throw new Error('Invalid remote desktop user');
+  if (!/^[a-zA-Z0-9._-]{1,80}$/.test(desktopUser)) throw new Error(tr('remoteDesktop.invalidRemoteDesktopUser'));
   const desktopPort = Number(input.desktopPort || 3389);
   const desktopLocalPort = Number(input.desktopLocalPort || 3390);
-  if (!Number.isInteger(desktopPort) || desktopPort < 1 || desktopPort > 65535) throw new Error('Invalid remote desktop port');
-  if (!Number.isInteger(desktopLocalPort) || desktopLocalPort < 1024 || desktopLocalPort > 65535) throw new Error('Local port must be between 1024 and 65535');
+  if (!Number.isInteger(desktopPort) || desktopPort < 1 || desktopPort > 65535) throw new Error(tr('remoteDesktop.invalidRemoteDesktopPort'));
+  if (!Number.isInteger(desktopLocalPort) || desktopLocalPort < 1024 || desktopLocalPort > 65535) throw new Error(tr('remoteDesktop.localPortMustBeBetween'));
   return { desktopUser, desktopPort, desktopLocalPort };
 }
 
 /** A separate SSH forward does not affect the reverse tunnel used by the Worker. */
 export function desktopTunnelSpec(device, keyPath) {
   const config = normalizeDesktopConfig(device);
-  if (!config) throw new Error('Configure a remote desktop user first');
-  if (!keyPath || !/^[a-zA-Z0-9._:-]+$/.test(device.host) || !/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(device.user)) throw new Error('Device SSH tunnel configuration is unavailable');
+  if (!config) throw new Error(tr('remoteDesktop.configureRemoteDesktopUserFirst'));
+  if (!keyPath || !/^[a-zA-Z0-9._:-]+$/.test(device.host) || !/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(device.user)) throw new Error(tr('remoteDesktop.deviceSshTunnelConfigurationUnavailable'));
   return { command: 'ssh', args: [
     '-NT', '-p', String(device.port), '-i', keyPath,
     '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ExitOnForwardFailure=yes',

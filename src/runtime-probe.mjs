@@ -1,6 +1,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
+import { tr } from './i18n.mjs';
 const exec = promisify(execFile);
 
 /** A single no-inference probe: reads only the version, login state, and model catalog, and creates no Thread/Turn. */
@@ -8,19 +9,19 @@ export async function inspectCodex() {
   const result = { type: 'codex', label: 'Codex CLI', supported: true, installed: false, available: false, models: [], quota: null, quotaStatus: 'unavailable', checkedAt: new Date().toISOString() };
   const bin = process.env.CODEX_BIN || 'codex';
   try { result.version = (await exec(bin, ['--version'], { timeout: 5000 })).stdout.trim(); result.installed = true; }
-  catch { return { ...result, reason: 'No runnable Codex CLI found; install it on the device or check CODEX_BIN/PATH' }; }
+  catch { return { ...result, reason: tr('runtimeProbe.noRunnableCodexCliFound') }; }
   const proc = spawn(bin, ['app-server', '--listen', 'stdio://'], { stdio: ['pipe', 'pipe', 'ignore'] });
   const lines = createInterface({ input: proc.stdout });
   const pending = new Map(); let id = 0;
   const fail = error => { for (const p of pending.values()) p.reject(error); pending.clear(); };
-  proc.on('error', () => fail(new Error('App Server could not start')));
-  proc.on('exit', () => fail(new Error('App Server has exited')));
-  const timer = setTimeout(() => { fail(new Error('CLI status probe timed out')); proc.kill(); }, 15000);
+  proc.on('error', () => fail(new Error(tr('runtimeProbe.appServerCouldNotStart'))));
+  proc.on('exit', () => fail(new Error(tr('runtimeProbe.appServerHasExited'))));
+  const timer = setTimeout(() => { fail(new Error(tr('runtimeProbe.cliStatusProbeTimedOut'))); proc.kill(); }, 15000);
   lines.on('line', line => {
-    try { const m = JSON.parse(line), p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.error ? p.reject(new Error('The CLI does not support the required probe interface')) : p.resolve(m.result); } catch {}
+    try { const m = JSON.parse(line), p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.error ? p.reject(new Error(tr('runtimeProbe.cliDoesNotSupportRequired'))) : p.resolve(m.result); } catch {}
   });
   const call = (method, params) => new Promise((resolve, reject) => { const key = ++id; pending.set(key, { resolve, reject }); proc.stdin.write(`${JSON.stringify({ id: key, method, params })}\n`); });
-  proc.stdin.on('error', () => fail(new Error('The CLI connection was closed (disconnect)')));
+  proc.stdin.on('error', () => fail(new Error(tr('runtimeProbe.cliConnectionWasClosedDisconnect'))));
   try {
     await call('initialize', { clientInfo: { name: 'agent_workbench_probe', version: '0.3.0' } });
     proc.stdin.write(`${JSON.stringify({ method: 'initialized' })}\n`);
@@ -46,8 +47,8 @@ export async function inspectCodex() {
       cursor = page.nextCursor;
     } while (cursor && result.models.length < 500);
     result.available = result.authReady && result.models.length > 0;
-    result.reason = !result.authReady ? 'Run codex login on this device, then refresh the check' : !result.models.length ? 'The CLI returned no available models; check the node configuration' : '';
-  } catch (e) { result.reason = `${e.message}; check the CLI on the device and then refresh the check`; }
+    result.reason = !result.authReady ? tr('runtimeProbe.runCodexLoginOnDevice') : !result.models.length ? tr('runtimeProbe.cliReturnedNoAvailableModels') : '';
+  } catch (e) { result.reason = tr('runtimeProbe.checkCliOnDeviceThen', { message: e.message }); }
   finally { clearTimeout(timer); lines.close(); proc.stdin.end(); proc.kill(); }
   return result;
 }
@@ -141,17 +142,17 @@ async function inspectPrintCli({ type, label, binEnv, binName, loginHint }) {
   const result = baseRuntime(type, label);
   const bin = process.env[binEnv] || binName;
   try { result.version = firstLine((await exec(bin, ['--version'], { timeout: 5000, maxBuffer: 16384 })).stdout); result.installed = true; }
-  catch { return { ...result, reason: `No runnable ${label} found; install it on the device or check ${binEnv}/PATH` }; }
+  catch { return { ...result, reason: tr('runtimeProbe.noRunnableFoundInstallIt', { label, binEnv }) }; }
   try {
     const { stdout, stderr } = await exec(bin, ['models'], { timeout: 15000, maxBuffer: 262144 });
     const text = `${stdout}\n${stderr}`;
     result.models = type === 'agy' ? parseAgyModels(stdout) : parseGrokModels(stdout);
     result.authReady = !looksLoggedOut(text) && result.models.length > 0;
     result.available = result.authReady;
-    result.reason = result.available ? '' : looksLoggedOut(text) ? loginHint : 'The CLI returned no available models; check the node configuration or sign in, then refresh the check';
+    result.reason = result.available ? '' : looksLoggedOut(text) ? loginHint : tr('runtimeProbe.cliReturnedNoAvailableModels2');
   } catch (e) {
     const text = `${e.message || ''}\n${e.stdout || ''}\n${e.stderr || ''}`;
-    result.reason = looksLoggedOut(text) ? loginHint : `${e.message}; check the CLI on the device and then refresh the check`;
+    result.reason = looksLoggedOut(text) ? loginHint : tr('runtimeProbe.checkCliOnDeviceThen2', { message: e.message });
   }
   return result;
 }
@@ -191,7 +192,7 @@ function probeGrokQuota(bin) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      for (const item of pending.values()) item.reject(new Error('The Grok probe has ended'));
+      for (const item of pending.values()) item.reject(new Error(tr('runtimeProbe.grokProbeHasEnded')));
       pending.clear();
       lines.close();
       proc.stdin.end();
@@ -209,7 +210,7 @@ function probeGrokQuota(bin) {
         const item = pending.get(message.id);
         if (!item) return;
         pending.delete(message.id);
-        message.error ? item.reject(new Error(message.error.message || 'Grok ACP error')) : item.resolve(message.result);
+        message.error ? item.reject(new Error(message.error.message || tr('runtimeProbe.grokAcpError'))) : item.resolve(message.result);
       } catch { /* Ignore non-protocol logs */ }
     });
     proc.on('error', () => finish({ quota: null, quotaStatus: 'unavailable' }));
@@ -231,7 +232,7 @@ function probeGrokQuota(bin) {
 
 /** A single no-inference probe: version, login, and model list; no conversation is started. */
 export async function inspectGrok() {
-  const result = await inspectPrintCli({ type: 'grok', label: 'Grok Build', binEnv: 'GROK_BIN', binName: 'grok', loginHint: 'Run grok login on this device, then refresh the check' });
+  const result = await inspectPrintCli({ type: 'grok', label: 'Grok Build', binEnv: 'GROK_BIN', binName: 'grok', loginHint: tr('runtimeProbe.runGrokLoginOnDevice') });
   if (!result.available) return result;
   const bin = process.env.GROK_BIN || 'grok';
   return { ...result, ...await probeGrokQuota(bin) };
@@ -291,7 +292,7 @@ async function probeAgyQuota(bin) {
 
 /** A single no-inference probe: version, login, and model list; no conversation is started. */
 export async function inspectAgy() {
-  const result = await inspectPrintCli({ type: 'agy', label: 'Antigravity', binEnv: 'AGY_BIN', binName: 'agy', loginHint: 'Sign in to the Antigravity CLI on this device, then refresh the check' });
+  const result = await inspectPrintCli({ type: 'agy', label: 'Antigravity', binEnv: 'AGY_BIN', binName: 'agy', loginHint: tr('runtimeProbe.signInAntigravityCliOn') });
   if (!result.available) return result;
   const bin = process.env.AGY_BIN || 'agy';
   return { ...result, ...await probeAgyQuota(bin) };
@@ -307,7 +308,7 @@ export async function inspectClaude() {
     result.version = firstLine(ver.stdout || ver.stderr);
     result.installed = true;
   } catch {
-    return { ...result, reason: 'No runnable Claude Code found; install it on the device or check CLAUDE_BIN/PATH' };
+    return { ...result, reason: tr('runtimeProbe.noRunnableClaudeCodeFound') };
   }
   let authReady = false;
   try {
@@ -329,7 +330,7 @@ export async function inspectClaude() {
   } catch (e) {
     const text = `${e.message || ''}\n${e.stdout || ''}\n${e.stderr || ''}`;
     if (looksLoggedOut(text)) {
-      return { ...result, authReady: false, reason: 'Sign in with claude on this device (claude.ai Pro), then refresh the check' };
+      return { ...result, authReady: false, reason: tr('runtimeProbe.signInWithClaudeOn') };
     }
   }
   // A third-party Anthropic-compatible service declares its models explicitly on the device, to avoid showing MiMo as Opus by mistake.
@@ -346,8 +347,8 @@ export async function inspectClaude() {
   result.available = authReady && models.length > 0;
   Object.assign(result, await probeClaudeQuota(bin));
   result.reason = !result.installed ? result.reason
-    : !authReady ? 'Sign in with claude on this device (claude.ai Pro), then refresh the check'
-    : !models.length ? 'The CLI returned no available models; check the node configuration or sign in, then refresh the check'
+    : !authReady ? tr('runtimeProbe.signInWithClaudeOn2')
+    : !models.length ? tr('runtimeProbe.cliReturnedNoAvailableModels3')
     : '';
   return result;
 }
@@ -447,11 +448,11 @@ async function probeClaudeQuota(bin) {
 
 /** Saving and dispatching use the same contract; the status comes from that node, and cross-device model lists are not accepted. */
 export function runtimeIssue(worker, type, model) {
-  if (!worker?.capabilities?.runtimeDiscovery) return 'Upgrade the Worker and refresh the CLI check';
+  if (!worker?.capabilities?.runtimeDiscovery) return tr('runtimeProbe.upgradeWorkerRefreshCliCheck');
   const runtime = worker.runtimes?.find(r => r.type === type && r.supported);
-  if (!runtime?.available) return runtime?.reason || 'This device has no available, connected CLI agent';
-  if (!runtime.checkedAt || Date.now() - Date.parse(runtime.checkedAt) > 600000 || !Number.isFinite(Date.parse(runtime.checkedAt))) return 'The CLI check has expired; refresh';
-  if (model && !runtime.models?.some(m => m.id === model)) return 'The model is not in this device\'s CLI model list; choose again';
+  if (!runtime?.available) return runtime?.reason || tr('runtimeProbe.deviceHasNoAvailableConnected');
+  if (!runtime.checkedAt || Date.now() - Date.parse(runtime.checkedAt) > 600000 || !Number.isFinite(Date.parse(runtime.checkedAt))) return tr('runtimeProbe.cliCheckHasExpiredRefresh');
+  if (model && !runtime.models?.some(m => m.id === model)) return tr('runtimeProbe.modelNotInDeviceS');
   return null;
 }
 
@@ -464,7 +465,7 @@ export function visibleRuntimes(reports) {
 export async function inspectRuntimes() {
   const results = await Promise.all([inspectCodex(), inspectGrok(), inspectAgy(), inspectClaude(), ...['opencode'].map(async type => {
     try { const { stdout } = await exec(type, ['--version'], { timeout: 5000, maxBuffer: 16384 });
-      return { type, label: `${type} CLI`, installed: true, supported: false, available: false, models: [], quota: null, quotaStatus: 'unavailable', version: stdout.trim().split('\n')[0].slice(0, 120), checkedAt: new Date().toISOString(), reason: 'Installed, but the platform has not integrated an execution adapter for this CLI yet' };
+      return { type, label: `${type} CLI`, installed: true, supported: false, available: false, models: [], quota: null, quotaStatus: 'unavailable', version: stdout.trim().split('\n')[0].slice(0, 120), checkedAt: new Date().toISOString(), reason: tr('runtimeProbe.installedButPlatformHasNot') };
     } catch { return null; }
   })]);
   return results.filter(Boolean);

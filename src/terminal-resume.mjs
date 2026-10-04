@@ -5,6 +5,7 @@ import { join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { Store } from './store.mjs';
+import { tr } from './i18n.mjs';
 
 const sessionPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -20,9 +21,9 @@ export function nativeSessionId(raw, runtime) {
 
 /** Use an explicit native ID; never last, continue, or fork. */
 export function resumeArgs(runtime, id) {
-  if (!sessionPattern.test(id || '')) throw new Error('A valid native session ID is missing');
+  if (!sessionPattern.test(id || '')) throw new Error(tr('terminalResume.validNativeSessionIdMissing'));
   const option = { codex:'resume', claude:'--resume', grok:'--resume', agy:'--conversation' }[runtime];
-  if (!option) throw new Error('This CLI does not support resume yet');
+  if (!option) throw new Error(tr('terminalResume.cliDoesNotSupportResume'));
   return [option, id];
 }
 
@@ -49,7 +50,7 @@ export async function nativeEnvironment(runtime, env = process.env) {
   for (const file of command.includes('/') ? [resolve(command)] : String(env.PATH || '').split(delimiter).map(p => join(p, command))) {
     try { await access(file, constants.X_OK); binary = file; break; } catch {}
   }
-  if (!binary) throw new Error('The original CLI executable was not found');
+  if (!binary) throw new Error(tr('terminalResume.originalCliExecutableWasNot'));
   const paths = Object.fromEntries(['HOME','CODEX_HOME','CLAUDE_CONFIG_DIR','XDG_CONFIG_HOME','XDG_DATA_HOME','PATH'].filter(k => env[k]).map(k => [k, env[k]]));
   return { runtime, user:userInfo().username, home:env.HOME || homedir(), binary, env:paths };
 }
@@ -68,7 +69,7 @@ export async function findSessionHistory(session) {
   async function walk(dir, depth = 0) {
     let entries; try { entries = await readdir(dir,{withFileTypes:true}); } catch (e) { if(e.code==='ENOENT')return null; throw e; }
     for (const entry of entries) {
-      if (++visited > 20000) throw new Error('Session directory is too large; could not confirm the specified history');
+      if (++visited > 20000) throw new Error(tr('terminalResume.sessionDirectoryTooLargeCould'));
       const file = join(dir,entry.name);
       if (entry.isFile() && (entry.name === `${id}.jsonl` || entry.name === `${id}.pb` || (runtime==='agy'&&entry.name===`${id}.db`) || (runtime==='codex' && entry.name.endsWith(`-${id}.jsonl`)))) return file;
       if (runtime==='grok' && entry.isDirectory() && entry.name===id) {
@@ -82,14 +83,14 @@ export async function findSessionHistory(session) {
     return null;
   }
   for (const root of roots) { const file=await walk(root); if(file && (await stat(file)).size>0)return file; }
-  throw new Error('The native session history for this user does not exist and cannot be resumed; no blank session will be created');
+  throw new Error(tr('terminalResume.nativeSessionHistoryForUser'));
 }
 
 /** Generate a reviewable command; the link carries no password or platform token. */
 export function terminalCommand(info, device = null, identityFile = null) {
   const command = info.launcher.map(quote).join(' ');
   if (!device) return command;
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9.:-]*$/.test(device.host || '') || !/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(device.user || '') || !/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(info.user || '') || !Number.isInteger(Number(device.port)) || device.port<1 || device.port>65535) throw new Error('SSH configuration is incomplete');
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9.:-]*$/.test(device.host || '') || !/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(device.user || '') || !/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(info.user || '') || !Number.isInteger(Number(device.port)) || device.port<1 || device.port>65535) throw new Error(tr('terminalResume.sshConfigurationIncomplete'));
   const remote = device.user === info.user ? command : `sudo -H -u ${quote(info.user)} -- ${command}`;
   return ['ssh','-t',...(identityFile?['-i',identityFile]:[]),'-p',String(device.port),`${device.user}@${device.host}`,remote].map(quote).join(' ');
 }
@@ -98,7 +99,7 @@ export function terminalCommand(info, device = null, identityFile = null) {
 export function claimTerminalSession(db, id, pid) {
   return db.transaction(() => {
     const s=db.get('terminalSessions',id);
-    if(s?.status!=='prepared')throw new Error('This takeover has already started, been released, or expired; check in the workbench');
+    if(s?.status!=='prepared')throw new Error(tr('terminalResume.takeoverHasAlreadyStartedBeen'));
     return db.put('terminalSessions',{...s,status:'active',pid,startedAt:new Date().toISOString()});
   });
 }
@@ -107,7 +108,7 @@ export function claimTerminalSession(db, id, pid) {
 export function releaseTerminalSession(db,id) {
   return db.transaction(()=>{
     const prior=db.get('terminalSessions',id);
-    if(prior && (processAlive(prior.pid)||processAlive(prior.childPid)))throw new Error('The terminal CLI has not exited; close the session before releasing');
+    if(prior && (processAlive(prior.pid)||processAlive(prior.childPid)))throw new Error(tr('terminalResume.terminalCliHasNotExited'));
     return db.put('terminalSessions',{...prior,id,status:'released'});
   });
 }
@@ -115,13 +116,13 @@ export function releaseTerminalSession(db,id) {
 /** Start the interactive CLI under the original Worker user; exiting does not make the platform automatically resume dispatching. */
 async function runTerminal(dbPath,id) {
   const db=new Store(dbPath), before=db.get('terminalSessions',id);
-  if(!before?.nativeSession || before.nativeSession.user!==userInfo().username)throw new Error('The running user does not match the original session');
-  if(!(await stat(before.workspace)).isDirectory())throw new Error('The original working directory does not exist');
+  if(!before?.nativeSession || before.nativeSession.user!==userInfo().username)throw new Error(tr('terminalResume.runningUserDoesNotMatch'));
+  if(!(await stat(before.workspace)).isDirectory())throw new Error(tr('terminalResume.originalWorkingDirectoryDoesNot'));
   await findSessionHistory(before.nativeSession);
   await access(before.nativeSession.binary,constants.X_OK);
   const session=claimTerminalSession(db,id,process.pid);
   const args=resumeArgs(session.nativeSession.runtime,session.nativeSession.id);
-  console.log(`Resuming original session ${session.nativeSession.id}\nDirectory: ${session.workspace}\nThe platform has paused project dispatch on this device. When finished, click "Return to platform" in the web UI.\nNew conversation in the terminal is not sent back to the group chat automatically, and the original managed wb tools are unavailable.`);
+  console.log(tr('terminalResume.resumingOriginalSessionDirectoryPlatform', { id: session.nativeSession.id, workspace: session.workspace }));
   const env={...session.privateEnv};
   for(const key of ['TERM','COLORTERM','TERM_PROGRAM','TERM_PROGRAM_VERSION'])if(process.env[key])env[key]=process.env[key];
   const child=spawn(session.nativeSession.binary,args,{cwd:session.workspace,env,stdio:'inherit'});

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { tr } from './i18n.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -9,12 +10,12 @@ export class RoleSessions {
   /** A role in the same conversation reuses its session by default; switching device or CLI requires explicitly opening a new session. */
   getOrCreate(binding) {
     const {projectId,conversationId,roleId,nodeId,runtime}=binding || {};
-    if (![projectId,conversationId,roleId,nodeId,runtime].every(value=>typeof value==='string' && value)) throw new Error('Role session binding is incomplete');
+    if (![projectId,conversationId,roleId,nodeId,runtime].every(value=>typeof value==='string' && value)) throw new Error(tr('roleSessions.roleSessionBindingIncomplete'));
     return this.db.transaction(()=>{
       const records=this.db.list('roleSessions').filter(s=>s.projectId===projectId && s.conversationId===conversationId && s.roleId===roleId);
       const current=records.find(s=>s.status!=='archived');
       if(current) {
-        if(current.nodeId!==nodeId || current.runtime!==runtime || (current.workspaceRoot||null)!==(binding.workspaceRoot||null)) throw new Error('Role session binding has changed; explicitly start a new session');
+        if(current.nodeId!==nodeId || current.runtime!==runtime || (current.workspaceRoot||null)!==(binding.workspaceRoot||null)) throw new Error(tr('roleSessions.roleSessionBindingHasChanged'));
         return current;
       }
       const value={id:randomUUID(),projectId,conversationId,roleId,nodeId,runtime,model:binding.model||null,workspaceRoot:binding.workspaceRoot||null,
@@ -28,8 +29,8 @@ export class RoleSessions {
   claim(sessionId,runId) {
     return this.db.transaction(()=>{
       const current=this.db.get('roleSessions',sessionId);
-      if(!current || current.status==='archived') throw new Error('Role session does not exist or is archived');
-      if(current.activeRunId && current.activeRunId!==runId) throw new Error('Session is in use');
+      if(!current || current.status==='archived') throw new Error(tr('roleSessions.roleSessionDoesNotExist'));
+      if(current.activeRunId && current.activeRunId!==runId) throw new Error(tr('roleSessions.sessionInUse'));
       if(current.activeRunId===runId)return current;
       return this.db.put('roleSessions',{...current,status:'running',activeRunId:runId,updatedAt:now()});
     });
@@ -39,11 +40,11 @@ export class RoleSessions {
   recordNative(sessionId,runId,nativeSession,workspace) {
     return this.db.transaction(()=>{
       const current=this.db.get('roleSessions',sessionId);
-      if(!current || current.activeRunId!==runId) throw new Error('Session ownership has changed');
+      if(!current || current.activeRunId!==runId) throw new Error(tr('roleSessions.sessionOwnershipHasChanged'));
       const id=nativeSession?.id;
-      if(typeof id!=='string' || !id) throw new Error('Native session ID is missing');
-      if(current.nativeSessionId && current.nativeSessionId!==id) throw new Error('Native session ID has changed; cannot overwrite');
-      if(current.workspace && workspace && current.workspace!==workspace) throw new Error('Session working directory has changed');
+      if(typeof id!=='string' || !id) throw new Error(tr('roleSessions.nativeSessionIdMissing'));
+      if(current.nativeSessionId && current.nativeSessionId!==id) throw new Error(tr('roleSessions.nativeSessionIdHasChanged'));
+      if(current.workspace && workspace && current.workspace!==workspace) throw new Error(tr('roleSessions.sessionWorkingDirectoryHasChanged'));
       return this.db.put('roleSessions',{...current,nativeSessionId:id,nativeSession,workspace:workspace||current.workspace,updatedAt:now()});
     });
   }
@@ -52,7 +53,7 @@ export class RoleSessions {
   release(sessionId,runId) {
     return this.db.transaction(()=>{
       const current=this.db.get('roleSessions',sessionId);
-      if(!current || current.activeRunId!==runId) throw new Error('Session releaser does not match');
+      if(!current || current.activeRunId!==runId) throw new Error(tr('roleSessions.sessionReleaserDoesNotMatch'));
       return this.db.put('roleSessions',{...current,status:'idle',activeRunId:null,lastRunId:runId,updatedAt:now()});
     });
   }
@@ -60,8 +61,8 @@ export class RoleSessions {
   archive(sessionId) {
     return this.db.transaction(()=>{
       const current=this.db.get('roleSessions',sessionId);
-      if(!current)throw new Error('Role session does not exist');
-      if(current.activeRunId)throw new Error('Session is in use');
+      if(!current)throw new Error(tr('roleSessions.roleSessionDoesNotExist2'));
+      if(current.activeRunId)throw new Error(tr('roleSessions.sessionInUse2'));
       if(current.status==='archived')return current;
       return this.db.put('roleSessions',{...current,status:'archived',updatedAt:now()});
     });

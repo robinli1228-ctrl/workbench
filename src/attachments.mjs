@@ -1,6 +1,7 @@
 import { mkdir, open, rename, unlink, readFile, realpath } from 'node:fs/promises';
 import { join, relative, isAbsolute } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
+import { tr } from './i18n.mjs';
 
 export const ATTACHMENT_LIMIT = 20 * 1024 * 1024;
 export const ATTACHMENT_COUNT = 6;
@@ -10,9 +11,9 @@ const idPattern = /^[a-f0-9-]{36}$/;
 export class Attachments {
   constructor(db, directory) { this.db = db; this.directory = directory; }
   async upload(projectId, req) {
-    if (!this.db.get('projects', projectId)) throw new Error('Project not found');
+    if (!this.db.get('projects', projectId)) throw new Error(tr('attachments.projectNotFound'));
     const name = decodeURIComponent(req.headers['x-file-name'] || 'attachment').replace(/[\x00-\x1f/\\]/g, '_').slice(0, 180);
-    if (Number(req.headers['content-length']) > ATTACHMENT_LIMIT) throw new Error('Each attachment must be at most 20 MB');
+    if (Number(req.headers['content-length']) > ATTACHMENT_LIMIT) throw new Error(tr('attachments.eachAttachmentMustBeAt'));
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const id = randomUUID(), temp = join(this.directory, `${id}.part`), destination = join(this.directory, id), hash = createHash('sha256');
     const handle = await open(temp, 'wx', 0o600);
@@ -20,11 +21,11 @@ export class Attachments {
     try {
       for await (const chunk of req) {
         size += chunk.length;
-        if (size > ATTACHMENT_LIMIT) throw new Error('Each attachment must be at most 20 MB');
+        if (size > ATTACHMENT_LIMIT) throw new Error(tr('attachments.eachAttachmentMustBeAt2'));
         if (magic.length < 16) magic = Buffer.concat([magic, chunk]).subarray(0, 16);
         hash.update(chunk); await handle.writeFile(chunk);
       }
-      if (!size) throw new Error('Empty files cannot be uploaded');
+      if (!size) throw new Error(tr('attachments.emptyFilesCannotBeUploaded'));
       await handle.close();
       await rename(temp, destination);
       renamed = true;
@@ -38,10 +39,10 @@ export class Attachments {
   }
   /** A message only accepts IDs that were uploaded and belong to the current project; the client cannot forge file paths. */
   resolve(projectId, ids = []) {
-    if (!Array.isArray(ids) || ids.length > ATTACHMENT_COUNT || new Set(ids).size !== ids.length) throw new Error('Each message allows at most 6 distinct attachments');
+    if (!Array.isArray(ids) || ids.length > ATTACHMENT_COUNT || new Set(ids).size !== ids.length) throw new Error(tr('attachments.eachMessageAllowsAtMost'));
     return ids.map(id => {
       const item = idPattern.test(id) && this.db.get('attachments', id);
-      if (!item || item.projectId !== projectId) throw new Error('Attachment does not exist or does not belong to the current project');
+      if (!item || item.projectId !== projectId) throw new Error(tr('attachments.attachmentDoesNotExistDoes'));
       return item;
     });
   }
@@ -55,26 +56,26 @@ export class Attachments {
 export class AttachmentTransfers {
   constructor({db,attachments,query,online,change=()=>{}}) { Object.assign(this,{db,attachments,query,online,change});this.active=new Map(); }
   async copy(projectId,{clientTransferId,nodeId,attachmentIds}) {
-    if(!idPattern.test(clientTransferId || ''))throw new Error('Invalid attachment transfer ID');
+    if(!idPattern.test(clientTransferId || ''))throw new Error(tr('attachments.invalidAttachmentTransferId'));
     const items=this.attachments.resolve(projectId,attachmentIds);
-    if(!items.length)throw new Error('Select an attachment');
+    if(!items.length)throw new Error(tr('attachments.selectAttachment'));
     const fingerprint=JSON.stringify({projectId,nodeId,attachmentIds});
     const prior=this.db.get('attachmentTransfers',clientTransferId);
-    if(prior && prior.fingerprint!==fingerprint)throw new Error('A repeated transfer ID has different parameters');
+    if(prior && prior.fingerprint!==fingerprint)throw new Error(tr('attachments.repeatedTransferIdHasDifferent'));
     if(prior?.status==='completed')return prior;
     if(this.active.has(clientTransferId))return this.active.get(clientTransferId);
     const binding=this.db.get('workspaces',`${projectId}:${nodeId}`),worker=this.db.get('workers',nodeId);
-    if(!binding?.localRoot || !worker)throw new Error('Prepare the project directory on the target device in project settings first');
-    if(!this.online(nodeId))throw new Error('Target device is offline; bring it online and retry');
-    if(worker.capabilities?.attachmentTransfer!==1)throw new Error('Upgrade the target device Worker to support file transfer first');
-    if(this.db.get('settings','main')?.paused)throw new Error('Remote operations are paused');
+    if(!binding?.localRoot || !worker)throw new Error(tr('attachments.prepareProjectDirectoryOnTarget'));
+    if(!this.online(nodeId))throw new Error(tr('attachments.targetDeviceOfflineBringIt'));
+    if(worker.capabilities?.attachmentTransfer!==1)throw new Error(tr('attachments.upgradeTargetDeviceWorkerSupport'));
+    if(this.db.get('settings','main')?.paused)throw new Error(tr('attachments.remoteOperationsPaused'));
     const record={id:clientTransferId,projectId,nodeId,attachmentIds,fingerprint,workspace:prior?.workspace||binding.localRoot,status:'transferring',createdAt:prior?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
-    if(prior && prior.workspace!==binding.localRoot)throw new Error('The project directory has changed; create the transfer again');
+    if(prior && prior.workspace!==binding.localRoot)throw new Error(tr('attachments.projectDirectoryHasChangedCreate'));
     this.db.put('attachmentTransfers',record);this.change();
     const transfer=Promise.resolve().then(async()=>{
       try {
         const result=await this.query({nodeId},'attachments_receive',{projectId,transferId:record.id,workspace:record.workspace,items},items.length*65000+10000);
-        if(!Array.isArray(result?.files)||result.files.length!==items.length||items.some(a=>!result.files.some(f=>f.id===a.id&&f.sha256===a.sha256&&f.size===a.size&&typeof f.path==='string')))throw new Error('The attachment confirmation returned by the target device is incomplete');
+        if(!Array.isArray(result?.files)||result.files.length!==items.length||items.some(a=>!result.files.some(f=>f.id===a.id&&f.sha256===a.sha256&&f.size===a.size&&typeof f.path==='string')))throw new Error(tr('attachments.attachmentConfirmationReturnedByTarget'));
         return this.db.put('attachmentTransfers',{...record,status:'completed',files:result.files,updatedAt:new Date().toISOString()});
       } catch(error) { this.db.put('attachmentTransfers',{...record,status:'failed',error:error.message,updatedAt:new Date().toISOString()});throw error; }
       finally { this.active.delete(record.id);this.change(); }
@@ -91,7 +92,7 @@ async function temporaryDirectory(workspace,id) {
     await mkdir(next,{mode:0o700}).catch(e=>{if(e.code!=='EEXIST')throw e;});
     directory=await realpath(next);
     const rel=relative(root,directory);
-    if(rel==='..'||rel.startsWith('../')||isAbsolute(rel))throw new Error('Attachment temporary directory escapes the project');
+    if(rel==='..'||rel.startsWith('../')||isAbsolute(rel))throw new Error(tr('attachments.attachmentTemporaryDirectoryEscapesProject'));
   }
   return directory;
 }
@@ -100,20 +101,20 @@ async function temporaryDirectory(workspace,id) {
 export async function receiveAttachments({ items = [], workspace, runId, transferId, home, token }) {
   if (!items.length) return [];
   const batchId=transferId || runId;
-  if (!idPattern.test(batchId) || items.length > ATTACHMENT_COUNT || new Set(items.map(a=>a.id)).size!==items.length) throw new Error('Invalid attachment run identity');
+  if (!idPattern.test(batchId) || items.length > ATTACHMENT_COUNT || new Set(items.map(a=>a.id)).size!==items.length) throw new Error(tr('attachments.invalidAttachmentRunIdentity'));
   const directory = await temporaryDirectory(workspace,batchId);
   const received = [];
   for (const item of items) {
-    if (!idPattern.test(item.id) || !Number.isSafeInteger(item.size) || item.size<1 || item.size > ATTACHMENT_LIMIT || !/^[a-f0-9]{64}$/.test(item.sha256 || '') || typeof item.name!=='string') throw new Error('Invalid attachment information');
+    if (!idPattern.test(item.id) || !Number.isSafeInteger(item.size) || item.size<1 || item.size > ATTACHMENT_LIMIT || !/^[a-f0-9]{64}$/.test(item.sha256 || '') || typeof item.name!=='string') throw new Error(tr('attachments.invalidAttachmentInformation'));
     const endpoint=transferId?'attachment-transfers':'attachments';
     const response = await fetch(new URL(`/api/agent/${endpoint}/${batchId}/${item.id}`, home), {
       headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60000)
     });
-    if (!response.ok) throw new Error(`Attachment download failed: ${item.name} (${response.status})`);
+    if (!response.ok) throw new Error(tr('attachments.attachmentDownloadFailed', { name: item.name, status: response.status }));
     const chunks = []; let size = 0;
-    for await (const chunk of response.body) { size += chunk.length; if (size > ATTACHMENT_LIMIT) throw new Error('Attachment download exceeds the size limit'); chunks.push(chunk); }
+    for await (const chunk of response.body) { size += chunk.length; if (size > ATTACHMENT_LIMIT) throw new Error(tr('attachments.attachmentDownloadExceedsSizeLimit')); chunks.push(chunk); }
     const bytes = Buffer.concat(chunks);
-    if (size !== item.size || createHash('sha256').update(bytes).digest('hex') !== item.sha256) throw new Error('Attachment verification failed');
+    if (size !== item.size || createHash('sha256').update(bytes).digest('hex') !== item.sha256) throw new Error(tr('attachments.attachmentVerificationFailed'));
     const sanitized = item.name.replace(/[^\p{L}\p{N}._-]/gu, '_');
     const extension = /\.[\p{L}\p{N}]{1,16}$/u.exec(sanitized)?.[0] || '';
     const stem=extension?sanitized.slice(0,-extension.length):sanitized;

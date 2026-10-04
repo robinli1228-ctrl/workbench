@@ -1,4 +1,5 @@
 import {terminal} from './store.mjs';
+import { tr } from './i18n.mjs';
 
 /** Model-free inspection only flags suspected stalls: silence is not treated as a hang, and processes are never killed or re-run automatically. */
 export function inspectRunProgress(db,online,now=Date.now()) {
@@ -6,9 +7,9 @@ export function inspectRunProgress(db,online,now=Date.now()) {
   for(const run of db.list('runs')) {
     if(terminal.has(run.status))continue;
     let reason=null;
-    if(!online(run.nodeId))reason='Device is offline; the execution state needs to be verified. It will not be re-dispatched automatically';
+    if(!online(run.nodeId))reason=tr('runMonitor.deviceOfflineExecutionStateNeeds');
     else if(run.status==='waiting_user')continue;
-    else if(now-Date.parse(run.updatedAt||run.createdAt)>10*60*1000)reason='No run events for over 10 minutes; a tool may still be executing. Check the logs and processes';
+    else if(now-Date.parse(run.updatedAt||run.createdAt)>10*60*1000)reason=tr('runMonitor.noRunEventsForOver');
     const old=db.get('runAlerts',run.id);
     if(reason && (old?.reason!==reason || old.status!=='open')) {
       db.put('runAlerts',{id:run.id,projectId:run.projectId,reason,createdAt:new Date(now).toISOString(),status:'open'});changed=true;
