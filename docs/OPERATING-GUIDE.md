@@ -147,7 +147,7 @@ Roles are created per project at runtime. To ship a new starting template, add a
 ```js
 {
   key: 'security-reviewer',
-  name: 'Security Reviewer',
+  name: 'Security-Reviewer',
   mode: 'workspace-write',
   modelHint: 'Use a strong model for critical review',
   instructions: `You are an independent security reviewer. ...`

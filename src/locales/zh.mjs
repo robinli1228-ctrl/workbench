@@ -120,6 +120,7 @@ JSON字段：goal {text,sourceMessageIds}或null，constraints数组，openItems
   'coordinator.plannerRoleMustBeConfigured': '计划角色必须是本项目已配置并启用的角色',
   // src/default-roles.mjs
   'defaultRoles.codeReviewer': '代码复核',
+  'rooms.broadcastNameReserved': '此名称用于群体通知，请使用其他角色名称',
   'defaultRoles.useTopTierModelFor': '关键审核使用高级模型',
   'defaultRoles.youIndependentCodeReviewRole': `你是独立代码复核角色，检查交付代码的正确性、影响范围和验证证据。
 

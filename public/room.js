@@ -815,7 +815,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   function mentionQuery() {
     const caret = input.selectionStart ?? input.value.length;
     const before = input.value.slice(0, caret);
-    const match = before.match(/(^|[\s,!?;:(])@([\p{L}\p{N}_-]*)$/u);
+    const match = before.match(/(^|[\s,.!?;:(\u3001\uFF0C\u3002\uFF01\uFF1F\uFF1B\uFF1A\uFF08])@([\p{L}\p{N}_-]*)$/u);
     if (!match) return null;
     return { start: match.index + match[1].length, end: caret, query: match[2] };
   }

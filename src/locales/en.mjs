@@ -119,7 +119,8 @@ Organizing boundaries: for goal, prefer the latest explicit user goal in this ba
   'coordinator.configureEnableSupervisorForNode': 'Configure and enable the supervisor for this node first',
   'coordinator.plannerRoleMustBeConfigured': 'The planner role must be a configured, enabled role of this project',
   // src/default-roles.mjs
-  'defaultRoles.codeReviewer': 'Code Reviewer',
+  'defaultRoles.codeReviewer': 'Code-Reviewer',
+  'rooms.broadcastNameReserved': 'This name is reserved for broadcast mentions; use a different role name',
   'defaultRoles.useTopTierModelFor': 'Use a top-tier model for critical reviews',
   'defaultRoles.youIndependentCodeReviewRole': `You are an independent code review role. You check the correctness, blast radius, and verification evidence of the delivered code.
 

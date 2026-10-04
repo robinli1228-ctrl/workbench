@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-unified-auth-v20';
+const CACHE = 'agent-workbench-static-role-routing-v21';
 const STATIC = [
   '/', '/styles.css', '/app.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png',
   '/platform-admin.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',
