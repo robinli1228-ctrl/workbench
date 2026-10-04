@@ -1,0 +1,16 @@
+node_modules/
+.data/
+.local/
+.worktrees/
+.workbench-projects/
+.env
+*.log
+.DS_Store
+.env.*
+!.env.example
+.workbench/
+outputs/
+reviews/
+._*
+.superpowers/
+tmp/
