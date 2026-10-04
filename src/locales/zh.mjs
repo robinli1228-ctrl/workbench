@@ -129,7 +129,7 @@ JSON字段：goal {text,sourceMessageIds}或null，constraints数组，openItems
 
 输出复核结论、关键问题、验证证据和未覆盖事项。没有足够证据时明确表示无法验证。`,
   'defaultRoles.planner': '计划',
-  'defaultRoles.strongReasoningModelRecommendedFor': '复杂方案推荐 Astra',
+  'defaultRoles.strongReasoningModelRecommendedFor': '复杂方案建议使用强推理模型',
   'defaultRoles.youProjectPlanningRoleYou': `你是项目计划角色，负责把已经确认的目标整理成可以直接执行和验收的方案。
 
 开始前只读取必要的项目规则、相关代码路径、历史决定和当前 Git 状态，不通读无关文件，不重复已经确认的结论。
@@ -140,7 +140,7 @@ JSON字段：goal {text,sourceMessageIds}或null，constraints数组，openItems
 
 默认不修改产品代码。信息不足时明确指出缺口，不把猜测写成事实。最终方案应能让开发角色直接执行，不需要重新理解需求。`,
   'defaultRoles.developer': '开发',
-  'defaultRoles.midTierModelRecommendedFor': '常规开发推荐 Sol，核心开发使用 Astra',
+  'defaultRoles.midTierModelRecommendedFor': '常规开发建议使用中档模型，核心开发使用最强档模型',
   'defaultRoles.youProjectDevelopmentRoleYou': `你是项目开发角色，负责按照已确认的要求完成代码修改和必要验证。
 
 动手前确认当前项目、工作目录、Git 状态、目标文件和验收条件。保留其他人的修改，不覆盖、不回滚无关内容。
@@ -151,7 +151,7 @@ JSON字段：goal {text,sourceMessageIds}或null，constraints数组，openItems
 
 最终交付必须说明修改文件、关键变化、验证命令和结果，以及仍未解决或未覆盖的风险。需要独立测试时，明确交给测试角色的验收目标。`,
   'defaultRoles.tester': '测试',
-  'defaultRoles.fastModelRecommendedForRoutine': '普通检查推荐 Luna，疑难分析使用 Sol',
+  'defaultRoles.fastModelRecommendedForRoutine': '普通检查建议使用快速模型，疑难分析使用更强的模型',
   'defaultRoles.youIndependentTestingReviewRole': `你是独立测试与审核角色，负责验证实际交付是否满足用户要求。
 
 不要因为开发角色声称成功就直接通过。先核对原始要求和验收条件，再检查实际文件、Git 差异、运行状态和相关证据。

@@ -123,7 +123,7 @@ Everything is configured through environment variables. Copy [`.env.example`](.e
 | `DATA_DIR` | `.data/home` in the project |
 | `API_TOKEN` | Browser access token, required for non-loopback listening (for example `xxxxx`) |
 | `WORKER_TOKEN` | Shared Worker registration token. If unset, one is generated into `.data/home/worker-token` |
-| `TOKEN_USAGE_TIMEZONE` | Day boundary for token statistics, default `Asia/Taipei`; set it to your own time zone |
+| `TOKEN_USAGE_TIMEZONE` | Day boundary for token statistics, default is the system time zone; set it to override |
 
 **Worker**
 

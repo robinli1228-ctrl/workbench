@@ -695,7 +695,6 @@ export default {
   'At intervals': '按间隔',
   'Daily': '每天',
   'Weekly': '每周',
-  'UTC': 'Asia/Taipei',
   'Sunday': '周日',
   'Monday': '周一',
   'Tuesday': '周二',

@@ -123,7 +123,7 @@ npm run worker   # Worker（在另一个终端中）
 | `DATA_DIR` | 项目内的 `.data/home` |
 | `API_TOKEN` | 浏览器访问令牌，监听非回环地址时必填（例如 `xxxxx`） |
 | `WORKER_TOKEN` | Worker 共用的注册令牌。未设置时会生成到 `.data/home/worker-token` |
-| `TOKEN_USAGE_TIMEZONE` | token 统计的日界线时区，默认 `Asia/Taipei`；请设置为你自己的时区 |
+| `TOKEN_USAGE_TIMEZONE` | token 统计的日界线时区，默认使用系统时区；可设置以覆盖 |
 
 **Worker**
 

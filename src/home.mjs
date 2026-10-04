@@ -743,6 +743,8 @@ const server = http.createServer(async (req, res) => {
     Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
     files['/workspace-inspector.js']='workspace-inspector.js';
     files['/state-data.js']='state-data.js';
+    files['/i18n.js']='i18n.js';
+    files['/locales/zh.js']='locales/zh.js';
     const file = files[pathname]; if (!file) return json(res, { error: tr('home.pageNotFound') }, 404);
     const bytes = await readFile(join(base, 'public', file));
     res.writeHead(200, { 'Content-Type': { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' }[extname(file)], 'Cache-Control': 'no-cache' }); res.end(bytes);
