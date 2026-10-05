@@ -1032,6 +1032,7 @@ export default {
   'Developer': '开发',
   'Tester': '测试',
   'General': '常规',
+  'Manage language, browser access, notifications and remote execution in one place.': '统一管理界面语言、浏览器访问、消息通知和远程执行。',
   'Preferences for how the workbench is displayed in this browser.': '设置工作台在此浏览器中的显示方式。',
   'Language': '语言',
   'Choose the language of the workbench interface. The choice applies immediately, is remembered in this browser and is also saved on Home.': '选择工作台界面语言。更改立即生效，会记住在此浏览器中，并同时保存到 Home。',

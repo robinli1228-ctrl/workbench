@@ -26,6 +26,8 @@ The shared collaboration prompt says: when information is sufficient, execute di
 
 ### Three-column workspace and recent artifacts
 
+The global Basic Settings tab combines language, browser API Token, WeChat and remote execution controls. The former `connection` tab identifier normalizes to `general`, so existing entry points continue to open the combined panel. Dialog IDs and backend settings remain unchanged; only the navigation and grouping change.
+
 The project navigation buttons are excluded from automatic DOM translation because their titles and accessible labels contain user-supplied names; repository counts inside them are translated explicitly when rendered. The shared top heading opts out only when displaying a project name, while settings headings and the empty-state label remain translatable. This avoids treating a project named after a UI label as interface text.
 
 The three tabs at the bottom right use line icons for roles, files and resources with no button text, and keep title and aria-label text, a selected state and keyboard switching, shared by desktop and mobile. The brand, project and right-column headers share a light blue-white background (`#f0f5fc`) and a subtle lower shadow; the color applies to headers only.
