@@ -71,7 +71,18 @@ export class Deliveries {
 
   request(run, input) {
     const project = this.db.get('projects', run.projectId);
-    const items = input.items;
+    if (typeof input.requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(input.requestId)) throw new Error(tr('gitDelivery.invalidDeliveryRequestId'));
+    checkCommit(input.commit);
+    let items = input.items;
+    // Project-scoped Runs carry repositories rather than the retired role-level repositoryUrl.
+    // Infer only an unambiguous single repository; preserve legacy delivery fingerprints.
+    if (items === undefined && !run.repositoryUrl && !project?.repoUrl) {
+      if (run.repositories?.length > 1) throw new Error(tr('gitDelivery.projectDeliveryRequiresAuto'));
+      if (run.repositories?.length === 1) {
+        const repo = run.repositories[0];
+        items = [{ id: repo.id, repoUrl: repo.repoUrl, commit: input.commit }];
+      }
+    }
     if (items) {
       if (!Array.isArray(items) || !items.length || items.length !== run.repositories?.length || new Set(items.map(i=>i.id)).size !== items.length) throw new Error(tr('gitDelivery.projectDeliveryMustIncludeAll'));
       for (const item of items) {
@@ -82,8 +93,6 @@ export class Deliveries {
     }
     const repositoryUrl = items?.[0]?.repoUrl || run.repositoryUrl || project?.repoUrl;
     if (!repositoryUrl) throw new Error(tr('gitDelivery.configureGitRepositoryExecutingRole'));
-    if (typeof input.requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(input.requestId)) throw new Error(tr('gitDelivery.invalidDeliveryRequestId'));
-    checkCommit(input.commit);
     const id = createHash('sha256').update(`${run.id}:${input.requestId}`).digest('hex').slice(0, 32);
     const fingerprint = JSON.stringify({ runId: run.id, commit: input.commit, items, repoUrl: repositoryUrl, summary: input.summary || '' });
     const old = this.db.get('deliveries', id);

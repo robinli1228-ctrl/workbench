@@ -3,16 +3,19 @@ import {discussionInstructions} from './discussion-policy.mjs';
 import { tr, isMessage } from './i18n.mjs';
 import { createHash } from 'node:crypto';
 
-export const defaultPlatformPrompt = () => tr('platformPrompts.youRunningInControlledCollaboration');
+export const defaultPlatformPrompt = () => tr('minimal.platformDefault');
 
-export const defaultSupervisorPrompt = () => tr('platformPrompts.youFixedProjectSupervisorYou');
+export const defaultSupervisorPrompt = () => tr('minimal.supervisorDefault');
 
 const PROMPT_LIMIT = 6000;
 /** All runtimes share this execution boundary so adapters and the approved stage cannot contradict each other. */
-export function executionRules(run) {
+export function executionRules(run,{minimal=false}={}) {
   const discussion=discussionInstructions(run);
   if(discussion&&run.turnPurpose&&run.turnPurpose!=='task')return discussion;
   const purpose=run.execution?.purpose;
+  if(minimal)return [purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):'',
+    ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):'',
+    run.planId&&run.reportRequired?tr('platformPrompts.beforeBusinessDeliveryRunWb',{p1:''}):''].filter(Boolean).join('\n');
   return tr('platformPrompts.handleOnlyAssignmentDoNot', { discussion, p2: run.discussionProtocol===2?tr('platformPrompts.useWbDiscussForShort'):tr('platformPrompts.useWbCallForRole'), p3: run.roleSnapshot?.systemSupervisor?tr('platformPrompts.workingRolesMayConsultDiscuss'):'', p4: purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):tr('platformPrompts.unlessMergeStageScheduledDo'), p5: ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):tr('platformPrompts.doNotReleaseOperateProduction'), p6: run.reportRequired?tr('platformPrompts.beforeBusinessDeliveryRunWb', { p1: run.discussionProtocol===2?tr('platformPrompts.wbDiscussAsk'):'' }):'' });
 }
 const DEFAULT_FIELD_LIMIT = 128;
@@ -30,7 +33,21 @@ function promptOrDefault(value, key, fallback) {
   const text = value.trim();
   const legacyDefault = key === 'platformPrompts.youFixedProjectSupervisorYou'
     && LEGACY_SUPERVISOR_DEFAULTS.has(createHash('sha256').update(text).digest('hex'));
-  return isMessage(text, key) || legacyDefault ? fallback() : value;
+  const currentKey = key === 'platformPrompts.youFixedProjectSupervisorYou' ? 'collaboration.supervisor' : 'collaboration.platform';
+  return isMessage(text, key) || isMessage(text, currentKey) || isMessage(text,key==='platformPrompts.youFixedProjectSupervisorYou'?'minimal.supervisorDefault':'minimal.platformDefault') || legacyDefault ? fallback() : value;
+}
+
+/** Only maintained exact defaults are replaced; saved custom text remains original execution input. */
+export function customExecutionPrompt(value,kind='platform') {
+  const text=typeof value==='string'?value:'';
+  return isMessage(text.trim(),kind==='supervisor'?'minimal.supervisorDefault':'minimal.platformDefault')
+    ||isMessage(text.trim(),kind==='supervisor'?'collaboration.supervisor':'collaboration.platform')?'':text;
+}
+
+/** Rolling upgrades keep the old wrapping contract for Workers that have not negotiated minimal instructions. */
+export function legacyExecutionPrompt(value,kind='platform') {
+  if(typeof value==='string'&&!value.trim())return value;
+  return customExecutionPrompt(value,kind)===''?tr(kind==='supervisor'?'collaboration.supervisor':'collaboration.platform'):value;
 }
 
 export function normalizePlatformSettings(record = {}) {
@@ -79,8 +96,8 @@ export function updatePlatformPrompts(record, input, now = new Date().toISOStrin
   const current = normalizePlatformSettings(record);
   return {
     ...current,
-    platformPrompt: promptValue(input.platformPrompt, tr('platformPrompts.platformPrompt')),
-    supervisorPrompt: promptValue(input.supervisorPrompt, tr('platformPrompts.supervisorPrompt')),
+    platformPrompt: input.platformPrompt === undefined ? current.platformPrompt : promptValue(input.platformPrompt, tr('platformPrompts.platformPrompt')),
+    supervisorPrompt: input.supervisorPrompt === undefined ? current.supervisorPrompt : promptValue(input.supervisorPrompt, tr('platformPrompts.supervisorPrompt')),
     defaultSupervisorRuntime: defaultValue(input.defaultSupervisorRuntime ?? current.defaultSupervisorRuntime, tr('platformPrompts.defaultSupervisorCli')),
     defaultSupervisorModel: defaultValue(input.defaultSupervisorModel ?? current.defaultSupervisorModel, tr('platformPrompts.defaultSupervisorModel')),
     defaultSupervisorEffort: defaultValue(input.defaultSupervisorEffort ?? current.defaultSupervisorEffort, tr('platformPrompts.defaultSupervisorReasoningEffort')),

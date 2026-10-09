@@ -10,19 +10,19 @@ export class SessionTools {
 
   session(run,id) {
     const value=this.db.get('roleSessions',id);
-    if(!value || value.projectId!==run.projectId || value.conversationId!==(run.conversationId||run.projectId))throw new Error(tr('sessionTools.sessionDoesNotExistDoes'));
+    if(!value || value.historyClearedAt || value.projectId!==run.projectId || value.conversationId!==(run.conversationId||run.projectId))throw new Error(tr('sessionTools.sessionDoesNotExistDoes'));
     return value;
   }
 
   current(run) {
     const session=run.roleSessionId?this.session(run,run.roleSessionId):null;
     return {roleSessionId:session?.id||null,conversationId:run.conversationId||run.projectId,
-      roleId:run.roleId||null,runId:run.id,status:session?.status||'unavailable',nativeSessionId:session?.nativeSessionId||null};
+      roleId:run.roleId||null,runId:run.id,status:session?.candidateFor?'staged':session?.status||'unavailable',nativeSessionId:session?.nativeSessionId||null};
   }
 
   list(run,{limit=20,cursor=null}={}) {
     if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw new Error(tr('sessionTools.limitMustBe1100'));
-    const rows=this.db.list('roleSessions').filter(s=>s.projectId===run.projectId && s.conversationId===(run.conversationId||run.projectId)).reverse();
+    const rows=this.db.list('roleSessions').filter(s=>!s.historyClearedAt && !s.candidateFor && s.projectId===run.projectId && s.conversationId===(run.conversationId||run.projectId)).reverse();
     const start=cursor?rows.findIndex(s=>s.id===cursor)+1:0;
     if(cursor && start===0)throw new Error(tr('sessionTools.cursorDoesNotBelongCurrent'));
     const page=rows.slice(start,start+limit);

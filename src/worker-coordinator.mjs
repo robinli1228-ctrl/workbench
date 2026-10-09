@@ -5,7 +5,7 @@ export function validateLaunch({ request, roleSnapshot, delivery, currentPlanVer
   if (['cancelled', 'succeeded', 'failed'].includes(request.status)) throw new Error(tr('workerCoordinator.callHasAlreadyEnded'));
   if (request.planVersion && request.planVersion !== currentPlanVersion) throw new Error(tr('workerCoordinator.planVersionHasChanged'));
   for (const key of ['nodeId', 'runtime', 'model', 'revision']) {
-    if ((request.targetSnapshot?.[key] ?? (key === 'revision' ? 1 : null)) !== (roleSnapshot[key] ?? (key === 'revision' ? 1 : null))) throw new Error(tr('workerCoordinator.roleExecutionConfigurationDiffersFrom'));
+    if (((request.executionBinding?.role||request.targetSnapshot)?.[key] ?? (key === 'revision' ? 1 : null)) !== (roleSnapshot[key] ?? (key === 'revision' ? 1 : null))) throw new Error(tr('workerCoordinator.roleExecutionConfigurationDiffersFrom'));
   }
   if (request.kind === 'handoff' && (delivery?.status !== 'ready' || delivery.projectId !== request.projectId)) throw new Error(tr('workerCoordinator.deliveryNotReadyYet'));
   return true;

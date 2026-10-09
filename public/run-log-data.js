@@ -40,7 +40,7 @@ export function partitionRunLog(events = []) {
 
 /** When an old Run has no input snapshot, show only the original task request; do not pass it off as the full CLI input. */
 export function displayRunInput(task, input) {
-  if (input && typeof input.prompt === 'string') return { instructions: input.instructions || '', prompt: input.prompt, complete: true, instructionsInheritedFrom:input.instructionsInheritedFrom||null };
+  if (input && typeof input.prompt === 'string') return { instructions: input.instructions || '', prompt: input.prompt, complete: true, instructionsInheritedFrom:input.instructionsInheritedFrom||null,configurationUpdate:input.configurationUpdate||'' };
   return { instructions: '', prompt: task?.prompt || '', complete: false };
 }
 

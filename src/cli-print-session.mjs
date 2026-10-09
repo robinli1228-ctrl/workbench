@@ -19,7 +19,10 @@ function roleRules(roleName, roleInstructions) {
 
 /** print/stream CLI adapter: tools are auto-approved, with no native per-item approval. */
 export class CliPrintSession {
-  constructor({ cwd, model, mode, emit, roleInstructions = '', roleName = '', effort = null, runtime, env = process.env, resumeSessionId = null, keepAlive = false, inheritInstructions = false }) {
+  constructor({ cwd, model, mode, emit, roleInstructions = '', roleName = '', effort = null, runtime, env = process.env, resumeSessionId = null, keepAlive = false, inheritInstructions = false, maintenance = false, minimalInstructions=false, instructionMessage='',configurationUpdate='' }) {
+    this.minimalInstructions=minimalInstructions;this.instructionMessage=instructionMessage;
+    this.configurationUpdate=configurationUpdate;
+    this.maintenance=maintenance;
     this.keepAlive=keepAlive && ['claude','agy'].includes(runtime);
     this.cwd = cwd; this.model = model; this.mode = mode; this.emit = emit;
     this.roleInstructions = roleInstructions; this.roleName = roleName;
@@ -36,14 +39,22 @@ export class CliPrintSession {
     return process.env.GROK_BIN || 'grok';
   }
   args(prompt) {
-    const rules = roleRules(this.roleName, this.roleInstructions);
+    if(this.configurationUpdate&&['claude','grok'].includes(this.runtime))prompt=[this.configurationUpdate,prompt].join('\n\n');
+    const rules = this.minimalInstructions?this.roleInstructions:roleRules(this.roleName, this.roleInstructions);
+    // A maintenance turn is not allowed to inherit an adapter's ordinary auto-approved write tools.
+    if(this.maintenance) {
+      if(this.runtime!=='grok')throw new Error('Safe maintenance is not yet verified for this adapter.');
+      return ['--cwd',this.cwd,'-m',this.model,'--output-format','streaming-messages-json','--include-partial-messages','--rules',rules,
+        '--tools','read_file','--permission-mode','dontAsk','--no-subagents','--disable-web-search',
+        ...(this.effort?['--reasoning-effort',this.effort]:[]),...(this.resumeSessionId?['--resume',this.resumeSessionId]:[]),'-p',prompt];
+    }
     if (this.runtime === 'agy') {
       const args = ['--output-format', 'stream-json', '--model', this.model, '--dangerously-skip-permissions'];
       if (this.effort) args.push('--effort', this.effort);
       args.push('--mode', 'accept-edits');
       if(this.resumeSessionId)args.push('--conversation',this.resumeSessionId);
       if(this.keepAlive)args.push('--input-format','stream-json');
-      else args.push('--print', this.inheritInstructions && this.resumeSessionId ? prompt : `${rules}\n\n${prompt}`);
+      else args.push('--print', this.minimalInstructions?[this.instructionMessage,prompt].filter(Boolean).join('\n\n'):this.inheritInstructions && this.resumeSessionId ? prompt : `${rules}\n\n${prompt}`);
       return args;
     }
     if (this.runtime === 'claude') {
@@ -101,7 +112,8 @@ export class CliPrintSession {
   }
   /** Agy uses event:user and Claude uses type:user; the rules are attached to Agy only on the first turn or when the rules change. */
   sendTurn(prompt) {
-    const content=this.runtime==='agy' && !this.inheritInstructions ? `${roleRules(this.roleName,this.roleInstructions)}\n\n${prompt}` : prompt;
+    if(this.configurationUpdate&&this.runtime==='claude')prompt=[this.configurationUpdate,prompt].join('\n\n');
+    const content=this.runtime==='agy'?this.minimalInstructions?[this.instructionMessage,prompt].filter(Boolean).join('\n\n'):!this.inheritInstructions?`${roleRules(this.roleName,this.roleInstructions)}\n\n${prompt}`:prompt:prompt;
     const message=this.runtime==='agy' ? {event:'user',message:{role:'user',content}}
       : {type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
     this.proc.stdin.write(`${JSON.stringify(message)}\n`);

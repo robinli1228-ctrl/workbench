@@ -53,7 +53,14 @@ export function buildRunContext({run,task,role={},environment={},conversation=nu
 }
 
 /** The source text is not rewritten by the summarizer; the background carries a coverage range and a fallback marker so it is not mistaken for a new instruction. */
-export function renderRunPrompt(packet) {
+export function renderRunPrompt(packet,{minimal=false}={}) {
+  if(minimal)return [packet.instruction,
+    packet.steering?tr('runContext.userChangedDirectionTurnImmediate'):'',
+    packet.discussionResolution?tr('runContext.questionOnOriginalTaskHas',{p1:JSON.stringify(packet.discussionResolution)}):'',
+    packet.schedulingRoster?.length?tr('runContext.rolesTurnMustCoverFixed',{p1:packet.schedulingRoster.map(r=>`${r.name} [${r.id}]`).join(', ')}):'',
+    ...(packet.references||[]).map(item=>`${item.author} [${item.id}]:\n${item.text}${item.truncated?`\n${item.readCommand}`:''}`),
+    ...(packet.deliveries||[]).map(item=>`${item.id} ${item.commit||''} ${item.summary||''}`),
+    packet.completion?tr('runContext.explicitCompletionRequirement',{completion:packet.completion}):''].filter(Boolean).join('\n\n');
   const lines=[tr('runContext.originalInstructionForTurnVerbatim', { instruction: packet.instruction })];
   if(packet.discussionResolution)lines.push(tr('runContext.questionOnOriginalTaskHas', { p1: JSON.stringify(packet.discussionResolution) }));
   if(packet.schedulingRoster?.length)lines.push(tr('runContext.rolesTurnMustCoverFixed', { p1: packet.schedulingRoster.map(r=>`${r.name} [${r.id}]`).join(tr('runContext.text')) }));

@@ -49,8 +49,8 @@ export async function main(argv = process.argv.slice(2)) {
     const roleSession=Boolean(process.env.WB_ROLE_SESSION_ID),discussion=roleSession&&process.env.WB_DISCUSSION_PROTOCOL==='2';
     if(cmd==='discuss') {
       if(!discussion&&sub!=='peers')throw new Error(tr('wbCli.discussionToolsNotEnabledFor'));
-      if(!['peers','ask','reply','read','resolve','budget_extend'].includes(sub)||rest.length>(sub==='peers'?0:1))throw new Error(discussionHelp());
-      return out(await agentRequest('/api/agent/discussions',{runId:process.env.WB_RUN_ID,action:sub,input:rest.length?JSON.parse(rest[0]):{}}));
+      if(!['peers','ask','reply','read','resolve','budget_extend'].includes(sub)||rest.length>1)throw new Error(discussionHelp());
+      return out(await agentRequest('/api/agent/discussions',{runId:process.env.WB_RUN_ID,action:sub,input:rest.length?JSON.parse(rest[0]):sub==='peers'?{view:'summary'}:{}}));
     }
     if(discussion&&(!cmd||['help','-h','--help'].includes(cmd)))return out(`${helpText()}\n\n${discussionHelp()}`);
     if (cmd === 'capabilities') return out({protocol:2,discussionProtocol:discussion?2:0,sessionTools:1,timerTools:1,tools:['setup catalog',...(roleSession?['discuss peers']:[]),...(discussion?['discuss ask','discuss reply','discuss read','discuss resolve',...(supervisor?['discuss budget_extend']:[])]:[]),'call','wait',...(supervisor?['schedule','timer','role prompt']:[]),'note','git status','memory read','memory write','report','history search','history read','result read','deliver','session current','session list','session summary','session read','chat summary']});
@@ -84,8 +84,14 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'git' && (!sub || sub === 'status')) return out(await gitStatus());
     if (cmd === 'chat' || cmd === 'note') return out(await chatPost(tail.join(' ')));
     if (cmd === 'ask') return out(await askRole(sub, rest.join(' ')));
-    if (cmd === 'wait') return out(await waitForRole(tail.join(' ')));
-    if (cmd === 'deliver') return out(await requestDelivery(sub, rest[0], rest.slice(1).join(' ')));
+    if (cmd === 'wait') {
+      if(tail.length===1&&tail[0].trim().startsWith('{')){const input=JSON.parse(tail[0]);if(Object.keys(input).some(k=>!['summary','requestIds','timeoutSeconds'].includes(k)))throw new Error(tr('minimal.invalidWait'));return out(await waitForRole(input.summary,input));}
+      return out(await waitForRole(tail.join(' ')));
+    }
+    if (cmd === 'deliver') {
+      if (['help', '-h', '--help'].includes(sub)) return out(tr('wbTools.deliveryUsage'));
+      return out(await requestDelivery(sub, rest[0], rest.slice(1).join(' ')));
+    }
     if (cmd === 'call') {
       const values = {}, flags = { '--role': 'role', '--kind': 'kind', '--request-id': 'requestId', '--text': 'text', '--delivery-id': 'deliveryId' };
       for (let i = 0; i < tail.length; i += 2) {

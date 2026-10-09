@@ -4,6 +4,8 @@ import { terminal } from './store.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
 import {outcomeFor,runFailureKind} from './run-reports.mjs';
 import { tr } from './i18n.mjs';
+import {createHash} from 'node:crypto';
+import {currentContinuation,waitDependencies} from './coordination-wait.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
 
@@ -45,6 +47,7 @@ export class RoleCalls {
       kind: input.kind, summary: input.summary.trim(), sourceMessageId: input.sourceMessageId || null,
       originNodeId: input.originNodeId || null, parentRequestId: input.parentRequestId || null,
       continuationOf: input.continuationOf || null, deliveryId: input.deliveryId || null,
+      ...(input.waitRequestIds?{waitRequestIds:[...input.waitRequestIds]}:{}),...(input.wakeReason?{wakeReason:input.wakeReason}:{}),
       planId: input.planId || null, planVersion: input.planVersion || null, stepId: input.stepId || null };
     const fingerprint = JSON.stringify(normalized);
     return this.db.transaction(() => {
@@ -73,13 +76,13 @@ export class RoleCalls {
       }
       const continued = normalized.continuationOf ? this.db.get('coordinationRequests', normalized.continuationOf) : null;
       if (continued) rootRequestId = continued.rootRequestId || continued.id;
-      if (this.db.list('coordinationRequests').filter(r => r.rootRequestId === rootRequestId).length >= 20) throw new Error(tr('roleCalls.collaborationChainHasReached20'));
+      if (input.kind!=='continuation'&&this.db.list('coordinationRequests').filter(r => r.rootRequestId === rootRequestId&&r.kind!=='continuation').length >= 20) throw new Error(tr('roleCalls.collaborationChainHasReached20'));
       if (normalized.sourceMessageId && this.db.get('roomMessages', normalized.sourceMessageId)?.projectId !== input.projectId) throw new Error(tr('roleCalls.sourceMessageDoesNotBelong'));
       if (normalized.deliveryId && this.db.get('deliveries', normalized.deliveryId)?.projectId !== input.projectId) throw new Error(tr('roleCalls.deliveryDoesNotBelongProject'));
       if (this.db.get('settings', 'main')?.paused) throw new Error(tr('roleCalls.remoteExecutionPaused'));
       const now = new Date().toISOString();
       return this.db.put('coordinationRequests', { ...normalized, fingerprint,
-        consultRound:continued ? (continued.consultRound||0)+1 : 0,
+        consultRound:continued ? (continued.consultRound||0)+(input.wakeReason==='timeout'?0:1) : 0,
         scheduledJobId:input.scheduledJobId||continued?.scheduledJobId||this.db.get('coordinationRequests',normalized.parentRequestId||'')?.scheduledJobId||null,
         attachments: input.attachments || continued?.attachments || [], execution:input.execution || continued?.execution || null,
         rootRequestId, targetSnapshot: continued?.targetSnapshot || { ...role, revision: role.revision || 1 },
@@ -91,13 +94,13 @@ export class RoleCalls {
   /** Backfill a stable call identity for an existing group-chat task without replacing the original role snapshot or restarting the task. */
   adoptTask(taskId) {
     const task = this.db.get('tasks', taskId);
-    if (!task || task.origin !== 'chat') return null;
+    if (!task || task.origin !== 'chat' || task.switchOperationId) return null;
     if (task.requestId) return this.db.get('coordinationRequests', task.requestId);
     const id = `task:${task.id}`, now = new Date().toISOString();
     return this.db.transaction(() => {
       const existing = this.db.get('coordinationRequests', id);
       const record = existing || this.db.put('coordinationRequests', { id, projectId: task.projectId,
-        rootRequestId: id, targetRoleId: task.roleId, targetSnapshot: task.roleSnapshot,
+        rootRequestId: id, targetRoleId: task.roleId, targetSnapshot: task.roleSnapshot,executionBinding:task.executionBinding||null,
         kind: task.deliveryId ? 'handoff' : 'direct', deliveryId: task.deliveryId || null, sourceMessageId: task.sourceMessageId, summary: task.prompt,
         attachments:task.attachments||[],scheduledJobId:task.scheduledJobId||null,
         taskId, currentRunId: task.currentRunId || null,
@@ -120,7 +123,7 @@ export class RoleCalls {
       const task = this.db.createTask({ projectId: r.projectId, title: r.summary.slice(0, 80), prompt: r.summary,
         model: role.model, mode: role.mode });
       this.db.put('tasks', { ...task, origin: 'chat', sourceMessageId: r.sourceMessageId,
-        requestId: r.id, roleId: role.id, roleSnapshot: role, deliveryId: r.deliveryId,
+        requestId: r.id, roleId: role.id, roleSnapshot: role, executionBinding:r.executionBinding||null, deliveryId: r.deliveryId,
         continuationRunId: previous?.currentRunId || null,
         requiresCoordination: r.kind !== 'direct', contextPrepared:['consult','continuation'].includes(r.kind), planId: r.planId, planVersion: r.planVersion, stepId: r.stepId,
         execution:r.execution || null,attachments:r.attachments || [],reportRequired:true,scheduledJobId:r.scheduledJobId||null });
@@ -133,18 +136,43 @@ export class RoleCalls {
   }
 
   /** Waiting is only a business state; the execution slot cannot be released until the Worker confirms the turn is complete. */
-  wait(run, summary) {
+  wait(run, summary, options={}) {
+    return this.db.transaction(()=>{
     const r = this.forRun(run);
-    if (!r || terminal.has(run.status) || callTerminal.has(r.status)) throw new Error(tr('roleCalls.currentRunCannotWaitFor'));
-    if (!this.db.list('coordinationRequests').some(child => child.parentRequestId === r.id)) throw new Error(tr('roleCalls.currentRunHasNoChild'));
+    const current=this.db.get('runs',run.id);
+    if (!r || !current||terminal.has(current.status)||current.stopRequested||current.roleId!==r.targetRoleId||r.currentRunId&&r.currentRunId!==run.id||callTerminal.has(r.status)||r.continuationRequestId) throw new Error(tr('roleCalls.currentRunCannotWaitFor'));
+    const children=this.dependencies(r),available=new Set(children.map(c=>c.id)),requestIds=options.requestIds??children.map(c=>c.id);
+    if (!Array.isArray(requestIds)||!requestIds.length||requestIds.some(id=>!available.has(id))) throw new Error(tr('roleCalls.currentRunHasNoChild'));
     if (typeof summary !== 'string' || !summary.trim() || summary.length > 8000) throw new Error(tr('roleCalls.provideResumeSummary18000'));
-    return this.db.put('coordinationRequests', { ...r, currentRunId: run.id, status: 'waiting_call', resumeSummary: summary.trim(), updatedAt: new Date().toISOString() });
+    const timeoutSeconds=options.timeoutSeconds??1800;
+    if(!Number.isSafeInteger(timeoutSeconds)||timeoutSeconds<60||timeoutSeconds>86400)throw new Error(tr('minimal.invalidWait'));
+    // A lost tool response/retry cannot extend the same wait deadline or replace its dependency set.
+    if(r.status==='waiting_call') {
+      if(JSON.stringify([...new Set(requestIds)].sort())!==JSON.stringify([...(r.waitRequestIds||requestIds)].sort()))throw new Error(tr('minimal.invalidWait'));
+      return r;
+    }
+    return this.db.put('coordinationRequests', { ...r, currentRunId: run.id, status: 'waiting_call', resumeSummary: summary.trim(),
+      waitRequestIds:[...new Set(requestIds)],waitDeadlineAt:new Date(Date.now()+timeoutSeconds*1000).toISOString(),updatedAt:new Date().toISOString() });
+    });
+  }
+
+  /** Shared by call and discussion recovery so inherited dependencies cannot be bypassed. */
+  dependencies(request) {return waitDependencies(this.db,request);}
+
+  /** Persisted deadlines survive Home restart; expired waits never stop or replay the receiving CLI. */
+  expireWaits(time=Date.now()) {
+    let changed=false;
+    for(const request of this.db.list('coordinationRequests').filter(r=>r.status==='waiting_call'&&r.waitDeadlineAt)) {
+      const before=JSON.stringify(this.db.get('coordinationRequests',request.id));this.resume(request.id,time);
+      changed=before!==JSON.stringify(this.db.get('coordinationRequests',request.id))||changed;
+    }
+    return changed;
   }
 
   /** A call completes only on the Worker's turn-final state; after the child results return, the original session is resumed with exactly one new run. */
   finish(runId) {
     const run = this.db.get('runs', runId);
-    if (!run || !terminal.has(run.status)||run.discussionDeliveryId||run.discussionWaiting) return;
+    if (!run || !terminal.has(run.status)||run.discussionDeliveryId||run.discussionWaiting||run.switchOperationId) return;
     let r = run.requestId ? this.db.get('coordinationRequests', run.requestId)
       : this.db.list('coordinationRequests').find(c => c.currentRunId === runId);
     if (!r || (r.currentRunId && r.currentRunId !== runId) || r.status === 'cancelled') return;
@@ -158,7 +186,9 @@ export class RoleCalls {
     if (r.parentRequestId) this.resume(r.parentRequestId);
     if (r.continuationOf && callTerminal.has(r.status)) {
       let previousId = r.continuationOf;
-      for (let i = 0; previousId && i < 20; i++) {
+      const seen=new Set();
+      for (; previousId&&!seen.has(previousId);) {
+        seen.add(previousId);
         const prior = this.db.get('coordinationRequests', previousId);
         if (!prior || callTerminal.has(prior.status)) break;
         this.db.put('coordinationRequests', { ...prior, status: r.status, result: r.result, outcome:r.outcome,runStatus:r.runStatus,failureKind:r.failureKind||null,reportSummary:r.reportSummary,error:r.error||null,updatedAt: r.updatedAt });
@@ -175,24 +205,31 @@ export class RoleCalls {
     });
   }
 
-  resume(requestId) {
-    const parent = this.db.get('coordinationRequests', requestId);
-    if (parent?.status !== 'waiting_call' || parent.continuationRequestId || parent.steeringTaskId) return;
+  resume(requestId,time=Date.now()) {
+    return this.db.transaction(()=>{
+    const parent = currentContinuation(this.db,requestId);
+    if (parent?.status !== 'waiting_call' || parent.continuationRequestId || parent.steeringTaskId || this.db.get('tasks',parent.taskId)?.status==='cancelled') return;
     if(this.db.get('tasks',parent.taskId)?.discussionWait||this.db.list('discussionIntents').some(i=>i.taskId===parent.taskId&&['queued','blocked'].includes(i.status)))return;
-    if (this.db.list('executionPlans').some(p=>p.parentRequestId===requestId && ['running','cancelled'].includes(p.status))) return;
+    if (this.db.list('executionPlans').some(p=>p.parentRequestId===parent.id && ['running','cancelled'].includes(p.status))) return;
     if (this.db.get('runs', parent.currentRunId)?.status !== 'succeeded') return;
-    const children = this.db.list('coordinationRequests').filter(r => r.parentRequestId === requestId && !r.continuationOf);
-    if (!children.length || children.some(r => !callTerminal.has(r.status))) return;
+    const children = this.dependencies(parent);
+    if (!children.length) return;
+    const ready=children.every(r=>callTerminal.has(r.status)),expired=parent.waitDeadlineAt&&Date.parse(parent.waitDeadlineAt)<=time;
+    if(!ready&&!expired)return;
+    const reason=ready?'results':'timeout';
+    if(!parent.waitEvent)this.db.put('coordinationRequests',{...parent,waitEvent:{id:`wait:${parent.id}`,reason,observedAt:new Date(time).toISOString(),requestIds:children.map(r=>r.id)}});
     if (this.db.get('settings', 'main')?.paused) return;
     try {
-      const header = tr('roleCalls.assistanceResultsContextOnly', { resumeSummary: parent.resumeSummary });
-      const next = this.create({ id: `${parent.id}:resume`, projectId: parent.projectId, targetRoleId: parent.targetRoleId,
+      const header = reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')}):tr('roleCalls.assistanceResultsContextOnly', { resumeSummary: parent.resumeSummary });
+      const next = this.create({ id: `resume:${createHash('sha256').update(parent.id).digest('hex')}`, projectId: parent.projectId, targetRoleId: parent.targetRoleId,
         kind: 'continuation', continuationOf: parent.id, sourceMessageId: parent.sourceMessageId,
         parentRequestId: parent.parentRequestId, deliveryId: parent.deliveryId,attachments:parent.attachments||[],
         planId:parent.planId,planVersion:parent.planVersion,stepId:parent.stepId,execution:parent.execution,
+        wakeReason:reason,waitRequestIds:reason==='timeout'?children.filter(c=>!callTerminal.has(c.status)).map(c=>c.id):[],
         summary: `${header}${packCoordinationResults(children, Math.max(0, 12000 - header.length))}`.slice(0, 12000) });
-      this.db.put('coordinationRequests', { ...parent, continuationRequestId: next.id, updatedAt: new Date().toISOString() });
-    } catch (error) { this.db.put('coordinationRequests', { ...parent, waitingReason: error.message }); }
+      this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), continuationRequestId: next.id, updatedAt: new Date().toISOString() });
+    } catch (error) { this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), waitingReason: error.message }); }
+    });
   }
 
   /** The stop scope and the command are fixed in the same transaction; an HTTP retransmission can only resend the original scope and cannot rescan for new runs. */
@@ -221,9 +258,15 @@ export class RoleCalls {
 
   /** Cancelling the chain first blocks new dispatches, then returns the truly active runs so Home can send stop commands. */
   cancel(requestId) {
-    const root = this.db.get('coordinationRequests', requestId);
+    return this.db.transaction(()=>{
+    let root = this.db.get('coordinationRequests', requestId);
     if (!root) throw new Error(tr('roleCalls.callNotFound'));
-    const ids = new Set([requestId]);
+    const seen=new Set();
+    while(root.continuationOf&&!seen.has(root.id)) {
+      seen.add(root.id);const previous=this.db.get('coordinationRequests',root.continuationOf);
+      if(!previous||previous.projectId!==root.projectId||previous.targetRoleId!==root.targetRoleId)throw new Error('Invalid continuation cancellation scope.');root=previous;
+    }
+    const ids = new Set([root.id]);
     const all = this.db.list('coordinationRequests').filter(r => r.projectId === root.projectId);
     for (let i = 0; i < all.length; i++) for (const r of all) if (ids.has(r.parentRequestId) || ids.has(r.continuationOf)) ids.add(r.id);
     const runs = [];
@@ -254,5 +297,6 @@ export class RoleCalls {
       }
     });
     return [...new Set(runs)];
+    });
   }
 }

@@ -1,6 +1,7 @@
 import { WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { WarmSessions, warmSessionFingerprint } from './warm-sessions.mjs';
+import {RoleSwitchWorker,recordSwitchOutput} from './role-switch-worker.mjs';
 import {discussionPolicy,validatedDiscussionConfigurations,supportsDiscussion} from './discussion-policy.mjs';
 import {inspectArtifactFiles} from './run-artifacts.mjs';
 import { writeTurnContext, turnToolCommand } from './turn-context.mjs';
@@ -12,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Store, terminal } from './store.mjs';
+import {validateCliCapacity,reservedTerminalSlots} from './device-capacity.mjs';
 import { readRunDocument } from './run-document.mjs';
 import { CodexSession } from './codex.mjs';
 import { CliPrintSession } from './cli-print-session.mjs';
@@ -31,13 +33,13 @@ import { outboxBatch } from './worker-outbox.mjs';
 import { prepareProjectSpace } from './project-space.mjs';
 import { publishProjectDelivery, receiveProjectDelivery, fetchExecutionDeliveries } from './project-delivery.mjs';
 import { collectCcusageReport } from './token-usage.mjs';
-import { nativeEnvironment, findSessionHistory, projectTerminalLock, processAlive, releaseTerminalSession, resumeEnvironment } from './terminal-resume.mjs';
+import { nativeEnvironment, findSessionHistory, projectTerminalLock, processAlive, releaseTerminalSession, resumeEnvironment, freshTerminalArgs } from './terminal-resume.mjs';
 import { receiveAttachments } from './attachments.mjs';
 import { inspectExecutionRepositories, prepareExecutionWorkspace, executionConflict, verifyExecutionVersions } from './execution-workspace.mjs';
-import { createRunInput, instructionDelivery } from './run-input.mjs';
+import { createRunInput, instructionDelivery,executionInstructionComponents,executionEnvironmentHint } from './run-input.mjs';
 import { inspectGitRepositoryVersion } from './git-version.mjs';
 import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseline.mjs';
-import { runOrganizer, preemptOrganizers } from './conversation-organizer.mjs';
+import { runOrganizer } from './conversation-organizer.mjs';
 import { runtimeGitEnvironment } from './hosting.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
 
@@ -68,7 +70,7 @@ const token = process.env.WORKER_TOKEN || (await readFile(join(base, '.data/home
 const sessions = new Map();
 let organizerRunning = 0;
 const organizerControllers = new Set();
-const capacity = Math.max(1, Number(process.env.WORKER_CONCURRENCY || 2));
+let capacity = validateCliCapacity(db.get('settings','cli-capacity')?.capacity??Number(process.env.WORKER_CONCURRENCY||2));
 let ws, paused = true, quitting = false, registered = false, readySent = false, reconnectCleanup;
 const eventSent = new Map();
 let runtimes = await inspectRuntimes(), probing;
@@ -84,6 +86,15 @@ async function refreshRuntimes() {
   return probing;
 }
 const send = m => { if (ws?.readyState === 1) ws.send(JSON.stringify(m)); };
+const configurationQueries=new Map();
+/** This control-channel query is not an agent tool: Home resolves the sender from the registered Worker and Run. */
+function currentExecutionConfiguration(runId) {
+  return new Promise((resolve,reject)=>{
+    if(ws?.readyState!==1)return reject(new Error('Home disconnected before execution configuration was read.'));
+    const id=randomUUID(),timer=setTimeout(()=>{configurationQueries.delete(id);reject(new Error('Execution configuration query timed out; no old configuration was used.'));},20000);
+    configurationQueries.set(id,{resolve,reject,timer});send({type:'execution_config',id,runId});
+  });
+}
 /** Events are kept until acknowledged; after a reconnect, old events are reconciled first, and only then may Home dispatch new tasks. */
 function flushOutbox() {
   if(!registered||ws?.readyState!==1)return;
@@ -93,11 +104,24 @@ function flushOutbox() {
   }
   if(!events.length&&!readySent){readySent=true;send({type:'ready'});}
 }
-const warmSessions = new WarmSessions({max:4,changed:()=>send({type:'warm_sessions',sessions:warmSessions.snapshot()})});
+const warmSessions = new WarmSessions({max:capacity,changed:()=>{send({type:'warm_sessions',sessions:warmSessions.snapshot()});reportCapacity();}});
+/** Slot reservations count before asynchronous preparation; retained processes are reclaimed, never active work. */
+function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalSlots(db,identity.nodeId);}
+function reportCapacity(){send({type:'capacity_state',capacity,usage:{active:sessions.size,retained:warmSessions.snapshot().length,organizer:organizerRunning,terminal:reservedTerminalSlots(db,identity.nodeId)}});}
+async function applyCapacity(value) {
+  capacity=validateCliCapacity(value);db.put('settings',{id:'cli-capacity',capacity});warmSessions.max=capacity;
+  await warmSessions.trim(occupiedSlots());reportCapacity();return {capacity};
+}
+const roleSwitchWorker=new RoleSwitchWorker({db,warmSessions,activeSessions:sessions,roots,runtimes:()=>runtimes,readHistory:async id=>{
+  if(!/^[a-zA-Z0-9_-]{1,100}$/.test(id))throw new Error('Invalid CLI switch history ID.');
+  const response=await fetch(homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,'')+`/api/agent/cli-switches/${id}/history`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(30000)});
+  if(!response.ok)throw new Error('Unable to retrieve CLI switch history.');return response.text();
+}});
 const inside = (root, path) => { const rel = relative(root, path); return !rel || (!rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && rel !== '..' && !isAbsolute(rel)); };
 
 /** The local outbox is written to disk first and deleted only after Home confirms, so "sent" is never treated as "received". */
 function emit(runId, type, payload) {
+  recordSwitchOutput(db,runId,type,payload);
   const r = db.get('runs', runId);
   if (!r) return;
   const seq = (r.seq || 0) + 1;
@@ -140,26 +164,36 @@ async function command(m) {
   const signature = JSON.stringify({ type: c.type, runId: c.runId, decision: c.decision, approvalId: c.approvalId, task: c.type === 'launch' ? m.task : null, projectRoot: c.type === 'launch' ? m.run.projectRoot : undefined,
     roleSnapshot: c.type === 'launch' ? m.run.roleSnapshot : undefined, sourceRunId: c.type === 'launch' ? m.run.sourceRunId : undefined,
     roleSessionId:c.type==='launch'?m.run.roleSessionId:undefined,resumeNativeSessionId:c.type==='launch'?m.run.resumeNativeSessionId:undefined,
+    switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash,
     contextVersion:c.type==='launch'?m.run.contextVersion:undefined,turnPurpose:m.run.turnPurpose,permissionProfile:m.run.permissionProfile,
     requestId: m.run.requestId, continuationRunId: m.run.continuationRunId, deliveryId: c.deliveryId || m.run.deliveryId, deliveryCommit: m.delivery?.commit, planVersion: m.run.planVersion,
     ...(m.run.execution ? {execution:m.run.execution}:{}),...(m.run.attachments?.length ? {attachments:m.run.attachments}:{}) });
   const prior = db.get('commands', c.id);
   if (prior) {
     if (prior.signature !== signature) throw new Error(tr('worker.duplicateCommandParameterConflict'));
+    if (!prior.deferred || db.get('runs',c.runId)) {
     if (!db.get('runs', c.runId)) {
       db.put('runs', { id: c.runId, seq: 0 });
       emit(c.runId, 'status', { status: 'reconciling', error: tr('worker.commandWasRegisteredButExecution') });
     }
     send({ type: 'command_ack', id: c.id }); return;
+    }
+  }
+  // Home may have sent a launch just before the limit changed. Keep the same command/session pinned and retry, not fail it.
+  if(c.type==='launch'&&!db.get('runs',c.runId)&&occupiedSlots()>=capacity) {
+    db.put('commands',{id:c.id,signature,runId:c.runId,type:c.type,deferred:true});
+    send({type:'launch_deferred',id:c.id,runId:c.runId});return;
   }
   db.put('commands', { id: c.id, signature, runId: c.runId, type: c.type, deliveryId: c.deliveryId });
   if (c.type === 'launch') {
     if (db.get('runs', c.runId)) { send({ type: 'command_ack', id: c.id }); return; }
-    db.put('runs', { id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: 0 });
+    db.put('runs', { id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: 0,
+      switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash });
     send({ type: 'command_ack', id: c.id });
     let bridge, ending=false;
     try {
       const policy=discussionPolicy(m.run),discussionTurn=policy.turnPurpose!=='task';
+      roleSwitchWorker.assertLaunch(m.run);
       const discussionEnabled=supportsDiscussion({capabilities:discussionCapabilities(),runtimes},m.run.roleSnapshot?.runtime,m.run.roleSnapshot?.model);
       if((discussionTurn||m.run.discussionProtocol===2)&&(!discussionEnabled||m.run.discussionProtocol!==2))throw new Error(tr('worker.discussionProtocolV2NotEnabled'));
       if (paused || m.paused) throw new Error(tr('worker.remoteCommandsPaused'));
@@ -168,12 +202,11 @@ async function command(m) {
       if (m.run.requestId) validateLaunch({ request: m.request, roleSnapshot: m.run.roleSnapshot, delivery: m.delivery, currentPlanVersion: m.run.planVersion });
       const issue = runtimeIssue({ capabilities: { runtimeDiscovery: true }, runtimes }, m.run.roleSnapshot?.runtime || 'codex', m.task.model);
       if (issue) throw new Error(issue);
-      if (sessions.size >= capacity || db.list('runs').some(r => r.id !== c.runId && r.status === 'reconciling')) throw new Error(tr('worker.workerFullHasProcessesAwaiting'));
+      if (db.list('runs').some(r => r.id !== c.runId && r.status === 'reconciling')) throw new Error(tr('worker.workerFullHasProcessesAwaiting'));
       if (executionConflict(m.run,db.list('runs').filter(r=>r.id!==c.runId && !terminal.has(r.status)).map(r=>({...r,nodeId:identity.nodeId})))) throw new Error(tr('worker.projectWorkspaceExclusiveOperationStill'));
       const reservation = { preparing: true, stopRequested: false };
       sessions.set(c.runId, reservation);
       emit(c.runId, 'status', { status: 'starting' });
-      if(sessions.size+organizerRunning>capacity)await preemptOrganizers(organizerControllers);
       if(reservation.stopRequested || paused || ws?.readyState!==1){emit(c.runId,'status',{status:'interrupted',error:tr('worker.interruptedByStopDisconnectWhile')});return;}
       let executionRepositories = m.run.repositories || [];
       for (const repository of executionRepositories) if (repository.localRoot) await projectRoot(repository.localRoot);
@@ -196,6 +229,7 @@ async function command(m) {
         ? await receiveDelivery({ root: await projectRoot(m.run.projectRoot), runId: c.runId, delivery: m.delivery })
         : source && m.task.mode === 'read-only'
         ? { folder: source.workspace, baseCommit: source.baseCommit }
+        : m.run.switchOperationId ? {folder:await projectRoot(m.run.resumeWorkspace||m.run.projectRoot),baseCommit:null}
         : await workspace(m.project, m.run);
       const { folder, baseCommit } = prepared;
       if(m.run.resumeNativeSessionId && folder!==m.run.resumeWorkspace)throw new Error(tr('worker.nativeSessionWorkingDirectoryDiffers'));
@@ -244,7 +278,7 @@ async function command(m) {
       wbEnv.WB_REPOSITORIES = JSON.stringify(executionRepositories);
       wbEnv.WB_TURN_PURPOSE=policy.turnPurpose;
       wbEnv.WB_DISCUSSION_PROTOCOL=m.run.discussionProtocol===2?'2':'0';
-      const keepAlive=Boolean(m.run.roleSessionId && ['codex','claude','agy'].includes(runtimeType));
+      const keepAlive=Boolean(!m.run.switchOperationId && m.run.roleSessionId && ['codex','claude','agy'].includes(runtimeType));
       const contextFile=join(bridge.directory,'turn-context.json');
       wbEnv.WB_TURN_CONTEXT=contextFile;
       const wbCommand=turnToolCommand(contextFile,join(base,'src','wb-cli.mjs'),process.execPath,{boundCli:runtimeType==='codex'&&m.run.discussionProtocol===2});
@@ -260,14 +294,18 @@ async function command(m) {
       db.put('runtimeEnvironments',{id:c.runId,env:resumeEnvironment(wbEnv)});
       emit(c.runId, 'status', { nativeSession: native });
       // The turn purpose goes into the dynamic input, so switching between Q&A and business stages does not needlessly recycle the warm process.
-      const roleInstructions = tr('worker.projectDescriptionRepositoriesForRun', { p1: composeAgentInstructions(m.platformPrompt, m.run.roleSnapshot?.instructions || ''), p2: String(m.project.description||'').slice(0,4000), p3: executionRepositories.filter(r=>r.localRoot).map(r=>`${r.key}: ${r.localRoot}`).join('\n'), p4: runtimeGuidance(runtimeType), p5: m.task.runtimeInstructions||'' });
+      const executionConfiguration=m.run.minimalInstructions===1?await currentExecutionConfiguration(c.runId):null;
+      if(reservation.stopRequested||paused||quitting||ws?.readyState!==1)throw new Error(tr('worker.interruptedByStopDisconnectBefore'));
+      const components=executionConfiguration?executionInstructionComponents({run:m.run,configuration:executionConfiguration}):undefined;
+      const roleInstructions = components?Object.values(components).filter(Boolean).join('\n\n'):tr('worker.projectDescriptionRepositoriesForRun', { p1: composeAgentInstructions(m.platformPrompt,m.run.roleSnapshot?.instructions??''), p2: String(m.project.description||'').slice(0,4000), p3: executionRepositories.filter(r=>r.localRoot).map(r=>`${r.key}: ${r.localRoot}`).join('\n'), p4: runtimeGuidance(runtimeType), p5: m.task.runtimeInstructions||'' });
       const priorInput=db.list('runs').filter(r=>r.id!==c.runId && r.projectId===m.run.projectId && r.roleSessionId===m.run.roleSessionId && r.nativeSession?.id===m.run.resumeNativeSessionId).at(-1);
-      let instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name});
+      let instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,components});
       const fingerprint=warmSessionFingerprint({folder,runtimeType,model:m.task.model,effort,roleName:m.run.roleSnapshot?.name,roleInstructions,env:resumeEnvironment(wbEnv)});
       let session;
-      const options={ cwd: folder, writableRoots:repositoryRoots, attachments: inputFiles, model: m.task.model, mode: m.task.mode, effort, runtime: runtimeType, autoApprove: m.run.roleSnapshot?.autoApprove !== false,keepAlive,
+      const options={ cwd: folder, writableRoots:repositoryRoots, attachments: inputFiles, model: m.task.model, mode: m.task.mode, effort, runtime: runtimeType, autoApprove: m.run.roleSnapshot?.autoApprove !== false,keepAlive,maintenance:Boolean(m.run.switchOperationId),
         resumeSessionId:m.run.resumeNativeSessionId || null,
         inheritInstructions:Boolean(instructions.inheritedFrom),
+        minimalInstructions:Boolean(executionConfiguration),instructionMessage:instructions.instructions,configurationUpdate:instructions.configurationUpdate||'',
         roleInstructions,
         roleName: m.run.roleSnapshot?.name, env: wbEnv, emit: (type, p) => {
         if(type==='status'&&p.nativeSessionId&&m.run.resumeNativeSessionId&&p.nativeSessionId!==m.run.resumeNativeSessionId) {
@@ -289,6 +327,7 @@ async function command(m) {
               try { p={...p,repositoryVersions:await inspectExecutionRepositories(executionRepositories)}; }
               catch(error) { p={...p,status:'failed',error:tr('worker.unableVerifyExecutionArtifacts', { message: error.message })}; }
             }
+            if(m.run.minimalInstructions===1)p={...p,configurationState:p.status==='succeeded'?'applied':'failed',...(p.error?{configurationError:p.error}:{})};
             finalStatus=p;endRun();
           };
           void (retained?complete():afterProcessExit(session.proc,complete));
@@ -296,7 +335,7 @@ async function command(m) {
       } };
       session=keepAlive?await warmSessions.take(m.run.roleSessionId,fingerprint):null;
       reservation.session=session;
-      await warmSessions.trim(sessions.size+organizerRunning);
+      await warmSessions.trim(occupiedSlots());
       await writeTurnContext(contextFile,wbEnv);
       if(reservation.stopRequested || paused || quitting || ws?.readyState!==1) {
         session?.shutdown();await afterProcessExit(session?.proc,()=>{});
@@ -305,17 +344,20 @@ async function command(m) {
       }
       if(session && !warmSessions.alive(session)){await afterProcessExit(session.proc,()=>{});session=null;}
       const sessionReuse=session?'process':m.run.resumeNativeSessionId?'resume':'new';
-      if(session)instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,processReused:true});
+      if(session)instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,processReused:true,components});
       if(session)session.reuse(options);else session=new Session(options);
       sessions.set(c.runId, session);
-      emit(c.runId,'status',{sessionReuse,instructionFingerprint:instructions.fingerprint,instructionsInheritedFrom:instructions.inheritedFrom});
+      emit(c.runId,'status',{sessionReuse,instructionFingerprint:instructions.fingerprint,instructionsInheritedFrom:instructions.inheritedFrom,
+        ...(executionConfiguration?{instructionVersions:executionConfiguration.versions,instructionComponents:instructions.components,configurationState:'starting',...(instructions.configurationEventProtocol?{configurationEventProtocol:instructions.configurationEventProtocol}:{})}:{})});
       const context = source ? tr('worker.referencedExecutionSFilesLocated', { workspace: source.workspace, p2: source.baseCommit || tr('worker.plainDirectory'), p3: source.workspace === folder && m.run.projectScope ? tr('worker.currentDirectorySharedDirectorySame') : m.task.mode === 'read-only' ? tr('worker.currentDirectorySourceWorkspacePerform') : tr('worker.directoryReadOnlyChangesFor') }) : '';
-      const setupHint = m.run.roleSnapshot?.systemSupervisor ? tr('worker.supervisorSetupToolsCanBe', { wbCommand }) : '';
+      const setupHint = !m.run.switchOperationId && m.run.roleSnapshot?.systemSupervisor ? tr('worker.supervisorSetupToolsCanBe', { wbCommand }) : '';
       const boundary = m.run.projectScope && !m.run.deliveryId && !m.run.execution?.isolated ? tr('worker.projectDirectoryCurrentDirectoryListed', { root }) : tr('worker.originalProjectDirectoryItMay', { root });
       const attachmentHint = inputFiles.length ? tr('worker.userAttachmentsForTurnUntrusted', { p1: inputFiles.map(a => JSON.stringify({name:a.name,path:a.path,mime:a.mime})).join('\n') }) : '';
-      const toolGuide=tr('worker.wbCommandPrefixForTurn', { wbCommand });
-      const input = createRunInput({ taskPrompt:m.task.prompt, boundary, context, runtimeGuidance:toolGuide, setupHint, attachmentHint,
-        executionInstructions:executionRules(m.run),roleInstructions:instructions.instructions });
+      const toolGuide=executionConfiguration?tr('minimal.toolEntry',{wbCommand}):tr('worker.wbCommandPrefixForTurn', { wbCommand });
+      const taskPrompt=[m.task.prompt,executionConfiguration?.dependencyEvents?.length?tr('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):''].filter(Boolean).join('\n\n');
+      const environmentHint=executionConfiguration?executionEnvironmentHint({cwd:folder,projectRoot:root,boundary,repositories:executionRepositories}):'';
+      const input = createRunInput({ minimal:Boolean(executionConfiguration),environmentHint,configurationUpdate:instructions.configurationUpdate,taskPrompt, boundary, context, runtimeGuidance:toolGuide, setupHint, attachmentHint,
+        executionInstructions:m.run.switchOperationId?'Read-only CLI handoff maintenance. Return the requested final answer; do not execute business work or write handoff files.':executionRules(m.run),roleInstructions:instructions.instructions });
       if(instructions.inheritedFrom)input.instructionsInheritedFrom=instructions.inheritedFrom;
       emit(c.runId, 'input', input);
       const result = session.start(input.prompt);
@@ -325,7 +367,7 @@ async function command(m) {
       await bridge.stop(); bridge = null;
       const rec = {...db.get('runs', c.runId),...finalStatus};
       try {
-        if(!discussionTurn)await writeHandoff({
+        if(!discussionTurn&&!m.run.switchOperationId)await writeHandoff({
           auto: true,
           done: rec.result || rec.error || tr('worker.turnStatus', { p1: rec.status || 'ended' }),
           next: rec.status === 'succeeded' ? tr('worker.nextRoleShouldFirstRun') : tr('worker.turnDidNotSucceedCheck'),
@@ -340,19 +382,19 @@ async function command(m) {
       } catch (error) {
         emit(c.runId, 'log', { text: tr('worker.writtenHandoffWasNotRecorded', { message: error.message }) });
       }
-      sessions.delete(c.runId);
       if(finalStatus?.status==='succeeded' && keepAlive && !paused && !quitting && !session.stopping) {
+        sessions.delete(c.runId);
         warmSessions.keep(m.run.roleSessionId,fingerprint,session,{projectId:m.run.projectId,roleId:m.run.roleId,runtime:runtimeType});
-        await warmSessions.trim(sessions.size+organizerRunning);
-      } else {session.shutdown();await afterProcessExit(session.proc,()=>{});}
-      emit(c.runId,'status',{...finalStatus,runtimeRetained:warmSessions.owns(session.proc?.pid),...(m.run.discussionProtocol===2?{discussionCleanup:{turnEnded:true,toolsClosed:true,effectsKnown:false}}:{})});
+        await warmSessions.trim(occupiedSlots());
+      } else {session.shutdown();await afterProcessExit(session.proc,()=>{});sessions.delete(c.runId);}
+      emit(c.runId,'status',{...finalStatus,runtimeRetained:warmSessions.owns(session.proc?.pid),processSettled:!warmSessions.owns(session.proc?.pid),...(m.run.discussionProtocol===2?{discussionCleanup:{turnEnded:true,toolsClosed:true,effectsKnown:false}}:{})});
     } catch (e) {
       ending=true;
       const entry = sessions.get(c.runId),s=entry?.preparing?entry.session:entry;
       if (typeof s?.finish === 'function') { s.finish('failed', e.message); s.shutdown(); await afterProcessExit(s.proc, () => sessions.delete(c.runId)); }
       await bridge?.stop();bridge=null;
-      emit(c.runId, 'status', { status: 'failed', error: e.message }); sessions.delete(c.runId);
-    } finally { await bridge?.stop(); if (sessions.get(c.runId)?.preparing) sessions.delete(c.runId); }
+      emit(c.runId, 'status', { status: 'failed', error: e.message,...(m.run.minimalInstructions===1?{configurationState:'failed',configurationError:e.message}:{}) }); sessions.delete(c.runId);
+    } finally { await bridge?.stop(); if (sessions.get(c.runId)?.preparing) sessions.delete(c.runId);reportCapacity(); }
     return;
   }
   if (c.type === 'delivery_publish') {
@@ -376,7 +418,7 @@ async function command(m) {
   }
   if (c.type === 'stop') {
     let r = db.get('runs', c.runId);
-    if (!r) { r = db.put('runs', { id: c.runId, seq: 0 }); emit(c.runId, 'status', { status: 'interrupted', error: tr('worker.taskHadNotStartedWas') }); }
+    if (!r) { r = db.put('runs', { id: c.runId, seq: 0 }); emit(c.runId, 'status', { status: 'interrupted',processSettled:true,error: tr('worker.taskHadNotStartedWas') }); }
     else if (!terminal.has(r.status)) {
       const s = sessions.get(c.runId);
       if (s?.preparing) s.stopRequested = true;
@@ -397,10 +439,25 @@ async function command(m) {
 }
 /** Only serves plain text files inside registered workspaces and does not follow symlinks that escape them. */
 async function query(m) {
+  if(m.action==='cli_capacity') {
+    try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
+  }
   try {
+    if(['role_switch_inspect','role_switch_prepare','role_switch_release','role_switch_status'].includes(m.action)) {
+      if(m.path?.nodeId!==identity.nodeId)throw new Error('CLI switch addressed to another Worker.');
+      const method=m.action.slice('role_switch_'.length);
+      const result=method==='status'?roleSwitchWorker.status(m.path.operationId):await roleSwitchWorker[method](m.path);
+      send({type:'reply',id:m.id,result});return;
+    }
+    if(m.action==='open_project_folder'){
+      if(platform()!=='darwin'||resolveNodeKind(process.env.NODE_KIND,platform())!=='local')throw new Error(tr('folders.localDeviceRequired'));
+      const folder=await projectRoot(m.path);
+      await exec('/usr/bin/open',[folder],{timeout:10000});
+      send({type:'reply',id:m.id,result:{opened:true,path:folder}});return;
+    }
     if(m.action==='conversation_summary') {
       if(paused || quitting)throw new Error(tr('worker.remoteOperationsPaused'));
-      if(sessions.size+organizerRunning>=capacity)throw new Error(tr('worker.organizerDeviceCurrentlyHasNo'));
+      if(occupiedSlots()>=capacity)throw new Error(tr('worker.organizerDeviceCurrentlyHasNo'));
       const {snapshot,config}=m.path||{};
       if(!snapshot?.projectId || !Array.isArray(snapshot.delta) || !config?.model)throw new Error(tr('worker.conversationOrganizerParametersIncomplete'));
       if(JSON.stringify(snapshot).length>50000)throw new Error(tr('worker.conversationOrganizerInputTooLong'));
@@ -410,8 +467,8 @@ async function query(m) {
       const controller=new AbortController();organizerControllers.add(controller);
       let release;controller.finished=new Promise(resolve=>{release=resolve;});
       send({type:'organizer_busy',count:organizerRunning});
-      try {await warmSessions.trim(sessions.size+organizerRunning);send({type:'reply',id:m.id,result:await runOrganizer({snapshot,config,dataRoot:data,signal:controller.signal})});}
-      finally {organizerControllers.delete(controller);organizerRunning--;send({type:'organizer_busy',count:organizerRunning});release();}
+      try {await warmSessions.trim(occupiedSlots());reportCapacity();send({type:'reply',id:m.id,result:await runOrganizer({snapshot,config,dataRoot:data,signal:controller.signal})});}
+      finally {organizerControllers.delete(controller);organizerRunning--;send({type:'organizer_busy',count:organizerRunning});release();reportCapacity();}
       return;
     }
     if(m.action==='attachments_receive') {
@@ -423,16 +480,37 @@ async function query(m) {
       const files=await receiveAttachments({items:input.items,workspace,transferId:input.transferId,home,token});
       send({type:'reply',id:m.id,result:{files}});return;
     }
-    if(m.action==='terminal_prepare' || m.action==='terminal_release') {
+    if(m.action==='terminal_prepare' || m.action==='terminal_release' || m.action==='terminal_new') {
       const id=m.path?.id;
       if(typeof id!=='string' || !/^[a-zA-Z0-9-]{8,100}$/.test(id))throw new Error(tr('worker.invalidTakeoverId'));
       const prior=db.get('terminalSessions',id);
       if(m.action==='terminal_release') {
         // Even if the prepare request timed out, the revocation is recorded so that a delayed request cannot re-prepare an old link.
         releaseTerminalSession(db,id);
+        reportCapacity();
         send({type:'reply',id:m.id,result:{released:true}});return;
       }
       if(paused)throw new Error(tr('worker.remoteExecutionPaused2'));
+      if(m.action==='terminal_new') {
+        const input=m.path,role=input.roleSettings;
+        if(input.nodeId!==identity.nodeId||typeof input.projectId!=='string'||!input.projectId||typeof input.roleId!=='string'||!input.roleId||!role)throw new Error(tr('worker.invalidTakeoverId'));
+        const issue=runtimeIssue({capabilities:{runtimeDiscovery:true},runtimes},role.runtime,role.model);if(issue)throw new Error(issue);
+        const busy=()=>db.list('runs').some(r=>r.status==='reconciling'||r.projectId===input.projectId&&!terminal.has(r.status))||db.list('workerRoleSwitches').some(s=>s.projectId===input.projectId&&s.roleId===input.roleId&&!s.released);
+        if(busy())throw new Error(tr('home.projectStillExecutingOnDevice'));
+        await warmSessions.closeProject(input.projectId);
+        const workspace=await projectRoot(input.workspace),nativeSession={...await nativeEnvironment(role.runtime),id:null};
+        const instructions=[composeAgentInstructions(input.platformPrompt,[role.instructions,input.supervisorPrompt].filter(Boolean).join('\n\n')),tr('roleTerminal.manualContext')].filter(Boolean).join('\n\n');
+        const roleSettings={runtime:role.runtime,model:role.model,effort:role.effort||null,instructions};
+        freshTerminalArgs({...roleSettings,workspace});
+        // Preparation can race a dispatch, a duplicate request or revocation while directories are checked.
+        if(db.get('terminalSessions',id)||projectTerminalLock(db,input.projectId,identity.nodeId)||busy())throw new Error(tr('worker.executionStateHasChangedCheck'));
+        if(occupiedSlots()>=capacity)throw new Error(tr('capacity.full'));
+        const info={id,kind:'new',projectId:input.projectId,roleId:input.roleId,nodeId:identity.nodeId,status:'prepared',workspace,nativeSession,roleSettings,privateEnv:resumeEnvironment(process.env),createdAt:new Date().toISOString()};
+        db.put('terminalSessions',info);
+        try{await warmSessions.trim(occupiedSlots());}catch(e){releaseTerminalSession(db,id);reportCapacity();throw e;}
+        if(db.get('terminalSessions',id)?.status!=='prepared')throw new Error(tr('worker.executionStateHasChangedCheck'));
+        reportCapacity();send({type:'reply',id:m.id,result:{id,kind:'new',workspace,user:nativeSession.user,runtime:role.runtime,model:role.model,sessionId:null,launcher:[process.execPath,join(base,'src','terminal-resume.mjs'),join(data,'worker.sqlite'),id]}});return;
+      }
       const r=db.get('runs',m.runId);
       if(r)await warmSessions.closeProject(r.projectId);
       if(!r || !terminal.has(r.status) || sessions.has(r.id) || processAlive(r.pid))throw new Error(tr('worker.originalCliHasNotExited'));
@@ -440,6 +518,7 @@ async function query(m) {
       const lock=projectTerminalLock(db,r.projectId,identity.nodeId);
       if(lock && lock.id!==id)throw new Error(tr('worker.projectHasBeenTakenOver'));
       if(prior)throw new Error(tr('worker.takeoverIdHasAlreadyBeen'));
+      if(occupiedSlots()>=capacity)throw new Error(tr('capacity.full'));
       const workspace=await projectRoot(r.workspace);
       const privateEnv=db.get('runtimeEnvironments',r.id)?.env;
       if(!privateEnv)throw new Error(tr('worker.olderExecutionDidNotSave'));
@@ -450,7 +529,11 @@ async function query(m) {
       const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,createdAt:new Date().toISOString()};
       // A dispatch/revocation that occurred during the file check must be rejected again.
       if(db.get('terminalSessions',id) || projectTerminalLock(db,r.projectId,identity.nodeId) || db.list('runs').some(other=>other.projectId===r.projectId&&!terminal.has(other.status)))throw new Error(tr('worker.executionStateHasChangedCheck'));
+      if(occupiedSlots()>=capacity)throw new Error(tr('capacity.full'));
       db.put('terminalSessions',info);
+      try{await warmSessions.trim(occupiedSlots());}catch(e){releaseTerminalSession(db,id);reportCapacity();throw e;}
+      if(db.get('terminalSessions',id)?.status!=='prepared')throw new Error(tr('worker.executionStateHasChangedCheck'));
+      reportCapacity();
       send({type:'reply',id:m.id,result:{id,workspace,user:nativeSession.user,runtime:nativeSession.runtime,sessionId:nativeSession.id,launcher:[process.execPath,join(base,'src','terminal-resume.mjs'),join(data,'worker.sqlite'),id]}});return;
     }
     if(m.action==='execution_receive') {
@@ -628,15 +711,22 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { minimalInstructions:1,terminalFresh:1,cliCapacity:1,roleSwitch:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
-  ws.on('message', bytes => {
+  ws.on('message', async bytes => {
     try {
       const m = JSON.parse(bytes);
+      if(m.type==='execution_config') {
+        const query=configurationQueries.get(m.id);if(!query)return;
+        configurationQueries.delete(m.id);clearTimeout(query.timer);m.error?query.reject(new Error(m.error)):query.resolve(m.result);return;
+      }
       if (m.type === 'registered') {
         paused = m.paused;
         // Home announces its language; run payloads carry their own, this covers Worker-originated text outside a run.
         if (m.language) try { setLanguage(m.language); } catch { /* keep current */ }
+        const connection=ws;
+        if(m.capacity!==undefined)await applyCapacity(m.capacity);
+        if(ws!==connection||connection.readyState!==1)return;
         registered=true;readySent=false;eventSent.clear();clearTimeout(reconnectCleanup);
         if(paused)void warmSessions.closeAll();
         for (const r of db.list('runs').filter(r => !terminal.has(r.status))) emit(r.id, 'status', { status: r.status });
@@ -653,6 +743,7 @@ function connect() {
   });
   ws.on('error', e => console.error(tr('worker.connectionError'), e.message));
   ws.on('close', () => {
+    for(const query of configurationQueries.values()){clearTimeout(query.timer);query.reject(new Error('Home disconnected during execution configuration query.'));}configurationQueries.clear();
     paused=true;registered=false;readySent=false;eventSent.clear();
     // A brief network blip keeps idle processes, still subject to the original identity fingerprint and idle deadline; an explicit pause/quit closes them immediately.
     clearTimeout(reconnectCleanup);reconnectCleanup=setTimeout(()=>{void warmSessions.closeAll();},30000);reconnectCleanup.unref();

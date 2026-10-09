@@ -7,6 +7,12 @@ const allowed = new Set(['/api/agent/setup/catalog', '/api/agent/setup/propose',
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 allowed.add('/api/agent/discussions');
 
+/** Sender identity belongs to the persisted Run; target role/session identifiers remain valid tool input. */
+export function assertAgentSender(input) {
+  if (['sender','senderId','senderName','senderRoleId','fromRoleId','sourceRoleId','ownerRoleId','projectId','nodeId'].some(key=>Object.hasOwn(input||{},key)))
+    throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));
+}
+
 /** A managed CLI may be bridged through the current Run, but must not inherit the Worker's control-plane token. */
 export function agentProcessEnv(base, additions) {
   const env={...base,...additions};
@@ -63,6 +69,7 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend 
             const path = join(directory, file), info = await lstat(path);
             if (!info.isFile() || info.size > 65536) throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
             const input = JSON.parse(await readFile(path, 'utf8'));
+            assertAgentSender(input.payload);
             if (!canSend()) throw new Error(tr('agentBridge.executionHasStoppedRemoteOperations'));
             if(input.payload?.runId&&input.payload.runId!==runId)throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));
             response = { result: await homeRequest(home, token, input.pathname, { ...input.payload, runId }) };

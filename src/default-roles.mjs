@@ -4,31 +4,35 @@ export function defaultRoleTemplates() {
   return Object.freeze([
     {
       key: 'reviewer',
+      responsibility: tr('collaboration.reviewerResponsibility'),
       name: tr('defaultRoles.codeReviewer'),
       mode: 'workspace-write',
       modelHint: tr('defaultRoles.useTopTierModelFor'),
-      instructions: tr('defaultRoles.youIndependentCodeReviewRole')
+      instructions: tr('collaboration.reviewerInstructions')
     },
     {
       key: 'planner',
+      responsibility: tr('collaboration.plannerResponsibility'),
       name: tr('defaultRoles.planner'),
       mode: 'workspace-write',
       modelHint: tr('defaultRoles.strongReasoningModelRecommendedFor'),
-      instructions: tr('defaultRoles.youProjectPlanningRoleYou')
+      instructions: tr('collaboration.plannerInstructions')
     },
     {
       key: 'developer',
+      responsibility: tr('collaboration.developerResponsibility'),
       name: tr('defaultRoles.developer'),
       mode: 'workspace-write',
       modelHint: tr('defaultRoles.midTierModelRecommendedFor'),
-      instructions: tr('defaultRoles.youProjectDevelopmentRoleYou')
+      instructions: tr('collaboration.developerInstructions')
     },
     {
       key: 'tester',
+      responsibility: tr('collaboration.testerResponsibility'),
       name: tr('defaultRoles.tester'),
       mode: 'workspace-write',
       modelHint: tr('defaultRoles.fastModelRecommendedForRoutine'),
-      instructions: tr('defaultRoles.youIndependentTestingReviewRole')
+      instructions: tr('collaboration.testerInstructions')
     }
   ]);
 }

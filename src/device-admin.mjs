@@ -3,7 +3,7 @@ import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
-import { desktopTunnelSpec, normalizeDesktopConfig } from './remote-desktop.mjs';
+import { desktopTunnelSpec, normalizeDesktopConfig, probeExistingDesktopTunnel } from './remote-desktop.mjs';
 import { tr } from './i18n.mjs';
 
 /** Probes only the local loopback listener and never touches the public desktop port. */
@@ -20,8 +20,8 @@ function localPortOpen(port) {
 
 /** Fixed commands run over SSH; the password is passed through the askpass environment and never enters arguments or public records. */
 export class DeviceAdmin {
-  constructor({ db, credentials, base, data, workerToken, change, homePort, spawnProcess = spawn, tunnelRestartMs = 5000, hostPlatform = process.platform, probePort = localPortOpen }) {
-    Object.assign(this, { db, credentials, base, data, workerToken, change, spawnProcess, tunnelRestartMs, hostPlatform, probePort });
+  constructor({ db, credentials, base, data, workerToken, change, homePort, spawnProcess = spawn, tunnelRestartMs = 5000, hostPlatform = process.platform, probePort = localPortOpen, probeExistingTunnel = probeExistingDesktopTunnel }) {
+    Object.assign(this, { db, credentials, base, data, workerToken, change, spawnProcess, tunnelRestartMs, hostPlatform, probePort, probeExistingTunnel });
     this.homePort = Number(homePort || process.env.PORT || 4317);
     this.running = new Set();
     this.tunnels = new Map();
@@ -98,11 +98,11 @@ export class DeviceAdmin {
     const children = [...this.tunnels.values()];
     this.tunnels.clear();
     for (const child of children) { try { child.kill('SIGTERM'); } catch {} }
-    for (const child of this.desktopTunnels.values()) { try { child.kill('SIGTERM'); } catch {} }
+    for (const child of this.desktopTunnels.values()) { if (!child.external) try { child.kill('SIGTERM'); } catch {} }
     this.desktopTunnels.clear();
   }
 
-  /** Check the server desktop port first, then set up a dedicated tunnel; a local listener must not be misreported as the remote xrdp being available. */
+  /** Check remote xrdp first, then create a dedicated forward or verify an existing one without taking ownership. */
   async prepareDesktop(id) {
     if (this.hostPlatform !== 'darwin') throw new Error(tr('deviceAdmin.oneClickRemoteDesktopOnly'));
     const device = this.db.get('devices', id);
@@ -117,13 +117,22 @@ const finish=ready=>{socket.destroy();console.log(JSON.stringify({ready}));};
 socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('error',()=>finish(false));socket.once('timeout',()=>finish(false));`, 15000);
     if (!remote.ready) throw new Error(tr('deviceAdmin.serverXrdpNotListeningOn', { desktopPort: config.desktopPort }));
     let tunnel = this.desktopTunnels.get(id);
+    if (tunnel?.external && (await this.probeExistingTunnel(device))?.pid !== tunnel.pid) {
+      this.desktopTunnels.delete(id); tunnel = null;
+    }
     if (tunnel && (tunnel.exitCode !== null || !(await this.probePort(config.desktopLocalPort)))) {
       this.desktopTunnels.delete(id);
-      try { tunnel.kill('SIGTERM'); } catch {}
+      if (!tunnel.external) try { tunnel.kill('SIGTERM'); } catch {}
       tunnel = null;
     }
     if (!tunnel) {
-      if (await this.probePort(config.desktopLocalPort)) throw new Error(tr('deviceAdmin.localPortInUseBy', { desktopLocalPort: config.desktopLocalPort }));
+      if (await this.probePort(config.desktopLocalPort)) {
+        const existing = await this.probeExistingTunnel(device);
+        if (!existing) throw new Error(tr('deviceAdmin.localPortInUseBy', { desktopLocalPort: config.desktopLocalPort }));
+        // The operator's existing forward may also carry other services; reuse it but never stop it on Home exit or device edits.
+        this.desktopTunnels.set(id, {...existing, external:true, exitCode:null});
+        return {localPort:config.desktopLocalPort, deviceName:device.name};
+      }
       const spec = desktopTunnelSpec(device, credential.keyPath);
       tunnel = this.spawnProcess(spec.command, spec.args, { stdio: 'ignore' });
       this.desktopTunnels.set(id, tunnel);
@@ -152,6 +161,7 @@ socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('err
     const config = normalizeDesktopConfig(device);
     const tunnel = this.desktopTunnels.get(id);
     if (!config || !tunnel || tunnel.exitCode !== null || !(await this.probePort(config.desktopLocalPort))) throw new Error(tr('deviceAdmin.sshDesktopTunnelNotReady'));
+    if (tunnel.external && (await this.probeExistingTunnel(device))?.pid !== tunnel.pid) throw new Error(tr('deviceAdmin.sshDesktopTunnelNotReady'));
     await new Promise((resolve, reject) => {
       // A new connection would not reuse the desktop credentials saved in Windows App; only launch the client and let the user click an existing connection.
       const child = this.spawnProcess('open', ['-a', 'Windows App'], { stdio: 'ignore' });
@@ -186,7 +196,7 @@ socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('err
     if (!old || ['host','port','user','homeUrl'].some(key => old[key] !== value[key]) || input.password || input.keyPath) this.restartTunnel(id);
     if (old && ['desktopUser','desktopPort','desktopLocalPort','host','port','user'].some(key => old[key] !== value[key])) {
       const tunnel = this.desktopTunnels.get(id); this.desktopTunnels.delete(id);
-      try { tunnel?.kill('SIGTERM'); } catch {}
+      if (!tunnel?.external) try { tunnel?.kill('SIGTERM'); } catch {}
     }
     this.change(); return value;
   }

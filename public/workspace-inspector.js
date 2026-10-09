@@ -1,12 +1,12 @@
 import { t, dateLocale } from './i18n.js';
 import {renderMarkdown} from './markdown.js';
-import {UI_ICON,deviceIconEl,workerDisplayName} from './role-icons.js';
+import {UI_ICON,deviceIconEl,workerDisplayName,workerKind} from './role-icons.js';
 
 const el=(tag,className,text)=>Object.assign(document.createElement(tag),{className:className||'',...(text!==undefined?{textContent:text}:{})});
 const date=value=>value?new Date(value).toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'Modified time unknown';
 
 /** Reuses existing file reading; late responses must not overwrite new content after switching projects or closing the dialog. */
-export function createWorkspaceInspector({api,getProject,getData,openDevices}) {
+export function createWorkspaceInspector({api,getProject,getData,openDevices,openProjectFolder}) {
   const names=['roles','artifacts','resources'],titles={roles:'Role Settings',artifacts:'Recent Outputs',resources:'Resources'};
   const panels=Object.fromEntries(names.map(name=>[name,document.querySelector(`#inspector-${name}`)]));
   const tabs=[...document.querySelectorAll('.inspector-tabs [role="tab"]')],list=document.querySelector('#recent-artifact-list'),note=document.querySelector('#artifacts-note');
@@ -67,7 +67,13 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices}) {
     const next=getProject()?.id||null;
     if(next!==projectId){projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
     const devices=document.querySelector('#inspector-device-list');devices.replaceChildren();
-    for(const worker of getData().workers||[]){const row=el('button','inspector-device-row');row.type='button';row.append(deviceIconEl(worker),el('span','',workerDisplayName(worker)),el('small',worker.online?'is-online':'',worker.online?'Online':'Offline'));row.addEventListener('click',openDevices);devices.append(row);}
+    for(const worker of getData().workers||[]){
+      const row=el('button','inspector-device-row'),local=workerKind(worker)==='local';row.type='button';
+      const name=workerDisplayName(worker);
+      row.title=local?t('Open project folder on {name}',{name}):name;
+      row.append(deviceIconEl(worker),el('span','',name),el('small',worker.online?'is-online':'',worker.online?'Online':'Offline'));
+      row.addEventListener('click',()=>local?void openProjectFolder(worker,row):openDevices());devices.append(row);
+    }
     if(!devices.childElementCount)devices.append(el('p','artifact-list-note','No devices registered'));
     void load();
   }};

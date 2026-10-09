@@ -12,6 +12,7 @@ import { steeringWaitReason } from './role-steering.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
 import { tr } from './i18n.mjs';
+import {switchSettled,roleSwitchWaitReason,effectiveExecutionRole,isSwitchMaintenance} from './role-switch-policy.mjs';
 
 export const terminal = new Set(['succeeded', 'failed', 'interrupted']);
 const now = () => new Date().toISOString();
@@ -57,6 +58,7 @@ export class Store {
     return this.transaction(() => {
       const project = this.get('projects', id);
       if (!project) throw new Error(tr('store.projectNotFound2'));
+      if(this.list('roleSwitches').some(op=>op.projectId===id&&(!switchSettled(op)||!op.steps.released)))throw new Error('Project still has an unsettled CLI switch.');
       if(this.list('discussionThreads').some(t=>t.projectId===id&&t.status==='open')
         ||this.list('discussionDeliveries').some(d=>d.projectId===id&&['queued','dispatched','runtime_accepted','reconciling'].includes(d.status))
         ||this.list('discussionIntents').some(i=>i.projectId===id&&i.status==='queued'))throw new Error(tr('store.projectStillHasUnfinishedDiscussions'));
@@ -89,6 +91,8 @@ export class Store {
       for(const kind of ['discussionThreads','discussionMessages','discussionDeliveries','discussionActions','discussionIntents'])for(const record of this.list(kind).filter(r=>r.projectId===id))this.remove(kind,record.id);
       for(const kind of ['conversationContexts','summaryJobs','summaryQueues'])for(const record of this.list(kind).filter(r=>r.projectId===id))this.remove(kind,record.id);
       this.remove('projects', id);
+      for(const op of this.list('roleSwitches').filter(op=>op.projectId===id))this.remove('roleSwitches',op.id);
+      for(const history of this.list('roleSwitchHistory').filter(history=>history.projectId===id))this.remove('roleSwitchHistory',history.id);
       return { id: project.id, name: project.name, deleted: true };
     });
   }
@@ -116,8 +120,10 @@ export class Store {
       if (prior) { if (prior.fingerprint !== fingerprint) throw new Error(tr('store.commandidParameterConflict')); return this.get('runs', prior.runId); }
       if (this.get('settings', 'main')?.paused) throw new Error(tr('store.remoteCommandsPaused'));
       if (this.get('workers',nodeId)?.capabilities?.projectSpace !== 1) throw new Error(tr('store.upgradeTargetWorkerSupportShared'));
-      const task = this.get('tasks', taskId);
-      if (!task) throw new Error(tr('store.taskNotFound'));
+      const storedTask = this.get('tasks', taskId);
+      if (!storedTask) throw new Error(tr('store.taskNotFound'));
+      const task = storedTask.executionBinding ? {...storedTask,roleSnapshot:effectiveExecutionRole(this,storedTask),model:effectiveExecutionRole(this,storedTask).model} : storedTask;
+      const switchReason=roleSwitchWaitReason(this,task);if(switchReason)throw new Error(switchReason);
       const steeringReason=steeringWaitReason(this,task);
       if(steeringReason)throw new Error(steeringReason);
       if(task.origin==='chat' && this.get('workers',nodeId)?.capabilities?.managedResume!==1)throw new Error(tr('store.upgradeTargetWorkerSupportRole'));
@@ -129,10 +135,12 @@ export class Store {
       if (!binding) throw new Error(tr('store.bindProjectWorkspaceOnNode'));
       const repositories = projectRepositories(this, task.projectId, nodeId).filter(r=>!task.execution?.repositoryKeys||task.execution.repositoryKeys.includes(r.key));
       if (!task.roleSnapshot?.systemSupervisor && repositories.some(repo => !repo.localRoot)) throw new Error(tr('store.projectRepositoriesOnDeviceNot'));
-      const roleSession = task.origin === 'chat' && (task.roleSnapshot?.id || task.roleId)
+      const roleSession = isSwitchMaintenance(task) ? this.get('roleSessions',task.switchSessionId) : task.origin === 'chat' && (task.roleSnapshot?.id || task.roleId)
         ? new RoleSessions(this).getOrCreate({projectId:task.projectId,conversationId:task.conversationId||task.projectId,
           roleId:task.roleSnapshot?.id||task.roleId,nodeId,runtime:task.roleSnapshot?.runtime||'codex',model:task.model,workspaceRoot:binding.localRoot}) : null;
       const run = { id: randomUUID(), taskId, projectId: task.projectId, nodeId, repositoryId,turnPurpose:'task',directionRevision:task.directionRevision||1,
+        ...(isSwitchMaintenance(task)?{switchOperationId:task.switchOperationId,switchPhase:task.switchPhase,switchHandoffHash:task.switchHandoffHash}:{}),
+        ...(storedTask.executionBinding?{originalRoleSnapshot:storedTask.roleSnapshot,executionBinding:storedTask.executionBinding,inputTask:task}:{}),
         discussionProtocol:supportsDiscussion(this.get('workers',nodeId),task.roleSnapshot?.runtime,task.roleSnapshot?.model)?2:0,peerStatus:this.get('workers',nodeId)?.capabilities?.peerStatus===1?1:0,permissionProfile:'business',
         roleSessionId:roleSession?.id||null,resumeNativeSessionId:roleSession?.nativeSessionId||null,resumeNativeSession:roleSession?.nativeSession||null,resumeWorkspace:roleSession?.workspace||null,
         projectScope: true, repositories, attachments: task.attachments || [], execution:task.execution||null,reportRequired:Boolean(task.reportRequired),scheduledJobId:task.scheduledJobId||null,
@@ -140,7 +148,7 @@ export class Store {
         projectRoot: binding.localRoot, model: task.model, mode: task.mode, status: 'queued', lastSeq: 0, createdAt: now(), updatedAt: now(),
         requestId: task.requestId || null, deliveryId: task.deliveryId || null, continuationRunId: task.continuationRunId || null, planId: task.planId || null, planVersion: task.planVersion || null, stepId: task.stepId || null,
         ...(task.origin === 'chat' ? { roleId: task.roleId, roleSnapshot: task.roleSnapshot, sourceMessageId: task.sourceMessageId, sourceRunId: task.sourceRunId, hop: task.hop || 0 } : {}) };
-      if(task.origin==='chat') {
+      if(task.origin==='chat'&&!isSwitchMaintenance(task)) {
         const context=this.get('conversationContexts',`${task.projectId}:${task.conversationId||task.projectId}`);
         const source=task.sourceMessageId?this.get('roomMessages',task.sourceMessageId):null;
         const messages=this.list('roomMessages').filter(message=>message.projectId===task.projectId && (message.conversationId||message.projectId)===(task.conversationId||task.projectId) && message.kind!=='summary');
@@ -157,7 +165,7 @@ export class Store {
       }
       if(roleSession)new RoleSessions(this).claim(roleSession.id,run.id);
       this.put('runs', run);
-      this.put('tasks', { ...task, status: 'in_progress', currentRunId: run.id });
+      this.put('tasks', { ...storedTask, status: 'in_progress', currentRunId: run.id });
       if (task.requestId) {
         const request = this.get('coordinationRequests', task.requestId);
         if (!request || request.status !== 'queued') throw new Error(tr('store.callWasCancelledItsStatus'));

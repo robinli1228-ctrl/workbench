@@ -159,17 +159,20 @@ export async function askRole(name, text) {
 /** The platform handles cross-node communication; local tools neither connect to other CLIs directly nor read their workspaces. */
 export async function callRole({ role, kind = 'consult', requestId, text, deliveryId }) {
   if (!role || !text || !requestId) throw new Error(tr('wbTools.roleTextStableRequestId'));
-  if (!['consult', 'handoff'].includes(kind)) throw new Error(tr('wbTools.kindMustBeConsultHandoff'));
+  if (!['consult', 'handoff','direct'].includes(kind)) throw new Error(tr('wbTools.kindMustBeConsultHandoff'));
   return homeFetch('/api/agent/calls', { runId: context().runId, role, kind,
     requestId: `${context().runId}:${requestId}`, text, deliveryId });
 }
 
-export async function waitForRole(summary) {
-  return homeFetch('/api/agent/wait', { runId: context().runId, summary });
+export async function waitForRole(summary,options={}) {
+  return homeFetch('/api/agent/wait', { runId: context().runId, summary,requestIds:options.requestIds,timeoutSeconds:options.timeoutSeconds });
 }
 
 /** Only submits a delivery request; once the user approves it, the Worker pushes the specified SHA. */
 export async function requestDelivery(requestId, commit, summary) {
+  if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(requestId)
+    || typeof commit !== 'string' || (commit !== 'auto' && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit))
+    || typeof summary !== 'string' || !summary.trim() || summary.length > 8000) throw new Error(tr('wbTools.deliveryUsage'));
   if (commit === 'auto') {
     const repositories = JSON.parse(process.env.WB_REPOSITORIES || '[]');
     if (!repositories.length) throw new Error(tr('wbTools.currentRunHasNoDeliverable'));
@@ -241,4 +244,4 @@ export async function writeHandoff(fields = {}, override = {}) {
   return { ok: true, path: file, latest: join(dir, 'handoffs', 'LATEST.md') };
 }
 
-export const helpText = () => tr('wbTools.builtInCollaborationToolsWorkbench');
+export const helpText = () => [tr('minimal.teamHelp'),tr('minimal.waitHelp'),tr('wbTools.builtInCollaborationToolsWorkbench')].filter(Boolean).join('\n\n');

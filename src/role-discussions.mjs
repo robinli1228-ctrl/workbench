@@ -7,6 +7,8 @@ import {executionConflict} from './execution-workspace.mjs';
 import {discussionPolicy,supportsDiscussion,discussionTargetStatus} from './discussion-policy.mjs';
 import {buildTeamContext} from './team-context.mjs';
 import { tr, isMessage } from './i18n.mjs';
+import {roleSwitchWaitReason} from './role-switch-policy.mjs';
+import {waitDependencies} from './coordination-wait.mjs';
 
 const now=()=>new Date().toISOString();
 const closed=new Set(['succeeded','failed','interrupted','stopping','reconciling']);
@@ -78,6 +80,7 @@ export class RoleDiscussions {
 
   /** Even when called directly, bypassing the scheduler, the capacity, exclusivity, and manual-takeover gates are kept. */
   assertStart(role,nodeId,task) {
+    const switchReason=roleSwitchWaitReason(this.db,{...task,roleId:role.id});if(switchReason)throw new Error(switchReason);
     if(!role?.enabled||role.archivedAt||role.nodeId!==nodeId)throw new Error(tr('roleDiscussions.roleDisabledDeviceHasChanged'));
     const worker=this.db.get('workers',nodeId),active=this.db.list('runs').filter(r=>!terminal.has(r.status));
     if(this.db.get('settings','main')?.paused)throw new Error(tr('roleDiscussions.remoteExecutionPaused'));
@@ -106,7 +109,7 @@ export class RoleDiscussions {
       if(task.requestId){
         const request=this.db.get('coordinationRequests',task.requestId);
         if(!request||['cancelled','failed','succeeded'].includes(request.status))throw new Error(tr('roleDiscussions.originalBusinessCallHasEnded'));
-        if(request.status==='waiting_call'&&(this.db.list('coordinationRequests').some(r=>r.parentRequestId===request.id&&!r.continuationOf&&!['succeeded','failed','cancelled'].includes(r.status))||this.db.list('executionPlans').some(p=>p.parentRequestId===request.id&&['running','cancelled'].includes(p.status))))throw new Error(tr('roleDiscussions.stillWaitingForOriginalBusiness'));
+        if(request.status==='waiting_call'&&(waitDependencies(this.db,request).some(r=>!['succeeded','failed','cancelled'].includes(r.status))||this.db.list('executionPlans').some(p=>p.parentRequestId===request.id&&['running','cancelled'].includes(p.status))))throw new Error(tr('roleDiscussions.stillWaitingForOriginalBusiness'));
         this.db.put('coordinationRequests',{...request,status:'queued'});
       }
       const run=this.db.startTask(task.id,{commandId,nodeId});
@@ -242,12 +245,12 @@ export class RoleDiscussions {
       const task=this.db.get('tasks',delivery.taskId),role=this.db.get('roles',delivery.recipientRoleId),message=this.db.get('discussionMessages',delivery.messageId);
       if(!task||!role||!message)continue;
       if(message.sourceRunId&&!terminal.has(this.db.get('runs',message.sourceRunId)?.status))continue;
-      result.push({id:`discussion:${delivery.id}`,projectId:task.projectId,roleId:role.id,roleSnapshot:role,contextPrepared:true,discussionDeliveryId:delivery.id,createdAt:delivery.createdAt});
+      result.push({id:`discussion:${delivery.id}`,businessTaskId:task.id,projectId:task.projectId,roleId:role.id,roleSnapshot:role,contextPrepared:true,discussionDeliveryId:delivery.id,createdAt:delivery.createdAt});
     }
     for(const intent of this.db.list('discussionIntents').filter(i=>i.status==='queued')) {
       const task=this.db.get('tasks',intent.taskId);
       if(!task||!terminal.has(this.db.get('runs',intent.afterRunId)?.status))continue;
-      result.push({...task,id:`discussion:${intent.id}`,contextPrepared:true,discussionIntentId:intent.id,createdAt:intent.createdAt});
+      result.push({...task,id:`discussion:${intent.id}`,businessTaskId:task.id,contextPrepared:true,discussionIntentId:intent.id,createdAt:intent.createdAt});
     }
     return result;
   }
@@ -259,14 +262,22 @@ export class RoleDiscussions {
     this.db.put('discussionDeliveries',{...delivery,status:'consumed',updatedAt:now()});
   }
 
-  peers(run) {
+  peers(run,input={}) {
+    fields(input,['view','includeArchived']);
+    if(input.view!==undefined&&!['summary','detail'].includes(input.view)||input.includeArchived!==undefined&&typeof input.includeArchived!=='boolean')throw new Error(tr('roleDiscussions.invalidDiscussionParameters'));
     const ctx=this.context(run,'discuss.peers');
-    const team=buildTeamContext(this.db,ctx.run,{online:this.online,inherit:false});
+    const team=buildTeamContext(this.db,ctx.run,{online:this.online,inherit:false,includeArchived:input.includeArchived===true});
+    if(input.view==='summary')return {observedAt:team.observedAt,teamVersion:team.version,memberCount:team.memberCount,selfRoleId:team.selfRoleId,complete:true,items:team.members.map(m=>({
+      id:m.id,name:m.name,nodeId:m.nodeId,enabled:m.enabled,configured:m.configured,archived:m.archived,online:m.online,
+      ...(m.id!==team.selfRoleId?{responsibility:m.responsibility,responsibilityMissing:m.responsibilityMissing}:{}),
+      availability:m.archived?'archived':!m.enabled?'disabled':!m.configured?'unconfigured':m.online===false?'offline':m.activeRunIds.length?'running':m.tasks.length?'queued':m.online===null?'unknown':'idle',
+      communication:m.communication
+    }))};
     const runs=this.db.list('runs').filter(r=>r.projectId===ctx.run.projectId&&!terminal.has(r.status));
     const tasks=this.db.list('tasks').filter(t=>t.projectId===ctx.run.projectId);
     const messages=this.db.list('roomMessages').filter(m=>m.projectId===ctx.run.projectId);
     return {observedAt:team.observedAt,teamVersion:team.version,memberCount:team.memberCount,selfRoleId:team.selfRoleId,notice:tr('roleDiscussions.snapshotManagedRoleStatusNot'),
-      items:this.db.list('roles').filter(r=>r.projectId===ctx.run.projectId&&(!r.archivedAt||runs.some(run=>run.roleId===r.id))).map(r=>{
+      items:this.db.list('roles').filter(r=>r.projectId===ctx.run.projectId&&(input.includeArchived||!r.archivedAt||runs.some(run=>run.roleId===r.id))).map(r=>{
         const member=team.members.find(m=>m.id===r.id);
         const activeRuns=runs.filter(run=>run.roleId===r.id).map(run=>({id:run.id,taskId:run.taskId,turnPurpose:run.turnPurpose||'task',status:run.status,
           workspace:run.workspace||null,workspaceStatus:run.workspace?'reported':'pending',plannedWorkspace:run.resumeWorkspace||run.projectRoot||null,updatedAt:run.updatedAt,
@@ -275,7 +286,8 @@ export class RoleDiscussions {
         const activeTasks=tasks.filter(t=>t.roleId===r.id&&(['in_progress','waiting_discussion','ready'].includes(t.status)||activeRuns.some(run=>run.taskId===t.id)))
           .map(t=>({id:t.id,title:t.title,status:t.status,waitingReason:t.waitingReason||null}));
         return {id:r.id,name:r.name,nodeId:r.nodeId,runtime:r.runtime,model:r.model||null,enabled:Boolean(r.enabled&&!r.archivedAt),online:member?.online??null,
-          responsibility:member?.responsibility||tr('roleDiscussions.archivedRoleActiveRunRecords'),instructionsMissing:member?.instructionsMissing??true,responsibilityTruncated:member?.responsibilityTruncated??false,
+          ...(r.id!==ctx.run.roleId?{responsibility:member?.responsibility||'',responsibilityMissing:member?.responsibilityMissing??true,
+            responsibilityVersion:member?.responsibilityVersion,responsibilityTruncated:false}:{}),
           activeRuns,tasks:activeTasks,taskIds:activeTasks.map(t=>t.id),
           recentMessages:messages.filter(m=>m.roleId===r.id).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,3)
             .map(m=>({id:m.id,runId:m.runId,createdAt:m.createdAt,excerpt:String(m.text||'').slice(0,400),truncated:String(m.text||'').length>400})),

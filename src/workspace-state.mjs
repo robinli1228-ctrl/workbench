@@ -3,17 +3,18 @@ import { createHash, randomUUID } from 'node:crypto';
 const omit=(value,keys)=>Object.fromEntries(Object.entries(value||{}).filter(([key])=>!keys.includes(key)));
 const short=value=>typeof value==='string'&&value.length>400?`${value.slice(0,400)}…`:value;
 const role=value=>value?omit(value,['prompt','instructions','systemPrompt']):value;
+const binding=value=>value?{...value,role:role(value.role)}:value;
 
 /** Projects only the metadata the UI needs; task requirements, context, and result bodies always stay in the original records and the detail endpoints. */
 export function workspaceState(snapshot,requestedProjectId) {
   const projectId=snapshot.projects.find(p=>p.id===requestedProjectId)?.id||snapshot.projects[0]?.id||null;
   const state={...snapshot};
   const runs=snapshot.runs.filter(r=>r.projectId===projectId),runIds=new Set(runs.map(r=>r.id));
-  state.runs=runs.map(r=>({...omit(r,['result','contextPacket','inputTask','teamContext','resumeNativeSession','runtimeInstructions']),
-    roleSnapshot:role(r.roleSnapshot),error:short(r.error),report:r.report?omit(r.report,['summary']):r.report,summaryOnly:true}));
-  state.tasks=snapshot.tasks.filter(t=>t.projectId===projectId).map(t=>({...omit(t,['prompt','inputTask','contextPacket','teamContext']),roleSnapshot:role(t.roleSnapshot),error:short(t.error),summaryOnly:true}));
-  state.requests=(snapshot.requests||[]).filter(r=>r.projectId===projectId).map(r=>({...omit(r,['summary','result','resumeSummary','reportSummary','execution']),error:short(r.error)}));
-  for(const key of ['discussionThreads','discussionDeliveries','roleSessions','runAlerts'])state[key]=(snapshot[key]||[]).filter(r=>r.projectId===projectId);
+  state.runs=runs.map(r=>({...omit(r,['result','contextPacket','inputTask','teamContext','resumeNativeSession','runtimeInstructions','executionConfiguration']),
+    roleSnapshot:role(r.roleSnapshot),originalRoleSnapshot:role(r.originalRoleSnapshot),executionBinding:binding(r.executionBinding),error:short(r.error),report:r.report?omit(r.report,['summary']):r.report,summaryOnly:true}));
+  state.tasks=snapshot.tasks.filter(t=>t.projectId===projectId).map(t=>({...omit(t,['prompt','inputTask','contextPacket','teamContext']),roleSnapshot:role(t.roleSnapshot),executionBinding:binding(t.executionBinding),error:short(t.error),summaryOnly:true}));
+  state.requests=(snapshot.requests||[]).filter(r=>r.projectId===projectId).map(r=>({...omit(r,['summary','result','resumeSummary','reportSummary','execution']),executionBinding:binding(r.executionBinding),error:short(r.error)}));
+  for(const key of ['discussionThreads','discussionDeliveries','roleSessions','roleSwitches','runAlerts'])state[key]=(snapshot[key]||[]).filter(r=>r.projectId===projectId);
   state.runReports=(snapshot.runReports||[]).filter(r=>runIds.has(r.id)).map(r=>omit(r,['summary']));
   state.approvals=(snapshot.approvals||[]).filter(r=>runIds.has(r.runId));
   state.executionPlans=(snapshot.executionPlans||[]).filter(p=>p.projectId===projectId).map(p=>({...p,stages:(p.stages||[]).map(s=>({...s,members:(s.members||[]).map(m=>omit(m,['prompt','summary','execution']))}))}));
