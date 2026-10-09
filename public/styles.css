@@ -978,6 +978,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .role-badge.is-setup { color: #516a82; background: #e8eef5; }
 
 .setup-proposals { padding: 8px 16px; border-bottom: 1px solid #d9e2eb; }
+.setup-proposals-entry { flex-shrink: 0; margin: 8px 16px; text-align: left; white-space: normal; }
+#setup-proposals-dialog .setup-proposals { padding: 0; border: 0; }
 .setup-card, .repository-card { padding: 12px; margin-bottom: 8px; background: #f3f7fb; border: 1px solid #d9e2eb; border-radius: 6px; }
 .setup-card summary { cursor: pointer; color: #28567f; }
 .setup-action { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; margin: 12px 0; }
