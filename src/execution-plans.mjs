@@ -3,6 +3,8 @@ import { terminal } from './store.mjs';
 import { callTerminal, packCoordinationResults } from './role-calls.mjs';
 import {runFailureKind} from './run-reports.mjs';
 import { tr } from './i18n.mjs';
+import {freezeSourceInputs} from './source-sync-input.mjs';
+import {syncError} from './source-sync-manifest.mjs';
 
 const now=()=>new Date().toISOString();
 const effects=new Set(['plan','audit','develop','test','merge','migration','deploy','production']);
@@ -42,7 +44,8 @@ export class ExecutionPlans {
       if (s.mode==='parallel' && !(members.every(m=>m.purpose==='audit') || members.every(m=>m.purpose==='develop'))) throw new Error(tr('executionPlans.onlyIndependentReviewsDevelopmentMay'));
       if (s.mode==='serial' && members.length>1 && new Set(members.map(m=>m.purpose)).size>1) throw new Error(tr('executionPlans.differentPurposesWithDependenciesMust'));
       if (s.mode==='serial' && members.length>1) throw new Error(tr('executionPlans.forSequentialExecutionSplitEach'));
-      return {index,title:s.title.trim(),mode:s.mode,exclusive:isExclusive,members,status:'pending'};
+      if(s.sourceSyncBatchId&&this.db.get('sourceSyncBatches',s.sourceSyncBatchId)?.projectId!==run.projectId)throw syncError('source_input_not_ready');
+      return {index,title:s.title.trim(),mode:s.mode,exclusive:isExclusive,members,status:'pending',...(s.sourceSyncBatchId?{sourceSyncBatchId:s.sourceSyncBatchId}:{})};
     });
     if (stages.reduce((n,s)=>n+s.members.length,0)>12) throw new Error(tr('executionPlans.scheduleAllowsAtMost12'));
     for (const [i,s] of stages.entries()) {
@@ -113,7 +116,7 @@ export class ExecutionPlans {
               if(runs.some(r=>this.db.get('runReports',r.id)?.verdict==='needs_input'))throw new Error(tr('executionPlans.reviewHasQuestionAwaitingUser'));
               if(runs.some(r=>r.status==='failed'&&!['temporary_service','incomplete_output'].includes(runFailureKind(r))))throw new Error(tr('executionPlans.reviewHitPermissionProblemUnconfirmed'));
               if(runs.some((r,i)=>r.status==='succeeded'&&!['passed','failed','blocked'].includes(settled[i].outcome)))throw new Error(tr('executionPlans.reviewHasNoClearConclusion'));
-              if(plan.isolated && runs.some(r=>!r.repositoryVersions?.length||r.repositoryVersions.length!==plan.baselines.length||r.repositoryVersions.some(v=>v.dirty||v.commit!==plan.baselines.find(b=>b.id===v.id)?.commit)))throw new Error(tr('executionPlans.independentReviewMadeChangesLacks'));
+              if(plan.isolated && runs.some(r=>!r.repositoryVersions?.length||r.repositoryVersions.length!==plan.baselines.length||r.repositoryVersions.some(v=>v.dirty&&!v.sourceInputVerified||v.commit!==plan.baselines.find(b=>b.id===v.id)?.commit)))throw new Error(tr('executionPlans.independentReviewMadeChangesLacks'));
             }
             if(requests.every(r=>callTerminal.has(r.status))) {
               stage.status=requests.every(r=>r.status==='succeeded'&&r.outcome==='passed')?'succeeded':'failed';
@@ -131,7 +134,7 @@ export class ExecutionPlans {
               return {run:this.db.get('runs',r.currentRunId),member:stage.members[index]};
             });
             const runs=stageRuns.map(item=>item.run);
-            if(plan.isolated && runs.some(r=>!r?.repositoryVersions || r.repositoryVersions.some(v=>v.dirty))) throw new Error(tr('executionPlans.stageContainsUncommittedChangesLacks'));
+            if(plan.isolated && stageRuns.some(({run:r,member})=>!r?.repositoryVersions || r.repositoryVersions.some(v=>v.dirty&&!(v.sourceInputVerified&&!member.writeRepositories.length)))) throw new Error(tr('executionPlans.stageContainsUncommittedChangesLacks'));
             const next=plan.stages[stage.index+1];
             if(plan.isolated) {
               const versions=new Map(plan.baselines.map(v=>[v.id,new Set([v.commit])]));
@@ -159,6 +162,13 @@ export class ExecutionPlans {
             if(this.db.list('runs').some(r=>r.projectId===plan.projectId && !terminal.has(r.status))) continue;
             const nodes=[...new Set(plan.stages.flatMap(s=>s.members.map(m=>m.nodeId)))];
             if(nodes.some(id=>this.db.get('workers',id)?.capabilities?.executionScheduling!==1)) { throw new Error(tr('executionPlans.targetWorkerHasNotBeen')); }
+            if(stage.sourceSyncBatchId){
+              const batch=this.db.get('sourceSyncBatches',stage.sourceSyncBatchId);if(batch?.status!=='completed')continue;
+              const inputs=freezeSourceInputs(this.db,batch.id,stage.members[0].nodeId,plan.projectId);
+              for(const member of stage.members)freezeSourceInputs(this.db,batch.id,member.nodeId,plan.projectId);
+              plan.baselines=inputs.filter(i=>!plan.repositoryKeys||plan.repositoryKeys.includes(this.db.get('repositories',i.repositoryId)?.key)).map(i=>({id:i.repositoryId,key:this.db.get('repositories',i.repositoryId)?.key,commit:i.baseCommit}));
+              plan.isolated=true;plan.prepared=true;
+            }else if(plan.stages[stage.index-1]?.outputs?.some(o=>o.versions?.some(v=>v.dirty&&v.sourceInputVerified)))throw syncError('source_input_required');
             if(!plan.prepared) {
                 const snapshots=[];
                 for(const nodeId of nodes) snapshots.push(await this.checked(plan,this.query({nodeId},'execution_snapshot',{repositories:this.repositories(plan,nodeId)},30000)));
@@ -220,7 +230,8 @@ export class ExecutionPlans {
             const outputs=plan.stages[stage.index-1]?.outputs;
             const execution={isolated:plan.isolated && !stage.exclusive,batchId:`${plan.id}:${stage.index}`,exclusive:stage.exclusive,
               baselines:plan.baselines||[],repositoryKeys:plan.repositoryKeys,purpose:m.purpose,writeRepositories:m.writeRepositories,inputs:outputs||[]};
-            this.db.put('coordinationRequests',{...r,status:'queued',execution,summary:tr('executionPlans.executionPurpose', { text: m.text, handoff, purpose: m.purpose, p4: execution.isolated?tr('executionPlans.workInIsolatedWorktreeCommit'):tr('executionPlans.useCurrentProjectDirectoryWork'), p5: outputs?tr('executionPlans.pinnedArtifactsFromEarlierStages', { p1: JSON.stringify(outputs) }):'' }).slice(0,18000),updatedAt:now()});
+            const sourceInputs=stage.sourceSyncBatchId?freezeSourceInputs(this.db,stage.sourceSyncBatchId,m.nodeId,plan.projectId).filter(i=>plan.baselines.some(v=>v.id===i.repositoryId)):[];
+            this.db.put('coordinationRequests',{...r,status:'queued',sourceInputs,execution,summary:tr('executionPlans.executionPurpose', { text: m.text, handoff, purpose: m.purpose, p4: execution.isolated?tr('executionPlans.workInIsolatedWorktreeCommit'):tr('executionPlans.useCurrentProjectDirectoryWork'), p5: outputs?tr('executionPlans.pinnedArtifactsFromEarlierStages', { p1: JSON.stringify(outputs) }):'' }).slice(0,18000),updatedAt:now()});
             changed=true;
           }
         } catch(e) {

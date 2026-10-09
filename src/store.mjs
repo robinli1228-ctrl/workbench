@@ -13,6 +13,8 @@ import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
 import { tr } from './i18n.mjs';
 import {switchSettled,roleSwitchWaitReason,effectiveExecutionRole,isSwitchMaintenance} from './role-switch-policy.mjs';
+import {syncError} from './source-sync-manifest.mjs';
+import {sourceInputWaitReason,sourceConflictContext} from './source-sync-input.mjs';
 
 export const terminal = new Set(['succeeded', 'failed', 'interrupted']);
 const now = () => new Date().toISOString();
@@ -25,10 +27,13 @@ export class Store {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,seq INTEGER NOT NULL,data TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS events_run ON events(run_id,seq);`);
+      CREATE INDEX IF NOT EXISTS events_run ON events(run_id,seq);
+      CREATE INDEX IF NOT EXISTS records_kind_project ON records(kind,json_extract(data,'$.projectId'));`);
   }
   get(kind, id) { const r = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id); return r ? JSON.parse(r.data) : null; }
   list(kind) { return this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind).map(r => JSON.parse(r.data)); }
+  /** Project-local sync metadata must not scan or serialize other projects' full manifests. */
+  listProject(kind,projectId) {return this.db.prepare("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.projectId')=? ORDER BY rowid").all(kind,projectId).map(r=>JSON.parse(r.data));}
   put(kind, value) { this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').run(kind, value.id, JSON.stringify(value)); return value; }
   remove(kind, id) { this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind, id); }
   /** A synchronous transaction makes the check and the creation a single operation, avoiding duplicate claims. */
@@ -59,6 +64,9 @@ export class Store {
       const project = this.get('projects', id);
       if (!project) throw new Error(tr('store.projectNotFound2'));
       if(this.list('roleSwitches').some(op=>op.projectId===id&&(!switchSettled(op)||!op.steps.released)))throw new Error('Project still has an unsettled CLI switch.');
+      if(this.listProject('sourceSyncCommands',id).some(c=>!c.result))throw syncError('sync_busy');
+      for(const c of this.listProject('sourceSyncCommands',id))this.put('sourceSyncTombstones',{id:c.id,nodeId:c.nodeId,projectId:id,generation:c.generation,deletedAt:now()});
+      for(const kind of ['sourceSyncConfigs','sourceSyncManifests','sourceSyncVersions','sourceSyncDevices','sourceSyncBatches','sourceSyncConflicts','sourceSyncConflictHistory','sourceSyncCandidates','sourceSyncProvenance','sourceSyncCommands','sourceSyncReceipts','sourceSyncUploads','sourceSyncUploadReceipts'])for(const r of this.listProject(kind,id))this.remove(kind,r.id);
       if(this.list('discussionThreads').some(t=>t.projectId===id&&t.status==='open')
         ||this.list('discussionDeliveries').some(d=>d.projectId===id&&['queued','dispatched','runtime_accepted','reconciling'].includes(d.status))
         ||this.list('discussionIntents').some(i=>i.projectId===id&&i.status==='queued'))throw new Error(tr('store.projectStillHasUnfinishedDiscussions'));
@@ -135,12 +143,16 @@ export class Store {
       if (!binding) throw new Error(tr('store.bindProjectWorkspaceOnNode'));
       const repositories = projectRepositories(this, task.projectId, nodeId).filter(r=>!task.execution?.repositoryKeys||task.execution.repositoryKeys.includes(r.key));
       if (!task.roleSnapshot?.systemSupervisor && repositories.some(repo => !repo.localRoot)) throw new Error(tr('store.projectRepositoriesOnDeviceNot'));
+      const sourceWait=sourceInputWaitReason(this,task,nodeId);if(sourceWait)throw syncError(sourceWait);
       const roleSession = isSwitchMaintenance(task) ? this.get('roleSessions',task.switchSessionId) : task.origin === 'chat' && (task.roleSnapshot?.id || task.roleId)
-        ? new RoleSessions(this).getOrCreate({projectId:task.projectId,conversationId:task.conversationId||task.projectId,
+        ? new RoleSessions(this).getOrCreate({projectId:task.projectId,conversationId:task.sourceInputs?.length&&task.execution?.isolated?`${task.projectId}:source:${task.sourceSessionKey||task.sourceConflictAssignmentId||task.id}`:task.conversationId||task.projectId,
           roleId:task.roleSnapshot?.id||task.roleId,nodeId,runtime:task.roleSnapshot?.runtime||'codex',model:task.model,workspaceRoot:binding.localRoot}) : null;
       const run = { id: randomUUID(), taskId, projectId: task.projectId, nodeId, repositoryId,turnPurpose:'task',directionRevision:task.directionRevision||1,
         ...(isSwitchMaintenance(task)?{switchOperationId:task.switchOperationId,switchPhase:task.switchPhase,switchHandoffHash:task.switchHandoffHash}:{}),
         ...(storedTask.executionBinding?{originalRoleSnapshot:storedTask.roleSnapshot,executionBinding:storedTask.executionBinding,inputTask:task}:{}),
+        sourceInputs:structuredClone(task.sourceInputs||[]),sourceSyncBatchId:task.sourceSyncBatchId||null,
+        ...sourceConflictContext(task),
+        sourceSyncTracking:Boolean(this.get('sourceSyncConfigs',task.projectId)?.enabled&&this.get('sourceSyncConfigs',task.projectId)?.nodeIds?.includes(nodeId)),
         discussionProtocol:supportsDiscussion(this.get('workers',nodeId),task.roleSnapshot?.runtime,task.roleSnapshot?.model)?2:0,peerStatus:this.get('workers',nodeId)?.capabilities?.peerStatus===1?1:0,permissionProfile:'business',
         roleSessionId:roleSession?.id||null,resumeNativeSessionId:roleSession?.nativeSessionId||null,resumeNativeSession:roleSession?.nativeSession||null,resumeWorkspace:roleSession?.workspace||null,
         projectScope: true, repositories, attachments: task.attachments || [], execution:task.execution||null,reportRequired:Boolean(task.reportRequired),scheduledJobId:task.scheduledJobId||null,

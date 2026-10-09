@@ -42,6 +42,12 @@ import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseli
 import { runOrganizer } from './conversation-organizer.mjs';
 import { runtimeGitEnvironment } from './hosting.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
+import {SourceSyncClient} from './source-sync-transport.mjs';
+import {syncError} from './source-sync-manifest.mjs';
+import {SourceProvenanceTracker} from './source-sync-provenance.mjs';
+import {prepareSourceInputs,sourceOverlayUnchanged} from './source-sync-input.mjs';
+import {captureSourceCandidate} from './source-sync-candidate.mjs';
+import {readSourceBlob} from './source-sync-files.mjs';
 
 const SYSTEM_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 const exec = promisify(execFile);
@@ -118,6 +124,19 @@ const roleSwitchWorker=new RoleSwitchWorker({db,warmSessions,activeSessions:sess
   if(!response.ok)throw new Error('Unable to retrieve CLI switch history.');return response.text();
 }});
 const inside = (root, path) => { const rel = relative(root, path); return !rel || (!rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && rel !== '..' && !isAbsolute(rel)); };
+const sourceSync=new SourceSyncClient({db,data,home:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),send,
+  paused:()=>paused||quitting,
+  activeRuns:()=>[...db.list('runs'),...db.list('sourceSyncOperations')],
+  takeoverState:projectId=>Boolean(projectTerminalLock(db,projectId,identity.nodeId)),
+  resolveBinding:async command=>{
+    if(command.nodeId!==identity.nodeId)throw syncError('receipt_owner_mismatch');
+    const root=await projectRoot(command.root),id=`${command.projectId}:${command.repositoryId}${command.sourceRunId?':'+command.sourceRunId:''}`;
+    if(command.sourceRunId){const source=db.get('runs',command.sourceRunId),repo=source?.repositories?.find(r=>r.id===command.repositoryId);
+      if(source?.projectId!==command.projectId||!repo||await projectRoot(repo.localRoot)!==root)throw syncError('binding_changed');}
+    const old=db.get('sourceSyncBindings',id);
+    if(old&&(old.generation>command.generation||old.generation===command.generation&&old.root!==root))throw syncError('binding_changed');
+    const binding={id,projectId:command.projectId,repositoryId:command.repositoryId,root,generation:command.generation};db.put('sourceSyncBindings',binding);return binding;
+  }});
 
 /** The local outbox is written to disk first and deleted only after Home confirms, so "sent" is never treated as "received". */
 function emit(runId, type, payload) {
@@ -131,6 +150,7 @@ function emit(runId, type, payload) {
   const event = { id: randomUUID(), runId, seq, type, payload, createdAt: new Date().toISOString() };
   db.transaction(() => { db.put('runs', next); db.put('outbox', event); });
   flushOutbox();
+  return event;
 }
 /** Paths and symlinks are resolved on the execution node; the allowed root directories are checked at registration and on every launch. */
 async function projectRoot(path) {
@@ -167,7 +187,7 @@ async function command(m) {
     switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash,
     contextVersion:c.type==='launch'?m.run.contextVersion:undefined,turnPurpose:m.run.turnPurpose,permissionProfile:m.run.permissionProfile,
     requestId: m.run.requestId, continuationRunId: m.run.continuationRunId, deliveryId: c.deliveryId || m.run.deliveryId, deliveryCommit: m.delivery?.commit, planVersion: m.run.planVersion,
-    ...(m.run.execution ? {execution:m.run.execution}:{}),...(m.run.attachments?.length ? {attachments:m.run.attachments}:{}) });
+    ...(m.run.execution ? {execution:m.run.execution}:{}),...(m.run.sourceInputs?.length?{sourceInputs:m.run.sourceInputs}:{}),...(m.run.attachments?.length ? {attachments:m.run.attachments}:{}) });
   const prior = db.get('commands', c.id);
   if (prior) {
     if (prior.signature !== signature) throw new Error(tr('worker.duplicateCommandParameterConflict'));
@@ -190,13 +210,14 @@ async function command(m) {
     db.put('runs', { id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: 0,
       switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash });
     send({ type: 'command_ack', id: c.id });
-    let bridge, ending=false;
+    let bridge, ending=false,provenance;
     try {
       const policy=discussionPolicy(m.run),discussionTurn=policy.turnPurpose!=='task';
       roleSwitchWorker.assertLaunch(m.run);
       const discussionEnabled=supportsDiscussion({capabilities:discussionCapabilities(),runtimes},m.run.roleSnapshot?.runtime,m.run.roleSnapshot?.model);
       if((discussionTurn||m.run.discussionProtocol===2)&&(!discussionEnabled||m.run.discussionProtocol!==2))throw new Error(tr('worker.discussionProtocolV2NotEnabled'));
       if (paused || m.paused) throw new Error(tr('worker.remoteCommandsPaused'));
+      if(!sourceSync.worker.canStart(m.run.projectId))throw syncError('sync_busy');
       if (projectTerminalLock(db,m.run.projectId,identity.nodeId)) throw new Error(tr('worker.projectUnderManualTerminalTakeover'));
       if (m.run.nodeId !== identity.nodeId) throw new Error(tr('worker.assignmentDoesNotBelongMachine'));
       if (m.run.requestId) validateLaunch({ request: m.request, roleSnapshot: m.run.roleSnapshot, delivery: m.delivery, currentPlanVersion: m.run.planVersion });
@@ -234,10 +255,19 @@ async function command(m) {
       const { folder, baseCommit } = prepared;
       if(m.run.resumeNativeSessionId && folder!==m.run.resumeWorkspace)throw new Error(tr('worker.nativeSessionWorkingDirectoryDiffers'));
       executionRepositories = prepared.repositories || continued?.repositories || executionRepositories;
+      let sourceInputReceipts=[],sourceInputAccess;
+      if(m.run.sourceInputs?.length){
+        const get=async(input,hash)=>{const response=await fetch(`${homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,'')}/api/agent/source-inputs/${c.runId}/${input.manifestId}${hash?'/blobs/'+hash:''}`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});if(!response.ok)throw syncError('source_input_not_ready');return hash?Buffer.from(await response.arrayBuffer()):response.json();};
+        sourceInputAccess={run:m.run,repositories:executionRepositories,db,blobRoot:sourceSync.blobRoot,readManifest:input=>get(input),fetchBlob:get};
+        const inherited=continued?.sourceInputReceipts;
+        if(inherited?.length===m.run.sourceInputs.length&&m.run.sourceInputs.every(i=>inherited.some(v=>v.repositoryId===i.repositoryId&&v.manifestHash===i.manifestHash&&v.generation===i.generation)))sourceInputReceipts=inherited.map(i=>({...i,inheritedFrom:continued.id}));
+        else sourceInputReceipts=await prepareSourceInputs({...sourceInputAccess,freshIsolated:Boolean(m.run.execution?.isolated&&!continued&&!m.run.resumeWorkspace)});
+      }
       const repositoryRoots = executionRepositories.filter(r=>r.localRoot).map(r=>r.localRoot);
       const workspaceRunId = continued ? continued.workspaceRunId || continued.id : c.runId;
       if (!source || m.task.mode !== 'read-only') db.put('workspaceOwners', { id: folder, runId: c.runId });
       emit(c.runId, 'status', { status: 'starting', workspace: folder, baseCommit, workspaceRunId, repositories:executionRepositories, projectScope:m.run.projectScope, ...(source ? { sourceWorkspace: source.workspace } : {}) });
+      if(m.run.sourceInputs?.length||m.run.sourceConflictId)emit(c.runId,'status',{sourceInputs:m.run.sourceInputs||[],sourceInputReceipts,sourceConflictId:m.run.sourceConflictId||null,sourceConflictGeneration:m.run.sourceConflictGeneration,sourceConflictAssignmentId:m.run.sourceConflictAssignmentId});
       if (reservation.stopRequested || paused || ws?.readyState !== 1) { emit(c.runId, 'status', { status: 'interrupted', error: tr('worker.interruptedByStopDisconnectBefore') }); return; }
       const runtimeType = m.run.roleSnapshot?.runtime || 'codex';
       if (!['codex', 'grok', 'agy', 'claude'].includes(runtimeType)) throw new Error(tr('worker.runtimeNotSupportedYet', { runtimeType }));
@@ -264,6 +294,7 @@ async function command(m) {
         WB_WORKSPACE: folder,
         WB_RUN_ID: c.runId,
         WB_ROLE_SESSION_ID: m.run.roleSessionId || '',
+        WB_SOURCE_SYNC:'1',
         WB_CONVERSATION_ID: m.run.projectId,
         WB_REQUEST_ID: m.run.requestId || '',
         WB_ROLE: m.run.roleSnapshot?.name || '',
@@ -292,6 +323,11 @@ async function command(m) {
         if(db.list('runs').some(r=>r.id!==c.runId && r.runtimeRetained && r.nativeSession?.id===prior.id && processAlive(r.pid) && !warmSessions.owns(r.pid)))throw new Error(tr('worker.nativeSessionStillHasProcess'));
       }
       db.put('runtimeEnvironments',{id:c.runId,env:resumeEnvironment(wbEnv)});
+      if(m.run.sourceSyncTracking){
+        provenance=new SourceProvenanceTracker({db,run:{...m.run,workspace:folder},repositories:executionRepositories,blobRoot:sourceSync.blobRoot,
+          publish:proof=>emit(c.runId,'source_provenance',proof)});
+        await provenance.start();
+      }
       emit(c.runId, 'status', { nativeSession: native });
       // The turn purpose goes into the dynamic input, so switching between Q&A and business stages does not needlessly recycle the warm process.
       const executionConfiguration=m.run.minimalInstructions===1?await currentExecutionConfiguration(c.runId):null;
@@ -323,15 +359,17 @@ async function command(m) {
             if(warning)clearTimeout(warning);
             if(p.status==='succeeded'&&!db.get('runs',c.runId)?.nativeSession?.id)
               p={...p,status:'failed',error:tr('worker.runtimeDidNotReturnResumable')};
-            if(m.run.execution?.baselines?.length) {
+            if(m.run.execution?.baselines?.length||m.run.sourceInputs?.length) {
               try { p={...p,repositoryVersions:await inspectExecutionRepositories(executionRepositories)}; }
               catch(error) { p={...p,status:'failed',error:tr('worker.unableVerifyExecutionArtifacts', { message: error.message })}; }
             }
+            if(sourceInputAccess&&p.repositoryVersions){const unchanged=await sourceOverlayUnchanged(sourceInputAccess).catch(()=>false);
+              p={...p,repositoryVersions:p.repositoryVersions.map(v=>({...v,sourceInputVerified:unchanged&&m.run.sourceInputs.some(i=>i.repositoryId===v.id)}))};}
             if(m.run.minimalInstructions===1)p={...p,configurationState:p.status==='succeeded'?'applied':'failed',...(p.error?{configurationError:p.error}:{})};
             finalStatus=p;endRun();
           };
           void (retained?complete():afterProcessExit(session.proc,complete));
-        } else emit(c.runId, type, p);
+        } else {const event=emit(c.runId,type,p);if(type==='tool')provenance?.observe(event);}
       } };
       session=keepAlive?await warmSessions.take(m.run.roleSessionId,fingerprint):null;
       reservation.session=session;
@@ -353,17 +391,18 @@ async function command(m) {
       const setupHint = !m.run.switchOperationId && m.run.roleSnapshot?.systemSupervisor ? tr('worker.supervisorSetupToolsCanBe', { wbCommand }) : '';
       const boundary = m.run.projectScope && !m.run.deliveryId && !m.run.execution?.isolated ? tr('worker.projectDirectoryCurrentDirectoryListed', { root }) : tr('worker.originalProjectDirectoryItMay', { root });
       const attachmentHint = inputFiles.length ? tr('worker.userAttachmentsForTurnUntrusted', { p1: inputFiles.map(a => JSON.stringify({name:a.name,path:a.path,mime:a.mime})).join('\n') }) : '';
-      const toolGuide=executionConfiguration?tr('minimal.toolEntry',{wbCommand}):tr('worker.wbCommandPrefixForTurn', { wbCommand });
+      const toolGuide=executionConfiguration?tr('minimal.toolEntry',{wbCommand}):[tr('worker.wbCommandPrefixForTurn', { wbCommand }),(m.run.sourceSyncTracking||m.run.sourceConflictId||m.run.sourceConflictPeerId||m.run.sourceConflictAssignmentRequestId)?tr('sourceSync.toolGuide'):''].filter(Boolean).join('\n\n');
       const taskPrompt=[m.task.prompt,executionConfiguration?.dependencyEvents?.length?tr('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):''].filter(Boolean).join('\n\n');
       const environmentHint=executionConfiguration?executionEnvironmentHint({cwd:folder,projectRoot:root,boundary,repositories:executionRepositories}):'';
       const input = createRunInput({ minimal:Boolean(executionConfiguration),environmentHint,configurationUpdate:instructions.configurationUpdate,taskPrompt, boundary, context, runtimeGuidance:toolGuide, setupHint, attachmentHint,
-        executionInstructions:m.run.switchOperationId?'Read-only CLI handoff maintenance. Return the requested final answer; do not execute business work or write handoff files.':executionRules(m.run),roleInstructions:instructions.instructions });
+        executionInstructions:m.run.switchOperationId?'Read-only CLI handoff maintenance. Return the requested final answer; do not execute business work or write handoff files.':executionRules(m.run),roleInstructions:instructions.instructions,sourceInputs:sourceInputReceipts });
       if(instructions.inheritedFrom)input.instructionsInheritedFrom=instructions.inheritedFrom;
       emit(c.runId, 'input', input);
       const result = session.start(input.prompt);
       db.put('runs', { ...db.get('runs', c.runId), pid: session.proc?.pid });
       await result;
       await ended;
+      await provenance?.finish();
       await bridge.stop(); bridge = null;
       const rec = {...db.get('runs', c.runId),...finalStatus};
       try {
@@ -390,6 +429,7 @@ async function command(m) {
       emit(c.runId,'status',{...finalStatus,runtimeRetained:warmSessions.owns(session.proc?.pid),processSettled:!warmSessions.owns(session.proc?.pid),...(m.run.discussionProtocol===2?{discussionCleanup:{turnEnded:true,toolsClosed:true,effectsKnown:false}}:{})});
     } catch (e) {
       ending=true;
+      await provenance?.finish();
       const entry = sessions.get(c.runId),s=entry?.preparing?entry.session:entry;
       if (typeof s?.finish === 'function') { s.finish('failed', e.message); s.shutdown(); await afterProcessExit(s.proc, () => sessions.delete(c.runId)); }
       await bridge?.stop();bridge=null;
@@ -401,6 +441,8 @@ async function command(m) {
     let payload;
     try {
       const source = db.get('runs', c.runId);
+      if(!sourceSync.worker.canStart(source?.projectId))throw syncError('sync_busy');
+      db.put('sourceSyncOperations',{id:c.id,projectId:source?.projectId||'*',status:'running'});
       if (projectTerminalLock(db,source?.projectId,identity.nodeId)) throw new Error(tr('worker.projectUnderManualTerminalTakeover2'));
       if (paused || m.paused) throw new Error(tr('worker.remoteExecutionPaused'));
       if (m.request?.status === 'cancelled' || (!m.delivery?.items && m.project.repoUrl !== m.delivery?.repoUrl)) throw new Error(tr('worker.sourceCallWasCancelledRepository'));
@@ -413,6 +455,7 @@ async function command(m) {
           runId: source.workspaceRunId || c.runId, repoUrl: m.delivery.repoUrl, commit: m.delivery.commit, ref: m.delivery.ref, projectScope:source.projectScope });
       payload = { deliveryId: c.deliveryId, ...result };
     } catch (error) { payload = { deliveryId: c.deliveryId, status: 'blocked', error: error.message }; }
+    finally {db.remove('sourceSyncOperations',c.id);}
     const event = recordDeliveryResult(db, c.id, payload);
     if (event) send({ type: 'event', event });
   }
@@ -442,11 +485,25 @@ async function query(m) {
   if(m.action==='cli_capacity') {
     try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
   }
+  const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new'].includes(m.action);
   try {
     if(['role_switch_inspect','role_switch_prepare','role_switch_release','role_switch_status'].includes(m.action)) {
       if(m.path?.nodeId!==identity.nodeId)throw new Error('CLI switch addressed to another Worker.');
       const method=m.action.slice('role_switch_'.length);
       const result=method==='status'?roleSwitchWorker.status(m.path.operationId):await roleSwitchWorker[method](m.path);
+      send({type:'reply',id:m.id,result});return;
+    }
+    if(modifies){if(db.list('sourceSyncReservations').length)throw syncError('sync_busy');db.put('sourceSyncOperations',{id:m.id,projectId:m.path?.projectId||db.get('runs',m.runId)?.projectId||'*',status:'running'});}
+    if(m.action==='source_sync_candidate'){
+      const run=db.get('runs',m.runId),input=m.path,repo=run?.repositories?.find(r=>r.id===input.repositoryId),frozen=run?.sourceInputs?.find(r=>r.repositoryId===input.repositoryId);
+      if(!run||terminal.has(run.status)||!run.sourceConflictId||run.sourceConflictId!==input.conflictId||!repo||!frozen)throw syncError('candidate_not_ready');
+      const home=homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,'');
+      const request=async(path,method='GET',body)=>{const response=await fetch(home+path,{method,headers:{Authorization:`Bearer ${token}`,...(body&&!Buffer.isBuffer(body)?{'Content-Type':'application/json'}:{})},body:body===undefined?undefined:Buffer.isBuffer(body)?body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});if(!response.ok){const error=await response.json();throw syncError(error.code||'candidate_failed');}return response.json();};
+      const baseline=await request(`/api/agent/source-inputs/${run.id}/${frozen.manifestId}`);
+      const candidate=await captureSourceCandidate({root:await projectRoot(repo.localRoot),path:input.path,baseline,blobRoot:sourceSync.blobRoot});
+      await request('/api/agent/source-candidates','POST',{runId:run.id,candidateId:input.candidateId,baselineManifestId:frozen.manifestId,...candidate});
+      if(candidate.entry)await request(`/api/agent/source-candidates/${run.id}/${input.candidateId}/blob`,'PUT',await readSourceBlob(sourceSync.blobRoot,candidate.entry.hash));
+      const result=await request('/api/agent/source-candidates','POST',{runId:run.id,candidateId:input.candidateId,finish:true});
       send({type:'reply',id:m.id,result});return;
     }
     if(m.action==='open_project_folder'){
@@ -696,6 +753,7 @@ async function query(m) {
       await walk(root, 0); send({ type: 'reply', id: m.id, result: { files } });
     }
   } catch (e) { send({ type: 'reply', id: m.id, error: e.message }); }
+  finally {if(modifies)db.remove('sourceSyncOperations',m.id);}
 }
 // On Worker restart, only known PIDs are verified; no --resume is attempted and no replacement process is started.
 recoverDeliveryCommands(db);
@@ -711,7 +769,7 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { minimalInstructions:1,terminalFresh:1,cliCapacity:1,roleSwitch:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { minimalInstructions:1,terminalFresh:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncTools:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -720,6 +778,9 @@ function connect() {
         const query=configurationQueries.get(m.id);if(!query)return;
         configurationQueries.delete(m.id);clearTimeout(query.timer);m.error?query.reject(new Error(m.error)):query.resolve(m.result);return;
       }
+      if(m.type==='source_sync_command'){void sourceSync.execute(m);return;}
+      if(m.type==='source_sync_cancel'){sourceSync.cancel(m.commandId);return;}
+      if(m.type==='source_sync_receipt_ack'){sourceSync.acknowledge(m.commandId);return;}
       if (m.type === 'registered') {
         paused = m.paused;
         // Home announces its language; run payloads carry their own, this covers Worker-originated text outside a run.
@@ -751,6 +812,7 @@ function connect() {
   });
 }
 const outboxTimer=setInterval(flushOutbox,1000);outboxTimer.unref();
+const sourceSyncTimer=setInterval(()=>{if(registered)sourceSync.flush();},1000);sourceSyncTimer.unref();
 const heartbeat = setInterval(() => send({ type: 'heartbeat' }), 15000);
 const runtimeTimer = setInterval(() => { if (ws?.readyState === 1) void refreshRuntimes(); }, 300000);
 connect();

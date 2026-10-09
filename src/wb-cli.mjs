@@ -47,13 +47,19 @@ export async function main(argv = process.argv.slice(2)) {
   const supervisor = process.env.WB_SYSTEM_SUPERVISOR === '1';
   try {
     const roleSession=Boolean(process.env.WB_ROLE_SESSION_ID),discussion=roleSession&&process.env.WB_DISCUSSION_PROTOCOL==='2';
+    const sourceSync=process.env.WB_SOURCE_SYNC==='1';
+    if(cmd==='sync'){
+      if(!sourceSync)throw new Error(tr('sourceSync.failure',{code:'worker_unsupported',detail:''}));
+      if(!['status','read','request','assign','propose'].includes(sub)||rest.length>1)throw new Error(tr('sourceSync.toolGuide'));
+      return out(await agentRequest('/api/agent/source-sync',{runId:process.env.WB_RUN_ID,action:sub,input:rest.length?JSON.parse(rest[0]):{}}));
+    }
     if(cmd==='discuss') {
       if(!discussion&&sub!=='peers')throw new Error(tr('wbCli.discussionToolsNotEnabledFor'));
       if(!['peers','ask','reply','read','resolve','budget_extend'].includes(sub)||rest.length>1)throw new Error(discussionHelp());
       return out(await agentRequest('/api/agent/discussions',{runId:process.env.WB_RUN_ID,action:sub,input:rest.length?JSON.parse(rest[0]):sub==='peers'?{view:'summary'}:{}}));
     }
     if(discussion&&(!cmd||['help','-h','--help'].includes(cmd)))return out(`${helpText()}\n\n${discussionHelp()}`);
-    if (cmd === 'capabilities') return out({protocol:2,discussionProtocol:discussion?2:0,sessionTools:1,timerTools:1,tools:['setup catalog',...(roleSession?['discuss peers']:[]),...(discussion?['discuss ask','discuss reply','discuss read','discuss resolve',...(supervisor?['discuss budget_extend']:[])]:[]),'call','wait',...(supervisor?['schedule','timer','role prompt']:[]),'note','git status','memory read','memory write','report','history search','history read','result read','deliver','session current','session list','session summary','session read','chat summary']});
+    if (cmd === 'capabilities') return out({protocol:2,sourceSyncTools:sourceSync?1:0,discussionProtocol:discussion?2:0,sessionTools:1,timerTools:1,tools:['setup catalog',...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),...(roleSession?['discuss peers']:[]),...(discussion?['discuss ask','discuss reply','discuss read','discuss resolve',...(supervisor?['discuss budget_extend']:[])]:[]),'call','wait',...(supervisor?['schedule','timer','role prompt']:[]),'note','git status','memory read','memory write','report','history search','history read','result read','deliver','session current','session list','session summary','session read','chat summary']});
     if (cmd === 'session' && sub === 'current') return out(await agentRequest('/api/agent/sessions/current',{runId:process.env.WB_RUN_ID}));
     if (cmd === 'session' && sub === 'list') return out(await agentRequest('/api/agent/sessions/list',{runId:process.env.WB_RUN_ID,...sessionOptions(rest)}));
     if (cmd === 'session' && sub === 'summary') return out(await agentRequest('/api/agent/sessions/summary',{runId:process.env.WB_RUN_ID,roleSessionId:rest[0]}));
@@ -93,7 +99,7 @@ export async function main(argv = process.argv.slice(2)) {
       return out(await requestDelivery(sub, rest[0], rest.slice(1).join(' ')));
     }
     if (cmd === 'call') {
-      const values = {}, flags = { '--role': 'role', '--kind': 'kind', '--request-id': 'requestId', '--text': 'text', '--delivery-id': 'deliveryId' };
+      const values = {}, flags = { '--role': 'role', '--kind': 'kind', '--request-id': 'requestId', '--text': 'text', '--delivery-id': 'deliveryId','--source-sync-batch-id':'sourceSyncBatchId' };
       for (let i = 0; i < tail.length; i += 2) {
         const key = flags[tail[i]];
         if (!key || tail[i + 1] === undefined || values[key] !== undefined) throw new Error(tr('wbCli.invalidDuplicateWbCallParameters'));

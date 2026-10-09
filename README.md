@@ -2,11 +2,23 @@ English | [简体中文](README.zh-CN.md)
 
 # Agent Collaboration Workbench
 
+Device details include a per-device **Maximum running CLIs** setting. Managed role runs, retained CLI processes and background organization share the limit; full devices queue work and resume the original native session when capacity becomes available. Offline settings apply after reconnect. Lowering the limit does not interrupt accepted work.
+
+Role Details includes a History tab. Clear history removes that role's old session associations and starts a new native CLI session on the next execution; project chat, code files and other roles are preserved.
+
+The role-card terminal button also offers a new interactive CLI session without requiring past execution records. It uses the role's saved device, model and project folder; past sessions can still be resumed explicitly. Return manual terminal control to the platform after closing the CLI.
+
+Terminal links preserve command spaces and literal `+` characters. Refreshing the page also corrects older prepared links without clearing history or replacing the terminal takeover.
+
+Role quota percentages show reset details on hover or keyboard focus, and open the same details on click or touch. Vendor timezone text is preserved; missing reset times are explicitly marked unavailable.
+
 A self-hosted workbench that turns the AI coding CLIs and accounts you already have (Codex, Claude Code, Grok Build, Antigravity) into one collaborating team. You talk to a project group chat, `@mention` roles, and the workbench launches the real CLI on the right machine, streams the progress back, and keeps the results, reviews and hand-offs in one place.
 
 > Status: development preview (`0.4.0`). It is built for a single trusted operator or a small trusted group. See [Limitations](#limitations-and-roadmap) before exposing it to a network.
 
 ## Why this exists
+
+An opt-in **Source sync** card is available under Resources, with configuration also linked from project settings. After previewing repository/device bindings and explicitly enabling the project, **Sync now** or a managed `wb sync request` exchanges saved, uncommitted files. It is changed-file transfer, not continuous save-time uploading or Git publication. Conflicts preserve the original versions and notify evidenced modifiers; repair candidates require independent inspection and explicit acceptance before checked distribution. Physical macOS/Linux transfer and Codex modifier repair were verified, as were source-tool reads and native continuation for all four adapters. Existing projects stay disabled. See the [contract and current acceptance limits](docs/design-source-sync.md).
 
 The project started from a practical situation: one person, several AI subscriptions (different vendors and models), and several machines.
 
@@ -30,6 +42,7 @@ All items below exist in the current code. Items that are only designed are list
 
 - Project group chat with `@role` dispatch. Messages without an `@` are stored but do not start a model; messages from agents never trigger other agents implicitly.
 - Per-project roles with their own device, CLI, model, reasoning effort and Markdown prompt. Built-in templates (reviewer, planner, developer, tester) are only starting points.
+- Same-device Codex/Grok changes use **Handoff and switch** in either role editor: retain identity/history, drain accepted work, verify a new native session and commit only after process settlement. Cancel before commit keeps the original binding. Requires a compatible Worker; other adapters are explicitly unverified. See [CLI switch design](docs/design-role-cli-switch.md) for current acceptance status.
 - Role names are mention identifiers (letters, digits, underscores or hyphens, without spaces); `all` and `everyone` are reserved for broadcasts. Existing role names are kept verbatim. Default intake follows the configured supervisor ID, not an English display name, and mentions support both ASCII and full-width punctuation.
 - A fixed per-project *supervisor* that receives requests without an `@`, proposes repository/role configuration cards (applied only after you confirm) and can schedule multi-stage work (`wb schedule`) with parallel independent reviews and sequential or merge stages. Its card is pinned above the work roles; click it to configure its device, CLI, model and reasoning effort in Project Settings.
 - Structured role-to-role tools exposed to every managed CLI through one `wb` command: consult another role (`wb call` / `wb wait`), report a business verdict (`wb report`), write a hand-off note (`wb handoff`), and request a Git delivery (`wb deliver`). An `@` inside model output never dispatches work.
@@ -44,6 +57,7 @@ All items below exist in the current code. Items that are only designed are list
 - Per-device project directories and a long-lived project baseline branch per repository (Git worktrees), with fixed-SHA cross-device delivery that requires an explicit confirmation before pushing.
 - Attachments (images and files, up to 6 per message, 20 MB each) with SHA-256 verification, and a "send to device" action for moving a file to another bound device.
 - Device onboarding helper over SSH (installs and connects a Worker on a remote Linux machine) and an optional Home-managed reverse SSH tunnel.
+- Remote desktop from a macOS Home: check the registered server's xrdp, create a loopback SSH forward or reuse a verified existing same-user forward, then open Windows App's saved connections. Unknown or ambiguous listeners remain blocked; externally managed tunnels are never stopped by this entry. Opening the app does not verify desktop login.
 - Terminal takeover: continue a finished native session in iTerm (macOS entry point; remote devices are reached over your own SSH configuration), with the platform pausing dispatch on that device while you work.
 
 **Operations**
@@ -116,6 +130,10 @@ Never commit any of these. See [docs/OPERATING-GUIDE.md](docs/OPERATING-GUIDE.md
 ## Configuration
 
 Role editing separates **responsibility** (used by other roles to choose collaborators) from **role prompt** (injected for that role's execution). A role does not receive its own responsibility through the team directory. Text-only edits work while its device is offline and preserve its CLI/model binding. Existing custom prompts remain unchanged; missing responsibilities are unspecified, not inferred.
+
+The development Home/Worker contract supports minimal execution context and on-demand team discovery. Saved prompt changes apply at actual next-turn admission, not halfway through running work. The four adapters apply complete changed/revoked component events while retaining the native session; unchanged delivered versions are not repeated. Codex separately reloads a retained thread's current Run/tool environment. Explicit dependency waits can time out, resume and wait for the original request without dispatching it again. Isolated four-CLI native and cross-device acceptance passed for the documented combinations; local Agy is unavailable under the provider's location policy. This is not a production rollout. See [actual coverage and selective release gates](docs/design-minimal-injection.md#11-observed-acceptance-boundary).
+
+Bilingual defaults cover a supervisor who can complete simple work, a planner who maintains plans and answers questions, an implementer who owns follow-up fixes, sequential reviewers, and a tester who checks the deployed test version through realistic operations. Prompts guide existing tools, not override authorization or collaboration limits. Safe automatic CLI handoff has [an approved design](docs/design-role-cli-switch.md) and an implementation plan awaiting review; it is not a released feature.
 
 Everything is configured through environment variables. Copy [`.env.example`](.env.example) as a reference; the app does not load `.env` files by itself, so export the variables in your shell or service manager. Values below are placeholders.
 

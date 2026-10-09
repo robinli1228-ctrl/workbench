@@ -157,11 +157,11 @@ export async function askRole(name, text) {
 }
 
 /** The platform handles cross-node communication; local tools neither connect to other CLIs directly nor read their workspaces. */
-export async function callRole({ role, kind = 'consult', requestId, text, deliveryId }) {
+export async function callRole({ role, kind = 'consult', requestId, text, deliveryId,sourceSyncBatchId }) {
   if (!role || !text || !requestId) throw new Error(tr('wbTools.roleTextStableRequestId'));
   if (!['consult', 'handoff','direct'].includes(kind)) throw new Error(tr('wbTools.kindMustBeConsultHandoff'));
   return homeFetch('/api/agent/calls', { runId: context().runId, role, kind,
-    requestId: `${context().runId}:${requestId}`, text, deliveryId });
+    requestId: `${context().runId}:${requestId}`, text, deliveryId,sourceSyncBatchId });
 }
 
 export async function waitForRole(summary,options={}) {
@@ -244,4 +244,4 @@ export async function writeHandoff(fields = {}, override = {}) {
   return { ok: true, path: file, latest: join(dir, 'handoffs', 'LATEST.md') };
 }
 
-export const helpText = () => [tr('minimal.teamHelp'),tr('minimal.waitHelp'),tr('wbTools.builtInCollaborationToolsWorkbench')].filter(Boolean).join('\n\n');
+export const helpText = () => [tr('minimal.teamHelp'),tr('minimal.waitHelp'),tr('wbTools.builtInCollaborationToolsWorkbench'),process.env.WB_SOURCE_SYNC==='1'?tr('sourceSync.toolGuide'):''].filter(Boolean).join('\n\n');

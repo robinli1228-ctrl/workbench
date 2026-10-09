@@ -1,6 +1,15 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "sourceSync.failure": "源代码同步：{code} {detail}",
+  "sourceSync.systemName": "源代码同步",
+  "sourceSync.continuedReceipt": "继续使用同一任务拥有的工作目录，原先已核对的源码输入为：{versions}。你上一轮的修改保留，不会被初始快照覆盖。请重读当前文件；这份回执不表示修改后的产物仍等于初始输入。",
+  "sourceSync.toolGuide": "源码工具：wb sync status [JSON]；wb sync read {\"conflictId\":\"...\"} 查看 expectedHashes 和所有设备版本，可指定 side=\"base\" 或所列版本的 endpointId（设备 ID 仅在版本唯一时可用）、offset/limit 分页读正文；wb sync request {\"requestId\":\"...\",\"targetNodeIds\":[\"...\"],\"repositoryIds\":[\"...\"]}；wb sync assign {\"conflictId\":\"...\",\"generation\":1,\"roleId\":\"...\"}（仅主管）；wb sync propose {\"requestId\":\"...\",\"conflictId\":\"...\",\"generation\":1,\"expectedHashes\":{},\"rationale\":\"...\",\"evidence\":[\"...\"]}（仅当前修复负责人，先运行检查）。候选采集是异步的，结束本轮前用 wb sync status {\"candidateId\":\"...\"} 核对 proposed 或 blocked。工具不会启用尚未启用的项目。同步请求等待写入回合结束；用 wb call 的 --source-sync-batch-id 关联请求，再 wb wait 让出执行槽。计划阶段可指定 sourceSyncBatchId。排队不等于送达，不得悄悄使用旧文件。",
+  "sourceSync.assignmentTask": "文件 {path} 存在源码冲突 {id}，原因：{reason}。请通过 wb sync status/read 和当前团队名单核对信息，找到合适的修改者，用 wb sync assign 明确指派修复。不要亲自改文件，也不要根据角色名称猜作者。",
+  "sourceSync.peerTask": "文件 {path} 存在源码冲突 {id}，唯一修复负责人为 {owner}。请通过 wb sync read 查阅双方版本，在本任务结果中说明你的原始意图和依据。这是解释请求，不是第二份修改任务；不要修改冲突文件。",
+  "sourceSync.repairTask": "解决源码冲突 {id}，轮次 {generation}，文件 {path}。预期版本：{hashes}。对方说明任务：{peerTaskId}。先用 wb sync read 查看基线和双方内容，按需查询历史、向同伴核实意图，只在专用修复目录修改这个文件。不得覆盖原设备目录，也不提交或推送 Git。运行相关检查后，用 wb sync propose 提交候选、理由和证据；确实验证后再用 wb report passed 结束。提交候选不等于同步完成，平台还会复核版本和接收回执。需要补充需求、修改其他文件或独立审核时，报告 needs_input，不要猜测。",
+  "sourceSync.proposalPending": "候选已登记，请以检查证据结束本轮。目前不自动验收：需人工独立检查并接受这个确定的候选版本，再分发并核对各设备接收回执。",
+  "sourceSync.executionReceipt": "本轮已核对的源码输入：{versions}。Git 基线本身不能代表这些未提交文件。即使续用原会话，也应重新读取变更文件，以本轮快照为准，不能沿用记忆中的旧文件内容。",
   'roleTerminal.unconfigured': '请先配置并启用角色，再打开新的终端会话。',
   'roleTerminal.switchBusy': '请先完成或取消 CLI 切换，再打开终端会话。',
   'roleTerminal.upgrade': '请升级这台设备的 Worker，以支持新建终端会话。',

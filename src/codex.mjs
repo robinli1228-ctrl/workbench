@@ -97,7 +97,7 @@ export class CodexSession {
       cwd: this.cwd, model: this.model, approvalPolicy: this.autoApprove ? 'never' : 'untrusted',
       sandbox:this.mode,
       // Git sync and cross-device wb communication need network access; the workspace write boundary is kept and re-applied on resume.
-      config: { ...Object.fromEntries(['GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT', 'WB_TURN_CONTEXT', 'WB_PROJECT_ROOT', 'WB_KNOWLEDGE', 'WB_WORKSPACE', 'WB_RUN_ID', 'WB_ROLE_SESSION_ID', 'WB_CONVERSATION_ID', 'WB_REQUEST_ID', 'WB_ROLE', 'WB_HOP', 'WB_HOME', 'WB_MODE', 'WB_BRIDGE', 'WB_CLI', 'WB_REPOSITORIES']
+      config: { ...Object.fromEntries(['GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT', 'WB_TURN_CONTEXT', 'WB_PROJECT_ROOT', 'WB_KNOWLEDGE', 'WB_WORKSPACE', 'WB_RUN_ID', 'WB_ROLE_SESSION_ID', 'WB_CONVERSATION_ID', 'WB_REQUEST_ID', 'WB_ROLE', 'WB_HOP', 'WB_HOME', 'WB_MODE', 'WB_BRIDGE', 'WB_CLI', 'WB_REPOSITORIES', 'WB_SOURCE_SYNC']
         .filter(key => typeof this.env[key] === 'string').map(key => [`shell_environment_policy.set.${key}`, this.env[key]])), 'sandbox_workspace_write.writable_roots':writableRoots, 'sandbox_workspace_write.network_access':true },
       developerInstructions: this.minimalInstructions?this.roleInstructions:tr('codex.you', { p1: this.roleName ? tr('codex.roleInProjectGroupChat', { roleName: this.roleName }) : tr('codex.executorTask'), p2: this.roleInstructions || '' })
     };
@@ -163,6 +163,7 @@ export class CodexSession {
     if (m.method === 'item/started' && p.item?.type !== 'agentMessage') this.emit('tool', { text: p.item?.command || p.item?.type || tr('codex.working'), item: p.item });
     // Save the completion state; file write attribution and tool logs must not rely on the intent of a single call alone.
     if (m.method === 'item/completed' && p.item?.type==='fileChange') this.emit('tool', {text:p.item.type,item:p.item});
+    if(m.method==='item/completed'&&p.item?.type==='commandExecution')this.emit('tool',{text:p.item.type,item:{id:p.item.id,type:p.item.type,status:p.item.status,exitCode:p.item.exitCode,command:p.item.command}});
     if (m.method === 'thread/tokenUsage/updated') this.emit('usage', { ...(p.tokenUsage?.total || p.tokenUsage || p), source: 'runtime', modelContextWindow: p.tokenUsage?.modelContextWindow });
     if (m.method === 'turn/started') this.turnId = p.turn?.id;
     if (m.method === 'turn/completed') {
