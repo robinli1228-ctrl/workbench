@@ -18,7 +18,7 @@
 
 ## 语言
 
-应用提供「设置 > 语言」选项（English / 简体中文），可将界面和内置提示词切换为对应语言。本 README 与[操作指南](docs/OPERATING-GUIDE.zh-CN.md)也提供简体中文版本。
+「基础设置」页签集中提供语言（English / 简体中文）、浏览器 API Token、微信通知和远程执行开关。语言选项可将界面和内置提示词切换为对应语言。本 README 与[操作指南](docs/OPERATING-GUIDE.zh-CN.md)也提供简体中文版本。
 
 ## 主要功能
 

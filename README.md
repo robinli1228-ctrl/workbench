@@ -18,7 +18,7 @@ The workbench does not replace the CLIs and does not proxy model APIs. It drives
 
 ## Language
 
-The app has a **Settings > Language** option (English / 简体中文) that localizes the UI and the built-in prompts. This README and the [operating guide](docs/OPERATING-GUIDE.md) are also available in Simplified Chinese: [README.zh-CN.md](README.zh-CN.md) and [docs/OPERATING-GUIDE.zh-CN.md](docs/OPERATING-GUIDE.zh-CN.md).
+The **Basic Settings** tab groups language (English / 简体中文), browser API Token, WeChat notifications and the remote execution switch. Language localizes the UI and the built-in prompts. This README and the [operating guide](docs/OPERATING-GUIDE.md) are also available in Simplified Chinese: [README.zh-CN.md](README.zh-CN.md) and [docs/OPERATING-GUIDE.zh-CN.md](docs/OPERATING-GUIDE.zh-CN.md).
 
 Project names remain user-defined text in the sidebar, its accessible labels and the workspace heading; switching the interface language does not rename them.
 
