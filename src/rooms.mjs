@@ -1,5 +1,6 @@
 import { tr } from './i18n.mjs';
 import {assertBindingEditAllowed, activeRoleSwitch,roleSwitchWaitReason,effectiveExecutionRole} from './role-switch-policy.mjs';
+import {sourceInputWaitReason} from './source-sync-input.mjs';
 import { normalizeResponsibility } from './role-definition.mjs';
 import { randomUUID } from 'node:crypto';
 import { terminal } from './store.mjs';
@@ -64,6 +65,24 @@ function collectiveRoleScopeZh(sentence) {
 /** In a new project, a message with no @ goes to the fixed supervisor; an explicit @ dispatches to that role; @everyone and legacy project discussions are only stored. */
 export class Rooms {
   constructor(db) { this.db = db; }
+
+  /** Internal system dispatch has a real queued task, but never impersonates a human message. */
+  postSystemTask(projectId,{id,roleId,text,source,sourceInputs=[],execution=null}) {
+    return this.db.transaction(()=>{
+      const role=this.db.get('roles',roleId);
+      if(role?.projectId!==projectId||role.archivedAt||!role.enabled||!isRoleConfigured(role))throw new Error(tr('rooms.roleDisabled2'));
+      if(!['repair','peer','assignment'].includes(source?.kind))throw new Error(tr('rooms.projectNotFound'));
+      const fingerprint=JSON.stringify({projectId,roleId,text,source,sourceInputs,execution}),prior=this.db.get('roomMessages',id);
+      if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('rooms.projectNotFound'));return prior;}
+      const task=this.db.createTask({projectId,title:text.slice(0,80),prompt:text,model:role.model,mode:role.mode});
+      this.db.put('tasks',{...task,origin:'chat',roleId,roleSnapshot:role,sourceMessageId:id,contextPrepared:true,reportRequired:true,sourceInputs,execution,
+        ...(source.kind==='repair'?{sourceConflictId:source.conflictId,sourceConflictGeneration:source.generation,sourceConflictAssignmentId:source.assignmentId}:{}),
+        ...(source.kind==='peer'?{sourceConflictPeerId:source.conflictId}:{}),
+        ...(source.kind==='assignment'?{sourceConflictAssignmentRequestId:source.conflictId}:{})});
+      const message=this.db.put('roomMessages',{id,projectId,sender:'system',senderName:tr('sourceSync.systemName'),kind:'source_conflict',text,taskIds:[task.id],source,fingerprint,createdAt:now()});
+      this.touch(projectId);return message;
+    });
+  }
 
   touch(projectId) {
     const prior = this.db.get('rooms', projectId);
@@ -252,6 +271,8 @@ export class Rooms {
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)
         : !task.contextPrepared ? tr('rooms.organizingConversation')
+        : (task.sourceConflictId||task.sourceConflictPeerId||task.sourceConflictAssignmentRequestId)&&worker?.capabilities?.sourceSyncTools!==1 ? tr('sourceSync.failure',{code:'worker_unsupported',detail:''})
+        : sourceInputWaitReason(this.db,task,role.nodeId) ? tr('sourceSync.failure',{code:sourceInputWaitReason(this.db,task,role.nodeId),detail:''})
         : projectTerminalLock(this.db,task.projectId,role.nodeId) ? tr('rooms.projectUnderManualTerminalTakeover')
         : !this.db.get('roles', role.id)?.enabled ? tr('rooms.roleDisabled2')
         : !isReady(role.nodeId) ? tr('rooms.waitingForNodeComeOnline')

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { Store } from './store.mjs';
 import { tr } from './i18n.mjs';
+import {syncError} from './source-sync-manifest.mjs';
 
 const sessionPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -115,6 +116,7 @@ export function claimTerminalSession(db, id, pid) {
   return db.transaction(() => {
     const s=db.get('terminalSessions',id);
     if(s?.status!=='prepared')throw new Error(tr('terminalResume.takeoverHasAlreadyStartedBeen'));
+    if(db.get('sourceSyncReservations',s.projectId))throw syncError('sync_busy');
     return db.put('terminalSessions',{...s,status:'active',pid,startedAt:new Date().toISOString()});
   });
 }

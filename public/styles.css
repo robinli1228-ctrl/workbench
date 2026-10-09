@@ -1442,3 +1442,17 @@ button.action-icon-button { display: inline-flex; align-items: center; justify-c
   .inspector-header .icon-button { width:36px; height:36px; }
   .topbar { min-height:54px; height:54px; padding:4px 8px; }
 }
+:root .source-sync-panel { display: grid; gap: 10px; }
+:root .source-sync-panel[hidden] { display: none; }
+.source-sync-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.source-sync-heading h3 { margin: 0; }
+.source-sync-heading button { font-size: 12px; padding: 7px 10px; }
+.source-sync-panel .workspace-note { margin: 0; }
+.source-sync-panel label, .source-sync-body label { display: grid; gap: 6px; }
+.source-sync-row { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid #dbe5f1; overflow-wrap: anywhere; }
+.source-sync-dialog { width: min(780px, 94vw); max-height: 88vh; padding: 24px; border: 1px solid #dbe5f1; border-radius: 18px; box-shadow: 0 20px 80px #172d4933; }
+.source-sync-body { display: grid; gap: 16px; padding-top: 16px; }
+.source-sync-body fieldset { border: 1px solid #dbe5f1; border-radius: 10px; padding: 12px; }
+.source-sync-body .source-sync-choice { display: flex; align-items: center; gap: 10px; padding: 5px; }
+.source-sync-choice input { width: auto; }
+.source-sync-body pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; background: #f5f8fc; padding: 12px; }

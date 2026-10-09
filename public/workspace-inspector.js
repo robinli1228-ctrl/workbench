@@ -1,12 +1,14 @@
 import { t, dateLocale } from './i18n.js';
 import {renderMarkdown} from './markdown.js';
 import {UI_ICON,deviceIconEl,workerDisplayName,workerKind} from './role-icons.js';
+import {sourceSyncPanel} from './source-sync.js';
 
 const el=(tag,className,text)=>Object.assign(document.createElement(tag),{className:className||'',...(text!==undefined?{textContent:text}:{})});
 const date=value=>value?new Date(value).toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'Modified time unknown';
 
 /** Reuses existing file reading; late responses must not overwrite new content after switching projects or closing the dialog. */
 export function createWorkspaceInspector({api,getProject,getData,openDevices,openProjectFolder}) {
+  const sourceSync=sourceSyncPanel({api,getProject,getData});
   const names=['roles','artifacts','resources'],titles={roles:'Role Settings',artifacts:'Recent Outputs',resources:'Resources'};
   const panels=Object.fromEntries(names.map(name=>[name,document.querySelector(`#inspector-${name}`)]));
   const tabs=[...document.querySelectorAll('.inspector-tabs [role="tab"]')],list=document.querySelector('#recent-artifact-list'),note=document.querySelector('#artifacts-note');
@@ -59,11 +61,12 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
     document.querySelector('#inspector-role-actions').hidden=name!=='roles';
     refresh.hidden=name!=='artifacts';
     tabs.forEach((tab,i)=>{const active=names[i]===name;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;});
-    void load();
+    void load();sourceSync.render();
   }
   tabs.forEach((tab,i)=>{tab.addEventListener('click',()=>select(names[i]));tab.addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?names.length-1:(i+(event.key==='ArrowRight'?1:-1)+names.length)%names.length;select(names[next]);tabs[next].focus();}});});
   refresh.addEventListener('click',()=>void load(true));
   return {render(){
+    sourceSync.render();
     const next=getProject()?.id||null;
     if(next!==projectId){projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
     const devices=document.querySelector('#inspector-device-list');devices.replaceChildren();

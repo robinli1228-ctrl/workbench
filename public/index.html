@@ -135,6 +135,7 @@
             <section class="settings-panel" data-settings-panel="project" id="settings-project-panel" hidden>
               <div class="settings-panel-heading"><h3>Project Information</h3><p>Manage the current project's description, repositories, workspace and scheduling. To manage devices and CLIs, use Basic Settings at the bottom left.</p></div>
               <div class="project-settings-body">
+                <button type="button" class="secondary" id="configure-project-source-sync">Configure source sync</button>
                 <form id="project-settings-form" class="form-grid">
                   <label class="full-width">Project name<input name="name" required maxlength="80"></label>
                   <label class="full-width">Project description<textarea name="description" rows="3" maxlength="12000"></textarea></label>
@@ -438,6 +439,7 @@
         <section class="inspector-panel" id="inspector-resources" role="tabpanel" aria-labelledby="inspector-tab-resources" hidden>
           <section class="inspector-devices" aria-label="Device Management"><div class="artifact-section-heading"><h3>Device Management</h3><div><button class="icon-button" id="manage-inspector-devices" type="button" aria-label="Manage devices" title="Manage devices"></button><button class="icon-button pause-button" id="pause-remote" type="button" disabled aria-label="Pause remote" title="Pause remote"></button></div></div><div class="sidebar-online-devices" id="sidebar-online-devices" aria-label="Quick access to online devices"></div><div id="inspector-device-list"></div></section>
           <section id="project-git-summary" class="project-git-summary" aria-label="Current project Git version" hidden></section>
+          <section id="source-sync-panel" class="inspector-devices source-sync-panel" aria-label="Source sync" hidden></section>
         </section>
         <div class="inspector-tabs" role="tablist" aria-label="Right panel sections">
           <button id="inspector-tab-roles" type="button" role="tab" aria-label="Roles" title="Roles" aria-selected="true" aria-controls="inspector-roles"></button>

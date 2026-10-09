@@ -23,7 +23,7 @@ When documents conflict, the actual code is the source of truth for what exists,
 - Current version: `0.4.0`.
 - Executable adapters: Codex (App Server), Grok Build, Antigravity and Claude Code. The last three run in print/stream mode with tool calls auto-approved and have no native per-step approval.
 - Home and Worker run as independent processes and talk over an authenticated WebSocket.
-- Project group chat supports `@role`, queueing, quoted hand-offs, run details, stop confirmation and attachments. A message without an `@` is stored but does not start a model (new projects route it to the project supervisor). Managed runs can use the built-in `wb` tool (memory, docs, read-only Git status, group notes, role consultation, reports, Git delivery requests). They cannot pull, push or sync by themselves. Every turn should end with a written hand-off under `.workbench/handoffs/`.
+- Project group chat supports `@role`, queueing, quoted hand-offs, run details, stop confirmation and attachments. A message without an `@` is stored but does not start a model (new projects route it to the project supervisor). Managed runs can use the built-in `wb` tool (memory, docs, read-only Git status, group notes, role consultation, reports, Git delivery requests). Formal Git publication remains approval-controlled. Enabled source-sync projects expose scoped wb sync requests; this is not permission for arbitrary pull, push or directory copying. Every turn should end with a written hand-off under `.workbench/handoffs/`.
 - A project can bind a different local directory per device. Code tasks run in separate Git worktrees.
 - Not done: other ACP runtimes, Feishu, multi-user identity, manual primary/standby Home switch-over, controlled cross-device session handoff (design only).
 
@@ -33,7 +33,7 @@ When documents conflict, the actual code is the source of truth for what exists,
 - Extend the existing Home, Worker, Room and runtime adapter code. Do not create a second control plane.
 - Handle task state, run state and Worker online state separately.
 - A runtime exiting successfully only means one execution ended. It does not mean the work was accepted.
-- Never share writable directories across devices. Deliver code across devices as Git commits and other files as attachments.
+- Never share writable directories across devices. Git commits remain the formal delivery path. Explicitly enabled source synchronization can exchange saved uncommitted files between independent bound directories; follow `docs/design-source-sync.md` and its measured acceptance limits. Do not enable it on business projects as a side effect of software installation.
 - Never commit `.data/`, `.local/`, `.worktrees/`, `.workbench/`, `node_modules/`, logs, tokens or account credentials. Never write real host names, IP addresses, user names, absolute personal paths or account identifiers into code, docs or tests; use `xxxxx` in examples.
 - Keep changes focused. Preserve existing data compatibility and verified flows.
 - Report the different states of a feature precisely: code written, committed, deployed, automatically checked and manually verified.

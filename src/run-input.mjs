@@ -53,7 +53,8 @@ export function instructionDelivery({runtime,run,prior,instructions,roleName,pro
 }
 
 /** Fix the two parts of input actually handed to the Runtime this turn, so the log snapshot and the launch arguments are not assembled separately. */
-export function createRunInput({ taskPrompt, boundary, context = '', runtimeGuidance = '', setupHint = '', attachmentHint = '', roleInstructions, executionInstructions = '',minimal=false,environmentHint='',configurationUpdate='' }) {
+export function createRunInput({ taskPrompt, boundary, context = '', runtimeGuidance = '', setupHint = '', attachmentHint = '', roleInstructions, executionInstructions = '',sourceInputs=[],minimal=false,environmentHint='',configurationUpdate='' }) {
+  if(sourceInputs.length)context=[context,tr(sourceInputs.some(i=>i.inheritedFrom)?'sourceSync.continuedReceipt':'sourceSync.executionReceipt',{versions:JSON.stringify(sourceInputs)})].filter(Boolean).join('\n\n');
   if(minimal)return {instructions:roleInstructions,prompt:[taskPrompt,context,environmentHint,runtimeGuidance,attachmentHint].filter(Boolean).join('\n\n'),...(configurationUpdate?{configurationUpdate}:{})};
   return {
     instructions: roleInstructions,

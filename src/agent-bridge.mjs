@@ -6,6 +6,7 @@ import { tr } from './i18n.mjs';
 const allowed = new Set(['/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/roles/prompt', '/api/agent/schedule', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/ask', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/report', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/sessions/list', '/api/agent/sessions/summary', '/api/agent/sessions/read', '/api/agent/conversation/summary']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 allowed.add('/api/agent/discussions');
+allowed.add('/api/agent/source-sync');
 
 /** Sender identity belongs to the persisted Run; target role/session identifiers remain valid tool input. */
 export function assertAgentSender(input) {

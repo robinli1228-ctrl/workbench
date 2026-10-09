@@ -56,7 +56,7 @@ For an Anthropic-compatible third-party service behind a launcher script, set `C
 
 ### 3.2 Spreading work across your accounts
 
-A role is one combination of device, CLI, model, reasoning effort and prompt. To use spare quota on an account, create or edit a role that points at that account's CLI and model, and `@` it for work that suits it (for example a second vendor's model as an independent reviewer). Role changes affect only new messages; queued and running work keeps its snapshot. Review the token statistics page and the quota shown on role cards to decide how to rebalance.
+A role is one combination of device, CLI, model, reasoning effort and prompt. To use spare quota on an account, create or edit a role that points at that account's CLI and model, and `@` it for suitable work. Definition changes affect new messages; running work keeps its snapshot. Changing Codex/Grok on the same device starts **Handoff and switch**, not a direct save. The original configuration remains active until handoff verification and process settlement succeed. Do not manually reset, clear or recreate the role to bypass it. Closing or cancelling requests shutdown of maintenance only; a disconnected Worker can keep cancellation pending until its process state is known. After commit, undispatched work receives a new execution binding without rewriting its historical snapshot. Unsupported adapters/Workers remain blocked. Review token statistics and role-card quota to rebalance.
 
 ### 3.3 Hosting accounts
 
@@ -124,7 +124,7 @@ Branch protection suggestions for maintainers: require one review, require the `
 - JavaScript with ES modules on Node.js 22. No TypeScript, no build step for the web UI.
 - Prefer extending the existing Home, Worker, Room and runtime adapter code over adding a second control plane.
 - Keep task state, run state and worker online state separate. A process exit does not mean the work was accepted.
-- No shared writable directories across devices: code moves as Git commits, other files as attachments.
+- No shared writable directories across devices: formal code delivery uses Git commits. Opt-in source sync uses independent repository/device bindings, previewed scope and explicit activation; it does not commit, push or deploy. In Resources, configure the repositories and devices, preview their actual folders and then enable the reviewed scope. Trigger Sync now or a managed `wb sync request`; saving alone does not start an upload. Inspect preserved versions before assigning a conflict owner, and independently inspect the exact candidate before accepting distribution. Changing scope requires disabling the previous generation first. Software installation leaves business scopes disabled; check the limits in [design-source-sync](design-source-sync.md) before enabling them.
 - Keep user-facing text, comments and docs in English. Do not hard-code personal paths, host names or account names.
 - Report each feature's status precisely: code written, committed, deployed, automatically checked and manually verified are different states.
 

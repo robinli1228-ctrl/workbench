@@ -47,6 +47,8 @@ import { TimerAgentActions } from './timer-agent.mjs';
 import { inspectRunProgress } from './run-monitor.mjs';
 import { projectTerminalLock, terminalCommand, terminalLaunchView } from './terminal-resume.mjs';
 import { ProjectGitVersions } from './project-git-versions.mjs';
+import {SourceSyncHome} from './source-sync-transport.mjs';
+import {acceptSourceProvenance} from './source-sync-provenance.mjs';
 import { WechatChannel, wechatTransport } from './wechat-channel.mjs';
 import { tr, getLanguage, setLanguage, initLanguage } from './i18n.mjs';
 import { roleResponsibility } from './role-definition.mjs';
@@ -124,6 +126,7 @@ const change = () => { clearTimeout(changeTimer);changeTimer=null;for (const r o
 const outputChanged=()=>{if(!changeTimer){changeTimer=setTimeout(change,100);changeTimer.unref();}};
 const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify(payload)); };
 const online = id => sockets.get(id)?.readyState === 1;
+const sourceSync=new SourceSyncHome({db,data,online,socket:id=>sockets.get(id),change,rooms,query:workerQuery});
 const setup = new ProjectSetup(db, rooms, workerQuery, online, change);
 const credentials = new CredentialStore(join(data, 'credentials'));
 const hosting = new Hosting(db, credentials);
@@ -176,6 +179,7 @@ async function dispatch(nodeId) {
     let run = db.get('runs', c.runId);
     if (!run) continue;
     if(c.type==='launch'&&db.get('settings','main')?.paused)continue;
+    if(['launch','delivery_publish'].includes(c.type)&&sourceSync.busy(run.projectId,nodeId))continue;
     if (['launch','delivery_publish'].includes(c.type) && projectTerminalLock(db,run.projectId,nodeId)) continue;
     if (c.type === 'launch' && (terminal.has(run.status) || run.status === 'stopping')) continue;
     if(c.type==='launch') {
@@ -252,6 +256,7 @@ function snapshot() {
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
+    sourceSyncSummaries:db.list('projects').map(p=>({id:p.id,projectId:p.id,enabled:sourceSync.sync.config(p.id).enabled,conflicts:db.listProject('sourceSyncConflicts',p.id).filter(c=>!['resolved','cancelled'].includes(c.status)).length})),
     terminalSessions: db.list('terminalSessions').filter(s=>!['released','cancelled'].includes(s.status)).map(terminalLaunchView),
     attachmentTransfers:db.list('attachmentTransfers').slice(-200).map(({fingerprint,...t})=>t),
     hostingAccounts: db.list('hostingAccounts'), devices: db.list('devices').map(d => ({ ...d, status: online(d.nodeId) ? 'online' : d.status })), repositoryOperations: db.list('repositoryOperations'),
@@ -315,6 +320,7 @@ const server = http.createServer(async (req, res) => {
     const pathname = decodeURIComponent(url.pathname);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    if(pathname.startsWith('/api/worker/source-sync/')&&await sourceSync.workerHttp(req,res,pathname))return;
       if (pathname === '/healthz') return json(res, { ok: true, version: '0.4.0', toolProtocol:2 });
     if (pathname.startsWith('/api/')) {
       const bearer = req.headers.authorization || '';
@@ -329,6 +335,8 @@ const server = http.createServer(async (req, res) => {
         const record=db.get('roleSwitchHistory',switchHistory[1]);if(!record)throw new Error('CLI switch history not found.');
         res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(record.text);
       }
+      if((pathname.startsWith('/api/agent/source-inputs/')||pathname.startsWith('/api/agent/source-candidates/'))&&await sourceSync.inputHttp(req,res,pathname))return;
+      if(await sourceSync.browserHttp(req,res,pathname))return;
       const uploadMatch = pathname.match(/^\/api\/projects\/([^/]+)\/attachments$/);
       if (uploadMatch && req.method === 'POST') return json(res, await attachments.upload(uploadMatch[1], req), 201);
       const transferMatch=pathname.match(/^\/api\/projects\/([^/]+)\/attachment-transfers$/);
@@ -436,6 +444,8 @@ const server = http.createServer(async (req, res) => {
         const run = db.get('runs', b.runId);
         if (!run || terminal.has(run.status) || ['stopping', 'reconciling'].includes(run.status)) throw new Error(tr('home.currentExecutionHasEndedStopping'));
         if(run.switchOperationId&&!['/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/sessions/list','/api/agent/sessions/summary','/api/agent/sessions/read','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
+        if(pathname==='/api/agent/source-sync'){const result=await sourceSync.agent.execute(run,b.action,b.input||{});change();return json(res,result);}
+        if(pathname==='/api/agent/source-candidates'){const result=b.finish?await sourceSync.agent.completeCandidate(run,b.candidateId):sourceSync.agent.stageCandidate(run,b);change();return json(res,result);}
         if(pathname==='/api/agent/discussions') {
           if(Object.keys(b).some(k=>!['runId','action','input'].includes(k)))throw new Error(tr('home.discussionRequestContainsUnauthorizedFields'));
           // Read/reply/resolve for an already started turn still finish under the frozen identity; a probe withdrawal only blocks new questions and does not swallow in-flight answers.
@@ -482,7 +492,7 @@ const server = http.createServer(async (req, res) => {
           }
           const request = calls.create({ id: b.requestId || (pathname.endsWith('/ask') ? `ask:${run.id}:${role.id}` : ''),
             projectId: run.projectId, targetRoleId: role.id, parentRequestId: parent.id, originNodeId: run.nodeId,
-            sourceMessageId: run.sourceMessageId, kind: b.kind || 'consult', summary, deliveryId: b.deliveryId, attachments:run.attachments||[],
+            sourceMessageId: run.sourceMessageId, kind: b.kind || 'consult', summary, deliveryId: b.deliveryId,sourceSyncBatchId:b.sourceSyncBatchId, attachments:run.attachments||[],
             // A consultation uses the receiving role's own workspace; it must not inherit the asker's deployment permissions or device version snapshot.
             ...((b.kind||'consult')==='consult'?{}:{planId:run.planId,planVersion:run.planVersion,stepId:run.stepId,execution:run.execution}) });
           const messageId = `call:${request.id}`;
@@ -859,6 +869,7 @@ const server = http.createServer(async (req, res) => {
     const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
     Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
     files['/workspace-inspector.js']='workspace-inspector.js';
+    files['/source-sync.js']='source-sync.js';
     files['/state-data.js']='state-data.js';
     files['/browser-token.js']='browser-token.js';
     files['/role-switch.js']='role-switch.js';
@@ -892,6 +903,9 @@ wss.on('connection', ws => {
         send(ws, { type: 'registered', paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
       }
       if (!nodeId || sockets.get(nodeId) !== ws) throw new Error(tr('home.nodeNotRegisteredYet'));
+      if(m.type==='source_sync_receipt'||m.type==='source_sync_command_ack'){
+        void sourceSync.message(nodeId,m).catch(e=>send(ws,{type:'error',error:e.message}));return;
+      }
       if (m.type === 'ready') { ws.workerReady = true; dispatch(nodeId); scheduleChat(); collectUsage(nodeId); }
       if (m.type === 'heartbeat') db.put('workers', { ...db.get('workers', nodeId), lastSeen: new Date().toISOString() });
       if(m.type==='launch_deferred') {
@@ -946,6 +960,7 @@ wss.on('connection', ws => {
         db.transaction(()=>{
           const current=db.event(m.event);
           roleSwitchRuntime.onRunSettled(current);
+          if(m.event.type==='source_provenance')acceptSourceProvenance(db,current,m.event.payload);
           if (m.event.type === 'delivery') deliveries.accept(current.id, m.event.payload);
           if(!discussions.finishRun(current.id).handled)calls.finish(current.id);
           rooms.complete(current);
@@ -972,6 +987,7 @@ const heartbeat = setInterval(() => {
   for (const r of viewers) r.write(': keepalive\n\n');
 }, 15000);
 const chatScheduler = setInterval(scheduleChat, 1000);
+const sourceSyncTimer=setInterval(()=>{void sourceSync.tick().catch(e=>console.error(e.message));},1000);sourceSyncTimer.unref();
 const wechatPoll = setInterval(() => { void wechat.tick().catch(error => { console.error(tr('home.wechatChannelCheckFailed'), error.message); }); }, 4000);
 wechatPoll.unref();
 const progressMonitor=setInterval(()=>{if(inspectRunProgress(db,online))change();},60000);progressMonitor.unref();

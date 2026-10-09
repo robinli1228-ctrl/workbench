@@ -11,6 +11,8 @@
 
 ## 1. Overview and goals
 
+Source synchronization increment: [design-source-sync](design-source-sync.md) adds explicitly scoped saved-file exchange, including uncommitted edits, with modifier-owned conflicts. It does not replace formal Git delivery or business acceptance; see its implementation and acceptance boundary before activation.
+
 ### 1.1 Product positioning
 
 A project workbench that manages real agent runtimes. Each computer or server runs a Worker that starts the local CLI, manages sessions, executes tasks and returns results. Users take part in projects through the web, a chat channel such as WeChat, and, in phase 2, Feishu.
