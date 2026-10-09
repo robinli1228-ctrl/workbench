@@ -1,6 +1,7 @@
 import { defaultOrganizerPrompt } from './conversation-organizer.mjs';
 import {discussionInstructions} from './discussion-policy.mjs';
 import { tr, isMessage } from './i18n.mjs';
+import { createHash } from 'node:crypto';
 
 export const defaultPlatformPrompt = () => tr('platformPrompts.youRunningInControlledCollaboration');
 
@@ -15,11 +16,21 @@ export function executionRules(run) {
   return tr('platformPrompts.handleOnlyAssignmentDoNot', { discussion, p2: run.discussionProtocol===2?tr('platformPrompts.useWbDiscussForShort'):tr('platformPrompts.useWbCallForRole'), p3: run.roleSnapshot?.systemSupervisor?tr('platformPrompts.workingRolesMayConsultDiscuss'):'', p4: purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):tr('platformPrompts.unlessMergeStageScheduledDo'), p5: ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):tr('platformPrompts.doNotReleaseOperateProduction'), p6: run.reportRequired?tr('platformPrompts.beforeBusinessDeliveryRunWb', { p1: run.discussionProtocol===2?tr('platformPrompts.wbDiscussAsk'):'' }):'' });
 }
 const DEFAULT_FIELD_LIMIT = 128;
+// Match only exact previous EN/ZH defaults; custom edits must survive prompt upgrades.
+const LEGACY_SUPERVISOR_DEFAULTS = new Set([
+  '68986281a3826c62394241e4e51068168a575bd615a65c415009538a625a93f7',
+  'b9c53a1fc442a02fdf46bb50169105a1c8c012c3a5593d1270588e7ca1e40c1f',
+  'bc1b43525dbdd2642f780776d9f7974f62eb41691d80fb3671a56fb6cecc6118',
+  'febb81a33a504d8393ffe0a8d053ed953f9a9b8ae8879f782db09adcfd1d9b3e'
+]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */
 function promptOrDefault(value, key, fallback) {
   if (typeof value !== 'string') return fallback();
-  return isMessage(value.trim(), key) ? fallback() : value;
+  const text = value.trim();
+  const legacyDefault = key === 'platformPrompts.youFixedProjectSupervisorYou'
+    && LEGACY_SUPERVISOR_DEFAULTS.has(createHash('sha256').update(text).digest('hex'));
+  return isMessage(text, key) || legacyDefault ? fallback() : value;
 }
 
 export function normalizePlatformSettings(record = {}) {
