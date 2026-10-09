@@ -1,14 +1,18 @@
 import {terminal} from './store.mjs';
 import { tr } from './i18n.mjs';
+import {currentContinuation} from './coordination-wait.mjs';
 
 /** Message progress is derived from existing request, command, and run evidence; no separate, possibly contradictory state table is created. */
 export function messageProgress(db,request,online,launch) {
+  const registeredAt=request.createdAt,current=currentContinuation(db,request.id);
+  if(current&&current.id!==request.id){request=current;launch=undefined;}
   const run=db.get('runs',request.currentRunId||''),task=db.get('tasks',request.taskId||'');
   const command=launch===undefined?db.list('commands').find(c=>c.type==='launch'&&c.runId===run?.id):launch;
   const parent=db.get('coordinationRequests',request.parentRequestId||'');
-  const next=db.get('coordinationRequests',(parent||request).continuationRequestId||'');
+  const effective=currentContinuation(db,(parent||request).id);
+  const next=effective?.id!==(parent||request).id?effective:null;
   const nextRun=db.get('runs',next?.currentRunId||'');
-  const timestamps={registeredAt:request.createdAt,sentAt:command?.firstSentAt,receivedAt:command?.ackedAt,startedAt:run?.startedAt,resultAt:run?.finishedAt,resumeStartedAt:nextRun?.startedAt};
+  const timestamps={registeredAt,sentAt:command?.firstSentAt,receivedAt:command?.ackedAt,startedAt:run?.startedAt,resultAt:run?.finishedAt,resumeStartedAt:nextRun?.startedAt};
   const result=(stage,label,reason='',attention=false)=>({stage,label,reason,attention,timestamps});
   if(request.status==='cancelled'||task?.status==='cancelled')return result('cancelled',tr('messageProgress.cancelled'));
   if(parent?.steeringTaskId||parent?.status==='cancelled'||request.steeringTaskId)return result('historical',tr('messageProgress.historicalResultNoLongerResumed'));

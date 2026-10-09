@@ -32,7 +32,10 @@ export class WarmSessions {
   }
   /** The active count includes the Run about to start; the longest-idle process is reclaimed first. */
   async trim(activeCount=0) {
-    while(this.entries.size && this.entries.size+activeCount>this.max)await this.drop(this.entries.keys().next().value);
+    while(this.entries.size && this.entries.size+activeCount>this.max) {
+      const count=Math.min(this.entries.size,this.entries.size+activeCount-this.max);
+      await Promise.all([...this.entries.keys()].slice(0,count).map(key=>this.drop(key)));
+    }
   }
   async drop(key) {
     const entry=this.entries.get(key);if(!entry)return;

@@ -21,10 +21,12 @@ async function gitMetadataRoots(roots) {
 
 /** A managed role may briefly reuse the App Server, rebinding instructions and events every turn; stdio exposes no control port. */
 export class CodexSession {
-  constructor({ cwd, writableRoots = [], attachments = [], model, mode, emit, roleInstructions = '', roleName = '', effort = 'low', autoApprove = true, env = process.env, resumeSessionId = null, keepAlive = false }) {
+  constructor({ cwd, writableRoots = [], attachments = [], model, mode, emit, roleInstructions = '', roleName = '', effort = 'low', autoApprove = true, env = process.env, resumeSessionId = null, keepAlive = false, maintenance = false,minimalInstructions=false,configurationUpdate='' }) {
+    this.minimalInstructions=minimalInstructions;
+    this.configurationUpdate=configurationUpdate;
     this.keepAlive=keepAlive;
     this.attachments = attachments;
-    this.cwd = cwd; this.model = model; this.mode = 'workspace-write'; this.emit = emit;
+    this.cwd = cwd; this.model = model; this.mode = maintenance ? 'read-only' : 'workspace-write'; this.emit = emit;
     this.roleInstructions = roleInstructions; this.roleName = roleName;
     this.writableRoots = writableRoots;
     this.effort = effort; this.autoApprove = true; this.env = env;
@@ -58,6 +60,7 @@ export class CodexSession {
     if (this.stopping) return this.shutdown();
     const response = await this.openThread();
     this.threadId = response.id;
+    await this.applyConfigurationUpdate();
     this.emit('status', { status: 'running', threadId: this.threadId, nativeSessionId: this.threadId, workspace: this.cwd });
     if (this.stopping) return this.shutdown();
     let result;
@@ -74,6 +77,12 @@ export class CodexSession {
     this.turnId = result.turn.id;
     if (this.stopping) await this.stop();
   }
+  /** Append the operator-approved update at developer authority; an RPC acknowledgement is delivery, not a model verification round. */
+  async applyConfigurationUpdate() {
+    if(!this.configurationUpdate)return;
+    await this.request('thread/inject_items',{threadId:this.threadId,items:[{type:'message',role:'developer',content:[{type:'input_text',text:this.configurationUpdate}]}]});
+    this.emit('status',{configurationEventState:'delivered'});
+  }
   /** All turns reuse the ordinary launch arguments; permissions and external tools are not switched by discussion purpose. */
   launchArgs() {
     const args=['app-server','--listen','stdio://','--disable','multi_agent'];
@@ -81,6 +90,8 @@ export class CodexSession {
   }
   /** Each turn loads history by exact ID and updates that turn's tool environment and role rules. */
   async openThread() {
+    // Loaded-thread resume ignores environment overrides. Retain the process and native ID, but release this idle subscription before reloading.
+    if(this.minimalInstructions&&this.threadId)await this.request('thread/unsubscribe',{threadId:this.threadId});
     const writableRoots = [...new Set([...this.writableRoots, ...await gitMetadataRoots([this.cwd, ...this.writableRoots])])];
     const options = {
       cwd: this.cwd, model: this.model, approvalPolicy: this.autoApprove ? 'never' : 'untrusted',
@@ -88,7 +99,7 @@ export class CodexSession {
       // Git sync and cross-device wb communication need network access; the workspace write boundary is kept and re-applied on resume.
       config: { ...Object.fromEntries(['GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT', 'WB_TURN_CONTEXT', 'WB_PROJECT_ROOT', 'WB_KNOWLEDGE', 'WB_WORKSPACE', 'WB_RUN_ID', 'WB_ROLE_SESSION_ID', 'WB_CONVERSATION_ID', 'WB_REQUEST_ID', 'WB_ROLE', 'WB_HOP', 'WB_HOME', 'WB_MODE', 'WB_BRIDGE', 'WB_CLI', 'WB_REPOSITORIES']
         .filter(key => typeof this.env[key] === 'string').map(key => [`shell_environment_policy.set.${key}`, this.env[key]])), 'sandbox_workspace_write.writable_roots':writableRoots, 'sandbox_workspace_write.network_access':true },
-      developerInstructions: tr('codex.you', { p1: this.roleName ? tr('codex.roleInProjectGroupChat', { roleName: this.roleName }) : tr('codex.executorTask'), p2: this.roleInstructions || '' })
+      developerInstructions: this.minimalInstructions?this.roleInstructions:tr('codex.you', { p1: this.roleName ? tr('codex.roleInProjectGroupChat', { roleName: this.roleName }) : tr('codex.executorTask'), p2: this.roleInstructions || '' })
     };
     const response = await this.request(this.resumeSessionId?'thread/resume':'thread/start',this.resumeSessionId?{threadId:this.resumeSessionId,...options}:options);
     if(this.resumeSessionId && response.thread?.id!==this.resumeSessionId)throw new Error(tr('codex.resumedCodexSessionIdDoes'));

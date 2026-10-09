@@ -5,8 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Store, terminal } from './store.mjs';
+import {assertAgentSender} from './agent-bridge.mjs';
+import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
+import {validateCliCapacity,reservedTerminalSlots,registrationCapacity} from './device-capacity.mjs';
 import { SessionTools } from './session-tools.mjs';
 import { RoleSessions } from './role-sessions.mjs';
+import {newTerminalBinding,publishNewTerminal} from './role-terminal.mjs';
+import {RoleSwitches,roleSwitchView} from './role-switches.mjs';
+import {RoleSwitchRuntime} from './role-switch-runtime.mjs';
 import { ConversationContext } from './conversation-context.mjs';
 import { renderRunPrompt } from './run-context.mjs';
 import { buildTeamContext, renderTeamContext } from './team-context.mjs';
@@ -22,7 +28,7 @@ import { WorkspaceStateFeed } from './workspace-state.mjs';
 import { messageProgress, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
-import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updatePausedSetting, updateConversationOrganizer } from './platform-prompts.mjs';
+import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updatePausedSetting, updateConversationOrganizer,legacyExecutionPrompt,executionRules } from './platform-prompts.mjs';
 import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -39,10 +45,12 @@ import { saveRunReport } from './run-reports.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
 import { TimerAgentActions } from './timer-agent.mjs';
 import { inspectRunProgress } from './run-monitor.mjs';
-import { projectTerminalLock, terminalCommand } from './terminal-resume.mjs';
+import { projectTerminalLock, terminalCommand, terminalLaunchView } from './terminal-resume.mjs';
 import { ProjectGitVersions } from './project-git-versions.mjs';
 import { WechatChannel, wechatTransport } from './wechat-channel.mjs';
 import { tr, getLanguage, setLanguage, initLanguage } from './i18n.mjs';
+import { roleResponsibility } from './role-definition.mjs';
+import { resolveNodeKind } from './node-kind.mjs';
 
 const base = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const data = resolve(process.env.DATA_DIR || join(base, '.data/home'));
@@ -107,6 +115,9 @@ const sockets = new Map();
 const viewers = new Set();
 const queries = new Map();
 const workspaceFeed = new WorkspaceStateFeed();
+const roleSwitches=new RoleSwitches(db);
+const roleSwitchRuntime=new RoleSwitchRuntime({db,switches:roleSwitches,query:workerQuery,dispatch,change:()=>change(),
+  stopRun:(runId,commandId)=>{const run=db.requestStop(runId,commandId);dispatch(run.nodeId);}});
 const matches = (a, b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 let changeTimer;
 const change = () => { clearTimeout(changeTimer);changeTimer=null;for (const r of viewers) r.write('event: change\ndata: {}\n\n'); };
@@ -167,16 +178,30 @@ async function dispatch(nodeId) {
     if(c.type==='launch'&&db.get('settings','main')?.paused)continue;
     if (['launch','delivery_publish'].includes(c.type) && projectTerminalLock(db,run.projectId,nodeId)) continue;
     if (c.type === 'launch' && (terminal.has(run.status) || run.status === 'stopping')) continue;
-    if(c.type==='launch'&&run.roleSessionId&&!run.teamContext) {
+    if(c.type==='launch') {
+      const issue=instructionProtocolIssue(run,db.get('workers',nodeId));
+      if(issue||run.instructionProtocolIssue) {
+        const task=db.get('tasks',run.taskId),previous=run.instructionProtocolIssue;
+        run={...run,instructionProtocolIssue:issue};db.put('runs',run);
+        if(task&&task.currentRunId===run.id&&(issue||task.waitingReason===previous))db.put('tasks',{...task,waitingReason:issue});
+        if(issue!==previous)change();
+      }
+      if(issue)continue;
+    }
+    if(c.type==='launch'&&!c.firstSentAt&&run.minimalInstructions===undefined) {
+      run={...run,minimalInstructions:supportsMinimalInstructions(run,db.get('workers',nodeId))?1:0};db.put('runs',run);
+    }
+    const minimal=run.minimalInstructions===1;
+    if(c.type==='launch'&&!minimal&&run.roleSessionId&&!run.teamContext) {
       run={...run,teamContext:buildTeamContext(db,run,{online,forExecution:true})};
       db.put('runs',run);
     }
     const storedTask = run.inputTask||db.get('tasks', run.taskId);
-    const basePrompt=[run.contextPacket?renderRunPrompt(run.contextPacket):storedTask.prompt,renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n');
+    const basePrompt=[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal?executionRules(run,{minimal:true}):run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n');
     const rulesText = schedulingRules();
     // The timer line is matched in both languages; it is dropped for Workers without timer tools.
     const schedulingRulesText = db.get('workers',nodeId)?.capabilities?.timerTools===1 ? rulesText : rulesText.replace(/^(?:Use wb timer only when given an explicit wall-clock time or recurrence requirement; |\u53ea\u6709\u6536\u5230\u660e\u786e\u7684\u5899\u949f\u65f6\u95f4\/\u5468\u671f\u9700\u6c42\u624d\u7528 wb timer\uff1b).*\n/m,'');
-    const supervisorInstructions=(!run.turnPurpose||run.turnPurpose==='task')&&run.roleSnapshot?.systemSupervisor && !run.roleSnapshot.platformAssistant ? tr('home.supervisorWorkingConventions', { supervisorPrompt: normalizePlatformSettings(db.get('settings', 'main')).supervisorPrompt, schedulingRules: schedulingRulesText }):'';
+    const supervisorInstructions=!minimal&&!run.switchOperationId&&(!run.turnPurpose||run.turnPurpose==='task')&&run.roleSnapshot?.systemSupervisor && !run.roleSnapshot.platformAssistant ? tr('home.supervisorWorkingConventions', { supervisorPrompt: legacyExecutionPrompt(normalizePlatformSettings(db.get('settings', 'main')).supervisorPrompt,'supervisor'), schedulingRules: schedulingRulesText }):'';
     // New Workers put the fixed Supervisor conventions in the stable rules area; old Workers still receive the full original format, so rolling upgrades do not lose rules.
     const stableInstructions=db.get('workers',nodeId)?.capabilities?.stableInstructions===1;
     const task = c.launchInput?.task||{...storedTask,prompt:supervisorInstructions&&!stableInstructions?`${basePrompt}\n\n${supervisorInstructions}`:basePrompt,
@@ -194,7 +219,7 @@ async function dispatch(nodeId) {
     }
     const settings = normalizePlatformSettings(db.get('settings', 'main'));
     const gitCredentials = {};
-    if (c.type === 'launch' || c.type === 'delivery_publish' || run.deliveryId) {
+    if (!run.switchOperationId && (c.type === 'launch' || c.type === 'delivery_publish' || run.deliveryId)) {
       try { for (const repo of run.repositories || []) gitCredentials[repo.id] = await hosting.auth(repo.accountId, repo.repoUrl); }
       catch (e) {
         if(c.type === 'delivery_publish') {
@@ -205,7 +230,7 @@ async function dispatch(nodeId) {
       }
     }
     if(!online(nodeId)||db.get('commands',c.id)?.acked)continue;
-    const sentAt=new Date().toISOString(),platformPrompt=c.launchInput?.platformPrompt??settings.platformPrompt;
+    const sentAt=new Date().toISOString(),platformPrompt=c.launchInput?.platformPrompt??(run.switchOperationId?'Maintenance only: read existing state; do not perform business actions.':minimal?settings.platformPrompt:legacyExecutionPrompt(settings.platformPrompt));
     // A launch keeps the language it was first sent in, so a re-send after a language change repeats the identical prompt.
     const language=c.launchInput?.language??getLanguage();
     const recorded={...c,firstSentAt:c.firstSentAt||sentAt,lastSentAt:sentAt,sendAttempts:(c.sendAttempts||0)+1,
@@ -221,9 +246,13 @@ async function dispatch(nodeId) {
 }
 function snapshot() {
   const launches=new Map(db.list('commands').filter(c=>c.type==='launch').map(c=>[c.runId,c]));
+  // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
+  const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
   return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1}, homePlatform: process.platform, projects: db.list('projects').filter(p => !p.systemConfig), roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
+    supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
-    terminalSessions: db.list('terminalSessions').filter(s=>!['released','cancelled'].includes(s.status)),
+    roleSwitches:db.list('roleSwitches').map(roleSwitchView),
+    terminalSessions: db.list('terminalSessions').filter(s=>!['released','cancelled'].includes(s.status)).map(terminalLaunchView),
     attachmentTransfers:db.list('attachmentTransfers').slice(-200).map(({fingerprint,...t})=>t),
     hostingAccounts: db.list('hostingAccounts'), devices: db.list('devices').map(d => ({ ...d, status: online(d.nodeId) ? 'online' : d.status })), repositoryOperations: db.list('repositoryOperations'),
     repositories: db.list('repositories'), repositoryWorkspaces: db.list('repositoryWorkspaces'), setupProposals: db.list('setupProposals'), projectGitVersions:db.list('projectGitVersions'),
@@ -231,7 +260,7 @@ function snapshot() {
     promptDefaults: { platformPrompt: defaultPlatformPrompt(), supervisorPrompt: defaultSupervisorPrompt() },
     roleTemplates: defaultRoleTemplates(), supervisors: db.list('supervisorConfigs'),
     executionPlans: db.list('executionPlans').map(({fingerprint,...p})=>p),
-    roleSessions:db.list('roleSessions').map(({nativeSession,...session})=>session),
+    roleSessions:db.list('roleSessions').filter(session=>!session.historyClearedAt).map(({nativeSession,...session})=>session),
     scheduledJobs: db.list('scheduledJobs'),scheduledOccurrences:db.list('scheduledOccurrences').slice(-200),runReports:db.list('runReports'),runAlerts:db.list('runAlerts').filter(a=>a.status==='open'),
     requests: db.list('coordinationRequests').map(request => {const {fingerprint,targetSnapshot,...r}=request;return {...r,messageProgress:messageProgress(db,request,online,launches.get(request.currentRunId)||null)};}),
     deliveries: db.list('deliveries').map(({ fingerprint, ...r }) => r),
@@ -239,11 +268,13 @@ function snapshot() {
 }
 /** Scheduling does not call a model; it only issues new executions after the Worker has finished reconnection verification. */
 function scheduleChat() {
+  void roleSwitchRuntime.tick();
   if(reconcileCallResults(db,calls))change();
   try { if(scheduledJobs.tick()) change(); } catch(error) {console.error(tr('home.scheduledJobCheckFailed'),error.message);}
   void executionPlans.advance().then(changed=>{if(changed)change();}).catch(error=>console.error(tr('home.executionStageAdvanceFailed'),error.message));
   for (const nodeId of deliveries.schedule()) dispatch(nodeId);
-  for (const task of db.list('tasks').filter(t => t.origin === 'chat' && !t.requestId && ['ready', 'in_progress'].includes(t.status))) calls.adoptTask(task.id);
+  for (const task of db.list('tasks').filter(t => t.origin === 'chat' && !t.switchOperationId && !t.requestId && ['ready', 'in_progress'].includes(t.status))) calls.adoptTask(task.id);
+  if(calls.expireWaits())change();
   for (const request of db.list('coordinationRequests')) {
     if (request.status === 'waiting_call') calls.resume(request.id);
     if (['queued', 'waiting_delivery'].includes(request.status)) calls.reconcile(request.id);
@@ -258,7 +289,7 @@ function scheduleChat() {
     config:normalizePlatformSettings(db.get('settings','main')).conversationOrganizer,
     canRun:nodeId=>!db.get('settings','main')?.paused && online(nodeId) && sockets.get(nodeId).workerReady
       && db.get('workers',nodeId)?.capabilities?.summaryBatches===1
-      && db.list('runs').filter(r=>r.nodeId===nodeId&&!terminal.has(r.status)).length+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1),
+      && db.list('runs').filter(r=>r.nodeId===nodeId&&!terminal.has(r.status)).length+reservedTerminalSlots(db,nodeId)+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1),
     query:(snapshot,config)=>workerQuery({nodeId:config.nodeId},'conversation_summary',{snapshot,config},125000),change
   }).catch(error=>console.error(tr('home.backgroundConversationOrganizationFailed'),error.message));
 }
@@ -293,6 +324,11 @@ const server = http.createServer(async (req, res) => {
         if (!workerOk) return json(res, { error: tr('home.agentToolsOnlyAllowedThrough') }, 401);
       } else if (apiToken && !userOk) return json(res, { error: tr('home.accessTokenRequired') }, 401);
       if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) return json(res, { error: tr('home.crossSiteRequestRejected') }, 403);
+      const switchHistory=pathname.match(/^\/api\/agent\/cli-switches\/([^/]+)\/history$/);
+      if(switchHistory&&req.method==='GET') {
+        const record=db.get('roleSwitchHistory',switchHistory[1]);if(!record)throw new Error('CLI switch history not found.');
+        res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});return res.end(record.text);
+      }
       const uploadMatch = pathname.match(/^\/api\/projects\/([^/]+)\/attachments$/);
       if (uploadMatch && req.method === 'POST') return json(res, await attachments.upload(uploadMatch[1], req), 201);
       const transferMatch=pathname.match(/^\/api\/projects\/([^/]+)\/attachment-transfers$/);
@@ -370,19 +406,36 @@ const server = http.createServer(async (req, res) => {
         const result = await (deviceAction[2] === 'check' ? devicesAdmin.check(deviceAction[1]) : devicesAdmin.provision(deviceAction[1]));
         return json(res, result);
       }
+      const workerCapacity=pathname.match(/^\/api\/workers\/([^/]+)\/capacity$/);
+      if(workerCapacity && req.method==='POST') {
+        const b=await body(req),capacity=validateCliCapacity(b.capacity),worker=db.get('workers',workerCapacity[1]);
+        if(!worker)throw new Error(tr('home.deviceNotFound'));
+        if(online(worker.id)&&worker.capabilities?.cliCapacity!==1)throw new Error(tr('capacity.upgrade'));
+        db.put('workerConfigs',{...db.get('workerConfigs',worker.id),id:worker.id,capacity});
+        db.put('workers',{...worker,desiredCapacity:capacity,capacity:Math.min(capacity,worker.appliedCapacity||worker.capacity||1)});change();
+        // Persist the desired value even offline. Reconnection applies it before dispatching work.
+        let applied=false;
+        if(online(worker.id)) {
+          try {const result=await workerQuery({nodeId:worker.id},'cli_capacity',{capacity},30000);applied=result.capacity===capacity&&db.get('workerConfigs',worker.id)?.capacity===capacity;}
+          catch { /* saved, but pending reconnection or an in-flight update */ }
+        }
+        scheduleChat();return json(res,{capacity,applied});
+      }
       const workerConfig = pathname.match(/^\/api\/workers\/([^/]+)\/configuration$/);
       if (workerConfig && req.method === 'POST') {
         if (db.get('settings','main')?.paused) throw new Error(tr('home.remoteExecutionPaused3'));
         const b = await body(req), worker = db.get('workers',workerConfig[1]);
         if (!worker) throw new Error(tr('home.deviceNotFound'));
         const checked = await workerQuery({nodeId:worker.id},'workspace_root',b.workspaceRoot);
-        const config = db.put('workerConfigs',{id:worker.id, workspaceRoot:checked.localRoot, name:String(b.name || worker.name).slice(0,80)});
-        db.put('workers',{...worker,...config}); change(); return json(res,config);
+        const config = db.put('workerConfigs',{...db.get('workerConfigs',worker.id),id:worker.id, workspaceRoot:checked.localRoot, name:String(b.name || worker.name).slice(0,80)});
+        db.put('workers',{...db.get('workers',worker.id),name:config.name,workspaceRoot:config.workspaceRoot}); change(); return json(res,config);
       }
       if (pathname.startsWith('/api/agent/') && req.method === 'POST') {
         const b = await body(req);
+        assertAgentSender(b);
         const run = db.get('runs', b.runId);
         if (!run || terminal.has(run.status) || ['stopping', 'reconciling'].includes(run.status)) throw new Error(tr('home.currentExecutionHasEndedStopping'));
+        if(run.switchOperationId&&!['/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/sessions/list','/api/agent/sessions/summary','/api/agent/sessions/read','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
         if(pathname==='/api/agent/discussions') {
           if(Object.keys(b).some(k=>!['runId','action','input'].includes(k)))throw new Error(tr('home.discussionRequestContainsUnauthorizedFields'));
           // Read/reply/resolve for an already started turn still finish under the frozen identity; a probe withdrawal only blocks new questions and does not swallow in-flight answers.
@@ -443,7 +496,7 @@ const server = http.createServer(async (req, res) => {
             note: tr('home.deliveredDirectlyTargetRoleWhen') }, 201);
         }
         if (pathname === '/api/agent/wait') {
-          const r = calls.wait(run, b.summary); change(); return json(res, { requestId: r.id, status: r.status, note: tr('home.endTurnNowExecutionSlot') });
+          const r = calls.wait(run, b.summary,{requestIds:b.requestIds,timeoutSeconds:b.timeoutSeconds}); change(); return json(res, { requestId: r.id, status: r.status,requestIds:r.waitRequestIds,deadlineAt:r.waitDeadlineAt,note: tr('home.endTurnNowExecutionSlot') });
         }
         if (pathname === '/api/agent/deliveries') {
           const r = deliveries.request(run, b); change(); return json(res, r, 201);
@@ -561,6 +614,13 @@ const server = http.createServer(async (req, res) => {
         if (!db.get('workers', m[1])?.capabilities?.projectBrowser) throw new Error(tr('home.upgradeNodeUseDirectorySelection'));
         return json(res, await workerQuery({ nodeId: m[1] }, 'directories', { path: url.searchParams.get('path'), offset: Number(url.searchParams.get('offset') || 0) }));
       }
+      if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/workspaces\/([^/]+)\/open$/)) && req.method === 'POST') {
+        const project=db.get('projects',m[1]),worker=db.get('workers',m[2]),binding=db.get('workspaces',`${m[1]}:${m[2]}`);
+        if(!project||!binding?.localRoot)throw new Error(tr('folders.projectBindingRequired'));
+        if(!worker||resolveNodeKind(worker.nodeKind,worker.platform)!=='local')throw new Error(tr('folders.localDeviceRequired'));
+        if(worker.capabilities?.openProjectFolder!==1)throw new Error(tr('folders.upgradeLocalWorker'));
+        return json(res,await workerQuery({nodeId:worker.id},'open_project_folder',binding.localRoot,15000));
+      }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)$/)) && req.method === 'POST') {
         const r = db.updateProject(m[1], await body(req)); change(); return json(res, r);
       }
@@ -582,6 +642,24 @@ const server = http.createServer(async (req, res) => {
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/archive$/)) && req.method === 'POST') {
         const r = rooms.archiveRole(m[1], m[2]); change(); return json(res, r);
       }
+      if((m=pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/cli-switch\/preview$/))&&req.method==='POST') {
+        const preview=roleSwitches.preview(m[1],m[2],await body(req));
+        return json(res,{supported:true,from:preview.role.runtime,to:preview.candidate.runtime});
+      }
+      if((m=pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/cli-switches(?:\/([^/]+)(?:\/(renew|cancel))?)?$/))) {
+        if(!m[3]&&req.method==='POST') {const op=roleSwitches.begin(m[1],m[2],await body(req));change();return json(res,roleSwitchView(op));}
+        if(m[3]) {
+          let op=roleSwitches.get(m[1],m[2],m[3]);
+          if(req.method==='POST'&&m[4]==='renew')op=roleSwitches.renew(op.id,(await body(req)).leaseId);
+          else if(req.method==='POST'&&m[4]==='cancel')op=roleSwitches.cancel(op.id,'operator');
+          else if(req.method!=='GET'||m[4])throw new Error('Unsupported CLI switch action.');
+          if(req.method==='POST')change();return json(res,roleSwitchView(op));
+        }
+      }
+      if((m=pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/history\/clear$/))&&req.method==='POST') {
+        const result=new RoleSessions(db).clearHistory(m[1],m[2],(await body(req)).sessionId||null);
+        change();return json(res,result);
+      }
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/session\/reset$/))&&req.method==='POST') {
         const role=db.get('roles',m[2]);if(role?.projectId!==m[1])throw new Error(tr('home.roleDoesNotBelongProject'));
         if(db.list('tasks').some(task=>task.projectId===m[1]&&task.roleId===m[2]&&['ready','in_progress'].includes(task.status)))throw new Error(tr('home.roleStillHasUnfinishedAssignments'));
@@ -599,6 +677,9 @@ const server = http.createServer(async (req, res) => {
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/sessions\/([^/]+)\/summary$/))&&req.method==='GET') {
         if(!db.get('projects',m[1]))throw new Error(tr('home.projectNotFound2'));
         return json(res,sessionTools.summary({projectId:m[1],conversationId:m[1]},m[2]));
+      }
+      if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/definition$/)) && req.method === 'PATCH') {
+        const r = rooms.updateRoleDefinition(m[1], m[2], await body(req)); change(); return json(res, r);
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/roles$/)) && req.method === 'POST') {
         const b = await body(req);
@@ -653,8 +734,43 @@ const server = http.createServer(async (req, res) => {
         for(const id of stopped.stopRunIds){const target=db.get('runs',id);if(target)dispatch(target.nodeId);}
         change();return json(res,stopped.run);
       }
+      if((m=pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/terminal$/)) && req.method==='POST') {
+        const [_,projectId,roleId]=m,b=await body(req);
+        if(b.action==='release') {
+          const claim=db.get('terminalSessions',b.id);
+          if(claim?.kind!=='new'||claim.projectId!==projectId||claim.roleId!==roleId)throw new Error(tr('home.thereNoTerminalTakeoverFor'));
+          await workerQuery(claim,'terminal_release',{id:claim.id});
+          db.put('terminalSessions',{...db.get('terminalSessions',claim.id),status:'released'});change();scheduleChat();return json(res,{released:true});
+        }
+        if(b.action!=='prepare'||typeof b.operationId!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(b.operationId))throw new Error(tr('home.invalidTakeoverAction'));
+        const repeated=db.get('terminalSessions',b.operationId);
+        if(repeated) {
+          if(repeated.kind!=='new'||repeated.projectId!==projectId||repeated.roleId!==roleId)throw new Error(tr('home.invalidTakeoverAction'));
+          if(repeated.status==='prepared')return json(res,terminalLaunchView(repeated));
+          throw new Error(tr('roleTerminal.pending'));
+        }
+        const {role,worker,workspace}=newTerminalBinding(db,projectId,roleId,id=>online(id)&&sockets.get(id).workerReady),device=db.list('devices').find(d=>d.nodeId===role.nodeId);
+        if(worker.nodeKind==='cloud'&&!device)throw new Error(tr('home.cloudDeviceMissingSshRegistration'));
+        const claim={id:b.operationId,kind:'new',projectId,roleId,nodeId:role.nodeId,runtime:role.runtime,model:role.model,status:'preparing',createdAt:new Date().toISOString()};
+        db.put('terminalSessions',claim);change();
+        try {
+          const settings=normalizePlatformSettings(db.get('settings','main'));
+          const info=await workerQuery(claim,'terminal_new',{id:claim.id,projectId,roleId,nodeId:role.nodeId,workspace,
+            roleSettings:{runtime:role.runtime,model:role.model,effort:role.effort||null,name:role.name,instructions:role.instructions||''},
+            platformPrompt:settings.platformPrompt,supervisorPrompt:role.systemSupervisor&&!role.platformAssistant?settings.supervisorPrompt:''},30000);
+          const identityFile=b.useLocalSshKey===true&&process.platform==='darwin'&&device?(await credentials.get(device.id))?.keyPath:null;
+          const command=terminalCommand(info,device||null,identityFile),value=terminalLaunchView({...claim,...info,status:'prepared',command});
+          publishNewTerminal(db,claim,value);change();return json(res,value);
+        }catch(error){
+          const current=db.get('terminalSessions',claim.id);
+          if(['released','cancelled'].includes(current?.status))throw error;
+          let status='blocked';try{await workerQuery(claim,'terminal_release',{id:claim.id});status='released';}catch{}
+          const after=db.get('terminalSessions',claim.id);
+          if(!['released','cancelled'].includes(after?.status))db.put('terminalSessions',{...claim,status,error:error.message});change();throw error;
+        }
+      }
       if ((m = pathname.match(/^\/api\/runs\/([^/]+)\/terminal$/)) && req.method === 'POST') {
-        const r=db.get('runs',m[1]), b=await body(req);
+        const b=await body(req), r=db.get('runs',m[1]);
         if(!r)throw new Error(tr('home.runNotFound'));
         const existing=projectTerminalLock(db,r.projectId,r.nodeId);
         if(b.action==='release') {
@@ -663,8 +779,9 @@ const server = http.createServer(async (req, res) => {
           db.put('terminalSessions',{...existing,status:'released'});change();scheduleChat();return json(res,{released:true});
         }
         if(b.action!=='prepare')throw new Error(tr('home.invalidTakeoverAction'));
+        if(r.historyClearedAt)throw new Error(tr('roleSessions.historyWasCleared'));
         if(existing) {
-          if(existing.runId===r.id && existing.status==='prepared')return json(res,existing);
+          if(existing.runId===r.id && existing.status==='prepared')return json(res,terminalLaunchView(existing));
           throw new Error(tr('home.projectOnDeviceAlreadyUnder'));
         }
         if(db.get('settings','main')?.paused)throw new Error(tr('home.remoteExecutionPaused4'));
@@ -680,7 +797,7 @@ const server = http.createServer(async (req, res) => {
           // The registered key path is reused only when accessed from the same Mac; when accessed from another computer, that computer's own SSH configuration is responsible.
           const identityFile=b.useLocalSshKey===true && process.platform==='darwin' && device ? (await credentials.get(device.id))?.keyPath : null;
           const command=terminalCommand(info,device || null,identityFile);
-          const value={...claim,...info,status:'prepared',command,url:`iterm2:/command?${new URLSearchParams({c:command})}`};
+          const value=terminalLaunchView({...claim,...info,status:'prepared',command});
           db.put('terminalSessions',value);change();return json(res,value);
         } catch(error) {
           let status='blocked';
@@ -743,6 +860,9 @@ const server = http.createServer(async (req, res) => {
     Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
     files['/workspace-inspector.js']='workspace-inspector.js';
     files['/state-data.js']='state-data.js';
+    files['/browser-token.js']='browser-token.js';
+    files['/role-switch.js']='role-switch.js';
+    files['/role-history.js']='role-history.js';
     files['/i18n.js']='i18n.js';
     files['/locales/zh.js']='locales/zh.js';
     const file = files[pathname]; if (!file) return json(res, { error: tr('home.pageNotFound') }, 404);
@@ -767,14 +887,26 @@ wss.on('connection', ws => {
         nodeId = m.node.id;
         if (online(nodeId)) { ws.close(1008, tr('home.workerAlreadyConnected')); nodeId = null; return; }
         sockets.set(nodeId, ws); clearTimeout(registerTimer);
-        db.put('workers', { ...m.node, ...db.get('workerConfigs',nodeId), id:nodeId, lastSeen: new Date().toISOString() });
-        send(ws, { type: 'registered', paused: !!db.get('settings', 'main')?.paused, language: getLanguage() }); change(); return;
+        const config=db.get('workerConfigs',nodeId),limits=registrationCapacity(m.node,config);
+        db.put('workers', { ...m.node, ...config,...limits,id:nodeId, lastSeen: new Date().toISOString() });
+        send(ws, { type: 'registered', paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
       }
       if (!nodeId || sockets.get(nodeId) !== ws) throw new Error(tr('home.nodeNotRegisteredYet'));
       if (m.type === 'ready') { ws.workerReady = true; dispatch(nodeId); scheduleChat(); collectUsage(nodeId); }
       if (m.type === 'heartbeat') db.put('workers', { ...db.get('workers', nodeId), lastSeen: new Date().toISOString() });
+      if(m.type==='launch_deferred') {
+        const c=db.get('commands',m.id);
+        if(c?.nodeId===nodeId&&c.type==='launch'&&c.runId===m.runId&&!c.acked)db.put('commands',{...c,capacityDeferred:true});
+      }
+      if(m.type==='capacity_state') {
+        const appliedCapacity=validateCliCapacity(m.capacity),worker=db.get('workers',nodeId),desiredCapacity=db.get('workerConfigs',nodeId)?.capacity??appliedCapacity;
+        const usage={};for(const key of ['active','retained','organizer','terminal'])usage[key]=Math.max(0,Math.min(128,Number(m.usage?.[key])||0));
+        db.put('workers',{...worker,appliedCapacity,desiredCapacity,capacity:Math.min(desiredCapacity,appliedCapacity),cliUsage:usage});
+        if(usage.active+usage.organizer+usage.terminal<Math.min(desiredCapacity,appliedCapacity))for(const c of db.list('commands').filter(c=>c.nodeId===nodeId&&!c.acked&&c.capacityDeferred))db.put('commands',{...c,lastSentAt:null});
+        dispatch(nodeId);scheduleChat();change();
+      }
       if(m.type==='warm_sessions') {
-        db.put('workers',{...db.get('workers',nodeId),warmSessions:Array.isArray(m.sessions)?m.sessions.slice(0,4):[]});change();
+        db.put('workers',{...db.get('workers',nodeId),warmSessions:Array.isArray(m.sessions)?m.sessions.slice(0,64):[]});change();
       }
       if(m.type==='organizer_busy') {
         db.put('workers',{...db.get('workers',nodeId),organizerBusy:Math.max(0,Math.min(10,Number(m.count)||0))});
@@ -799,6 +931,13 @@ wss.on('connection', ws => {
           discussionConfigurations:Array.isArray(discussion.discussionConfigurations)?discussion.discussionConfigurations:[]}}:{}) });
         change();
       }
+      if(m.type==='execution_config') {
+        try {
+          if(db.get('runs',m.runId)?.nodeId!==nodeId)throw new Error(tr('home.runDoesNotBelongCurrent'));
+          send(ws,{type:'execution_config',id:m.id,result:freezeExecutionConfiguration(db,m.runId)});change();
+        } catch(error) {send(ws,{type:'execution_config',id:m.id,error:error.message});}
+        return;
+      }
       if (m.type === 'event') {
         if(!db.get('runs',m.event?.runId||'')&&db.get('deletedRuns',m.event?.runId||'')?.nodeId===nodeId) {
           send(ws,{type:'ack',id:m.event.id,disposition:'project_deleted'});return;
@@ -806,6 +945,7 @@ wss.on('connection', ws => {
         if (db.get('runs', m.event?.runId)?.nodeId !== nodeId) throw new Error(tr('home.runDoesNotBelongCurrent'));
         db.transaction(()=>{
           const current=db.event(m.event);
+          roleSwitchRuntime.onRunSettled(current);
           if (m.event.type === 'delivery') deliveries.accept(current.id, m.event.payload);
           if(!discussions.finishRun(current.id).handled)calls.finish(current.id);
           rooms.complete(current);

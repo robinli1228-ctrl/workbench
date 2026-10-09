@@ -1,5 +1,6 @@
 import { t, dateLocale } from './i18n.js';
 import {renderMarkdown} from './markdown.js';
+import {readApiToken} from './browser-token.js';
 
 const title=document.querySelector('#document-title');
 const status=document.querySelector('#document-status');
@@ -7,8 +8,7 @@ const content=document.querySelector('#document-content');
 const copy=document.querySelector('#document-copy');
 const params=new URLSearchParams(location.search);
 const runId=params.get('runId'),path=params.get('path');
-let token=sessionStorage.getItem('agent-workbench.api-token')||'';
-try { token ||= window.opener?.sessionStorage.getItem('agent-workbench.api-token')||''; } catch {}
+const token=readApiToken();
 window.opener=null;
 
 /** File content comes only from the authorized Run API; Markdown never inserts raw HTML. */

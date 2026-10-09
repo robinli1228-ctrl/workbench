@@ -5,6 +5,7 @@ import { giteeRepository } from './repository.mjs';
 import { buildTeamContext } from './team-context.mjs';
 import { tr } from './i18n.mjs';
 import { isSupervisorName, isBroadcastName } from './default-roles.mjs';
+import { normalizeResponsibility, roleForAgent } from './role-definition.mjs';
 
 /** The supervisor may be on any device, but the CLI, model, and login state must be confirmed by the target Worker. */
 export function validateLocalSupervisor(worker, input, online) {
@@ -20,7 +21,7 @@ export function validateLocalSupervisor(worker, input, online) {
   if (input.effort && !(model.efforts || runtime.efforts || []).includes(input.effort)) throw new Error(tr('projectSetup.supervisorModelDoesNotSupport'));
 }
 
-export const setupRules = () => tr('projectSetup.youProjectSFixedSupervisor');
+export const setupRules = () => [tr('projectSetup.youProjectSFixedSupervisor'), tr('roleDefinition.supervisorConvention'), tr('coordinator.dynamicPlanningRules')].join('\n\n');
 
 /** Stores and executes configuration proposals; the model can only propose, and the user-confirmation endpoint applies them. */
 export class ProjectSetup {
@@ -43,10 +44,25 @@ export class ProjectSetup {
     const project = this.db.get('projects', run?.projectId);
     const role = run?.roleId ? this.db.get('roles', run.roleId) : null;
     if (!project || !run.roleId || (project.supervisorRoleId !== run.roleId && role?.projectId !== project.id)) throw new Error(tr('projectSetup.youCanOnlyQueryConfiguration'));
+    const roles = this.db.list('roles').filter(r => r.projectId === project.id);
+    // Older proposals duplicate role records in actions and results; project those too.
+    const projectAction = (a, index, proposal) => {
+      if (a.type !== 'role') return a;
+      const id = proposal.completed?.find(c => c.index === index)?.result?.id || roles.find(r => r.name === a.name)?.id;
+      const projected = roleForAgent({ ...a, id }, run);
+      // An unresolved legacy name may belong to the caller before a rename; use the live roster for duties.
+      if (!id) delete projected.responsibility;
+      return projected;
+    };
+    const proposals = this.db.list('setupProposals').filter(r => r.projectId === project.id).slice(-5).map(p => ({
+      ...p, actions: p.actions.map((a, index) => projectAction(a, index, p)), completed: (p.completed || []).map(c => ({
+        ...c, result: p.actions[c.index]?.type === 'role' ? roleForAgent(c.result, run) : c.result
+      }))
+    }));
     return { project, team:buildTeamContext(this.db,run,{online:this.online,inherit:false}), repositories: this.db.list('repositories').filter(r => r.projectId === project.id),
       workspaces: this.db.list('repositoryWorkspaces').filter(r => r.projectId === project.id),
-      roles: this.db.list('roles').filter(r => r.projectId === project.id && !r.archivedAt),
-      proposals: this.db.list('setupProposals').filter(r => r.projectId === project.id).slice(-5),
+      roles: roles.filter(r => !r.archivedAt).map(r => roleForAgent(r, run)),
+      proposals,
       workers: this.db.list('workers').map(w => ({ id: w.id, name: w.name, nodeKind: w.nodeKind,
         online: this.online(w.id), allowedRoots: w.allowedRoots, runtimes: w.runtimes })) };
   }
@@ -102,6 +118,7 @@ export class ProjectSetup {
       const issue = runtimeIssue(this.db.get('workers', a.nodeId), a.runtime, a.model);
       if (issue) throw new Error(issue);
       return { type: a.type, name: a.name, nodeId: a.nodeId,
+        ...(a.responsibility === undefined ? {} : { responsibility: normalizeResponsibility(a.responsibility) }),
         runtime: a.runtime, model: a.model, effort: a.effort || null, instructions: a.instructions, enabled: true };
     });
     const proposal = this.db.put('setupProposals', { id: randomUUID(), projectId: run.projectId, sourceRunId: run.id,

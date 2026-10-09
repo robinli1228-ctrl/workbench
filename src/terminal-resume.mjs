@@ -1,5 +1,5 @@
 import { userInfo, homedir } from 'node:os';
-import { readdir, stat, access } from 'node:fs/promises';
+import { readdir, stat, access, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,16 @@ export function resumeArgs(runtime, id) {
   const option = { codex:'resume', claude:'--resume', grok:'--resume', agy:'--conversation' }[runtime];
   if (!option) throw new Error(tr('terminalResume.cliDoesNotSupportResume'));
   return [option, id];
+}
+
+/** Start an interactive CLI with the saved role settings; never continue, fork or reference an old native ID. */
+export function freshTerminalArgs({runtime,model,effort,instructions='',workspace}) {
+  if(typeof model!=='string'||!model||typeof instructions!=='string'||(effort&&typeof effort!=='string'))throw new Error(tr('roleTerminal.unconfigured'));
+  if(runtime==='codex')return ['--model',model,'--sandbox','workspace-write','--ask-for-approval','never','-c',`developer_instructions=${JSON.stringify(instructions)}`,'-c','sandbox_workspace_write.network_access=true',...(effort?['-c',`model_reasoning_effort=${JSON.stringify(effort)}`]:[])];
+  if(runtime==='claude')return ['--model',model,'--append-system-prompt',instructions,'--dangerously-skip-permissions',...(effort?['--effort',effort]:[])];
+  if(runtime==='grok')return ['--cwd',workspace,'-m',model,'--rules',instructions,'--always-approve','--no-plan','--permission-mode','bypassPermissions',...(effort?['--reasoning-effort',effort]:[])];
+  if(runtime==='agy')return ['--model',model,'--mode','accept-edits','--dangerously-skip-permissions',...(effort?['--effort',effort]:[]),...(instructions?['--prompt-interactive',instructions]:[])];
+  throw new Error(tr('terminalResume.cliDoesNotSupportResume'));
 }
 
 /** Take over the whole project's execution window on this node, avoiding concurrent use of the shared directory and deliveries. */
@@ -86,6 +96,11 @@ export async function findSessionHistory(session) {
   throw new Error(tr('terminalResume.nativeSessionHistoryForUser'));
 }
 
+/** iTerm decodes percent escapes, not form '+' spaces; rebuild old saved links without changing their takeover identity. */
+export function terminalLaunchView(session) {
+  return session.command?{...session,url:`iterm2:/command?c=${encodeURIComponent(session.command)}`}:session;
+}
+
 /** Generate a reviewable command; the link carries no password or platform token. */
 export function terminalCommand(info, device = null, identityFile = null) {
   const command = info.launcher.map(quote).join(' ');
@@ -118,11 +133,12 @@ async function runTerminal(dbPath,id) {
   const db=new Store(dbPath), before=db.get('terminalSessions',id);
   if(!before?.nativeSession || before.nativeSession.user!==userInfo().username)throw new Error(tr('terminalResume.runningUserDoesNotMatch'));
   if(!(await stat(before.workspace)).isDirectory())throw new Error(tr('terminalResume.originalWorkingDirectoryDoesNot'));
-  await findSessionHistory(before.nativeSession);
+  if(before.kind==='new'&&await realpath(before.workspace)!==before.workspace)throw new Error(tr('terminalResume.originalWorkingDirectoryDoesNot'));
+  if(before.kind!=='new')await findSessionHistory(before.nativeSession);
   await access(before.nativeSession.binary,constants.X_OK);
   const session=claimTerminalSession(db,id,process.pid);
-  const args=resumeArgs(session.nativeSession.runtime,session.nativeSession.id);
-  console.log(tr('terminalResume.resumingOriginalSessionDirectoryPlatform', { id: session.nativeSession.id, workspace: session.workspace }));
+  const args=session.kind==='new'?freshTerminalArgs({...session.roleSettings,runtime:session.nativeSession.runtime,workspace:session.workspace}):resumeArgs(session.nativeSession.runtime,session.nativeSession.id);
+  console.log(session.kind==='new'?tr('roleTerminal.startingNew',{workspace:session.workspace}):tr('terminalResume.resumingOriginalSessionDirectoryPlatform', { id: session.nativeSession.id, workspace: session.workspace }));
   const env={...session.privateEnv};
   for(const key of ['TERM','COLORTERM','TERM_PROGRAM','TERM_PROGRAM_VERSION'])if(process.env[key])env[key]=process.env[key];
   const child=spawn(session.nativeSession.binary,args,{cwd:session.workspace,env,stdio:'inherit'});

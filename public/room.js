@@ -2,6 +2,8 @@ import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName } from './role-icons.js';
 import { renderMarkdown, linkRunDocuments } from './markdown.js';
 import { createHistoryViewer } from './history-view.js';
+import {createRoleSwitchUI} from './role-switch.js';
+import {createRoleHistoryTabs} from './role-history.js';
 
 /** Long text only changes its carrier; the file content keeps the original line breaks, whitespace and trailing characters. */
 export function longTextFileName(text) {
@@ -124,7 +126,7 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
   const reportedRunIds=new Set(messages.map(message=>message.runId).filter(Boolean));
   const runById=new Map(runs.map(run=>[run.id,run]));
   return tasks.filter(task=>{
-    if(task.projectId!==projectId || linkedTaskIds.has(task.id))return false;
+    if(task.switchOperationId || task.projectId!==projectId || linkedTaskIds.has(task.id))return false;
     const run=task.currentRunId ? runById.get(task.currentRunId) : null;
     if(run && reportedRunIds.has(run.id))return false;
     if(run)return ['queued','starting','running','waiting_user','stopping','reconciling'].includes(run.status);
@@ -181,6 +183,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   const quoteBar = document.querySelector('#chat-quote');
   const roleDialog = document.querySelector('#role-dialog');
   const roleForm = document.querySelector('#role-form');
+  const roleHistory=createRoleHistoryTabs({host:roleDialog,settings:roleForm,getData:()=>data,getRole:()=>editingRoleSnapshot,api,refreshState,create,formatTime,openTask});
+  const cliSwitch=createRoleSwitchUI({api,refreshState});
   const roleError = document.querySelector('#role-error');
   const older = document.querySelector('#load-older');
   const mentionMenu = document.querySelector('#mention-menu');
@@ -764,6 +768,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   /** Read messages by Room revision; Token updates only refresh cards and do not re-fetch the whole history. */
   async function refresh(nextData, nextProjectId) {
     data = nextData;
+    roleHistory.refresh();
     if (roleDialog.open && !savingRole && !checkingRuntime) renderDeviceOptions(roleForm.elements.nodeId.value);
     if (projectId !== nextProjectId) {
       if(messageFullscreen?.open)messageFullscreen.close();
@@ -918,9 +923,31 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     } finally { sendingProject = null; saveDrafts(); composer(); }
   });
 
-  const customPreset = { key: 'custom', name: '', mode: 'workspace-write', autoApprove: true, instructions: '' };
+  const customPreset = { key: 'custom', name: '', mode: 'workspace-write', autoApprove: true, responsibility: '', instructions: '' };
   const rolePreset = key => key === 'custom' ? customPreset : (data.roleTemplates || []).find(item => item.key === key);
   let editingRoleRevision;
+  let editingRoleSnapshot = null, roleRuntimeReady = false;
+
+  /** Offline text edits retain the original binding; changing any execution setting still needs the normal checks. */
+  function definitionOnly() {
+    const role = editingRoleSnapshot, fields = roleForm.elements;
+    return role && fields.name.value.trim() === role.name
+      && ['nodeId', 'runtime', 'model', 'effort'].every(key => fields[key].value === (role[key] || ''))
+      && fields.mode.value === (role.mode || 'workspace-write')
+      && fields.enabled.checked === Boolean(role.enabled)
+      && fields.autoApprove.checked === (role.autoApprove !== false);
+  }
+  function renderRoleSaveState() {
+    if(!savingRole)document.querySelector('#role-save').textContent=editingRoleSnapshot?.runtime&&roleForm.elements.runtime.value!==editingRoleSnapshot.runtime?'Handoff and switch':'Save role';
+    document.querySelector('#role-save').disabled = savingRole || checkingRuntime
+      || (!definitionOnly() && !roleRuntimeReady && !(editingRoleId && !roleForm.elements.enabled.checked));
+  }
+  /** A saved unavailable value remains visible for metadata edits; it is not a claim that the CLI is usable. */
+  function retainSavedOption(select, value) {
+    if (!value || [...select.options].some(o => o.value === value)) return;
+    const option = create('option', '', t('{value} (saved; unavailable)', { value }));
+    option.value = value; option.disabled = true; select.append(option);
+  }
 
   function roleBinding(nodeId) {
     return data.workspaces?.find(b => b.projectId === editingProjectId && b.nodeId === nodeId);
@@ -928,6 +955,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
 
   function populateRole(role) {
     editingRoleId = role?.id || null; roleForm.reset();
+    editingRoleSnapshot = role ? { ...role } : null;
     const value = role || customPreset;
     editingRoleRevision = role ? role.revision || 1 : undefined;
     const presets = roleForm.elements.preset;
@@ -938,7 +966,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     presets.disabled = Boolean(role);
     document.querySelector('#role-archive').hidden = !role;
-    for (const key of ['name', 'mode', 'instructions']) roleForm.elements[key].value = value[key] ?? (key === 'mode' ? 'workspace-write' : '');
+    for (const key of ['name', 'mode', 'responsibility', 'instructions']) roleForm.elements[key].value = value[key] ?? (key === 'mode' ? 'workspace-write' : '');
     roleForm.elements.preset.value = rolePreset(role?.templateKey)?.key || 'custom';
     preferredModel = value.model || '';
     preferredRuntime = role?.runtime || 'codex';
@@ -949,6 +977,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     roleError.hidden = true;
     document.querySelector('#role-dialog-title').textContent = 'Role Details';
     document.querySelector('#role-save').textContent = 'Save role';
+    roleHistory.reset();
   }
 
   function renderDeviceOptions(selected) {
@@ -962,6 +991,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const option = create('option', '', `${workerDisplayName(w)} · ${system} · ${w.online ? t('Online') : t('Offline')}${usable ? '' : t(' · CLI not ready')}${bound ? '' : t(' · Folder not bound')}`);
       option.value = w.id; option.disabled = !w.online; select.append(option);
     }
+    if (selected) retainSavedOption(select, selected);
     select.value = selected !== undefined ? selected : workers.find(w => w.online && w.runtimes?.some(r => r.available && r.supported))?.id || '';
     renderRuntimeOptions();
   }
@@ -980,7 +1010,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       o.value = r.type; o.disabled = !r.available || !r.supported; runtimeSelect.append(o);
     }
     const usable = [...runtimeSelect.options].filter(o => o.value && !o.disabled);
-    runtimeSelect.value = usable.find(o => o.value === prior)?.value
+    const savedRuntime = editingRoleSnapshot?.nodeId === roleForm.elements.nodeId.value ? editingRoleSnapshot.runtime : '';
+    if (savedRuntime) retainSavedOption(runtimeSelect, savedRuntime);
+    runtimeSelect.value = (savedRuntime && preferredRuntime === savedRuntime ? savedRuntime : '')
+      || usable.find(o => o.value === prior)?.value
       || usable.find(o => o.value === preferredRuntime)?.value
       || (!editingRoleId && (usable.find(o => o.value === 'codex')?.value || usable[0]?.value))
       || '';
@@ -992,14 +1025,17 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     select.disabled = !w?.online || !r?.available;
     const blank = create('option', '', preferredModel && !r?.models?.some(m => m.id === preferredModel) ? t('Previously selected model {preferredModel} is not listed; please choose', { preferredModel }) : 'Select model…'); blank.value = ''; select.append(blank);
     for (const m of r?.models || []) { const o = create('option', '', m.name || m.id); o.value = m.id; select.append(o); }
-    select.value = r?.models?.some(m => m.id === preferredModel) ? preferredModel : '';
+    const savedBinding = editingRoleSnapshot?.nodeId === roleForm.elements.nodeId.value && editingRoleSnapshot.runtime === roleForm.elements.runtime.value;
+    if (savedBinding) retainSavedOption(select, editingRoleSnapshot.model);
+    select.value = [...select.options].some(o => o.value === preferredModel) ? preferredModel : '';
     renderEffortOptions(r?.models?.find(m => m.id === select.value) || null, r);
     const fresh = r?.checkedAt && Date.now() - Date.parse(r.checkedAt) < 600000;
     const binding = roleBinding(w?.id);
     const ready = w?.online && w.capabilities?.runtimeDiscovery && r?.supported && r.available && fresh && select.value && binding;
     const reason = !w?.online ? 'Please select an online device' : !w.capabilities?.runtimeDiscovery ? 'Please upgrade the Worker on this device' : !r?.available ? (w.runtimes?.[0]?.reason || 'No connected and available CLI Agent') : !fresh ? 'CLI check is stale; refresh it in "Basic Settings > Devices, CLIs and Models"' : !select.value ? 'Select a model actually returned by this CLI; the previously selected model is not replaced automatically' : !binding ? 'First bind the project folder in "Project Settings > Project Workspace"' : 'Device, CLI, model and project folder match; they are checked again on save';
-    document.querySelector('#role-runtime-note').textContent = t('{reason}{v}. The check does not invoke model inference; actual runs may still be limited by network or quota.', { reason, v: r?.checkedAt ? t('. Checked {time}', { time: formatTime(r.checkedAt) }) : '' });
-    document.querySelector('#role-save').disabled = savingRole || checkingRuntime || (!ready && !(editingRoleId && !roleForm.elements.enabled.checked));
+    document.querySelector('#role-runtime-note').textContent = t('{reason}{v}. The check does not invoke model inference; actual runs may still be limited by network or quota.', { reason: t(reason), v: r?.checkedAt ? t('. Checked {time}', { time: formatTime(r.checkedAt) }) : '' });
+    roleRuntimeReady = ready;
+    renderRoleSaveState();
     renderAutoApproveNote();
     syncRoleSelectTitles();
   }
@@ -1014,6 +1050,9 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const select = roleForm.elements.effort;
     const efforts = Array.isArray(model?.efforts) ? model.efforts.filter(Boolean)
       : Array.isArray(runtime?.efforts) ? runtime.efforts.filter(Boolean) : [];
+    const saved = editingRoleSnapshot;
+    const keepEffort = saved && saved.nodeId === roleForm.elements.nodeId.value && saved.runtime === roleForm.elements.runtime.value && saved.model === roleForm.elements.model.value && saved.effort;
+    if (keepEffort && !efforts.includes(saved.effort)) efforts.push(saved.effort);
     if (!efforts.length) {
       field.hidden = true;
       select.replaceChildren();
@@ -1030,6 +1069,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     select.value = efforts.includes(preferredEffort) ? preferredEffort : '';
   }
   roleForm.addEventListener('change', syncRoleSelectTitles);
+  roleForm.addEventListener('input', renderRoleSaveState);
+  roleForm.addEventListener('change', renderRoleSaveState);
   roleForm.elements.nodeId.addEventListener('change', renderRuntimeOptions);
   roleForm.elements.runtime.addEventListener('change', () => { preferredRuntime = roleForm.elements.runtime.value; renderModelOptions(); });
   roleForm.elements.model.addEventListener('change', () => { preferredModel = roleForm.elements.model.value; renderModelOptions(); });
@@ -1046,16 +1087,17 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const role = roleId ? (data.roles || []).find(r => r.id === roleId) : null;
     populateRole(role || undefined);
     roleDialog.showModal();
+    if(role){const pending=cliSwitch.resume({projectId:editingProjectId,role,host:roleForm,operation:data.roleSwitches?.find(op=>op.roleId===role.id&&!['committed','cancelled'].includes(op.status))});if(pending){savingRole=true;void pending.then(op=>{if(op.status==='committed')roleDialog.close();}).catch(error=>setError(error.message)).finally(()=>{savingRole=false;renderRoleSaveState();});}}
   }
   document.querySelector('#manage-roles')?.addEventListener('click', () => openRoleEditor());
   document.querySelector('#add-role-sidebar')?.addEventListener('click', () => openRoleEditor());
-  document.querySelector('#close-role-dialog').addEventListener('click', () => { if (!savingRole) roleDialog.close(); });
-  roleDialog.addEventListener('cancel', e => { if (savingRole) e.preventDefault(); });
+  document.querySelector('#close-role-dialog').addEventListener('click', () => { if (!savingRole) roleDialog.close();else void cliSwitch.cancel(); });
+  roleDialog.addEventListener('cancel', e => { if (savingRole){e.preventDefault();void cliSwitch.cancel();} });
   roleForm.elements.preset.addEventListener('change', () => {
     if (editingRoleId) return;
     const preset = rolePreset(roleForm.elements.preset.value);
     if (preset) {
-      for (const key of ['name', 'mode', 'instructions']) roleForm.elements[key].value = key === 'mode' ? preset[key] : t(preset[key]);
+      for (const key of ['name', 'mode', 'responsibility', 'instructions']) roleForm.elements[key].value = key === 'mode' ? preset[key] : t(preset[key] || '');
       roleForm.elements.autoApprove.checked = preset.autoApprove !== false;
       renderModelOptions();
     }
@@ -1073,15 +1115,26 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   roleForm.addEventListener('submit', async e => {
     e.preventDefault(); if (savingRole || checkingRuntime || document.querySelector('#role-save').disabled) return;
     const values = Object.fromEntries(new FormData(roleForm));
+    // Disabled saved options are omitted by FormData; keep the binding shown by the editor instead of treating omission as a CLI switch or clear.
+    for(const key of ['nodeId','runtime','model','effort'])values[key]=roleForm.elements[key].value;
+    const onlyDefinition = definitionOnly();
     const effort = String(values.effort || '').trim();
     const body = { ...values, id: editingRoleId || undefined, enabled: roleForm.elements.enabled.checked, autoApprove: roleForm.elements.autoApprove.checked, effort: effort || null };
     body.revision = editingRoleRevision;
     if (!editingRoleId && values.preset !== 'custom') body.templateKey = values.preset;
     delete body.preset;
     savingRole = true; document.querySelector('#role-save').disabled = true; roleError.hidden = true;
-    document.querySelector('#role-save').textContent = 'Checking device and CLI…';
+    document.querySelector('#role-save').textContent = onlyDefinition ? 'Saving role definition…' : 'Checking device and CLI…';
     try {
-      const role = await api(`/api/projects/${encodeURIComponent(editingProjectId)}/roles`, { method: 'POST', json: body });
+      const endpoint = `/api/projects/${encodeURIComponent(editingProjectId)}/roles`;
+      if(editingRoleSnapshot?.runtime&&roleForm.elements.runtime.value!==editingRoleSnapshot.runtime) {
+        const op=await cliSwitch.begin({projectId:editingProjectId,role:editingRoleSnapshot,draft:body,host:roleForm});
+        if(op.status==='committed'){roleDialog.close();await refreshState({quiet:true});}
+        return;
+      }
+      const role = onlyDefinition
+        ? await api(`${endpoint}/${encodeURIComponent(editingRoleId)}/definition`, { method: 'PATCH', json: { revision: editingRoleRevision, responsibility: values.responsibility, instructions: values.instructions } })
+        : await api(endpoint, { method: 'POST', json: body });
       data.roles = [...(data.roles || []).filter(r => r.id !== role.id), role];
       populateRole(role);
       roleDialog.close();

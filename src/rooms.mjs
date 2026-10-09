@@ -1,6 +1,9 @@
 import { tr } from './i18n.mjs';
+import {assertBindingEditAllowed, activeRoleSwitch,roleSwitchWaitReason,effectiveExecutionRole} from './role-switch-policy.mjs';
+import { normalizeResponsibility } from './role-definition.mjs';
 import { randomUUID } from 'node:crypto';
 import { terminal } from './store.mjs';
+import {reservedTerminalSlots} from './device-capacity.mjs';
 import { runtimeIssue } from './runtime-probe.mjs';
 import { defaultRoleTemplates, isRoleConfigured, isSupervisorName, isBroadcastName } from './default-roles.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -69,6 +72,12 @@ export class Rooms {
 
   /** Instruction settings are stored on the role record and copied at dispatch time; they never overwrite Markdown files in the user's repository. */
   saveRole(projectId, input) {
+    assertBindingEditAllowed(this.db, input.id && this.db.get('roles', input.id), input);
+    return this.db.put('roles', this.validateRole(projectId, input));
+  }
+
+  /** Validate a draft without temporarily saving it as the live execution binding. */
+  validateRole(projectId, input) {
     if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound'));
     const old = input.id ? this.db.get('roles', input.id) : null;
     if (old?.systemSupervisor) throw new Error(tr('rooms.editSystemSupervisorThroughSupervisor'));
@@ -99,9 +108,25 @@ export class Rooms {
       if (!effort || effort.length > 32) throw new Error(tr('rooms.invalidReasoningEffort'));
     }
     const templateKey = old ? old.templateKey : defaultRoleTemplates().find(t => t.key === input.templateKey)?.key;
-    return this.db.put('roles', { id: old?.id || randomUUID(), projectId, templateKey, revision: old ? (old.revision || 1) + 1 : 1,
+    return { ...old, id: old?.id || randomUUID(), projectId, templateKey, revision: old ? (old.revision || 1) + 1 : 1,
       name, repositoryId, nodeId: configured ? input.nodeId : '', runtime: configured ? runtime : '', model: configured ? input.model : '',
-      mode: 'workspace-write', effort, autoApprove, instructions: input.instructions.trim(), configured, enabled: configured && input.enabled, updatedAt: now() });
+      mode: 'workspace-write', effort, autoApprove, instructions: input.instructions.trim(), responsibility: normalizeResponsibility(input.responsibility, old?.responsibility || ''), configured, enabled: configured && input.enabled, updatedAt: now() };
+  }
+
+  /** Definition edits do not run a CLI probe or change any execution binding, including for offline roles. */
+  updateRoleDefinition(projectId, roleId, input) {
+    const old = this.db.get('roles', roleId);
+    if (!old || old.projectId !== projectId) throw new Error(tr('rooms.roleDoesNotBelongProject'));
+    if (old.systemSupervisor || old.platformAssistant) throw new Error(tr('rooms.editSystemSupervisorThroughSupervisor'));
+    if (old.archivedAt) throw new Error(tr('rooms.roleArchivedCannotBeModified'));
+    if (!Number.isInteger(input?.revision) || input.revision !== (old.revision || 1)) throw new Error(tr('rooms.roleConfigurationHasChangedReopen'));
+    if (Object.keys(input).some(key => !['revision', 'responsibility', 'instructions'].includes(key))
+      || (!Object.hasOwn(input, 'responsibility') && !Object.hasOwn(input, 'instructions'))) throw new Error(tr('roleDefinition.onlyDefinitionFields'));
+    if (Object.hasOwn(input, 'instructions') && (typeof input.instructions !== 'string' || input.instructions.length > 12000)) throw new Error(tr('rooms.roleInstructionsLimited12000Characters'));
+    const updated = this.db.put('roles', { ...old, responsibility: normalizeResponsibility(input.responsibility, old.responsibility || ''),
+      instructions: input.instructions === undefined ? old.instructions : input.instructions.trim(), revision: (old.revision || 1) + 1, updatedAt: now() });
+    this.touch(projectId);
+    return updated;
   }
 
   /** Archiving only hides a working role and keeps its history; unfinished work must be cancelled or handled first. */
@@ -109,6 +134,7 @@ export class Rooms {
     return this.db.transaction(() => {
       const role = this.db.get('roles', roleId);
       if (role?.systemSupervisor) throw new Error(tr('rooms.fixedProjectSupervisorCannotBe'));
+      if (activeRoleSwitch(this.db, roleId)) throw new Error('CLI switch in progress; cannot archive this role.');
       if (role?.projectId !== projectId) throw new Error(tr('rooms.roleDoesNotBelongProject2'));
       if (role.archivedAt) return role;
       const activeRun = this.db.list('runs').some(r => r.projectId === projectId && r.roleId === roleId && !terminal.has(r.status));
@@ -216,13 +242,14 @@ export class Rooms {
   schedule(isReady) {
     const nodes = new Set(); let changed = false;
     const discussions=new RoleDiscussions(this.db,{online:isReady});changed=discussions.recover().changed;
-    const candidates=[...this.db.list('tasks').filter(t=>t.origin==='chat'&&t.status==='ready'),...discussions.candidates()];
+    const candidates=[...this.db.list('tasks').filter(t=>t.origin==='chat'&&t.status==='ready'&&!t.switchOperationId),...discussions.candidates()];
     for (const task of orderRoleQueue(candidates,id=>this.db.get('roleQueueTurns',id)?.priorityUsed,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed)) {
       const discussion=Boolean(task.discussionDeliveryId||task.discussionIntentId);
       const kind=task.discussionDeliveryId?'discussionDeliveries':'discussionIntents',recordId=task.discussionDeliveryId||task.discussionIntentId;
-      const role = task.roleSnapshot, worker = this.db.get('workers', role.nodeId);
+      const role = effectiveExecutionRole(this.db,task), worker = this.db.get('workers', role.nodeId);
       const active = this.db.list('runs').filter(r => !terminal.has(r.status));
       const reason = this.db.get('settings', 'main')?.paused ? tr('rooms.remoteExecutionPaused')
+        : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)
         : !task.contextPrepared ? tr('rooms.organizingConversation')
         : projectTerminalLock(this.db,task.projectId,role.nodeId) ? tr('rooms.projectUnderManualTerminalTakeover')
@@ -239,7 +266,7 @@ export class Rooms {
         : active.some(r => r.roleId === role.id) ? tr('rooms.waitingForRoleFinishIts')
         : executionConflict({...task,nodeId:role.nodeId},active) ? (task.execution?.exclusive ? tr('rooms.waitingForExclusiveOperationWindow') : tr('rooms.waitingForProjectWorkspaceExclusive'))
         : active.some(r => r.nodeId === role.nodeId && r.status === 'reconciling') ? tr('rooms.nodeHasRunsAwaitingReconciliation')
-        : active.filter(r => r.nodeId === role.nodeId).length+(worker.capabilities.summaryBatches===1?0:worker.organizerBusy||0) >= (worker.capacity || 1) ? tr('rooms.waitingForNodeBecomeIdle') : null;
+        : active.filter(r => r.nodeId === role.nodeId).length+reservedTerminalSlots(this.db,role.nodeId)+(worker.capabilities.cliCapacity!==1&&worker.capabilities.summaryBatches===1?0:worker.organizerBusy||0) >= (worker.capacity || 1) ? tr('rooms.waitingForNodeBecomeIdle') : null;
       if (reason) {
         const record=discussion?this.db.get(kind,recordId):task;
         if (record?.waitingReason !== reason) { this.db.put(discussion?kind:'tasks', { ...record, waitingReason: reason }); changed = true; }
@@ -284,7 +311,7 @@ export class Rooms {
 
   /** Post only a run's final state back to the group; text streams and tool logs stay in the run details. */
   complete(run) {
-    if (!run?.roleId || !terminal.has(run.status)||run.discussionDeliveryId) return;
+    if (!run?.roleId || !terminal.has(run.status)||run.discussionDeliveryId||run.switchOperationId) return;
     const id = `result-${run.id}`;
     if (this.db.get('roomMessages', id)) return;
     this.db.transaction(() => {

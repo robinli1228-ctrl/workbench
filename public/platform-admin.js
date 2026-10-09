@@ -54,6 +54,24 @@ export function platformAdminUI({api,getData,refreshState,create}) {
       detail.append(form);
       const roots=Array.isArray(worker.allowedRoots)?worker.allowedRoots:[];
       if(roots.length)detail.append(create('p','workspace-note',t('Allowed folders: {v}', { v: roots.join(t(', ')) })));
+
+      detail.append(create('h4','','CLI Capacity'));
+      const capacityForm=create('form','form-grid device-capacity-form'),capacity=create('input'),capacityFeedback=create('p','form-feedback full-width');
+      capacity.type='number';capacity.min='1';capacity.max='64';capacity.step='1';capacity.required=true;
+      capacity.value=worker.desiredCapacity ?? worker.capacity ?? 2;
+      capacityFeedback.hidden=true;capacityFeedback.setAttribute('role','status');
+      const capacityLabel=create('label','','Maximum running CLIs'),capacityHint=create('p','workspace-note full-width','Running and retained CLI processes share this limit. Tasks queue when full; lowering does not stop accepted work.'),capacitySave=create('button','secondary','Save CLI limit');
+      capacityLabel.append(capacity);capacitySave.type='submit';capacityForm.append(capacityLabel,capacityHint,capacitySave,capacityFeedback);
+      capacityForm.addEventListener('submit',e=>{e.preventDefault();void (async()=>{
+        capacitySave.disabled=true;text(capacityFeedback,'Processing…');
+        try{
+          const result=await api(`/api/workers/${encodeURIComponent(worker.id)}/capacity`,{method:'POST',json:{capacity:Number(capacity.value)}});
+          capacity.value=result.capacity;
+          text(capacityFeedback,result.applied?'Saved and applied to the connected Worker.':'Saved; waiting for the Worker to apply this limit. It will be applied on reconnection if the device is offline.');
+          await refreshState({quiet:true});
+        }catch(error){text(capacityFeedback,error.message);}finally{capacitySave.disabled=false;}
+      })();});
+      detail.append(capacityForm);
     }
     if(registered){
       detail.append(create('h4','','Server Connection'));
@@ -132,7 +150,7 @@ export function platformAdminUI({api,getData,refreshState,create}) {
     }catch(e){text('#assistant-feedback',e.message);}finally{loading=false;}
   }
   function refresh(){
-    const data=getData(),next=JSON.stringify([data.devices,data.hostingAccounts,data.settings?.hostingAccountId,(data.workers||[]).map(w=>[w.id,w.name,w.online,w.workspaceRoot]),getLanguage()]);
+    const data=getData(),next=JSON.stringify([data.devices,data.hostingAccounts,data.settings?.hostingAccountId,(data.workers||[]).map(w=>[w.id,w.name,w.online,w.workspaceRoot,w.capacity,w.desiredCapacity]),getLanguage()]);
     if(next!==signature){signature=next;
       const accounts=$('#hosting-account-list');accounts.replaceChildren();
       for(const [provider,label] of [['gitee','Gitee'],['github','GitHub']]){

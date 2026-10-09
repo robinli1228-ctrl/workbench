@@ -8,8 +8,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="Agent Workbench">
     <title>Agent Collaboration Workbench</title>
-    <link rel="icon" type="image/png" href="/app-icon.png?v=blue-20260928">
-    <link rel="apple-touch-icon" href="/app-icon.png?v=blue-20260928">
+    <link rel="icon" type="image/png" href="/app-icon.png?v=terminals-solid-20261009">
+    <link rel="apple-touch-icon" href="/app-icon.png?v=terminals-solid-20261009">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="stylesheet" href="/styles.css">
   </head>
@@ -17,7 +17,7 @@
     <div class="app-shell">
       <aside class="project-sidebar" id="project-sidebar" aria-label="Project navigation">
         <div class="brand">
-          <button type="button" class="brand-mark" id="toggle-project-sidebar-collapse" aria-label="Collapse project menu" title="Collapse"><img class="brand-icon" src="/app-icon.png?v=blue-20260928" alt="" width="36" height="36"></button>
+          <button type="button" class="brand-mark" id="toggle-project-sidebar-collapse" aria-label="Collapse project menu" title="Collapse"><img class="brand-icon" src="/app-icon.png?v=terminals-solid-20261009" alt="" width="36" height="36"></button>
           <div class="brand-copy">
             <strong>Agent Workbench</strong>
             <span>Collaboration Console</span>
@@ -179,21 +179,22 @@
                 <section class="settings-block project-timer-link"><div><h3>Scheduled Jobs</h3><p class="workspace-note">View and adjust scheduled dispatches and progress checks for the current project.</p></div><button class="secondary" id="open-project-timers" type="button">Manage scheduled jobs</button></section>
                 <section id="supervisor-settings" class="settings-block" hidden>
                   <h3>System Supervisor</h3>
+                  <p id="supervisor-responsibility" class="workspace-note"></p>
+                  <div class="settings-overview-card">
+                    <div class="artifact-section-heading"><h4>Default supervisor prompt</h4><button id="edit-project-supervisor-prompt" class="secondary compact" type="button" data-prompt-edit="supervisor-prompt" aria-label="Edit default supervisor prompt">Edit</button></div>
+                    <p class="workspace-note">Shared by all projects. Edit the default prompt without changing this project's device or model.</p>
+                    <p id="project-supervisor-prompt-preview" class="settings-overview-preview" translate="no"></p>
+                  </div>
                   <p class="workspace-note">The supervisor can run locally or on a server. When there is no @, the supervisor handles the message; project folders and repositories can be configured on this page, or the supervisor can help.</p>
                   <form id="supervisor-form" class="form-grid">
                     <label>Supervisor run device<select name="nodeId" required></select></label>
                     <label>Supervisor CLI<select name="runtime" required></select></label>
                     <label>Supervisor model<select name="model" required></select></label>
-                    <label>Supervisor reasoning effort (optional)<input name="effort" maxlength="32" placeholder="Use CLI default"></label>
+                    <label>Supervisor reasoning effort (optional)<select name="effort"><option value="">Use CLI default</option></select></label>
                     <label class="checkbox-label"><input name="enabled" type="checkbox" checked>Enable this node's supervisor configuration</label>
                     <div class="form-actions full-width"><button type="submit" class="secondary">Save node supervisor configuration</button></div>
                   </form>
-                  <form id="coordination-form" class="form-grid">
-                    <label>Project intake node<select name="supervisorNodeId"></select></label>
-                    <label>Planner role<select name="plannerRoleId"></select></label>
-                    <p class="workspace-note full-width">Choose the planner role from roles you created. If none is set, one is not created automatically.</p>
-                    <div class="form-actions full-width"><button type="submit" class="secondary">Save project dispatch settings</button></div>
-                  </form>
+                  <p class="workspace-note">No planner role is pre-bound. The supervisor selects suitable collaborators for each task from current responsibilities and availability.</p>
                   <p id="supervisor-feedback" class="form-feedback" role="status" hidden></p>
                 </section>
               </div>
@@ -316,7 +317,7 @@
                   </section>
                   <section class="settings-block" data-prompt-field="supervisor">
                     <label for="supervisor-prompt"><strong>Supervisor prompt</strong></label>
-                    <p class="workspace-note">Applies to supervisor sessions started afterwards; sessions already running are unchanged.</p>
+                    <p class="workspace-note">Default for all projects. Applies to later supervisor runs; already running turns are unchanged.</p>
                     <textarea id="supervisor-prompt" name="supervisorPrompt" rows="12" maxlength="6000"></textarea>
                   </section>
                   <section class="settings-block" data-prompt-field="defaults">
@@ -358,7 +359,7 @@
                 </section>
                 <section class="settings-overview-card" aria-labelledby="api-token-section-title">
                   <span class="settings-kicker">BROWSER ACCESS</span><h4 id="api-token-section-title">API Token</h4>
-                  <p id="api-token-summary" class="settings-overview-preview">No Token set for this browser session</p>
+                  <p id="api-token-summary" class="settings-overview-preview">No Token saved in this browser</p>
                   <p id="settings-connection-note" class="connection-note settings-connection-note" role="status">Connecting to Home…</p>
                   <button class="secondary compact" id="edit-api-token" type="button" aria-label="Edit API Token">Edit</button>
                 </section>
@@ -484,7 +485,9 @@
         <input type="hidden" name="mode" value="workspace-write">
         <label class="checkbox-label full-width" id="role-auto-approve-field" hidden><input type="checkbox" name="autoApprove" checked>Skip approvals by default</label>
         <p id="role-auto-approve-note" class="workspace-note full-width" hidden></p>
-        <label class="full-width">Role prompt<textarea name="instructions" rows="7" maxlength="12000" placeholder="State responsibilities, boundaries and delivery format. This applies only to this role and does not override existing project files."></textarea></label>
+        <label class="full-width">Role responsibility<textarea name="responsibility" rows="3" maxlength="1000" placeholder="Describe when other roles should ask this role for help. Leave blank if unspecified."></textarea></label>
+        <p class="workspace-note full-width">For other roles to choose collaborators. Not injected into this role's execution context.</p>
+        <label class="full-width">Role prompt<textarea name="instructions" rows="7" maxlength="12000" placeholder="Describe execution methods, checks, boundaries and output format. Injected when this role executes a task."></textarea></label>
         <label class="checkbox-label full-width"><input type="checkbox" name="enabled" checked>Enable role (disabling pauses this role's waiting assignments; a running execution must be stopped separately)</label>
         <p id="role-error" class="inline-error full-width" role="status" hidden></p>
         <div class="form-actions full-width"><button class="secondary" id="role-archive" type="button" hidden>Archive role</button><button class="primary" id="role-save" type="submit">Save role</button></div>
@@ -525,9 +528,9 @@
     <dialog id="artifact-detail-dialog" aria-labelledby="artifact-detail-title"><div class="dialog-heading"><h2 id="artifact-detail-title">Output Details</h2><button class="icon-button" id="close-artifact-detail" type="button" aria-label="Close output details">×</button></div><p id="artifact-detail-meta"></p><div id="artifact-detail-content" class="markdown-body"></div></dialog>
     <dialog id="api-token-dialog" class="settings-edit-dialog" aria-labelledby="api-token-dialog-title">
       <div class="dialog-heading"><div><p class="eyebrow">BROWSER ACCESS</p><h3 id="api-token-dialog-title">Edit API Token</h3></div><button class="icon-button" id="close-api-token-dialog" type="button" aria-label="Close">×</button></div>
-      <p class="workspace-note">Enter the Home access token; after verification it is kept only in the current browser session. It is required whenever authentication is enabled, locally or remotely; configure GitHub/Gitee repository tokens under "Code Hosting Accounts".</p>
+      <p class="workspace-note">After verification, the Home access token is saved in this browser and reused when you reopen it. Change it here when needed. Clearing site data or using another browser requires setup again. Save only on a trusted device; configure GitHub/Gitee tokens under "Code Hosting Accounts".</p>
       <label for="api-token">API Token</label>
-      <input id="api-token" type="password" autocomplete="off" placeholder="Kept only for the current session">
+      <input id="api-token" type="password" autocomplete="off" placeholder="Saved in this browser after verification">
       <p id="api-token-error" class="form-feedback" role="alert" hidden></p>
       <div class="form-actions"><button class="secondary" id="cancel-api-token-dialog" type="button">Cancel</button><button class="primary" id="save-token" type="button">Save</button></div>
     </dialog>

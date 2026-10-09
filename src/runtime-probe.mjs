@@ -266,12 +266,13 @@ function parseAgyCredits(stdout) {
   return match ? finiteNumber(match[1]) : null;
 }
 
-/** In print mode, Agy expands /usage and /credits locally and starts no model conversation. */
+/** In print mode, Agy expands /usage and /credits locally and starts no model conversation.
+ * These disposable probes need a hard deadline: some CLI builds ignore SIGTERM and otherwise hold Worker registration. */
 async function probeAgyQuota(bin) {
   try {
     const [usage, credits] = await Promise.all([
-      exec(bin, ['-p', '/usage', '--output-format', 'text'], { timeout: 15000, maxBuffer: 262144 }),
-      exec(bin, ['-p', '/credits', '--output-format', 'text'], { timeout: 15000, maxBuffer: 65536 }),
+      exec(bin, ['-p', '/usage', '--output-format', 'text'], { timeout: 15000, killSignal: 'SIGKILL', maxBuffer: 262144 }),
+      exec(bin, ['-p', '/credits', '--output-format', 'text'], { timeout: 15000, killSignal: 'SIGKILL', maxBuffer: 65536 }),
     ]);
     const groups = parseAgyUsage(usage.stdout);
     const primary = groups.gemini || groups.claudeGpt;

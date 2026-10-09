@@ -1,12 +1,12 @@
-const CACHE = 'agent-workbench-static-basic-settings-v37';
+const CACHE = 'agent-workbench-static-verified-release-v44';
 const STATIC = [
   '/', '/styles.css', '/app.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png',
   '/platform-admin.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',
   '/markdown.js', '/project-settings.js', '/role-icons.js', '/settings-page.js',
-  '/supervisor-settings.js', '/project-setup.js', '/history-view.js', '/scheduled-jobs.js',
+  '/supervisor-settings.js', '/role-switch.js', '/role-history.js', '/project-setup.js', '/history-view.js', '/scheduled-jobs.js',
   '/git-version.js', '/plan-dock.js', '/agent-codex.png', '/agent-antigravity.png',
   '/document.html', '/document.js', '/workspace-inspector.js', '/state-data.js',
-  '/i18n.js', '/locales/zh.js'
+  '/i18n.js', '/locales/zh.js', '/browser-token.js'
 ];
 const staticPaths = new Set(STATIC);
 

@@ -4,7 +4,7 @@ import { tr } from './i18n.mjs';
 const verdicts=new Set(['passed','failed','blocked','needs_input']);
 /** Discussions only handle information; they must not prematurely produce a business delivery or a prompt aimed at the user. Compatible with legacy plain Runs. */
 export function acceptsBusinessReport(run) {
-  return Boolean(run&&!run.discussionWaiting&&!run.discussionDeliveryId&&(!run.turnPurpose||run.turnPurpose==='task'));
+  return Boolean(run&&!run.switchOperationId&&!run.discussionWaiting&&!run.discussionDeliveryId&&(!run.turnPurpose||run.turnPurpose==='task'));
 }
 /** Classify only by the error reason of a failed run; body text is not error evidence, and unknown errors must not be let through as temporary faults. */
 export function runFailureKind(run) {
