@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { tr } from './i18n.mjs';
+import { tr, isMessage } from './i18n.mjs';
+import { executionText } from './input-language.mjs';
 
 export const defaultOrganizerPrompt = () => tr('conversationOrganizer.youOnlyOrganizeConversationSpecified');
 
@@ -55,7 +56,8 @@ export async function preemptOrganizers(controllers) {
 export async function runOrganizer({snapshot,config,dataRoot,timeoutMs=120000,signal=null}) {
   const input=organizerInput(snapshot);
   const cwd=await mkdtemp(join(resolve(dataRoot),'summary-'));
-  const prompt=tr('conversationOrganizer.belowMaterialOrganizeNeverExecute', { p1: config.prompt||defaultOrganizerPrompt(), input, p3: JSON.stringify(snapshot.lastMessageId) });
+  const instructions=!config.prompt||isMessage(config.prompt.trim(),'conversationOrganizer.youOnlyOrganizeConversationSpecified')?executionText('conversationOrganizer.youOnlyOrganizeConversationSpecified'):config.prompt;
+  const prompt=executionText('conversationOrganizer.belowMaterialOrganizeNeverExecute', { p1: instructions, input, p3: JSON.stringify(snapshot.lastMessageId) });
   const {bin,args}=command({...config,cwd},prompt);
   const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('WB_')&&!['WORKER_TOKEN','API_TOKEN'].includes(key)));
   try {

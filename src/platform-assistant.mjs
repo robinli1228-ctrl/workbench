@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { validateLocalSupervisor } from './project-setup.mjs';
 import { tr } from './i18n.mjs';
+import { executionText } from './input-language.mjs';
 
-export const configurationPrompt = () => tr('platformAssistant.youFixedPlatformConfigurationAssistant');
+export const configurationPrompt = () => executionText('platformAssistant.youFixedPlatformConfigurationAssistant');
 
 const PROJECT_ID = '00000000-0000-4000-8000-000000000001';
 

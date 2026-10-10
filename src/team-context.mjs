@@ -55,7 +55,7 @@ export function buildTeamContext(db, run, { online, inherit = true, forExecution
 export function renderTeamContext(team) {
   if(!team)return '';
   const self=team.members.find(m=>m.id===team.selfRoleId);
-  const lines=[tr('teamContext.currentProjectTeamMembersIn', { memberCount: team.memberCount, workerCount: team.workerCount, p3: self?.name||team.selfRoleId, selfRoleId: team.selfRoleId, p5: team.version.slice(0,17) })];
+  const lines=[tr('teamContext.currentProjectTeamMembersIn', { memberCount: team.memberCount, workerCount: team.workerCount, p3: JSON.stringify(self?.name||team.selfRoleId), selfRoleId: team.selfRoleId, p5: team.version.slice(0,17) })];
   if(team.inheritedFrom)lines.push(tr('teamContext.sameNativeSessionHasAlready', { inheritedFrom: team.inheritedFrom }));
   else {
     lines.push(tr('teamContext.followingCompleteTeamRosterReplaces'));
@@ -65,7 +65,7 @@ export function renderTeamContext(team) {
   lines.push(tr('teamContext.statusSnapshotForTurnNot', { observedAt: team.observedAt }));
   for(const member of team.members) {
     const state=member.archived?tr('teamContext.archivedButStillHasUnfinished'):!member.enabled?tr('teamContext.disabled'):!member.configured?tr('teamContext.notConfigured'):member.online===false?tr('teamContext.offline'):member.activeRunIds.length?tr('teamContext.running'):member.tasks.length?tr('teamContext.hasPendingTasks'):member.online===null?tr('teamContext.connectionUnknown'):tr('teamContext.idle');
-    lines.push(tr('teamContext.tasks', { name: member.name, state, length: member.tasks.length, p4: member.tasks.length?tr('teamContext.text2', { p1: member.tasks.slice(0,2).map(t=>t.title).join(tr('teamContext.text')) }):'', p5: member.id===team.selfRoleId?tr('teamContext.yourself'):member.communication.consultationSupported?tr('teamContext.consultWithWbCall', { p1: member.communication.discussionReady?tr('teamContext.qWithWbDiscussAsk'):tr('teamContext.newQUnavailable', { p1: member.communication.discussionUnavailableDetail||member.communication.discussionUnavailableReason }) }):tr('teamContext.cannotBeDispatched') }));
+    lines.push(tr('teamContext.tasks', { name: JSON.stringify(member.name), state, length: member.tasks.length, p4: member.tasks.length?tr('teamContext.text2', { p1: member.tasks.slice(0,2).map(t=>t.title).join(tr('teamContext.text')) }):'', p5: member.id===team.selfRoleId?tr('teamContext.yourself'):member.communication.consultationSupported?tr('teamContext.consultWithWbCall', { p1: member.communication.discussionReady?tr('teamContext.qWithWbDiscussAsk'):tr('teamContext.newQUnavailable', { p1: member.communication.discussionUnavailableDetail||member.communication.discussionUnavailableReason }) }):tr('teamContext.cannotBeDispatched') }));
   }
   lines.push(tr('teamContext.autonomousCollaborationWhenInformationSuffic'));
   lines.push(tr('roleDefinition.coordinationConvention'));
