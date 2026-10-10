@@ -50,7 +50,7 @@ import { ProjectGitVersions } from './project-git-versions.mjs';
 import {SourceSyncHome} from './source-sync-transport.mjs';
 import {acceptSourceProvenance} from './source-sync-provenance.mjs';
 import { WechatChannel, wechatTransport } from './wechat-channel.mjs';
-import { tr, getLanguage, setLanguage, initLanguage } from './i18n.mjs';
+import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
 import { roleResponsibility } from './role-definition.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
 
@@ -201,11 +201,11 @@ async function dispatch(nodeId) {
       db.put('runs',run);
     }
     const storedTask = run.inputTask||db.get('tasks', run.taskId);
-    const basePrompt=[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal?executionRules(run,{minimal:true}):run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n');
-    const rulesText = schedulingRules();
+    const basePrompt=runWithLanguage('en',()=>[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal?executionRules(run,{minimal:true}):run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n'));
+    const rulesText = runWithLanguage('en',()=>schedulingRules());
     // The timer line is matched in both languages; it is dropped for Workers without timer tools.
     const schedulingRulesText = db.get('workers',nodeId)?.capabilities?.timerTools===1 ? rulesText : rulesText.replace(/^(?:Use wb timer only when given an explicit wall-clock time or recurrence requirement; |\u53ea\u6709\u6536\u5230\u660e\u786e\u7684\u5899\u949f\u65f6\u95f4\/\u5468\u671f\u9700\u6c42\u624d\u7528 wb timer\uff1b).*\n/m,'');
-    const supervisorInstructions=!minimal&&!run.switchOperationId&&(!run.turnPurpose||run.turnPurpose==='task')&&run.roleSnapshot?.systemSupervisor && !run.roleSnapshot.platformAssistant ? tr('home.supervisorWorkingConventions', { supervisorPrompt: legacyExecutionPrompt(normalizePlatformSettings(db.get('settings', 'main')).supervisorPrompt,'supervisor'), schedulingRules: schedulingRulesText }):'';
+    const supervisorInstructions=runWithLanguage('en',()=>!minimal&&!run.switchOperationId&&(!run.turnPurpose||run.turnPurpose==='task')&&run.roleSnapshot?.systemSupervisor && !run.roleSnapshot.platformAssistant ? tr('home.supervisorWorkingConventions', { supervisorPrompt: legacyExecutionPrompt(normalizePlatformSettings(db.get('settings', 'main')).supervisorPrompt,'supervisor'), schedulingRules: schedulingRulesText }):'');
     // New Workers put the fixed Supervisor conventions in the stable rules area; old Workers still receive the full original format, so rolling upgrades do not lose rules.
     const stableInstructions=db.get('workers',nodeId)?.capabilities?.stableInstructions===1;
     const task = c.launchInput?.task||{...storedTask,prompt:supervisorInstructions&&!stableInstructions?`${basePrompt}\n\n${supervisorInstructions}`:basePrompt,

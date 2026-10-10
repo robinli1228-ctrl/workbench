@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { tr } from './i18n.mjs';
+import { executionText as tr, traditionalInput } from './input-language.mjs';
 import {customExecutionPrompt} from './platform-prompts.mjs';
 import {relative,isAbsolute} from 'node:path';
 
@@ -12,8 +12,8 @@ export function executionEnvironmentHint({cwd,projectRoot,boundary,repositories=
 /** Runtime instructions contain only trusted identity and configured execution text, not directory duties or live inventory. */
 export function executionInstructionComponents({run,configuration}) {
   return {identity:tr('minimal.identity',{name:run.roleSnapshot?.name||'',roleId:run.roleId}),
-    platform:customExecutionPrompt(configuration.platformPrompt),role:configuration.roleInstructions??'',
-    supervisor:customExecutionPrompt(configuration.supervisorPrompt,'supervisor')};
+    platform:traditionalInput(customExecutionPrompt(configuration.platformPrompt)),role:traditionalInput(configuration.roleInstructions??''),
+    supervisor:traditionalInput(customExecutionPrompt(configuration.supervisorPrompt,'supervisor'))};
 }
 
 /** Only a successful prior turn in the same native session proves the input was received; failed or unknown states always send everything. */
@@ -55,9 +55,10 @@ export function instructionDelivery({runtime,run,prior,instructions,roleName,pro
 /** Fix the two parts of input actually handed to the Runtime this turn, so the log snapshot and the launch arguments are not assembled separately. */
 export function createRunInput({ taskPrompt, boundary, context = '', runtimeGuidance = '', setupHint = '', attachmentHint = '', roleInstructions, executionInstructions = '',sourceInputs=[],minimal=false,environmentHint='',configurationUpdate='' }) {
   if(sourceInputs.length)context=[context,tr(sourceInputs.some(i=>i.inheritedFrom)?'sourceSync.continuedReceipt':'sourceSync.executionReceipt',{versions:JSON.stringify(sourceInputs)})].filter(Boolean).join('\n\n');
-  if(minimal)return {instructions:roleInstructions,prompt:[taskPrompt,context,environmentHint,runtimeGuidance,attachmentHint].filter(Boolean).join('\n\n'),...(configurationUpdate?{configurationUpdate}:{})};
+  // Components have already been converted before versioning; reprocessing them would rename trusted identities and disagree with native parameters.
+  if(minimal)return {instructions:roleInstructions,prompt:traditionalInput([taskPrompt,context,environmentHint,runtimeGuidance,attachmentHint].filter(Boolean).join('\n\n')),...(configurationUpdate?{configurationUpdate}:{})};
   return {
     instructions: roleInstructions,
-    prompt: tr('runInput.currentWorkspaceHasBeenDesignated', { taskPrompt, boundary, context, executionInstructions, runtimeGuidance, setupHint, attachmentHint })
+    prompt: traditionalInput(tr('runInput.currentWorkspaceHasBeenDesignated', { taskPrompt, boundary, context, executionInstructions, runtimeGuidance, setupHint, attachmentHint }))
   };
 }

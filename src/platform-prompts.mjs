@@ -1,6 +1,6 @@
 import { defaultOrganizerPrompt } from './conversation-organizer.mjs';
 import {discussionInstructions} from './discussion-policy.mjs';
-import { tr, isMessage } from './i18n.mjs';
+import { tr, isMessage, runWithLanguage } from './i18n.mjs';
 import { createHash } from 'node:crypto';
 
 export const defaultPlatformPrompt = () => tr('minimal.platformDefault');
@@ -8,6 +8,11 @@ export const defaultPlatformPrompt = () => tr('minimal.platformDefault');
 export const defaultSupervisorPrompt = () => tr('minimal.supervisorDefault');
 
 const PROMPT_LIMIT = 6000;
+/** Runtime rules are always English; UI-localized defaults and user-saved prompts stay independent. */
+export function englishExecutionRules(run,options) {
+  return runWithLanguage('en',()=>executionRules(run,options));
+}
+
 /** All runtimes share this execution boundary so adapters and the approved stage cannot contradict each other. */
 export function executionRules(run,{minimal=false}={}) {
   const discussion=discussionInstructions(run);
@@ -47,7 +52,7 @@ export function customExecutionPrompt(value,kind='platform') {
 /** Rolling upgrades keep the old wrapping contract for Workers that have not negotiated minimal instructions. */
 export function legacyExecutionPrompt(value,kind='platform') {
   if(typeof value==='string'&&!value.trim())return value;
-  return customExecutionPrompt(value,kind)===''?tr(kind==='supervisor'?'collaboration.supervisor':'collaboration.platform'):value;
+  return customExecutionPrompt(value,kind)===''?runWithLanguage('en',()=>tr(kind==='supervisor'?'collaboration.supervisor':'collaboration.platform')):value;
 }
 
 export function normalizePlatformSettings(record = {}) {

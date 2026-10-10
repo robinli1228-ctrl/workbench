@@ -1,6 +1,6 @@
 import { sameNativeSession } from './run-input.mjs';
 import { createHash } from 'node:crypto';
-import { tr } from './i18n.mjs';
+import { executionText as tr } from './input-language.mjs';
 
 /** An excerpt keeps the source fingerprint and the full-text entry point; the excerpt length is not the grapheme pagination cursor of the history tool. */
 function excerpt(message,limit) {
@@ -57,16 +57,16 @@ export function renderRunPrompt(packet,{minimal=false}={}) {
   if(minimal)return [packet.instruction,
     packet.steering?tr('runContext.userChangedDirectionTurnImmediate'):'',
     packet.discussionResolution?tr('runContext.questionOnOriginalTaskHas',{p1:JSON.stringify(packet.discussionResolution)}):'',
-    packet.schedulingRoster?.length?tr('runContext.rolesTurnMustCoverFixed',{p1:packet.schedulingRoster.map(r=>`${r.name} [${r.id}]`).join(', ')}):'',
-    ...(packet.references||[]).map(item=>`${item.author} [${item.id}]:\n${item.text}${item.truncated?`\n${item.readCommand}`:''}`),
+    packet.schedulingRoster?.length?tr('runContext.rolesTurnMustCoverFixed',{p1:packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(', ')}):'',
+    ...(packet.references||[]).map(item=>`${JSON.stringify(item.author)} [${item.id}]:\n${item.text}${item.truncated?`\n${item.readCommand}`:''}`),
     ...(packet.deliveries||[]).map(item=>`${item.id} ${item.commit||''} ${item.summary||''}`),
     packet.completion?tr('runContext.explicitCompletionRequirement',{completion:packet.completion}):''].filter(Boolean).join('\n\n');
   const lines=[tr('runContext.originalInstructionForTurnVerbatim', { instruction: packet.instruction })];
   if(packet.discussionResolution)lines.push(tr('runContext.questionOnOriginalTaskHas', { p1: JSON.stringify(packet.discussionResolution) }));
-  if(packet.schedulingRoster?.length)lines.push(tr('runContext.rolesTurnMustCoverFixed', { p1: packet.schedulingRoster.map(r=>`${r.name} [${r.id}]`).join(tr('runContext.text')) }));
+  if(packet.schedulingRoster?.length)lines.push(tr('runContext.rolesTurnMustCoverFixed', { p1: packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(tr('runContext.text')) }));
   if(packet.steering)lines.unshift(tr('runContext.userChangedDirectionTurnImmediate'));
   const context={...packet.context};
-  const showMessage=item=>tr('runContext.text3', { id: item.id, author: item.author, text: item.text, p4: item.truncated?tr('runContext.excerptCharactersFullTextPass', { length: item.text.length, totalLength: item.totalLength, readCommand: item.readCommand }):'', p5: item.attachments?.length?tr('runContext.attachmentsBodyDoesNotInclude', { p1: item.attachments.map(a=>a.name).join(tr('runContext.text2')) }):'' });
+  const showMessage=item=>tr('runContext.text3', { id: item.id, author: JSON.stringify(item.author), text: item.text, p4: item.truncated?tr('runContext.excerptCharactersFullTextPass', { length: item.text.length, totalLength: item.totalLength, readCommand: item.readCommand }):'', p5: item.attachments?.length?tr('runContext.attachmentsBodyDoesNotInclude', { p1: item.attachments.map(a=>a.name).join(tr('runContext.text2')) }):'' });
   if(packet.inheritedContext) {
     const {fields,messageIds,runId}=packet.inheritedContext;
     for(const key of fields)context[key]=Array.isArray(context[key])?[]:null;

@@ -2,6 +2,7 @@ import { spawn, execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 import { tr } from './i18n.mjs';
+import { executionText } from './input-language.mjs';
 
 const git = promisify(execFile);
 
@@ -99,7 +100,7 @@ export class CodexSession {
       // Git sync and cross-device wb communication need network access; the workspace write boundary is kept and re-applied on resume.
       config: { ...Object.fromEntries(['GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT', 'WB_TURN_CONTEXT', 'WB_PROJECT_ROOT', 'WB_KNOWLEDGE', 'WB_WORKSPACE', 'WB_RUN_ID', 'WB_ROLE_SESSION_ID', 'WB_CONVERSATION_ID', 'WB_REQUEST_ID', 'WB_ROLE', 'WB_HOP', 'WB_HOME', 'WB_MODE', 'WB_BRIDGE', 'WB_CLI', 'WB_REPOSITORIES', 'WB_SOURCE_SYNC']
         .filter(key => typeof this.env[key] === 'string').map(key => [`shell_environment_policy.set.${key}`, this.env[key]])), 'sandbox_workspace_write.writable_roots':writableRoots, 'sandbox_workspace_write.network_access':true },
-      developerInstructions: this.minimalInstructions?this.roleInstructions:tr('codex.you', { p1: this.roleName ? tr('codex.roleInProjectGroupChat', { roleName: this.roleName }) : tr('codex.executorTask'), p2: this.roleInstructions || '' })
+      developerInstructions: this.minimalInstructions?this.roleInstructions:executionText('codex.you', { p1: this.roleName ? executionText('codex.roleInProjectGroupChat', { roleName: this.roleName }) : executionText('codex.executorTask'), p2: this.roleInstructions || '' })
     };
     const response = await this.request(this.resumeSessionId?'thread/resume':'thread/start',this.resumeSessionId?{threadId:this.resumeSessionId,...options}:options);
     if(this.resumeSessionId && response.thread?.id!==this.resumeSessionId)throw new Error(tr('codex.resumedCodexSessionIdDoes'));

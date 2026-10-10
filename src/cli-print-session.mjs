@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { nativeSessionId } from './terminal-resume.mjs';
 import { tr } from './i18n.mjs';
+import { executionText } from './input-language.mjs';
 
 function extractText(content) {
   if (typeof content === 'string') return content;
@@ -14,7 +15,7 @@ function extractText(content) {
 }
 
 function roleRules(roleName, roleInstructions) {
-  return tr('cliPrintSession.you', { p1: roleName ? tr('cliPrintSession.roleInProjectGroupChat', { roleName }) : tr('cliPrintSession.executorTask'), p2: roleInstructions || '' });
+  return executionText('cliPrintSession.you', { p1: roleName ? executionText('cliPrintSession.roleInProjectGroupChat', { roleName }) : executionText('cliPrintSession.executorTask'), p2: roleInstructions || '' });
 }
 
 /** print/stream CLI adapter: tools are auto-approved, with no native per-item approval. */

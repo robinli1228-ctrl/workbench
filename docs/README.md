@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | [OPERATING-GUIDE](OPERATING-GUIDE.md) | Publishing, configuration, running single and multi-server setups, contributing, sanitization checklist | Current |
 | [ARCHITECTURE](ARCHITECTURE.md) | Current code architecture, interfaces, data and implementation boundaries | Current. Describes only what the code does |
+| [PROGRESS](PROGRESS.md) | Append-only development changes and verification milestones | Current; does not imply public release or deployment |
 | [PRD](PRD.md) | Product goals, phase scope, business rules and acceptance direction | Scope reference. Not everything is implemented |
 | [design-coordination](design-coordination.md) | Supervisor, templates, custom roles, optional plans and fixed-version hand-off | Design. Partly implemented; see ARCHITECTURE |
 | [design-local-supervisor](design-local-supervisor.md) | Project supervisor, multi-repository setup, device and account configuration assistant | Implemented in the current code |
