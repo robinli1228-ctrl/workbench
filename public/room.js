@@ -104,6 +104,23 @@ export function extractLiveText(events) {
 /** A chat notice for a failed final state must not overwrite the streamed body already received. */
 export function fullRunReply(run, text, message) { return run?.result || text || message?.text || ''; }
 
+/** Match the room publisher: explicit business reports are never replaced by a compact handoff wait. */
+export function quietHandoff(run,data={}) {
+  const report=data.runReports?.find(report=>report.id===run?.id)||run?.report;
+  return run?.status==='succeeded'&&Boolean(run.handoffWait?.requestId)&&!['passed','failed','blocked','needs_input'].includes(report?.verdict);
+}
+
+/** A succeeded turn that only handed work off shows one waiting line until its continuation takes over; null hides it. */
+export function handoffWaitState(run, data) {
+  if(!quietHandoff(run,data))return null;
+  const parent=data.requests?.find(r=>r.id===run.handoffWait.requestId);
+  if(!parent||parent.status!=='waiting_call'||parent.continuationRequestId||(parent.currentRunId&&parent.currentRunId!==run.id))return null;
+  const ids=parent.waitRequestIds||run.handoffWait.requestIds||[];
+  const names=[...new Set(ids.map(id=>data.requests?.find(r=>r.id===id)).filter(Boolean)
+    .map(r=>data.roles?.find(role=>role.id===r.targetRoleId)?.name||r.targetSnapshot?.name).filter(Boolean))];
+  return {names:names.length>4?[...names.slice(0,4),`+${names.length-4}`]:names};
+}
+
 /** Delivery status does not mean understanding or business approval; late records can only serve as historical material. */
 export function discussionDisplay(message,data) {
   if(message.kind!=='discussion'||!message.discussion?.messageId)return null;
@@ -770,6 +787,21 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if(task.backgroundFollowup||run?.backgroundFollowup){const approvals=run?renderApprovalsInline(run):null;if(!recoveryButton)return approvals;const entry=create('div','chat-approvals');if(approvals)entry.append(approvals);entry.append(recoveryButton);return entry;}
     if (run && messages.some(m => m.runId === run.id)) return null;
     const role = task.roleSnapshot || {};
+    if (quietHandoff(run, data)) {
+      // The handoff cards already carry the work; keep only a compact waiting line, without replaying this turn's text.
+      const waiting = handoffWaitState(run, data);
+      if (!waiting) return null;
+      const row = create('article', 'chat-row agent is-live is-handoff-wait');
+      row.append(avatarFor(role, role.name));
+      const col = create('div', 'chat-col');
+      const label = waiting.names.length ? t('Waiting for {names} to reply', { names: waiting.names.map(name => `@${name}`).join(t(', ')) }) : t('Waiting for other roles to reply');
+      const line = create('div', 'chat-name handoff-wait-line', `@${role.name || t('Role')} · ${label}`);
+      line.translate = false;
+      col.append(line);
+      col.append(chatMeta('', [iconAction('log', 'Log', () => openTask(task.id, run.id))]));
+      row.append(col);
+      return row;
+    }
     const row = create('article', 'chat-row agent is-live');
     row.append(avatarFor(role, role.name));
     const col = create('div', 'chat-col');

@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-integrated-compact-v97';
+const CACHE = 'agent-workbench-static-release-ui-wait-v101';
 const STATIC = [
   '/', '/styles.css', '/app.js', '/native-sessions.js', '/list-order.js', '/select-controls.js', '/mention-input.js', '/context-usage.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png',
   '/platform-admin.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',

@@ -197,6 +197,8 @@ export class RoleCalls {
     }
     const next=this.db.put('coordinationRequests', { ...r, currentRunId: run.id, status: 'waiting_call', resumeSummary: summary.trim(),
       waitRequestIds:[...new Set(requestIds)],waitDeadlineAt:new Date(Date.now()+timeoutSeconds*1000).toISOString(),updatedAt:new Date().toISOString() });
+    // The handoff cards already tell the room what this turn did; its own final reply stays in run details.
+    this.db.put('runs',{...current,handoffWait:{requestId:r.id,requestIds:[...new Set(requestIds)],at:new Date().toISOString()}});
     new SessionQueue(this.db).settleRequest(next);return next;
     });
   }

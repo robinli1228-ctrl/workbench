@@ -629,6 +629,8 @@ button.quoted-message:hover { color:#315b84; background:#e7eef5; }
 .chat-typing span:nth-child(2) { animation-delay: .15s; }
 .chat-typing span:nth-child(3) { animation-delay: .3s; }
 .chat-typing-label { margin-left: 8px; color: #6a7b71; font-size: 12px; }
+.chat-row.is-handoff-wait .handoff-wait-line { color: #71859a; font-size: 12px; font-weight: 500; }
+.chat-row.is-handoff-wait .chat-meta { margin-top: 2px; }
 @keyframes chat-dot { 0%, 80%, 100% { opacity: .3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
 .chat-approvals { display: grid; gap: 8px; margin-top: 4px; width: 100%; }
 .chat-approval { padding: 10px; border-radius: 10px; background: #fff8e8; color: #5d4a2c; font-size: 12px; }
@@ -1210,8 +1212,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .role-activity-row { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 8px; }
 .role-activity-row .role-name-quota { margin-left: auto; }
 .role-activity { flex: 1; min-width: 0; margin: 0; overflow: hidden; color: #6d7d8f; font-size: 11px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-.role-last-failure { display:block; margin-top:7px; padding:2px 0; border:0; border-radius:3px; background:transparent; color:#92703e; font-size:11px; text-align:left; cursor:pointer; }
-.role-last-failure:hover, .role-last-failure:focus-visible { color:#76521d; text-decoration:underline; }
+.role-failure-dot { width:8px; height:8px; min-width:8px; min-height:8px; margin-left:auto; padding:0; border:0; border-radius:50%; background:#f08c00; flex:0 0 auto; align-self:center; cursor:pointer; }
+.role-failure-dot:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 .role-badge { color: #5f6f80; background: #edf1f5; }
 .role-badge.is-working { color: var(--accent-dark); background: var(--accent-soft); }
 .role-badge.is-waiting { color: #8a5a12; background: #fff1d8; }
@@ -1437,6 +1439,8 @@ body:has(#platform-prompts-dialog[open]) .settings-page { overflow: hidden; }
 .run-dialog-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 7px; color: #718398; font-size: 11px; }
 .run-dialog-meta:empty { display: none; }
 .run-dialog-meta .status-chip { font-size: 10px; }
+#run-dialog-status { display: inline-flex; align-items: center; gap: 8px; }
+#run-dialog .run-dialog-meta .run-stop-button { min-height: 26px; padding: 0 9px; font-size: 12px; line-height: 1.4; }
 #run-dialog .detail-column { flex: 1 1 auto; min-height: 0; border: 0; border-radius: 0; overflow-y: auto; overscroll-behavior: contain; }
 #run-dialog .detail-body { padding: 12px 20px 20px; }
 #run-dialog .run-toolbar { padding: 9px 20px; }
@@ -1480,6 +1484,7 @@ body:has(#platform-prompts-dialog[open]) .settings-page { overflow: hidden; }
 .role-card-head { align-items: center; gap: 5px; }
 /* Leave room for the right-hand status; device and session icons follow the role name so they are not pushed apart by the title. */
 .role-card-head > .role-badge { margin-left: auto; }
+.role-card-head > .role-failure-dot + .role-badge { margin-left: 0; }
 .role-card-name { line-height: 1.4; }
 .role-terminal, .role-history { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 28px; min-height: 28px; padding: 2px; color: var(--accent); }
 .role-card-head .role-name-device { width: 24px; height: 28px; }
@@ -2003,12 +2008,32 @@ dialog.role-switch-dialog { width: min(640px, calc(100vw - 32px)); }
   #settings-page .usage-device-card { grid-template-columns: 96px minmax(0, 1fr); gap: 12px; }
   #settings-page .timer-job-head { align-items: flex-start; }
 }
-/* Sidebar navigation toggle: light active state, subtle border, groove divider under the heading row. */
-.navigation-mode { border:1px solid #d7dfeb; border-radius:7px; overflow:hidden; }
-.navigation-mode button + button { border-left:1px solid #d7dfeb; }
-.navigation-mode button[aria-pressed="true"] { background:#e5efff; color:#0866ff; }
-.sidebar-heading .new-conversation-button { border:1px solid #d7dfeb; }
-.sidebar-heading { border-bottom:1px solid rgba(0,0,0,.08); box-shadow:0 1px 0 #fff; margin-bottom:10px; }
+/* Scoped to the project menu: footer actions and session/runtime icons retain their existing appearance. */
+body .project-sidebar .sidebar-heading { align-items:stretch; gap:10px; padding:0; margin-bottom:16px; border-bottom:1px solid #dfe5ee; box-shadow:none; }
+.project-sidebar .navigation-mode { gap:16px; border:0; border-radius:0; overflow:visible; }
+.project-sidebar .navigation-mode button { position:relative; padding:12px 8px; border:0; border-radius:0; background:transparent; color:#687890; font-size:14px; line-height:20px; }
+.project-sidebar .navigation-mode button:hover { color:#0866ff; background:transparent; }
+.project-sidebar .navigation-mode button[aria-pressed="true"] { color:#0866ff; background:transparent; }
+.project-sidebar .navigation-mode button[aria-pressed="true"]::after { content:''; position:absolute; left:8px; right:8px; bottom:-1px; height:3px; border-radius:2px; background:#0866ff; }
+.project-sidebar .sidebar-heading .new-conversation-button { align-self:center; flex:none; width:34px; height:34px; min-height:34px; margin:0 2px 6px 0; padding:7px; border:0; border-radius:7px; background:transparent; color:#0866ff; box-shadow:none; }
+.project-sidebar .sidebar-heading .new-conversation-button:hover { background:transparent; color:#075bd6; }
+.project-sidebar .sidebar-heading .new-conversation-button:focus-visible { outline:2px solid #0866ff; outline-offset:2px; }
+.project-sidebar .new-conversation-button svg { width:20px; height:20px; }
+#project-list { gap:8px; }
+#project-list .project-item { position:relative; grid-template-columns:26px minmax(0,1fr); gap:10px; min-height:64px; padding:10px 18px 10px 8px; border-radius:8px; color:#172338; background:transparent; box-shadow:none; }
+#project-list .project-item strong { font-size:13px; font-weight:650; line-height:1.4; }
+#project-list .project-item small { margin-top:3px; color:#697b94; font-size:12px; line-height:1.4; }
+#project-list .project-item:hover { background:#f0f4fa; }
+#project-list .project-item.active { color:#0866ff; background:#eaf2ff; box-shadow:none; }
+#project-list .project-item.active::after { content:''; position:absolute; right:8px; top:calc(50% - 3px); width:6px; height:6px; border-radius:50%; background:#0866ff; }
+#project-list .project-item:focus-visible { outline:2px solid #0866ff; outline-offset:-2px; }
+#project-list .project-item-icon { width:26px; height:26px; color:#687890; background:transparent; border-radius:0; box-shadow:none; }
+#project-list .project-item-icon svg { width:24px; height:24px; }
+#project-list .project-item.active .project-item-icon { color:#0866ff; box-shadow:none; }
+@media (min-width:1001px) {
+  body[data-project-sidebar="collapsed"] #project-list .project-item { min-height:44px; padding:7px; }
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active::after { display:none; }
+}
 /* Native fields retain values, validation and form bindings; only their popup is replaced. */
 body select:not([multiple]):not([size]), body select[size="1"] {
   appearance:none; -webkit-appearance:none; min-height:42px; padding:10px 38px 10px 13px;

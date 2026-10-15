@@ -17,6 +17,10 @@ import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followu
 
 const now = () => new Date().toISOString();
 
+/** A turn that only handed work to peers and is waiting for them needs no extra room message: the handoff cards show it.
+ *  An explicit business report is substantive output, even when the same turn also registered a wait. */
+export function handoffOnly(run,report=run?.report){return run?.status==='succeeded'&&Boolean(run.handoffWait?.requestId)&&!['passed','failed','blocked','needs_input'].includes(report?.verdict);}
+
 /** Give a result continuation priority once at a turn boundary; after that, ordinary messages go first in their original FIFO order. */
 export function orderRoleQueue(tasks,priorityUsed,discussionUsed=()=>false) {
   const rank=t=>t.steering ? -1 : (t.discussionDeliveryId||t.discussionIntentId) ? (discussionUsed(t.roleSnapshot?.nodeId)?1:0) : t.continuationRunId && !priorityUsed(t.roleId) ? 0 : t.scheduledJobId||t.proactiveInitial ? 2 : 1;
@@ -390,9 +394,9 @@ export class Rooms {
     this.db.transaction(() => {
       const report = this.db.get('runReports', run.id);
       const question = report?.verdict === 'needs_input' ? tr('rooms.yourConfirmationNeededReplyBy', { summary: report.summary }) : '';
-      const quiet=privateFollowup(this.db,run);
+      const quiet=privateFollowup(this.db,run)||handoffOnly(run,report);
       if(quiet&&!question)return;
-      const text = quiet||run.explicitPublish&&run.status==='succeeded'?question:run.status === 'succeeded' ? (run.result || question || tr('rooms.runHasEndedRuntimeReturned'))
+      const text = quiet||(run.explicitPublish||run.handoffWait&&question)&&run.status==='succeeded'?question:run.status === 'succeeded' ? (run.result || question || tr('rooms.runHasEndedRuntimeReturned'))
         : tr('rooms.text', { p1: run.status === 'interrupted' ? tr('rooms.runStopped') : tr('rooms.runFailed'), p2: run.error || tr('rooms.seeRunDetails'), p3: !run.explicitPublish && run.result ? tr('rooms.existingOutput', { result: run.result }) : '' });
       const request=this.db.get('coordinationRequests',run.requestId||'');
       const handoff=this.db.get('roomMessages',request?.callMessageId||`call:${run.requestId}`);

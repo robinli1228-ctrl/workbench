@@ -1544,4 +1544,5 @@ export default {
   "Template deleted.": "模板已删除。",
   "Built-in template restored.": "内置模板已恢复。",
   "Template saved.": "模板已保存。",
+  "Waiting for {names} to reply": "等待 {names} 回复",
 };
