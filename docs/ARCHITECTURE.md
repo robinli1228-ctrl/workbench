@@ -325,6 +325,8 @@ Timers are executed by the current Home. A Home on a sleeping laptop cannot disp
 - The role configuration form shows the role name, template and machine, then the agent, model and reasoning effort, which is shown according to the model's capabilities. After a successful save the dialog closes and the list refreshes; a validation failure keeps the input and the error.
 - The chat input does not truncate in the browser. Pasted or typed content over 8000 characters or 80 lines is converted automatically into a Markdown attachment using the existing project attachment and cross-device verification chain. Markdown and TXT attachments offer formatted or plain-text full previews, and copy and download keep the original. The limits of 6 attachments per message and 20 MB per file apply; exceeding them shows an explicit hint and keeps the text.
 
+Group-chat composer attachment cards use a 160×100 (8:5) layout with single-line filename ellipsis. Clicking opens image/text preview or file metadata with an explicit download link. Draft cards omit text restoration and device transfer; removal and failed-upload retry remain. This only changes draft presentation, not attachment storage, original bytes or the transfer action on sent messages.
+
 ## Project directories and repository configuration
 
 `GET /api/workers/:id/directories` sends the directory query to a Worker that declares the `projectBrowser` capability. It returns only real folders inside the allowed roots, excluding hidden directories and symbolic links, at most 200 items per page. The Home does not read the user's machine. The selection result is the canonical path on the node and not a browser upload path.

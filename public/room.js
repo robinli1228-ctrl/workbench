@@ -255,12 +255,6 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     body.append(content); previewDialog.replaceChildren(header, body);
     if (!previewDialog.open) previewDialog.showModal();
   }
-  function restoreText(ownerId, text) {
-    const d = drafts[ownerId];
-    d.text = `${d.text || ''}${d.text ? '\n\n' : ''}${text}`;
-    d.inlineLongText = true;
-    if (ownerId === scopeId) { input.value = d.text; resizeInput(); }
-  }
   function attachmentCard(item, removable = false, ownerId = scopeId) {
     const card = create('div', `attachment-card${item.mime.startsWith('image/') ? '' : ' attachment-file-card'}${removable && item.pastedText ? ' attachment-text-card' : ''}`);
     card.title = item.name;
@@ -277,6 +271,13 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         } else if (/\.(md|markdown|txt)$/i.test(item.name)) {
           const response = await fetch(url);
           previewText(await response.text(), item.name, url);
+        } else if (removable) {
+          // 不支持正文预览的草稿附件也先显示详情，不在点击卡片时直接下载。
+          previewDialog.className = 'attachment-dialog';
+          previewDialog.setAttribute('aria-label', item.name);
+          const link = create('a', '', 'Download original'); link.href = url; link.download = item.name;
+          previewDialog.replaceChildren(iconAction('close','Close',()=>previewDialog.close()),create('p','attachment-text',item.name),create('p','',`${item.size} B`),link);
+          previewDialog.showModal();
         } else {
           const link = create('a'); link.href = url; link.download = item.name; link.click();
         }
@@ -288,23 +289,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     } else open.append(create('span','attachment-file-icon','▤'));
     open.append(create('span','attachment-name',item.name),create('small','',item.size<1024?`${item.size} B`:`${(item.size/1024).toFixed(1)} KB`));
     card.append(open);
-    if (removable && item.pastedText) {
-      const restore=iconAction('edit','Show in text box',async b => {
-        const d = drafts[ownerId];
-        if (!d || d.pending || sendingProject === ownerId) return;
-        b.disabled = true;
-        try {
-          const text = await (await fetch(await attachmentUrl(item))).text();
-          if (d.pending || sendingProject === ownerId || !d.attachments?.some(a => a.id === item.id)) return;
-          restoreText(ownerId, text);
-          d.attachments = d.attachments.filter(a => a.id !== item.id); saveDrafts();
-          if (ownerId === scopeId) composer();
-        } catch (error) { setError(error.message); }
-        finally { b.disabled = false; }
-      });
-      restore.classList.add('attachment-restore');card.append(restore);
-    }
-    card.append(iconAction('transfer', 'Send to device', () => openAttachmentTransfer(item)));
+    if (!removable) card.append(iconAction('transfer', 'Send to device', () => openAttachmentTransfer(item)));
     if (removable) card.append(button('×', () => {
       const d = drafts[ownerId]; if (d?.pending || sendingProject === ownerId) return;
       d.attachments = (d.attachments || []).filter(a=>a.id!==item.id); saveDrafts(); composer();
@@ -397,11 +382,6 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     card.append(open);
     if (!busy) {
       card.append(iconAction('refresh',entry.error ? 'Retry upload' : 'Upload', () => { void uploadTextFile(entry, ownerId); }));
-      const restore=iconAction('edit','Show in text box', () => {
-        const d = drafts[ownerId]; restoreText(ownerId, entry.text);
-        d.textFiles = d.textFiles.filter(value => value.id !== entry.id); saveDrafts(); composer();
-      });
-      restore.classList.add('attachment-restore');card.append(restore);
       card.append(button('×', () => {
         drafts[ownerId].textFiles = drafts[ownerId].textFiles.filter(value => value.id !== entry.id); saveDrafts(); composer();
       }, 'attachment-remove'));
