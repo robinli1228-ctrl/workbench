@@ -26,7 +26,7 @@ import { browseFolders, createFolder, prepareNativeSessionFolder } from './folde
 import {createWorkerNativeTurns} from './native-turns-worker.mjs';
 import {listNativeSessions,readNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import { giteeRepository } from './repository.mjs';
-import { inspectRuntimes, runtimeIssue } from './runtime-probe.mjs';
+import { inspectRuntimes, runtimeIssue, mergeRuntimeReports } from './runtime-probe.mjs';
 import { writeHandoff } from './wb-tools.mjs';
 import {handoffReadPaths} from './handoff-paths.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
@@ -96,7 +96,8 @@ const organizerControllers = new Set();
 let capacity = validateCliCapacity(db.get('settings','cli-capacity')?.capacity??Number(process.env.WORKER_CONCURRENCY||2));
 let ws, paused = true, quitting = false, registered = false, readySent = false, reconnectCleanup,cliRecoveryEnabled=false,readToolsEnabled=false;
 const eventSent = new Map();
-let runtimes = await inspectRuntimes(), probing;
+let runtimes = await inspectRuntimes(), probing, runtimeFailures = {}, runtimeRetry = null;
+{ const first = mergeRuntimeReports([], runtimes, {}); runtimes = first.runtimes; runtimeFailures = first.failures; if (first.retryMs) scheduleRuntimeRetry(first.retryMs); }
 // The first version is still in isolated acceptance testing; only adapters that are explicitly enabled and have version-tested evidence report the capability.
 const discussionCapabilities=()=>{
   const bins={codex:process.env.CODEX_BIN||'codex',claude:process.env.CLAUDE_BIN||'claude',grok:process.env.GROK_BIN||'grok',agy:process.env.AGY_BIN||'agy'};
@@ -105,8 +106,13 @@ const discussionCapabilities=()=>{
 };
 if(process.env.WB_DISCUSSION_PREVIEW==='1'&&!discussionCapabilities().discussionConfigurations.length)console.warn(tr('worker.discussionPreviewNotEnabledNo'));
 async function refreshRuntimes() {
-  if (!probing) probing = inspectRuntimes().then(r => { runtimes = r; send({ type: 'runtime_report', runtimes,discussionCapabilities:discussionCapabilities() }); return runtimes; }).finally(() => { probing = null; });
+  if (!probing) probing = inspectRuntimes().then(r => { const merged = mergeRuntimeReports(runtimes, r, runtimeFailures); runtimes = merged.runtimes; runtimeFailures = merged.failures; scheduleRuntimeRetry(merged.retryMs); send({ type: 'runtime_report', runtimes,discussionCapabilities:discussionCapabilities() }); return runtimes; }).finally(() => { probing = null; });
   return probing;
+}
+/** One pending retry at a time; it reuses the single in-flight probe instead of starting another App Server. */
+function scheduleRuntimeRetry(ms) {
+  clearTimeout(runtimeRetry); runtimeRetry = null;
+  if (ms) { runtimeRetry = setTimeout(() => { runtimeRetry = null; if (ws?.readyState === 1) void refreshRuntimes(); }, ms); runtimeRetry.unref?.(); }
 }
 const send = m => { if (ws?.readyState === 1) ws.send(JSON.stringify(m)); };
 const configurationQueries=new Map();

@@ -160,7 +160,14 @@ export async function callDocument(file,ctx=context()) {
   const base=ctx.workspace||ctx.projectRoot;
   if(!base)throw new Error(tr('wbTools.wbProjectRootNotSet'));
   const roots=[base,ctx.projectRoot,ctx.knowledge,...JSON.parse(env('WB_REPOSITORIES','[]')).map(r=>r.localRoot)].filter(Boolean);
-  const target=await realpath(resolve(base,file));
+  // A relative path is looked up in the workspace, then the project root, then knowledge, in that fixed order.
+  // Only "not found" moves on to the next base; every hit still passes the same realpath and allow-list check.
+  let target=null;
+  for(const candidate of [...new Set([base,ctx.projectRoot,ctx.knowledge].filter(Boolean))]){
+    try{target=await realpath(resolve(candidate,file));break;}
+    catch(error){if(error?.code!=='ENOENT'||isAbsolute(file))throw error;}
+  }
+  if(!target)throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${resolve(base,file)}'`),{code:'ENOENT'});
   const allowed=await Promise.all(roots.map(root=>realpath(root).catch(()=>null)));
   const owner=allowed.find(root=>root&&inside(root,target));
   if(!owner)throw new Error(tr('wbTools.callDocumentOutside'));

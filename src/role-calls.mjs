@@ -12,6 +12,18 @@ import {reviewView} from './collaboration-sessions.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
+export const BLOCKED_WAKE_MS = 10 * 60000;
+
+/** A queued dependency whose task has been blocked for the window and not yet reported for this blocked episode. */
+export function blockedDependency(db,request,time=Date.now()) {
+  if(!['queued','waiting_delivery'].includes(request?.status))return null;
+  const task=db.get('tasks',request.taskId||'');
+  if(task?.status!=='ready'||task.currentRunId||!['device_offline','cli_unavailable'].includes(task.blockedKind))return null;
+  const since=Date.parse(task.blockedSince);
+  if(!Number.isFinite(since)||time-since<BLOCKED_WAKE_MS)return null;
+  if(request.blockedWake?.kind===task.blockedKind&&request.blockedWake?.since===task.blockedSince)return null;
+  return {kind:task.blockedKind,since:task.blockedSince,reason:task.waitingReason||task.blockedKind};
+}
 
 function clippedResult(text, limit) {
   text = String(text || tr('roleCalls.noTextResultWasProvided'));
@@ -109,7 +121,7 @@ export class RoleCalls {
         automaticPropagation: input.kind !== 'continuation' && Boolean(sourceRequest?.collaborationCycleId),
         sourceInputs:continued?.sourceInputs||[],
         ...sourceConflictContext(continued),
-        consultRound:continued ? (continued.consultRound||0)+(input.wakeReason==='timeout'?0:1) : 0,
+        consultRound:continued ? (continued.consultRound||0)+(['timeout','blocked'].includes(input.wakeReason)?0:1) : 0,
         scheduledJobId:input.scheduledJobId||continued?.scheduledJobId||this.db.get('coordinationRequests',normalized.parentRequestId||'')?.scheduledJobId||null,
         attachments: input.attachments || continued?.attachments || [], execution:input.execution || continued?.execution || null,
         rootRequestId, targetSnapshot: continued?.targetSnapshot || { ...role, revision: role.revision || 1 },
@@ -272,19 +284,26 @@ export class RoleCalls {
     const children = this.dependencies(parent);
     if (!children.length) return;
     const ready=children.every(r=>callTerminal.has(r.status)),expired=parent.waitDeadlineAt&&Date.parse(parent.waitDeadlineAt)<=time;
-    if(!ready&&!expired)return;
-    const reason=ready?'results':'timeout';
+    // A dependency that cannot start (device offline, CLI unusable) wakes the waiter once per blocked episode, like an
+    // early timeout: the requests stay active and nothing is cancelled or redispatched. Paused Homes never wake anyone.
+    const blocked=!ready&&!expired?children.filter(c=>!callTerminal.has(c.status)).map(c=>({request:c,block:blockedDependency(this.db,c,time)})).filter(x=>x.block):[];
+    if(!ready&&!expired&&(!blocked.length||this.db.get('settings','main')?.paused))return;
+    const reason=ready?'results':expired?'timeout':'blocked';
     if(!parent.waitEvent)this.db.put('coordinationRequests',{...parent,waitEvent:{id:`wait:${parent.id}`,reason,observedAt:new Date(time).toISOString(),requestIds:children.map(r=>r.id)}});
     if (this.db.get('settings', 'main')?.paused) return;
     try {
-      const header = reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')}):tr('roleCalls.assistanceResultsContextOnly', { resumeSummary: parent.resumeSummary });
+      const header = reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')})
+        :reason==='blocked'?tr('minimal.waitBlocked',{resumeSummary:parent.resumeSummary,requestIds:blocked.map(x=>x.request.id).join(', '),reasons:blocked.map(x=>`${x.request.id}: ${x.block.reason}`).join('; ')})
+        :tr('roleCalls.assistanceResultsContextOnly', { resumeSummary: parent.resumeSummary });
       const next = this.create({ id: `resume:${createHash('sha256').update(parent.id).digest('hex')}`, projectId: parent.projectId, targetRoleId: parent.targetRoleId,
         kind: 'continuation', continuationOf: parent.id, sourceMessageId: parent.sourceMessageId,
         parentRequestId: parent.parentRequestId, deliveryId: parent.deliveryId,attachments:parent.attachments||[],
         planId:parent.planId,planVersion:parent.planVersion,stepId:parent.stepId,execution:parent.execution,
-        wakeReason:reason,waitRequestIds:reason==='timeout'?children.filter(c=>!callTerminal.has(c.status)).map(c=>c.id):[],
+        wakeReason:reason,waitRequestIds:reason!=='results'?children.filter(c=>!callTerminal.has(c.status)).map(c=>c.id):[],
         summary: `${header}${packCoordinationResults(children, Math.max(0, 12000 - header.length))}`.slice(0, 12000) });
       this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), continuationRequestId: next.id, updatedAt: new Date().toISOString() });
+      // Mark the episode as reported only once the wake exists, so a failed wake can be retried.
+      for(const {request,block} of blocked)this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',request.id),blockedWake:{kind:block.kind,since:block.since,notifiedAt:new Date(time).toISOString()}});
     } catch (error) { this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), waitingReason: error.message }); }
     });
   }
