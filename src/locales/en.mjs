@@ -1151,6 +1151,7 @@ Assistance results (context only):
   'rooms.projectNotFound3': 'Project not found',
   'rooms.historyCursorNotFound': 'History cursor not found',
   'rooms.onlyGroupChatAssignmentsHave': 'Only group-chat assignments that have not started can be cancelled',
+  'rooms.queueOrderMismatch': 'The queue changed; refresh and try reordering again',
   'rooms.remoteExecutionPaused': 'Remote execution is paused',
   'rooms.organizingConversation': 'Organizing the conversation',
   'rooms.projectUnderManualTerminalTakeover': 'This project is under manual terminal takeover; return it to the platform first',

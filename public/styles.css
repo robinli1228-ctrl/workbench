@@ -2458,3 +2458,21 @@ dialog .dialog-heading h2 { color: var(--text-strong); font-size: var(--fs-xl); 
 :is(dialog, #project-form-panel) :is(input, textarea)::placeholder, #settings-page :is(input, textarea)::placeholder { color: #6b7385; }
 .mention-item em { color: #656c7d; }
 .chat-card-kind { color: #656c7d; }
+
+/* Waiting queue: floating card like the plan dock; waiting items are rows that can be long-pressed and dragged. */
+.message-queue { margin: 0 16px 8px; padding: 0; border: 1px solid var(--card-hairline); border-radius: var(--r-lg); background: rgb(255 255 255 / 94%); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: var(--elev-float); font-size: var(--fs-sm); overflow: hidden; }
+.message-queue summary { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 14px; color: var(--text-strong); font-size: var(--fs-base); font-weight: 650; list-style-position: inside; }
+.message-queue[open] summary { border-bottom: 1px solid var(--card-hairline); }
+.message-queue-list { display: grid; gap: 4px; padding: 6px; }
+.message-queue-item { gap: 8px; padding: 8px 8px 8px 10px; border-radius: var(--r-md); background: transparent; transition: background-color .15s; }
+.message-queue-item:hover { background: var(--surface-sunken); }
+.message-queue-info strong { color: var(--text-strong); font-size: var(--fs-sm); font-weight: 600; }
+.message-queue-info span { color: var(--text-muted); font-size: var(--fs-xs); }
+.message-queue-item .icon-button { width: 30px; height: 30px; min-height: 30px; padding: 6px; border: 0; border-radius: var(--r-sm); color: var(--text-muted); background: transparent; }
+.message-queue-item .icon-button:hover:not(:disabled) { color: var(--accent); background: var(--accent-tint); }
+.message-queue-list.is-orderable .message-queue-item[data-order-id] { cursor: grab; }
+.message-queue-list.is-orderable .message-queue-item[data-order-id]::before { content: ''; flex: none; width: 6px; height: 14px; margin-right: 2px; opacity: .45; background: radial-gradient(circle, var(--text-muted) 1.1px, transparent 1.4px) 0 0 / 3px 4.67px; }
+.message-queue-list.is-orderable .message-queue-item[data-order-id]:hover::before { opacity: .8; }
+.message-queue-item.list-order-placeholder { outline-color: rgb(79 91 206 / 45%); background: var(--accent-tint); }
+.message-queue-item.list-order-ghost { border: 1px solid var(--card-hairline); background: #fff; box-shadow: var(--elev-float); }
+@media (max-width: 760px) { .message-queue { margin-inline: 8px; } .message-queue-item .icon-button { width: 36px; height: 36px; } }

@@ -8,6 +8,7 @@ import { createHistoryViewer } from './history-view.js';
 import {createRoleSwitchUI} from './role-switch.js';
 import {createRoleHistoryTabs} from './role-history.js';
 import {createCliRecoveryUI} from './cli-recovery.js';
+import {createListOrder} from './list-order.js';
 import {createMentionInput} from './mention-input.js';
 
 /** Long text only changes its carrier; the file content keeps the original line breaks, whitespace and trailing characters. */
@@ -171,14 +172,27 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
 /** Show existing dispatches without creating a separate queue; request retries reuse the ID to avoid repeated interruptions. */
 function createMessageQueue({api,refreshState,create,setError}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
-  const commands=new Map(),pending=new Set();let currentProject=null;
-  return {update(data,projectId){
-    if(currentProject!==projectId){panel.open=false;currentProject=projectId;}
+  const commands=new Map(),pending=new Set();let currentProject=null,lastData=null,optimistic=null;
+  const queueKey=task=>Number.isFinite(task.queueOrder)?task.queueOrder:(Date.parse(task.createdAt)||0);
+  // Long press reorders waiting items; Home stores the order and the scheduler runs them in that order.
+  const order=createListOrder({container:list,scope:()=>`queue:${currentProject||''}`,onEnd:()=>{if(lastData)view.update(lastData,currentProject);},onError:setError,
+    persist:async taskIds=>{
+      optimistic=taskIds;
+      try{await api(`/api/projects/${encodeURIComponent(currentProject)}/queue/order`,{method:'POST',json:{taskIds}});await refreshState({quiet:true});}
+      catch(error){setError(error.message);}
+      finally{optimistic=null;if(lastData)view.update(lastData,currentProject);}
+    }});
+  const view={update(data,projectId){
+    lastData=data;if(order.active())return;
+    if(currentProject!==projectId){panel.open=false;currentProject=projectId;optimistic=null;}
+    const rank=new Map((optimistic||[]).map((id,index)=>[id,index]));
     const tasks=(data.tasks||[]).filter(t=>t.projectId===projectId&&t.origin==='chat'&&t.status==='ready'&&!t.currentRunId)
-      .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering)));
+      .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||queueKey(a)-queueKey(b));
+    list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&tasks.length>1);
     panel.hidden=!tasks.length;summary.textContent=t('Queue · {v}', { v: tasks.length });list.replaceChildren();
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
+      if(data.capabilities?.queueOrder&&!task.steering){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
       const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||t('Role')} · ${task.title||task.prompt}`);title.title=task.prompt||task.title;
       info.append(title,create('span','',task.steering?(task.waitingReason||'Continuing with the new instruction first'):(task.waitingReason||'Waiting to run')));row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
@@ -202,6 +216,7 @@ function createMessageQueue({api,refreshState,create,setError}) {
       };row.append(cancel);list.append(row);
     }
   }};
+  return view;
 }
 
 /** The chat only handles display and user actions; role selection, idempotency and scheduling are validated by Home. */

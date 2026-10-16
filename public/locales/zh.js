@@ -1524,6 +1524,8 @@ export default {
   "Unavailable CLI removed. Software and history are kept.": "不可用的 CLI 已移除，软件和历史已保留。",
   "Drag to change the order. Release to save; Escape to cancel.": "拖动调整顺序，松开保存，按 Escape 取消。",
   "Order saved in this browser.": "顺序已保存在当前浏览器。",
+  "Queue order saved.": "队列顺序已保存。",
+  "Long press to drag and reorder": "长按拖动调整顺序",
   "Could not save the order in this browser.": "无法在当前浏览器保存顺序。",
   "Cancel quote": "取消引用",
   "Configuration assistant received it; results will appear in the conversation.": "配置助手已收到，结果会显示在对话中。",

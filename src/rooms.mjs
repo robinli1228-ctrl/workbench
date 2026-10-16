@@ -23,9 +23,18 @@ const now = () => new Date().toISOString();
 export function handoffOnly(run,report=run?.report){return run?.status==='succeeded'&&Boolean(run.handoffWait?.requestId)&&!['passed','failed','blocked','needs_input'].includes(report?.verdict);}
 
 /** Give a result continuation priority once at a turn boundary; after that, ordinary messages go first in their original FIFO order. */
+/** Arrival time, or the slot the user dragged the queued item into; priority ranks still come first. */
+export const queueKey=t=>Number.isFinite(t.queueOrder)?t.queueOrder:(Date.parse(t.createdAt)||0);
 export function orderRoleQueue(tasks,priorityUsed,discussionUsed=()=>false) {
   const rank=t=>t.steering ? -1 : (t.discussionDeliveryId||t.discussionIntentId) ? (discussionUsed(t.roleSnapshot?.nodeId)?1:0) : t.continuationRunId && !priorityUsed(t.roleId) ? 0 : t.scheduledJobId||t.proactiveInitial ? 2 : 1;
-  return [...tasks].sort((a,b)=>rank(a)-rank(b)||(Date.parse(a.createdAt)||0)-(Date.parse(b.createdAt)||0));
+  return [...tasks].sort((a,b)=>rank(a)-rank(b)||queueKey(a)-queueKey(b));
+}
+/** Reordering permutes the queued items' existing keys, so other projects' items keep their relative positions. */
+export function reorderedQueueKeys(tasks,taskIds) {
+  const byId=new Map(tasks.map(t=>[t.id,t]));
+  if(new Set(taskIds).size!==taskIds.length||taskIds.some(id=>!byId.has(id)))throw new Error(tr('rooms.queueOrderMismatch'));
+  const keys=taskIds.map(id=>queueKey(byId.get(id))).sort((a,b)=>a-b);
+  return taskIds.map((id,index)=>[id,keys[index]+index*1e-3]);
 }
 export function mentionNames(text) {
   return [...new Set([...text.matchAll(/(?:^|[\s,.!?;:(\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a\uff08])@([\p{L}\p{N}_-]+)/gu)].map(m => m[1]))];
@@ -303,6 +312,18 @@ export class Rooms {
     const role = get('roles', source?.roleId || parent?.targetRoleId);
     const to = call?.handoff?.fromRole || source?.roleSnapshot?.name || role?.name;
     return to ? { from: message.senderName, to } : null;
+  }
+
+  /** Only items still waiting in this chat's queue can be reordered; running or finished work keeps its history. */
+  reorderQueue(projectId, input) {
+    const taskIds=Array.isArray(input?.taskIds)?input.taskIds.filter(id=>typeof id==='string'):[];
+    if(!taskIds.length||taskIds.length>500)throw new Error(tr('rooms.queueOrderMismatch'));
+    return this.db.transaction(()=>{
+      const tasks=taskIds.map(id=>this.db.get('tasks',id));
+      if(tasks.some(t=>!t||t.projectId!==projectId||t.origin!=='chat'||t.status!=='ready'||t.currentRunId))throw new Error(tr('rooms.queueOrderMismatch'));
+      for(const [id,queueOrder] of reorderedQueueKeys(tasks,taskIds))this.db.put('tasks',{...this.db.get('tasks',id),queueOrder});
+      return {taskIds};
+    });
   }
 
   cancel(taskId) {
