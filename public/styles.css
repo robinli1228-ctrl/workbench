@@ -2446,3 +2446,15 @@ dialog .dialog-heading h2 { color: var(--text-strong); font-size: var(--fs-xl); 
 @media (prefers-reduced-motion: reduce) {
   .chat-typing span { animation: none; opacity: .6; }
 }
+
+/* Focus ring must beat the high-specificity :is() field bases in dialogs and settings. */
+:is(dialog, #project-form-panel) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), textarea):not(.wb-select-search):focus,
+#settings-page :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), textarea):not(dialog *):focus {
+  border-color: rgb(79 91 206 / 55%); outline: 0; box-shadow: 0 0 0 3px rgb(79 91 206 / 16%);
+}
+/* Device icon keeps its own width; the name takes the rest. */
+.inspector-device-row > :first-child { flex: 0 0 auto; width: auto; min-width: 18px; }
+/* Readable small text left over from older tints (>=4.5:1). */
+:is(dialog, #project-form-panel) :is(input, textarea)::placeholder, #settings-page :is(input, textarea)::placeholder { color: #6b7385; }
+.mention-item em { color: #656c7d; }
+.chat-card-kind { color: #656c7d; }
