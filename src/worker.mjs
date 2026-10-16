@@ -44,7 +44,7 @@ import { outboxBatch } from './worker-outbox.mjs';
 import { prepareProjectSpace } from './project-space.mjs';
 import { publishProjectDelivery, receiveProjectDelivery, fetchExecutionDeliveries } from './project-delivery.mjs';
 import { collectCcusageReport } from './token-usage.mjs';
-import { nativeEnvironment, findSessionHistory, projectTerminalLock, nativeTerminalProject, managedRunProcessState, releaseTerminalSession, checkTerminalSession, stopTerminalSession, resumeEnvironment, freshTerminalArgs } from './terminal-resume.mjs';
+import { scopedTerminalArgs, nativeEnvironment, findSessionHistory, projectTerminalLock, nativeTerminalProject, managedRunProcessState, releaseTerminalSession, checkTerminalSession, stopTerminalSession, resumeEnvironment, freshTerminalArgs } from './terminal-resume.mjs';
 import { receiveAttachments } from './attachments.mjs';
 import { inspectExecutionRepositories, prepareExecutionWorkspace, executionConflict, verifyExecutionVersions,resolveExecutionRepositories,inspectExecutionInput,assertExecutionInputVersions,executionInputBaselines } from './execution-workspace.mjs';
 import { createRunInput, instructionDelivery,executionInstructionComponents,executionEnvironmentHint } from './run-input.mjs';
@@ -217,7 +217,8 @@ async function command(m) {
     switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash,
     contextVersion:c.type==='launch'?m.run.contextVersion:undefined,turnPurpose:m.run.turnPurpose,permissionProfile:m.run.permissionProfile,
     requestId: m.run.requestId, continuationRunId: m.run.continuationRunId, deliveryId: c.deliveryId || m.run.deliveryId, deliveryCommit: m.delivery?.commit, planVersion: m.run.planVersion,
-    ...(m.run.execution ? {execution:m.run.execution}:{}),...(m.run.sourceInputs?.length?{sourceInputs:m.run.sourceInputs}:{}),...(m.run.attachments?.length ? {attachments:m.run.attachments}:{}) });
+    ...(m.run.execution ? {execution:m.run.execution}:{}),...(m.run.sourceInputs?.length?{sourceInputs:m.run.sourceInputs}:{}),...(m.run.attachments?.length ? {attachments:m.run.attachments}:{}),
+    ...(m.run.permissionScope!==undefined?{permissionScope:m.run.permissionScope,permissionContract:m.run.permissionContract}:{}) });
   const prior = db.get('commands', c.id);
   if (prior) {
     if (prior.signature !== signature) throw new Error(tr('worker.duplicateCommandParameterConflict'));
@@ -238,7 +239,9 @@ async function command(m) {
   if (c.type === 'launch') {
     const deferred=db.get('runs',c.runId);
     if (deferred&&!deferred.cliRecoveryWait) { send({ type: 'command_ack', id: c.id }); return; }
+    // Reconnect and terminal resume retain this run's frozen policy, never the role's mutable current settings.
     db.put('runs', { ...deferred,id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: deferred?.seq||0,cliRecoveryWait:false,error:null,
+      ...(m.run.permissionScope!==undefined?{permissionScope:m.run.permissionScope,permissionContract:m.run.permissionContract}:{}),
       collaborationBatchId:m.run.collaborationBatchId||null,collaborationBatch:m.run.collaborationBatch||null,
       collaborationCycleId:m.run.collaborationCycleId||null,propagationBudget:m.run.propagationBudget||null,
       switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash });
@@ -770,7 +773,7 @@ async function query(m) {
         await warmSessions.closeProject(input.projectId);
         const workspace=await projectRoot(input.workspace),nativeSession={...await nativeEnvironment(role.runtime),id:null};
         const instructions=[runWithLanguage('en',()=>composeAgentInstructions(input.platformPrompt,[role.instructions,input.supervisorPrompt].filter(Boolean).join('\n\n'))),executionText('roleTerminal.manualContext')].filter(Boolean).join('\n\n');
-        const roleSettings={runtime:role.runtime,model:role.model,effort:role.effort||null,instructions};
+        const roleSettings={runtime:role.runtime,model:role.model,effort:role.effort||null,instructions,...(role.permissionScope?{permissionScope:role.permissionScope,toolRoots:[base]}:{})};
         freshTerminalArgs({...roleSettings,workspace});
         // Preparation can race a dispatch, a duplicate request or revocation while directories are checked.
         if(db.get('terminalSessions',id)||projectTerminalLock(db,input.projectId,identity.nodeId)||busy())throw new Error(tr('worker.executionStateHasChangedCheck'));
@@ -796,7 +799,9 @@ async function query(m) {
       const nativeSession={...native,id:native.id || r.nativeSessionId || r.threadId};
       if(nativeSession.user!==(await nativeEnvironment(nativeSession.runtime)).user)throw new Error(tr('worker.workerUserDoesNotMatch'));
       const historyFile=await findSessionHistory(nativeSession);
-      const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,createdAt:new Date().toISOString()};
+      // The resumed terminal keeps the scope frozen on the original run; refuse here rather than after the terminal opens.
+      if(r.permissionScope)scopedTerminalArgs(nativeSession.runtime,r.permissionScope,[base]);
+      const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,...(r.permissionScope?{permissionScope:r.permissionScope,toolRoots:[base]}:{}),createdAt:new Date().toISOString()};
       // A dispatch/revocation that occurred during the file check must be rejected again.
       if(db.get('terminalSessions',id) || projectTerminalLock(db,r.projectId,identity.nodeId) || db.list('runs').some(other=>other.projectId===r.projectId&&!terminal.has(other.status)))throw new Error(tr('worker.executionStateHasChangedCheck'));
       if(occupiedSlots()>=capacity)throw new Error(tr('capacity.full'));

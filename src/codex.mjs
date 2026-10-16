@@ -82,6 +82,9 @@ export class CodexSession {
     Object.assign(this,options);this.done=false;this.stopping=false;this.turnId=null;
     // Logical review mode must not disable WB receipt writes on reuse; match fresh business admission and keep maintenance read-only.
     this.mode=options.maintenance?'read-only':'workspace-write';
+    // options carries the role's legacy autoApprove; the frozen scope decides approvals, never the copied flag.
+    this.permissionScope=options.maintenance?null:(options.permissionScope??null);
+    this.autoApprove=this.permissionScope!=='device-approval';
     this.items.clear();
     for(const state of this.toolOutputBuffers.values())clearTimeout(state.timer);
     this.toolOutputBuffers.clear();this.textBuffer='';

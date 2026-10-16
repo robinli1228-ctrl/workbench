@@ -39,12 +39,24 @@ export class RoleSteering {
         if(prior.collaborationYield.commandId!==commandId)throw new Error(tr('collabWait.yieldPending'));
         return prior.collaborationYield;
       }
-      const task=this.humanQueuedTask(projectId,taskId,conversationId);
-      if(task.steering)throw new Error(tr('roleSteering.messageHasAlreadyStartedImmediate'));
-      const view=collaborationQueueView(this.db),check=view.forTask(task);
+      const view=collaborationQueueView(this.db);
+      const queued=this.db.get('tasks',taskId);
+      if(!queued||queued.projectId!==projectId)throw new Error(tr('roleSteering.messageDoesNotBelongCurrent'));
+      assertConversationRecord({projectId,conversationId},queued);
+      // One override at a time: a yielded task that is still queued, running, or waiting on its own collaboration blocks another.
+      if(view.activeYield(queued))throw new Error(tr('collabWait.yieldPending'));
+      const check=view.forTask(queued);
       if(check.allowed)throw new Error(tr('collabWait.notWaiting'));
-      if(this.db.list('tasks').some(t=>t.id!==taskId&&t.projectId===projectId&&conversationIdOf(t)===conversationId&&t.roleId===task.roleId&&t.collaborationYield&&t.status==='ready'&&!t.currentRunId))throw new Error(tr('collabWait.yieldPending'));
-      const collaborationYield={commandId,actor:'human',rootRequestId:check.state.rootRequestId,createdAt:new Date().toISOString()};
+      // Human messages may go first at any time; other queued work only once the wait is marked stalled.
+      let task;
+      try{task=this.humanQueuedTask(projectId,taskId,conversationId);}
+      catch(error){
+        if(!check.stalled)throw new Error(tr('collabWait.stalledOnly'));
+        if(queued.origin!=='chat'||queued.status!=='ready'||queued.currentRunId)throw error;
+        task=queued;
+      }
+      if(task.steering)throw new Error(tr('roleSteering.messageHasAlreadyStartedImmediate'));
+      const collaborationYield={commandId,actor:'human',rootRequestId:check.state?.rootRequestId||null,createdAt:new Date().toISOString()};
       this.db.put('tasks',{...task,collaborationYield,waitingReason:tr('collabWait.yielded')});
       return collaborationYield;
     });

@@ -1903,7 +1903,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wechatChannel.requestConflict': '该通知 requestId 已用于不同内容，新消息请使用新编号。',
   'wechatChannel.notificationTargetChanged': '原项目总管已不可用或发生变更，已关闭编号且未改派。',
   'wechatChannel.toolGuide': '仅项目总管可用：wb notify send \'{"requestId":"stable-id","text":"问题或通知，最多1600字符"}\'；wb notify status MESSAGE_ID。Home 使用已配置的平台和账号，从本轮执行身份确定真实项目及总管，不得指定其他项目或收件角色；消息自动标明所属项目。启用仅开放工具，不自动转发报告或审批。超时后使用相同 requestId 和内容重试；状态区分排队、发送及错误，不把发送当作已读。带编号的回复排入原项目总管队列，不打断运行中的 CLI。原生权限、仓库配置及 Git 交付保持原审批边界。',
-  'collabWait.queued': "{role} 正在等待协作结果，本条消息排队中。约 {minutes} 分钟后自动放行，也可以点“先处理这条”",
+  'collabWait.queued': "{role} 正在等待协作结果，本条消息排队中。约 {minutes} 分钟内仍无进展会标记为卡住；随时可以点“先处理这条”",
   'collabWait.notWaiting': "该角色当前没有在等待协作结果，消息会按正常顺序执行",
   'collabWait.yieldPending': "该角色已有一条消息设为先处理，请等它完成后再操作",
   'collabWait.steerDuringWait': "该角色正在等待协作结果。可以点“先处理这条”并保留它的工作，或刷新后选择明确的操作",
@@ -1912,4 +1912,9 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'rolePermissions.invalid': "未知的权限范围：{scope}",
   'rolePermissions.worker_unsupported': "该设备的 Worker 尚不支持按角色设置权限；请升级 Worker，或保留当前权限",
   'rolePermissions.scope_unsupported': "该设备上的这个 CLI 不支持权限范围 {scope}",
+  'rolePermissions.terminalApprovalUnsupported': "角色终端无法把审批回传到 Workbench；请把该角色切换到其他权限范围后再打开终端",
+  'rolePermissions.selectScope': "请为该角色选择权限范围",
+  'collabWait.stalled': "{role} 的协作已长时间没有进展，需要处理；本条消息会继续排队，直到你点“先处理这条”",
+  'collabWait.yieldRunning': "{role} 正在先处理另一条消息；本条要等它和原先等待的协作都结束后再执行",
+  'collabWait.stalledOnly': "等待被标记为卡住之前，只有你发的消息可以先处理",
 });

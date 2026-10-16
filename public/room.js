@@ -199,8 +199,9 @@ function createMessageQueue({api,refreshState,create,setError}) {
     for(const wait of waits.filter((w,i,all)=>all.findIndex(x=>x.roleId===w.roleId&&x.conversationId===w.conversationId)===i)) {
       const role=(data.roles||[]).find(r=>r.id===wait.roleId)?.name||t('Role');
       const left=Math.max(1,Math.ceil((Date.parse(wait.releaseAt)-Date.now())/60000));
-      list.append(create('p',`message-queue-wait${wait.released?' is-released':''}`,wait.released?t('{role} · collaboration wait timed out; needs attention, queued messages are running',{role})
-        :t('{role} · waiting for collaboration results · released automatically in about {minutes} min',{role,minutes:left})));
+      // Nothing is released automatically; a stalled wait only unlocks "Handle this first" for every queued item.
+      list.append(create('p',`message-queue-wait${wait.stalled?' is-released':''}`,wait.stalled?t('{role} · no collaboration progress for a while; needs attention. Choose Handle this first to let a queued item go',{role})
+        :t('{role} · waiting for collaboration results · marked stalled after about {minutes} min without progress',{role,minutes:left})));
     }
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
@@ -209,11 +210,14 @@ function createMessageQueue({api,refreshState,create,setError}) {
       info.append(title,create('span','',task.steering?(task.waitingReason||'Continuing with the new instruction first'):(task.waitingReason||'Waiting to run')));row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
       const human=!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination;
-      if(human&&data.capabilities?.collaborationWait&&(protectedRole(task)||task.collaborationYield)) {
+      const guard=protectedRole(task),scopeOf=x=>(x.conversationId||x.projectId)===(task.conversationId||task.projectId)&&x.roleId===task.roleId;
+      const yieldBusy=tasks.some(x=>x.id!==task.id&&x.collaborationYield&&scopeOf(x))||waits.some(w=>w.yielded&&scopeOf(w));
+      if((human||guard?.stalled)&&data.capabilities?.collaborationWait&&(guard||task.collaborationYield)) {
         // Handle this first keeps the waiting collaboration; it never stops or cancels anything.
         const first=create('button','secondary compact message-queue-first',task.collaborationYield?t('Handling first'):t('Handle this first'));first.type='button';
         first.title=t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
-        first.disabled=Boolean(task.collaborationYield)||pending.has(task.id)||data.settings?.paused;
+        first.disabled=Boolean(task.collaborationYield)||yieldBusy||pending.has(task.id)||data.settings?.paused;
+        if(yieldBusy&&!task.collaborationYield)first.title=t('Another item for this role is being handled first; wait until it and its collaboration finish');
         first.onclick=async()=>{
           pending.add(task.id);first.disabled=true;
           if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
@@ -1302,7 +1306,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   roleForm.elements.effort.addEventListener('change', () => { preferredEffort = roleForm.elements.effort.value; });
   const renderRolePermission = () => renderPermissionScope(roleForm.elements.permissionScope, roleForm.querySelector('[data-permission-note]'), {
     worker: data.workers?.find(w => w.id === roleForm.elements.nodeId.value), runtime: roleForm.elements.runtime.value,
-    saved: editingRoleSnapshot?.permissionScope, isNew: !editingRoleId });
+    saved: editingRoleSnapshot?.permissionScope, isNew: !editingRoleId || editingRoleSnapshot?.configured === false });
   roleForm.elements.permissionScope.addEventListener('change', () => { roleForm.elements.permissionScope.dataset.touched = '1'; renderRolePermission(); });
   roleForm.elements.nodeId.addEventListener('change', renderRolePermission);
   roleForm.elements.runtime.addEventListener('change', renderRolePermission);

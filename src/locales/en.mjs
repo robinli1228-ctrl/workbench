@@ -1903,7 +1903,7 @@ Report accurately: finish with wb report describing the work, actual verificatio
   'wechatChannel.requestConflict': 'This notification requestId was already used with different text. Use a new ID for a new message.',
   'wechatChannel.notificationTargetChanged': 'The original project supervisor is unavailable or changed; this number was closed without reassignment.',
   'wechatChannel.toolGuide': 'Project supervisor only: wb notify send \'{"requestId":"stable-id","text":"Question or notification, at most 1600 characters"}\'; wb notify status MESSAGE_ID. The Home uses the configured platform/account and derives the real project and supervisor from this turn; never supply another project or recipient. The message automatically identifies its project. Enabling the tool does not auto-forward reports or approvals. Reuse the same requestId and text after a timeout; status shows queued/sent/error, not guaranteed receipt. Numbered replies queue to the original project supervisor without interrupting a running CLI. Native permissions, repository configuration and Git delivery keep their existing approval boundaries.',
-  'collabWait.queued': "{role} is waiting for collaboration results; this message is queued. It is released automatically in about {minutes} min, or choose Handle this first",
+  'collabWait.queued': "{role} is waiting for collaboration results; this message is queued. If there is no progress for about {minutes} more min the wait is marked stalled; you can choose Handle this first at any time",
   'collabWait.notWaiting': "This role is not waiting for collaboration results; the message will run in normal order",
   'collabWait.yieldPending': "Another message for this role has already been set to go first; wait until it finishes",
   'collabWait.steerDuringWait': "This role is waiting for collaboration results. Choose Handle this first to keep its work, or refresh and choose an explicit action",
@@ -1912,4 +1912,9 @@ Report accurately: finish with wb report describing the work, actual verificatio
   'rolePermissions.invalid': "Unknown permission scope: {scope}",
   'rolePermissions.worker_unsupported': "The device Worker does not support per-role permission scopes yet; upgrade it or keep the current permissions",
   'rolePermissions.scope_unsupported': "Permission scope {scope} is not available for this CLI on this device",
+  'rolePermissions.terminalApprovalUnsupported': "A role terminal cannot send approvals back to Workbench; open it after switching the role to another permission scope",
+  'rolePermissions.selectScope': "Choose a permission scope for this role",
+  'collabWait.stalled': "{role}'s collaboration has made no progress for a while and needs attention; this message stays queued until you choose Handle this first",
+  'collabWait.yieldRunning': "Another message for {role} is being handled first; this one runs after it and the waiting collaboration finish",
+  'collabWait.stalledOnly': "Only human messages can go first before the wait is marked stalled",
 });

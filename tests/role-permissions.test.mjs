@@ -41,7 +41,7 @@ test('saves keep, default and validate the scope', () => {
   assert.equal(resolveRolePermissionScope({ ...base, input: {}, old: { permissionScope: 'device' }, isNew: false }), 'device', 'old clients keep the saved scope');
   assert.equal(resolveRolePermissionScope({ ...base, input: { permissionScope: '' }, old: { permissionScope: 'device' }, isNew: false }), 'device');
   assert.equal(resolveRolePermissionScope({ ...base, input: {}, old: {}, isNew: false }), undefined, 'legacy roles stay legacy');
-  assert.equal(resolveRolePermissionScope({ ...base, worker: worker(undefined), input: {}, old: null, isNew: true }), undefined, 'old Worker: no silent default');
+  assert.throws(() => resolveRolePermissionScope({ ...base, worker: worker(undefined), input: {}, old: null, isNew: true }), /worker_unsupported/, 'new roles cannot silently use legacy permissions on an old Worker');
   assert.throws(() => resolveRolePermissionScope({ ...base, runtime: 'claude', input: { permissionScope: 'project' }, old: null, isNew: true }), /scope_unsupported/);
   assert.throws(() => resolveRolePermissionScope({ ...base, input: { permissionScope: 'root' }, old: null, isNew: true }), /invalid/);
   assert.throws(() => resolveRolePermissionScope({ ...base, runtime: 'claude', input: {}, old: { permissionScope: 'project' }, isNew: false }), /scope_unsupported/, 'a runtime change re-validates');
@@ -97,4 +97,38 @@ test('the built-in supervisor template asks the dispatcher to own and follow up 
   const { defaultSupervisorPrompt } = await import('../src/platform-prompts.mjs');
   assert.match(await runWithLanguage('en', () => defaultSupervisorPrompt()), /Goal ownership/);
   assert.match(await runWithLanguage('zh', () => defaultSupervisorPrompt()), /目标负责/);
+});
+
+test('a reused Codex process keeps asking for approval in the approval scope', () => {
+  const session = new CodexSession({ cwd: tmpdir(), model: 'm', emit: () => {}, permissionScope: 'device-approval' });
+  assert.equal(session.autoApprove, false);
+  session.done = true; session.proc = { killed: false, exitCode: null, signalCode: null };
+  session.reuse({ autoApprove: true, permissionScope: 'device-approval', maintenance: false });
+  assert.equal(session.autoApprove, false, 'the legacy autoApprove flag in reuse options must not switch approvals off');
+  session.done = true;
+  session.reuse({ autoApprove: true, permissionScope: 'project', maintenance: false });
+  assert.equal(session.autoApprove, true);
+});
+
+test('a new role on an upgraded Worker must pick a scope when no safe default exists', () => {
+  const claude = worker({ claude: ['device'] });
+  assert.throws(() => resolveRolePermissionScope({ worker: claude, runtime: 'claude', configured: true, message, input: {}, old: null, isNew: true }), /selectScope/);
+  assert.equal(resolveRolePermissionScope({ worker: claude, runtime: 'claude', configured: true, message, input: { permissionScope: 'device' }, old: null, isNew: true }), 'device');
+});
+
+test('role terminals carry the scope and refuse the approval scope', async () => {
+  const { terminalPermissionArgs } = await import('../src/role-permissions.mjs');
+  const { freshTerminalArgs } = await import('../src/terminal-resume.mjs');
+  assert.equal(terminalPermissionArgs('codex', undefined), null);
+  assert.throws(() => terminalPermissionArgs('codex', 'device-approval'), /terminalApprovalUnsupported/);
+  if (process.platform === 'linux') {
+    const project = freshTerminalArgs({ runtime: 'codex', model: 'm', instructions: 'i', workspace: '/w', permissionScope: 'project', toolRoots: ['/opt/wb'] });
+    assert.equal(project.includes('workspace-write'), false, 'no legacy sandbox flag');
+    assert.ok(project.includes('default_permissions="workbench_project"'));
+    assert.ok(project.some(arg => arg.startsWith('permissions.workbench_project.filesystem={') && arg.includes('"/opt/wb"="read"')));
+  }
+  const device = freshTerminalArgs({ runtime: 'codex', model: 'm', instructions: 'i', workspace: '/w', permissionScope: 'device' });
+  assert.deepEqual(device.slice(1, 6), ['m', '--sandbox', 'danger-full-access', '--ask-for-approval', 'never']);
+  const legacy = freshTerminalArgs({ runtime: 'codex', model: 'm', instructions: 'i', workspace: '/w' });
+  assert.ok(legacy.includes('workspace-write'), 'legacy roles keep their terminal flags');
 });

@@ -68,7 +68,7 @@ export function supervisorSettings({ api, getData, getProject, refreshState, cre
   function permission() {
     const data=getData(),role=data.supervisorRoles?.find(r=>r.id===getProject()?.supervisorRoleId);
     renderPermissionScope(form.elements.permissionScope, form.querySelector('[data-permission-note]'), {
-      worker: data.workers.find(w => w.id === form.elements.nodeId.value), runtime: form.elements.runtime.value, saved: role?.permissionScope, isNew: !role });
+      worker: data.workers.find(w => w.id === form.elements.nodeId.value), runtime: form.elements.runtime.value, saved: role?.permissionScope, isNew: !role || role.configured === false });
   }
   function open() {
     if(busy||!getProject())return;
