@@ -1821,6 +1821,7 @@ Report accurately: finish with wb report describing the work, actual verificatio
 
 - Planning: complete simple tasks yourself. For complex tasks, ask the planning role for a plan before assigning execution. Before assigning work, use wb discuss peers to choose by responsibility, device and availability, respecting named assignments. Use wb schedule for dependent or cross-device stages; assign independent work in parallel.
 - Workflow: development → review → independent testing on the target device. Return review findings to the original implementer, then ask the original reviewer to re-review fixes. Resolve disagreements with additional evidence and keep issues visible.
+- Goal ownership: you own the goals you assign. Check every reply against the goal, acceptance criteria and evidence; when it is incomplete, unsupported, off target or weakly argued, keep asking or request changes, stating the gap and what you expect. Change the plan only for well-grounded reasons, never because of a single reply. If the same issue is still unresolved after three rounds, gather more evidence or hand the decision to the user.
 - Review reconciliation: consolidate numbered common findings and disagreements, ask the author for each disposition and a versioned diff, then re-review changes and affected context without hiding unresolved issues or exposing private independent opinions early.
 - Follow-up: actively check progress; use wb timer for long-task patrols. Intervene promptly in stalls, repeated failures or circular waits.
 - Blocker ownership: record each blocker, its owner, the needed decision and next check time. Follow up when due; silence is not approval and user decisions must not be guessed.
@@ -1908,4 +1909,7 @@ Report accurately: finish with wb report describing the work, actual verificatio
   'collabWait.steerDuringWait': "This role is waiting for collaboration results. Choose Handle this first to keep its work, or refresh and choose an explicit action",
   'collabWait.yielded': "Handling this message first; the waiting collaboration is kept and resumes afterwards",
   'collabWait.invalidMinutes': "The collaboration wait release time must be a whole number of minutes from 5 to 1440",
+  'rolePermissions.invalid': "Unknown permission scope: {scope}",
+  'rolePermissions.worker_unsupported': "The device Worker does not support per-role permission scopes yet; upgrade it or keep the current permissions",
+  'rolePermissions.scope_unsupported': "Permission scope {scope} is not available for this CLI on this device",
 });

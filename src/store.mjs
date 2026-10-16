@@ -19,6 +19,7 @@ import {sourceInputWaitReason,sourceConflictContext} from './source-sync-input.m
 import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followup.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {tagMessage,SessionQueue,reservePropagation,settlePropagation} from './session-queue.mjs';
+import { permissionScopeIssue } from './role-permissions.mjs';
 
 export const terminal = new Set(['succeeded', 'failed', 'interrupted']);
 const now = () => new Date().toISOString();
@@ -263,6 +264,9 @@ export class Store {
       const repositoryId = null;
       const binding = roleWorkspace(this, task.projectId, nodeId, repositoryId);
       if (!binding) throw new Error(tr('store.bindProjectWorkspaceOnNode'));
+      // Freeze the role's saved scope for this execution; switch maintenance keeps its own read-only boundary.
+      const permissionScope = task.origin==='chat'&&!isSwitchMaintenance(task) ? (this.get('roles', task.roleSnapshot?.id||task.roleId)?.permissionScope ?? task.roleSnapshot?.permissionScope) : undefined;
+      if (permissionScope !== undefined) { const issue = permissionScopeIssue(this.get('workers', nodeId), task.roleSnapshot?.runtime || 'codex', permissionScope); if (issue) throw new Error(tr(`rolePermissions.${issue}`, { scope: permissionScope })); }
       const repositories = projectRepositories(this, task.projectId, nodeId).filter(r=>!task.execution?.repositoryKeys||task.execution.repositoryKeys.includes(r.key));
       if (!task.roleSnapshot?.systemSupervisor && repositories.some(repo => !repo.localRoot)) throw new Error(tr('store.projectRepositoriesOnDeviceNot'));
       const sourceWait=sourceInputWaitReason(this,task,nodeId);if(sourceWait)throw syncError(sourceWait);
@@ -286,6 +290,7 @@ export class Store {
         documentViews:this.get('workers',nodeId)?.capabilities?.sessionQueue===2?1:0,
         repositoryUrl: repositoryId ? this.get('repositories', repositoryId)?.repoUrl : null,
         projectRoot: binding.localRoot, model: task.model, mode: task.mode, status: 'queued', lastSeq: 0, createdAt: now(), updatedAt: now(),
+        ...(permissionScope !== undefined ? { permissionScope, permissionContract: 1 } : {}),
         ...(task.collaborationBatchId?{collaborationBatchId:task.collaborationBatchId,collaborationBatch:task.collaborationBatch,explicitPublish:true}:{}),
         requestId: task.requestId || null, deliveryId: task.deliveryId || null, continuationRunId: task.continuationRunId || null, planId: task.planId || null, planVersion: task.planVersion || null, stepId: task.stepId || null,
         ...(task.origin === 'chat' ? { roleId: task.roleId, roleSnapshot: task.roleSnapshot, sourceMessageId: task.sourceMessageId, sourceRunId: task.sourceRunId, hop: task.hop || 0 } : {}) };
