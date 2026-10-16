@@ -545,7 +545,10 @@ const server = http.createServer(async (req, res) => {
           const revision=scope==='group'?createHash('sha256').update(JSON.stringify(managed)).digest('hex'):null;
           if(!sessionId&&scope==='group'&&offset&&url.searchParams.get('revision')!==revision)return json(res,{restart:true});
           const page=scope==='group'?managed.slice(offset,offset+50):managed.map(({sessionId})=>({sessionId}));
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,managedSessions:page},30000);
+          const paged=Boolean(sessionId&&url.searchParams.get('historyPage')==='1'),cursor=url.searchParams.get('cursor'),historySnapshot=url.searchParams.get('snapshot');
+          if((cursor||historySnapshot)&&(!paged||cursor?.length>2048||historySnapshot?.length>2048||cursor&&historySnapshot))throw Error('Invalid native history cursor');
+          if(paged&&worker.capabilities?.nativeHistoryPages!==1)throw Error('Upgrade this Worker to load older native history.');
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,managedSessions:page,...(paged?{historyPage:true,cursor,snapshot:historySnapshot}:{})},30000);
           if(!sessionId&&scope==='group'){
             const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));
             return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});
@@ -1176,6 +1179,7 @@ const server = http.createServer(async (req, res) => {
     files['/i18n.js']='i18n.js';
     files['/output-language.js']='output-language.js';
     files['/native-sessions.js']='native-sessions.js';
+    files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';
     files['/list-order.js']='list-order.js';files['/select-controls.js']='select-controls.js';

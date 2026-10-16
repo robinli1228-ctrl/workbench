@@ -2149,3 +2149,7 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 .team-copy-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
 .team-copy-dialog [role="status"] { white-space: pre-wrap; overflow-wrap: anywhere; }
 .team-copy-destination { overflow-wrap: anywhere; }
+.native-history-loader { text-align: center; padding: 8px 12px; }
+.native-history-loader .workspace-note:empty { display: none; }
+.native-history-separator { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.native-history-separator::before, .native-history-separator::after { content: ''; flex: 1; min-width: 12px; height: 1px; background: var(--border); }

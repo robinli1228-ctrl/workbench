@@ -4,6 +4,15 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Load older history':'加载更早的历史',
+  'Continue to earlier session':'继续查看更早会话',
+  'Refresh latest history':'返回最新记录',
+  'Newer messages are available. Refresh latest history to read them.':'有新的消息，点击“返回最新记录”查看。',
+  'An older session is running':'较早的会话仍在执行',
+  'Invalid native history cursor':'历史分页位置无效，请重新打开会话。',
+  'Native history changed; reopen the session to read it again.':'原生历史文件已变化，请重新打开会话。',
+  'A native history record is too large to preview; the original history is unchanged.':'单条原生历史记录过大，暂无法预览；原始历史仍完整保留。',
+  'Upgrade this Worker to load older native history.':'请升级此设备的 Worker 后加载更早的历史。',
   'Create project':'新建项目',
   'Retry preparation':'重试准备',
   'No code or history is copied':'不会复制代码或历史',

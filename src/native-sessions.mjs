@@ -1,6 +1,7 @@
 import {readdir,open,realpath,stat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {homedir} from 'node:os';
+import {createHash} from 'node:crypto';
 import {join,basename,dirname,relative,isAbsolute} from 'node:path';
 import {resumeArgs,managedRunProcessState,terminalOwnsProject} from './terminal-resume.mjs';
 
@@ -116,11 +117,49 @@ export async function listNativeSessions(runtime,{env=process.env,limit=100,scop
  return {items:items.slice(0,limit),partial:partial||items.length>limit||(scope==='all'&&scopedTotal>limit)};
 }
 
+/** Read backwards at line boundaries, pinning the original tail while a live CLI appends.
+ * Cursors select offsets only inside this exact vendor file; each page has bounded I/O and wire size. */
+async function historyPage(file,runtime,id,cursor,snapshot){
+ if(!inside(await realpath(file.root),await realpath(file.path)))throw Error('History outside CLI directory');
+ const h=await open(file.path,constants.O_RDONLY|constants.O_NOFOLLOW),hash=value=>createHash('sha256').update(value).digest('hex');
+ try{
+  const info=await h.stat();if(!info.isFile())throw Error('Not a history file');
+  const key=hash(JSON.stringify([runtime,id,file.path,info.dev,info.ino,info.birthtimeMs]));
+  let prior=null;
+  const token=cursor||snapshot;if(cursor&&snapshot)throw Error('Invalid native history cursor');
+  if(token){try{if(typeof token!=='string'||token.length>2048)throw Error();prior=JSON.parse(Buffer.from(token,'base64url'));if(!prior||typeof prior!=='object'||Array.isArray(prior))throw Error();}catch{throw Error('Invalid native history cursor');}}
+  let size=prior?.size??info.size,end=prior?.end??size;
+  if(prior&&(prior.v!==1||prior.key!==key)||!Number.isSafeInteger(size)||!Number.isSafeInteger(end)||size<0||size>info.size||end<0||end>size)throw Error('Native history changed; reopen the session to read it again.');
+  const tailAt=async boundary=>{const b=Buffer.alloc(Math.min(256,boundary));await h.read(b,0,b.length,boundary-b.length);return hash(b);};
+  let tail=await tailAt(size);
+  if(prior&&prior.tail!==tail)throw Error('Native history changed; reopen the session to read it again.');
+  // Quiet refresh must verify the previous snapshot, even when its last page had no older cursor.
+  if(snapshot){size=info.size;end=size;tail=await tailAt(size);}
+  const start=Math.max(0,end-1048576),buffer=Buffer.alloc(end-start);await h.read(buffer,0,buffer.length,start);
+  let pos=buffer.length,next=end,bytes=0;const messages=[];
+  while(pos>0){
+   let lineEnd=pos;while(lineEnd>0&&[10,13].includes(buffer[lineEnd-1]))lineEnd--;
+   if(!lineEnd){next=start;break;}
+   const lf=buffer.lastIndexOf(10,lineEnd-1),lineStart=lf+1;
+   if(lf<0&&start>0)break; // Retry this incomplete leading line from its end on the next page.
+   const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map(m=>({...m,id:`${id}:${start+lineStart}`,offset:start+lineStart}));
+   const weight=Buffer.byteLength(JSON.stringify(found));
+   if(found.length&&(messages.length>=40||bytes+weight>262144))break;
+   messages.unshift(...found);bytes+=weight;next=start+lineStart;pos=Math.max(0,lf);
+  }
+  if(next===end&&end>0)throw Error('A native history record is too large to preview; the original history is unchanged.');
+  const after=await stat(file.path);if(after.dev!==info.dev||after.ino!==info.ino||after.size<size)throw Error('Native history changed; reopen the session to read it again.');
+  const encode=offset=>Buffer.from(JSON.stringify({v:1,key,size,end:offset,tail})).toString('base64url');
+  return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0};
+ }finally{await h.close();}
+}
+
 /** Resume and preview resolve an exact native ID on the selected device, never a filename from the client. */
-export async function readNativeSession(runtime,id,{env=process.env}={}){
+export async function readNativeSession(runtime,id,{env=process.env,historyPage:paged=false,cursor=null,snapshot=null}={}){
  if(!idPattern.test(id||''))throw Error('Invalid native session ID');
  const {files}=await discover(runtime,env),file=files.find(f=>f.id===id);if(!file)throw Error('Native session not found on this device');
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
+ if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot)};
  const window=await readWindow(file.path,file.root,true,524288),messages=messagesFrom(jsonLines(window.text),runtime);
  return {...info,messages:messages.slice(-80),partial:window.partial||messages.length>80};
 }
