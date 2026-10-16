@@ -4,7 +4,7 @@ import { sendBufferedResponse } from './http-response.mjs';
 import { readFile, mkdir, writeFile, chmod } from 'node:fs/promises';
 import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Store, terminal } from './store.mjs';
 import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
@@ -412,10 +412,13 @@ const nativeCatalogRecords=(nodeId,runtime)=>db.list('nativeCatalogEntries').fil
 const nativeCatalogItem=entry=>({id:entry.id,entryId:entry.id,nodeId:entry.nodeId,runtime:entry.runtime,sessionId:entry.sessionId||null,title:entry.title,createdAt:entry.createdAt,modifiedAt:entry.modifiedAt||entry.createdAt,workspace:entry.workspace||null,origin:'dialog',status:entry.status||'awaiting_native_id',hasHistory:entry.hasHistory===true,previewAvailable:entry.previewAvailable===true,canReopen:entry.status==='draft',canResume:entry.hasHistory===true&&!['active','prepared'].includes(entry.status),exactLastScan:entry.exactLastScan||null});
 function managedNativeSessions(nodeId,runtime){
   const items=new Map();for(const session of db.list('roleSessions')){
-    if(session.nodeId!==nodeId||session.runtime!==runtime||session.historyClearedAt||!session.nativeSessionId)continue;
+    if(session.nodeId!==nodeId||session.runtime!==runtime||session.historyClearedAt||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/.test(session.nativeSessionId||''))continue;
     const role=db.get('roles',session.roleId),project=db.get('projects',session.projectId),title=[project?.name,role?.name].filter(Boolean).join(' · ')||session.nativeSessionId;
-    items.set(session.nativeSessionId,{sessionId:session.nativeSessionId,title,workspace:session.workspace||session.workspaceRoot||null,createdAt:session.createdAt||null});
-  }return [...items.values()];
+    const previous=items.get(session.nativeSessionId),binding={projectId:session.projectId,roleId:session.roleId,createdAt:session.createdAt||null,generation:session.generation||0};
+    const ambiguous=previous&&(previous.ambiguous||previous.roleBinding.projectId!==binding.projectId||previous.roleBinding.roleId!==binding.roleId);
+    if(previous&&String(previous.createdAt||'')>String(session.createdAt||'')){if(ambiguous){previous.ambiguous=true;previous.roleBinding=null;}continue;}
+    items.set(session.nativeSessionId,{sessionId:session.nativeSessionId,title,workspace:session.workspace||session.workspaceRoot||null,createdAt:session.createdAt||null,roleBinding:ambiguous?null:binding,ambiguous:Boolean(ambiguous)});
+  }return [...items.values()].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))||a.sessionId.localeCompare(b.sessionId));
 }
 function cacheNativeCatalog(items,nodeId,runtime){
   db.transaction(()=>{for(const item of items||[]){if(item.origin!=='dialog'||item.nodeId!==nodeId||item.runtime!==runtime||!item.entryId)continue;const current=db.get('nativeCatalogEntries',item.entryId);if(current?.nodeId!==nodeId||current.runtime!==runtime)continue;db.put('nativeCatalogEntries',{...current,sessionId:item.sessionId||null,title:item.title,workspace:item.workspace||current.workspace,status:item.status,hasHistory:item.hasHistory===true,previewAvailable:item.previewAvailable===true,exactLastScan:item.exactLastScan||current.exactLastScan||null,modifiedAt:item.modifiedAt||current.modifiedAt});}});
@@ -511,7 +514,18 @@ const server = http.createServer(async (req, res) => {
             if(!sessionId&&['created','all'].includes(scope))return json(res,{items:nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem),partial:scope==='all',offline:true});
             throw Error('Device is offline');
           }
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,managedSessions:['group','all'].includes(scope)?managedNativeSessions(nodeId,runtime):[]},30000);
+          // Page authoritative cross-project bindings before the Worker catalogue's limit and WebSocket envelope.
+          const managed=!sessionId&&['group','all'].includes(scope)?managedNativeSessions(nodeId,runtime):[];
+          const offset=Number(url.searchParams.get('offset')||0);
+          if(!Number.isSafeInteger(offset)||offset<0)throw Error('Invalid native session offset');
+          const revision=scope==='group'?createHash('sha256').update(JSON.stringify(managed)).digest('hex'):null;
+          if(!sessionId&&scope==='group'&&offset&&url.searchParams.get('revision')!==revision)return json(res,{restart:true});
+          const page=scope==='group'?managed.slice(offset,offset+50):managed.map(({sessionId})=>({sessionId}));
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,managedSessions:page},30000);
+          if(!sessionId&&scope==='group'){
+            const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));
+            return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});
+          }
           if(!sessionId&&['created','all'].includes(scope))cacheNativeCatalog(result.items,nodeId,runtime);
           if(!sessionId&&scope==='created'){const merged=new Map(nativeCatalogRecords(nodeId,runtime).map(entry=>[entry.id,nativeCatalogItem(entry)]));for(const item of result.items||[])merged.set(item.entryId||item.id,item);return json(res,{...result,items:[...merged.values()]});}
           return json(res,result);
@@ -836,6 +850,11 @@ const server = http.createServer(async (req, res) => {
         const result = await workerQuery({ nodeId: m[1] }, 'runtimes', null, 25000);
         change(); return json(res, result);
       }
+      if ((m = pathname.match(/^\/api\/workers\/([^/]+)\/directories$/)) && req.method === 'POST') {
+        if (db.get('workers', m[1])?.capabilities?.directoryCreate !== 1) throw new Error(tr('folders.upgradeCreateFolder'));
+        const input = await body(req);
+        return json(res, await workerQuery({ nodeId: m[1] }, 'directory_create', { path: input.path, name: input.name }), 201);
+      }
       if ((m = pathname.match(/^\/api\/workers\/([^/]+)\/directories$/)) && req.method === 'GET') {
         if (!db.get('workers', m[1])?.capabilities?.projectBrowser) throw new Error(tr('home.upgradeNodeUseDirectorySelection'));
         return json(res, await workerQuery({ nodeId: m[1] }, 'directories', { path: url.searchParams.get('path'), offset: Number(url.searchParams.get('offset') || 0) }));
@@ -1120,6 +1139,8 @@ const server = http.createServer(async (req, res) => {
     files['/i18n.js']='i18n.js';
     files['/output-language.js']='output-language.js';
     files['/native-sessions.js']='native-sessions.js';
+    files['/native-session-groups.js']='native-session-groups.js';
+    files['/create-folder.js']='create-folder.js';
     files['/list-order.js']='list-order.js';files['/select-controls.js']='select-controls.js';
     files['/mention-input.js']='mention-input.js';
     files['/context-usage.js']='context-usage.js';

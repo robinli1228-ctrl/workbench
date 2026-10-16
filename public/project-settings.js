@@ -1,5 +1,6 @@
 import { t } from './i18n.js';
 import { workerDisplayName } from './role-icons.js';
+import { createFolderControl } from './create-folder.js';
 
 /** Node folder selection and repository settings share the existing authenticated API and never upload local browser files. */
 export function projectSettings({ api, getData, getProject, refreshState, create, setError, openSettings, closeSettings, openTask }) {
@@ -19,6 +20,9 @@ export function projectSettings({ api, getData, getProject, refreshState, create
   const pickSettingsFolder = document.querySelector('#pick-settings-folder');
   const saveSettingsFolder = document.querySelector('#save-settings-folder');
   let workerId, current = null, callback, serial = 0, settingsId, savedUrl = '', busy = false, allowedRoots = [], filterText = '';
+  const newFolder = createFolderControl({api,onCreated: result => load(result.path)});
+  document.querySelector('.folder-browser-actions').prepend(newFolder.button);
+  list.before(newFolder.panel);
   const followupForm=document.querySelector('#proactive-followup-form'),followupFeedback=document.querySelector('#followup-feedback'),followupStatus=document.querySelector('#followup-status'),viewFollowup=document.querySelector('#view-followup');
   let followupVersion=0,followupConfig=null,followupProject=null;
   function followupDisabled(value){for(const element of followupForm.elements)element.disabled=value;viewFollowup.disabled=value||!followupConfig?.execution?.taskId;}
@@ -129,6 +133,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
 
   async function load(path = '', offset = 0) {
     const version = ++serial;
+    newFolder.update();
     choose.disabled = true; up.disabled = true; more.disabled = true; error.hidden = true;
     if (!offset) {
       list.replaceChildren(create('p', 'folder-empty', 'Loading…'));
@@ -144,6 +149,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
         filterText = '';
         filterInput.value = '';
       }
+      newFolder.update({nodeId:workerId,path:result.path,enabled:getData().workers.find(w=>w.id===workerId)?.capabilities?.directoryCreate===1});
       pathLabel.hidden = true;
       pathLabel.textContent = result.path || '';
       renderCrumbs();
@@ -186,6 +192,7 @@ export function projectSettings({ api, getData, getProject, refreshState, create
   choose.addEventListener('click', () => { if (!current?.path) return; callback(current.path); picker.close(); serial++; });
   document.querySelector('#folder-close').addEventListener('click', () => { picker.close(); serial++; });
   picker.addEventListener('cancel', () => { serial++; });
+  picker.addEventListener('close', () => newFolder.update());
 
   function refreshNodes() {
     const select = projectForm.elements.nodeId, previous = select.value;

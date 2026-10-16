@@ -1,9 +1,24 @@
-import { realpath, readdir, stat } from 'node:fs/promises';
+import { realpath, readdir, stat, mkdir } from 'node:fs/promises';
 import { relative, isAbsolute, dirname, join } from 'node:path';
 import { tr } from './i18n.mjs';
 
 /** Check boundaries using canonical paths; the browser cannot widen the Worker's permitted root directories. */
 const inside = (root, path) => { const r = relative(root, path); return !r || (r !== '..' && !r.startsWith('../') && !isAbsolute(r)); };
+
+/** Create one visible child only; resolve the parent on the Worker and never overwrite an existing entry. */
+export async function createFolder(roots, path, name) {
+  if (typeof path !== 'string' || !isAbsolute(path)) throw new Error(tr('folders.directoryMustBeAbsolutePath'));
+  if (typeof name !== 'string' || !name.trim() || name !== name.trim() || name.startsWith('.') || name === 'node_modules'
+    || /[\\/\x00-\x1f\x7f]/.test(name) || Buffer.byteLength(name, 'utf8') > 255) throw new Error(tr('folders.invalidFolderName'));
+  const parent = await realpath(path);
+  if (!roots.some(root => inside(root, parent))) throw new Error(tr('folders.directoryOutsideRangeNodeAllows'));
+  if (!(await stat(parent)).isDirectory()) throw new Error(tr('folders.selectFolder'));
+  const target = join(parent, name);
+  try { await mkdir(target); }
+  catch (error) { if (error.code === 'EEXIST') throw new Error(tr('folders.folderAlreadyExists')); throw error; }
+  return { path: target, parent, name };
+}
+
 export async function browseFolders(roots, path, offset = 0, options = { includeFiles: false }) {
   if (!Number.isInteger(offset) || offset < 0) throw new Error(tr('folders.invalidDirectoryPagination'));
   const includeFiles = options?.includeFiles === true;

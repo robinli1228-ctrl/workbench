@@ -21,7 +21,7 @@ import {inspectReadSource,readSourceCurrent} from './cross-device-read-worker.mj
 import {executeReadQuery,normalizeFileRead,normalizeReadQuery,readError} from './node-query-recipes.mjs';
 import { CodexSession } from './codex.mjs';
 import { CliPrintSession } from './cli-print-session.mjs';
-import { browseFolders } from './folders.mjs';
+import { browseFolders, createFolder } from './folders.mjs';
 import {createWorkerNativeTurns} from './native-turns-worker.mjs';
 import {listNativeSessions,readNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import { giteeRepository } from './repository.mjs';
@@ -883,6 +883,9 @@ async function query(m) {
       send({ type: 'reply', id: m.id, result: await browseFolders(roots, m.path?.path, m.path?.offset ?? 0,
         { includeFiles: m.path?.includeFiles === true }) }); return;
     }
+    if (m.action === 'directory_create') {
+      send({ type: 'reply', id: m.id, result: await createFolder(roots, m.path?.path, m.path?.name) }); return;
+    }
     if (m.action === 'git_check') {
       const root = await projectRoot(m.path?.localRoot);
       const repo = giteeRepository(m.path?.repoUrl); if (!repo) throw new Error(tr('worker.configureGiteeRepositoryUrlFirst'));
@@ -981,7 +984,7 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

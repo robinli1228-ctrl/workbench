@@ -470,6 +470,9 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'folders.directoryMustBeAbsolutePath': '目录须为绝对路径',
   'folders.directoryOutsideRangeNodeAllows': '目录超出节点允许范围',
   'folders.selectFolder': '请选择文件夹',
+  'folders.invalidFolderName': '请输入不含路径分隔符、控制字符的文件夹名称；不支持隐藏文件夹和 node_modules。',
+  'folders.folderAlreadyExists': '同名文件或文件夹已存在，未覆盖任何内容。',
+  'folders.upgradeCreateFolder': '请更新该设备的 Worker，以启用新建文件夹。',
   // src/git-delivery.mjs
   'gitDelivery.invalidRunId': '执行编号无效',
   'gitDelivery.fullGitCommitIdRequired': '需要完整 Git 提交编号',

@@ -4,6 +4,13 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'New folder': '新建文件夹',
+  'Folder name': '文件夹名称',
+  'Create folder': '创建文件夹',
+  'Creating folder…': '正在创建文件夹…',
+  'Folder created.': '文件夹已创建。',
+  'Open a parent folder first.': '请先进入要创建文件夹的上级目录。',
+  'Update the Worker on this device to enable creating folders.': '请更新该设备的 Worker，以启用新建文件夹。',
   'Last execution failed': '上次执行失败',
   'Last execution failed · View record': '上次执行失败 · 查看记录',
   'Refresh CLI availability after the last execution failure': '上次执行失败后尚未重新检测，请刷新 CLI 状态',
