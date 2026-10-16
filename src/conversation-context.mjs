@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { organizerInput } from './conversation-organizer.mjs';
 import { tr, isMessage } from './i18n.mjs';
+import {groupConversationIdOfSession} from './group-conversations.mjs';
 
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const now=()=>new Date().toISOString();
@@ -22,7 +23,7 @@ export class ConversationContext {
     if(prior?.coveredThroughMessageId && !messages.some(m=>m.id===prior.coveredThroughMessageId))prior=null;
     const index=prior?.coveredThroughMessageId?messages.findIndex(m=>m.id===prior.coveredThroughMessageId):-1;
     const snapshot={projectId,conversationId,prior,delta:[],recent:[],
-      roleSessions:this.db.list('roleSessions').filter(session=>session.projectId===projectId&&session.conversationId===conversationId).map(session=>({id:session.id,roleId:session.roleId,name:this.db.get('roles',session.roleId)?.name||session.roleId})),
+      roleSessions:this.db.list('roleSessions').filter(session=>session.projectId===projectId&&groupConversationIdOfSession(session)===conversationId).map(session=>({id:session.id,roleId:session.roleId,name:this.db.get('roles',session.roleId)?.name||session.roleId})),
       lastMessageId:prior?.coveredThroughMessageId||null,partialThrough:null};
     let budget=10000;
     for(const message of messages.slice(index+1)) {
@@ -92,7 +93,7 @@ export class ConversationContext {
       }
       const validRoleSummaries=output.roleSummaries.filter(item=>{
         const session=this.db.get('roleSessions',item.roleSessionId);
-        return session?.projectId===job.projectId && session.conversationId===job.conversationId;
+        return session?.projectId===job.projectId && groupConversationIdOfSession(session)===job.conversationId;
       });
       const recentSummary=output.recentSummary;
       const roleSummaries=[...(snapshot.prior?.roleSummaries||[]).filter(item=>!validRoleSummaries.some(update=>update.roleSessionId===item.roleSessionId)),...validRoleSummaries];

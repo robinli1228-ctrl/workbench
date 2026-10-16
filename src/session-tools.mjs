@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { buildRunContext } from './run-context.mjs';
 import { tr } from './i18n.mjs';
+import {conversationIdOf,groupConversationIdOfSession,assertConversationRecord} from './group-conversations.mjs';
+import {taskConversationId} from './role-sessions.mjs';
 
 const graphemes = text => [...new Intl.Segmenter('zh',{granularity:'grapheme'}).segment(text)].map(item=>item.segment);
 
@@ -10,19 +12,20 @@ export class SessionTools {
 
   session(run,id) {
     const value=this.db.get('roleSessions',id);
-    if(!value || value.historyClearedAt || value.projectId!==run.projectId || value.conversationId!==(run.conversationId||run.projectId))throw new Error(tr('sessionTools.sessionDoesNotExistDoes'));
+    if(!value || value.historyClearedAt || value.projectId!==run.projectId || groupConversationIdOfSession(value)!==conversationIdOf(run))throw new Error(tr('sessionTools.sessionDoesNotExistDoes'));
     return value;
   }
 
   current(run) {
     const session=run.roleSessionId?this.session(run,run.roleSessionId):null;
+    if(session&&(session.conversationId||session.projectId)!==(run.sessionConversationId||taskConversationId(run)))throw new Error(tr('sessionTools.sessionDoesNotExistDoes'));
     return {roleSessionId:session?.id||null,conversationId:run.conversationId||run.projectId,
       roleId:run.roleId||null,runId:run.id,status:session?.candidateFor?'staged':session?.status||'unavailable',nativeSessionId:session?.nativeSessionId||null};
   }
 
   list(run,{limit=20,cursor=null}={}) {
     if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw new Error(tr('sessionTools.limitMustBe1100'));
-    const rows=this.db.list('roleSessions').filter(s=>!s.historyClearedAt && !s.candidateFor && s.projectId===run.projectId && s.conversationId===(run.conversationId||run.projectId)).reverse();
+    const rows=this.db.list('roleSessions').filter(s=>!s.historyClearedAt && !s.candidateFor && s.projectId===run.projectId && groupConversationIdOfSession(s)===conversationIdOf(run)).reverse();
     const start=cursor?rows.findIndex(s=>s.id===cursor)+1:0;
     if(cursor && start===0)throw new Error(tr('sessionTools.cursorDoesNotBelongCurrent'));
     const page=rows.slice(start,start+limit);
@@ -33,7 +36,7 @@ export class SessionTools {
 
   summary(run,id) {
     const session=this.session(run,id);
-    const context=this.db.get('conversationContexts',`${run.projectId}:${session.conversationId}`);
+    const context=this.db.get('conversationContexts',`${run.projectId}:${groupConversationIdOfSession(session)}`);
     const item=context?.roleSummaries?.find(s=>s.roleSessionId===id);
     return {roleSessionId:id,status:item?'ready':'unavailable',text:item?.text||'',sourceMessageIds:item?.sourceMessageIds||[],
       coveredThroughMessageId:context?.coveredThroughMessageId||null,version:context?.version||null};
@@ -61,9 +64,11 @@ export class SessionTools {
     if(!Number.isSafeInteger(offset)||offset<0)throw new Error(tr('sessionTools.offsetMustBeNonNegative'));
     if(!Number.isSafeInteger(limit)||limit<1||limit>20000)throw new Error(tr('sessionTools.limitMustBe120000'));
     if(offset && !version)throw new Error(tr('sessionTools.versionRequiredContinueReading'));
-    const runs=this.db.list('runs').filter(r=>r.roleSessionId===id && r.projectId===run.projectId);
+    const runs=this.db.list('runs').filter(r=>r.roleSessionId===id && r.projectId===run.projectId && conversationIdOf(r)===conversationIdOf(run));
     const content=runs.map(r=>{
       const source=r.sourceMessageId?this.db.get('roomMessages',r.sourceMessageId):null;
+      if(source)assertConversationRecord(run,source);
+      const task=this.db.get('tasks',r.taskId);if(task)assertConversationRecord(run,task);
       return tr('sessionTools.instructionReply', { p1: source?.id||r.taskId||r.id, p2: source?.text||this.db.get('tasks',r.taskId)?.prompt||'', id: r.id, p4: r.result||r.error||tr('sessionTools.noReplyYet') });
     }).join('\n\n');
     const currentVersion=createHash('sha256').update(id).update('\0').update(content).digest('hex');

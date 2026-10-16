@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Store, terminal } from './store.mjs';
-import {GroupConversations} from './group-conversations.mjs';
+import {GroupConversations,conversationIdOf,conversationView,agentConversationInput} from './group-conversations.mjs';
 import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
 import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
 import {validateCliCapacity,reservedTerminalSlots,registrationCapacity} from './device-capacity.mjs';
@@ -235,7 +235,7 @@ async function dispatch(nodeId) {
     }
     const minimal=run.minimalInstructions===1;
     if(c.type==='launch'&&!minimal&&run.roleSessionId&&!run.teamContext) {
-      run={...run,teamContext:buildTeamContext(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run,{online,forExecution:true})};
+      run={...run,teamContext:buildTeamContext(conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run),run,{online,forExecution:true})};
       db.put('runs',run);
     }
     const storedTask = run.inputTask||db.get('tasks', run.taskId);
@@ -667,14 +667,14 @@ const server = http.createServer(async (req, res) => {
           // Read/reply/resolve for an already started turn still finish under the frozen identity; a probe withdrawal only blocks new questions and does not swallow in-flight answers.
           if(b.action!=='peers'&&(run.discussionProtocol!==2||(b.action==='ask'&&!supportsDiscussion(db.get('workers',run.nodeId),run.roleSnapshot?.runtime,run.roleSnapshot?.model))))throw new Error(tr('home.discussionProtocolV2NotEnabled'));
           if(!['peers','ask','reply','read','resolve','budget_extend'].includes(b.action))throw new Error(tr('home.unknownDiscussionAction'));
-          const reader=['peers','read'].includes(b.action)?new RoleDiscussions(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),{online:id=>online(id)}):discussions;
+          const reader=['peers','read'].includes(b.action)?new RoleDiscussions(conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run),{online:id=>online(id)}):discussions;
           const result=b.action==='budget_extend'?discussions.extendBudget({kind:'agent',runId:run.id},b.input):reader[b.action](run,b.input||{});
           scheduleChat();change();return json(res,result);
         }
         // Independent-review isolation is applied to the data the read tools see, before search, pagination or summaries.
-        const readView=reviewView(db,{projectId:run.projectId,roleId:run.roleId});
-        if (pathname === '/api/agent/history/search') return json(res,new History(readView).search(run.projectId,b));
-        if (pathname === '/api/agent/history/read') return json(res,new History(readView).read(run.projectId,b));
+        const readView=conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run);
+        if (pathname === '/api/agent/history/search') return json(res,new History(readView).search(run.projectId,agentConversationInput(run,b)));
+        if (pathname === '/api/agent/history/read') return json(res,new History(readView).read(run.projectId,agentConversationInput(run,b)));
         if (pathname === '/api/agent/sessions/current') return json(res,sessionTools.current(run));
         if (pathname === '/api/agent/sessions/list') return json(res,new SessionTools(readView).list(run,b));
         if (pathname === '/api/agent/sessions/summary') return json(res,new SessionTools(readView).summary(run,b.roleSessionId));

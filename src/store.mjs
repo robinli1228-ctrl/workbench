@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import {conversationIdOf,resolveConversationId} from './group-conversations.mjs';
+import {conversationIdOf,resolveConversationId,assertConversationRecord,conversationView} from './group-conversations.mjs';
 import { mkdirSync,statfsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { giteeRepository } from './repository.mjs';
@@ -283,9 +283,10 @@ export class Store {
         requestId: task.requestId || null, deliveryId: task.deliveryId || null, continuationRunId: task.continuationRunId || null, planId: task.planId || null, planVersion: task.planVersion || null, stepId: task.stepId || null,
         ...(task.origin === 'chat' ? { roleId: task.roleId, roleSnapshot: task.roleSnapshot, sourceMessageId: task.sourceMessageId, sourceRunId: task.sourceRunId, hop: task.hop || 0 } : {}) };
       if(task.origin==='chat'&&!isSwitchMaintenance(task)) {
-        if(run.backgroundFollowup)run.followupState=this.listProject('tasks',task.projectId).filter(t=>t.id!==task.id).slice(-10).map(t=>({taskId:t.id,status:t.status,roleId:t.roleId,runId:t.currentRunId||null,requestId:t.requestId||null,waitingReason:t.waitingReason||null}));
+        if(run.backgroundFollowup)run.followupState=this.listProject('tasks',task.projectId).filter(t=>t.id!==task.id&&conversationIdOf(t)===conversationId).slice(-10).map(t=>({taskId:t.id,status:t.status,roleId:t.roleId,runId:t.currentRunId||null,requestId:t.requestId||null,waitingReason:t.waitingReason||null}));
         // Independent review: other reviewers' unreleased opinions never enter this role's new input.
-        const view=reviewView(this,{projectId:task.projectId,roleId:task.roleSnapshot?.id||task.roleId});
+        for(const [kind,id] of [['roomMessages',task.sourceMessageId],['roomMessages',task.quoteMessageId],['runs',task.sourceRunId],['runs',task.continuationRunId],['coordinationRequests',task.requestId]])if(id)assertConversationRecord(run,this.get(kind,id));
+        const view=conversationView(reviewView(this,{projectId:task.projectId,roleId:task.roleSnapshot?.id||task.roleId}),run);
         run.reviewGuarded=view.reviewGuarded===true;
         if(run.reviewGuarded&&this.get('workers',nodeId)?.capabilities?.sessionQueue!==2)throw new Error(tr('store.reviewWorkerUpgradeRequired'));
         const context=view.get('conversationContexts',`${task.projectId}:${task.conversationId||task.projectId}`);

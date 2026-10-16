@@ -21,6 +21,32 @@ export function assertConversationRecord(context,record) {
   return record;
 }
 
+/** Agent scope comes from the authenticated Run, never a caller override. */
+export function agentConversationInput(run,input={}) {
+  if(input.conversationId!==undefined&&input.conversationId!==conversationIdOf(run))throw new Error(tr('conversations.recordMismatch'));
+  return {...input,conversationId:conversationIdOf(run)};
+}
+
+/** A read-only conversation lens composes with (and never replaces) independent-review redaction. */
+export function conversationView(db,context) {
+  const scoped=new Set(['roomMessages','tasks','runs','coordinationRequests','conversationContexts','summaryQueues','summaryJobs','discussionThreads','discussionMessages','discussionDeliveries','discussionIntents','plans','planSteps','planVersions','collaborationSessions','sessionBatches','scheduledJobs','scheduledOccurrences','deliveries']);
+  const visible=(kind,record)=>{
+    if(!record)return null;
+    let owner=record;
+    if(kind==='runReports'||kind==='reportSubmissions')owner=db.get('runs',record.runId||record.id);
+    else if(kind==='roleSessions')return record.projectId===context.projectId&&groupConversationIdOfSession(record)===conversationIdOf(context)?record:null;
+    else if(!scoped.has(kind))return record;
+    return owner?.projectId===context.projectId&&conversationIdOf(owner)===conversationIdOf(context)?record:null;
+  };
+  return new Proxy(db,{get(target,key){
+    if(key==='get')return (kind,id)=>visible(kind,target.get(kind,id));
+    if(key==='list')return kind=>target.list(kind).map(r=>visible(kind,r)).filter(Boolean);
+    if(key==='listProject')return (kind,pid)=>target.listProject(kind,pid).map(r=>visible(kind,r)).filter(Boolean);
+    if(['put','remove','transaction'].includes(key))return ()=>{throw new Error(tr('collabSessions.readOnlyView'));};
+    const value=target[key];return typeof value==='function'?value.bind(target):value;
+  }});
+}
+
 /** Lightweight group metadata; creation neither copies context nor starts any execution. */
 export class GroupConversations {
   constructor(db){this.db=db;}

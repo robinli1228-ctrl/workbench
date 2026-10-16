@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { tr } from './i18n.mjs';
+import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 
 const MAX_SEARCH_LIMIT = 100;
 const MAX_READ_LIMIT = 20000;
@@ -59,30 +60,35 @@ function isAfterCursor(item, cursor) {
 export class History {
   constructor(db) { this.db = db; }
 
-  search(projectId, { query = '', cursor = null, limit } = {}) {
+  search(projectId, { query = '', cursor = null, limit, conversationId } = {}) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (!this.db.get('projects', projectId)) throw new Error(tr('history.projectNotFound'));
     if (typeof query !== 'string') throw new Error(tr('history.queryMustBeString'));
     if (query.length > 1000) throw new Error(tr('history.queryMustBeAtMost'));
     const pageLimit = positiveLimit(limit, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
     const after = decodeCursor(cursor);
+    if(after){
+      const kind={message:'roomMessages',run:'runs',request:'coordinationRequests'}[after[1]];
+      assertConversationRecord({projectId,conversationId},kind?this.db.get(kind,after[2]):null);
+    }
     const needle = query.trim().toLocaleLowerCase('zh');
     const includes = value => !needle || String(value || '').toLocaleLowerCase('zh').includes(needle);
     const items = [];
 
     for (const message of this.db.list('roomMessages')) {
-      if (message.projectId !== projectId || !includes(message.text)) continue;
+      if (message.projectId !== projectId || conversationIdOf(message)!==conversationId || !includes(message.text)) continue;
       items.push({ id: message.id, projectId, kind: 'message', messageId: message.id, runId: message.runId || null,
         summary: clipped(message.text), source: 'message', createdAt: message.createdAt || '' });
     }
     for (const run of this.db.list('runs')) {
       const content = run.result || run.error || '';
-      if (run.projectId !== projectId || !content || !includes(content)) continue;
+      if (run.projectId !== projectId || conversationIdOf(run)!==conversationId || !content || !includes(content)) continue;
       items.push({ id: run.id, projectId, kind: 'result', messageId: null, runId: run.id, requestId: run.requestId || null,
         summary: clipped(content), source: 'run', createdAt: run.updatedAt || run.createdAt || '' });
     }
     for (const request of this.db.list('coordinationRequests')) {
       const searchable = [request.summary, request.result].filter(Boolean).join('\n');
-      if (request.projectId !== projectId || !searchable || !includes(searchable)) continue;
+      if (request.projectId !== projectId || conversationIdOf(request)!==conversationId || !searchable || !includes(searchable)) continue;
       items.push({ id: request.id, projectId, kind: 'result', messageId: request.sourceMessageId || null,
         runId: request.currentRunId || null, requestId: request.id, summary: clipped(searchable), source: 'request',
         createdAt: request.updatedAt || request.createdAt || '' });
@@ -93,14 +99,15 @@ export class History {
     return { items: page, nextCursor: remaining.length > page.length && page.length ? encodeCursor(page.at(-1)) : null };
   }
 
-  read(projectId, { kind, id, offset, limit, version } = {}) {
+  read(projectId, { kind, id, offset, limit, version, conversationId } = {}) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (!this.db.get('projects', projectId)) throw new Error(tr('history.projectNotFound2'));
     if (!['message', 'result'].includes(kind)) throw new Error(tr('history.kindMustBeMessageResult'));
     if (typeof id !== 'string' || !id) throw new Error(tr('history.idRequired'));
     const start = offsetValue(offset);
     const pageLimit = positiveLimit(limit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
     if (start && !version) throw new Error(tr('history.versionRequiredWhenOffsetGreater'));
-    const resolved = kind === 'message' ? this.#message(projectId, id) : this.#result(projectId, id);
+    const resolved = kind === 'message' ? this.#message(projectId, id, conversationId) : this.#result(projectId, id, conversationId);
     const content = String(resolved.content || '');
     const currentVersion = versionOf(`${kind}:${resolved.identity}`, content);
     if (version && version !== currentVersion) throw new Error(tr('history.sourceTextVersionHasChanged'));
@@ -111,18 +118,22 @@ export class History {
       nextOffset: end < parts.length ? end : null, complete: end >= parts.length, version: currentVersion };
   }
 
-  #message(projectId, id) {
+  #message(projectId, id, conversationId) {
     const message = this.db.get('roomMessages', id);
+    assertConversationRecord({projectId,conversationId},message);
     if (!message || message.projectId !== projectId) throw new Error(tr('history.contentDoesNotExistDoes'));
     return { identity: message.id, messageId: message.id, runId: message.runId || null, content: message.text || '' };
   }
 
-  #result(projectId, id) {
+  #result(projectId, id, conversationId) {
     let run = this.db.get('runs', id), request = this.db.get('coordinationRequests', id);
+    const check=record=>record&&assertConversationRecord({projectId,conversationId},record);
+    check(run);check(request);
     if (run && run.projectId !== projectId || request && request.projectId !== projectId) throw new Error(tr('history.contentDoesNotExistDoes2'));
     // An explicit Run is an immutable historical reference; only a request ID means reading the final result of the whole continuation chain.
     if (run) return { identity: run.id, requestId: run.requestId || null, runId: run.id, content: run.result ?? run.error ?? '' };
     if (!run && request?.currentRunId) run = this.db.get('runs', request.currentRunId);
+    check(run);
     if (!run && !request) throw new Error(tr('history.contentDoesNotExistDoes3'));
     if ((run && run.projectId !== projectId) || (request && request.projectId !== projectId)) throw new Error(tr('history.contentDoesNotExistDoes4'));
 
@@ -131,11 +142,13 @@ export class History {
       if (seen.has(request.id) || seen.size >= 20) throw new Error(tr('history.invalidContinuationChain'));
       seen.add(request.id);
       const next = this.db.get('coordinationRequests', request.continuationRequestId);
+      check(next);
       if (!next || next.projectId !== projectId) throw new Error(tr('history.contentDoesNotExistDoes5'));
       request = next;
     }
     if (request?.currentRunId) {
       const finalRun = this.db.get('runs', request.currentRunId);
+      check(finalRun);
       if (finalRun) {
         if (finalRun.projectId !== projectId) throw new Error(tr('history.contentDoesNotExistDoes6'));
         run = finalRun;
