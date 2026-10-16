@@ -525,7 +525,7 @@ const server = http.createServer(async (req, res) => {
         const link = wechat.openProject(wechatProject[1]); void wechat.tick().catch(() => {}); return json(res, { id: link.id }, 201);
       }
       if(pathname.includes('native-')&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
-      const nativeMatch=pathname.match(/^\/api\/native-sessions\/([^/]+)(?:\/(terminal|folders))?$/);
+      const nativeMatch=pathname.match(/^\/api\/native-sessions\/([^/]+)(?:\/(terminal|folders|default-folder))?$/);
       if(nativeMatch){
         const nodeId=decodeURIComponent(nativeMatch[1]),worker=db.get('workers',nodeId);
         if(!worker)throw Error('Device is unavailable');
@@ -545,7 +545,10 @@ const server = http.createServer(async (req, res) => {
           const revision=scope==='group'?createHash('sha256').update(JSON.stringify(managed)).digest('hex'):null;
           if(!sessionId&&scope==='group'&&offset&&url.searchParams.get('revision')!==revision)return json(res,{restart:true});
           const page=scope==='group'?managed.slice(offset,offset+50):managed.map(({sessionId})=>({sessionId}));
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,managedSessions:page},30000);
+          const paged=Boolean(sessionId&&url.searchParams.get('historyPage')==='1'),cursor=url.searchParams.get('cursor'),historySnapshot=url.searchParams.get('snapshot');
+          if((cursor||historySnapshot)&&(!paged||cursor?.length>2048||historySnapshot?.length>2048||cursor&&historySnapshot))throw Error('Invalid native history cursor');
+          if(paged&&worker.capabilities?.nativeHistoryPages!==1)throw Error('Upgrade this Worker to load older native history.');
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,managedSessions:page,...(paged?{historyPage:true,cursor,snapshot:historySnapshot}:{})},30000);
           if(!sessionId&&scope==='group'){
             const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));
             return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});
@@ -555,6 +558,11 @@ const server = http.createServer(async (req, res) => {
           return json(res,result);
         }
         if(!online(nodeId))throw Error('Device is offline');
+        if(req.method==='POST'&&nativeMatch[2]==='default-folder'){
+          if(worker.capabilities?.nativeDefaultFolder!==1)throw Error('Upgrade this Worker to prepare the default session folder.');
+          const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({localRoot:w.localRoot}));
+          return json(res,await workerQuery({nodeId},'native_default_folder',{bindings},15000));
+        }
         if(req.method==='GET'&&nativeMatch[2]==='folders')return json(res,await workerQuery({nodeId},'directories',{
           path:url.searchParams.get('path')||null,offset:Number(url.searchParams.get('offset')||0),includeFiles:true},15000));
         if(req.method!=='POST'||nativeMatch[2]!=='terminal')throw Error('Invalid session action');
@@ -1176,6 +1184,7 @@ const server = http.createServer(async (req, res) => {
     files['/i18n.js']='i18n.js';
     files['/output-language.js']='output-language.js';
     files['/native-sessions.js']='native-sessions.js';
+    files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';
     files['/list-order.js']='list-order.js';files['/select-controls.js']='select-controls.js';

@@ -1,9 +1,26 @@
-import { realpath, readdir, stat, mkdir } from 'node:fs/promises';
-import { relative, isAbsolute, dirname, join } from 'node:path';
+import { realpath, readdir, stat, mkdir, lstat, access } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { relative, isAbsolute, dirname, join, resolve } from 'node:path';
 import { tr } from './i18n.mjs';
 
 /** Check boundaries using canonical paths; the browser cannot widen the Worker's permitted root directories. */
 const inside = (root, path) => { const r = relative(root, path); return !r || (r !== '..' && !r.startsWith('../') && !isAbsolute(r)); };
+
+/** Keep standalone sessions outside managed projects; create one child and preserve existing files on reuse. */
+export async function prepareNativeSessionFolder(roots, workspaceRoot, bindings = []) {
+  const parent = await realpath(workspaceRoot), target = join(parent, 'native-sessions');
+  const allowed = await Promise.all(roots.map(root => realpath(root)));
+  if (!allowed.some(root => inside(root, parent))) throw new Error(tr('folders.directoryOutsideRangeNodeAllows'));
+  for (const binding of bindings) {
+    if (!binding.localRoot) continue;
+    const root = await realpath(binding.localRoot).catch(error => { if (error.code === 'ENOENT') return resolve(binding.localRoot); throw error; });
+    if (inside(root, target) || inside(target, root)) throw new Error('Default session folder overlaps a project; select another folder.');
+  }
+  try { await mkdir(target); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+  if (!(await lstat(target)).isDirectory() || await realpath(target) !== target) throw new Error('Default session folder is not a regular directory; select another folder.');
+  await access(target, constants.R_OK | constants.W_OK | constants.X_OK);
+  return { path: target };
+}
 
 /** Create one visible child only; resolve the parent on the Worker and never overwrite an existing entry. */
 export async function createFolder(roots, path, name) {
