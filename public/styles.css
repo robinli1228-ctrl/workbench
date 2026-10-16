@@ -2649,3 +2649,14 @@ button.danger:hover:not(:disabled), :is(dialog, #project-form-panel) button.dang
 .is-live-card .chat-card-footer .elapsed-time { margin-left: 6px; }
 .is-live-card .chat-card-footer .elapsed-time::before { content: '· '; }
 .is-live-card { min-width: min(320px, 100%); }
+
+/* Fix F1: the collapsed rail keeps the bare selected icon (no leftover tile shadow). */
+@media (min-width: 1001px) {
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active .project-item-icon,
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active.is-running .project-item-icon { box-shadow: none; }
+}
+/* Fix F2: the restored underlined tabs fit beside the new-chat button at the default 260px width in English. */
+.project-sidebar .navigation-mode { flex: 1 1 auto; min-width: 0; gap: 6px; }
+.project-sidebar .navigation-mode button { min-width: 0; padding: 8px 5px; font-size: 13.5px; white-space: nowrap; }
+.project-sidebar .navigation-mode button[aria-pressed="true"]::after { left: 5px; right: 5px; }
+body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
