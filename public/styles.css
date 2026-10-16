@@ -2484,3 +2484,71 @@ dialog .dialog-heading h2 { color: var(--text-strong); font-size: var(--fs-xl); 
 .chat-name .elapsed-time::before { content: '· '; }
 .chat-bubble > .elapsed-time { margin-left: 8px; }
 .role-badge-elapsed { margin-left: 4px; font-weight: 600; font-variant-numeric: tabular-nums; opacity: .85; }
+
+/* ===== Fine-tuning pass: quiet surfaces, precise type, a light technical accent =====
+   Technical values (models, IDs, hashes, times, logs) use one monospace stack with tabular digits;
+   surfaces stay flat with hairlines; colour is reserved for state and the single accent. */
+:root {
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --hairline: 1px solid var(--card-hairline);
+  --code-surface: #f6f7f9;
+}
+code, kbd, samp, pre, .prompt-preview, .artifact-code, .history-viewer-content { font-family: var(--font-mono); }
+pre, .prompt-preview { border: var(--hairline); border-radius: var(--r-sm); background: var(--code-surface); color: var(--text-body); font-size: 12px; line-height: 1.6; }
+:not(pre) > code { padding: 1px 5px; border-radius: 5px; background: var(--code-surface); font-size: .92em; }
+
+/* Technical values read as data. */
+.role-model, .role-session-short, .native-session-sidebar input[readonly], .git-version, .elapsed-time, .role-badge-elapsed,
+.execution-progress, .chat-row time, .chat-meta time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.role-model { font-size: 12px; font-weight: 500; }
+.chat-row time, .chat-meta time { font-size: 10.5px; }
+.elapsed-time, .role-badge-elapsed { font-size: 10.5px; }
+
+/* State dots: a faint halo on online / live, nothing on idle. */
+.topbar .connection-note[data-state="connected"] { box-shadow: 0 0 0 3px rgb(32 165 121 / 14%); }
+.role-badge.is-working::before { box-shadow: 0 0 0 2px rgb(79 91 206 / 18%); }
+
+/* Kicker labels: small caps tracking, used sparingly for data fields. */
+.summary-item span, .native-side-card h3, .execution-plan-count { letter-spacing: .06em; }
+.summary-item { border: var(--hairline); border-radius: var(--r-md); background: var(--surface-sunken); }
+.summary-item span { color: var(--text-muted); font-size: 10px; font-weight: 650; }
+.summary-item strong { color: var(--text-strong); font-weight: 600; }
+
+/* Live execution dialog: flat event log instead of heavy blue rails. */
+.live-scene-heading { padding: 16px 22px; border-bottom: var(--hairline); }
+.live-scene-heading h2, dialog .live-scene-heading h2 { color: var(--text-strong); font-size: var(--fs-xl); font-weight: 650; letter-spacing: -.01em; }
+.live-scene-heading p, .live-scene-heading small { color: var(--text-muted); font-size: var(--fs-sm); }
+.live-scene-input, dialog .live-scene-input { margin-bottom: 14px; padding: 10px 14px; border: var(--hairline); border-radius: var(--r-md); background: #fff; }
+.live-scene-input summary { color: var(--text-body); font-size: var(--fs-base); font-weight: 600; }
+.live-scene-event, dialog .live-scene-event { margin: 0 0 10px; padding: 10px 14px; border: var(--hairline); border-left: 2px solid var(--accent); border-radius: var(--r-sm); background: #fff; }
+.live-scene-event header, dialog .live-scene-event header { color: var(--text-muted); font-size: var(--fs-xs); letter-spacing: .02em; }
+.live-scene-event pre { margin-top: 6px; }
+
+/* Role history: a row reads "time · status" on the left, its action on the right. */
+.role-history-panel .settings-block:has(> strong + button:last-child) { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.role-history-panel .settings-block > strong { color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Settings: device and runtime rows as flat lists. */
+.settings-panel .device-card { border: var(--hairline); border-top: var(--hairline); background: #fff; box-shadow: none; }
+.device-runtime-list > * { border: var(--hairline); border-radius: var(--r-md); background: #fff; }
+#settings-page .settings-tabs button { font-weight: 550; }
+#settings-page .settings-overview-card h4, #settings-page .settings-panel-heading h3, #settings-page .hosting-provider-title h4 { font-weight: 650; letter-spacing: -.005em; }
+
+/* Run dialog: tabs as a quiet underline strip. */
+#run-dialog [role="tablist"] { border-bottom: var(--hairline); background: transparent; }
+#run-dialog [role="tab"][aria-selected="true"] { color: var(--accent-dark); }
+
+/* Dialog rhythm: one gap scale for stacked sections. */
+:is(dialog, #project-form-panel) :is(.settings-block, fieldset) { padding: 16px 0; }
+:is(dialog, #project-form-panel) .role-section-title { font-size: var(--fs-md); font-weight: 650; color: var(--text-strong); }
+dialog .dialog-heading { border-bottom: var(--hairline); }
+
+/* Scrollbars: thin and neutral everywhere. */
+* { scrollbar-width: thin; scrollbar-color: #cdd2db transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: #cdd2db padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* Selection and links */
+::selection { background: rgb(79 91 206 / 18%); }
+a { color: var(--accent-dark); text-underline-offset: 2px; }
