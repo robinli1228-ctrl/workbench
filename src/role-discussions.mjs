@@ -520,6 +520,14 @@ export class RoleDiscussions {
   }
 
   /** Callable only from the authenticated web entry point; user identity is never accepted through an agent request. */
+  /** Read-only receipt for a composer reply: was this exact user reply request already accepted for this thread? */
+  userReplyReceipt(projectId,threadId,requestId) {
+    if(typeof requestId!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(requestId))throw new Error(tr('roleDiscussions.invalidRequestId3'));
+    const thread=this.db.get('discussionThreads',threadId);
+    if(!thread||thread.projectId!==projectId)throw new Error(tr('roleDiscussions.threadStateHasChanged'));
+    const prior=this.db.get('discussionActions',key(projectId,'human',requestId));
+    return {requestId,exists:Boolean(prior)};
+  }
   userResolve(projectId,input) {
     fields(input,['requestId','threadId','revision','expectedQuestionId','directionRevision','conclusion','resumeAfterRunId']);text(input.conclusion,tr('roleDiscussions.conclusion2'));
     if(typeof input.requestId!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(input.requestId))throw new Error(tr('roleDiscussions.invalidRequestId4'));

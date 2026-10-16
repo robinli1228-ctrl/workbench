@@ -18,3 +18,9 @@ export function sendStateOf(draft, inFlight = false) {
 
 /** Send is usable only with no pending payload or after a confirmed absence. */
 export const sendLocked = state => Boolean(state && state !== 'failed');
+
+/** A failed lookup never proves the send is missing: network-level failures read as 'offline', anything else stays 'checking'. */
+export const lookupFailureState = error => uncertainSend(error) ? 'offline' : 'checking';
+
+/** After a 4xx, identical content keeps its id and edited content gets a new one; Home rejects one id with different content. */
+export const sameSend = (a, b) => Boolean(a && b) && JSON.stringify(a) === JSON.stringify(b);
