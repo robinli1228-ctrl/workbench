@@ -5,6 +5,7 @@ import {RoleSessions} from './role-sessions.mjs';
 import {activeRoleSwitch, belongsToDrain, switchSettled} from './role-switch-policy.mjs';
 import {tr} from './i18n.mjs';
 import {projectTerminalLock} from './terminal-resume.mjs';
+import {conversationIdOf,groupConversationIdOfSession} from './group-conversations.mjs';
 
 const terminal = new Set(['succeeded','failed','interrupted']);
 const planTerminal = new Set(['succeeded','completed_with_issues','completed','cancelled','blocked']);
@@ -15,7 +16,7 @@ export const switchHash = value => createHash('sha256').update(typeof value==='s
 export const roleSwitchView = op => ({id:op.id,projectId:op.projectId,roleId:op.roleId,status:op.status,from:op.original.runtime,to:op.candidate.runtime,
   error:op.error||op.lastError||null,reason:op.reason||null,sourceRunId:op.steps.handoff?.runId||null,verificationRunId:op.steps.verified?.runId||null,
   handoffHash:op.steps.handoff?.hash||null,committedAt:op.committedAt||null,createdAt:op.createdAt,updatedAt:op.updatedAt,released:Boolean(op.steps.released)});
-const sessions = (db,role) => db.list('roleSessions').filter(s=>s.projectId===role.projectId && s.roleId===role.id && s.conversationId===role.projectId && s.status!=='archived' && !s.candidateFor);
+const sessions = (db,role) => db.list('roleSessions').filter(s=>s.projectId===role.projectId && s.roleId===role.id && s.status!=='archived' && !s.candidateFor);
 
 /** Home is the authority for the switch transaction, not the browser or a native CLI. */
 export class RoleSwitches {
@@ -27,7 +28,7 @@ export class RoleSwitches {
   /** Freeze full history once; transfer it over authenticated HTTP rather than the bounded command socket. */
   history(id) {
     const op=this.operation(id),prior=this.db.get('roleSwitchHistory',id);if(prior)return prior;
-    const text=JSON.stringify(this.db.list('runs').filter(r=>r.projectId===op.projectId&&r.roleId===op.roleId&&!r.switchOperationId&&!r.historyClearedAt).map(r=>({runId:r.id,sessionId:r.roleSessionId,status:r.status,task:this.db.get('tasks',r.taskId)?.prompt||'',result:r.result||'',error:r.error||''})));
+    const text=JSON.stringify(this.db.list('runs').filter(r=>r.projectId===op.projectId&&conversationIdOf(r)===conversationIdOf(op)&&r.roleId===op.roleId&&!r.switchOperationId&&!r.historyClearedAt).map(r=>({runId:r.id,sessionId:r.roleSessionId,status:r.status,task:this.db.get('tasks',r.taskId)?.prompt||'',result:r.result||'',error:r.error||''})));
     return this.db.put('roleSwitchHistory',{id,projectId:op.projectId,roleId:op.roleId,text,hash:switchHash(text)});
   }
 
@@ -81,7 +82,7 @@ export class RoleSwitches {
       const tasks=this.db.list('tasks').filter(t=>t.projectId===projectId&&['ready','in_progress','awaiting_acceptance','waiting_discussion'].includes(t.status));
       const requests=this.db.list('coordinationRequests').filter(r=>r.projectId===projectId&&!['succeeded','failed','cancelled'].includes(r.status));
       const plans=this.db.list('executionPlans').filter(p=>p.projectId===projectId&&!planTerminal.has(p.status));
-      return this.db.put('roleSwitches',{id:input.operationId,projectId,roleId,nodeId:role.nodeId,fingerprint,status:'draining',leaseId:input.leaseId,leaseUntil:this.now()+120000,
+      return this.db.put('roleSwitches',{id:input.operationId,projectId,conversationId:groupConversationIdOfSession(this.db.get('roleSessions',p.sourceSessionId))||projectId,roleId,nodeId:role.nodeId,fingerprint,status:'draining',leaseId:input.leaseId,leaseUntil:this.now()+120000,
         original:p.role,candidate:p.candidate,supervisorConfig:p.supervisorConfig,originalSupervisorConfig:config||null,
         workspace:p.workspace,workspaceHash:switchHash(p.workspace),sourceSessionId:p.sourceSessionId,sourceGeneration:p.sourceGeneration,
         drainTaskIds:tasks.map(t=>t.id),drainRequestIds:requests.map(r=>r.id),drainPlanIds:plans.map(p=>p.id),
@@ -99,7 +100,8 @@ export class RoleSwitches {
       if(!['draining','handoff','verifying'].includes(op.status))throw new Error('Switch cannot create a candidate now.');
       if(op.candidateSessionId)return this.db.get('roleSessions',op.candidateSessionId);
       const all=this.db.list('roleSessions').filter(s=>s.roleId===op.roleId&&s.projectId===op.projectId);
-      const candidate=this.db.put('roleSessions',{id:randomUUID(),projectId:op.projectId,conversationId:op.projectId,roleId:op.roleId,nodeId:op.nodeId,
+      const source=this.db.get('roleSessions',op.sourceSessionId);
+      const candidate=this.db.put('roleSessions',{id:randomUUID(),projectId:op.projectId,conversationId:source?.conversationId||conversationIdOf(op),groupConversationId:conversationIdOf(op),roleId:op.roleId,nodeId:op.nodeId,
         runtime:op.candidate.runtime,model:op.candidate.model,workspaceRoot:op.workspace.root,workspace:null,nativeSessionId:null,nativeSession:null,
         generation:Math.max(0,...all.map(s=>s.generation||0))+1,status:'idle',activeRunId:null,lastRunId:null,candidateFor:op.id,predecessorSessionId:op.sourceSessionId,createdAt:this.stamp(),updatedAt:this.stamp()});
       this.save(op,{candidateSessionId:candidate.id});return candidate;

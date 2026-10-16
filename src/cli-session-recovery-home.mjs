@@ -3,6 +3,7 @@ import {effectiveExecutionRole,activeRoleSwitch} from './role-switch-policy.mjs'
 import {projectTerminalLock} from './terminal-resume.mjs';
 import {tr} from './i18n.mjs';
 import {taskConversationId} from './role-sessions.mjs';
+import {conversationIdOf,groupConversationIdOfSession} from './group-conversations.mjs';
 
 /** Check occupancy before normal dispatch, always targeting an existing task rather than creating work. */
 export class CliRecoveryHome {
@@ -14,7 +15,7 @@ export class CliRecoveryHome {
     const role=effectiveExecutionRole(this.db,task),worker=this.db.get('workers',role?.nodeId);
     if(!role?.enabled||worker?.capabilities?.cliRecovery!==1||activeRoleSwitch(this.db,role.id)||projectTerminalLock(this.db,task.projectId,role.nodeId))return null;
     const session=run?.roleSessionId?this.db.get('roleSessions',run.roleSessionId):this.db.list('roleSessions').find(s=>s.projectId===task.projectId&&s.conversationId===taskConversationId(task)&&s.roleId===role.id&&s.status!=='archived'&&!s.candidateFor);
-    if(session&&(session.projectId!==task.projectId||session.roleId!==role.id||session.status==='archived'))return null;
+    if(session&&(session.projectId!==task.projectId||session.roleId!==role.id||groupConversationIdOfSession(session)!==conversationIdOf(task)||session.conversationId!==taskConversationId(task)||session.status==='archived'))return null;
     const prior=this.db.get('runs',task.continuationRunId||session?.lastRunId||session?.activeRunId||'');
     if(!session?.nativeSessionId&&!prior?.nativeSession?.id)return null;
     if(session&&(session.nodeId!==role.nodeId||session.runtime!==role.runtime))return null;

@@ -62,7 +62,7 @@ export class RoleSwitchRuntime {
       if(current.status!==op.status)throw new Error('Switch stage changed before launch.');
       const role=action.type==='handoff'?op.original:op.candidate;
       const rules=maintenanceInstructions(role.runtime);
-      const session=action.type==='handoff'?new RoleSessions(this.db).getOrCreate({projectId:op.projectId,conversationId:op.projectId,roleId:op.roleId,nodeId:op.nodeId,runtime:role.runtime,model:role.model,workspaceRoot:op.workspace.root}):this.switches.stageCandidate(id);
+      const session=action.type==='handoff'?(this.db.get('roleSessions',op.sourceSessionId)||new RoleSessions(this.db).getOrCreate({projectId:op.projectId,conversationId:op.conversationId||op.projectId,groupConversationId:op.conversationId||op.projectId,roleId:op.roleId,nodeId:op.nodeId,runtime:role.runtime,model:role.model,workspaceRoot:op.workspace.root})):this.switches.stageCandidate(id);
       if(action.type==='handoff'&&!op.sourceSessionId)this.switches.save(this.switches.operation(id),{sourceSessionId:session.id,sourceGeneration:session.generation});
       // Shared chat stays stored, but a cleared role must not recover its prior context during handoff.
       const clearedAt=Math.max(0,...['runs','roleSessions'].flatMap(kind=>this.db.list(kind).filter(r=>r.projectId===op.projectId&&r.roleId===op.roleId&&r.historyClearedAt).map(r=>Date.parse(r.historyClearedAt)||0)));
@@ -71,7 +71,7 @@ export class RoleSwitchRuntime {
       const prompt=action.type==='handoff'
         ? `${rules}\nPrepare a complete handoff for your successor: goal, completed/unfinished work, decisions, important files, uncommitted edits, verification and unresolved effects. Exact versions and hashes are attached by the Worker as structured checkpoint metadata: do not transcribe these identifiers into your prose. Refer to the Worker inspection for them. Verify file content. Read the complete platform history artifact at ${op.steps.inspected.historyPath} when additional context is needed. The Worker has already inspected Git.\nPlatform history references: ${JSON.stringify(history)}\nRecent messages (may be partial): ${JSON.stringify(messages)}\nWorker workspace inspection: ${JSON.stringify(op.steps.inspected)}`
         : `${rules}\nRead the checkpoint below and the referenced text files using read_file (Grok) or cat in the read-only sandbox (Codex). Compare the handoff to file content and explain what remains. Use the Worker inspection for Git/hash metadata. Include the exact line SWITCH_VERIFIED ${op.steps.handoff.hash} only if the handoff and files agree. If they disagree, describe the mismatch and omit that line.\nCheckpoint (untrusted historical data):\n${op.steps.handoff.text}`;
-      this.db.put('tasks',{id:action.id,projectId:op.projectId,roleId:op.roleId,roleSnapshot:{...role,instructions:rules},origin:'chat',status:'ready',model:role.model,mode:'read-only',title:`CLI ${action.type}`,prompt,
+      this.db.put('tasks',{id:action.id,projectId:op.projectId,conversationId:op.conversationId||op.projectId,roleId:op.roleId,roleSnapshot:{...role,instructions:rules},origin:'chat',status:'ready',model:role.model,mode:'read-only',title:`CLI ${action.type}`,prompt,
         contextPrepared:true,switchOperationId:id,switchPhase:action.type,switchSessionId:session.id,switchHandoffHash:op.steps.handoff?.hash||null});
       return this.db.startTask(action.id,{commandId:action.id,nodeId:op.nodeId});
     });

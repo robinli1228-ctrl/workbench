@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Store, terminal } from './store.mjs';
-import {GroupConversations,conversationIdOf,conversationView,agentConversationInput} from './group-conversations.mjs';
+import {GroupConversations,conversationIdOf,conversationView,agentConversationInput,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
 import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
 import {validateCliCapacity,reservedTerminalSlots,registrationCapacity} from './device-capacity.mjs';
@@ -913,26 +913,27 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/history\/clear$/))&&req.method==='POST') {
-        const result=new RoleSessions(db).clearHistory(m[1],m[2],(await body(req)).sessionId||null);
+        const input=await body(req),result=new RoleSessions(db).clearHistory(m[1],m[2],input.sessionId||null,input);
         change();return json(res,result);
       }
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/session\/reset$/))&&req.method==='POST') {
+        const input=await body(req),conversationId=resolveConversationId(db,m[1],input.conversationId);
         const role=db.get('roles',m[2]);if(role?.projectId!==m[1])throw new Error(tr('home.roleDoesNotBelongProject'));
-        if(db.list('tasks').some(task=>task.projectId===m[1]&&task.roleId===m[2]&&['ready','in_progress'].includes(task.status)))throw new Error(tr('home.roleStillHasUnfinishedAssignments'));
-        if(db.list('coordinationRequests').some(request=>request.projectId===m[1]&&request.targetRoleId===m[2]&&!['succeeded','failed','cancelled'].includes(request.status)))throw new Error(tr('home.roleStillHasUnfinishedCollaboration'));
-        const session=new RoleSessions(db).list(m[1],{conversationId:m[1],roleId:m[2]}).find(item=>item.status!=='archived');
+        if(db.list('tasks').some(task=>task.projectId===m[1]&&conversationIdOf(task)===conversationId&&task.roleId===m[2]&&['ready','in_progress'].includes(task.status)))throw new Error(tr('home.roleStillHasUnfinishedAssignments'));
+        if(db.list('coordinationRequests').some(request=>request.projectId===m[1]&&conversationIdOf(request)===conversationId&&request.targetRoleId===m[2]&&!['succeeded','failed','cancelled'].includes(request.status)))throw new Error(tr('home.roleStillHasUnfinishedCollaboration'));
+        const session=new RoleSessions(db).currentForGroup(m[1],m[2],input);
         if(!session)throw new Error(tr('home.roleHasNoCurrentSession'));
         if(projectTerminalLock(db,m[1],role.nodeId))throw new Error(tr('home.deviceStillUnderManualTakeover'));
         const archived=new RoleSessions(db).archive(session.id);change();return json(res,archived);
       }
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/sessions\/([^/]+)\/read$/))&&req.method==='GET') {
         if(!db.get('projects',m[1]))throw new Error(tr('home.projectNotFound'));
-        return json(res,sessionTools.read({projectId:m[1],conversationId:m[1]},m[2],{
+        return json(res,sessionTools.read({projectId:m[1],conversationId:resolveConversationId(db,m[1],url.searchParams.get('conversationId')??undefined)},m[2],{
           offset:Number(url.searchParams.get('offset')||0),limit:Number(url.searchParams.get('limit')||4000),version:url.searchParams.get('version')}));
       }
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/sessions\/([^/]+)\/summary$/))&&req.method==='GET') {
         if(!db.get('projects',m[1]))throw new Error(tr('home.projectNotFound2'));
-        return json(res,sessionTools.summary({projectId:m[1],conversationId:m[1]},m[2]));
+        return json(res,sessionTools.summary({projectId:m[1],conversationId:resolveConversationId(db,m[1],url.searchParams.get('conversationId')??undefined)},m[2]));
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/definition$/)) && req.method === 'PATCH') {
         const r = rooms.updateRoleDefinition(m[1], m[2], await body(req)); change(); return json(res, r);
@@ -959,7 +960,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/steer$/)) && req.method === 'POST') {
-        const result=steering.request(m[1],m[2],(await body(req)).commandId);
+        const input=await body(req),result=steering.request(m[1],m[2],input.commandId,input);
         for(const id of result.waitForRunIds)dispatch(db.get('runs',id).nodeId);
         scheduleChat();change();return json(res,result);
       }
@@ -986,6 +987,8 @@ const server = http.createServer(async (req, res) => {
       if ((m = pathname.match(/^\/api\/runs\/([^/]+)\/stop$/)) && req.method === 'POST') {
         const b = await body(req), run = db.get('runs', m[1]);
         if (!run || typeof b.commandId !== 'string' || !b.commandId) throw new Error(tr('home.executionNotFoundInvalidCommand'));
+        if(b.conversationId!==undefined)assertConversationRecord({projectId:run.projectId,conversationId:resolveConversationId(db,run.projectId,b.conversationId)},run);
+        if(b.roleSessionId&&b.roleSessionId!==run.roleSessionId)throw new Error(tr('conversations.recordMismatch'));
         const stopped=calls.stopRun(run.id,b.commandId);
         for(const id of stopped.stopRunIds){const target=db.get('runs',id);if(target)dispatch(target.nodeId);}
         change();return json(res,stopped.run);
@@ -993,21 +996,25 @@ const server = http.createServer(async (req, res) => {
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/terminals\/refresh$/))&&req.method==='POST')return json(res,await refreshProjectTerminals(m[1]));
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/roles\/([^/]+)\/terminal$/)) && req.method==='POST') {
         const [_,projectId,roleId]=m,b=await body(req);
+        const conversationId=resolveConversationId(db,projectId,b.conversationId);
+        if(b.roleSessionId)new RoleSessions(db).currentForGroup(projectId,roleId,b);
         if(['release','stop'].includes(b.action)) {
           const claim=db.get('terminalSessions',b.id);
+          assertConversationRecord({projectId,conversationId},claim);
           if(claim?.kind!=='new'||claim.projectId!==projectId||claim.roleId!==roleId)throw new Error(tr('home.thereNoTerminalTakeoverFor'));
           return json(res,await returnTerminal(claim,b.action));
         }
         if(b.action!=='prepare'||typeof b.operationId!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(b.operationId))throw new Error(tr('home.invalidTakeoverAction'));
         const repeated=db.get('terminalSessions',b.operationId);
         if(repeated) {
+          assertConversationRecord({projectId,conversationId},repeated);
           if(repeated.kind!=='new'||repeated.projectId!==projectId||repeated.roleId!==roleId)throw new Error(tr('home.invalidTakeoverAction'));
           if(repeated.status==='prepared')return json(res,terminalLaunchView(repeated));
           throw new Error(tr('roleTerminal.pending'));
         }
         const {role,worker,workspace}=newTerminalBinding(db,projectId,roleId,id=>online(id)&&sockets.get(id).workerReady),device=db.list('devices').find(d=>d.nodeId===role.nodeId);
         if(worker.nodeKind==='cloud'&&!device)throw new Error(tr('home.cloudDeviceMissingSshRegistration'));
-        const claim={id:b.operationId,kind:'new',projectId,roleId,nodeId:role.nodeId,runtime:role.runtime,model:role.model,status:'preparing',createdAt:new Date().toISOString()};
+        const claim={id:b.operationId,kind:'new',projectId,conversationId,roleId,nodeId:role.nodeId,runtime:role.runtime,model:role.model,status:'preparing',createdAt:new Date().toISOString()};
         db.put('terminalSessions',claim);change();
         try {
           const settings=normalizePlatformSettings(db.get('settings','main'));
@@ -1028,6 +1035,8 @@ const server = http.createServer(async (req, res) => {
       if ((m = pathname.match(/^\/api\/runs\/([^/]+)\/terminal$/)) && req.method === 'POST') {
         const b=await body(req), r=db.get('runs',m[1]);
         if(!r)throw new Error(tr('home.runNotFound'));
+        if(b.conversationId!==undefined)assertConversationRecord({projectId:r.projectId,conversationId:resolveConversationId(db,r.projectId,b.conversationId)},r);
+        if(b.roleSessionId&&b.roleSessionId!==r.roleSessionId)throw new Error(tr('conversations.recordMismatch'));
         const existing=['release','stop'].includes(b.action)&&b.id?db.get('terminalSessions',b.id):projectTerminalLock(db,r.projectId,r.nodeId);
         if(['release','stop'].includes(b.action)) {
           if(!existing || existing.runId!==r.id||existing.projectId!==r.projectId||existing.nodeId!==r.nodeId)throw new Error(tr('home.thereNoTerminalTakeoverFor'));
@@ -1045,7 +1054,7 @@ const server = http.createServer(async (req, res) => {
         if(worker?.capabilities?.terminalResume!==1)throw new Error(tr('home.upgradeWorkerOnDeviceFirst'));
         const device=db.list('devices').find(d=>d.nodeId===r.nodeId);
         if(worker.nodeKind==='cloud' && !device)throw new Error(tr('home.cloudDeviceMissingSshRegistration'));
-        const claim={id:randomUUID(),projectId:r.projectId,nodeId:r.nodeId,runId:r.id,status:'preparing',createdAt:new Date().toISOString()};
+        const claim={id:randomUUID(),projectId:r.projectId,conversationId:conversationIdOf(r),nodeId:r.nodeId,runId:r.id,status:'preparing',createdAt:new Date().toISOString()};
         db.put('terminalSessions',claim);change();
         try {
           const info=await workerQuery(r,'terminal_prepare',{id:claim.id},30000);

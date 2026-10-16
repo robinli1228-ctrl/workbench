@@ -1,9 +1,11 @@
 import {createHash} from 'node:crypto';
 import {isSupervisorName} from './default-roles.mjs';
 import {tr} from './i18n.mjs';
+import {conversationIdOf,agentConversationInput} from './group-conversations.mjs';
 
 /** One shared instruction is published atomically; each recipient retains its own queue, request and reply lifecycle. */
 export function createAgentCalls({db,calls,rooms},run,input,{legacyAsk=false}={}) {
+  agentConversationInput(run,input);
   const kind=input.kind||'consult';
   if(!['consult','direct','handoff'].includes(kind))throw new Error(tr('roleCalls.invalidCallType'));
   if(input.role!==undefined&&input.roles!==undefined)throw new Error(tr('wbTools.invalidCallTargets'));
@@ -55,7 +57,7 @@ export function createAgentCalls({db,calls,rooms},run,input,{legacyAsk=false}={}
     });
     if(existing)return response(existing);
     const toRoles=[...new Map(recipients.map(r=>[r.id,r])).values()];
-    const message=db.put('roomMessages',{id:messageId,projectId:run.projectId,sender:'agent',senderName:run.roleSnapshot.name,roleId:run.roleId,kind:'handoff',runId:run.id,
+    const message=db.put('roomMessages',{id:messageId,projectId:run.projectId,conversationId:conversationIdOf(run),sender:'agent',senderName:run.roleSnapshot.name,roleId:run.roleId,kind:'handoff',runId:run.id,
       requestId:requests[0].id,requestIds:requests.map(r=>r.id),callFingerprint:fingerprint,taskIds:[],text:input.text,replyToId:run.sourceMessageId||null,
       handoff:{kind,fromRoleId:run.roleId,fromRole:run.roleSnapshot.name,toRoleId:toRoles[0].id,toRole:toRoles[0].name,toRoles,summary:input.text},createdAt:new Date().toISOString()});
     rooms.touch(run.projectId);

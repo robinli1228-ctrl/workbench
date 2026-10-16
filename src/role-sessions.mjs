@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { tr } from './i18n.mjs';
 import {activeRoleSwitch} from './role-switch-policy.mjs';
 import {terminalOwnsProject} from './terminal-resume.mjs';
-import {conversationIdOf} from './group-conversations.mjs';
+import {conversationIdOf,groupConversationIdOfSession,resolveConversationId} from './group-conversations.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -81,16 +81,26 @@ export class RoleSessions {
     return this.db.list('roleSessions').filter(s=>!s.historyClearedAt && s.projectId===projectId && (!conversationId || s.conversationId===conversationId) && (!roleId || s.roleId===roleId));
   }
 
+  /** Operator actions select an exact group slot; ambiguity or a stale expected ID is not permission to choose another. */
+  currentForGroup(projectId,roleId,input={}) {
+    const conversationId=resolveConversationId(this.db,projectId,input.conversationId);
+    const rows=this.list(projectId,{roleId}).filter(s=>groupConversationIdOfSession(s)===conversationId&&s.status!=='archived'&&!s.candidateFor);
+    const session=input.roleSessionId?rows.find(s=>s.id===input.roleSessionId):rows.length===1?rows[0]:null;
+    if(!session)throw new Error(tr('roleSessions.historySessionChanged'));
+    return session;
+  }
+
   /** Clear the role's session associations, preserving shared chat and audit records; later dispatch starts a fresh native session. */
-  clearHistory(projectId,roleId,expectedSessionId=null) {
+  clearHistory(projectId,roleId,expectedSessionId=null,input={}) {
+    const conversationId=resolveConversationId(this.db,projectId,input.conversationId);
     return this.db.transaction(()=>{
       const role=this.db.get('roles',roleId);
       if(role?.projectId!==projectId)throw new Error(tr('home.roleDoesNotBelongProject'));
       if(activeRoleSwitch(this.db,roleId))throw new Error(tr('roleSessions.historySwitchBusy'));
-      const sessions=this.list(projectId,{roleId}),ids=new Set(sessions.map(s=>s.id));
-      const current=sessions.find(s=>s.conversationId===projectId && s.status!=='archived' && !s.candidateFor);
+      const sessions=this.list(projectId,{roleId}).filter(s=>groupConversationIdOfSession(s)===conversationId),ids=new Set(sessions.map(s=>s.id));
+      const current=sessions.find(s=>(expectedSessionId?s.id===expectedSessionId:s.conversationId===conversationId) && s.status!=='archived' && !s.candidateFor);
       if((current?.id||null)!==expectedSessionId)throw new Error(tr('roleSessions.historySessionChanged'));
-      const runs=this.db.list('runs').filter(r=>r.projectId===projectId && r.roleId===roleId);
+      const runs=this.db.list('runs').filter(r=>r.projectId===projectId && conversationIdOf(r)===conversationId && r.roleId===roleId);
       if(sessions.some(s=>s.activeRunId) || runs.some(r=>!['succeeded','failed','interrupted'].includes(r.status))
         || this.db.list('tasks').some(t=>t.projectId===projectId && t.roleId===roleId && ['ready','in_progress'].includes(t.status))
         || this.db.list('coordinationRequests').some(r=>r.projectId===projectId && r.targetRoleId===roleId && !['succeeded','failed','cancelled'].includes(r.status))
