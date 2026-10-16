@@ -9,6 +9,26 @@ const binding=value=>value?{...value,role:role(value.role)}:value;
 export function workspaceState(snapshot,requestedProjectId) {
   const projectId=snapshot.projects.find(p=>p.id===requestedProjectId)?.id||snapshot.projects[0]?.id||null;
   const state={...snapshot};
+  // Share execution identities across projects, never history bodies or idle CLI occupancy.
+  const online=new Set((snapshot.workers||[]).filter(w=>w.online).map(w=>w.id));
+  const executing=value=>online.has(value.nodeId)&&['preparing','starting','running','stopping'].includes(value.status);
+  const sessions=snapshot.roleSessions||[],byId=new Map(sessions.map(s=>[s.id,s]));
+  const identity=(nodeId,runtime,sessionId)=>JSON.stringify([nodeId,runtime,sessionId]);
+  const owners=new Map();
+  for(const session of sessions){
+    if(!session.nativeSessionId||session.historyClearedAt)continue;
+    const key=identity(session.nodeId,session.runtime,session.nativeSessionId);
+    if(!owners.has(key))owners.set(key,new Set());
+    owners.get(key).add(session.projectId);
+  }
+  state.sidebarExecutions=[
+    ...snapshot.runs.filter(executing).map(r=>({id:`run:${r.id}`,projectIds:[r.projectId],nodeId:r.nodeId,
+      runtime:r.nativeSession?.runtime||r.roleSnapshot?.runtime||byId.get(r.roleSessionId)?.runtime||null,
+      sessionId:r.nativeSession?.id||r.resumeNativeSessionId||byId.get(r.roleSessionId)?.nativeSessionId||null})),
+    ...(snapshot.nativeTurnExecutions||[]).filter(executing).map(turn=>({id:`native:${turn.id}`,
+      projectIds:[...(owners.get(identity(turn.nodeId,turn.runtime,turn.sessionId))||[])],nodeId:turn.nodeId,runtime:turn.runtime,sessionId:turn.sessionId}))
+  ];
+  delete state.nativeTurnExecutions;
   const runs=snapshot.runs.filter(r=>r.projectId===projectId),runIds=new Set(runs.map(r=>r.id));
   state.runs=runs.map(r=>({...omit(r,['result','contextPacket','inputTask','teamContext','resumeNativeSession','runtimeInstructions','executionConfiguration']),
     roleSnapshot:role(r.roleSnapshot),originalRoleSnapshot:role(r.originalRoleSnapshot),executionBinding:binding(r.executionBinding),error:short(r.error),report:r.report?omit(r.report,['summary']):r.report,summaryOnly:true}));

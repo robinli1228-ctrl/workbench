@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-create-folder-v104';
+const CACHE = 'agent-workbench-static-sidebar-running-v105';
 const STATIC = [
   '/create-folder.js',
   '/native-session-groups.js',

@@ -2119,3 +2119,20 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 .native-turn-error { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: #fdf0ed; color: #b4442f; font-size: 12px; font-weight: 500; }
 .native-turn-state { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .native-process-hidden { font-size: 11px; color: #98a2b3; }
+
+/* Static glow distinguishes execution from selection without continuous animation or idle repainting. */
+#project-list .project-item.is-running,
+#native-session-list .project-item.is-running {
+  color: #2357a2;
+  background: linear-gradient(115deg, #e6f0ff, #f3f6ff 72%, #eaf0ff);
+  box-shadow: inset 0 0 0 1px rgb(89 143 237 / 24%), inset 3px 0 0 #6099f4, 0 2px 9px rgb(65 115 209 / 9%);
+}
+#project-list .project-item.is-running:hover,
+#native-session-list .project-item.is-running:hover { background: linear-gradient(115deg, #dceaff, #edf2ff); }
+#project-list .project-item.is-running .project-item-icon { color: #2874df; filter: drop-shadow(0 1px 3px rgb(57 127 235 / 20%)); }
+#project-list .project-item.is-running small,
+#native-session-list .project-item.is-running small { color: #607a9f; }
+#project-list .project-item.active.is-running { color: #075fd3; background: linear-gradient(115deg, #d7e8ff, #e9efff); box-shadow: inset 0 0 0 1px rgb(64 124 229 / 35%), inset 3px 0 0 #2476ed, 0 2px 10px rgb(65 115 209 / 12%); }
+#native-session-list .project-item.active.is-running { color: #fff; background: linear-gradient(115deg, #5363d8, #5c50c7); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%), inset 3px 0 0 #b6d4ff, 0 3px 10px rgb(73 84 179 / 19%); }
+#native-session-list .project-item.active.is-running small { color: #e5ecff; }
+.native-session-history > summary.has-running-session { color: #286cd0; text-shadow: 0 0 8px rgb(74 135 236 / 15%); }

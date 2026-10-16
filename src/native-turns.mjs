@@ -68,7 +68,10 @@ export function nativeTurnView(turn){
 
 /** Home side: validation, idempotent creation, occupancy checks, attachment binding and event intake. */
 export class NativeTurnsHome{
- constructor({db,send,online,change,assertIdle,attachments=null,leases=null}){Object.assign(this,{db,send,online,change,assertIdle,attachments,leases});db.db.exec("CREATE INDEX IF NOT EXISTS native_turn_session ON records(json_extract(data,'$.nodeId'),json_extract(data,'$.runtime'),json_extract(data,'$.sessionId')) WHERE kind='nativeTurns'; CREATE INDEX IF NOT EXISTS native_turn_client ON records(json_extract(data,'$.clientTurnId')) WHERE kind='nativeTurns';");}
+ constructor({db,send,online,change,assertIdle,attachments=null,leases=null}){Object.assign(this,{db,send,online,change,assertIdle,attachments,leases});db.db.exec("CREATE INDEX IF NOT EXISTS native_turn_session ON records(json_extract(data,'$.nodeId'),json_extract(data,'$.runtime'),json_extract(data,'$.sessionId')) WHERE kind='nativeTurns'; CREATE INDEX IF NOT EXISTS native_turn_client ON records(json_extract(data,'$.clientTurnId')) WHERE kind='nativeTurns';");
+  // Sidebar reads must not parse finished turns' event bodies on every workspace refresh.
+  db.db.exec("CREATE INDEX IF NOT EXISTS native_turn_active ON records(id) WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('starting','running','stopping')");
+ }
  static owner(nodeId){return `native:${nodeId}`;}
  list(nodeId,runtime,sessionId){let bytes=0;return nativeTurnRows(this.db,{nodeId,runtime,sessionId}).map(t=>{let view=nativeTurnView(t);bytes+=Buffer.byteLength(JSON.stringify(view));if(bytes>2*1024*1024)view={...view,events:[],text:view.text.slice(-4000),truncated:true};return view;}).reverse();}
  active(nodeId,runtime,sessionId){return nativeTurnRows(this.db,{nodeId,runtime,sessionId,active:true,limit:1})[0];}

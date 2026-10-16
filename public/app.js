@@ -516,6 +516,7 @@ async function refreshState({ quiet = false } = {}) {
       workspaces: Array.isArray(data.workspaces) ? data.workspaces : [],
       tasks: Array.isArray(data.tasks) ? data.tasks : [],
       runs: Array.isArray(data.runs) ? data.runs : [],
+      sidebarExecutions:Array.isArray(data.sidebarExecutions)?data.sidebarExecutions:[],
       workers: Array.isArray(data.workers) ? data.workers : [],
       approvals: Array.isArray(data.approvals) ? data.approvals : [],
       settings: data.settings || { paused: false },
@@ -669,8 +670,10 @@ function renderProjects() {
   if(projectOrder.active())return;
   dom.projectList.replaceChildren();
   const icons = projectIconAssignments(app.data.projects);
+  const executing=new Set((app.data.sidebarExecutions||[]).flatMap(item=>item.projectIds));
   for (const project of projectOrder.ordered(app.data.projects)) {
-    const button = create('button', `project-item${project.id === app.selectedProjectId ? ' active' : ''}`);
+    const running=executing.has(project.id);
+    const button = create('button', `project-item${project.id === app.selectedProjectId ? ' active' : ''}${running?' is-running':''}`);
     button.type = 'button';
     button.dataset.orderId=project.id;
     // Names, titles and accessible labels are user data; the count below is translated explicitly.
@@ -679,8 +682,8 @@ function renderProjects() {
     const icon = projectIconEl(icons[project.id]);
     const copy = create('span', 'project-item-copy');
     copy.append(create('strong', '', project.name), create('small', '', project.supervisorRoleId ? t(count===1?'{count} code repository':'{count} code repositories', { count }) : t(count===1?'{count} node workspace':'{count} node workspaces', { count })));
-    button.title = project.name;
-    button.setAttribute('aria-label', project.name);
+    button.title = `${project.name}${running?` · ${t('In progress')}`:''}`;
+    button.setAttribute('aria-label', button.title);
     if (project.id === app.selectedProjectId) button.setAttribute('aria-current', 'page');
     button.append(icon, copy);
     button.addEventListener('click', async () => {

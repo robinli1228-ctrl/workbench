@@ -186,3 +186,9 @@
 - Independent integration review identified an outdated empty-chat routing hint, a missing zero-usage state and a duplicate translation. The first two were reproduced in the real isolated browser before minimal fixes; the final page also retained the selected sidebar state and title-bar tabs. Existing histories, reports and synchronization records were not rewritten.
 - Node 22.22.1 verification passed 56 maintained tests plus 60 targeted read/routing/token checks, syntax and whitespace gates. Actual isolated Home/Edge checks covered English/Chinese reply routing, model totals/remainders, empty states, five settings tabs and desktop/mobile layout. Private test scripts/data/screenshots remain ignored; no vendor-model turn or production task was launched.
 - This integration does not deploy or restart any service, enable Q/F on business projects, or implement the separate automatic dependency-preparation proposal. Publishing source and accepting a live runtime remain separate operations.
+
+## 2026-10-16 — Sidebar execution emphasis
+
+- Added static blue shading, fine borders and soft shadows for executing group chats and exact native sessions. Selected rows remain distinct; historical running sessions are indicated in the expandable history entry. Queued, waiting, offline and idle states are not labeled as executing.
+- Compact cross-project activity metadata reuses the existing state feed; no new polling, model calls, continuous animation or history rewrites. Native identity matching includes device, runtime and session ID.
+- Focused projection tests and real isolated Home/Edge checks covered unselected projects, exact native matching, selected styling, history expansion, completion updates without catalogue refetching and mobile layout. The maintained suite passed 82/82. This change is not deployed and does not restart production services.
