@@ -228,3 +228,11 @@
 
 - Replaced the need to choose a broad shared project parent with an automatically prepared `native-sessions` folder under each device's workspace root. Folder creation is idempotent and preserves contents; project overlap and file/symlink collisions are rejected. Manual selection/new-folder controls remain, and existing sessions retain their original directory.
 - Actual isolated Home, two Workers and Edge verified default creation/reuse, device switching, a delayed response not overwriting a manual choice, and a standalone terminal reservation/return without starting a CLI. No production service was restarted and no existing history or project directory was changed.
+
+## 2026-10-16 — Collaboration wait protection (P1)
+
+- While a role waits for its own collaboration results (`waiting_call`, or its continuation not yet finished), other queued messages for that role in the same group chat wait instead of interleaving. Other roles and other chats are unaffected; existing capacity, workspace and native-session locks are unchanged.
+- "Handle this first" in the waiting queue lets one human message run first. It records `collaborationYield` on that task only; no request, reply, plan or native history is cancelled or stopped. One such message per role and chat at a time; replays return the same decision.
+- A chain with no progress (teammate updates, wait events, continuations) for the project's release window, 40 minutes by default and configurable from 5 to 1440 in project settings, frees the queue and is shown as needing attention. Released human messages are ordered ahead of other ordinary work. A CLI still running or unverified keeps its existing lock.
+- The old steer action now has to state `mode: 'replace'`; an old client steering into a protected wait is rejected instead of silently cancelling the collaboration.
+- `collaborationQueueView` in `coordination-wait.mjs` is the single read-only projection used by the scheduler, the steer endpoint and the state feed (`collaborationWaits`). Tests: `tests/collaboration-wait.test.mjs` (8); maintained suite 90/90. Not yet browser-accepted or deployed; message send-time ordering and the P2 confirmation dialog remain separate work.

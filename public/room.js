@@ -190,14 +190,38 @@ function createMessageQueue({api,refreshState,create,setError}) {
     const tasks=(data.tasks||[]).filter(t=>t.projectId===projectId&&t.origin==='chat'&&t.status==='ready'&&!t.currentRunId)
       .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||queueKey(a)-queueKey(b));
     list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&tasks.length>1);
+    const conversation=tasks[0]?.conversationId||projectId;
+    // Home's own projection decides who is protected; the browser only labels it and never guesses from an idle CLI.
+    const waits=(data.collaborationWaits||[]).filter(w=>w.projectId===projectId&&(!tasks.length||tasks.some(t=>(t.conversationId||t.projectId)===w.conversationId&&t.roleId===w.roleId)));
+    const protectedRole=task=>waits.find(w=>!w.released&&w.roleId===task.roleId&&w.conversationId===(task.conversationId||task.projectId));
     panel.hidden=!tasks.length;summary.textContent=t('Queue · {v}', { v: tasks.length });list.replaceChildren();
+    for(const wait of waits.filter((w,i,all)=>all.findIndex(x=>x.roleId===w.roleId&&x.conversationId===w.conversationId)===i)) {
+      const role=(data.roles||[]).find(r=>r.id===wait.roleId)?.name||t('Role');
+      const left=Math.max(1,Math.ceil((Date.parse(wait.releaseAt)-Date.now())/60000));
+      list.append(create('p',`message-queue-wait${wait.released?' is-released':''}`,wait.released?t('{role} · collaboration wait timed out; needs attention, queued messages are running',{role})
+        :t('{role} · waiting for collaboration results · released automatically in about {minutes} min',{role,minutes:left})));
+    }
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
       if(data.capabilities?.queueOrder&&!task.steering){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
       const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||t('Role')} · ${task.title||task.prompt}`);title.title=task.prompt||task.title;
       info.append(title,create('span','',task.steering?(task.waitingReason||'Continuing with the new instruction first'):(task.waitingReason||'Waiting to run')));row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
-      if(!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination) {
+      const human=!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination;
+      if(human&&data.capabilities?.collaborationWait&&(protectedRole(task)||task.collaborationYield)) {
+        // Handle this first keeps the waiting collaboration; it never stops or cancels anything.
+        const first=create('button','secondary compact message-queue-first',task.collaborationYield?t('Handling first'):t('Handle this first'));first.type='button';
+        first.title=t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
+        first.disabled=Boolean(task.collaborationYield)||pending.has(task.id)||data.settings?.paused;
+        first.onclick=async()=>{
+          pending.add(task.id);first.disabled=true;
+          if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
+          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'yield_wait',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});await refreshState({quiet:true});}
+          catch(error){setError(error.message);}
+          finally{pending.delete(task.id);}
+        };
+        row.append(first);
+      } else if(human) {
         const steer=create('button','icon-button message-queue-steer');steer.type='button';steer.setAttribute('aria-label',t(task.steering?'Steering':'Steer now'));steer.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
         steer.title='Stop this role\'s current run and continue with this message after confirmation; actions already performed are not rolled back';
         steer.disabled=Boolean(task.steering)||pending.has(task.id)||data.settings?.paused||!data.capabilities?.roleSteering;
@@ -205,7 +229,7 @@ function createMessageQueue({api,refreshState,create,setError}) {
         steer.onclick=async()=>{
           pending.add(task.id);steer.disabled=true;
           if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
-          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});await refreshState({quiet:true});}
+          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'replace',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});await refreshState({quiet:true});}
           catch(error){setError(error.message);}
           finally{pending.delete(task.id);steer.disabled=Boolean(task.steering)||data.settings?.paused;}
         };

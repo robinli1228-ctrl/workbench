@@ -2603,3 +2603,6 @@ button.danger, :is(dialog, #project-form-panel) button.danger, #settings-page bu
 button.danger:hover:not(:disabled), :is(dialog, #project-form-panel) button.danger:hover:not(:disabled), button.secondary.danger:hover:not(:disabled) {
   border-color: #c0263a; color: #fff; background: #c0263a;
 }
+.message-queue-wait { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; color: var(--accent-dark); background: var(--accent-soft); font-size: 12px; }
+.message-queue-wait.is-released { color: #8a5a12; background: #fff1d8; }
+.message-queue-first { min-height: 30px; padding: 0 10px; font-size: 12px; white-space: nowrap; }

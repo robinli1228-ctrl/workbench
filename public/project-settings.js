@@ -240,6 +240,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     void loadQueue();
     form.elements.name.value = p.name || '';
     form.elements.description.value = p.description || '';
+    form.elements.collaborationWaitReleaseMinutes.value = p.collaborationWaitReleaseMinutes || 40;
     form.elements.repoUrl.value = savedUrl;
     feedback.hidden = true;
     folderFeedback.hidden = true; deleteFeedback.hidden = true;
@@ -322,6 +323,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
         json: {
           name,
           description: form.elements.description.value,
+          collaborationWaitReleaseMinutes: Number(form.elements.collaborationWaitReleaseMinutes.value) || 40,
           repoUrl: form.elements.repoUrl.value
         }
       });

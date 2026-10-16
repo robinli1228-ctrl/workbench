@@ -34,6 +34,7 @@ import {recentProjectArtifacts} from './run-artifacts.mjs';
 import {ProjectFiles} from './project-files.mjs';
 import {CrossDeviceRead} from './cross-device-read.mjs';
 import { RoleSteering } from './role-steering.mjs';
+import { collaborationQueueView } from './coordination-wait.mjs';
 import { WorkspaceStateFeed } from './workspace-state.mjs';
 import { messageProgress, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries } from './git-delivery.mjs';
@@ -309,7 +310,7 @@ function snapshot() {
   const continuationLaunches=new Map(launchCommands.toReversed().map(c=>[c.runId,c]));
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1,projectTeamCopy:1,queueOrder:1}, homePlatform: process.platform, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
+  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1,projectTeamCopy:1,queueOrder:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -987,7 +988,8 @@ const server = http.createServer(async (req, res) => {
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/steer$/)) && req.method === 'POST') {
         const input=await body(req),result=steering.request(m[1],m[2],input.commandId,input);
-        for(const id of result.waitForRunIds)dispatch(db.get('runs',id).nodeId);
+        // A non-destructive yield stops nothing; only a replacing steer has runs to wait for.
+        for(const id of result.waitForRunIds||[])dispatch(db.get('runs',id).nodeId);
         scheduleChat();change();return json(res,result);
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/queue\/order$/)) && req.method === 'POST') {
