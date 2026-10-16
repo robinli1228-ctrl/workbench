@@ -2149,3 +2149,105 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 .team-copy-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
 .team-copy-dialog [role="status"] { white-space: pre-wrap; overflow-wrap: anywhere; }
 .team-copy-destination { overflow-wrap: anywhere; }
+
+/* Unified card language: sidebar chats, native sessions and role cards share one surface, hairline, depth and accent.
+   Running items get an occasional light sweep: one compositor-only transform on a pseudo-element, idle for most of each cycle. */
+:root {
+  --card-surface: #fff;
+  --card-hairline: rgb(22 30 58 / 8%);
+  --card-hairline-strong: rgb(22 30 58 / 14%);
+  --card-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 1px 3px rgb(16 24 40 / 3%);
+  --card-shadow-hover: 0 2px 4px rgb(16 24 40 / 4%), 0 8px 20px rgb(16 24 40 / 7%);
+  --card-active-ring: 0 0 0 1px rgb(79 91 206 / 32%), 0 6px 18px rgb(79 91 206 / 13%);
+  --card-active-surface: linear-gradient(180deg, #fff 0%, #f6f7ff 100%);
+  --card-running-surface: linear-gradient(120deg, #f7f9ff 0%, #fff 55%, #f4f6ff 100%);
+  --card-sweep: linear-gradient(100deg, transparent 0%, rgb(255 255 255 / 0%) 30%, rgb(132 146 255 / 16%) 46%, rgb(255 255 255 / 62%) 50%, rgb(132 146 255 / 16%) 54%, rgb(255 255 255 / 0%) 70%, transparent 100%);
+  --card-ease: cubic-bezier(.2, .7, .2, 1);
+}
+.project-sidebar, .node-sidebar { background: linear-gradient(180deg, #f7f8fa 0%, #f2f3f6 100%); }
+
+#project-list .project-item,
+#native-session-list .project-item,
+.role-card {
+  position: relative; isolation: isolate; overflow: hidden;
+  border: 1px solid var(--card-hairline); border-radius: 12px;
+  color: var(--ink); background: var(--card-surface); box-shadow: var(--card-shadow);
+  transition: transform .22s var(--card-ease), box-shadow .22s var(--card-ease), border-color .22s var(--card-ease), background-color .22s var(--card-ease);
+}
+#project-list { gap: 8px; }
+#native-session-list { gap: 8px; }
+#project-list .project-item, #native-session-list .project-item { min-height: 60px; padding: 10px 14px 10px 10px; }
+#project-list .project-item strong, #native-session-list .project-item strong,
+.role-card .role-card-name { color: var(--ink); font-size: 13.5px; font-weight: 650; letter-spacing: -.005em; }
+#project-list .project-item small, #native-session-list .project-item small { margin-top: 3px; color: #8a93a6; font-size: 11.5px; }
+
+#project-list .project-item:hover, #native-session-list .project-item:hover,
+.role-card:hover, .role-card:focus-visible {
+  border-color: var(--card-hairline-strong); background: var(--card-surface); box-shadow: var(--card-shadow-hover); transform: translateY(-1px); outline: none;
+}
+#project-list .project-item:focus-visible, #native-session-list .project-item:focus-visible { outline: 2px solid rgb(79 91 206 / 55%); outline-offset: 2px; }
+
+/* Icon tile: a soft lacquered square instead of a bare glyph. */
+#project-list .project-item { grid-template-columns: 32px minmax(0, 1fr); gap: 11px; }
+#project-list .project-item-icon {
+  width: 32px; height: 32px; border-radius: 9px; color: #5b6478;
+  background: linear-gradient(180deg, #fbfbfd 0%, #eef0f5 100%);
+  box-shadow: inset 0 0 0 1px rgb(22 30 58 / 7%), inset 0 1px 0 rgb(255 255 255 / 90%);
+}
+#project-list .project-item-icon svg { width: 18px; height: 18px; }
+
+/* Selection: hairline accent ring plus a left accent rail, the same on both sides. */
+#project-list .project-item.active, #native-session-list .project-item.active {
+  color: var(--ink); border-color: transparent; background: var(--card-active-surface);
+  box-shadow: var(--card-active-ring), inset 3px 0 0 var(--accent);
+}
+#project-list .project-item.active strong, #native-session-list .project-item.active strong { color: var(--accent-dark); }
+#project-list .project-item.active small, #native-session-list .project-item.active small { color: #7d86a8; }
+#native-session-list .project-item.active .native-session-device { color: var(--accent); }
+#project-list .project-item.active::after { content: none; }
+#project-list .project-item.active .project-item-icon {
+  color: #fff; background: linear-gradient(160deg, #6a75e0 0%, var(--accent) 60%, #434dbb 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 28%), 0 2px 6px rgb(79 91 206 / 30%);
+}
+.role-card.is-supervisor { border-top: 1px solid var(--card-hairline); box-shadow: var(--card-shadow), inset 0 2px 0 var(--accent); }
+.role-card.is-supervisor:hover { box-shadow: var(--card-shadow-hover), inset 0 2px 0 var(--accent); }
+.role-card.is-supervisor .role-card-name { color: var(--accent-dark); }
+.role-card.is-setup { border-style: dashed; border-color: var(--card-hairline-strong); background: #fafbfc; box-shadow: none; }
+.role-card.disabled { opacity: .62; }
+
+/* Running: tinted surface and a light that sweeps across now and then. */
+#project-list .project-item.is-running, #native-session-list .project-item.is-running, .role-card.is-working {
+  color: var(--ink); border-color: rgb(79 91 206 / 18%); background: var(--card-running-surface);
+  box-shadow: var(--card-shadow), inset 0 0 0 1px rgb(255 255 255 / 60%);
+}
+#project-list .project-item.is-running small, #native-session-list .project-item.is-running small { color: #6f7cae; }
+#project-list .project-item.is-running .project-item-icon { color: var(--accent); filter: none; }
+#project-list .project-item.active.is-running, #native-session-list .project-item.active.is-running {
+  color: var(--ink); background: var(--card-active-surface); box-shadow: var(--card-active-ring), inset 3px 0 0 var(--accent);
+}
+#native-session-list .project-item.active.is-running small { color: #7d86a8; }
+#project-list .project-item.is-running::after,
+#native-session-list .project-item.is-running::after,
+.role-card.is-working::after {
+  content: ''; position: absolute; inset: -1px; z-index: 1; display: block; pointer-events: none;
+  background: var(--card-sweep); transform: translateX(-120%); will-change: transform;
+  animation: card-sweep 7.5s var(--card-ease) infinite;
+}
+#project-list .project-item.is-running:nth-child(3n+2)::after, #native-session-list .project-item.is-running:nth-child(3n+2)::after, .role-card.is-working:nth-child(3n+2)::after { animation-delay: 2.4s; }
+#project-list .project-item.is-running:nth-child(3n)::after, #native-session-list .project-item.is-running:nth-child(3n)::after, .role-card.is-working:nth-child(3n)::after { animation-delay: 4.8s; }
+@keyframes card-sweep {
+  0% { transform: translateX(-120%); }
+  18% { transform: translateX(120%); }
+  100% { transform: translateX(120%); }
+}
+@media (min-width: 1001px) {
+  body[data-project-sidebar="collapsed"] #project-list .project-item { border-color: transparent; background: transparent; box-shadow: none; transform: none; }
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active .project-item-icon { box-shadow: inset 0 1px 0 rgb(255 255 255 / 28%), 0 2px 6px rgb(79 91 206 / 30%); }
+  body[data-project-sidebar="collapsed"] #project-list .project-item.is-running::after { display: none; }
+  body[data-project-sidebar="collapsed"] #project-list .project-item.is-running .project-item-icon { box-shadow: 0 0 0 2px rgb(79 91 206 / 28%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #project-list .project-item, #native-session-list .project-item, .role-card { transition: none; }
+  #project-list .project-item:hover, #native-session-list .project-item:hover, .role-card:hover { transform: none; }
+  #project-list .project-item.is-running::after, #native-session-list .project-item.is-running::after, .role-card.is-working::after { animation: none; display: none; }
+}
