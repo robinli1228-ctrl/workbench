@@ -714,38 +714,18 @@ button.quoted-message:hover { color:#315b84; background:#e7eef5; }
 .attachment-text-card .attachment-name, .attachment-text-card small { grid-column: 2; min-width: 0; }
 .attachment-text-card .attachment-restore { margin-left: 50px; }
 .attachment-text-card > .chat-icon-btn { position: absolute; right: 3px; bottom: 4px; margin: 0; }
-/* Composer previews are compact; reserve an action column so generic input buttons cannot cover filenames. Sent attachments retain their existing layout. */
-#chat-attachments { align-items: flex-start; max-height: 164px; overflow-y: auto; }
-#chat-attachments .attachment-card { flex: 0 1 232px; width: 232px; max-width: 100%; min-width: 0; padding-right: 0; }
-#chat-attachments .attachment-open { display: grid; grid-template-columns: 48px minmax(0, 1fr); grid-template-rows: auto auto; align-content: center; gap: 3px 8px; min-height: 66px; max-width: none; padding: 8px 36px 8px 8px; }
-#chat-attachments .attachment-open img, #chat-attachments .attachment-file-icon { grid-row: 1 / span 2; width: 48px; height: 48px; align-self: center; }
-#chat-attachments .attachment-file-icon { display: grid; place-items: center; font-size: 25px; }
-#chat-attachments .attachment-name, #chat-attachments .attachment-open small { grid-column: 2; min-width: 0; max-width: 100%; }
-#chat-attachments .attachment-remove, #chat-attachments .attachment-card > .chat-icon-btn { position: absolute; right: 3px; display: grid; place-items: center; width: 28px; height: 28px; min-height: 28px; padding: 0; margin: 0; color: var(--accent); background: transparent; }
-#chat-attachments .attachment-remove { top: 3px; font-size: 20px; line-height: 1; }
-#chat-attachments .attachment-card > .chat-icon-btn { bottom: 3px; }
-#chat-attachments .attachment-remove:hover, #chat-attachments .attachment-card > .chat-icon-btn:hover { background: var(--accent-soft); }
-#chat-attachments .attachment-restore { min-height: 24px; margin-left: 64px; padding: 2px 0; font-size: 11px; }
 /* 文件附件统一两行：小图标和大小在上，文件名在下；操作放进首行，图片缩略图不变。 */
 .attachment-file-card { width: 160px; max-width: 100%; padding-right: 0; }
-:is(.attachment-file-card, #chat-attachments .attachment-file-card) .attachment-open { display: grid; grid-template-columns: 16px minmax(0, 1fr) 28px; grid-template-rows: 18px 18px; align-items: center; gap: 2px 6px; max-width: none; min-height: 0; padding: 7px 8px; }
-:is(.attachment-file-card, #chat-attachments .attachment-file-card) .attachment-file-icon { display: grid; place-items: center; grid-column: 1; grid-row: 1; width: 16px; height: 18px; align-self: center; font-size: 16px; line-height: 18px; }
-:is(.attachment-file-card, #chat-attachments .attachment-file-card) .attachment-open small { grid-column: 2; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 18px; }
-:is(.attachment-file-card, #chat-attachments .attachment-file-card) .attachment-name { display: block; grid-column: 1 / -1; grid-row: 2; min-width: 0; max-width: 100%; font-size: 12px; line-height: 18px; }
-:is(.attachment-file-card, #chat-attachments .attachment-file-card):has(.attachment-remove) .attachment-open { grid-template-columns: 16px minmax(0, 1fr) 56px; }
-:is(.attachment-file-card, #chat-attachments .attachment-file-card):has(.attachment-restore) .attachment-open { grid-template-columns: 16px minmax(0, 1fr) 84px; }
-:is(.attachment-file-card, #chat-attachments .attachment-file-card) > :is(.chat-icon-btn, .attachment-remove) { position: absolute; top: 5px; right: 4px; bottom: auto; display: grid; place-items: center; width: 22px; height: 22px; min-height: 22px; margin: 0; padding: 0; }
-:is(.attachment-file-card, #chat-attachments .attachment-file-card):has(.attachment-remove) > .chat-icon-btn:not(.attachment-restore) { right: 30px; }
-:is(.attachment-file-card, #chat-attachments .attachment-file-card) > .attachment-restore { right: 56px; }
+.attachment-file-card .attachment-open { display: grid; grid-template-columns: 16px minmax(0, 1fr) 28px; grid-template-rows: 18px 18px; align-items: center; gap: 2px 6px; max-width: none; min-height: 0; padding: 7px 8px; }
+.attachment-file-card .attachment-file-icon { display: grid; place-items: center; grid-column: 1; grid-row: 1; width: 16px; height: 18px; align-self: center; font-size: 16px; line-height: 18px; }
+.attachment-file-card .attachment-open small { grid-column: 2; grid-row: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 18px; }
+.attachment-file-card .attachment-name { display: block; grid-column: 1 / -1; grid-row: 2; min-width: 0; max-width: 100%; font-size: 12px; line-height: 18px; }
+.attachment-file-card:has(.attachment-remove) .attachment-open { grid-template-columns: 16px minmax(0, 1fr) 56px; }
+.attachment-file-card:has(.attachment-restore) .attachment-open { grid-template-columns: 16px minmax(0, 1fr) 84px; }
+.attachment-file-card > :is(.chat-icon-btn, .attachment-remove) { position: absolute; top: 5px; right: 4px; bottom: auto; display: grid; place-items: center; width: 22px; height: 22px; min-height: 22px; margin: 0; padding: 0; }
+.attachment-file-card:has(.attachment-remove) > .chat-icon-btn:not(.attachment-restore) { right: 30px; }
+.attachment-file-card > .attachment-restore { right: 56px; }
 .attachment-dialog { max-width: min(90vw, 1000px); }
-/* 输入区卡片固定 8:5；正文点击预览，仅保留移除和上传失败重试。 */
-#chat-attachments .attachment-card { flex: 0 1 160px; width: 160px; aspect-ratio: 8 / 5; overflow: hidden; }
-#chat-attachments .attachment-card .attachment-open { width: 100%; height: 100%; min-height: 0; padding: 10px; grid-template-columns: 18px minmax(0, 1fr) 22px; grid-template-rows: minmax(0, 1fr) 18px; gap: 6px; align-content: stretch; }
-#chat-attachments .attachment-card .attachment-file-icon { grid-column: 1; grid-row: 1; }
-#chat-attachments .attachment-card .attachment-open small { grid-column: 2; grid-row: 1; }
-#chat-attachments .attachment-card .attachment-name { grid-column: 1 / -1; grid-row: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#chat-attachments .attachment-card .attachment-open img { grid-column: 1; grid-row: 1; width: 100%; height: 100%; min-height: 0; object-fit: contain; }
-#chat-attachments .attachment-card:has(img) .attachment-open { grid-template-columns: minmax(0, 1fr) 48px 22px; }
 .attachment-dialog img { display: block; max-width: 100%; max-height: 75vh; object-fit: contain; }
 #chat-file-input[hidden] { display: none; }
 .chat-input-bar button { flex-shrink: 0; min-height: 40px; padding: 0 16px; }
@@ -2115,16 +2095,11 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 .native-process-tool.is-failed .live-scene-tool-state { background: #fdecea; color: #b4442f; }
 .native-process-tool h4 { margin: 8px 0 0; font-size: 11px; color: var(--muted); }
 /* Native takeover polish: composer preview cards, sent thumbnails and quiet status pills. */
-.native-takeover-tray { gap: 8px; margin: 8px 8px 2px; max-height: 150px; overflow-y: auto; }
 .native-session-history { min-width: 0; margin: -2px 0 6px 8px; padding-left: 8px; border-left: 1px solid var(--line); }
 .native-session-history > summary { padding: 6px 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
 .native-session-history > .project-item { width: 100%; margin-top: 4px; }
-.native-takeover-tray .attachment-card { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 8px; width: 220px; max-width: 100%; padding: 6px 32px 6px 6px; }
-.native-takeover-tray .attachment-card img, .native-takeover-tray .native-file-icon { width: 44px; height: 44px; border-radius: 6px; object-fit: cover; background: #eef3f9; display: grid; place-items: center; font-size: 20px; }
 .native-file-info { display: grid; gap: 2px; min-width: 0; }
 .native-file-info small { color: var(--muted); font-size: 11px; }
-.native-takeover-tray .attachment-remove { top: 4px; right: 4px; width: 22px; height: 22px; display: grid; place-items: center; padding: 0; font-size: 16px; line-height: 1; color: var(--muted); background: transparent; }
-.native-takeover-tray .attachment-remove:hover { background: #e3edf7; color: var(--ink); }
 .native-turn-files { justify-content: flex-end; }
 .native-turn-files .attachment-card { border: 0; background: transparent; }
 .native-turn-files .attachment-card img { display: block; width: 96px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid #d3deeb; }
@@ -2700,3 +2675,28 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 /* Close/remove controls draw the same stroked SVG as their neighbours (closeIcon), so they share one optical centre. */
 .attachment-remove { display: grid; place-items: center; }
 .attachment-remove svg { display: block; width: 14px; height: 14px; pointer-events: none; }
+
+/* Composer attachments (group chat and native takeover) share one fixed 224×64 horizontal card: a 48px preview or
+   file icon, the name on one line, size or upload status below it, and the actions in their own right column so
+   they never cover text. Desktop wraps; narrow screens scroll the row sideways. Sent attachments keep their layout. */
+:is(#chat-attachments, .native-takeover-tray) { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 8px; min-width: 0; max-width: 100%; max-height: 144px; overflow-x: hidden; overflow-y: auto; }
+:is(#chat-attachments, .native-takeover-tray)[hidden] { display: none; }
+:is(#chat-attachments, .native-takeover-tray) > :is(.attachment-card, .attachment-uploading) { box-sizing: border-box; flex: 0 0 224px; width: 224px; min-width: 224px; max-width: 224px; height: 64px; margin: 0; aspect-ratio: auto; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 28px; grid-template-rows: 1fr 1fr; padding: 0; overflow: hidden; border: 1px solid var(--card-hairline); border-radius: 12px; background: #fff; transition: border-color .15s; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:hover { border-color: rgb(79 91 206 / 28%); }
+:is(#chat-attachments, .native-takeover-tray) .attachment-open { grid-column: 1; grid-row: 1 / -1; display: grid; grid-template-columns: 48px minmax(0, 1fr); grid-template-rows: 1fr 1fr; column-gap: 10px; row-gap: 0; align-items: center; width: 100%; max-width: none; height: 100%; min-height: 0; margin: 0; padding: 0 0 0 7px; border: 0; border-radius: 0; color: var(--text-strong); background: transparent; text-align: left; cursor: pointer; }
+:is(#chat-attachments, .native-takeover-tray) .attachment-open > :is(img, .attachment-file-icon, .native-file-icon) { grid-column: 1; grid-row: 1 / -1; align-self: center; display: grid; place-items: center; box-sizing: border-box; width: 48px; height: 48px; border-radius: 8px; object-fit: cover; color: var(--text-muted); background: var(--surface-sunken); font-size: 22px; line-height: 1; }
+:is(#chat-attachments, .native-takeover-tray) .attachment-open > :is(.attachment-file-icon, .native-file-icon) svg { display: block; width: 22px; height: 22px; }
+:is(#chat-attachments, .native-takeover-tray) .attachment-name { grid-column: 2; grid-row: 1; align-self: end; display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 550; line-height: 18px; }
+:is(#chat-attachments, .native-takeover-tray) .attachment-open small { grid-column: 2; grid-row: 2; align-self: start; display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11px; line-height: 16px; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card.is-error small { color: var(--danger); }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card > :is(.attachment-remove, .chat-icon-btn) { position: static; grid-column: 2; grid-row: 1 / -1; align-self: center; justify-self: center; display: grid; place-items: center; width: 24px; height: 24px; min-width: 24px; min-height: 24px; margin: 0; padding: 0; border: 0; border-radius: 6px; color: var(--text-muted); background: transparent; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card > :is(.attachment-remove, .chat-icon-btn) svg { display: block; width: 14px; height: 14px; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card > :is(.attachment-remove, .chat-icon-btn):hover { color: var(--accent); background: var(--accent-tint); }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:has(> .chat-icon-btn) > .attachment-remove { grid-row: 1; align-self: end; margin-bottom: 1px; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card > .chat-icon-btn { grid-row: 2; align-self: start; margin-top: 1px; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-uploading { display: grid; place-items: center; padding: 0 12px; border: 1px dashed var(--card-hairline); border-radius: 12px; color: var(--text-muted); background: var(--surface-sunken); font-size: 12px; }
+@media (max-width: 760px) {
+  :is(#chat-attachments, .native-takeover-tray) { flex-wrap: nowrap; max-height: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding-bottom: 2px; }
+  :is(#chat-attachments, .native-takeover-tray) > :is(.attachment-card, .attachment-uploading) { scroll-snap-align: start; }
+}
