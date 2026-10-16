@@ -2660,3 +2660,8 @@ button.danger:hover:not(:disabled), :is(dialog, #project-form-panel) button.dang
 .project-sidebar .navigation-mode button { min-width: 0; padding: 8px 5px; font-size: 13.5px; white-space: nowrap; }
 .project-sidebar .navigation-mode button[aria-pressed="true"]::after { left: 5px; right: 5px; }
 body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
+
+/* Queue title row: count on the left, the collaboration wait status on the right. */
+.message-queue summary .message-queue-title { flex: none; }
+.message-queue summary .message-queue-wait { min-width: 0; margin: 0 0 0 auto; padding: 2px 8px; overflow: hidden; border-radius: 999px; color: var(--accent-dark); background: var(--accent-tint); font-size: var(--fs-xs); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.message-queue summary .message-queue-wait.is-released { color: #8a5a12; background: #fff1d8; }

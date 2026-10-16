@@ -195,13 +195,17 @@ function createMessageQueue({api,refreshState,create,setError}) {
     // Home's own projection decides who is protected; the browser only labels it and never guesses from an idle CLI.
     const waits=(data.collaborationWaits||[]).filter(w=>w.projectId===projectId&&(!tasks.length||tasks.some(t=>(t.conversationId||t.projectId)===w.conversationId&&t.roleId===w.roleId)));
     const protectedRole=task=>waits.find(w=>!w.released&&w.roleId===task.roleId&&w.conversationId===(task.conversationId||task.projectId));
-    panel.hidden=!tasks.length;summary.textContent=t('Queue · {v}', { v: tasks.length });list.replaceChildren();
-    for(const wait of waits.filter((w,i,all)=>all.findIndex(x=>x.roleId===w.roleId&&x.conversationId===w.conversationId)===i)) {
-      const role=(data.roles||[]).find(r=>r.id===wait.roleId)?.name||t('Role');
-      const left=Math.max(1,Math.ceil((Date.parse(wait.releaseAt)-Date.now())/60000));
+    panel.hidden=!tasks.length;list.replaceChildren();
+    // The wait status sits on the queue title row, to the right of the count, so it is visible even when the queue is folded.
+    const roleName=id=>(data.supervisorRoles||[]).some(r=>r.id===id)?t('Supervisor@@roleCard'):(data.roles||[]).find(r=>r.id===id)?.name||t('Role');
+    const firstWait=[...waits].sort((a,b)=>Number(Boolean(b.stalled))-Number(Boolean(a.stalled))||Date.parse(a.releaseAt)-Date.parse(b.releaseAt))[0];
+    const title=create('span','message-queue-title',t('Queue · {v}', { v: tasks.length }));
+    summary.replaceChildren(title);
+    if(firstWait){
+      const role=roleName(firstWait.roleId),left=Math.max(1,Math.ceil((Date.parse(firstWait.releaseAt)-Date.now())/60000));
       // Nothing is released automatically; a stalled wait only unlocks "Handle this first" for every queued item.
-      list.append(create('p',`message-queue-wait${wait.stalled?' is-released':''}`,wait.stalled?t('{role} · no collaboration progress for a while; needs attention. Choose Handle this first to let a queued item go',{role})
-        :t('{role} · waiting for collaboration results · marked stalled after about {minutes} min without progress',{role,minutes:left})));
+      summary.append(create('span',`message-queue-wait${firstWait.stalled?' is-released':''}`,firstWait.stalled?t('{role} · no progress for a while, marked stalled',{role})
+        :t('{role} · marked stalled after about {minutes} min without progress',{role,minutes:left})));
     }
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
@@ -1093,7 +1097,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     mentionRange = mentionQuery();
     if (!mentionRange || input.disabled) { hideMentionMenu(); return; }
     const q = mentionRange.query.toLowerCase();
-    const roles = projectRoles().filter(r => !q || r.name.toLowerCase().includes(q));
+    // The project supervisor is routed by name on the server; offer it in the menu like any other role.
+    const project = data.projects?.find(p => p.id === projectId);
+    const supervisorRole = project?.supervisorRoleId ? (data.supervisorRoles || []).find(r => r.id === project.supervisorRoleId) : null;
+    const supervisor = supervisorRole ? { ...supervisorRole, name: t('Supervisor@@roleCard') } : null;
+    const supervisorMatches = supervisor && (!q || supervisor.name.toLowerCase().includes(q) || 'supervisor'.startsWith(q) || '\u603b\u7ba1'.includes(q));
+    const roles = [...(supervisorMatches ? [supervisor] : []), ...projectRoles().filter(r => !q || r.name.toLowerCase().includes(q))];
     const everyone = !q || 'everyone'.includes(q) || 'all'.startsWith(q);
     mentionChoices = [...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...roles];
     if (!mentionChoices.length) { hideMentionMenu(); return; }
