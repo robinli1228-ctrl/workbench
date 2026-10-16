@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import {RoleCalls} from './role-calls.mjs';
 import {isRoleConfigured} from './default-roles.mjs';
 import {executionProgress} from '../public/execution-progress.js';
+import {conversationIdOf,resolveConversationId} from './group-conversations.mjs';
 
 /** Resolve provenance from trusted stored links, never from model-supplied sender fields. */
 export function followupFor(db,record) {
@@ -26,13 +27,15 @@ export function privateFollowup(db,record){const context=followupFor(db,record);
 export class ProactiveFollowup {
   constructor(db,rooms=null,{clock=()=>new Date()}={}){this.db=db;this.rooms=rooms;this.clock=clock;}
   /** Reading defaults never enables a project or advances its cursor. */
-  get(projectId){
+  get(projectId,conversationId){
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
     if(!this.db.get('projects',projectId))throw Error(tr('home.projectNotFound3'));
-    return this.db.get('proactiveFollowups',projectId)||{id:projectId,projectId,enabled:false,silenceMinutes:10,revision:0,anchorMessageId:null,dueAt:null,requestId:null,waitingReason:null};
+    const id=conversationId===projectId?projectId:`${projectId}:${conversationId}`;
+    return this.db.get('proactiveFollowups',id)||{id,projectId,conversationId,enabled:false,silenceMinutes:10,revision:0,anchorMessageId:null,dueAt:null,requestId:null,waitingReason:null};
   }
   /** Presentation follows the original request's latest continuation; no second status machine is persisted. */
-  view(projectId){
-    const state=this.get(projectId),seen=new Set();let request=this.db.get('coordinationRequests',state.requestId||'');
+  view(projectId,conversationId){
+    const state=this.get(projectId,conversationId),seen=new Set();let request=this.db.get('coordinationRequests',state.requestId||'');
     while(request?.continuationRequestId&&!seen.has(request.id)){seen.add(request.id);const next=this.db.get('coordinationRequests',request.continuationRequestId);if(!next)break;request=next;}
     const task=this.db.get('tasks',request?.taskId||state.taskId||''),run=this.db.get('runs',request?.currentRunId||task?.currentRunId||'');
     return {...state,execution:task||request?{taskId:task?.id,requestId:request?.id,runId:run?.id,status:run?.status||request?.status||task?.status,progress:executionProgress({run,task,request}),waitingReason:task?.waitingReason||request?.waitingReason||null,error:run?.error||task?.error||null}:null};
@@ -40,25 +43,26 @@ export class ProactiveFollowup {
   /** Enabling starts at the current tail; a duration edit retains the original message receipt time. */
   save(projectId,input){
     return this.db.transaction(()=>{
-      const old=this.get(projectId);
+      const old=this.get(projectId,input?.conversationId),conversationId=conversationIdOf(old);
       if(input?.revision!==old.revision)throw Error(tr('followup.configChanged'));
       if(typeof input.enabled!=='boolean'||!Number.isSafeInteger(input.silenceMinutes)||input.silenceMinutes<1||input.silenceMinutes>10080)throw Error(tr('followup.invalidConfig'));
       const reset=!old.enabled&&input.enabled;
       const value={...old,enabled:input.enabled,silenceMinutes:input.silenceMinutes,revision:old.revision+1,updatedAt:this.clock().toISOString(),
-        ...(reset?{cursor:this.db.messageCursor(projectId),anchorMessageId:null,anchorAt:null,dueAt:null,requestId:null,taskId:null,messageIds:[],waitingReason:null}:{} )};
+        ...(reset?{cursor:this.db.messageCursor(projectId,conversationId),anchorMessageId:null,anchorAt:null,dueAt:null,requestId:null,taskId:null,messageIds:[],waitingReason:null}:{} )};
       if(value.anchorAt)value.dueAt=new Date(Date.parse(value.anchorAt)+value.silenceMinutes*60000).toISOString();
       this.db.put('proactiveFollowups',value);
-      if(!value.enabled)this.cancelPending(projectId);
+      if(!value.enabled)this.cancelPending(projectId,null,conversationId);
       return value;
     });
   }
   /** Consume newly persisted messages only, using provenance rather than the meaning of their text. */
-  observe(projectId){
-    let state=this.get(projectId);if(!state.enabled)return state;
-    const arrivals=this.db.messageArrivals(projectId,state.cursor||0);if(!arrivals.length)return state;
+  observe(projectId,conversationId){
+    let state=this.get(projectId,conversationId);if(!state.enabled)return state;
+    conversationId=conversationIdOf(state);
+    const arrivals=this.db.messageArrivals(projectId,state.cursor||0,conversationId);if(!arrivals.length)return state;
     const valid=arrivals.filter(message=>this.eligible(message)),anchor=valid.at(-1);
     state={...state,cursor:arrivals.at(-1).receiptSeq};
-    if(anchor){this.cancelPending(projectId,anchor.id);state={...state,anchorMessageId:anchor.id,anchorAt:anchor.receivedAt,dueAt:new Date(Date.parse(anchor.receivedAt)+state.silenceMinutes*60000).toISOString(),requestId:null,taskId:null,waitingReason:null,
+    if(anchor){this.cancelPending(projectId,anchor.id,conversationId);state={...state,anchorMessageId:anchor.id,anchorAt:anchor.receivedAt,dueAt:new Date(Date.parse(anchor.receivedAt)+state.silenceMinutes*60000).toISOString(),requestId:null,taskId:null,waitingReason:null,
       messageIds:[...(state.messageIds||[]),...valid.map(m=>m.id)].slice(-12)};
     }
     return this.db.put('proactiveFollowups',state);
@@ -73,9 +77,9 @@ export class ProactiveFollowup {
       &&!(message.runId&&this.db.get('tasks',this.db.get('runs',message.runId)?.taskId||'')?.sessionQueueAlert);
   }
   /** Only first turns not yet started can be withdrawn; active turns and their dependency continuations remain intact. */
-  cancelPending(projectId,keepAnchor=null){
+  cancelPending(projectId,keepAnchor=null,conversationId=projectId){
     for(const task of this.db.listProject('tasks',projectId)){
-      if(!task.proactiveInitial||task.status!=='ready'||task.currentRunId||task.proactiveFollowup?.anchorMessageId===keepAnchor)continue;
+      if(conversationIdOf(task)!==conversationId||!task.proactiveInitial||task.status!=='ready'||task.currentRunId||task.proactiveFollowup?.anchorMessageId===keepAnchor)continue;
       this.db.put('tasks',{...task,status:'cancelled',waitingReason:null});
       const request=this.db.get('coordinationRequests',task.requestId||`task:${task.id}`);
       if(request&&!request.currentRunId)this.db.put('coordinationRequests',{...request,status:'cancelled',updatedAt:this.clock().toISOString()});
@@ -99,11 +103,11 @@ export class ProactiveFollowup {
   prepareStart(taskId){
     let task=this.db.get('tasks',taskId),context=followupFor(this.db,task);if(!context)return task;
     if(task.proactiveInitial&&!task.currentRunId){
-      const state=this.observe(task.projectId);
-      if(!state.enabled||state.anchorMessageId!==context.anchorMessageId){this.cancelPending(task.projectId,state.enabled?state.anchorMessageId:null);return null;}
+      const state=this.observe(task.projectId,conversationIdOf(task));
+      if(!state.enabled||state.anchorMessageId!==context.anchorMessageId){this.cancelPending(task.projectId,state.enabled?state.anchorMessageId:null,conversationIdOf(task));return null;}
       if(Date.parse(state.dueAt)>this.clock().getTime()){this.db.put('tasks',{...task,waitingReason:tr('followup.waitingSilence')});return null;}
       const covered=this.coveringRequest({...state,messageIds:context.messageIds});
-      if(covered&&covered.taskId!==task.id){this.cancelPending(task.projectId);this.db.put('proactiveFollowups',{...state,requestId:covered.id,taskId:covered.taskId});return null;}
+      if(covered&&covered.taskId!==task.id){this.cancelPending(task.projectId,null,conversationIdOf(task));this.db.put('proactiveFollowups',{...state,requestId:covered.id,taskId:covered.taskId});return null;}
       context={...context,silenceMinutes:state.silenceMinutes,dueAt:state.dueAt};
       task={...task,proactiveFollowup:context,prompt:tr('followup.event',{minutes:state.silenceMinutes})};
     }
@@ -125,7 +129,7 @@ export class ProactiveFollowup {
     let changed=false;
     for(const snapshot of this.db.list('proactiveFollowups'))if(snapshot.enabled){
       this.db.transaction(()=>{
-        let state=this.observe(snapshot.projectId);
+        let state=this.observe(snapshot.projectId,conversationIdOf(snapshot));
         if(state.anchorMessageId&&Date.parse(state.dueAt)<=this.clock().getTime()&&!state.requestId){
           const role=this.db.get('roles',this.db.get('projects',state.projectId)?.supervisorRoleId||'');
           if(!role?.enabled||role.archivedAt||!isRoleConfigured(role))state=this.db.put('proactiveFollowups',{...state,waitingReason:tr('followup.noSupervisor')});
@@ -135,7 +139,7 @@ export class ProactiveFollowup {
             else if(this.rooms){
               const id=`followup:${createHash('sha256').update(`${state.projectId}:${state.anchorMessageId}`).digest('hex')}`;
               const context={id,roleId:role.id,anchorMessageId:state.anchorMessageId,messageIds:state.messageIds||[],dueAt:state.dueAt,triggeredAt:this.clock().toISOString(),silenceMinutes:state.silenceMinutes};
-              const message=this.rooms.postSystemTask(state.projectId,{id,roleId:role.id,text:tr('followup.event',{minutes:state.silenceMinutes}),source:{kind:'proactive_followup',context}});
+              const message=this.rooms.postSystemTask(state.projectId,{id,conversationId:conversationIdOf(state),roleId:role.id,text:tr('followup.event',{minutes:state.silenceMinutes}),source:{kind:'proactive_followup',context}});
               const request=new RoleCalls(this.db).adoptTask(message.taskIds[0]);
               state=this.db.put('proactiveFollowups',{...state,requestId:request.id,taskId:message.taskIds[0],waitingReason:null});
             }

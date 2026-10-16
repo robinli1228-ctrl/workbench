@@ -133,8 +133,8 @@ export class Store {
     this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').run(kind, value.id, JSON.stringify(value));return value;
   }
   /** A monotonic Home receipt survives edits, imports, deletion and restarts without trusting a device timestamp. */
-  messageCursor(projectId){return this.db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM room_message_receipts WHERE project_id=?').get(projectId).seq;}
-  messageArrivals(projectId,after){return this.db.prepare("SELECT r.data,m.seq,m.received_at FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND m.seq>? ORDER BY m.seq").all(projectId,after).map(r=>({...JSON.parse(r.data),receiptSeq:r.seq,receivedAt:r.received_at}));}
+  messageCursor(projectId,conversationId=projectId){return this.db.prepare("SELECT COALESCE(MAX(m.seq),0) AS seq FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=?").get(projectId,conversationId).seq;}
+  messageArrivals(projectId,after,conversationId=projectId){return this.db.prepare("SELECT r.data,m.seq,m.received_at FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND m.seq>? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=? ORDER BY m.seq").all(projectId,after,conversationId).map(r=>({...JSON.parse(r.data),receiptSeq:r.seq,receivedAt:r.received_at}));}
   remove(kind, id) { this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind, id); }
   /** A synchronous transaction makes the check and the creation a single operation, avoiding duplicate claims. */
   transaction(fn) {
@@ -189,7 +189,7 @@ export class Store {
       for (const t of this.list('tasks').filter(t => t.projectId === id)) this.remove('tasks', t.id);
       for (const m of this.list('roomMessages').filter(m => m.projectId === id)) this.remove('roomMessages', m.id);
       for (const c of this.listProject('groupConversations',id)) this.remove('groupConversations',c.id);
-      this.remove('proactiveFollowups',id);
+      for(const followup of this.listProject('proactiveFollowups',id))this.remove('proactiveFollowups',followup.id);
       // Only explicit project deletion releases its private read evidence; there is no background eviction.
       const readOperations=this.listProject('readOperations',id),readUsage=this.get('readStorageUsage','home');
       if(readUsage)this.put('readStorageUsage',{...readUsage,

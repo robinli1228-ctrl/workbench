@@ -803,7 +803,7 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/tasks' && req.method === 'POST') { const r = db.createTask(await body(req)); change(); return json(res, r, 201); }
       let m;
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/proactive-followup$/))){
-        if(req.method==='GET')return json(res,proactiveFollowup.view(m[1]));
+        if(req.method==='GET')return json(res,proactiveFollowup.view(m[1],url.searchParams.get('conversationId')??undefined));
         if(req.method==='POST'){const result=proactiveFollowup.save(m[1],await body(req));change();return json(res,result);}
       }
       if((m=pathname.match(/^\/api\/tasks\/([^/]+)\/detail$/)) && req.method==='GET') {
@@ -816,11 +816,13 @@ const server = http.createServer(async (req, res) => {
         return json(res,history[m[2]](m[1],input));
       }
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/scheduled-jobs$/))) {
-        if(req.method==='GET')return json(res,scheduledJobs.list(m[1]));
+        if(req.method==='GET')return json(res,scheduledJobs.list(m[1],url.searchParams.get('conversationId')??undefined));
         if(req.method==='POST'){const result=scheduledJobs.save(m[1],await body(req));change();return json(res,result);}
       }
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/scheduled-jobs\/([^/]+)\/(toggle|run|delete)$/)) && req.method==='POST') {
-        const b=await body(req),result=m[3]==='toggle'?scheduledJobs.pause(m[1],m[2],b.enabled,b.revision):m[3]==='run'?scheduledJobs.runNow(m[1],m[2]):scheduledJobs.remove(m[1],m[2],b.revision);
+        const b=await body(req);
+        assertConversationRecord({projectId:m[1],conversationId:resolveConversationId(db,m[1],b.conversationId)},db.get('scheduledJobs',m[2]));
+        const result=m[3]==='toggle'?scheduledJobs.pause(m[1],m[2],b.enabled,b.revision):m[3]==='run'?scheduledJobs.runNow(m[1],m[2]):scheduledJobs.remove(m[1],m[2],b.revision);
         scheduleChat();change();return json(res,result);
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/prepare\/([^/]+)$/)) && req.method === 'POST') return json(res,await projectsAdmin.prepare(m[1],m[2]));

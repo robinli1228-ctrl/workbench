@@ -1,4 +1,5 @@
 import { tr } from './i18n.mjs';
+import {conversationIdOf,assertConversationRecord} from './group-conversations.mjs';
 const ACTIONS = new Set(['list', 'create', 'update', 'pause', 'resume', 'delete']);
 const SCHEDULE_FIELDS = ['type', 'onceAt', 'intervalMinutes', 'time', 'timezone', 'weekday', 'anchorAt'];
 const WRITE_FIELDS = ['requestId', 'id', 'revision', 'name', 'description', 'roleId', 'jobType', 'enabled', 'schedule', ...SCHEDULE_FIELDS];
@@ -33,11 +34,12 @@ export class TimerAgentActions {
     const project = this.db.get('projects', run?.projectId);
     if (!project || project.supervisorRoleId !== run.roleId || !run.roleSnapshot?.systemSupervisor) throw new Error(tr('timerAgent.onlyCurrentProjectSFixed'));
     const values = normalize(action, input);
-    if (action === 'list') return this.jobs.list(run.projectId);
+    if (action === 'list') return this.jobs.list(run.projectId,conversationIdOf(run));
+    if(values.id)assertConversationRecord(run,this.db.get('scheduledJobs',values.id));
     if (['create', 'update'].includes(action) && values.roleId && this.db.get('roles', values.roleId)?.projectId !== run.projectId) throw new Error(tr('timerAgent.onlyRolesFromCurrentProject'));
     if (this.db.get('settings', 'main')?.paused) throw new Error(tr('timerAgent.remoteExecutionPaused'));
     return this.db.transaction(() => {
-      const id = `${run.projectId}:${values.requestId}`;
+      const id = `${run.projectId}:${conversationIdOf(run)===run.projectId?'':`${conversationIdOf(run)}:`}${values.requestId}`;
       const fingerprint = JSON.stringify({ action, values });
       const prior = this.db.get('timerActions', id);
       if (prior) {
@@ -45,7 +47,7 @@ export class TimerAgentActions {
         return prior.result;
       }
       let result;
-      if (action === 'create' || action === 'update') result = this.jobs.save(run.projectId, values);
+      if (action === 'create' || action === 'update') result = this.jobs.save(run.projectId, {...values,conversationId:conversationIdOf(run)});
       else if (action === 'pause' || action === 'resume') result = this.jobs.pause(run.projectId, values.id, action === 'resume', values.revision);
       else result = this.jobs.remove(run.projectId, values.id, values.revision);
       this.db.put('timerActions', { id, projectId: run.projectId, runId: run.id, action, fingerprint,

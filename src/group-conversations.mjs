@@ -29,11 +29,11 @@ export function agentConversationInput(run,input={}) {
 
 /** A read-only conversation lens composes with (and never replaces) independent-review redaction. */
 export function conversationView(db,context) {
-  const scoped=new Set(['roomMessages','tasks','runs','coordinationRequests','conversationContexts','summaryQueues','summaryJobs','discussionThreads','discussionMessages','discussionDeliveries','discussionIntents','plans','planSteps','planVersions','collaborationSessions','sessionBatches','scheduledJobs','scheduledOccurrences','deliveries']);
+  const scoped=new Set(['roomMessages','tasks','runs','coordinationRequests','conversationContexts','summaryQueues','summaryJobs','discussionThreads','discussionMessages','discussionDeliveries','discussionIntents','executionPlans','plans','planSteps','planVersions','collaborationSessions','sessionBatches','scheduledJobs','scheduledOccurrences','deliveries']);
   const visible=(kind,record)=>{
     if(!record)return null;
     let owner=record;
-    if(kind==='runReports'||kind==='reportSubmissions')owner=db.get('runs',record.runId||record.id);
+    if(kind==='runReports'||kind==='reportSubmissions'||kind==='runAlerts')owner=db.get('runs',record.runId||record.id);
     else if(kind==='roleSessions')return record.projectId===context.projectId&&groupConversationIdOfSession(record)===conversationIdOf(context)?record:null;
     else if(!scoped.has(kind))return record;
     return owner?.projectId===context.projectId&&conversationIdOf(owner)===conversationIdOf(context)?record:null;

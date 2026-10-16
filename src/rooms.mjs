@@ -74,20 +74,21 @@ export class Rooms {
   constructor(db) { this.db = db; }
 
   /** Internal system dispatch has a real queued task, but never impersonates a human message. */
-  postSystemTask(projectId,{id,roleId,text,source,sourceInputs=[],execution=null}) {
+  postSystemTask(projectId,{id,roleId,text,source,sourceInputs=[],execution=null,conversationId}) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
     return this.db.transaction(()=>{
       const role=this.db.get('roles',roleId);
       if(role?.projectId!==projectId||role.archivedAt||!role.enabled||!isRoleConfigured(role))throw new Error(tr('rooms.roleDisabled2'));
       if(!['repair','peer','assignment','proactive_followup'].includes(source?.kind))throw new Error(tr('rooms.projectNotFound'));
-      const fingerprint=JSON.stringify({projectId,roleId,text,source,sourceInputs,execution}),prior=this.db.get('roomMessages',id);
+      const fingerprint=JSON.stringify({projectId,roleId,text,source,sourceInputs,execution,...(conversationId!==projectId?{conversationId}:{})}),prior=this.db.get('roomMessages',id);
       if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('rooms.projectNotFound'));return prior;}
       const task=this.db.createTask({projectId,title:text.slice(0,80),prompt:text,model:role.model,mode:role.mode});
-      this.db.put('tasks',{...task,origin:'chat',roleId,roleSnapshot:role,sourceMessageId:id,contextPrepared:true,reportRequired:true,sourceInputs,execution,
+      this.db.put('tasks',{...task,conversationId,origin:'chat',roleId,roleSnapshot:role,sourceMessageId:id,contextPrepared:true,reportRequired:true,sourceInputs,execution,
         ...(source.kind==='proactive_followup'?{proactiveFollowup:source.context,proactiveInitial:true,backgroundFollowup:true,reportRequired:false}:{}),
         ...(source.kind==='repair'?{sourceConflictId:source.conflictId,sourceConflictGeneration:source.generation,sourceConflictAssignmentId:source.assignmentId}:{}),
         ...(source.kind==='peer'?{sourceConflictPeerId:source.conflictId}:{}),
         ...(source.kind==='assignment'?{sourceConflictAssignmentRequestId:source.conflictId}:{})});
-      const message=this.db.put('roomMessages',{id,projectId,sender:'system',senderName:source.kind==='proactive_followup'?'Workbench':tr('sourceSync.systemName'),kind:source.kind==='proactive_followup'?'proactive_followup':'source_conflict',text,taskIds:[task.id],source,fingerprint,createdAt:now(),
+      const message=this.db.put('roomMessages',{id,projectId,conversationId,sender:'system',senderName:source.kind==='proactive_followup'?'Workbench':tr('sourceSync.systemName'),kind:source.kind==='proactive_followup'?'proactive_followup':'source_conflict',text,taskIds:[task.id],source,fingerprint,createdAt:now(),
         ...(source.kind==='proactive_followup'?{visibility:'internal',proactiveFollowup:source.context}:{} )});
       this.touch(projectId);return message;
     });
