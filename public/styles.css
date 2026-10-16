@@ -663,7 +663,10 @@ button.quoted-message:hover { color:#315b84; background:#e7eef5; }
 .mention-input { grid-column: 2; position: relative; min-width: 0; }
 .mention-input #chat-text { display: block; position: relative; z-index: 1; }
 .mention-input-mirror { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--ink); white-space: pre-wrap; overflow-wrap: break-word; }
-.chat-input-field #chat-text.has-role-mentions { color: transparent; caret-color: var(--ink); }
+.chat-input-field #chat-text.has-role-mentions { color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--ink); }
+/* Safari paints disabled text with its own fill colour; keep it transparent while sending so only the mirror shows, dimmed. */
+.chat-input-field #chat-text.has-role-mentions:disabled { color: transparent; -webkit-text-fill-color: transparent; opacity: 1; }
+.mention-input:has(#chat-text:disabled) .mention-input-mirror { opacity: .55; }
 .chat-input-field #chat-text.has-role-mentions::selection { color: transparent; background: rgb(77 135 233 / 24%); }
 .mention-menu {
   position: absolute; left: 0; right: 72px; bottom: calc(100% + 6px);
