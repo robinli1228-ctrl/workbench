@@ -782,6 +782,8 @@ const server = http.createServer(async (req, res) => {
         const result=discussions.extendBudget({kind:'human',projectId:discussionBudgetRoute[1]},await body(req));change();return json(res,result);
       }
       const discussionReplyRoute=pathname.match(/^\/api\/projects\/([^/]+)\/discussions\/([^/]+)\/(reply|resolve)$/);
+      // GET .../reply?requestId= answers only whether this user reply request was already accepted; it changes nothing.
+      if(discussionReplyRoute&&discussionReplyRoute[3]==='reply'&&req.method==='GET')return json(res,discussions.userReplyReceipt(discussionReplyRoute[1],discussionReplyRoute[2],url.searchParams.get('requestId')));
       if(discussionReplyRoute&&req.method==='POST') {
         const input=await body(req);if(input.threadId&&input.threadId!==discussionReplyRoute[2])throw new Error(tr('home.threadIdMismatch'));
         const result=discussions[discussionReplyRoute[3]==='reply'?'userReply':'userResolve'](discussionReplyRoute[1],{...input,threadId:discussionReplyRoute[2]});scheduleChat();change();return json(res,result);
@@ -979,6 +981,8 @@ const server = http.createServer(async (req, res) => {
         const r = rooms.saveRole(m[1], b); scheduleChat(); change(); return json(res, r);
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/messages$/))) {
+        // ?id= is a read-only receipt for one composer send (same route, authentication and project scope as the list).
+        if (req.method === 'GET' && url.searchParams.has('id')) return json(res, rooms.messageReceipt(m[1], url.searchParams.get('id'), url.searchParams.get('conversationId') ?? undefined));
         if (req.method === 'GET') return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(rooms.messages(m[1],url.searchParams.get('before'),url.searchParams.get('conversationId')??undefined))),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
         if (req.method === 'POST') {
           const input = await body(req);
@@ -1173,7 +1177,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, { error: tr('home.endpointNotFound') }, 404);
     }
     if (req.method !== 'GET') return json(res, { error: tr('home.unsupportedRequest') }, 405);
-    const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
+    const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/send-state.js':'send-state.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
     Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
     files['/workspace-inspector.js']='workspace-inspector.js';
     files['/source-sync.js']='source-sync.js';

@@ -13,7 +13,7 @@ export const NATIVE_RESIDENT_RUNTIMES=new Set(['codex','claude','agy']);
 export const NATIVE_IMAGE_RUNTIMES=new Set(['codex','claude']);
 export const NATIVE_IDLE_MS=30*60*1000;
 const idPattern=/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
-const turnIdPattern=/^[a-zA-Z0-9-]{8,100}$/;
+export const turnIdPattern=/^[a-zA-Z0-9-]{8,100}$/;
 const ACTIVE=new Set(['queued','starting','running','waiting_user']);
 const MAX_TEXT=60000,MAX_PROMPT=12000,MAX_EVENTS=400,MAX_EVENT_TEXT=8000;
 const MAX_EVENT_BYTES=128*1024,MAX_ITEM_BYTES=24*1024;

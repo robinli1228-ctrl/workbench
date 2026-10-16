@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Attachments } from './attachments.mjs';
-import { NativeTurnsHome, nativeTurnRows } from './native-turns.mjs';
+import { NativeTurnsHome, nativeTurnRows, turnIdPattern } from './native-turns.mjs';
 import { assertNativeSessionIdle } from './native-sessions.mjs';
 import { nativeTerminalProject, projectTerminalLock } from './terminal-resume.mjs';
 
@@ -61,6 +61,11 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       db.remove('nativeTurnAttachments',id);await unlink(join(dataDir,'native-turn-attachments',id)).catch(e=>{if(e.code!=='ENOENT')throw e;});json(res,{deleted:true});return true;
     }
     if(area==='takeover'&&a==='release'&&!b&&req.method==='POST'){json(res,turns.release(nodeId,await body(req)));return true;}
+    // ?clientTurnId= is a read-only receipt for one composer send in this exact session; it skips process upkeep.
+    if(area==='turns'&&!a&&req.method==='GET'&&url.searchParams.has('clientTurnId')){const q=url.searchParams,clientTurnId=q.get('clientTurnId');
+      if(!turnIdPattern.test(clientTurnId||''))throw Error('Invalid takeover message ID');
+      if(!q.get('runtime')||!q.get('sessionId'))throw Error('Invalid native session ID');
+      json(res,{clientTurnId,exists:nativeTurnRows(db,{nodeId,runtime:q.get('runtime'),sessionId:q.get('sessionId'),clientTurnId,limit:1}).length>0});return true;}
     if(area==='turns'&&!a&&req.method==='GET'){const q=url.searchParams,[runtime,sessionId]=[q.get('runtime'),q.get('sessionId')];
       const open=turns.process(nodeId,runtime,sessionId);if(!open)finishTurns(nodeId,runtime,sessionId);
       json(res,{items:turns.list(nodeId,runtime,sessionId),process:open?'open':'closed',supported:worker.capabilities?.nativeTurns===3});return true;}

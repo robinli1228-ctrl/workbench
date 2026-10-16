@@ -280,6 +280,15 @@ export class Rooms {
   }
 
   /** Paginate recent messages; the cursor must belong to the same project so that switching projects cannot leak history. */
+  /** Read-only receipt for one composer send: is this exact client message id stored in this visible conversation? */
+  messageReceipt(projectId, id, conversationId) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
+    if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound3'));
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(id)) throw new Error(tr('rooms.invalidMessageId'));
+    const message = this.db.get('roomMessages', id);
+    return { id, exists: Boolean(message && message.projectId === projectId && conversationIdOf(message) === conversationId && message.visibility !== 'internal') };
+  }
+
   messages(projectId, before, conversationId) {
     conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound3'));

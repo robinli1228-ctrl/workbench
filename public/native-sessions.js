@@ -8,7 +8,7 @@ import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
 import {liveSceneRows} from './live-scene.js';
-import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked} from './send-state.js';
+import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {toolStatusLabel,stripAnsi} from './run-log-data.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
@@ -226,16 +226,23 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   // Same send lifecycle as the group chat (send-state.js); the takeover API is idempotent by clientTurnId.
   const sendState=(d,op)=>sendStateOf(d,Boolean(op?.sending));
   let checkedAt=0;
-  /** The turn list is already read for this session; a frozen clientTurnId found there was stored, otherwise it is absent. */
-  function reconcilePending(id){const d=drafts[id],op=operation(id);if(!d?.pending||op.sending||d.sendState==='failed')return;
-   const sent=d.pending;if(turns.some(x=>x.clientTurnId===sent.clientTurnId)){
-    if((d.text||'')===(sent.text||'')){drafts[id]={text:'',attachments:[]};if(k()===id)input.value='';}
-    else{const carried=new Set(sent.attachmentIds||[]);delete d.pending;delete d.sendState;d.attachments=(d.attachments||[]).filter(a=>!carried.has(a.id));}
-    op.message='';
-   }else d.sendState='failed';
-   save();}
+  /** Clear only what the confirmed send carried; text typed afterwards stays. */
+  function settleTurn(id,sent){const d=drafts[id];if(!d)return;
+   if((d.text||'')===(sent.text||'')){drafts[id]={text:'',attachments:[]};if(k()===id)input.value='';}
+   else{const carried=new Set(sent.attachmentIds||[]);delete d.pending;delete d.sendState;d.attachments=(d.attachments||[]).filter(a=>!carried.has(a.id));}
+   operation(id).message='';save();}
+  /** Exact read-only receipt for the frozen clientTurnId in this session; only a confirmed absence re-enables Send. */
+  async function verifyTurn(id){const d=drafts[id],op=operation(id),value=current;if(!d?.pending||op.sending||op.verifying||d.sendState==='failed'||!value||k()!==id)return;
+   op.verifying=true;checkedAt=Date.now();const sent=d.pending;render();
+   try{const receipt=await api(`${endpoint(value.nodeId)}/turns?${new URLSearchParams({runtime:value.runtime,sessionId:value.sessionId,clientTurnId:sent.clientTurnId})}`);
+    if(drafts[id]?.pending?.clientTurnId!==sent.clientTurnId)return;
+    if(receipt?.exists===true)settleTurn(id,sent);else if(receipt?.exists===false)drafts[id].sendState='failed';}
+   catch(error){
+    // An unreachable Home or 401/403/429 says nothing about the original POST: stay unknown and look again later.
+    if(drafts[id]?.pending?.clientTurnId===sent.clientTurnId)drafts[id].sendState=lookupFailureState(error);op.message=t(error.message);}
+   finally{op.verifying=false;save();if(current&&k()===id)render();}}
   /** Redraws from the existing state refresh re-check an unknown send at most every few seconds; no new polling. */
-  function recheck(){if(!current)return;const d=drafts[k()];if(!d?.pending||d.sendState==='failed'||operation().sending||Date.now()-checkedAt<5000)return;checkedAt=Date.now();void refresh();}
+  function recheck(){if(!current)return;const d=drafts[k()];if(!d?.pending||d.sendState==='failed'||operation().sending||Date.now()-checkedAt<5000)return;void verifyTurn(k());}
   const draft=(id=k())=>drafts[id]||={text:'',attachments:[]};
   const fileUrl=(nodeId,item)=>{const id=`${nodeId}:${item.id}`;if(!urls.has(id))urls.set(id,api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(item.id)}`,{blob:true}).then(blob=>URL.createObjectURL(blob)).catch(e=>{urls.delete(id);throw e;}));return urls.get(id);};
   const revokeAttachment=(nodeId,id)=>{const key=`${nodeId}:${id}`,pending=urls.get(key);urls.delete(key);if(pending)void Promise.resolve(pending).then(url=>URL.revokeObjectURL(url)).catch(()=>{});};
@@ -299,7 +306,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
    note.textContent=op.message||'';note.hidden=!note.textContent;const state=sendState(d,op);
    for(const item of d.attachments||[])tray.append(attachmentCard(item,()=>{if(!d.pending)void removeAttachment(id,value.nodeId,item);}));
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
-   sendButton.disabled=op.sending||op.releasing||busy||op.uploads>0||sendLocked(state);sendButton.textContent=t(SEND_LABELS[state]||'Send');input.disabled=op.sending||op.releasing||Boolean(d.pending);attachButton.disabled=op.sending||op.releasing||Boolean(d.pending);
+   sendButton.disabled=op.sending||op.releasing||busy||op.uploads>0||sendLocked(state)||Boolean(op.verifying);sendButton.textContent=t(SEND_LABELS[state]||'Send');input.disabled=op.sending||op.releasing||Boolean(d.pending);attachButton.disabled=op.sending||op.releasing||Boolean(d.pending);
    field.append(tray,attachButton,input);barRow.append(field,sendButton);
    const release=button(op.releasing?'Ending takeover…':'End takeover',()=>void endTakeover(value),'secondary compact native-release');release.disabled=busy||op.sending||op.uploads>0||op.releasing;
    const status=el('div','native-takeover-status');status.append(el('span',`native-takeover-dot${residentState==='open'?' is-resident':''}`),el('span','',t(op.releasing?'Ending page takeover; waiting for the CLI to exit…':busy?'This session is replying…':residentState==='open'?'Taken over · CLI is resident; messages continue this native session':'Taken over · the next message starts the CLI')),release);
@@ -329,14 +336,17 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   input.addEventListener('keydown',e=>{if(window.matchMedia('(max-width: 1000px)').matches)return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!sendButton.disabled){e.preventDefault();input.form?.requestSubmit();}});
   async function submit(){if(!current||activeTurn())return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.uploads)return;
    // An in-flight or unknown send is only looked up again (click, double click, Enter); it is never resent with a new ID.
-   if(d.pending&&d.sendState!=='failed'){checkedAt=Date.now();void refresh();return;}
+   if(d.pending&&d.sendState!=='failed'){void verifyTurn(id);return;}
    if(!d.pending&&!input.value.trim()&&!d.attachments?.length)return;op.message='';
-   d.pending||={clientTurnId:crypto.randomUUID(),text:input.value,attachmentIds:(d.attachments||[]).map(a=>a.id)};d.sendState='sending';save();op.sending=true;render();
+   if(!d.pending){const payload={text:input.value,attachmentIds:(d.attachments||[]).map(a=>a.id)};
+    // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
+    d.pending={clientTurnId:sameSend(d.rejected?.payload,payload)?d.rejected.clientTurnId:crypto.randomUUID(),...payload};}
+   delete d.rejected;d.sendState='sending';const sent=d.pending;save();op.sending=true;render();
    try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});drafts[id]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
-   catch(error){if(uncertainSend(error))d.sendState='checking';else{delete d.pending;delete d.sendState;}op.message=t(error.message);}
-   finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[id]?.pending&&drafts[id].sendState==='checking'){checkedAt=Date.now();void refresh();}}}}
+   catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;}op.message=t(error.message);}
+   finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[id]?.pending&&drafts[id].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}
-  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;residentState=result.process||'closed';turns=result.items||[];reconcilePending(id);if(op.releasing&&residentState==='closed'){op.releasing=false;on.delete(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){const d=drafts[id];if(d?.pending&&!op.sending&&d.sendState!=='failed'){d.sendState=uncertainSend(error)?'offline':'failed';save();}op.message=t(error.message);render();schedule();}}
+  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;residentState=result.process||'closed';turns=result.items||[];{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&residentState==='closed'){op.releasing=false;on.delete(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
   function schedule(){clearInterval(poll);poll=null;if(current&&(activeTurn()||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
   return {feed,attach,detach,isOn,isReleasing,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh,recheck};
  }
