@@ -84,9 +84,10 @@ test('handle this first keeps every collaboration record and allows one message 
   assert.equal(collaborationQueueView(e.db).forTask(t3).allowed, false);
 });
 
-test('an old steer without an explicit mode cannot cancel a waiting collaboration', () => {
+test('a steer without an explicit cancel confirmation cannot cancel a waiting collaboration', () => {
   const e = env(); e.human('t2');
   assert.throws(() => e.steering.request(P, 't2', 'cmd-x', {}), /waiting for collaboration results/);
+  assert.throws(() => e.steering.request(P, 't2', 'cmd-y', { mode: 'replace' }), /waiting for collaboration results/, 'the queue button sends replace; it must not cancel a protected wait');
   assert.equal(e.db.get('coordinationRequests', e.parent.id).status, 'waiting_call');
 });
 
@@ -109,4 +110,11 @@ test('another group chat of the same project is not blocked', () => {
   e.db.put('conversations', { id: 'chat-2', projectId: P, title: 'second' });
   const t = { ...e.human('t2'), conversationId: 'chat-2' };
   assert.equal(collaborationQueueView(e.db).forTask(t).allowed, true);
+});
+
+test('the yield result needs no runs to wait for', () => {
+  const e = env(); e.human('t2');
+  const result = e.steering.request(P, 't2', 'cmd-1', { mode: 'yield_wait' });
+  assert.equal(result.waitForRunIds, undefined);
+  for (const id of result.waitForRunIds || []) assert.fail(id);
 });

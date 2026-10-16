@@ -73,7 +73,8 @@ export class RoleSteering {
       if(active.some(r=>r.nodeId!==task.roleSnapshot.nodeId||r.roleSnapshot?.runtime!==task.roleSnapshot.runtime))throw new Error(tr('roleSteering.roleDeviceCliHasChanged'));
       if(task.requestId && this.db.get('coordinationRequests',task.requestId)?.status!=='queued')throw new Error(tr('roleSteering.messageStateHasChangedRefresh'));
       // Replacing a waiting collaboration cancels it; an old client must not do that without saying so.
-      if(input.mode!=='replace'&&!collaborationQueueView(this.db).forTask(task).allowed)throw new Error(tr('collabWait.steerDuringWait'));
+      // Even an explicit replace must say it means to cancel a protected wait; the queue never offers that by default.
+      if(!collaborationQueueView(this.db).forTask(task).allowed&&!(input.mode==='replace'&&input.confirmReplaceWait===true))throw new Error(tr('collabWait.steerDuringWait'));
       const stopped=new Set(active.map(r=>r.id)), blocked=new Set(), planIds=new Set();
       const discussions=new RoleDiscussions(this.db);
       const pendingDiscussionTasks=new Set(this.db.list('discussionIntents').filter(i=>i.projectId===projectId&&['queued','blocked'].includes(i.status)).map(i=>i.taskId));

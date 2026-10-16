@@ -988,7 +988,8 @@ const server = http.createServer(async (req, res) => {
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/steer$/)) && req.method === 'POST') {
         const input=await body(req),result=steering.request(m[1],m[2],input.commandId,input);
-        for(const id of result.waitForRunIds)dispatch(db.get('runs',id).nodeId);
+        // A non-destructive yield stops nothing; only a replacing steer has runs to wait for.
+        for(const id of result.waitForRunIds||[])dispatch(db.get('runs',id).nodeId);
         scheduleChat();change();return json(res,result);
       }
       if ((m = pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/)) && req.method === 'POST') {
