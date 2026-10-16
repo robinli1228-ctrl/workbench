@@ -10,6 +10,7 @@ import {createRoleHistoryTabs} from './role-history.js';
 import {createCliRecoveryUI} from './cli-recovery.js';
 import {createListOrder} from './list-order.js';
 import {createMentionInput} from './mention-input.js';
+import { elapsedEl } from './elapsed.js';
 
 /** Long text only changes its carrier; the file content keeps the original line breaks, whitespace and trailing characters. */
 export function longTextFileName(text) {
@@ -822,7 +823,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     row.append(avatarFor(role, role.name));
     const col = create('div', 'chat-col');
     const progress=taskProgress(task,run),label=t(progress.label);
-    col.append(create('div', 'chat-name', `@${role.name || t('Role')} · ${label}`));
+    const running=progress.state==='running'&&run?.startedAt;
+    const nameLine=create('div', 'chat-name', `@${role.name || t('Role')} · ${label}`);
+    if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)nameLine.append(elapsed);}
+    col.append(nameLine);
     const bubble = create('div', 'chat-bubble');
     const preview = run && !run.explicitPublish ? liveText(run.id) : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id,`run:${run?.id || task.id}`));
@@ -830,6 +834,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const typing = create('div', 'chat-typing');
       typing.append(create('span'), create('span'), create('span'));
       bubble.append(typing, create('span', 'chat-typing-label', label));
+      if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)bubble.append(elapsed);}
     }
     col.append(bubble);
     const alert=run&&data.runAlerts?.find(a=>a.id===run.id);

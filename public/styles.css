@@ -2478,3 +2478,9 @@ dialog .dialog-heading h2 { color: var(--text-strong); font-size: var(--fs-xl); 
 @media (max-width: 760px) { .message-queue { margin-inline: 8px; } .message-queue-item .icon-button { width: 36px; height: 36px; } }
 /* Human bubbles sit on an accent tint, so their meta text needs one step more contrast. */
 .chat-row.human :is(.chat-card-footer, .chat-card-kind) { color: #565d6e; }
+
+/* Elapsed time after a running status: tabular digits so the label does not jitter each second. */
+.elapsed-time { margin-left: 6px; color: var(--text-muted); font-size: var(--fs-xs); font-weight: 500; font-variant-numeric: tabular-nums; }
+.chat-name .elapsed-time::before { content: '· '; }
+.chat-bubble > .elapsed-time { margin-left: 8px; }
+.role-badge-elapsed { margin-left: 4px; font-weight: 600; font-variant-numeric: tabular-nums; opacity: .85; }

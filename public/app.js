@@ -29,6 +29,7 @@ import { planDismissKey, planDockState, planMemberLabel, planStageActivity } fro
 import {createWorkspaceInspector,initWorkspaceColumns} from './workspace-inspector.js';
 import {applyStateUpdate} from './state-data.js';
 import { TOKEN_KEY, readApiToken, saveApiToken } from './browser-token.js';
+import { elapsedEl, startElapsedTicker } from './elapsed.js';
 
 const DRAFT_KEY = 'agent-workbench.drafts';
 const COMMAND_KEY = 'agent-workbench.commands';
@@ -925,7 +926,13 @@ function renderRoles() {
       dot.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' ')event.stopPropagation();});
       head.append(dot);
     }
-    if (activity.label !== 'Idle') head.append(create('span', `role-badge is-${activity.tone}`, activity.label));
+    if (activity.label !== 'Idle') {
+      const badge = create('span', `role-badge is-${activity.tone}`, activity.label);
+      // Running roles show how long the current execution has taken.
+      const elapsed = activity.startedAt ? elapsedEl(create, activity.startedAt, 'role-badge-elapsed') : null;
+      if (elapsed) badge.append(elapsed);
+      head.append(badge);
+    }
     const ids = create('div', 'role-id-row');
     if (configured) {
       ids.append(
@@ -2378,3 +2385,4 @@ window.addEventListener('pageshow', refreshAfterActivation);
 document.addEventListener('visibilitychange', refreshAfterActivation);
 connectUpdates();
 refreshState().finally(() => void syncLanguage());
+startElapsedTicker();
