@@ -38,7 +38,7 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
   const input = (name, type = 'text') => { const el = create('input'); el.name = name; el.type = type; return el; };
   const button = (label, action, className = 'secondary') => {
     const el = create('button', className, label); el.type = 'button';
-    const icon={'Add scheduled job':'plus','Edit':'edit','Pause':'pause','Resume':'play','Check now':'search','Run now':'play','Delete':'trash','View conversation':'log'}[label];
+    const icon={'Add scheduled job':'plus','Edit':'edit','Pause':'pause','Resume':'play','Check now':'search','Run now':'run','Delete':'trash','View conversation':'log'}[label];
     if(icon)setActionIcon(el,icon,label);
     el.addEventListener('click', () => void action(el)); return el;
   };

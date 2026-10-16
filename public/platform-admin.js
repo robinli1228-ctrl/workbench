@@ -40,7 +40,7 @@ export function platformAdminUI({api,getData,refreshState,create}) {
 
   /** Removal is checked again by Home; a stale page can never clear an occupied device. */
   function deleteDeviceButton({worker,device:registered}) {
-    const button=create('button','secondary compact danger device-delete-button','Delete device');button.type='button';
+    const button=create('button','secondary compact danger device-delete-button','Delete device');button.type='button';setActionIcon(button,'trash',t('Delete device'));
     button.addEventListener('click',()=>{
       const name=worker?.name||registered?.name||worker?.id||registered?.nodeId;
       if(!confirm(t('Delete device {name}? This removes its registration. Files, conversation history and reports are kept. Existing project bindings are not reassigned.',{name})))return;
@@ -52,7 +52,7 @@ export function platformAdminUI({api,getData,refreshState,create}) {
 
   /** Forget an unavailable catalog entry, without uninstalling a CLI or touching its native sessions. */
   function deleteRuntimeButton(worker,runtime) {
-    const button=create('button','secondary compact danger runtime-delete-button','Delete CLI');button.type='button';
+    const button=create('button','secondary compact danger runtime-delete-button','Delete CLI');button.type='button';setActionIcon(button,'trash',t('Delete CLI'));
     button.addEventListener('click',event=>{
       event.preventDefault();event.stopPropagation();
       if(!confirm(t('Remove unavailable CLI {name} from this device? Software and history are kept. It will reappear if a later check confirms it is available.',{name:runtime.label||runtime.type})))return;

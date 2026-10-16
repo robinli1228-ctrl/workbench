@@ -143,15 +143,14 @@ let originalRunSnapshot=null;
 const room = createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice(projectId, nodeId) {
   if (app.data.projects.some(p => p.id === projectId)) { app.selectedProjectId=projectId;openSettings('project'); }
 } });
-// Action icons apply only to explicit entry points; tabs, project names and the text confirm buttons at the bottom of dialogs are unchanged.
+// Icons are for utility actions only (close, add, edit, refresh, settings). Commit actions such as send, save, prepare and delete
+// stay text-only, the same as the confirm buttons at the bottom of dialogs, so a row never mixes the two styles.
 for(const [selector,icon,label] of [
   ['#close-settings-page, dialog button.icon-button[id^="close-"], #folder-close','close'],['#show-device-enroll','plus'],['#edit-assistant-runtime','edit'],
   ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit conversation organizer model'],['#edit-api-token','edit'],
-  ['#manage-wechat','settings'],['#assistant-stop','stop'],['#configuration-assistant-form > .form-actions [type=submit]','send'],
+  ['#manage-wechat','settings'],
   ['#token-usage-form [type=submit]','search'],['#token-usage-refresh','refresh'],['#open-project-timers','history'],
-  ['#pick-settings-folder','folder'],['#project-prepare-form [type=submit]','refresh'],
-  ['#project-repository-form [type=submit]','git'],['#save-settings-folder','save'],
-  ['#delete-project','trash'],['#save-project-settings','save']
+  ['#pick-settings-folder','folder']
 ])document.querySelectorAll(selector).forEach(button=>setActionIcon(button,icon,label));
 const projectsUI = projectSettings({ api, getData: () => app.data, getProject: getCurrentProject, getConversationId:()=>app.selectedConversationId, refreshState, create, setError, openSettings, closeSettings,openTask });
 const supervisorsUI = supervisorSettings({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create,openTask });

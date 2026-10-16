@@ -2596,7 +2596,6 @@ button.danger:hover:not(:disabled), :is(dialog, #project-form-panel) button.dang
 }
 .message-queue-wait { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; color: var(--accent-dark); background: var(--accent-soft); font-size: 12px; }
 .message-queue-wait.is-released { color: #8a5a12; background: #fff1d8; }
-.message-queue-first { min-height: 30px; padding: 0 10px; font-size: 12px; white-space: nowrap; }
 
 /* ===== Refinement round (user feedback 2026-10-16) ===== */
 /* Role cards: one plain card; the model row sits directly on it, no inset strip or outline. */
@@ -2669,7 +2668,16 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 /* Card footer: status line under the hairline, actions on their own row below it. */
 .chat-card-footer { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 6px; }
 .chat-card-actions { flex-wrap: wrap; justify-content: flex-start; margin-left: -4px; }
-.chat-card-actions .chat-card-recovery { height: 27px; min-height: 27px; margin-left: 2px; padding: 0 9px; font-size: 11.5px; line-height: 1; white-space: nowrap; }
 /* The reply line on a live card is the body while it waits, so it may run to two lines. */
 .is-live-card .chat-live-reply { display: -webkit-box; margin: 0 0 8px; overflow: hidden; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
 .is-live-card div.chat-live-reply { cursor: default; }
+
+/* Buttons: icon-only for utility actions, text-only for commits; a row never mixes them, and buttons keep clear of the text beside them. */
+.message-queue-item .message-queue-first.is-active { color: var(--accent); background: var(--accent-tint); }
+.message-queue-item .message-queue-first.is-active:disabled { opacity: 1; }
+.source-sync-heading button.action-icon-button { padding: 8px; }
+.worker-card-head strong { min-width: 0; }
+.worker-card-head > button:first-of-type { margin-left: auto; }
+.role-history-run { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.role-history-run strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-card-head .role-live-scene { margin-left: 2px; }

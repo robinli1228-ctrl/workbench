@@ -218,7 +218,10 @@ export const UI_ICON = {
   live: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M5 11h3l2-4 4 8 2-4h3M8 21h8M12 18v3"/></svg>`,
   stop: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>`,
   pause: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M8 5v14M16 5v14"/></svg>`,
-  play: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M8 5v14l12-7z"/></svg>`
+  play: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M8 5v14l12-7z"/></svg>`,
+  run: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M13 3 5 14h6l-1 7 8-11h-6z"/></svg>`,
+  priority: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M5 4h14M12 20V9m-5 5 5-5 5 5"/></svg>`,
+  diagnose: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M6 11h3l1.5-3 3 6 1.5-3h3M8 21h8M12 17v4"/></svg>`
 };
 
 /** Keep handlers and button state intact; important settings actions opt into visible labels for touch users. */

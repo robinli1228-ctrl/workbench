@@ -220,8 +220,10 @@ function createMessageQueue({api,refreshState,create,setError}) {
       const yieldBusy=tasks.some(x=>x.id!==task.id&&x.collaborationYield&&scopeOf(x))||waits.some(w=>w.yielded&&scopeOf(w));
       if((human||guard?.stalled)&&data.capabilities?.collaborationWait&&(guard||task.collaborationYield)) {
         // Handle this first keeps the waiting collaboration; it never stops or cancels anything.
-        const first=create('button','secondary compact message-queue-first',task.collaborationYield?t('Handling first'):t('Handle this first'));first.type='button';
-        first.title=t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
+        // Same icon style as steer and cancel on this row; the label lives in the tooltip and aria-label.
+        const first=create('button',`icon-button message-queue-first${task.collaborationYield?' is-active':''}`);first.type='button';first.innerHTML=UI_ICON.priority;
+        first.setAttribute('aria-label',task.collaborationYield?t('Handling first'):t('Handle this first'));
+        first.title=task.collaborationYield?t('Handling first'):t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
         first.disabled=Boolean(task.collaborationYield)||yieldBusy||pending.has(task.id)||data.settings?.paused;
         if(yieldBusy&&!task.collaborationYield)first.title=t('Another item for this role is being handled first; wait until it and its collaboration finish');
         first.onclick=async()=>{
@@ -897,8 +899,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', label);
     if (running) { const elapsed = elapsedEl(create, run.startedAt); if (elapsed) status.append(elapsed); }
     const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
-    // The CLI occupancy check stays available, but as a small action in the row instead of a box standing in for the body.
-    if (recoveryButton) { recoveryButton.classList.add('chat-card-recovery'); actionBar.append(recoveryButton); }
+    // The CLI occupancy check stays available as one more icon in the row, instead of a box standing in for the body.
+    if (recoveryButton) actionBar.append(recoveryButton);
     footer.append(status, actionBar); bubble.append(footer);
     row.append(col);
     if (run && ['starting', 'running', 'waiting_user', 'stopping'].includes(run.status)) void pullLive(run.id);
