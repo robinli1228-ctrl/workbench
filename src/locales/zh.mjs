@@ -2,6 +2,7 @@
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
   'conversations.invalid': '此项目中不存在指定的群聊。',
+  'conversations.workerUpgrade': '目标设备的 Worker 需要升级后才能执行并列群聊任务。',
   'conversations.recordMismatch': '这条记录属于其他群聊。',
   'conversations.systemProject': '系统配置项目不能新建群聊。',
   'conversations.invalidRequest': '新建请求必须使用独立的 UUID。',

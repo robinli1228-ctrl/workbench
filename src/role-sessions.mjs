@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { tr } from './i18n.mjs';
 import {activeRoleSwitch} from './role-switch-policy.mjs';
 import {terminalOwnsProject} from './terminal-resume.mjs';
+import {conversationIdOf} from './group-conversations.mjs';
 
 const now = () => new Date().toISOString();
 
 /** Dispatch and occupancy checks must select the same isolated source conversation. */
-export const taskConversationId=task=>task.sourceInputs?.length&&task.execution?.isolated?`${task.projectId}:source:${task.sourceSessionKey||task.sourceConflictAssignmentId||task.id}`:task.conversationId||task.projectId;
+export const taskConversationId=task=>task.sourceInputs?.length&&task.execution?.isolated
+  ? `${task.projectId}${conversationIdOf(task)===task.projectId?'':`:chat:${conversationIdOf(task)}`}:source:${task.sourceSessionKey||task.sourceConflictAssignmentId||task.id}`
+  : conversationIdOf(task);
 
 /** Platform sessions only store the mapping between a role and a native session; whether the CLI process is alive is still determined by the Worker. */
 export class RoleSessions {
@@ -23,7 +26,7 @@ export class RoleSessions {
         if(current.nodeId!==nodeId || current.runtime!==runtime || (current.workspaceRoot||null)!==(binding.workspaceRoot||null)) throw new Error(tr('roleSessions.roleSessionBindingHasChanged'));
         return current;
       }
-      const value={id:randomUUID(),projectId,conversationId,roleId,nodeId,runtime,model:binding.model||null,workspaceRoot:binding.workspaceRoot||null,
+      const value={id:randomUUID(),projectId,conversationId,groupConversationId:binding.groupConversationId||projectId,roleId,nodeId,runtime,model:binding.model||null,workspaceRoot:binding.workspaceRoot||null,
         generation:Math.max(0,...records.map(s=>s.generation||0))+1,nativeSessionId:null,nativeSession:null,
         workspace:null,status:'idle',activeRunId:null,lastRunId:null,predecessorSessionId:records.at(-1)?.id||null,createdAt:now(),updatedAt:now()};
       return this.db.put('roleSessions',value);

@@ -701,7 +701,7 @@ const server = http.createServer(async (req, res) => {
           if(!root)throw new Error(tr('store.bindProjectWorkspaceOnNode'));
           const privatePath=readView.reviewGuarded?`handoffs/private/${run.roleId}/LATEST.md`:'handoffs/LATEST.md';
           const deviceHandoffs=db.get('workers',run.nodeId)?.capabilities?.sourceSyncOutputs===1;
-          const result=await workerQuery(run,'collaboration_documents',{root,action:b.action==='last'?(deviceHandoffs?'last':'read'):b.action,path:b.action==='last'?privatePath:b.path,...(b.action==='last'&&deviceHandoffs?{reviewPrivate:readView.reviewGuarded?run.roleId:''}:{})});
+          const result=await workerQuery(run,'collaboration_documents',{root,action:b.action==='last'?(deviceHandoffs?'last':'read'):b.action,path:b.action==='last'?privatePath:b.path,...(b.action==='last'&&deviceHandoffs?{reviewPrivate:readView.reviewGuarded?run.roleId:'',...(db.get('workers',run.nodeId)?.capabilities?.groupConversations===1?{roleSessionId:run.roleSessionId||''}:{})}:{})});
           if(b.action==='list')return json(res,{docs:result.files.filter(file=>reviewDocumentAllowed(db,run,file)&&file.path.startsWith('docs/')).map(file=>file.path.slice(5)),partial:result.partial});
           if(!reviewDocumentAllowed(db,run,result))throw new Error(tr('collabSessions.documentNotReleased'));
           return json(res,{path:result.path,text:result.text});
@@ -951,7 +951,7 @@ const server = http.createServer(async (req, res) => {
         const r = rooms.saveRole(m[1], b); scheduleChat(); change(); return json(res, r);
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/messages$/))) {
-        if (req.method === 'GET') return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(rooms.messages(m[1],url.searchParams.get('before')))),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
+        if (req.method === 'GET') return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(rooms.messages(m[1],url.searchParams.get('before'),url.searchParams.get('conversationId')??undefined))),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
         if (req.method === 'POST') {
           const input = await body(req);
           const r = db.transaction(() => { const message = rooms.post(m[1], input); wechat.webReply(message); return message; });

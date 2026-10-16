@@ -2,6 +2,7 @@
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
   'conversations.invalid': 'Group conversation not found in this project.',
+  'conversations.workerUpgrade': 'Upgrade the target Worker before executing a parallel group chat.',
   'conversations.recordMismatch': 'This record belongs to a different group conversation.',
   'conversations.systemProject': 'System configuration projects cannot create group conversations.',
   'conversations.invalidRequest': 'A distinct UUID creation request ID is required.',

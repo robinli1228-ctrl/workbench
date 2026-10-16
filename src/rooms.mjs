@@ -1,4 +1,5 @@
 import { tr } from './i18n.mjs';
+import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 import {assertBindingEditAllowed, activeRoleSwitch,roleSwitchWaitReason,effectiveExecutionRole} from './role-switch-policy.mjs';
 import {sourceInputWaitReason} from './source-sync-input.mjs';
 import { normalizeResponsibility } from './role-definition.mjs';
@@ -173,19 +174,22 @@ export class Rooms {
   }
 
   /** The message and the execution records of all recipient roles are committed together; resending does not dispatch again. */
-  post(projectId, { clientMessageId, text = '', replyToId = null, attachmentIds = [], targetRoleId = null, scheduledJobId = null }) {
+  post(projectId, { clientMessageId, text = '', replyToId = null, attachmentIds = [], targetRoleId = null, scheduledJobId = null, conversationId }) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (typeof clientMessageId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(clientMessageId)) throw new Error(tr('rooms.invalidMessageId'));
     if (typeof text !== 'string' || (!text.trim() && !attachmentIds.length) || text.length > 12000) throw new Error(tr('rooms.enterTextAddAttachmentText'));
     const attachments = this.attachments ? this.attachments.resolve(projectId, attachmentIds) : [];
     text = text.trim();
-    const fingerprint = JSON.stringify({ projectId, text, replyToId, ...(attachmentIds.length ? { attachmentIds } : {}),...(targetRoleId?{targetRoleId}:{}),...(scheduledJobId?{scheduledJobId}:{}) });
+    const fingerprint = JSON.stringify({ projectId, text, replyToId, ...(attachmentIds.length ? { attachmentIds } : {}),...(targetRoleId?{targetRoleId}:{}),...(scheduledJobId?{scheduledJobId}:{}),...(conversationId!==projectId?{conversationId}:{}) });
     return this.db.transaction(() => {
       const prior = this.db.get('roomMessages', clientMessageId);
       if (prior) { if (prior.fingerprint !== fingerprint) throw new Error(tr('rooms.messageIdConflictsWithDifferent')); return prior; }
       if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound2'));
       const quote = replyToId ? this.db.get('roomMessages', replyToId) : null;
       if (replyToId && quote?.projectId !== projectId) throw new Error(tr('rooms.quotedMessageDoesNotBelong'));
+      if(quote)assertConversationRecord({projectId,conversationId},quote);
       const source = quote?.runId ? this.db.get('runs', quote.runId) : null;
+      if(source)assertConversationRecord({projectId,conversationId},source);
       let fixedRole=targetRoleId?this.db.get('roles',targetRoleId):null;
       if(targetRoleId && fixedRole?.projectId!==projectId) throw new Error(tr('rooms.specifiedRoleDoesNotBelong'));
       const mentioned = fixedRole ? [fixedRole.name] : mentionNames(text);
@@ -241,30 +245,31 @@ export class Rooms {
         // The original dispatch text is kept verbatim; quotes and recent conversation are attached separately by source in this turn's context pack.
         const prompt = text || tr('rooms.pleaseReviewAttachmentsInMessage');
         const task = this.db.createTask({ projectId, title: text.slice(0, 80) || tr('rooms.reviewAttachments'), prompt, model: role.model, mode: role.mode });
-        this.db.put('tasks', { ...task, origin: 'chat', sourceMessageId: clientMessageId, roleId: role.id, roleSnapshot: role,
+        this.db.put('tasks', { ...task, conversationId, origin: 'chat', sourceMessageId: clientMessageId, roleId: role.id, roleSnapshot: role,
           sourceRunId: delivery || !reuseSource ? null : source.id, deliveryId: delivery?.id || null,
           quoteMessageId:quote?.id||null,
           attachments: attachments.length ? attachments : (quote?.attachments?.length ? quote.attachments : source?.attachments || []), schedulingTargets,schedulingRoster,reportRequired:true,scheduledJobId,
           requiresCoordination: Boolean(delivery), broadcast: broadcast || undefined });
         return task.id;
       });
-      const message = this.db.put('roomMessages', { id: clientMessageId, projectId, sender: 'human', senderName: tr('rooms.me'), text, attachments, replyToId, taskIds, broadcast: broadcast || undefined, createdAt: now(), fingerprint });
-      if(!project.systemConfig)new ConversationContext(this.db).enqueue(projectId);
+      const message = this.db.put('roomMessages', { id: clientMessageId, projectId, conversationId, sender: 'human', senderName: tr('rooms.me'), text, attachments, replyToId, taskIds, broadcast: broadcast || undefined, createdAt: now(), fingerprint });
+      if(!project.systemConfig)new ConversationContext(this.db).enqueue(projectId,conversationId);
       this.touch(projectId);
       return message;
     });
   }
 
   /** Paginate recent messages; the cursor must belong to the same project so that switching projects cannot leak history. */
-  messages(projectId, before) {
+  messages(projectId, before, conversationId) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound3'));
-    const all = this.db.list('roomMessages').filter(m => m.projectId === projectId&&m.visibility!=='internal');
+    const all = this.db.listProject('roomMessages',projectId).filter(m => conversationIdOf(m)===conversationId&&m.visibility!=='internal');
     const end = before ? all.findIndex(m => m.id === before) : all.length;
     if (end < 0) throw new Error(tr('rooms.historyCursorNotFound'));
     const start = Math.max(0, end - 60), messages = all.slice(start, end).map(message => {
       const dialogue = this.messageDialogue(message);
       const source=message.replyToId?this.db.get('roomMessages',message.replyToId):null;
-      const replySource=source?.projectId===projectId&&source.visibility!=='internal'?{id:source.id,senderName:source.senderName,text:String(source.text||'').slice(0,180)}:null;
+      const replySource=source?.projectId===projectId&&conversationIdOf(source)===conversationId&&source.visibility!=='internal'?{id:source.id,senderName:source.senderName,text:String(source.text||'').slice(0,180)}:null;
       return {...message,...(dialogue?{dialogue}:{}),...(replySource?{replySource}:{})};
     });
     return { messages, hasMore: start > 0, nextBefore: messages[0]?.id || null };
@@ -278,7 +283,7 @@ export class Rooms {
     if (message.id !== `result-${message.runId}`) return null;
     const get = (kind, id) => {
       const record = id ? this.db.get(kind, id) : null;
-      return record?.projectId === message.projectId ? record : null;
+      return record?.projectId === message.projectId && conversationIdOf(record)===conversationIdOf(message) ? record : null;
     };
     const run = get('runs', message.runId);
     let request = get('coordinationRequests', run?.requestId);
@@ -329,6 +334,7 @@ export class Rooms {
         : !worker?.capabilities?.roomRoles ? tr('rooms.upgradeWorkerSupportRoles')
         : worker.capabilities.projectSpace !== 1 ? tr('rooms.upgradeWorkerSupportSharedProject')
         : worker.capabilities.managedResume !== 1 ? tr('rooms.upgradeWorkerSupportRoleSession')
+        : conversationIdOf(task)!==task.projectId && worker.capabilities.groupConversations!==1 ? tr('conversations.workerUpgrade')
         : task.attachments?.length && worker.capabilities.attachments !== 1 ? tr('rooms.upgradeWorkerReceiveAttachments')
         : task.reportRequired && worker.capabilities.collaborationTools !== 2 ? tr('rooms.upgradeWorkerForReportFull')
         : task.execution && worker.capabilities.executionScheduling !== 1 ? tr('rooms.upgradeWorkerRunSupervisorSchedules')
@@ -376,7 +382,7 @@ export class Rooms {
     const request=this.db.get('coordinationRequests',run.requestId||'');
     const call=request?.callMessageId?this.db.get('roomMessages',request.callMessageId):null;
     const message = this.db.put('roomMessages', {
-      id: randomUUID(), projectId: run.projectId, sender: 'agent', senderName: run.roleSnapshot.name,
+      id: randomUUID(), projectId: run.projectId, conversationId:conversationIdOf(run), sender: 'agent', senderName: run.roleSnapshot.name,
       roleId: run.roleId, text: body, replyToId: call?.projectId===run.projectId?call.id:run.sourceMessageId || null, runId: run.id, taskIds: [], createdAt: now()
     });
     if (run.collaborationBatchId||run.continuationBatchId) new SessionQueue(this.db).recordReply(run, message.id);
@@ -400,7 +406,7 @@ export class Rooms {
         : tr('rooms.text', { p1: run.status === 'interrupted' ? tr('rooms.runStopped') : tr('rooms.runFailed'), p2: run.error || tr('rooms.seeRunDetails'), p3: !run.explicitPublish && run.result ? tr('rooms.existingOutput', { result: run.result }) : '' });
       const request=this.db.get('coordinationRequests',run.requestId||'');
       const handoff=this.db.get('roomMessages',request?.callMessageId||`call:${run.requestId}`);
-      this.db.put('roomMessages', { id, projectId: run.projectId, sender: 'agent', senderName: run.roleSnapshot.name,
+      this.db.put('roomMessages', { id, projectId: run.projectId, conversationId:conversationIdOf(run), sender: 'agent', senderName: run.roleSnapshot.name,
         ...(run.explicitPublish?{kind:question?'user_question':'technical_notice'}:{}),
         roleId: run.roleId, text, replyToId: handoff?.projectId===run.projectId?handoff.id:run.sourceMessageId,
         runId: run.id, taskIds: [], createdAt: now() });

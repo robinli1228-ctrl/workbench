@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
+import {conversationIdOf,resolveConversationId} from './group-conversations.mjs';
 import { mkdirSync,statfsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { giteeRepository } from './repository.mjs';
@@ -243,6 +244,8 @@ export class Store {
       if(!storedTask&&this.get('tasks',taskId))return null;
       if (!storedTask) throw new Error(tr('store.taskNotFound'));
       const task = storedTask.executionBinding ? {...storedTask,roleSnapshot:effectiveExecutionRole(this,storedTask),model:effectiveExecutionRole(this,storedTask).model} : storedTask;
+      const conversationId=resolveConversationId(this,task.projectId,task.conversationId);
+      if(conversationId!==task.projectId&&this.get('workers',nodeId)?.capabilities?.groupConversations!==1)throw new Error(tr('conversations.workerUpgrade'));
       const switchReason=roleSwitchWaitReason(this,task);if(switchReason)throw new Error(switchReason);
       const steeringReason=steeringWaitReason(this,task);
       if(steeringReason)throw new Error(steeringReason);
@@ -258,9 +261,9 @@ export class Store {
       const sourceWait=sourceInputWaitReason(this,task,nodeId);if(sourceWait)throw syncError(sourceWait);
       if (!reservePropagation(this, task)) return null;
       const roleSession = isSwitchMaintenance(task) ? this.get('roleSessions',task.switchSessionId) : task.origin === 'chat' && (task.roleSnapshot?.id || task.roleId)
-        ? new RoleSessions(this).getOrCreate({projectId:task.projectId,conversationId:taskConversationId(task),
+        ? new RoleSessions(this).getOrCreate({projectId:task.projectId,conversationId:taskConversationId(task),groupConversationId:conversationId,
           roleId:task.roleSnapshot?.id||task.roleId,nodeId,runtime:task.roleSnapshot?.runtime||'codex',model:task.model,workspaceRoot:binding.localRoot}) : null;
-      const run = { id: randomUUID(), taskId, projectId: task.projectId, nodeId, repositoryId,turnPurpose:'task',directionRevision:task.directionRevision||1,
+      const run = { id: randomUUID(), taskId, projectId: task.projectId, conversationId, sessionConversationId:taskConversationId(task), nodeId, repositoryId,turnPurpose:'task',directionRevision:task.directionRevision||1,
         collaborationSessionId:task.collaborationSessionId||null,collaborationCycleId:task.collaborationCycleId||null,
         continuationBatchId:task.continuationBatchId||null,...(task.explicitPublish?{explicitPublish:true}:{}),
         ...(task.automaticPropagation&&!task.collaborationBatchId?{propagationBudget:'reserved',explicitPublish:true}:{}),
