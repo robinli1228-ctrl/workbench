@@ -13,6 +13,7 @@ import {createLiveScene} from './live-scene.js';
 import { createRoomUI, createRoleRefresh } from './room.js';
 import { projectSettings } from './project-settings.js';
 import {createGroupConversationUI} from './group-conversations.js';
+import {createProjectTeamCopyUI} from './project-team-copy.js';
 import { agentIconEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl } from './role-icons.js';
 import { activateSettingsTab, normalizeSettingsTab, settingsView, initProjectSettingsTabs } from './settings-page.js';
 import { supervisorSettings } from './supervisor-settings.js';
@@ -440,7 +441,8 @@ function getDetailRun(taskId) {
 }
 
 /** Switching projects immediately isolates old data and in-flight details so late responses are not shown in another project. */
-const groupConversationsUI=createGroupConversationUI({api,getSelection:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),onCreated:async chat=>{selectProject(chat.projectId,chat.id);render();await refreshState({quiet:true});}});
+const teamCopyUI=createProjectTeamCopyUI({api,getData:()=>app.data,onCreated:async op=>{selectProject(op.destinationProjectId);render();await refreshState({quiet:true});}});
+const groupConversationsUI=createGroupConversationUI({api,getSelection:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),onCopyTeam:selection=>teamCopyUI.open(selection.projectId),onCreated:async chat=>{selectProject(chat.projectId,chat.id);render();await refreshState({quiet:true});}});
 document.querySelector('#group-chat-actions').addEventListener('click',()=>groupConversationsUI.open());
 
 function selectProject(projectId,conversationId=projectId) {
@@ -511,6 +513,7 @@ async function refreshState({ quiet = false } = {}) {
     app.data = {
       capabilities: data.capabilities || {},
       conversations:data.conversations||[],
+      projectCopies:data.projectCopies||[],
       projects: Array.isArray(data.projects) ? data.projects : [],
       roles: Array.isArray(data.roles) ? data.roles : [],
       supervisorRoles: Array.isArray(data.supervisorRoles) ? data.supervisorRoles : [],
@@ -571,6 +574,7 @@ function render() {
   if(app.selectedConversationId)sessionStorage.setItem('agent-workbench.conversation',app.selectedConversationId);
   if (app.selectedTaskId) sessionStorage.setItem('agent-workbench.task', app.selectedTaskId);
   renderProjects();
+  teamCopyUI.sync();
   renderRoles();
   renderProjectGitVersion();
   renderExecutionPlans();
@@ -853,6 +857,7 @@ function renderRoles() {
   dom.roleList.replaceChildren();
   const project = getCurrentProject();
   const supervisor = project && app.data.supervisorRoles?.find(r => r.id === project.supervisorRoleId && r.projectId === project.id);
+  if(project?.initialRoleOrder)roleOrder.seedInitialOrder(project.initialRoleOrder);
   // Home preserves device registration order; include offline devices so reconnects do not renumber clouds.
   const cloudNumbers = new Map(app.data.workers.filter(w => workerKind(w) === 'cloud').map((w, index) => [w.id, index + 1]));
   const roles = project ? [...(supervisor ? [supervisor] : []), ...roleOrder.ordered((app.data.roles || []).filter(r => r.projectId === project.id && !r.archivedAt && r.id !== supervisor?.id))] : [];

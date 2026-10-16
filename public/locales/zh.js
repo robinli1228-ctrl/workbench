@@ -4,6 +4,13 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Create project':'新建项目',
+  'Retry preparation':'重试准备',
+  'No code or history is copied':'不会复制代码或历史',
+  'New business directories contain only platform bootstrap files; dependencies and native sessions are not copied.':'新业务目录仅包含平台初始化文件，不复制依赖和原生会话。',
+  'Explicitly empty prompt':'提示词明确为空',
+  'No custom prompt':'没有自定义提示词',
+  'Upgrade Home before copying a team.':'请升级 Home 后再复制角色。',
   'Group chat actions': '群聊操作',
   'Branch into new chat': '分支新会话',
   'Copy team into new project': '复制角色到新项目',

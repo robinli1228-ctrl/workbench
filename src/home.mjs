@@ -87,17 +87,19 @@ for (const project of db.list('projects')) {
 }
 // Workspace isolation is the unified security boundary; legacy roles no longer keep read-only or manual-approval policies at startup.
 for (const role of db.list('roles')) {
+  // A copied definition is an accepted exact snapshot, not an old preset awaiting migration.
+  if(role.copyOperationId)continue;
   if (role.mode !== 'workspace-write' || role.autoApprove !== true || role.repositoryId || (role.systemSupervisor && !role.platformAssistant && role.instructions !== setupRules())) db.put('roles', { ...role, repositoryId:null, mode: 'workspace-write', autoApprove: true, ...(role.systemSupervisor && !role.platformAssistant ? {instructions:setupRules()} : {}) });
 }
 /** The fixed project supervisors always carry the platform setup rules in the current language (also refreshed when the language changes). */
 function syncSupervisorInstructions() {
   const rules = setupRules();
   for (const role of db.list('roles')) {
-    if (role.systemSupervisor && !role.platformAssistant && role.instructions !== rules) db.put('roles', { ...role, instructions: rules });
+    if (role.systemSupervisor && !role.platformAssistant && !role.copyOperationId && role.instructions !== rules) db.put('roles', { ...role, instructions: rules });
   }
 }
 const rooms = new Rooms(db);
-const projectTeamCopy=new ProjectTeamCopy({db,query:workerQuery,online,change});
+const projectTeamCopy=new ProjectTeamCopy({db,query:workerQuery,online:id=>online(id),change:()=>change()});
 const attachments = new Attachments(db, join(data, 'attachments'));
 rooms.attachments = attachments;
 const attachmentTransfers=new AttachmentTransfers({db,attachments,query:workerQuery,online:id=>online(id),change:()=>change()});
@@ -307,7 +309,7 @@ function snapshot() {
   const continuationLaunches=new Map(launchCommands.toReversed().map(c=>[c.runId,c]));
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1}, homePlatform: process.platform, projects: db.list('projects').filter(p => !p.systemConfig), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
+  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1,projectTeamCopy:1}, homePlatform: process.platform, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -474,7 +476,7 @@ const server = http.createServer(async (req, res) => {
       const copyRetryRoute=pathname.match(/^\/api\/project-copies\/([^/]+)\/retry$/);
       if(copyRetryRoute&&req.method==='POST')return json(res,await projectTeamCopy.retry(copyRetryRoute[1]));
       const copyDetailRoute=pathname.match(/^\/api\/project-copies\/([^/]+)$/);
-      if(copyDetailRoute&&req.method==='GET')return json(res,projectTeamCopy.get(copyDetailRoute[1]));
+      if(copyDetailRoute&&req.method==='GET')return db.get('projectCopyOperations',copyDetailRoute[1])?json(res,projectTeamCopy.get(copyDetailRoute[1])):json(res,{error:tr('teamCopy.notFound')},404);
       if(conversationsRoute&&req.method==='GET')return json(res,new GroupConversations(db).list(conversationsRoute[1]));
       if(conversationsRoute&&req.method==='POST'){
         const result=new GroupConversations(db).create(conversationsRoute[1],await body(req));change();return json(res,result,201);
@@ -1162,6 +1164,7 @@ const server = http.createServer(async (req, res) => {
     files['/source-sync.js']='source-sync.js';
     files['/state-data.js']='state-data.js';
     files['/group-conversations.js']='group-conversations.js';
+    files['/project-team-copy.js']='project-team-copy.js';
     files['/execution-progress.js']='execution-progress.js';
     files['/live-scene.js']='live-scene.js';
     files['/cli-recovery.js']='cli-recovery.js';

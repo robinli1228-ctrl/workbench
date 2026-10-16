@@ -2144,3 +2144,8 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 .group-conversation-dialog label { display: grid; gap: 8px; }
 .group-conversation-dialog input { width: 100%; }
 .group-conversation-dialog p { line-height: 1.6; }
+.team-copy-dialog { max-height: calc(100vh - 40px); overflow: auto; }
+.team-copy-dialog form { display: grid; gap: 12px; }
+.team-copy-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+.team-copy-dialog [role="status"] { white-space: pre-wrap; overflow-wrap: anywhere; }
+.team-copy-destination { overflow-wrap: anywhere; }

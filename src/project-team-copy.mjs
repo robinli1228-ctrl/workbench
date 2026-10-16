@@ -27,6 +27,7 @@ export class ProjectTeamCopy {
     const roles=selected.map(r=>({id:r.id,revision:r.revision||1,...Object.fromEntries(fields.filter(k=>Object.hasOwn(r,k)).map(k=>[k,r[k]])),systemSupervisor:r.id===supervisor.id}));
     const snapshot={sourceProjectId,sourceName:project.name,supervisorRevision:supervisorConfig.revision||1,roles,roleOrder:[...order],requiredDeviceIds:[...new Set(roles.filter(r=>r.systemSupervisor||r.enabled).map(r=>r.nodeId))]};
     if(snapshot.requiredDeviceIds.some(id=>typeof id!=='string'||!id))throw new Error(tr('teamCopy.sourceInvalid'));
+    snapshot.deviceRoots=Object.fromEntries(snapshot.requiredDeviceIds.map(id=>[id,this.db.get('workers',id)?.workspaceRoot||this.db.get('workers',id)?.allowedRoots?.[0]||null]));
     return {...snapshot,sourceRevision:hash(snapshot),warnings:[tr('teamCopy.promptWarning')]};
   }
   begin(sourceProjectId,input={}){
@@ -41,7 +42,7 @@ export class ProjectTeamCopy {
       const destinationProjectId=randomUUID(),roleIdMap=Object.fromEntries(snapshot.roles.map(r=>[r.id,r.systemSupervisor?`supervisor-${destinationProjectId}`:randomUUID()]));
       this.db.put('projects',{id:destinationProjectId,name,folderName:folder,description:'',root:'',repoUrl:'',repository:null,projectScope:true,setupStatus:'copy_pending',copyOperationId:input.requestId,createdAt:stamp()});
       this.db.put('projectCopyOperations',{id:input.requestId,sourceProjectId,destinationProjectId,name,folderName:folder,fingerprint,sourceRevision:snapshot.sourceRevision,snapshot,roleIdMap,
-        deviceReceipts:Object.fromEntries(snapshot.requiredDeviceIds.map(nodeId=>[nodeId,{nodeId,workspaceRoot:this.db.get('workers',nodeId)?.workspaceRoot||this.db.get('workers',nodeId)?.allowedRoots?.[0]||null,status:'pending'}])),status:'pending',createdAt:stamp(),updatedAt:stamp()});
+        deviceReceipts:Object.fromEntries(snapshot.requiredDeviceIds.map(nodeId=>[nodeId,{nodeId,workspaceRoot:snapshot.deviceRoots[nodeId],status:'pending'}])),status:'pending',createdAt:stamp(),updatedAt:stamp()});
       this.change();return this.get(input.requestId);
     });
   }
@@ -95,7 +96,7 @@ export class ProjectTeamCopy {
         for(const original of op.snapshot.roles){
           const {id:sourceId,revision,...settings}=original;
           const configured=Boolean(op.deviceReceipts[settings.nodeId]?.status==='ready'&&!runtimeIssue(this.db.get('workers',settings.nodeId),settings.runtime,settings.model));
-          this.db.put('roles',{...settings,id:op.roleIdMap[sourceId],projectId:project.id,revision:1,configured});
+          this.db.put('roles',{...settings,id:op.roleIdMap[sourceId],projectId:project.id,copyOperationId:id,revision:1,configured});
         }
         const supervisor=op.snapshot.roles.find(r=>r.systemSupervisor),supervisorRoleId=op.roleIdMap[supervisor.id];
         this.db.put('supervisorConfigs',{id:`${project.id}:${supervisor.nodeId}`,projectId:project.id,nodeId:supervisor.nodeId,runtime:supervisor.runtime,model:supervisor.model,effort:supervisor.effort??null,enabled:supervisor.enabled,revision:1,updatedAt:stamp()});

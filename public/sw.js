@@ -1,6 +1,7 @@
 const CACHE = 'agent-workbench-parallel-groups-v106';
 const STATIC = [
   '/group-conversations.js',
+  '/project-team-copy.js',
   '/create-folder.js',
   '/native-session-groups.js',
   '/', '/styles.css', '/app.js', '/native-sessions.js', '/list-order.js', '/select-controls.js', '/mention-input.js', '/context-usage.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png',
