@@ -8,8 +8,10 @@ const binding=value=>value?{...value,role:role(value.role)}:value;
 
 /** Projects only the metadata the UI needs; task requirements, context, and result bodies always stay in the original records and the detail endpoints. */
 export function workspaceState(snapshot,requestedProjectId,requestedConversationId) {
-  const projectId=snapshot.projects.find(p=>p.id===requestedProjectId)?.id||snapshot.projects[0]?.id||null;
-  const conversationId=requestedConversationId||projectId;
+  const selected=snapshot.projects.find(p=>p.id===requestedProjectId);
+  const projectId=selected?.id||snapshot.projects[0]?.id||null;
+  // A deleted project invalidates its persisted chat selection as one unit.
+  const conversationId=selected?(requestedConversationId||projectId):projectId;
   if(conversationId!==projectId&&!(snapshot.conversations||[]).some(c=>c.id===conversationId&&c.projectId===projectId))throw new Error('Group conversation not found.');
   const belongs=record=>record.projectId===projectId&&conversationIdOf(record)===conversationId;
   const state={...snapshot};

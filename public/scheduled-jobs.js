@@ -191,7 +191,7 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
           const row = create('div', 'timer-history-row');
           row.append(create('span', '', `${item.kind === 'manual' ? t('Manual') : item.kind === 'monitor' ? t('Check') : t('Scheduled')} · ${format(item.createdAt)} · ${status(item.status)}${item.error ? ` · ${item.error}` : ''}`));
           const taskId = item.taskIds?.[0];
-          if (taskId) row.append(button('View conversation', () => openTask(job.projectId, taskId)));
+          if (taskId) row.append(button('View conversation', () => openTask(job.projectId, taskId, item.conversationId||job.conversationId||job.projectId)));
           details.append(row);
         }
         card.append(details);

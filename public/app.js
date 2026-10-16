@@ -160,7 +160,10 @@ const platformUI = platformAdminUI({api,getData:()=>app.data,refreshState,create
 const spacesUI = projectSpaceUI({api,getData:()=>app.data,getProject:getCurrentProject,refreshState,create});
 const tokenUI = tokenUsageUI({api,getData:()=>app.data,create});
 const schedulesUI = createScheduledJobsUI({api,getData:()=>app.data,getProject:getCurrentProject,getConversationId:()=>app.selectedConversationId,refreshState,create,
-  openTask:(projectId,taskId)=>{app.selectedProjectId=projectId;closeSettings();openTask(taskId);}});
+  openTask:async(projectId,taskId,conversationId=projectId)=>{
+    selectProject(projectId,conversationId);closeSettings();await refreshState({quiet:true});
+    if(app.selectedProjectId===projectId&&app.selectedConversationId===conversationId)openTask(taskId);
+  }});
 
 /** Recognize only clear short horizontal gestures; do not hijack vertical scrolling while reading. */
 function swipePanel(panel, dx, dy, elapsed) {
@@ -571,7 +574,9 @@ async function refreshState({ quiet = false } = {}) {
 
 function render() {
   if (app.selectedProjectId) sessionStorage.setItem('agent-workbench.project', app.selectedProjectId);
+  else sessionStorage.removeItem('agent-workbench.project');
   if(app.selectedConversationId)sessionStorage.setItem('agent-workbench.conversation',app.selectedConversationId);
+  else sessionStorage.removeItem('agent-workbench.conversation');
   if (app.selectedTaskId) sessionStorage.setItem('agent-workbench.task', app.selectedTaskId);
   renderProjects();
   teamCopyUI.sync();
