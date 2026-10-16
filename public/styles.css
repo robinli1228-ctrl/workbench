@@ -2476,3 +2476,5 @@ dialog .dialog-heading h2 { color: var(--text-strong); font-size: var(--fs-xl); 
 .message-queue-item.list-order-placeholder { outline-color: rgb(79 91 206 / 45%); background: var(--accent-tint); }
 .message-queue-item.list-order-ghost { border: 1px solid var(--card-hairline); background: #fff; box-shadow: var(--elev-float); }
 @media (max-width: 760px) { .message-queue { margin-inline: 8px; } .message-queue-item .icon-button { width: 36px; height: 36px; } }
+/* Human bubbles sit on an accent tint, so their meta text needs one step more contrast. */
+.chat-row.human :is(.chat-card-footer, .chat-card-kind) { color: #565d6e; }
