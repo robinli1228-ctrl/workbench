@@ -131,7 +131,8 @@ All items below exist in the current code. Items that are only designed are list
 - Token usage statistics per device, collected with `ccusage`, with daily columns stacked by model across the selected devices.
 - GitHub and Gitee account storage and optional repository creation (private by default).
 - Installable PWA shell, desktop three-column layout and a mobile drawer layout.
-- Group-chat draft attachments use 8:5 cards with truncated filenames and click-to-view details. Cards retain removal and failed-upload retry, without edit or device-transfer buttons; sent-message transfer remains available.
+- Draft attachments in the group chat and native takeover use fixed 224×64 cards (48px preview, one-line filename, size or upload status, removal in its own column) with click-to-view details. Cards retain removal and failed-upload retry, without edit or device-transfer buttons; sent-message transfer remains available.
+- Send stays disabled while a message is sending or its outcome is unknown; the original message ID is looked up and only a confirmed absence allows a retry with that same ID.
 - New native sessions prefill a dedicated `native-sessions` child of the device workspace root. It is prepared on demand and reused without deleting files; users can select or create another folder. Existing sessions retain their original working folder.
 - State reads time out after 20 seconds and recover automatically without replaying task submissions. Returning to the page or reconnecting refreshes state while preserving drafts; connection details show the last successful update.
 - Buffered static text and state/chat reads negotiate gzip to reduce SSH transfer overhead; streaming events and attachments are unchanged. Small page icons use the existing 192px asset, and optional high-resolution images are not eagerly downloaded for offline-shell installation.

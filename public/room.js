@@ -12,6 +12,7 @@ import {createListOrder} from './list-order.js';
 import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl } from './elapsed.js';
+import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked } from './send-state.js';
 
 /** Long text only changes its carrier; the file content keeps the original line breaks, whitespace and trailing characters. */
 export function longTextFileName(text) {
@@ -339,7 +340,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (item.mime.startsWith('image/')) {
       const thumb = create('img'); thumb.alt = item.name; open.append(thumb);
       void attachmentUrl(item).then(url=>{thumb.src=url;}).catch(()=>{thumb.alt='Preview failed to load; click to retry';});
-    } else open.append(create('span','attachment-file-icon','▤'));
+    } else if (removable) { const icon = create('span','attachment-file-icon'); icon.innerHTML = UI_ICON.original; open.append(icon); }
+    else open.append(create('span','attachment-file-icon','▤'));
     open.append(create('span','attachment-name',item.name),create('small','',item.size<1024?`${item.size} B`:`${(item.size/1024).toFixed(1)} KB`));
     card.append(open);
     if (!removable) card.append(iconAction('transfer', 'Send to device', () => openAttachmentTransfer(item)));
@@ -427,11 +429,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     textUploads.set(entry.id, job); return job;
   }
   function textDraftCard(entry, ownerId) {
-    const card = create('div', 'attachment-card attachment-file-card attachment-text-card attachment-text-draft');
+    const card = create('div', `attachment-card attachment-file-card attachment-text-card attachment-text-draft${entry.error && !textUploads.has(entry.id) ? ' is-error' : ''}`);
     card.title = entry.name;
     const busy = textUploads.has(entry.id);
     const open = button('', () => previewText(entry.text, entry.name), 'attachment-open');
-    open.append(create('span', 'attachment-file-icon', '▤'), create('span', 'attachment-name', entry.name), create('small', '', busy ? 'Uploading…' : entry.error ? 'Upload failed; original text kept' : 'Pending upload'));
+    const icon = create('span', 'attachment-file-icon'); icon.innerHTML = UI_ICON.original;
+    open.append(icon, create('span', 'attachment-name', entry.name), create('small', '', busy ? 'Uploading…' : entry.error ? 'Upload failed; original text kept' : 'Pending upload'));
     card.append(open);
     if (!busy) {
       card.append(iconAction('refresh',entry.error ? 'Retry upload' : 'Upload', () => { void uploadTextFile(entry, ownerId); }));
@@ -495,6 +498,44 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     catch { setError('Not enough browser draft storage; the original text is still on this page. Copy a backup first and do not close the page'); return false; }
   };
   const draft = () => drafts[scopeId] ||= { projectId, text: '', replyToId: null, replyLabel: '' };
+  // Send lifecycle per draft scope (see send-state.js). Home already treats a repeated clientMessageId idempotently.
+  // Nothing here adds polling: checks run after a send fails and when the existing state refresh redraws the room,
+  // at most every few seconds per scope.
+  const verifying = new Set(), verifiedAt = new Map(), submitLocks = new Set();
+  const sendState = (d, ownerId = scopeId) => sendStateOf(d, sendingProject === ownerId);
+  const scopeProject = ownerId => { try { return ownerId.startsWith('[') ? JSON.parse(ownerId)[0] : ownerId; } catch { return ownerId; } };
+  /** Clear only what the confirmed send carried; text typed afterwards or another scope's draft is never touched. */
+  function settleSent(ownerId, sent) {
+    const d = drafts[ownerId];
+    if (!d) return;
+    if ((d.text || '') === (sent.text || '')) {
+      drafts[ownerId] = { projectId: d.projectId || scopeProject(ownerId), text: '', replyToId: null, replyLabel: '' };
+      if (ownerId === scopeId) input.value = '';
+      return;
+    }
+    const carried = new Set(sent.attachmentIds || []);
+    delete d.pending; delete d.sendState;
+    d.attachments = (d.attachments || []).filter(a => !carried.has(a.id));
+    if (d.replyToId === sent.replyToId) { d.replyToId = null; d.replyLabel = ''; delete d.replyMention; delete d.discussion; }
+  }
+  /** Look the frozen id up in the existing message list; a confirmed absence is the only way back to Send. */
+  async function verifyPending(ownerId, force = false) {
+    const d = drafts[ownerId], sent = d?.pending;
+    if (!sent || sendingProject === ownerId || verifying.has(ownerId) || d.sendState === 'failed') return;
+    if (!force && Date.now() - (verifiedAt.get(ownerId) || 0) < 5000) return;
+    verifying.add(ownerId); verifiedAt.set(ownerId, Date.now());
+    if (ownerId === scopeId) composer();
+    const targetProjectId = d.projectId || scopeProject(ownerId);
+    try {
+      const result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(sent.conversationId || targetProjectId)}`);
+      if (drafts[ownerId]?.pending?.clientMessageId !== sent.clientMessageId) return;
+      // Discussion replies are stored under a derived id, so they cannot be looked up; their replay is idempotent by requestId.
+      if (!sent.discussion && (result.messages || []).some(m => m.id === sent.clientMessageId)) { settleSent(ownerId, sent); if (ownerId === scopeId) setError(''); }
+      else drafts[ownerId].sendState = 'failed';
+    } catch (error) {
+      if (drafts[ownerId]?.pending?.clientMessageId === sent.clientMessageId) drafts[ownerId].sendState = uncertainSend(error) ? 'offline' : 'failed';
+    } finally { verifying.delete(ownerId); saveDrafts(); if (ownerId === scopeId) composer(); }
+  }
   const mentionInput=createMentionInput(input,()=>{
     const names=[...(data.roles||[]),...(data.supervisorRoles||[])].filter(r=>r.projectId===projectId&&!r.archivedAt).map(r=>r.name);
     if(data.projects?.find(p=>p.id===projectId)?.supervisorRoleId)names.push('Supervisor','supervisor','\u603b\u7ba1');
@@ -522,11 +563,11 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   function composer() {
     if (!projectId) return;
     input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, new messages go to the supervisor; replies target the sender, and @ several roles dispatches to each' : 'Type a message; @role to start work';
-    const d = draft(), busy = sendingProject === scopeId;
+    const d = draft(), busy = sendingProject === scopeId, state = sendState(d);
     input.disabled = busy || !!d.pending;
-    send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length);
+    send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length) || sendLocked(state) || verifying.has(scopeId);
     attachButton.disabled = busy || !!d.pending;
-    send.textContent = busy ? 'Sending…' : d.pending ? 'Retry send' : 'Send';
+    send.textContent = SEND_LABELS[state] || 'Send';
     attachTray.replaceChildren();
     for (const item of d.attachments || []) attachTray.append(attachmentCard(item,true));
     for (const entry of d.textFiles || []) attachTray.append(textDraftCard(entry, scopeId));
@@ -540,11 +581,6 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       delete d.replyMention;
       d.replyToId = null; d.replyLabel = ''; delete d.discussion;saveDrafts(); composer();
     }));
-    const note = document.querySelector('#chat-send-note');
-    if (note) {
-      note.hidden = !d.pending;
-      note.textContent = d.pending ? 'Sending is not yet confirmed; clicking Send retries the same message without dispatching twice.' : '';
-    }
   }
 
   function liveText(runId) {
@@ -1039,6 +1075,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     if (!projectId) return;
     messageQueue.update(data,projectId);composer(); renderMessages();
+    if (draft().pending && sendState(draft()) !== 'failed') void verifyPending(scopeId);
     for (const run of (data.runs || []).filter(r => r.projectId === projectId && ['starting', 'running', 'waiting_user', 'stopping'].includes(r.status))) {
       void pullLive(run.id);
     }
@@ -1172,8 +1209,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   form.addEventListener('submit', async e => {
     e.preventDefault();
     hideMentionMenu();
-    if (!projectId || sendingProject || uploadCounts.get(scopeId)) return;
+    if (!projectId || sendingProject || uploadCounts.get(scopeId) || submitLocks.has(scopeId)) return;
     const id = projectId, ownerId=scopeId, targetConversationId=conversationId, d = draft();
+    // Click, double click, Enter and redraws all land here: an in-flight or unknown send is only ever looked up, never resent.
+    if (d.pending && d.sendState !== 'failed') { void verifyPending(ownerId, true); return; }
+    submitLocks.add(ownerId);
+    try {
     if (d.textFiles?.length) { setError('Finish uploading the long-text attachment first, or restore it to the input box'); return; }
     if (!d.pending && input.value.length > 12000) {
       const entry = attachComposerText();
@@ -1184,18 +1225,23 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (!d.pending && !input.value.trim() && !d.attachments?.length) return;
     if(d.discussion&&d.attachments?.length){setError('Use text for discussion replies; send attachments as a separate regular message');return;}
     d.pending ||= { clientMessageId: crypto.randomUUID(), conversationId:targetConversationId, text: input.value, replyToId: d.replyToId || null, attachmentIds:(d.attachments||[]).map(a=>a.id),...(d.discussion&&!hasMention(input.value)?{discussion:d.discussion}:{}) };
+    d.sendState = 'sending'; d.projectId ||= id;
+    const sent = d.pending;
     saveDrafts(); sendingProject = ownerId; composer();
     try {
-      if(d.pending.discussion)await api(`/api/projects/${encodeURIComponent(id)}/discussions/${encodeURIComponent(d.pending.discussion.threadId)}/reply`,{method:'POST',json:{...d.pending.discussion,requestId:d.pending.clientMessageId,text:d.pending.text}});
-      else await api(`/api/projects/${encodeURIComponent(id)}/messages`, { method: 'POST', json: d.pending });
-      drafts[ownerId] = { projectId:id, text: '', replyToId: null, replyLabel: '' };
-      if (scopeId === ownerId) input.value = '';
+      if(sent.discussion)await api(`/api/projects/${encodeURIComponent(id)}/discussions/${encodeURIComponent(sent.discussion.threadId)}/reply`,{method:'POST',json:{...sent.discussion,requestId:sent.clientMessageId,text:sent.text}});
+      else await api(`/api/projects/${encodeURIComponent(id)}/messages`, { method: 'POST', json: sent });
+      settleSent(ownerId, sent);
       setError('');
       await refreshState({ quiet: true });
     } catch (error) {
-      if (!error.isNetworkError) delete d.pending;
+      // Lost connections, timeouts and server errors leave the outcome unknown: keep the id and look it up.
+      // A definite rejection (4xx) stored nothing, so the draft becomes editable again with its text and files.
+      if (uncertainSend(error)) d.sendState = 'checking';
+      else { delete d.pending; delete d.sendState; }
       if (scopeId === ownerId) setError(error.message);
-    } finally { sendingProject = null; saveDrafts(); composer(); }
+    } finally { sendingProject = null; saveDrafts(); composer(); if (drafts[ownerId]?.pending === sent && drafts[ownerId].sendState === 'checking') void verifyPending(ownerId, true); }
+    } finally { submitLocks.delete(ownerId); }
   });
 
   const customPreset = { key: 'custom', name: '', mode: 'workspace-write', autoApprove: true, responsibility: '', instructions: '' };
