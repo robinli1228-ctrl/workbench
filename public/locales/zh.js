@@ -4,6 +4,13 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Group chat actions': '群聊操作',
+  'Branch into new chat': '分支新会话',
+  'Copy team into new project': '复制角色到新项目',
+  'Chat title': '群聊名称',
+  'Create chat': '新建群聊',
+  'Same project folders and roles; no messages or native context are copied. The original chat remains usable.': '共用项目目录和角色，不带入原消息或原生上下文；原群聊仍可继续使用。',
+  'Role and project settings apply to every chat in this project.': '角色和项目配置对本项目的所有群聊共同生效。',
   'New folder': '新建文件夹',
   'Folder name': '文件夹名称',
   'Create folder': '创建文件夹',

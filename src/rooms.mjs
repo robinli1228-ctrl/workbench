@@ -90,13 +90,13 @@ export class Rooms {
         ...(source.kind==='assignment'?{sourceConflictAssignmentRequestId:source.conflictId}:{})});
       const message=this.db.put('roomMessages',{id,projectId,conversationId,sender:'system',senderName:source.kind==='proactive_followup'?'Workbench':tr('sourceSync.systemName'),kind:source.kind==='proactive_followup'?'proactive_followup':'source_conflict',text,taskIds:[task.id],source,fingerprint,createdAt:now(),
         ...(source.kind==='proactive_followup'?{visibility:'internal',proactiveFollowup:source.context}:{} )});
-      this.touch(projectId);return message;
+      this.touch(projectId,conversationId);return message;
     });
   }
 
-  touch(projectId) {
-    const prior = this.db.get('rooms', projectId);
-    this.db.put('rooms', { id: projectId, revision: (prior?.revision || 0) + 1 });
+  touch(projectId,conversationId=projectId) {
+    const prior = this.db.get('rooms', conversationId);
+    this.db.put('rooms', { id: conversationId, projectId, conversationId, revision: (prior?.revision || 0) + 1 });
   }
 
   /** Instruction settings are stored on the role record and copied at dispatch time; they never overwrite Markdown files in the user's repository. */
@@ -255,7 +255,7 @@ export class Rooms {
       });
       const message = this.db.put('roomMessages', { id: clientMessageId, projectId, conversationId, sender: 'human', senderName: tr('rooms.me'), text, attachments, replyToId, taskIds, broadcast: broadcast || undefined, createdAt: now(), fingerprint });
       if(!project.systemConfig)new ConversationContext(this.db).enqueue(projectId,conversationId);
-      this.touch(projectId);
+      this.touch(projectId,conversationId);
       return message;
     });
   }
@@ -387,7 +387,7 @@ export class Rooms {
       roleId: run.roleId, text: body, replyToId: call?.projectId===run.projectId?call.id:run.sourceMessageId || null, runId: run.id, taskIds: [], createdAt: now()
     });
     if (run.collaborationBatchId||run.continuationBatchId) new SessionQueue(this.db).recordReply(run, message.id);
-    this.touch(run.projectId);
+    this.touch(run.projectId,conversationIdOf(run));
     return message;
   }
 
@@ -411,7 +411,7 @@ export class Rooms {
         ...(run.explicitPublish?{kind:question?'user_question':'technical_notice'}:{}),
         roleId: run.roleId, text, replyToId: handoff?.projectId===run.projectId?handoff.id:run.sourceMessageId,
         runId: run.id, taskIds: [], createdAt: now() });
-      this.touch(run.projectId);
+      this.touch(run.projectId,conversationIdOf(run));
     });
   }
 }

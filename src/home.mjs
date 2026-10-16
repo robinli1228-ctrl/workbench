@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Store, terminal } from './store.mjs';
-import {GroupConversations,conversationIdOf,conversationView,agentConversationInput,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
+import {GroupConversations,conversationIdOf,conversationView,agentConversationInput,resolveConversationId,assertConversationRecord,groupConversationIdOfSession} from './group-conversations.mjs';
 import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
 import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
 import {validateCliCapacity,reservedTerminalSlots,registrationCapacity} from './device-capacity.mjs';
@@ -305,7 +305,7 @@ function snapshot() {
   const continuationLaunches=new Map(launchCommands.toReversed().map(c=>[c.runId,c]));
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1}, homePlatform: process.platform, projects: db.list('projects').filter(p => !p.systemConfig), roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
+  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1}, homePlatform: process.platform, projects: db.list('projects').filter(p => !p.systemConfig), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -417,8 +417,8 @@ function managedNativeSessions(nodeId,runtime){
   const items=new Map();for(const session of db.list('roleSessions')){
     if(session.nodeId!==nodeId||session.runtime!==runtime||session.historyClearedAt||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/.test(session.nativeSessionId||''))continue;
     const role=db.get('roles',session.roleId),project=db.get('projects',session.projectId),title=[project?.name,role?.name].filter(Boolean).join(' · ')||session.nativeSessionId;
-    const previous=items.get(session.nativeSessionId),binding={projectId:session.projectId,roleId:session.roleId,createdAt:session.createdAt||null,generation:session.generation||0};
-    const ambiguous=previous&&(previous.ambiguous||previous.roleBinding.projectId!==binding.projectId||previous.roleBinding.roleId!==binding.roleId);
+    const previous=items.get(session.nativeSessionId),binding={projectId:session.projectId,conversationId:groupConversationIdOfSession(session),roleId:session.roleId,createdAt:session.createdAt||null,generation:session.generation||0};
+    const ambiguous=previous&&(previous.ambiguous||previous.roleBinding.projectId!==binding.projectId||previous.roleBinding.roleId!==binding.roleId||previous.roleBinding.conversationId!==binding.conversationId);
     if(previous&&String(previous.createdAt||'')>String(session.createdAt||'')){if(ambiguous){previous.ambiguous=true;previous.roleBinding=null;}continue;}
     items.set(session.nativeSessionId,{sessionId:session.nativeSessionId,title,workspace:session.workspace||session.workspaceRoot||null,createdAt:session.createdAt||null,roleBinding:ambiguous?null:binding,ambiguous:Boolean(ambiguous)});
   }return [...items.values()].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))||a.sessionId.localeCompare(b.sessionId));
@@ -493,7 +493,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (pathname === '/api/state' && req.method === 'GET') {
         const state=snapshot();
-        const view=url.searchParams.get('view')==='workspace'?workspaceFeed.read(state,url.searchParams.get('projectId'),url.searchParams.get('cursor')):state;
+        const view=url.searchParams.get('view')==='workspace'?workspaceFeed.read(state,url.searchParams.get('projectId'),url.searchParams.get('cursor'),url.searchParams.get('conversationId')):state;
         return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(view)),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
       }
       if (pathname === '/api/wechat' && req.method === 'GET') return json(res, wechat.status());
@@ -1147,6 +1147,7 @@ const server = http.createServer(async (req, res) => {
     files['/workspace-inspector.js']='workspace-inspector.js';
     files['/source-sync.js']='source-sync.js';
     files['/state-data.js']='state-data.js';
+    files['/group-conversations.js']='group-conversations.js';
     files['/execution-progress.js']='execution-progress.js';
     files['/live-scene.js']='live-scene.js';
     files['/cli-recovery.js']='cli-recovery.js';

@@ -208,6 +208,7 @@ export class Store {
         for (const record of this.list(kind).filter(r => r.projectId === id)) this.remove(kind, record.id);
       }
       this.remove('rooms', id);
+      for(const room of this.listProject('rooms',id))this.remove('rooms',room.id);
       for(const kind of ['discussionThreads','discussionMessages','discussionDeliveries','discussionActions','discussionIntents'])for(const record of this.list(kind).filter(r=>r.projectId===id))this.remove(kind,record.id);
       for(const kind of ['conversationContexts','summaryJobs','summaryQueues'])for(const record of this.list(kind).filter(r=>r.projectId===id))this.remove(kind,record.id);
       this.remove('projects', id);

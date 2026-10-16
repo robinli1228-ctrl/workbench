@@ -392,7 +392,7 @@ export class RoleDiscussions {
     const from=this.db.get('roles',message.fromRoleId),to=this.db.get('roles',toRoleId);
     this.db.put('roomMessages',{id:`discussion:${message.id}`,projectId:message.projectId,sender:'agent',senderName:from?.name||message.fromRoleId,roleId:message.fromRoleId,
       kind:'discussion',text,runId:ctx.run.id,taskIds:[],conversationId:thread.conversationId,discussion:{messageId:message.id,threadId:thread.id,questionId:replyTo||message.id,fromRoleId:message.fromRoleId,toRoleId,late},createdAt:message.createdAt});
-    const room=this.db.get('rooms',thread.projectId)||{id:thread.projectId};
+    const room=this.db.get('rooms',conversationIdOf(thread))||{id:conversationIdOf(thread),projectId:thread.projectId,conversationId:conversationIdOf(thread)};
     this.db.put('rooms',{...room,revision:(room.revision||0)+1});
     if(!late) {
       const recipientSessionId=thread.participantSessions?.[toRoleId]||this.session(to,thread.conversationId||thread.projectId);

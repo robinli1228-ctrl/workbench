@@ -12,6 +12,7 @@ import {executionProgressLabels} from './execution-progress.js';
 import {createLiveScene} from './live-scene.js';
 import { createRoomUI, createRoleRefresh } from './room.js';
 import { projectSettings } from './project-settings.js';
+import {createGroupConversationUI} from './group-conversations.js';
 import { agentIconEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl } from './role-icons.js';
 import { activateSettingsTab, normalizeSettingsTab, settingsView, initProjectSettingsTabs } from './settings-page.js';
 import { supervisorSettings } from './supervisor-settings.js';
@@ -77,6 +78,7 @@ dom.bindingError = document.querySelector('#binding-error');
 const app = {
   data: { projects: [], roles: [], roleTemplates: [], tasks: [], runs: [], workers: [], approvals: [], settings: { paused: false }, promptDefaults: {}, version: '' },
   selectedProjectId: sessionStorage.getItem('agent-workbench.project') || null,
+  selectedConversationId:sessionStorage.getItem('agent-workbench.conversation')||sessionStorage.getItem('agent-workbench.project')||null,
   selectedTaskId: sessionStorage.getItem('agent-workbench.task') || null,
   token: readApiToken(),
   authPromptShown: false,
@@ -149,14 +151,14 @@ for(const [selector,icon,label] of [
   ['#project-repository-form [type=submit]','git'],['#save-settings-folder','save'],
   ['#delete-project','trash'],['#save-project-settings','save']
 ])document.querySelectorAll(selector).forEach(button=>setActionIcon(button,icon,label));
-const projectsUI = projectSettings({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create, setError, openSettings, closeSettings,openTask });
+const projectsUI = projectSettings({ api, getData: () => app.data, getProject: getCurrentProject, getConversationId:()=>app.selectedConversationId, refreshState, create, setError, openSettings, closeSettings,openTask });
 const supervisorsUI = supervisorSettings({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create,openTask });
 const roleTemplates = roleTemplatesUI({ api, getData: () => app.data, refreshState, create });
 const setupUI = projectSetupUI({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create, setError });
 const platformUI = platformAdminUI({api,getData:()=>app.data,refreshState,create});
 const spacesUI = projectSpaceUI({api,getData:()=>app.data,getProject:getCurrentProject,refreshState,create});
 const tokenUI = tokenUsageUI({api,getData:()=>app.data,create});
-const schedulesUI = createScheduledJobsUI({api,getData:()=>app.data,getProject:getCurrentProject,refreshState,create,
+const schedulesUI = createScheduledJobsUI({api,getData:()=>app.data,getProject:getCurrentProject,getConversationId:()=>app.selectedConversationId,refreshState,create,
   openTask:(projectId,taskId)=>{app.selectedProjectId=projectId;closeSettings();openTask(taskId);}});
 
 /** Recognize only clear short horizontal gestures; do not hijack vertical scrolling while reading. */
@@ -438,9 +440,12 @@ function getDetailRun(taskId) {
 }
 
 /** Switching projects immediately isolates old data and in-flight details so late responses are not shown in another project. */
-function selectProject(projectId) {
+const groupConversationsUI=createGroupConversationUI({api,getSelection:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),onCreated:async chat=>{selectProject(chat.projectId,chat.id);render();await refreshState({quiet:true});}});
+document.querySelector('#group-chat-actions').addEventListener('click',()=>groupConversationsUI.open());
+
+function selectProject(projectId,conversationId=projectId) {
   liveScene.close();
-  app.selectedProjectId=projectId;app.selectedTaskId=null;app.stateGeneration++;
+  app.selectedProjectId=projectId;app.selectedConversationId=conversationId;app.selectedTaskId=null;app.stateGeneration++;
   app.stateCache=null;app.fullRun=null;app.fullTask=null;app.requestVersion++;
   for(const key of ['tasks','runs','requests','executionPlans','runReports','runAlerts','discussionThreads','discussionDeliveries','roleSessions','roleSwitches'])app.data[key]=[];
   if(dom.runDialog.open)dom.runDialog.close();
@@ -454,6 +459,7 @@ function taskDisplayStatus(task, latestRun) {
 function reconcileSelection() {
   if (!app.data.projects.some((project) => project.id === app.selectedProjectId)) {
     app.selectedProjectId = app.data.projects[0]?.id || null;
+    app.selectedConversationId=app.selectedProjectId;
   }
   const projectTasks = app.data.tasks.filter((task) => task.projectId === app.selectedProjectId);
   if (!projectTasks.some((task) => task.id === app.selectedTaskId)) {
@@ -485,24 +491,26 @@ async function refreshState({ quiet = false } = {}) {
     return new Promise(resolve => app.refreshWaiters.push(resolve));
   }
   app.loadingState = true;
-  const requestedProject=app.selectedProjectId,generation=app.stateGeneration;
+  const requestedProject=app.selectedProjectId,requestedConversation=app.selectedConversationId,generation=app.stateGeneration;
   if (!quiet) setConnection('Syncing Home…');
   try {
     const params=new URLSearchParams({view:'workspace'});
     if(requestedProject)params.set('projectId',requestedProject);
-    if(app.stateCache?.projectId===requestedProject)params.set('cursor',app.stateCache.cursor);
+    if(requestedConversation)params.set('conversationId',requestedConversation);
+    if(app.stateCache?.projectId===requestedProject&&app.stateCache?.conversationId===requestedConversation)params.set('cursor',app.stateCache.cursor);
     let update=await readState(`/api/state?${params}`);
-    if(generation!==app.stateGeneration||requestedProject!==app.selectedProjectId){app.pendingStateRefresh=true;return;}
+    if(generation!==app.stateGeneration||requestedProject!==app.selectedProjectId||requestedConversation!==app.selectedConversationId){app.pendingStateRefresh=true;return;}
     try {app.stateCache=update.schema===1?applyStateUpdate(app.stateCache,update):{projectId:requestedProject||update.projects?.[0]?.id||null,cursor:null,state:update};}
     catch {
       params.delete('cursor');update=await readState(`/api/state?${params}`);
-      if(generation!==app.stateGeneration||requestedProject!==app.selectedProjectId){app.pendingStateRefresh=true;return;}
+      if(generation!==app.stateGeneration||requestedProject!==app.selectedProjectId||requestedConversation!==app.selectedConversationId){app.pendingStateRefresh=true;return;}
       app.stateCache=applyStateUpdate(null,update);
     }
     const data=app.stateCache.state;
-    app.selectedProjectId=app.stateCache.projectId;
+    app.selectedProjectId=app.stateCache.projectId;app.selectedConversationId=app.stateCache.conversationId||app.selectedProjectId;
     app.data = {
       capabilities: data.capabilities || {},
+      conversations:data.conversations||[],
       projects: Array.isArray(data.projects) ? data.projects : [],
       roles: Array.isArray(data.roles) ? data.roles : [],
       supervisorRoles: Array.isArray(data.supervisorRoles) ? data.supervisorRoles : [],
@@ -560,6 +568,7 @@ async function refreshState({ quiet = false } = {}) {
 
 function render() {
   if (app.selectedProjectId) sessionStorage.setItem('agent-workbench.project', app.selectedProjectId);
+  if(app.selectedConversationId)sessionStorage.setItem('agent-workbench.conversation',app.selectedConversationId);
   if (app.selectedTaskId) sessionStorage.setItem('agent-workbench.task', app.selectedTaskId);
   renderProjects();
   renderRoles();
@@ -576,7 +585,7 @@ function render() {
   projectsUI.refreshNodes();
   setupUI.refresh();
   platformUI.refresh(); spacesUI.refresh();
-  if(!nativeSessionUI.active())void room.refresh(app.data, app.selectedProjectId);
+  if(!nativeSessionUI.active())void room.refresh(app.data, app.selectedProjectId,app.selectedConversationId);
   nativeSessionUI.sync();
 }
 
@@ -670,30 +679,33 @@ function renderProjects() {
   if(projectOrder.active())return;
   dom.projectList.replaceChildren();
   const icons = projectIconAssignments(app.data.projects);
-  const executing=new Set((app.data.sidebarExecutions||[]).flatMap(item=>item.projectIds));
-  for (const project of projectOrder.ordered(app.data.projects)) {
-    const running=executing.has(project.id);
-    const button = create('button', `project-item${project.id === app.selectedProjectId ? ' active' : ''}${running?' is-running':''}`);
+  const executing=new Set((app.data.sidebarExecutions||[]).flatMap(item=>item.conversationIds||item.projectIds));
+  const conversations=app.data.conversations?.length?app.data.conversations:app.data.projects.map(p=>({id:p.id,projectId:p.id,title:p.name,isDefault:true}));
+  for (const chat of projectOrder.ordered(conversations)) {
+    const project=app.data.projects.find(p=>p.id===chat.projectId);if(!project)continue;
+    const active=chat.id===(app.selectedConversationId||app.selectedProjectId),running=executing.has(chat.id);
+    const button = create('button', `project-item${active ? ' active' : ''}${running?' is-running':''}`);
     button.type = 'button';
-    button.dataset.orderId=project.id;
+    button.dataset.orderId=chat.id;
     // Names, titles and accessible labels are user data; the count below is translated explicitly.
     button.translate = false;
     const count = project.supervisorRoleId ? (app.data.repositories || []).filter(r => r.projectId === project.id).length : (app.data.workspaces || []).filter(w => w.projectId === project.id).length;
     const icon = projectIconEl(icons[project.id]);
     const copy = create('span', 'project-item-copy');
-    copy.append(create('strong', '', project.name), create('small', '', project.supervisorRoleId ? t(count===1?'{count} code repository':'{count} code repositories', { count }) : t(count===1?'{count} node workspace':'{count} node workspaces', { count })));
-    button.title = `${project.name}${running?` · ${t('In progress')}`:''}`;
+    copy.append(create('strong', '', chat.title), create('small', '', chat.isDefault?(project.supervisorRoleId ? t(count===1?'{count} code repository':'{count} code repositories', { count }) : t(count===1?'{count} node workspace':'{count} node workspaces', { count })):project.name));
+    button.title = `${chat.title} · ${project.name}${running?` · ${t('In progress')}`:''}`;
     button.setAttribute('aria-label', button.title);
-    if (project.id === app.selectedProjectId) button.setAttribute('aria-current', 'page');
+    if (active) button.setAttribute('aria-current', 'page');
     button.append(icon, copy);
     button.addEventListener('click', async () => {
-      selectProject(project.id);
+      selectProject(project.id,chat.id);
       app.view = 'workspace';
       setError('');
       mobilePanel('chat');
       render();
       await refreshState({quiet:true});
     });
+    button.addEventListener('contextmenu',event=>{if(app.data.capabilities?.groupConversations!==1)return;event.preventDefault();groupConversationsUI.open({projectId:project.id,conversationId:chat.id});});
     dom.projectList.append(button);
   }
 }
@@ -1464,7 +1476,8 @@ function renderWorkspace() {
   dom.emptyState.hidden = settingsOpen || hasProjects || !dom.projectFormPanel.hidden;
   dom.contentGrid.hidden = settingsOpen || !project || !dom.projectFormPanel.hidden;
   dom.workspaceTitle.translate = settingsOpen || !project;
-  dom.workspaceTitle.textContent = settingsOpen ? settingsView(app.settingsTab).title : (project?.name || 'Select a project');
+  dom.workspaceTitle.textContent = settingsOpen ? settingsView(app.settingsTab).title : (app.data.conversations?.find(c=>c.id===app.selectedConversationId)?.title||project?.name||'Select a project');
+  document.querySelector('#group-chat-actions').hidden=settingsOpen||nativeSessionUI.active()||!project||app.data.capabilities?.groupConversations!==1;
   document.querySelector('#show-project-settings').disabled = !project;
   const repoBar = document.querySelector('#project-repository'); repoBar.replaceChildren(); repoBar.hidden = settingsOpen || !project?.repository;
   if (!settingsOpen && project?.repository) { const link = create('a', '', `Gitee · ${project.repository.owner}/${project.repository.repo}`); link.href = project.repository.webUrl; link.target = '_blank'; link.rel = 'noopener noreferrer'; repoBar.append(link); }
@@ -1681,7 +1694,7 @@ function renderRunTabs(task, run) {
       const snapshot={id:run.id,result:run.result,error:run.error,status:run.status};
       if(!originalRunSnapshot||Object.keys(snapshot).some(key=>snapshot[key]!==originalRunSnapshot[key])) {
         originalRunSnapshot=snapshot;
-        void runOriginal.open(run.projectId,'result',run.id).then(result=>{if(!result&&originalRunSnapshot===snapshot)originalRunSnapshot=null;});
+        void runOriginal.open(run.projectId,'result',run.id,run.conversationId||run.projectId).then(result=>{if(!result&&originalRunSnapshot===snapshot)originalRunSnapshot=null;});
       }
     }
   }

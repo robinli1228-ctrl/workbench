@@ -60,7 +60,7 @@ export function createAgentCalls({db,calls,rooms},run,input,{legacyAsk=false}={}
     const message=db.put('roomMessages',{id:messageId,projectId:run.projectId,conversationId:conversationIdOf(run),sender:'agent',senderName:run.roleSnapshot.name,roleId:run.roleId,kind:'handoff',runId:run.id,
       requestId:requests[0].id,requestIds:requests.map(r=>r.id),callFingerprint:fingerprint,taskIds:[],text:input.text,replyToId:run.sourceMessageId||null,
       handoff:{kind,fromRoleId:run.roleId,fromRole:run.roleSnapshot.name,toRoleId:toRoles[0].id,toRole:toRoles[0].name,toRoles,summary:input.text},createdAt:new Date().toISOString()});
-    rooms.touch(run.projectId);
+    rooms.touch(run.projectId,conversationIdOf(run));
     return response(message);
   });
 }

@@ -28,7 +28,7 @@ export function recentTimerOccurrences(occurrences, data, jobId) {
 }
 
 /** A single shared edit form is provided for project scheduled jobs; the authoritative schedule and trigger facts remain in Home. */
-export function createScheduledJobsUI({ api, getData, getProject, refreshState, create, openTask }) {
+export function createScheduledJobsUI({ api, getData, getProject, getConversationId=()=>getProject()?.id, refreshState, create, openTask }) {
   const container = document.querySelector('#global-scheduled-jobs');
   const dialog = document.querySelector('#scheduled-job-dialog');
   if (!container || !dialog) return { refresh() {}, show() {} };
@@ -153,7 +153,7 @@ export function createScheduledJobsUI({ api, getData, getProject, refreshState, 
     fillProjects();
     const data = getData();
     const allJobs = data.scheduledJobs || [];
-    const jobs = allJobs.filter(job => !selectedProjectId || job.projectId === selectedProjectId);
+    const jobs = allJobs.filter(job => !selectedProjectId || job.projectId === selectedProjectId&&(job.conversationId||job.projectId)===(selectedProjectId===getProject()?.id?getConversationId()||selectedProjectId:selectedProjectId));
     const occurrences = selectedProjectId && detailProjectId === selectedProjectId && detail?.occurrences
       ? detail.occurrences : data.scheduledOccurrences || [];
     const count = allJobs.length, enabledCount = allJobs.filter(job => job.enabled).length;
@@ -173,15 +173,15 @@ export function createScheduledJobsUI({ api, getData, getProject, refreshState, 
       const controls = create('div', 'timer-actions');
       const immediate = button(job.jobType === 'monitor' ? 'Check now' : 'Run now', control => {
         if (!window.confirm(t('Run "{name}" now? {v}', { name: job.name, v: job.jobType === 'monitor' ? t('This only checks current progress; new anomalies will notify the supervisor.') : t('This dispatches to the role and consumes model quota.') }))) return;
-        return act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/run`, { method: 'POST', json: {} }));
+        return act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/run`, { method: 'POST', json: {conversationId:job.conversationId||job.projectId} }));
       });
       if (job.jobType === 'monitor' && !job.enabled) immediate.disabled = true;
       controls.append(button('Edit', () => edit(job)),
-        button(job.enabled ? 'Pause' : 'Resume', control => act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/toggle`, { method: 'POST', json: { enabled: !job.enabled, revision: job.revision } }))),
+        button(job.enabled ? 'Pause' : 'Resume', control => act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/toggle`, { method: 'POST', json: { conversationId:job.conversationId||job.projectId,enabled: !job.enabled, revision: job.revision } }))),
         immediate,
         button('Delete', control => {
           if (!window.confirm(t('Delete scheduled job "{name}"? Existing run records are kept.', { name: job.name }))) return;
-          return act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/delete`, { method: 'POST', json: { revision: job.revision } }));
+          return act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/delete`, { method: 'POST', json: { conversationId:job.conversationId||job.projectId,revision: job.revision } }));
         }, 'secondary danger-text'));
       card.append(controls);
       const history = recentTimerOccurrences(occurrences, data, job.id);
@@ -201,12 +201,12 @@ export function createScheduledJobsUI({ api, getData, getProject, refreshState, 
   }
 
   async function loadDetails() {
-    const projectId = selectedProjectId;
+    const projectId = selectedProjectId,conversationId=projectId===getProject()?.id?getConversationId()||projectId:projectId;
     if (!projectId) { detailProjectId = ''; detail = null; render(); return; }
     const serial = ++requestSerial;
     try {
-      const result = await api(`/api/projects/${encodeURIComponent(projectId)}/scheduled-jobs`);
-      if (serial !== requestSerial || selectedProjectId !== projectId) return;
+      const result = await api(`/api/projects/${encodeURIComponent(projectId)}/scheduled-jobs?conversationId=${encodeURIComponent(conversationId)}`);
+      if (serial !== requestSerial || selectedProjectId !== projectId||(projectId===getProject()?.id?getConversationId()||projectId:projectId)!==conversationId) return;
       detailProjectId = projectId; detail = result; render();
     } catch (error) { if (serial === requestSerial) { feedback.textContent = error.message; feedback.hidden = false; } }
   }
@@ -223,7 +223,7 @@ export function createScheduledJobsUI({ api, getData, getProject, refreshState, 
       const projectId = formProject.value;
       if (!projectId) throw new Error('Please select a project');
       const project = getData().projects.find(item => item.id === projectId);
-      const payload = { id: editing?.id, revision: editing?.revision, name: name.value, description: description.value,
+      const payload = { conversationId:editing?(editing.conversationId||editing.projectId):(projectId===getProject()?.id?getConversationId()||projectId:projectId),id: editing?.id, revision: editing?.revision, name: name.value, description: description.value,
         roleId: jobType.value === 'monitor' ? project.supervisorRoleId : roleId.value, jobType: jobType.value,
         type: type.value, enabled: enabled.checked };
       if (type.value === 'once') {

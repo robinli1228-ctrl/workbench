@@ -2136,3 +2136,11 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 #native-session-list .project-item.active.is-running { color: #fff; background: linear-gradient(115deg, #5363d8, #5c50c7); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%), inset 3px 0 0 #b6d4ff, 0 3px 10px rgb(73 84 179 / 19%); }
 #native-session-list .project-item.active.is-running small { color: #e5ecff; }
 .native-session-history > summary.has-running-session { color: #286cd0; text-shadow: 0 0 8px rgb(74 135 236 / 15%); }
+/* Fresh-chat creation uses the existing dialog colors and never animates active work. */
+.group-conversation-dialog { width: min(520px, calc(100vw - 32px)); padding: 24px; }
+.group-conversation-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.group-conversation-actions { display: grid; gap: 12px; }
+.group-conversation-actions[hidden] { display: none; }
+.group-conversation-dialog label { display: grid; gap: 8px; }
+.group-conversation-dialog input { width: 100%; }
+.group-conversation-dialog p { line-height: 1.6; }
