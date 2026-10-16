@@ -1,6 +1,6 @@
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
-import { agentIconEl, UI_ICON, workerDisplayName } from './role-icons.js';
+import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
@@ -248,7 +248,7 @@ function createMessageQueue({api,refreshState,create,setError}) {
         };
         row.append(steer);
       }
-      const cancel=create('button','icon-button','×');cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
+      const cancel=closeIcon(create('button','icon-button'));cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
       cancel.disabled=pending.has(task.id);cancel.onclick=async()=>{
         cancel.disabled=true;try{await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`,{method:'POST',json:{}});await refreshState({quiet:true});}catch(error){setError(error.message);cancel.disabled=false;}
       };row.append(cancel);list.append(row);
@@ -343,10 +343,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     open.append(create('span','attachment-name',item.name),create('small','',item.size<1024?`${item.size} B`:`${(item.size/1024).toFixed(1)} KB`));
     card.append(open);
     if (!removable) card.append(iconAction('transfer', 'Send to device', () => openAttachmentTransfer(item)));
-    if (removable) card.append(button('×', () => {
+    if (removable) card.append(closeIcon(button('', () => {
       const d = drafts[ownerId]; if (d?.pending || sendingProject === ownerId) return;
       d.attachments = (d.attachments || []).filter(a=>a.id!==item.id); saveDrafts(); composer();
-    },'attachment-remove'));
+    },'attachment-remove'), t('Remove attachment')));
     return card;
   }
 
@@ -435,9 +435,9 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     card.append(open);
     if (!busy) {
       card.append(iconAction('refresh',entry.error ? 'Retry upload' : 'Upload', () => { void uploadTextFile(entry, ownerId); }));
-      card.append(button('×', () => {
+      card.append(closeIcon(button('', () => {
         drafts[ownerId].textFiles = drafts[ownerId].textFiles.filter(value => value.id !== entry.id); saveDrafts(); composer();
-      }, 'attachment-remove'));
+      }, 'attachment-remove'), t('Remove attachment')));
     }
     if (entry.error) card.title = entry.error;
     return card;

@@ -2696,3 +2696,7 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 .native-workspace-row button.action-icon-button { width: 40px; min-width: 40px; padding: 0; }
 @media (max-width: 760px) { .native-workspace-row:has(.action-icon-button) { flex-wrap: nowrap; } .native-workspace-row:has(.action-icon-button) input { flex-basis: auto; } }
 .proposal-actions { justify-content: flex-start; margin-top: 10px; }
+
+/* Close/remove controls draw the same stroked SVG as their neighbours (closeIcon), so they share one optical centre. */
+.attachment-remove { display: grid; place-items: center; }
+.attachment-remove svg { display: block; width: 14px; height: 14px; pointer-events: none; }

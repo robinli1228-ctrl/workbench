@@ -14,7 +14,7 @@ import { createRoomUI, createRoleRefresh } from './room.js';
 import { projectSettings } from './project-settings.js';
 import {createGroupConversationUI} from './group-conversations.js';
 import {createProjectTeamCopyUI} from './project-team-copy.js';
-import { agentIconEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl } from './role-icons.js';
+import { agentIconEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl, closeIcon } from './role-icons.js';
 import { activateSettingsTab, normalizeSettingsTab, settingsView, initProjectSettingsTabs } from './settings-page.js';
 import { supervisorSettings } from './supervisor-settings.js';
 import { roleTemplatesUI } from './role-templates.js';
@@ -146,7 +146,7 @@ const room = createRoomUI({ api, refreshState, openTask, stopRun, decideApproval
 // Icons are for utility actions only (close, add, edit, refresh, settings). Commit actions such as send, save, prepare and delete
 // stay text-only, the same as the confirm buttons at the bottom of dialogs, so a row never mixes the two styles.
 for(const [selector,icon,label] of [
-  ['#close-settings-page, dialog button.icon-button[id^="close-"], #folder-close','close'],['#show-device-enroll','plus'],['#edit-assistant-runtime','edit'],
+  ['#close-settings-page, dialog button.icon-button[id^="close-"], #folder-close, #close-project-form','close'],['#show-device-enroll','plus'],['#edit-assistant-runtime','edit'],
   ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit conversation organizer model'],['#edit-api-token','edit'],
   ['#manage-wechat','settings'],
   ['#token-usage-form [type=submit]','search'],['#token-usage-refresh','refresh'],['#open-project-timers','history'],
@@ -990,7 +990,7 @@ function openGitVersionDetails(project,status) {
   gitVersionDialog.replaceChildren();
   const heading=create('div','dialog-heading');
   const title=create('div');title.append(create('p','eyebrow',project.name),create('h2','','Git Version Details'));
-  const close=create('button','icon-button','×');close.type='button';close.setAttribute('aria-label','Close Git version details');close.onclick=()=>gitVersionDialog.close();
+  const close=closeIcon(create('button','icon-button'),t('Close Git version details'));close.type='button';close.onclick=()=>gitVersionDialog.close();
   heading.append(title,close);gitVersionDialog.append(heading);
   const tabs=create('div','git-version-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','Select device');
   const list=create('div','git-version-list');

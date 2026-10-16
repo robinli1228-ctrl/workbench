@@ -1,5 +1,5 @@
 import { t, dateLocale } from './i18n.js';
-import { setActionIcon } from './role-icons.js';
+import { setActionIcon, closeIcon } from './role-icons.js';
 
 /** Converts a stored UTC value to the browser-local wall clock needed by datetime-local; the ISO string cannot be sliced directly. */
 export function localDateTimeValue(value) {
@@ -60,7 +60,7 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
 
   const heading = create('div', 'dialog-heading');
   const dialogTitle = create('h3', '', 'Add scheduled job');
-  heading.append(dialogTitle, button('×', () => dialog.close(), 'icon-button'));
+  heading.append(dialogTitle, closeIcon(button('', () => dialog.close(), 'icon-button'), t('Close')));
   const form = create('form', 'form-grid timer-edit-form');
   const formProject = create('select'); formProject.name = 'projectId';
   const jobType = create('select'); jobType.name = 'jobType'; jobType.append(option('dispatch', 'Scheduled dispatch'), option('monitor', 'Progress check'));

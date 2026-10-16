@@ -1,11 +1,12 @@
 import {t} from './i18n.js';
+import {closeIcon} from './role-icons.js';
 import {orderedItems,readListOrder} from './list-order.js';
 
 /** Copy configuration only; persist the request before sending so reloads recover rather than duplicate it. */
 export function createProjectTeamCopyUI({api,getData,onCreated}) {
   const el=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=t(text);return n;};
   const dialog=el('dialog');dialog.id='project-team-copy-dialog';dialog.className='group-conversation-dialog team-copy-dialog';
-  const header=el('div');header.className='group-conversation-heading';const close=el('button','×');close.type='button';close.className='icon-button';close.setAttribute('aria-label',t('Close'));close.onclick=()=>dialog.close();header.append(el('h3','Copy team into new project'),close);
+  const header=el('div');header.className='group-conversation-heading';const close=closeIcon(el('button',''),t('Close'));close.type='button';close.className='icon-button';close.onclick=()=>dialog.close();header.append(el('h3','Copy team into new project'),close);
   const form=el('form'),name=el('input'),folder=el('input'),preview=el('section'),status=el('div'),submit=el('button','Create project'),retry=el('button','Retry preparation');
   name.id='team-copy-name';name.required=true;name.maxLength=80;folder.id='team-copy-folder';folder.required=true;folder.pattern='[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}';folder.maxLength=64;
   for(const [label,input]of [['Project name',name],['Folder name',folder]]){const field=el('label',label);field.append(input);form.append(field);}

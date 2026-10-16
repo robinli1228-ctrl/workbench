@@ -237,6 +237,18 @@ export function setActionIcon(button,name,label) {
 }
 
 
+/**
+ * A text "×" is drawn from font metrics and sits lower than the 16px SVG icons it shares a row with; every close or
+ * remove control uses the same stroked SVG instead. Existing classes, handlers and the accessible name are kept.
+ */
+export function closeIcon(button, label) {
+  if (!button) return button;
+  button.innerHTML = UI_ICON.close;
+  button.querySelector('svg').setAttribute('aria-hidden', 'true');
+  if (label) { button.title = label; button.setAttribute('aria-label', label); }
+  return button;
+}
+
 export function uiIconButton(create, name, title, className = 'icon-button') {
   const btn = create('button', className);
   btn.type = 'button';
