@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { folderName } from './project-space.mjs';
+import { folderName,assertProjectReady } from './project-space.mjs';
 import { saveRepository, bindRepository } from './project-repositories.mjs';
 import { tr } from './i18n.mjs';
 
@@ -7,6 +7,7 @@ import { tr } from './i18n.mjs';
 export class ProjectAdmin {
   constructor(db, query, hosting, change) { Object.assign(this, { db, query, hosting, change }); this.busy = new Set(); }
   check(projectId) {
+    assertProjectReady(this.db,projectId);
     const project = this.db.get('projects', projectId);
     if (!project) throw new Error(tr('projectAdmin.projectNotFound'));
     if (this.db.get('settings', 'main')?.paused) throw new Error(tr('projectAdmin.remoteExecutionPaused'));

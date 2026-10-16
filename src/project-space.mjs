@@ -14,6 +14,11 @@ export function within(root, path) {
   return !rel || (rel !== '..' && !rel.startsWith('../') && !isAbsolute(rel));
 }
 
+/** Pending copies cannot execute or rebind partial directories before the frozen team is published. */
+export function assertProjectReady(db,projectId){
+  if(db.get('projects',projectId)?.setupStatus==='copy_pending')throw new Error(tr('teamCopy.notReady'));
+}
+
 /** The directory is created and permission-checked by the target Worker; a directory with other content or belonging to another project is never taken over. */
 export async function prepareProjectSpace(roots, { projectId, folder, workspaceRoot }) {
   if (!/^[a-zA-Z0-9_-]{1,100}$/.test(projectId || '')) throw new Error(tr('projectSpace.invalidProjectId'));

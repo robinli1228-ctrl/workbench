@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Store, terminal } from './store.mjs';
+import {ProjectTeamCopy,projectCopyView} from './project-team-copy.mjs';
 import {GroupConversations,conversationIdOf,conversationView,agentConversationInput,resolveConversationId,assertConversationRecord,groupConversationIdOfSession} from './group-conversations.mjs';
 import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
 import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
@@ -96,6 +97,7 @@ function syncSupervisorInstructions() {
   }
 }
 const rooms = new Rooms(db);
+const projectTeamCopy=new ProjectTeamCopy({db,query:workerQuery,online,change});
 const attachments = new Attachments(db, join(data, 'attachments'));
 rooms.attachments = attachments;
 const attachmentTransfers=new AttachmentTransfers({db,attachments,query:workerQuery,online:id=>online(id),change:()=>change()});
@@ -461,6 +463,12 @@ const server = http.createServer(async (req, res) => {
       if((pathname.startsWith('/api/agent/source-inputs/')||pathname.startsWith('/api/agent/source-candidates/'))&&await sourceSync.inputHttp(req,res,pathname))return;
       if(await sourceSync.browserHttp(req,res,pathname))return;
       const conversationsRoute=pathname.match(/^\/api\/projects\/([^/]+)\/conversations$/);
+      const copyPreviewRoute=pathname.match(/^\/api\/projects\/([^/]+)\/team-copy\/preview$/);
+      if(copyPreviewRoute&&req.method==='GET')return json(res,projectTeamCopy.preview(copyPreviewRoute[1],{roleOrder:url.searchParams.has('roleOrder')?JSON.parse(url.searchParams.get('roleOrder')):undefined}));
+      const teamCopyRoute=pathname.match(/^\/api\/projects\/([^/]+)\/team-copies$/);
+      if(teamCopyRoute&&req.method==='POST')return json(res,projectTeamCopy.begin(teamCopyRoute[1],await body(req)),201);
+      const copyDetailRoute=pathname.match(/^\/api\/project-copies\/([^/]+)$/);
+      if(copyDetailRoute&&req.method==='GET')return json(res,projectTeamCopy.get(copyDetailRoute[1]));
       if(conversationsRoute&&req.method==='GET')return json(res,new GroupConversations(db).list(conversationsRoute[1]));
       if(conversationsRoute&&req.method==='POST'){
         const result=new GroupConversations(db).create(conversationsRoute[1],await body(req));change();return json(res,result,201);

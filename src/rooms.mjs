@@ -324,6 +324,7 @@ export class Rooms {
       const recoveryReason=discussion?null:this.nativeRecoveryReason?.(task);
       const active = this.db.activeRuns();
       const reason = this.db.get('settings', 'main')?.paused ? tr('rooms.remoteExecutionPaused')
+        : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)
         : !task.contextPrepared ? tr('rooms.organizingConversation')

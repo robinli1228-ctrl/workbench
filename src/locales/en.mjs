@@ -1,6 +1,14 @@
 // English message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  'teamCopy.sourceInvalid':'The source project needs a saved supervisor and valid team configuration.',
+  'teamCopy.invalidOrder':'Role order must contain every current working role exactly once.',
+  'teamCopy.promptWarning':'Prompts are copied exactly and may reference the source project or old paths. Review them before use.',
+  'teamCopy.invalidInput':'Provide a UUID request ID and a project name of 1 to 80 characters.',
+  'teamCopy.sourceChanged':'Source team changed. Refresh the preview before creating the copy.',
+  'teamCopy.destinationExists':'The destination project name or folder is already reserved.',
+  'teamCopy.notFound':'Project copy operation not found.',
+  'teamCopy.notReady':'Team copy workspace preparation is not complete.',
   'conversations.invalid': 'Group conversation not found in this project.',
   'conversations.workerUpgrade': 'Upgrade the target Worker before executing a parallel group chat.',
   'conversations.recordMismatch': 'This record belongs to a different group conversation.',

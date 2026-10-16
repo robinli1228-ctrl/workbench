@@ -5,7 +5,7 @@ import { mkdirSync,statfsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { giteeRepository } from './repository.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
-import { projectRepositories } from './project-space.mjs';
+import { projectRepositories,assertProjectReady } from './project-space.mjs';
 import { projectTerminalLock, terminalOwnsProject } from './terminal-resume.mjs';
 import { RoleSessions,taskConversationId } from './role-sessions.mjs';
 import { buildRunContext } from './run-context.mjs';
@@ -153,6 +153,7 @@ export class Store {
   }
   /** Project metadata never changes any node's Git remote or account credentials. */
   updateProject(id, { name, description = '', repoUrl = '' }) {
+    assertProjectReady(this,id);
     const p = this.get('projects', id); if (!p) throw new Error(tr('store.projectNotFound'));
     if (typeof name !== 'string' || !name.trim()) throw new Error(tr('store.projectNameRequired2'));
     if (typeof description !== 'string' || description.length > 12000) throw new Error(tr('store.descriptionMustBeAtMost'));
@@ -163,6 +164,7 @@ export class Store {
     return this.transaction(() => {
       const project = this.get('projects', id);
       if (!project) throw new Error(tr('store.projectNotFound2'));
+      assertProjectReady(this,id);
       if(this.list('roleSwitches').some(op=>op.projectId===id&&(!switchSettled(op)||!op.steps.released)))throw new Error('Project still has an unsettled CLI switch.');
       if(this.listProject('sourceSyncCommands',id).some(c=>!c.result))throw syncError('sync_busy');
       for(const c of this.listProject('sourceSyncCommands',id))this.put('sourceSyncTombstones',{id:c.id,nodeId:c.nodeId,projectId:id,generation:c.generation,deletedAt:now()});
@@ -244,6 +246,7 @@ export class Store {
       const storedTask = new ProactiveFollowup(this).prepareStart(taskId);
       if(!storedTask&&this.get('tasks',taskId))return null;
       if (!storedTask) throw new Error(tr('store.taskNotFound'));
+      assertProjectReady(this,storedTask.projectId);
       const task = storedTask.executionBinding ? {...storedTask,roleSnapshot:effectiveExecutionRole(this,storedTask),model:effectiveExecutionRole(this,storedTask).model} : storedTask;
       const conversationId=resolveConversationId(this,task.projectId,task.conversationId);
       if(conversationId!==task.projectId&&this.get('workers',nodeId)?.capabilities?.groupConversations!==1)throw new Error(tr('conversations.workerUpgrade'));

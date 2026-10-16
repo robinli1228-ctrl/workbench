@@ -1,6 +1,14 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  'teamCopy.sourceInvalid':'源项目需要已保存的总管和有效的角色配置。',
+  'teamCopy.invalidOrder':'排序必须包含每个现有工作角色且不得重复。',
+  'teamCopy.promptWarning':'提示词将原样复制，其中可能包含旧项目名称和路径，请在使用前检查。',
+  'teamCopy.invalidInput':'请提供 UUID 请求编号和 1 至 80 个字符的项目名称。',
+  'teamCopy.sourceChanged':'源角色配置已变更，请刷新预览后再创建副本。',
+  'teamCopy.destinationExists':'新项目名称或目录名已被占用。',
+  'teamCopy.notFound':'未找到项目复制操作。',
+  'teamCopy.notReady':'角色复制的工作目录尚未全部准备完成。',
   'conversations.invalid': '此项目中不存在指定的群聊。',
   'conversations.workerUpgrade': '目标设备的 Worker 需要升级后才能执行并列群聊任务。',
   'conversations.recordMismatch': '这条记录属于其他群聊。',
