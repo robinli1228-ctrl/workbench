@@ -833,17 +833,32 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const col = create('div', 'chat-col');
     const progress=taskProgress(task,run),label=t(progress.label);
     const running=progress.state==='running'&&run?.startedAt;
-    const nameLine=create('div', 'chat-name', `@${role.name || t('Role')} · ${label}`);
-    if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)nameLine.append(elapsed);}
+    const nameLine=create('div', 'chat-name', `@${role.name || t('Role')}`);
+    nameLine.translate=false;
     col.append(nameLine);
-    const bubble = create('div', 'chat-bubble');
+    const bubble = create('div', 'chat-bubble is-live-card');
+    const top = create('div', 'chat-bubble-top');
+    const source = messages.find(q => q.id === task.sourceMessageId);
+    if (source) {
+      const sourceText = simplifiedCliOutput(source.text || '');
+      const quote = create('button', 'quoted-message', t('{senderName}: {v}', { senderName: source.senderName, v: sourceText.slice(0, 180) + (sourceText.length >= 180 ? '...' : '') }));
+      quote.type = 'button'; quote.title = 'View quoted original'; quote.setAttribute('aria-label', 'View quoted original');
+      quote.addEventListener('click', () => void historyViewer.open(source.projectId || task.projectId, 'message', source.id, source.conversationId || source.projectId || task.projectId).catch(e => setError(e.message)));
+      top.append(quote);
+    }
+    const sentAt = run?.startedAt || run?.createdAt || task.createdAt;
+    const time = create('time', '', formatTime(sentAt));
+    if (sentAt) time.dateTime = sentAt;
+    top.append(time);
+    bubble.append(top);
     const preview = run && !run.explicitPublish ? liveText(run.id) : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id,`run:${run?.id || task.id}`));
     else {
       const typing = create('div', 'chat-typing');
       typing.append(create('span'), create('span'), create('span'));
-      bubble.append(typing, create('span', 'chat-typing-label', label));
-      if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)bubble.append(elapsed);}
+      const typingRow = create('div', 'chat-typing-row');
+      typingRow.append(typing, create('span', 'chat-typing-label', label));
+      bubble.append(typingRow);
     }
     col.append(bubble);
     const alert=run&&data.runAlerts?.find(a=>a.id===run.id);
@@ -865,7 +880,11 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       }));
     }
     if (run) actions.push(iconAction('log', 'Log', () => openTask(task.id,run.id)));
-    if (actions.length) col.append(chatMeta('', actions));
+    // Status and actions sit inside the card, the same footer as finished messages.
+    const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', label);
+    if (running) { const elapsed = elapsedEl(create, run.startedAt); if (elapsed) status.append(elapsed); }
+    const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
+    footer.append(status, actionBar); bubble.append(footer);
     row.append(col);
     if (run && ['starting', 'running', 'waiting_user', 'stopping'].includes(run.status)) void pullLive(run.id);
     return row;
@@ -886,16 +905,20 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const sender=create('div', 'chat-name', agent ? m.senderName : 'Me');
     // Saved role names are identities, not UI dictionary keys.
     if(agent)sender.setAttribute('translate','no');
-    header.append(sender, time);
+    header.append(sender);
     col.append(header);
     const bubble = create('div', `chat-bubble${handoff || replyDirection ? ' handoff-card' : ''}`);
+    // Every card opens with one top line: what it replies to (if anything) on the left, its send time on the right.
+    const top = create('div', 'chat-bubble-top');
+    bubble.append(top);
     if (m.replyToId) {
       const source = m.replySource || messages.find(q => q.id === m.replyToId);
       const quoteText=source?simplifiedCliOutput(source.text):'';
       const quote=create(source?.id?'button':'div', 'quoted-message', source ? t('{senderName}: {v}', { senderName: source.senderName, v: quoteText.slice(0, 180)+(quoteText.length>=180?'...':'') }) : 'Quoting an earlier message');
       if(source?.id){quote.type='button';quote.title='View quoted original';quote.setAttribute('aria-label','View quoted original');quote.addEventListener('click',()=>void historyViewer.open(m.projectId,'message',source.id,m.conversationId||m.projectId).catch(error=>setError(error.message)));}
-      bubble.append(quote);
+      top.append(quote);
     }
+    top.append(time);
     const recipients=messageRecipients(m,replyDirection);
     const bodyText=messageDisplayText(handoff?m.handoff.summary||m.text:m.text,recipients);
     const body=replyPreview(bodyText,handoff||agent,m.runId,`message:${m.id}`);
