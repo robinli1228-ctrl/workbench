@@ -1,6 +1,22 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  'teamCopy.sourceInvalid':'源项目需要已保存的总管和有效的角色配置。',
+  'teamCopy.invalidOrder':'排序必须包含每个现有工作角色且不得重复。',
+  'teamCopy.promptWarning':'提示词将原样复制，其中可能包含旧项目名称和路径，请在使用前检查。',
+  'teamCopy.invalidInput':'请提供 UUID 请求编号和 1 至 80 个字符的项目名称。',
+  'teamCopy.sourceChanged':'源角色配置已变更，请刷新预览后再创建副本。',
+  'teamCopy.destinationExists':'新项目名称或目录名已被占用。',
+  'teamCopy.notFound':'未找到项目复制操作。',
+  'teamCopy.notReady':'角色复制的工作目录尚未全部准备完成。',
+  'teamCopy.welcome':'已将角色复制到空业务目录，没有复制代码、依赖或历史。开始工作前请检查提示词中的项目名称和路径。',
+  'conversations.invalid': '此项目中不存在指定的群聊。',
+  'conversations.workerUpgrade': '目标设备的 Worker 需要升级后才能执行并列群聊任务。',
+  'conversations.recordMismatch': '这条记录属于其他群聊。',
+  'conversations.systemProject': '系统配置项目不能新建群聊。',
+  'conversations.invalidRequest': '新建请求必须使用独立的 UUID。',
+  'conversations.invalidTitle': '群聊名称须包含 1 至 80 个字符。',
+  'conversations.retryConflict': '此新建请求已使用过，重试参数不一致。',
   'roleTemplates.localDeveloper': '本地开发',
   'roleTemplates.localDeveloperResponsibility': '在本机实现和修复代码、完成自测，并跟进审核和测试问题。',
   'roleTemplates.localDeveloperInstructions': `你是本地开发角色，在本机为项目实现和修复代码，并在本机完成自测。

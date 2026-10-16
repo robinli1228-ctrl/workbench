@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { tr } from './i18n.mjs';
 import {activeRoleSwitch} from './role-switch-policy.mjs';
 import {terminalOwnsProject} from './terminal-resume.mjs';
+import {conversationIdOf,groupConversationIdOfSession,resolveConversationId} from './group-conversations.mjs';
 
 const now = () => new Date().toISOString();
 
 /** Dispatch and occupancy checks must select the same isolated source conversation. */
-export const taskConversationId=task=>task.sourceInputs?.length&&task.execution?.isolated?`${task.projectId}:source:${task.sourceSessionKey||task.sourceConflictAssignmentId||task.id}`:task.conversationId||task.projectId;
+export const taskConversationId=task=>task.sourceInputs?.length&&task.execution?.isolated
+  ? `${task.projectId}${conversationIdOf(task)===task.projectId?'':`:chat:${conversationIdOf(task)}`}:source:${task.sourceSessionKey||task.sourceConflictAssignmentId||task.id}`
+  : conversationIdOf(task);
 
 /** Platform sessions only store the mapping between a role and a native session; whether the CLI process is alive is still determined by the Worker. */
 export class RoleSessions {
@@ -23,7 +26,7 @@ export class RoleSessions {
         if(current.nodeId!==nodeId || current.runtime!==runtime || (current.workspaceRoot||null)!==(binding.workspaceRoot||null)) throw new Error(tr('roleSessions.roleSessionBindingHasChanged'));
         return current;
       }
-      const value={id:randomUUID(),projectId,conversationId,roleId,nodeId,runtime,model:binding.model||null,workspaceRoot:binding.workspaceRoot||null,
+      const value={id:randomUUID(),projectId,conversationId,groupConversationId:binding.groupConversationId||projectId,roleId,nodeId,runtime,model:binding.model||null,workspaceRoot:binding.workspaceRoot||null,
         generation:Math.max(0,...records.map(s=>s.generation||0))+1,nativeSessionId:null,nativeSession:null,
         workspace:null,status:'idle',activeRunId:null,lastRunId:null,predecessorSessionId:records.at(-1)?.id||null,createdAt:now(),updatedAt:now()};
       return this.db.put('roleSessions',value);
@@ -78,16 +81,26 @@ export class RoleSessions {
     return this.db.list('roleSessions').filter(s=>!s.historyClearedAt && s.projectId===projectId && (!conversationId || s.conversationId===conversationId) && (!roleId || s.roleId===roleId));
   }
 
+  /** Operator actions select an exact group slot; ambiguity or a stale expected ID is not permission to choose another. */
+  currentForGroup(projectId,roleId,input={}) {
+    const conversationId=resolveConversationId(this.db,projectId,input.conversationId);
+    const rows=this.list(projectId,{roleId}).filter(s=>groupConversationIdOfSession(s)===conversationId&&s.status!=='archived'&&!s.candidateFor);
+    const session=input.roleSessionId?rows.find(s=>s.id===input.roleSessionId):rows.length===1?rows[0]:null;
+    if(!session)throw new Error(tr('roleSessions.historySessionChanged'));
+    return session;
+  }
+
   /** Clear the role's session associations, preserving shared chat and audit records; later dispatch starts a fresh native session. */
-  clearHistory(projectId,roleId,expectedSessionId=null) {
+  clearHistory(projectId,roleId,expectedSessionId=null,input={}) {
+    const conversationId=resolveConversationId(this.db,projectId,input.conversationId);
     return this.db.transaction(()=>{
       const role=this.db.get('roles',roleId);
       if(role?.projectId!==projectId)throw new Error(tr('home.roleDoesNotBelongProject'));
       if(activeRoleSwitch(this.db,roleId))throw new Error(tr('roleSessions.historySwitchBusy'));
-      const sessions=this.list(projectId,{roleId}),ids=new Set(sessions.map(s=>s.id));
-      const current=sessions.find(s=>s.conversationId===projectId && s.status!=='archived' && !s.candidateFor);
+      const sessions=this.list(projectId,{roleId}).filter(s=>groupConversationIdOfSession(s)===conversationId),ids=new Set(sessions.map(s=>s.id));
+      const current=sessions.find(s=>(expectedSessionId?s.id===expectedSessionId:s.conversationId===conversationId) && s.status!=='archived' && !s.candidateFor);
       if((current?.id||null)!==expectedSessionId)throw new Error(tr('roleSessions.historySessionChanged'));
-      const runs=this.db.list('runs').filter(r=>r.projectId===projectId && r.roleId===roleId);
+      const runs=this.db.list('runs').filter(r=>r.projectId===projectId && conversationIdOf(r)===conversationId && r.roleId===roleId);
       if(sessions.some(s=>s.activeRunId) || runs.some(r=>!['succeeded','failed','interrupted'].includes(r.status))
         || this.db.list('tasks').some(t=>t.projectId===projectId && t.roleId===roleId && ['ready','in_progress'].includes(t.status))
         || this.db.list('coordinationRequests').some(r=>r.projectId===projectId && r.targetRoleId===roleId && !['succeeded','failed','cancelled'].includes(r.status))

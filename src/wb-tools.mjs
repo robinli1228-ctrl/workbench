@@ -36,6 +36,7 @@ export function context() {
     knowledge,
     workspace: env('WB_WORKSPACE'),
     runId: env('WB_RUN_ID'),
+    roleSessionId: env('WB_ROLE_SESSION_ID'),
     nodeId:env('WB_NODE_ID')||`local-${createHash('sha256').update(hostname()).digest('hex')}`,
     role: env('WB_ROLE'),
     hop: Number(env('WB_HOP') || 0),
@@ -218,7 +219,7 @@ function renderHandoff({ ctx, git, done, files, verify, next, blocked, auto }) {
 export async function handoffLast() {
   const ctx=context();if(ctx.documentViews&&ctx.home&&ctx.runId){const result=await homeFetch('/api/agent/documents',{runId:ctx.runId,action:'last'});return {ok:true,...result};}
   const dir = await ensureKnowledge(ctx.knowledge);
-  for(const path of handoffReadPaths(ctx.nodeId,ctx.reviewPrivate)){try{const text=await readFile(join(dir,path),'utf8');return {ok:true,path:join(dir,path),text};}catch(e){if(e.code!=='ENOENT')throw e;}}
+  for(const path of handoffReadPaths(ctx.nodeId,ctx.reviewPrivate,ctx.roleSessionId)){try{const text=await readFile(join(dir,path),'utf8');return {ok:true,path:join(dir,path),text};}catch(e){if(e.code!=='ENOENT')throw e;}}
   return { ok: false, error: tr('wbTools.noWrittenHandoffYet') };
 }
 
@@ -233,8 +234,8 @@ export async function handoffHasRun(runId, knowledge) {
 export async function writeHandoff(fields = {}, override = {}) {
   const ctx = { ...context(), ...override };
   const dir = await ensureKnowledge(ctx.knowledge);
-  const handoffs=join(dir,handoffDirectory(ctx.nodeId,ctx.reviewPrivate));
-  const previous=join(dir,handoffDirectory('',ctx.reviewPrivate));
+  const handoffs=join(dir,handoffDirectory(ctx.nodeId,ctx.reviewPrivate,ctx.roleSessionId));
+  const previous=join(dir,handoffDirectory('',ctx.reviewPrivate,ctx.roleSessionId));
   if (fields.auto && ctx.runId && (await Promise.all([handoffs,previous].map(path=>readdir(path).catch(()=>[])))).flat().some(name=>name.includes(ctx.runId))) {
     return { ok: true, skipped: true, reason: tr('wbTools.turnAlreadyHasWrittenHandoff') };
   }

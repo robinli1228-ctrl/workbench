@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { tr } from './i18n.mjs';
 import {posix} from 'node:path';
+import {conversationIdOf,resolveConversationId,assertConversationRecord,agentConversationInput} from './group-conversations.mjs';
 
 const now = () => new Date().toISOString();
 const TYPES = new Set(['open', 'independent-review']);
@@ -74,7 +75,9 @@ export class CollaborationSessions {
     const project = this.db.get('projects', run?.projectId || '');
     if (!run?.roleId || project?.supervisorRoleId !== run.roleId || run.roleSnapshot?.platformAssistant) throw new Error(tr('collabSessions.supervisorOnly'));
     const actor = { kind: 'agent', roleId: run.roleId, runId: run.id };
-    if (action === 'list') return this.list(run.projectId);
+    input=agentConversationInput(run,input);
+    if (action === 'list') return this.list(run.projectId).filter(s=>conversationIdOf(s)===conversationIdOf(run));
+    if(action!=='create')assertConversationRecord(run,this.db.get(KIND,input.sessionId));
     if (action === 'create') return this.create(run.projectId, { ...input, sourceMessageId: input.sourceMessageId || run.sourceMessageId }, actor, documentBaselines);
     if (action === 'link') return this.link(run.projectId, input.sessionId, input);
     if (action === 'add-member') return this.addMember(run.projectId, input.sessionId, input, actor);
@@ -91,9 +94,10 @@ export class CollaborationSessions {
   }
 
   create(projectId, input = {}, actor = { kind: 'human' }, documentBaselines = []) {
+    const conversationId=resolveConversationId(this.db,projectId,input.conversationId);
     return this.db.transaction(() => {
       if (!collaborationSessionsEnabled(this.db, projectId)) throw new Error(tr('collabSessions.featureDisabled'));
-      if (input.id) { const prior = this.db.get(KIND, input.id); if (prior) { if (prior.projectId !== projectId) throw new Error(tr('collabSessions.sessionNotFound')); return prior; } }
+      if (input.id) { const prior = this.db.get(KIND, input.id); if (prior) { assertConversationRecord({projectId,conversationId},prior); return prior; } }
       const type = input.type || 'open';
       if (!TYPES.has(type)) throw new Error(tr('collabSessions.invalidType'));
       if (!Array.isArray(input.participants) || !input.participants.length || input.participants.length > 50) throw new Error(tr('collabSessions.participantsRequired'));
@@ -107,8 +111,10 @@ export class CollaborationSessions {
       const parent = input.parentSessionId ? this.db.get(KIND, input.parentSessionId) : null;
       if (input.parentSessionId && parent?.projectId !== projectId) throw new Error(tr('collabSessions.sessionNotFound'));
       const source = input.sourceMessageId ? this.db.get('roomMessages', input.sourceMessageId) : null;
+      if(parent)assertConversationRecord({projectId,conversationId},parent);
+      if(source)assertConversationRecord({projectId,conversationId},source);
       if (input.sourceMessageId && source?.projectId !== projectId) throw new Error(tr('collabSessions.linkNotInProject'));
-      const s = { id: input.id || randomUUID(), projectId, goal: text(input.goal, 'goal', 4000),
+      const s = { id: input.id || randomUUID(), projectId, conversationId, goal: text(input.goal, 'goal', 4000),
         background: input.background ? text(input.background, 'background', 16000) : '',
         documentBaselines: type === 'independent-review' ? documentBaselines : [],
         delivery: input.delivery ? text(input.delivery, 'delivery', 4000) : '', type, participants,
@@ -128,6 +134,7 @@ export class CollaborationSessions {
       const [kind, key, field] = taskId ? ['tasks', taskId, 'linkedTaskIds'] : ['coordinationRequests', requestId, 'linkedRequestIds'];
       const record = key ? this.db.get(kind, key) : null;
       if (!record || record.projectId !== projectId) throw new Error(tr('collabSessions.linkNotInProject'));
+      assertConversationRecord(s,record);
       const owner = sessionOf(this.db, kind, record);
       if (owner && owner !== id) throw new Error(tr('collabSessions.alreadyLinked'));
       if (s[field].includes(key)) return s;

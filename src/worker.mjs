@@ -347,7 +347,7 @@ async function command(m) {
         WB_ROLE_SESSION_ID: m.run.roleSessionId || '',
         WB_SOURCE_SYNC:'1',
         WB_READ_TOOLS:readToolsEnabled?'1':'0',
-        WB_CONVERSATION_ID: m.run.projectId,
+        WB_CONVERSATION_ID: m.run.conversationId || m.run.projectId,
         WB_REQUEST_ID: m.run.requestId || '',
         WB_ROLE: m.run.roleSnapshot?.name || '',
         WB_SYSTEM_SUPERVISOR: m.run.roleSnapshot?.systemSupervisor && !m.run.roleSnapshot?.platformAssistant ? '1' : '0',
@@ -482,6 +482,7 @@ async function command(m) {
         }, {
           knowledge,
           nodeId:identity.nodeId,
+          roleSessionId:m.run.roleSessionId||'',
           reviewPrivate:m.run.reviewGuarded?m.run.roleId:'',
           projectRoot: root,
           workspace: folder,
@@ -619,8 +620,8 @@ async function query(m) {
       };
       if(input.action==='read'){reply(await read(input.path));return;}
       if(input.action==='last'){
-        for(const path of handoffReadPaths(identity.nodeId,input.reviewPrivate||'')){try{reply(await read(path));return;}catch(e){if(e.code!=='ENOENT')throw e;}}
-        reply({path:handoffReadPaths(identity.nodeId,input.reviewPrivate||'')[0],text:'',hash:createHash('sha256').update('').digest('hex')});return;
+        for(const path of handoffReadPaths(identity.nodeId,input.reviewPrivate||'',input.roleSessionId||'')){try{reply(await read(path));return;}catch(e){if(e.code!=='ENOENT')throw e;}}
+        reply({path:handoffReadPaths(identity.nodeId,input.reviewPrivate||'',input.roleSessionId||'')[0],text:'',hash:createHash('sha256').update('').digest('hex')});return;
       }
       if(!['list','snapshot'].includes(input.action))throw new Error(tr('collabSessions.invalidAction'));
       const files=[];let partial=false;
@@ -984,7 +985,7 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

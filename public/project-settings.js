@@ -3,7 +3,8 @@ import { workerDisplayName } from './role-icons.js';
 import { createFolderControl } from './create-folder.js';
 
 /** Node folder selection and repository settings share the existing authenticated API and never upload local browser files. */
-export function projectSettings({ api, getData, getProject, refreshState, create, setError, openSettings, closeSettings, openTask }) {
+export function projectSettings({ api, getData, getProject, getConversationId=()=>getProject()?.id, refreshState, create, setError, openSettings, closeSettings, openTask }) {
+  document.querySelector('#project-panel-basic')?.prepend(create('p','workspace-note','Role and project settings apply to every chat in this project.'));
   const picker = document.querySelector('#folder-dialog');
   const crumbs = document.querySelector('#folder-crumbs');
   const list = document.querySelector('#folder-list');
@@ -33,15 +34,15 @@ export function projectSettings({ api, getData, getProject, refreshState, create
     viewFollowup.disabled=!execution?.taskId;
   }
   async function loadFollowup(){
-    const id=getProject()?.id,version=++followupVersion;if(!id)return;
+    const id=getProject()?.id,conversationId=getConversationId()||id,version=++followupVersion;if(!id)return;
     followupProject=id;followupConfig=null;followupDisabled(true);followupFeedback.hidden=true;followupStatus.textContent=t('Loading…');
-    try{const value=await api(`/api/projects/${encodeURIComponent(id)}/proactive-followup`);if(version===followupVersion&&getProject()?.id===id)showFollowup(value);}
+    try{const value=await api(`/api/projects/${encodeURIComponent(id)}/proactive-followup?conversationId=${encodeURIComponent(conversationId)}`);if(version===followupVersion&&getProject()?.id===id&&(getConversationId()||id)===conversationId)showFollowup(value);}
     catch(error){if(version===followupVersion&&getProject()?.id===id){followupStatus.textContent=error.message;}}
     finally{if(version===followupVersion&&getProject()?.id===id){followupDisabled(!followupConfig);document.querySelector('#refresh-followup').disabled=false;}}
   }
   followupForm.addEventListener('submit',async event=>{
     event.preventDefault();const id=followupProject,version=followupVersion;if(!followupConfig||id!==getProject()?.id)return;
-    const input={enabled:followupForm.elements.enabled.checked,silenceMinutes:Number(followupForm.elements.silenceMinutes.value),revision:followupConfig.revision};followupDisabled(true);followupFeedback.hidden=true;
+    const input={conversationId:followupConfig.conversationId||id,enabled:followupForm.elements.enabled.checked,silenceMinutes:Number(followupForm.elements.silenceMinutes.value),revision:followupConfig.revision};followupDisabled(true);followupFeedback.hidden=true;
     try{const value=await api(`/api/projects/${encodeURIComponent(id)}/proactive-followup`,{method:'POST',json:input});if(version!==followupVersion||getProject()?.id!==id)return;showFollowup(value);followupFeedback.textContent=t('Saved');followupFeedback.hidden=false;}
     catch(error){if(version===followupVersion&&getProject()?.id===id){followupFeedback.textContent=error.message;followupFeedback.hidden=false;}}
     finally{if(version===followupVersion&&getProject()?.id===id)followupDisabled(false);}

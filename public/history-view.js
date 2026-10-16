@@ -37,7 +37,7 @@ export function createHistoryViewer({ api, inline = false }) {
   async function requestPart(state) {
     if (state.request) return state.request;
     const request = (async () => {
-      const query = new URLSearchParams({ kind: state.kind, id: state.id, offset: String(state.offset), limit: '4000' });
+      const query = new URLSearchParams({ conversationId:state.conversationId, kind: state.kind, id: state.id, offset: String(state.offset), limit: '4000' });
       if (state.version) query.set('version', state.version);
       const result = await api(`/api/projects/${encodeURIComponent(state.projectId)}/history/read?${query}`);
       if (activeState !== state) return null;
@@ -65,9 +65,9 @@ export function createHistoryViewer({ api, inline = false }) {
     view.parts.next.hidden = state.complete;
   }
 
-  async function open(projectId, kind, id) {
+  async function open(projectId, kind, id, conversationId=projectId) {
     const view = ensureDialog();
-    const state = { projectId, kind, id, offset: 0, version: null, complete: false, text: '', totalLength: 0 };
+    const state = { projectId, conversationId, kind, id, offset: 0, version: null, complete: false, text: '', totalLength: 0 };
     activeState = state;
     view.parts.title.textContent = kind === 'message' ? 'Original message' : 'Original execution result';
     view.parts.content.textContent = '';

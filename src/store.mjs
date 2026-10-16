@@ -1,10 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
+import {conversationIdOf,resolveConversationId,assertConversationRecord,conversationView} from './group-conversations.mjs';
 import { mkdirSync,statfsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { giteeRepository } from './repository.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
-import { projectRepositories } from './project-space.mjs';
+import { projectRepositories,assertProjectReady } from './project-space.mjs';
 import { projectTerminalLock, terminalOwnsProject } from './terminal-resume.mjs';
 import { RoleSessions,taskConversationId } from './role-sessions.mjs';
 import { buildRunContext } from './run-context.mjs';
@@ -132,8 +133,8 @@ export class Store {
     this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').run(kind, value.id, JSON.stringify(value));return value;
   }
   /** A monotonic Home receipt survives edits, imports, deletion and restarts without trusting a device timestamp. */
-  messageCursor(projectId){return this.db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM room_message_receipts WHERE project_id=?').get(projectId).seq;}
-  messageArrivals(projectId,after){return this.db.prepare("SELECT r.data,m.seq,m.received_at FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND m.seq>? ORDER BY m.seq").all(projectId,after).map(r=>({...JSON.parse(r.data),receiptSeq:r.seq,receivedAt:r.received_at}));}
+  messageCursor(projectId,conversationId=projectId){return this.db.prepare("SELECT COALESCE(MAX(m.seq),0) AS seq FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=?").get(projectId,conversationId).seq;}
+  messageArrivals(projectId,after,conversationId=projectId){return this.db.prepare("SELECT r.data,m.seq,m.received_at FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND m.seq>? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=? ORDER BY m.seq").all(projectId,after,conversationId).map(r=>({...JSON.parse(r.data),receiptSeq:r.seq,receivedAt:r.received_at}));}
   remove(kind, id) { this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind, id); }
   /** A synchronous transaction makes the check and the creation a single operation, avoiding duplicate claims. */
   transaction(fn) {
@@ -152,6 +153,7 @@ export class Store {
   }
   /** Project metadata never changes any node's Git remote or account credentials. */
   updateProject(id, { name, description = '', repoUrl = '' }) {
+    assertProjectReady(this,id);
     const p = this.get('projects', id); if (!p) throw new Error(tr('store.projectNotFound'));
     if (typeof name !== 'string' || !name.trim()) throw new Error(tr('store.projectNameRequired2'));
     if (typeof description !== 'string' || description.length > 12000) throw new Error(tr('store.descriptionMustBeAtMost'));
@@ -162,6 +164,7 @@ export class Store {
     return this.transaction(() => {
       const project = this.get('projects', id);
       if (!project) throw new Error(tr('store.projectNotFound2'));
+      assertProjectReady(this,id);
       if(this.list('roleSwitches').some(op=>op.projectId===id&&(!switchSettled(op)||!op.steps.released)))throw new Error('Project still has an unsettled CLI switch.');
       if(this.listProject('sourceSyncCommands',id).some(c=>!c.result))throw syncError('sync_busy');
       for(const c of this.listProject('sourceSyncCommands',id))this.put('sourceSyncTombstones',{id:c.id,nodeId:c.nodeId,projectId:id,generation:c.generation,deletedAt:now()});
@@ -187,7 +190,8 @@ export class Store {
       }
       for (const t of this.list('tasks').filter(t => t.projectId === id)) this.remove('tasks', t.id);
       for (const m of this.list('roomMessages').filter(m => m.projectId === id)) this.remove('roomMessages', m.id);
-      this.remove('proactiveFollowups',id);
+      for (const c of this.listProject('groupConversations',id)) this.remove('groupConversations',c.id);
+      for(const followup of this.listProject('proactiveFollowups',id))this.remove('proactiveFollowups',followup.id);
       // Only explicit project deletion releases its private read evidence; there is no background eviction.
       const readOperations=this.listProject('readOperations',id),readUsage=this.get('readStorageUsage','home');
       if(readUsage)this.put('readStorageUsage',{...readUsage,
@@ -206,6 +210,7 @@ export class Store {
         for (const record of this.list(kind).filter(r => r.projectId === id)) this.remove(kind, record.id);
       }
       this.remove('rooms', id);
+      for(const room of this.listProject('rooms',id))this.remove('rooms',room.id);
       for(const kind of ['discussionThreads','discussionMessages','discussionDeliveries','discussionActions','discussionIntents'])for(const record of this.list(kind).filter(r=>r.projectId===id))this.remove(kind,record.id);
       for(const kind of ['conversationContexts','summaryJobs','summaryQueues'])for(const record of this.list(kind).filter(r=>r.projectId===id))this.remove(kind,record.id);
       this.remove('projects', id);
@@ -241,7 +246,10 @@ export class Store {
       const storedTask = new ProactiveFollowup(this).prepareStart(taskId);
       if(!storedTask&&this.get('tasks',taskId))return null;
       if (!storedTask) throw new Error(tr('store.taskNotFound'));
+      assertProjectReady(this,storedTask.projectId);
       const task = storedTask.executionBinding ? {...storedTask,roleSnapshot:effectiveExecutionRole(this,storedTask),model:effectiveExecutionRole(this,storedTask).model} : storedTask;
+      const conversationId=resolveConversationId(this,task.projectId,task.conversationId);
+      if(conversationId!==task.projectId&&this.get('workers',nodeId)?.capabilities?.groupConversations!==1)throw new Error(tr('conversations.workerUpgrade'));
       const switchReason=roleSwitchWaitReason(this,task);if(switchReason)throw new Error(switchReason);
       const steeringReason=steeringWaitReason(this,task);
       if(steeringReason)throw new Error(steeringReason);
@@ -257,9 +265,9 @@ export class Store {
       const sourceWait=sourceInputWaitReason(this,task,nodeId);if(sourceWait)throw syncError(sourceWait);
       if (!reservePropagation(this, task)) return null;
       const roleSession = isSwitchMaintenance(task) ? this.get('roleSessions',task.switchSessionId) : task.origin === 'chat' && (task.roleSnapshot?.id || task.roleId)
-        ? new RoleSessions(this).getOrCreate({projectId:task.projectId,conversationId:taskConversationId(task),
+        ? new RoleSessions(this).getOrCreate({projectId:task.projectId,conversationId:taskConversationId(task),groupConversationId:conversationId,
           roleId:task.roleSnapshot?.id||task.roleId,nodeId,runtime:task.roleSnapshot?.runtime||'codex',model:task.model,workspaceRoot:binding.localRoot}) : null;
-      const run = { id: randomUUID(), taskId, projectId: task.projectId, nodeId, repositoryId,turnPurpose:'task',directionRevision:task.directionRevision||1,
+      const run = { id: randomUUID(), taskId, projectId: task.projectId, conversationId, sessionConversationId:taskConversationId(task), nodeId, repositoryId,turnPurpose:'task',directionRevision:task.directionRevision||1,
         collaborationSessionId:task.collaborationSessionId||null,collaborationCycleId:task.collaborationCycleId||null,
         continuationBatchId:task.continuationBatchId||null,...(task.explicitPublish?{explicitPublish:true}:{}),
         ...(task.automaticPropagation&&!task.collaborationBatchId?{propagationBudget:'reserved',explicitPublish:true}:{}),
@@ -279,9 +287,10 @@ export class Store {
         requestId: task.requestId || null, deliveryId: task.deliveryId || null, continuationRunId: task.continuationRunId || null, planId: task.planId || null, planVersion: task.planVersion || null, stepId: task.stepId || null,
         ...(task.origin === 'chat' ? { roleId: task.roleId, roleSnapshot: task.roleSnapshot, sourceMessageId: task.sourceMessageId, sourceRunId: task.sourceRunId, hop: task.hop || 0 } : {}) };
       if(task.origin==='chat'&&!isSwitchMaintenance(task)) {
-        if(run.backgroundFollowup)run.followupState=this.listProject('tasks',task.projectId).filter(t=>t.id!==task.id).slice(-10).map(t=>({taskId:t.id,status:t.status,roleId:t.roleId,runId:t.currentRunId||null,requestId:t.requestId||null,waitingReason:t.waitingReason||null}));
+        if(run.backgroundFollowup)run.followupState=this.listProject('tasks',task.projectId).filter(t=>t.id!==task.id&&conversationIdOf(t)===conversationId).slice(-10).map(t=>({taskId:t.id,status:t.status,roleId:t.roleId,runId:t.currentRunId||null,requestId:t.requestId||null,waitingReason:t.waitingReason||null}));
         // Independent review: other reviewers' unreleased opinions never enter this role's new input.
-        const view=reviewView(this,{projectId:task.projectId,roleId:task.roleSnapshot?.id||task.roleId});
+        for(const [kind,id] of [['roomMessages',task.sourceMessageId],['roomMessages',task.quoteMessageId],['runs',task.sourceRunId],['runs',task.continuationRunId],['coordinationRequests',task.requestId]])if(id)assertConversationRecord(run,this.get(kind,id));
+        const view=conversationView(reviewView(this,{projectId:task.projectId,roleId:task.roleSnapshot?.id||task.roleId}),run);
         run.reviewGuarded=view.reviewGuarded===true;
         if(run.reviewGuarded&&this.get('workers',nodeId)?.capabilities?.sessionQueue!==2)throw new Error(tr('store.reviewWorkerUpgradeRequired'));
         const context=view.get('conversationContexts',`${task.projectId}:${task.conversationId||task.projectId}`);

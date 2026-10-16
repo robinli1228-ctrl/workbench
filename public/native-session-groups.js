@@ -6,7 +6,7 @@ export function groupNativeSessions(items, roleSessions) {
   const newest = (a, b) => created(b.binding?.createdAt || b.item.createdAt) - created(a.binding?.createdAt || a.item.createdAt)
     || (b.binding?.generation || 0) - (a.binding?.generation || 0)
     || String(a.item.id).localeCompare(String(b.item.id));
-  const catalogueBindings=items.filter(item=>item.roleBinding).map(item=>({...item.roleBinding,nodeId:item.nodeId,runtime:item.runtime,nativeSessionId:item.sessionId||item.id}));
+  const catalogueBindings=items.filter(item=>item.roleBinding).map(item=>({...item.roleBinding,groupConversationId:item.roleBinding.conversationId||item.roleBinding.projectId,nodeId:item.nodeId,runtime:item.runtime,nativeSessionId:item.sessionId||item.id}));
   for (const binding of [...catalogueBindings,...(roleSessions || [])]) {
     if (binding.historyClearedAt || !binding.nativeSessionId || !binding.nodeId || !binding.projectId || !binding.roleId) continue;
     const id = identity(binding.nodeId, binding.runtime, binding.nativeSessionId);
@@ -16,10 +16,10 @@ export function groupNativeSessions(items, roleSessions) {
   for (const item of items) {
     const id = identity(item.nodeId, item.runtime, item.sessionId || item.id);
     const matches = bindings.get(id) || [];
-    const owners = new Set(matches.map(s => JSON.stringify([s.projectId, s.roleId])));
+    const owners = new Set(matches.map(s => JSON.stringify([s.projectId, s.groupConversationId||s.projectId, s.roleId])));
     // Never infer ownership from titles or combine ambiguous native identities.
     const binding = owners.size === 1 ? [...matches].sort((a, b) => newest({binding: a, item}, {binding: b, item}))[0] : null;
-    const groupId = binding ? `role:${JSON.stringify([binding.projectId, binding.roleId])}` : `native:${identity(item.nodeId, item.runtime, item.entryId || item.id)}`;
+    const groupId = binding ? `role:${JSON.stringify([binding.projectId, binding.groupConversationId||binding.projectId, binding.roleId])}` : `native:${identity(item.nodeId, item.runtime, item.entryId || item.id)}`;
     if (!groups.has(groupId)) groups.set(groupId, []);
     groups.get(groupId).push({item, binding});
   }

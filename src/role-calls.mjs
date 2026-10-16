@@ -9,6 +9,7 @@ import {createHash} from 'node:crypto';
 import {currentContinuation,waitDependencies} from './coordination-wait.mjs';
 import {SessionQueue} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
+import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
 
@@ -43,11 +44,15 @@ export class RoleCalls {
   constructor(db) { this.db = db; }
 
   create(input) {
+    const owners=[['coordinationRequests',input.parentRequestId],['coordinationRequests',input.continuationOf],['runs',input.sourceRunId],['roomMessages',input.sourceMessageId]]
+      .filter(([,id])=>id).map(([kind,id])=>this.db.get(kind,id));
+    const conversationId=resolveConversationId(this.db,input.projectId,input.conversationId===undefined&&owners.length?conversationIdOf(owners[0]):input.conversationId);
+    for(const owner of owners)assertConversationRecord({projectId:input.projectId,conversationId},owner);
     if (typeof input.id !== 'string' || !/^[a-zA-Z0-9:_-]{1,200}$/.test(input.id)) throw new Error(tr('roleCalls.invalidCallId'));
     if (!['direct', 'consult', 'handoff', 'continuation'].includes(input.kind)) throw new Error(tr('roleCalls.invalidCallType'));
     if(input.kind==='continuation'&&!input.continuationOf)throw new Error(tr('roleCalls.invalidCallType'));
     if (typeof input.summary !== 'string' || !input.summary.trim() || input.summary.length > 12000) throw new Error(tr('roleCalls.callSummaryMustBe1'));
-    const normalized = { id: input.id, projectId: input.projectId, targetRoleId: input.targetRoleId,
+    const normalized = { id: input.id, projectId: input.projectId, ...(conversationId!==input.projectId?{conversationId}:{}), targetRoleId: input.targetRoleId,
       kind: input.kind, summary: input.summary.trim(), sourceMessageId: input.sourceMessageId || null,
       originNodeId: input.originNodeId || null, parentRequestId: input.parentRequestId || null,
       ...(input.sourceRunId?{sourceRunId:input.sourceRunId}:{}),
@@ -94,7 +99,7 @@ export class RoleCalls {
       if(normalized.sourceSyncBatchId&&this.db.get('sourceSyncBatches',normalized.sourceSyncBatchId)?.projectId!==input.projectId)throw new Error(tr('roleCalls.deliveryDoesNotBelongProject'));
       if (this.db.get('settings', 'main')?.paused) throw new Error(tr('roleCalls.remoteExecutionPaused'));
       const now = new Date().toISOString();
-      return this.db.put('coordinationRequests', { ...normalized, fingerprint,
+      return this.db.put('coordinationRequests', { ...normalized, conversationId, fingerprint,
         collaborationSessionId: sourceRequest?.collaborationSessionId || null,
         collaborationCycleId: sourceRequest?.collaborationCycleId || null,
         continuationBatchId: continued?.continuationBatchId || null,
@@ -122,7 +127,7 @@ export class RoleCalls {
     return this.db.transaction(() => {
       const existing = this.db.get('coordinationRequests', id);
       const batch = task.collaborationBatchId ? this.db.get('sessionBatches', task.collaborationBatchId) : null;
-      const record = existing || this.db.put('coordinationRequests', { id, projectId: task.projectId,
+      const record = existing || this.db.put('coordinationRequests', { id, projectId: task.projectId, conversationId:conversationIdOf(task),
         collaborationSessionId: batch?.sessionId || task.collaborationSessionId || null,
         collaborationCycleId: batch?.cycleId || task.collaborationCycleId || null,
         continuationBatchId: task.collaborationBatchId || task.continuationBatchId || null,
@@ -159,7 +164,7 @@ export class RoleCalls {
         model: role.model, mode: role.mode });
       // Continuations retain the isolated source conversation; older requests can recover its key from their materialized task.
       const sourceSessionKey=r.sourceSessionKey||previous?.sourceSessionKey||this.db.get('tasks',previous?.taskId||'')?.sourceSessionKey||task.id;
-      this.db.put('tasks', { ...task, origin: 'chat', sourceMessageId: r.sourceMessageId,
+      this.db.put('tasks', { ...task, conversationId:conversationIdOf(r), origin: 'chat', sourceMessageId: r.sourceMessageId,
         collaborationSessionId:r.collaborationSessionId,collaborationCycleId:r.collaborationCycleId,automaticPropagation:r.automaticPropagation,
         continuationBatchId:r.kind==='continuation'?r.continuationBatchId||null:null,
         explicitPublish:Boolean(r.explicitPublish||r.automaticPropagation||r.continuationBatchId||previous?.explicitPublish||previous?.automaticPropagation||this.db.get('tasks',previous?.taskId||'')?.explicitPublish),
@@ -176,7 +181,9 @@ export class RoleCalls {
   }
 
   forRun(run) {
-    return run.requestId ? this.db.get('coordinationRequests', run.requestId) : this.adoptTask(run.taskId);
+    const request=run.requestId ? this.db.get('coordinationRequests', run.requestId) : this.adoptTask(run.taskId);
+    if(request)assertConversationRecord(run,request);
+    return request;
   }
 
   /** Waiting is only a business state; the execution slot cannot be released until the Worker confirms the turn is complete. */

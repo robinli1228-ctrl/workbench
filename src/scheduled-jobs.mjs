@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { progressFindings } from './timer-monitor.mjs';
+import {conversationIdOf,resolveConversationId,assertConversationRecord,conversationView} from './group-conversations.mjs';
 import { tr } from './i18n.mjs';
 
 const SYSTEM_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -97,18 +98,21 @@ export class ScheduledJobs {
     this.clock = clock;
   }
 
-  list(projectId) {
+  list(projectId,conversationId) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
     this.#project(projectId);
-    const jobs = this.db.list('scheduledJobs').filter(job => job.projectId === projectId).map(job => ({ ...job, jobType: job.jobType || 'dispatch' }));
-    const occurrences = this.db.list('scheduledOccurrences').filter(item => item.projectId === projectId)
+    const jobs = this.db.list('scheduledJobs').filter(job => job.projectId === projectId&&conversationIdOf(job)===conversationId).map(job => ({ ...job, jobType: job.jobType || 'dispatch' }));
+    const occurrences = this.db.list('scheduledOccurrences').filter(item => item.projectId === projectId&&conversationIdOf(item)===conversationId)
       .map(item => this.#withStatus(item)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return { jobs, occurrences };
   }
 
   save(projectId, input) {
+    const conversationId=resolveConversationId(this.db,projectId,input?.conversationId);
     this.#project(projectId);
     if (!input || typeof input !== 'object') throw new Error(tr('scheduledJobs.scheduleConfigurationRequired'));
     const old = input.id ? this.db.get('scheduledJobs', input.id) : null;
+    if(old)assertConversationRecord({projectId,conversationId},old);
     if (input.id && old?.projectId !== projectId) throw new Error(tr('scheduledJobs.scheduledJobDoesNotBelong'));
     if (old && input.revision !== old.revision) throw new Error(tr('scheduledJobs.scheduledJobConfigurationHasChanged'));
     const name = typeof input.name === 'string' ? input.name.trim() : '';
@@ -125,7 +129,7 @@ export class ScheduledJobs {
     const enabled = input.enabled === undefined ? old?.enabled ?? true : input.enabled;
     if (typeof enabled !== 'boolean') throw new Error(tr('scheduledJobs.enabledMustBeBoolean'));
     const job = {
-      id: old?.id || randomUUID(), projectId, name, description, roleId: role.id, jobType, schedule, enabled,
+      id: old?.id || randomUUID(), projectId, conversationId, name, description, roleId: role.id, jobType, schedule, enabled,
       revision: (old?.revision || 0) + 1, manualSequence: old?.manualSequence || 0,
       activeFindingKeys: old?.activeFindingKeys || [], lastCheckAt: old?.lastCheckAt || null, lastCheckResult: old?.lastCheckResult || null,
       createdAt: old?.createdAt || iso(now), updatedAt: iso(now),
@@ -199,7 +203,7 @@ export class ScheduledJobs {
           const role = this.db.get('roles', job.roleId);
           this.db.put('scheduledJobs', { ...job, nextRunAt: next?.toISOString() || null, lastRunAt: iso(now), updatedAt: iso(now) });
           this.db.put('scheduledOccurrences', {
-            id: occurrenceId, projectId: job.projectId, jobId: job.id, jobRevision: job.revision, jobName: job.name,
+            id: occurrenceId, projectId: job.projectId, conversationId:conversationIdOf(job), jobId: job.id, jobRevision: job.revision, jobName: job.name,
             dueAt, kind: job.jobType === 'monitor' ? 'monitor' : 'scheduled', roleId: job.roleId, roleSnapshot: role || null,
             messageId: `timer-${job.id}-${Date.parse(dueAt)}`, status: 'failed', error: message.slice(0, 2000), createdAt: iso(now)
           });
@@ -212,7 +216,7 @@ export class ScheduledJobs {
 
   /** Health inspection only saves a checkpoint; new anomalies are merged into a single Supervisor dispatch. */
   #checkMonitor(job, key, now, advance, extra = {}) {
-    const findings = progressFindings(this.db, job.projectId, now);
+    const findings = progressFindings(conversationView(this.db,job), job.projectId, now);
     const previous = new Set(job.activeFindingKeys || []);
     const fresh = findings.filter(item => !previous.has(item.key));
     const deferred = fresh.length && this.#hasActive(job.id);
@@ -239,12 +243,12 @@ export class ScheduledJobs {
     const numericKey = key.startsWith('manual-') ? key.replace('manual-', 'm') : String(Date.parse(key));
     const messageId = `timer-${job.id}-${numericKey}`;
     const occurrence = this.db.put('scheduledOccurrences', {
-      id, projectId: job.projectId, jobId: job.id, jobRevision: job.revision, jobName: job.name,
+      id, projectId: job.projectId, conversationId:conversationIdOf(job), jobId: job.id, jobRevision: job.revision, jobName: job.name,
       dueAt: extra.dueAt || iso(now), kind: extra.kind || (extra.manualNumber ? 'manual' : 'scheduled'), ...occurrenceExtra,
       roleId: role.id, roleSnapshot: role, messageId, status: 'dispatching', createdAt: iso(now)
     });
     const message = this.rooms.post(job.projectId, {
-      clientMessageId: messageId, text: text || job.description, targetRoleId: role.id, scheduledJobId: job.id
+      clientMessageId: messageId, conversationId:conversationIdOf(job), text: text || job.description, targetRoleId: role.id, scheduledJobId: job.id
     });
     if(extra.followupMessageIds?.length)for(const taskId of message.taskIds||[]){const task=this.db.get('tasks',taskId);this.db.put('tasks',{...task,followupMessageIds:extra.followupMessageIds});}
     return this.db.put('scheduledOccurrences', { ...occurrence, taskIds: message.taskIds || [], status: 'queued' });

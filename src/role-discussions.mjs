@@ -6,6 +6,7 @@ import {projectTerminalLock} from './terminal-resume.mjs';
 import {executionConflict} from './execution-workspace.mjs';
 import {discussionPolicy,supportsDiscussion,discussionTargetStatus} from './discussion-policy.mjs';
 import {buildTeamContext} from './team-context.mjs';
+import {conversationIdOf,groupConversationIdOfSession,assertConversationRecord} from './group-conversations.mjs';
 import { tr, isMessage } from './i18n.mjs';
 import {roleSwitchWaitReason} from './role-switch-policy.mjs';
 import {waitDependencies} from './coordination-wait.mjs';
@@ -57,7 +58,7 @@ export class RoleDiscussions {
       if(source&&(!terminal.has(source.status)||source.controlLost||source.discussionCleanup?.turnEnded!==true||source.discussionCleanup?.toolsClosed!==true))throw new Error(tr('roleDiscussions.waitingForSourceTurnEnd'));
       const role=this.db.get('roles',delivery.recipientRoleId),session=this.db.get('roleSessions',delivery.recipientSessionId);
       this.assertStart(role,nodeId,task);
-      if(!session||session.status==='archived'||session.projectId!==thread.projectId||session.conversationId!==thread.conversationId||session.roleId!==role.id||session.nodeId!==nodeId||session.runtime!==role.runtime)throw new Error(tr('roleDiscussions.recipientSessionBindingHasChanged'));
+      if(!session||session.status==='archived'||session.projectId!==thread.projectId||groupConversationIdOfSession(session)!==conversationIdOf(thread)||session.roleId!==role.id||session.nodeId!==nodeId||session.runtime!==role.runtime)throw new Error(tr('roleDiscussions.recipientSessionBindingHasChanged'));
       const binding=roleWorkspace(this.db,thread.projectId,nodeId,null);
       if(!binding||binding.localRoot!==session.workspaceRoot)throw new Error(tr('roleDiscussions.recipientWorkspaceHasChanged'));
       const purpose=message.kind==='question'?'clarification':'answer_resume';
@@ -71,7 +72,7 @@ export class RoleDiscussions {
         this.db.put('discussionDeliveries',{...delivery,waitingReason:'broadcast_paused'});return null;
       }
       const followup=followupFor(this.db,task);
-      const run={id:randomUUID(),taskId:task.id,businessTaskId:task.id,projectId:thread.projectId,nodeId,roleId:role.id,roleSnapshot:{...role},
+      const run={id:randomUUID(),taskId:task.id,businessTaskId:task.id,projectId:thread.projectId,conversationId:conversationIdOf(thread),sessionConversationId:session.conversationId,nodeId,roleId:role.id,roleSnapshot:{...role},
         reviewGuarded:view.reviewGuarded===true,
         collaborationSessionId:source?.collaborationSessionId||sourceBatch?.sessionId||task.collaborationSessionId||null,
         collaborationCycleId:cycleId,...(automatic?{propagationBudget:'reserved'}:{}),documentViews:this.db.get('workers',nodeId)?.capabilities?.sessionQueue===2?1:0,
@@ -102,6 +103,7 @@ export class RoleDiscussions {
     const worker=this.db.get('workers',nodeId),active=this.db.list('runs').filter(r=>!terminal.has(r.status));
     if(this.db.get('settings','main')?.paused)throw new Error(tr('roleDiscussions.remoteExecutionPaused'));
     this.assertReady(role);
+    if(conversationIdOf(task)!==task.projectId&&worker?.capabilities?.groupConversations!==1)throw new Error(tr('conversations.workerUpgrade'));
     if(active.some(r=>r.nodeId===nodeId&&r.status==='reconciling')||active.filter(r=>r.nodeId===nodeId).length>=(worker.capacity||1)||active.some(r=>r.roleId===role.id))throw new Error(tr('roleDiscussions.waitingForRoleFinishNode'));
     if(projectTerminalLock(this.db,task.projectId,nodeId))throw new Error(tr('roleDiscussions.projectUnderManualTakeover'));
     if(executionConflict({projectId:task.projectId,nodeId},active))throw new Error(tr('roleDiscussions.waitingForExclusiveProjectOperation'));
@@ -266,7 +268,7 @@ export class RoleDiscussions {
       const task=this.db.get('tasks',delivery.taskId),role=this.db.get('roles',delivery.recipientRoleId),message=this.db.get('discussionMessages',delivery.messageId);
       if(!task||!role||!message)continue;
       if(message.sourceRunId&&!terminal.has(this.db.get('runs',message.sourceRunId)?.status))continue;
-      result.push({id:`discussion:${delivery.id}`,businessTaskId:task.id,projectId:task.projectId,roleId:role.id,roleSnapshot:role,contextPrepared:true,discussionDeliveryId:delivery.id,createdAt:delivery.createdAt});
+      result.push({id:`discussion:${delivery.id}`,businessTaskId:task.id,projectId:task.projectId,conversationId:conversationIdOf(task),roleId:role.id,roleSnapshot:role,contextPrepared:true,discussionDeliveryId:delivery.id,createdAt:delivery.createdAt});
     }
     for(const intent of this.db.list('discussionIntents').filter(i=>i.status==='queued')) {
       const task=this.db.get('tasks',intent.taskId);
@@ -327,9 +329,10 @@ export class RoleDiscussions {
     if(input.threadId) {
       thread=this.db.get('discussionThreads',input.threadId);
       if(!thread||thread.projectId!==ctx.run.projectId||!thread.participants.includes(ctx.run.roleId))throw new Error(tr('roleDiscussions.notAllowedReadThread'));
+      assertConversationRecord(ctx.run,thread);
     }
-    const unread=new Set(this.db.list('discussionDeliveries').filter(d=>d.projectId===ctx.run.projectId&&d.recipientRoleId===ctx.run.roleId&&['queued','dispatched','runtime_accepted','reconciling'].includes(d.status)).map(d=>d.messageId));
-    const messages=this.db.list('discussionMessages').filter(m=>m.projectId===ctx.run.projectId&&(thread?m.threadId===thread.id:unread.has(m.id)));
+    const unread=new Set(this.db.list('discussionDeliveries').filter(d=>d.projectId===ctx.run.projectId&&conversationIdOf(d)===conversationIdOf(ctx.run)&&d.recipientRoleId===ctx.run.roleId&&['queued','dispatched','runtime_accepted','reconciling'].includes(d.status)).map(d=>d.messageId));
+    const messages=this.db.list('discussionMessages').filter(m=>m.projectId===ctx.run.projectId&&conversationIdOf(m)===conversationIdOf(ctx.run)&&(thread?m.threadId===thread.id:unread.has(m.id)));
     let start=0;
     if(input.cursor) {
       const i=messages.findIndex(m=>m.id===input.cursor);
@@ -345,8 +348,10 @@ export class RoleDiscussions {
     if(!current||closed.has(current.status)||this.db.get('settings','main')?.paused)throw new Error(tr('roleDiscussions.currentRunInvalidPaused'));
     const task=this.db.get('tasks',current.businessTaskId||current.taskId);
     if(!task||task.projectId!==current.projectId||task.status==='cancelled'||current.stopRequested)throw new Error(tr('roleDiscussions.originalTaskNoLongerValid'));
+    assertConversationRecord(current,task);
     const session=this.db.get('roleSessions',current.roleSessionId);
     if(!session||session.status==='archived'||session.projectId!==current.projectId||session.roleId!==current.roleId||session.nodeId!==current.nodeId)throw new Error(tr('roleDiscussions.currentRoleSessionBindingNo'));
+    if(groupConversationIdOfSession(session)!==conversationIdOf(current))throw new Error(tr('conversations.recordMismatch'));
     return {run:current,task};
   }
 
@@ -376,24 +381,24 @@ export class RoleDiscussions {
     if(!role||!role.enabled||role.archivedAt)throw new Error(tr('roleDiscussions.targetRoleDisabled'));
     const binding=roleWorkspace(this.db,role.projectId,role.nodeId,null);
     if(!binding)throw new Error(tr('roleDiscussions.targetRoleWorkspaceHasNot'));
-    return new RoleSessions(this.db).getOrCreate({projectId:role.projectId,conversationId,roleId:role.id,nodeId:role.nodeId,runtime:role.runtime,model:role.model,workspaceRoot:binding.localRoot}).id;
+    return new RoleSessions(this.db).getOrCreate({projectId:role.projectId,conversationId,groupConversationId:conversationId,roleId:role.id,nodeId:role.nodeId,runtime:role.runtime,model:role.model,workspaceRoot:binding.localRoot}).id;
   }
 
   /** The visible record and the pending delivery are committed in the caller's single transaction; recipients are never guessed from natural language. */
   message(ctx,thread,{requestId,kind,toRoleId,replyTo=null,text,evidenceRefs=[],late=false}) {
-    const message={id:randomUUID(),projectId:thread.projectId,threadId:thread.id,taskId:thread.taskId,rootTaskId:thread.rootTaskId,
+    const message={id:randomUUID(),projectId:thread.projectId,conversationId:conversationIdOf(thread),threadId:thread.id,taskId:thread.taskId,rootTaskId:thread.rootTaskId,
       directionRevision:thread.directionRevision,requestId,kind,fromRoleId:ctx.run.roleId,toRoleId,replyTo,text,evidenceRefs,late,sourceRunId:ctx.run.id,createdAt:now()};
     this.db.put('discussionMessages',message);
     const from=this.db.get('roles',message.fromRoleId),to=this.db.get('roles',toRoleId);
     this.db.put('roomMessages',{id:`discussion:${message.id}`,projectId:message.projectId,sender:'agent',senderName:from?.name||message.fromRoleId,roleId:message.fromRoleId,
       kind:'discussion',text,runId:ctx.run.id,taskIds:[],conversationId:thread.conversationId,discussion:{messageId:message.id,threadId:thread.id,questionId:replyTo||message.id,fromRoleId:message.fromRoleId,toRoleId,late},createdAt:message.createdAt});
-    const room=this.db.get('rooms',thread.projectId)||{id:thread.projectId};
+    const room=this.db.get('rooms',conversationIdOf(thread))||{id:conversationIdOf(thread),projectId:thread.projectId,conversationId:conversationIdOf(thread)};
     this.db.put('rooms',{...room,revision:(room.revision||0)+1});
     if(!late) {
       const recipientSessionId=thread.participantSessions?.[toRoleId]||this.session(to,thread.conversationId||thread.projectId);
       const recipientSession=this.db.get('roleSessions',recipientSessionId);
       if(!recipientSession||recipientSession.status==='archived'||recipientSession.nodeId!==to.nodeId||recipientSession.runtime!==to.runtime)throw new Error(tr('roleDiscussions.recipientSessionHasChangedReconfirm'));
-      this.db.put('discussionDeliveries',{id:key(message.id,toRoleId,thread.directionRevision),projectId:thread.projectId,threadId:thread.id,taskId:thread.taskId,
+      this.db.put('discussionDeliveries',{id:key(message.id,toRoleId,thread.directionRevision),projectId:thread.projectId,conversationId:conversationIdOf(thread),threadId:thread.id,taskId:thread.taskId,
         messageId:message.id,recipientRoleId:toRoleId,recipientSessionId,directionRevision:thread.directionRevision,status:'queued',deliveryMode:'next_turn',processingRunId:null,recoveryCount:0,attempts:[],createdAt:now(),updatedAt:now()});
     }
     return message;
@@ -503,7 +508,7 @@ export class RoleDiscussions {
       this.consume(ctx.run);
       this.db.put('discussionThreads',{...thread,status:'resolved',revision:thread.revision+1,conclusion:input.conclusion,resolutionBasis:{questionId:thread.currentQuestionId,basedOnReplyIds:ids,evidenceRefs:refs,runId:ctx.run.id},updatedAt:now()});
       this.db.put('tasks',{...ctx.task,discussionWait:null,waitingReason:tr('roleDiscussions.waitingForReplyHandlingTurn')});
-      this.db.put('discussionIntents',{id:resumeIntentId,projectId:thread.projectId,taskId:thread.taskId,threadId:thread.id,questionId:thread.currentQuestionId,directionRevision:thread.directionRevision,afterRunId:ctx.run.id,status:'queued',createdAt:now()});
+      this.db.put('discussionIntents',{id:resumeIntentId,projectId:thread.projectId,conversationId:conversationIdOf(thread),taskId:thread.taskId,threadId:thread.id,questionId:thread.currentQuestionId,directionRevision:thread.directionRevision,afterRunId:ctx.run.id,status:'queued',createdAt:now()});
       return {threadId:thread.id,questionId:thread.currentQuestionId,revision:thread.revision+1,resumeIntentId,status:'resolved'};
     });
   }
@@ -525,7 +530,7 @@ export class RoleDiscussions {
         if(!intent||task.discussionResumeBlocked?.afterRunId!==after?.id||input.resumeAfterRunId!==after?.id||input.expectedQuestionId!==thread.currentQuestionId)throw new Error(tr('roleDiscussions.verifyCurrentAbnormalTurnThen'));
         if(!terminal.has(after?.status)||after.stopRequested||after.controlLost||after.discussionCleanup?.turnEnded!==true||after.discussionCleanup?.toolsClosed!==true)throw new Error(tr('roleDiscussions.originalRunHasNotEnded'));
         const evidenceId=`discussion-user:${randomUUID()}`;
-        this.db.put('roomMessages',{id:evidenceId,projectId,sender:'human',senderName:tr('roleDiscussions.me2'),text:input.conclusion,taskIds:[],discussion:{threadId:thread.id,questionId:thread.currentQuestionId,action:'resume',afterRunId:after.id},createdAt:now()});
+        this.db.put('roomMessages',{id:evidenceId,projectId,conversationId:conversationIdOf(thread),sender:'human',senderName:tr('roleDiscussions.me2'),text:input.conclusion,taskIds:[],discussion:{threadId:thread.id,questionId:thread.currentQuestionId,action:'resume',afterRunId:after.id},createdAt:now()});
         this.db.put('discussionIntents',{...intent,status:'queued',waitingReason:null,recoveryEvidenceId:evidenceId,updatedAt:now()});
         this.db.put('tasks',{...task,discussionResumeBlocked:{...task.discussionResumeBlocked,confirmed:true},waitingReason:tr('roleDiscussions.verifiedWaitingForOriginalTask')});
         const result={threadId:thread.id,questionId:thread.currentQuestionId,revision:thread.revision,resumeIntentId:intent.id,status:'resolved'};
@@ -533,7 +538,7 @@ export class RoleDiscussions {
       }
       if(thread.currentQuestionId!==input.expectedQuestionId||task.discussionWait?.questionId!==input.expectedQuestionId)throw new Error(tr('roleDiscussions.currentQuestionHasChanged3'));
       const evidenceId=`discussion-user:${randomUUID()}`,resumeIntentId=`discussion-resume:${thread.id}`;
-      this.db.put('roomMessages',{id:evidenceId,projectId,sender:'human',senderName:tr('roleDiscussions.me3'),text:input.conclusion,taskIds:[],discussion:{threadId:thread.id,questionId:thread.currentQuestionId,action:'resolve'},createdAt:now()});
+      this.db.put('roomMessages',{id:evidenceId,projectId,conversationId:conversationIdOf(thread),sender:'human',senderName:tr('roleDiscussions.me3'),text:input.conclusion,taskIds:[],discussion:{threadId:thread.id,questionId:thread.currentQuestionId,action:'resolve'},createdAt:now()});
       this.db.put('discussionThreads',{...thread,status:'resolved',revision:thread.revision+1,conclusion:input.conclusion,resolutionBasis:{source:'human',questionId:thread.currentQuestionId,evidenceRefs:[evidenceId]},updatedAt:now()});
       this.db.put('tasks',{...task,discussionWait:null,waitingReason:tr('roleDiscussions.waitingForOriginalTurnEnd')});
       this.db.put('discussionIntents',{id:resumeIntentId,projectId,taskId:task.id,threadId:thread.id,questionId:thread.currentQuestionId,directionRevision:thread.directionRevision,afterRunId:task.discussionWait.sourceRunId,status:'queued',createdAt:now()});

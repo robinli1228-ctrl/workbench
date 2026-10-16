@@ -186,3 +186,28 @@
 - Independent integration review identified an outdated empty-chat routing hint, a missing zero-usage state and a duplicate translation. The first two were reproduced in the real isolated browser before minimal fixes; the final page also retained the selected sidebar state and title-bar tabs. Existing histories, reports and synchronization records were not rewritten.
 - Node 22.22.1 verification passed 56 maintained tests plus 60 targeted read/routing/token checks, syntax and whitespace gates. Actual isolated Home/Edge checks covered English/Chinese reply routing, model totals/remainders, empty states, five settings tabs and desktop/mobile layout. Private test scripts/data/screenshots remain ignored; no vendor-model turn or production task was launched.
 - This integration does not deploy or restart any service, enable Q/F on business projects, or implement the separate automatic dependency-preparation proposal. Publishing source and accepting a live runtime remain separate operations.
+
+## 2026-10-16 — Sidebar execution emphasis
+
+- Added static blue shading, fine borders and soft shadows for executing group chats and exact native sessions. Selected rows remain distinct; historical running sessions are indicated in the expandable history entry. Queued, waiting, offline and idle states are not labeled as executing.
+- Compact cross-project activity metadata reuses the existing state feed; no new polling, model calls, continuous animation or history rewrites. Native identity matching includes device, runtime and session ID.
+- Focused projection tests and real isolated Home/Edge checks covered unselected projects, exact native matching, selected styling, history expansion, completion updates without catalogue refetching and mobile layout. The maintained suite passed 82/82. This change is not deployed and does not restart production services.
+
+## 2026-10-16 — Parallel-chat and team-copy design
+
+- User selected a parallel new group chat while retaining the original usable chat. Added the proposed specification in `design-parallel-conversations.md` and registered it in the documentation index.
+- The proposal separates fresh conversation/native context from shared project files and roles, preserves workspace/process locks, and defines team-only copying into empty new project workspaces. Full specification review and the implementation plan remain pending; no application code, runtime configuration, histories or running tasks were changed by this documentation step.
+
+## 2026-10-16 — Parallel-chat and team-copy implementation plans
+
+- The user approved the specification by asking to continue development. Split execution into two independently testable plans: conversation/context isolation first, then configuration-only project copying with strict directory ownership and retryable readiness.
+- Self-review clarified group ownership versus existing source-isolated native partitions, mixed-version Worker capability checks, empty/custom prompt preservation, and the ambiguous mkdir-before-marker crash boundary. Plans include targeted failing tests, compatibility gates, real-browser/native acceptance and independent final review.
+- Implementation-plan review and execution-method confirmation are still pending under the planning workflow. This step changes documentation only, not source behavior, live configuration, history, files in business projects or services.
+
+## 2026-10-16 — Parallel chats and team-only project copy implemented
+
+- Implemented both approved actions through native execution. Parallel chats retain shared project folders and role configuration while isolating messages, Tasks, Runs, summaries, native-session identities, handoffs and derived collaboration. Team copying freezes exact allow-listed configuration, uses new IDs and strict owned-directory preparation, and publishes the team only after every required device is ready. Existing histories and project files are retained.
+- One independent whole-branch review identified five important gaps. Added failing regressions and corrected CLI-switch prompt history scope, setup-catalog task/proposal scope, setup notice routing, selected-project deletion recovery and scheduled-job sibling-chat navigation. The final maintained-plus-focused Node test run passed 121/121 reported test executions (including imported fixture tests), with npm ci, syntax and whitespace checks passing.
+- Actual isolated Home/Edge verification covered desktop/mobile navigation and copy UI, blank/duplicate input, drafts/reload, delayed old replies, stale responses, source order preservation, offline retry, independent copied-role edits, and exact copied settings after language refresh and Home restart. A real local Codex branch used a distinct native identity after the original Run completed; all four adapters passed deterministic captured-input checks, but only Codex had actual model startup verified for this feature.
+- Real isolated Mac/server Workers completed the same copy operation after one device disconnected and reconnected. Both destination business folders contained only the ownership marker and two bootstrap instruction files; no Tasks, Runs, repository clone or dependency installation was created by the copy. The production Worker PID remained unchanged. The earlier failed test environment attempt remains in ignored evidence instead of being rewritten as success.
+- Documented shared capacity/CLI-switch constraints, project-level source-sync conflicts and copied-preset behavior. This is local implementation and isolated acceptance only: no GitHub publication, production deployment, business-project activation or production service restart.

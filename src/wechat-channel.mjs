@@ -6,6 +6,7 @@ import { resolve, dirname, join } from 'node:path';
 import { terminal } from './store.mjs';
 import { acceptsBusinessReport } from './run-reports.mjs';
 import { tr } from './i18n.mjs';
+import {conversationIdOf,resolveConversationId} from './group-conversations.mjs';
 
 const API = '/api/v1/confirmations';
 const mentions = /(?:^|[\s\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a,!?;:(\uff08])@[\p{L}\p{N}_-]+/u;
@@ -138,12 +139,15 @@ export class WechatChannel {
   }
   /** The idempotency UUID is saved before sending; after a timeout, the same client_request_id is still submitted to the Hub. */
   create({ sourceKey, kind, projectId, roleId, runId, approvalId, approvalFingerprint, remoteApproval, reportRevision, summary, channelId, requestText }) {
+    const source=runId?this.db.get('runs',runId):null;
+    if(runId&&source?.projectId!==projectId)throw new Error(tr('conversations.recordMismatch'));
+    const conversationId=resolveConversationId(this.db,projectId,source?conversationIdOf(source):undefined);
     const existing = this.db.list('wechatLinks').find(link => link.sourceKey === sourceKey);
     if (existing) return existing;
     const project = this.db.get('projects', projectId), role = this.db.get('roles', roleId);
     if (!project || project.systemConfig || role?.projectId !== projectId) throw new Error(tr('wechatChannel.invalidWechatTargetProjectRole'));
     const text = `[${project.name}] @${role.name}\n${summary}`;
-    const link = this.db.put('wechatLinks', { id: randomUUID(), sourceKey, kind, projectId, roleId, runId, approvalId, approvalFingerprint, remoteApproval, reportRevision,
+    const link = this.db.put('wechatLinks', { id: randomUUID(), sourceKey, kind, projectId, conversationId, roleId, runId, approvalId, approvalFingerprint, remoteApproval, reportRevision,
       conversationRef: `wb:${runId || projectId}`, summary: text.length > 1800 ? tr('wechatChannel.questionLongSeeFullContent', { p1: text.slice(0, 1800) }) : text,
       channelId: channelId || this.status().channelId, requestText, state: 'pending', createdAt: this.now(), lastSeq: 0 });
     this.change(); return link;
@@ -247,7 +251,7 @@ export class WechatChannel {
             const explicit = latest.kind !== 'notification' && mentions.test(reply.answer);
             const source = latest.runId ? this.db.get('runs', latest.runId) : null;
             const quoteId = !explicit && source?.status === 'succeeded' && source.workspace && this.db.get('roomMessages', `result-${source.id}`) ? `result-${source.id}` : null;
-            const message = this.rooms.post(latest.projectId, { clientMessageId: `wechat-${latest.id}-${reply.seq}`, text: reply.answer,
+            const message = this.rooms.post(latest.projectId, { clientMessageId: `wechat-${latest.id}-${reply.seq}`, conversationId:conversationIdOf(latest), text: reply.answer,
               targetRoleId: explicit ? null : latest.roleId, replyToId: quoteId });
             this.db.put('roomMessages', { ...message, senderName: tr('wechatChannel.meWechat'), wechatRequestId: latest.id, wechatReplySeq: reply.seq });
             link = this.db.put('wechatLinks', { ...latest, lastSeq: reply.seq, answeredAt: latest.answeredAt || sentAt,

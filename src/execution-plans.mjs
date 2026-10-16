@@ -68,7 +68,7 @@ export class ExecutionPlans {
         this.db.put('coordinationRequests',{...r,status:'waiting_dependencies',attachments:run.attachments||[]});
       }
       this.calls.wait(run,tr('executionPlans.schedulingReasonVerifyActualResult', { reason: input.reason }));
-      return this.db.put('executionPlans',{id,projectId:run.projectId,parentRequestId:parent.id,sourceRunId:run.id,sourceMessageId:run.sourceMessageId,
+      return this.db.put('executionPlans',{id,projectId:run.projectId,conversationId:run.conversationId||run.projectId,parentRequestId:parent.id,sourceRunId:run.id,sourceMessageId:run.sourceMessageId,
         reason:input.reason,fingerprint,stages,repositoryKeys,failurePolicy,requiresReports:true,status:'running',createdAt:now(),updatedAt:now()});
     });
   }

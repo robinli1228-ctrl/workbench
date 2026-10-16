@@ -7,6 +7,7 @@ import { tr } from './i18n.mjs';
 import { isSupervisorName, isBroadcastName } from './default-roles.mjs';
 import { normalizeResponsibility, roleForAgent } from './role-definition.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
+import {conversationIdOf,conversationView} from './group-conversations.mjs';
 
 /** The supervisor may be on any device, but the CLI, model, and login state must be confirmed by the target Worker. */
 export function validateLocalSupervisor(worker, input, online) {
@@ -40,6 +41,11 @@ export class ProjectSetup {
     if (!project || project.supervisorRoleId !== run.roleId || !run.roleSnapshot?.systemSupervisor) throw new Error(tr('projectSetup.onlyCurrentProjectSupervisorCan'));
     return project;
   }
+  /** Older proposals inherit their source Run's group without rewriting stored history. */
+  conversationId(record) {
+    const run=record.sourceRunId?this.db.get('runs',record.sourceRunId):null;
+    return record.conversationId||(run?.projectId===record.projectId?conversationIdOf(run):record.projectId);
+  }
   /** All roles of this project can read the configuration catalog; proposals and prompt changes still separately check the supervisor identity. */
   catalog(run) {
     const project = this.db.get('projects', run?.projectId);
@@ -55,12 +61,12 @@ export class ProjectSetup {
       if (!id) delete projected.responsibility;
       return projected;
     };
-    const proposals = this.db.list('setupProposals').filter(r => r.projectId === project.id).slice(-5).map(p => ({
+    const proposals = this.db.list('setupProposals').filter(r => r.projectId === project.id&&this.conversationId(r)===conversationIdOf(run)).slice(-5).map(p => ({
       ...p, actions: p.actions.map((a, index) => projectAction(a, index, p)), completed: (p.completed || []).map(c => ({
         ...c, result: p.actions[c.index]?.type === 'role' ? roleForAgent(c.result, run) : c.result
       }))
     }));
-    return { project, team:buildTeamContext(reviewView(this.db,{projectId:run.projectId,roleId:run.roleId}),run,{online:this.online,inherit:false}), repositories: this.db.list('repositories').filter(r => r.projectId === project.id),
+    return { project, team:buildTeamContext(conversationView(reviewView(this.db,{projectId:run.projectId,roleId:run.roleId}),run),run,{online:this.online,inherit:false}), repositories: this.db.list('repositories').filter(r => r.projectId === project.id),
       workspaces: this.db.list('repositoryWorkspaces').filter(r => r.projectId === project.id),
       roles: roles.filter(r => !r.archivedAt).map(r => roleForAgent(r, run)),
       proposals,
@@ -91,13 +97,13 @@ export class ProjectSetup {
       if (role.instructions === instructions) throw new Error(tr('projectSetup.rolePromptUnchanged'));
       const updated = this.db.put('roles', { ...role, instructions, revision: input.revision + 1, updatedAt: new Date().toISOString() });
       const output = { roleId: role.id, name: role.name, revision: updated.revision, appliesTo: 'new_tasks' };
-      this.db.put('rolePromptChanges', { id, projectId: project.id, roleId: role.id, roleName: role.name,
+      this.db.put('rolePromptChanges', { id, projectId: project.id, conversationId:conversationIdOf(run), roleId: role.id, roleName: role.name,
         sourceRunId: run.id, revisionBefore: input.revision, revisionAfter: updated.revision,
         before: role.instructions, after: instructions, createdAt: updated.updatedAt, result: output });
-      this.db.put('roomMessages', { id: `notice:${id}`, projectId: project.id, sender: 'system', senderName: tr('projectSetup.roleConfiguration'),
+      this.db.put('roomMessages', { id: `notice:${id}`, projectId: project.id, conversationId:conversationIdOf(run), sender: 'system', senderName: tr('projectSetup.roleConfiguration'),
         taskIds: [], text: tr('projectSetup.supervisorUpdatedRolePromptFrom', { name: role.name, revision: input.revision, revision2: updated.revision }),
         createdAt: updated.updatedAt });
-      this.rooms.touch(project.id);
+      this.rooms.touch(project.id,conversationIdOf(run));
       changed = true;
       return output;
     });
@@ -122,9 +128,9 @@ export class ProjectSetup {
         ...(a.responsibility === undefined ? {} : { responsibility: normalizeResponsibility(a.responsibility) }),
         runtime: a.runtime, model: a.model, effort: a.effort || null, instructions: a.instructions, enabled: true };
     });
-    const proposal = this.db.put('setupProposals', { id: randomUUID(), projectId: run.projectId, sourceRunId: run.id,
+    const proposal = this.db.put('setupProposals', { id: randomUUID(), projectId: run.projectId, conversationId:conversationIdOf(run), sourceRunId: run.id,
       summary: input.summary.trim(), actions, completed: [], status: 'pending', createdAt: new Date().toISOString() });
-    this.rooms.touch(run.projectId); this.change();
+    this.rooms.touch(run.projectId,conversationIdOf(run)); this.change();
     return { proposalId: proposal.id, status: 'pending', message: tr('projectSetup.actionCardHasBeenIssued') };
   }
   reject(projectId, id) {
@@ -159,10 +165,11 @@ export class ProjectSetup {
       p = this.db.put('setupProposals', { ...p, status: 'succeeded' });
       this.db.put('projects', { ...this.db.get('projects', projectId), setupStatus: 'ready' });
     } catch (e) { p = this.db.put('setupProposals', { ...p, status: 'blocked', error: e.message }); }
-    this.db.put('roomMessages', { id: `setup-${p.id}`, projectId, sender: 'system', senderName: tr('projectSetup.setupResult'), taskIds: [],
+    const conversationId=this.conversationId(p);
+    this.db.put('roomMessages', { id: `setup-${p.id}`, projectId, conversationId, sender: 'system', senderName: tr('projectSetup.setupResult'), taskIds: [],
       text: tr('projectSetup.text', { summary: p.summary, p2: p.status === 'succeeded' ? tr('projectSetup.completed') : tr('projectSetup.notCompleted'), length: p.completed.length, length2: p.actions.length, p5: p.error || '' }),
       createdAt: new Date().toISOString() });
-    this.rooms.touch(projectId); this.change();
+    this.rooms.touch(projectId,conversationId); this.change();
     return p;
   }
 }

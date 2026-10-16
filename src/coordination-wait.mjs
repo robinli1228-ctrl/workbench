@@ -1,9 +1,12 @@
+import {assertConversationRecord} from './group-conversations.mjs';
+
 /** Follow only the same owner's continuation chain; a peer reply must not jump to a different task or project. */
 export function currentContinuation(db,requestId) {
   let current=db.get('coordinationRequests',requestId);const seen=new Set();
   while(current?.continuationRequestId&&current.status!=='cancelled'&&!current.steeringTaskId) {
     if(seen.has(current.id))throw new Error('Invalid coordination continuation cycle.');seen.add(current.id);
     const next=db.get('coordinationRequests',current.continuationRequestId);
+    assertConversationRecord(current,next);
     if(!next||next.projectId!==current.projectId||next.targetRoleId!==current.targetRoleId||next.continuationOf!==current.id)throw new Error('Coordination continuation ownership changed.');
     current=next;
   }
@@ -18,6 +21,7 @@ export function waitDependencies(db,request) {
     const owners=new Set([request.id]);let ancestor=request;
     while(ancestor.continuationOf) {
       const previous=db.get('coordinationRequests',ancestor.continuationOf);
+      assertConversationRecord(request,previous);
       if(!previous||previous.projectId!==request.projectId||previous.targetRoleId!==request.targetRoleId||owners.has(previous.id))throw new Error('Invalid dependency ownership chain.');
       owners.add(previous.id);ancestor=previous;
     }
@@ -26,6 +30,7 @@ export function waitDependencies(db,request) {
   }
   return [...ids].map(id=>{
     const child=db.get('coordinationRequests',id);
+    assertConversationRecord(request,child);
     if(!child||child.projectId!==request.projectId)throw new Error('A wait dependency is missing or outside the project.');
     const effective=currentContinuation(db,id);
     return effective?.id!==child.id?{...effective,id:child.id,resultRequestId:effective.id}:child;

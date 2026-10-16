@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { tr } from './i18n.mjs';
 import { collaborationSessionsEnabled, sessionOf, reviewView } from './collaboration-sessions.mjs';
+import {conversationIdOf,assertConversationRecord} from './group-conversations.mjs';
 
 /**
  * Home-side external queue (design V3 sections 4-6). Messages wait here; a CLI only receives a sealed batch
@@ -64,6 +65,7 @@ export class SessionQueue {
       if (!message?.collaborationSessionId || !collaborationSessionsEnabled(this.db, message.projectId)) return [];
       const session = this.db.get('collaborationSessions', message.collaborationSessionId);
       if (!session || session.state !== 'open') return [];
+      assertConversationRecord(session,message);
       if (message.partial || message.visibility === 'internal' || !['human', 'agent'].includes(message.sender)) return [];
       if(['user_question','technical_notice'].includes(message.kind))return [];
       const requests=[...new Set([message.requestId,...(message.requestIds||[])].filter(Boolean))].map(id=>this.db.get('coordinationRequests',id)).filter(r=>r?.projectId===message.projectId);
@@ -77,14 +79,14 @@ export class SessionQueue {
         const id = `${message.id}:${roleId}`;
         if (this.db.get(RECEIPT, id)) continue;                                    // redelivery never registers twice
         const directed=requests.filter(r=>r.targetRoleId===roleId);
-        const receipt = { id, projectId: message.projectId, sessionId: session.id, roleId, messageId: message.id,
+        const receipt = { id, projectId: message.projectId, conversationId:conversationIdOf(message), sessionId: session.id, roleId, messageId: message.id,
           explicitRequest: addressed.has(roleId), requestId: directed[0]?.id || null,
           ...(message.requestIds&&directed.length?{requestIds:directed.map(r=>r.id)}:{}),
           taskId: tasks.find(t => t.roleId === roleId)?.id || null,
           status: 'queued', batchId: null, createdAt: iso(at), order: at };
         this.db.put(RECEIPT, receipt); created.push(receipt);
         const key = `${session.id}:${roleId}`, collector = this.db.get(COLLECTOR, key);
-        this.db.put(COLLECTOR, { ...(collector||{}),id: key, projectId: message.projectId, sessionId: session.id, roleId,
+        this.db.put(COLLECTOR, { ...(collector||{}),id: key, projectId: message.projectId, conversationId:conversationIdOf(message), sessionId: session.id, roleId,
           firstAt: collector?.open ? collector.firstAt : at, lastAt: at, open: true, explicit: Boolean(collector?.open && collector.explicit) || receipt.explicitRequest, waitingReason: collector?.startBlocked?'startup_failed':null });
       }
       return created;
@@ -172,7 +174,8 @@ export class SessionQueue {
         .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
       const visible = new Set(this.readableReceipts(projectId, roleId, collector.sessionId).map(r => r.id));
       const taken = receipts.filter(r => visible.has(r.id)).slice(0, config.maxBatchMessages); // hidden receipts remain pending, ordered splits never truncate
-      const batch = { id: randomUUID(), projectId, sessionId: collector.sessionId, roleId, roleSessionId, workerId,
+      for(const receipt of taken)assertConversationRecord(session,this.db.get('roomMessages',receipt.messageId));
+      const batch = { id: randomUUID(), projectId, conversationId:conversationIdOf(session), sessionId: collector.sessionId, roleId, roleSessionId, workerId,
         messageIds: taken.map(r => r.messageId), explicit: taken.some(r => r.explicitRequest), configVersion: config.version,
         // The Home lease runs on the Home clock; the Worker re-checks its own expiry before writing.
         reservation: { id: reservation.id, generation: reservation.generation, expiresAt: iso(this.now() + config.leaseSeconds * 1000), workerExpiresAt: reservation.expiresAt || null },
@@ -462,10 +465,11 @@ export function grantBudget(db, projectId, sessionId, { additional } = {}, actor
  * new kinds are appended to it instead of waking the supervisor again. The alert task is never broadcast.
  */
 export function raiseAlert(db, { projectId, sessionId, kind, detail = {}, matter = null }, at = Date.now()) {
+  const conversationId=conversationIdOf(db.get('collaborationSessions',sessionId))||projectId;
   const key = `${kind}:${matter || detail.batchId || sessionId}`;
   const ledger = db.get(ALERT, key);
   if (ledger?.active) return null;                                             // still over the line: no repeat
-  const open = db.listProject('tasks', projectId).find(t => !t.currentRunId && ['ready', 'queued'].includes(t.status)
+  const open = db.listProject('tasks', projectId).find(t => conversationIdOf(t)===conversationId && !t.currentRunId && ['ready', 'queued'].includes(t.status)
     && (t.sessionQueueAlert?.sessionId === sessionId || (t.proactiveInitial && !t.sessionQueueAlert)));   // same matter, or a pending silence follow-up
   const project = db.get('projects', projectId), supervisor = db.get('roles', project?.supervisorRoleId || '');
   db.put(ALERT, { id: key, projectId, sessionId, kind, detail, active: true, at: iso(at), count: (ledger?.count || 0) + 1, taskId: open?.id || null });
@@ -477,7 +481,7 @@ export function raiseAlert(db, { projectId, sessionId, kind, detail = {}, matter
   }
   const task = db.createTask({ projectId, title: tr('sessionQueue.alertTitle'), prompt: `${tr('sessionQueue.alertIntro')}\n${line}`, model: supervisor.model, mode: supervisor.mode });
   db.put(ALERT, { ...db.get(ALERT, key), taskId: task.id });
-  return db.put('tasks', { ...task, origin: 'chat', roleId: supervisor.id, roleSnapshot: supervisor, reportRequired: false, sessionQueueAlert: { sessionId, kinds: [kind] } });
+  return db.put('tasks', { ...task, conversationId, origin: 'chat', roleId: supervisor.id, roleSnapshot: supervisor, reportRequired: false, sessionQueueAlert: { sessionId, kinds: [kind] } });
 }
 
 /** The matter recovered; crossing the line again later raises a new alert. */
@@ -591,7 +595,7 @@ export class QueuePump {
       const role = this.db.get('roles', p.roleId), view = reviewView(this.db, { projectId: p.projectId, roleId: p.roleId });
       const messages = batch.messageIds.map(id => view.get('roomMessages', id)).filter(Boolean);
       const task = this.db.createTask({ projectId: p.projectId, title: `batch ${batch.id.slice(0, 8)}`, prompt: this.render(batch, messages), model: role.model, mode: role.mode });
-      this.db.put('tasks', { ...task, origin: 'chat', roleId: role.id, roleSnapshot: role, sourceMessageId: batch.messageIds.at(-1) || null,
+      this.db.put('tasks', { ...task, conversationId:conversationIdOf(batch), origin: 'chat', roleId: role.id, roleSnapshot: role, sourceMessageId: batch.messageIds.at(-1) || null,
         collaborationSessionId:batch.sessionId,collaborationCycleId:batch.cycleId,
         reportRequired: false, collaborationBatchId: batch.id,
         collaborationBatch: { id: batch.id, key: p.key, projectId: p.projectId, roleId:role.id, deliveryProtocol:2,ownerNodeId: role.nodeId, runtime: role.runtime, reservation: { id: m.reservation.id, generation: m.reservation.generation } } });

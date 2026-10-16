@@ -1,6 +1,22 @@
 // English message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  'teamCopy.sourceInvalid':'The source project needs a saved supervisor and valid team configuration.',
+  'teamCopy.invalidOrder':'Role order must contain every current working role exactly once.',
+  'teamCopy.promptWarning':'Prompts are copied exactly and may reference the source project or old paths. Review them before use.',
+  'teamCopy.invalidInput':'Provide a UUID request ID and a project name of 1 to 80 characters.',
+  'teamCopy.sourceChanged':'Source team changed. Refresh the preview before creating the copy.',
+  'teamCopy.destinationExists':'The destination project name or folder is already reserved.',
+  'teamCopy.notFound':'Project copy operation not found.',
+  'teamCopy.notReady':'Team copy workspace preparation is not complete.',
+  'teamCopy.welcome':'Team copied into empty business workspaces. No code, dependencies or history were copied. Review project-specific prompts before starting work.',
+  'conversations.invalid': 'Group conversation not found in this project.',
+  'conversations.workerUpgrade': 'Upgrade the target Worker before executing a parallel group chat.',
+  'conversations.recordMismatch': 'This record belongs to a different group conversation.',
+  'conversations.systemProject': 'System configuration projects cannot create group conversations.',
+  'conversations.invalidRequest': 'A distinct UUID creation request ID is required.',
+  'conversations.invalidTitle': 'Chat title must contain 1 to 80 characters.',
+  'conversations.retryConflict': 'This creation request was already used with different arguments.',
   'roleTemplates.localDeveloper': 'Local-Developer',
   'roleTemplates.localDeveloperResponsibility': 'Implement and fix code on the local machine, run self-tests and follow up on review and testing issues.',
   'roleTemplates.localDeveloperInstructions': `You are the local development role. Implement and fix project code on the local machine and run self-tests there.

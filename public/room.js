@@ -190,7 +190,7 @@ function createMessageQueue({api,refreshState,create,setError}) {
         steer.onclick=async()=>{
           pending.add(task.id);steer.disabled=true;
           if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
-          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{commandId:commands.get(task.id)}});await refreshState({quiet:true});}
+          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});await refreshState({quiet:true});}
           catch(error){setError(error.message);}
           finally{pending.delete(task.id);steer.disabled=Boolean(task.steering)||data.settings?.paused;}
         };
@@ -218,7 +218,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   const quoteBar = document.querySelector('#chat-quote');
   const roleDialog = document.querySelector('#role-dialog');
   const roleForm = document.querySelector('#role-form');
-  const roleHistory=createRoleHistoryTabs({host:roleDialog,settings:roleForm,getData:()=>data,getRole:()=>editingRoleSnapshot,api,refreshState,create,formatTime,openTask});
+  roleForm.prepend(create('p','workspace-note full-width','Role and project settings apply to every chat in this project.'));
+  const roleHistory=createRoleHistoryTabs({getConversationId:()=>conversationId,host:roleDialog,settings:roleForm,getData:()=>data,getRole:()=>editingRoleSnapshot,api,refreshState,create,formatTime,openTask});
   const cliSwitch=createRoleSwitchUI({api,refreshState});
   const roleError = document.querySelector('#role-error');
   const older = document.querySelector('#load-older');
@@ -258,9 +259,9 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const d = drafts[ownerId];
     d.text = `${d.text || ''}${d.text ? '\n\n' : ''}${text}`;
     d.inlineLongText = true;
-    if (ownerId === projectId) { input.value = d.text; resizeInput(); }
+    if (ownerId === scopeId) { input.value = d.text; resizeInput(); }
   }
-  function attachmentCard(item, removable = false, ownerId = projectId) {
+  function attachmentCard(item, removable = false, ownerId = scopeId) {
     const card = create('div', `attachment-card${item.mime.startsWith('image/') ? '' : ' attachment-file-card'}${removable && item.pastedText ? ' attachment-text-card' : ''}`);
     card.title = item.name;
     const open = button('', async () => {
@@ -297,7 +298,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
           if (d.pending || sendingProject === ownerId || !d.attachments?.some(a => a.id === item.id)) return;
           restoreText(ownerId, text);
           d.attachments = d.attachments.filter(a => a.id !== item.id); saveDrafts();
-          if (ownerId === projectId) composer();
+          if (ownerId === scopeId) composer();
         } catch (error) { setError(error.message); }
         finally { b.disabled = false; }
       });
@@ -358,17 +359,17 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     targetChanged();transferDialog.showModal();
   }
   async function uploadFiles(files) {
-    if (!projectId || draft().pending || sendingProject === projectId) return;
-    const id = projectId, d = draft(), incoming = [...files];
+    if (!projectId || draft().pending || sendingProject === scopeId) return;
+    const id = scopeId, targetProjectId=projectId, d = draft(), incoming = [...files];
     if ((d.attachments?.length || 0) + (d.textFiles?.length || 0) + (uploadCounts.get(id) || 0) + incoming.length > 6) { setError('At most 6 attachments per message'); return; }
     if (incoming.some(f=>!f.size || f.size>20*1024*1024)) { setError('Attachments cannot be empty; each file is limited to 20 MB'); return; }
     uploadCounts.set(id,(uploadCounts.get(id)||0)+incoming.length); composer();
     for (const file of incoming) {
       try {
-        const item = await api(`/api/projects/${encodeURIComponent(id)}/attachments`, {method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name || 'pasted-image.png')}});
+        const item = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/attachments`, {method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name || 'pasted-image.png')}});
         (d.attachments ||= []).push(item); saveDrafts();
       } catch(e) { setError(e.message); }
-      finally { uploadCounts.set(id,Math.max(0,(uploadCounts.get(id)||0)-1)); if (id===projectId) composer(); }
+      finally { uploadCounts.set(id,Math.max(0,(uploadCounts.get(id)||0)-1)); if (id===scopeId) composer(); }
     }
   }
   /** Save a recoverable text draft first, then upload; on failure the card keeps the original text and sending without the attachment is blocked. */
@@ -376,14 +377,14 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (textUploads.has(entry.id)) return textUploads.get(entry.id);
     const d = drafts[ownerId];
     const job = Promise.resolve().then(async () => {
-      entry.error = ''; if (ownerId === projectId) composer();
+      entry.error = ''; if (ownerId === scopeId) composer();
       try {
         const file = new File([entry.text], entry.name, { type: 'text/markdown;charset=utf-8' });
-        const item = await api(`/api/projects/${encodeURIComponent(ownerId)}/attachments`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(entry.name) } });
+        const item = await api(`/api/projects/${encodeURIComponent(d.projectId||ownerId)}/attachments`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(entry.name) } });
         (d.attachments ||= []).push({ ...item, pastedText: true });
         d.textFiles = d.textFiles.filter(value => value.id !== entry.id);
       } catch (error) { entry.error = error.message; }
-      finally { textUploads.delete(entry.id); saveDrafts(); if (ownerId === projectId) composer(); }
+      finally { textUploads.delete(entry.id); saveDrafts(); if (ownerId === scopeId) composer(); }
     });
     textUploads.set(entry.id, job); return job;
   }
@@ -409,8 +410,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     return card;
   }
   function queueTextFile(text, remaining) {
-    if (!projectId || draft().pending || sendingProject === projectId) return null;
-    const d = draft(), ownerId = projectId;
+    if (!projectId || draft().pending || sendingProject === scopeId) return null;
+    const d = draft(), ownerId = scopeId;
     if ((d.attachments?.length || 0) + (d.textFiles?.length || 0) + (uploadCounts.get(ownerId) || 0) >= 6) { setError('Attachments are full; the long text stays in the input box. Remove an attachment first'); return null; }
     if (new Blob([text]).size > 20 * 1024 * 1024) { setError('Text exceeds the 20 MB per-attachment limit; the original is kept, please split it before sending'); return null; }
     const entry = { id: crypto.randomUUID(), name: longTextFileName(text) || 'Pasted text.md', text };
@@ -451,7 +452,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   const pendingReads = new Set();
   const liveByRun = new Map();
   const liveFetching = new Set();
-  let data = {}, projectId = null, editingProjectId = null, editingRoleId = null;
+  let data = {}, projectId = null, conversationId = null, scopeId = null, editingProjectId = null, editingRoleId = null;
   let sendingProject = null, savingRole = false;
   let preferredModel = '', preferredRuntime = 'codex', preferredEffort = '', checkingRuntime = false;
   let drafts;
@@ -460,7 +461,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     try { sessionStorage.setItem('agent-workbench.chat-drafts', JSON.stringify(drafts)); return true; }
     catch { setError('Not enough browser draft storage; the original text is still on this page. Copy a backup first and do not close the page'); return false; }
   };
-  const draft = () => drafts[projectId] ||= { text: '', replyToId: null, replyLabel: '' };
+  const draft = () => drafts[scopeId] ||= { projectId, text: '', replyToId: null, replyLabel: '' };
   const mentionInput=createMentionInput(input,()=>{
     const names=[...(data.roles||[]),...(data.supervisorRoles||[])].filter(r=>r.projectId===projectId&&!r.archivedAt).map(r=>r.name);
     if(data.projects?.find(p=>p.id===projectId)?.supervisorRoleId)names.push('Supervisor','supervisor','\u603b\u7ba1');
@@ -488,15 +489,15 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   function composer() {
     if (!projectId) return;
     input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, new messages go to the supervisor; replies target the sender, and @ several roles dispatches to each' : 'Type a message; @role to start work';
-    const d = draft(), busy = sendingProject === projectId;
+    const d = draft(), busy = sendingProject === scopeId;
     input.disabled = busy || !!d.pending;
-    send.disabled = !!sendingProject || Boolean(uploadCounts.get(projectId)) || Boolean(d.textFiles?.length);
+    send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length);
     attachButton.disabled = busy || !!d.pending;
     send.textContent = busy ? 'Sending…' : d.pending ? 'Retry send' : 'Send';
     attachTray.replaceChildren();
     for (const item of d.attachments || []) attachTray.append(attachmentCard(item,true));
-    for (const entry of d.textFiles || []) attachTray.append(textDraftCard(entry, projectId));
-    if (uploadCounts.get(projectId)) attachTray.append(create('span','attachment-uploading','Uploading attachments…'));
+    for (const entry of d.textFiles || []) attachTray.append(textDraftCard(entry, scopeId));
+    if (uploadCounts.get(scopeId)) attachTray.append(create('span','attachment-uploading','Uploading attachments…'));
     attachTray.hidden = !attachTray.childElementCount;
     resizeInput();
     quoteBar.replaceChildren(); quoteBar.hidden = !d.replyToId;
@@ -535,7 +536,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   }
 
   function quoteReply(m,{mentionSender=true}={}) {
-    if (draft().pending || sendingProject === projectId) return;
+    if (draft().pending || sendingProject === scopeId) return;
     const d=draft();
     // Replace only our own previous prefix; explicit mentions and the unsent body remain the user's choice.
     if(d.replyMention&&input.value.startsWith(d.replyMention))input.value=input.value.slice(d.replyMention.length);
@@ -714,7 +715,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const task=data.tasks?.find(t=>t.id===view.taskId);
     view.runId ||= task?.currentRunId;
     const run=data.runs?.find(r=>r.id===view.runId);
-    const message=histories.get(view.projectId)?.messages.find(m=>m.id===`result-${view.runId}`);
+    const message=histories.get(scopeId)?.messages.find(m=>m.id===`result-${view.runId}`);
     const text=fullRunReply(run,liveText(view.runId),message);
     const label=t(taskProgress(task,run).label);
     view.heading.textContent=`${view.name || t('Role')} · ${label}`;
@@ -863,7 +864,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const source = m.replySource || messages.find(q => q.id === m.replyToId);
       const quoteText=source?simplifiedCliOutput(source.text):'';
       const quote=create(source?.id?'button':'div', 'quoted-message', source ? t('{senderName}: {v}', { senderName: source.senderName, v: quoteText.slice(0, 180)+(quoteText.length>=180?'...':'') }) : 'Quoting an earlier message');
-      if(source?.id){quote.type='button';quote.title='View quoted original';quote.setAttribute('aria-label','View quoted original');quote.addEventListener('click',()=>void historyViewer.open(m.projectId,'message',source.id).catch(error=>setError(error.message)));}
+      if(source?.id){quote.type='button';quote.title='View quoted original';quote.setAttribute('aria-label','View quoted original');quote.addEventListener('click',()=>void historyViewer.open(m.projectId,'message',source.id,m.conversationId||m.projectId).catch(error=>setError(error.message)));}
       bubble.append(quote);
     }
     const recipients=messageRecipients(m,replyDirection);
@@ -898,7 +899,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }));
     actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text));
     // Execution originals live in the Run details; ordinary messages still resolve to their own stored text.
-    if(!m.runId||discussion||handoff)actions.push(iconAction('original','Original',()=>void historyViewer.open(m.projectId,'message',m.id).catch(e=>setError(e.message))));
+    if(!m.runId||discussion||handoff)actions.push(iconAction('original','Original',()=>void historyViewer.open(m.projectId,'message',m.id,m.conversationId||m.projectId).catch(e=>setError(e.message))));
     if (m.runId) {
       const run = data.runs?.find(r => r.id === m.runId);
       if (run) actions.push(iconAction('log', 'Log', () => openTask(run.taskId,run.id)));
@@ -915,7 +916,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
 
   function renderMessages() {
     cliRecoveryUI.refresh();
-    const history = histories.get(projectId), messages = history?.messages || [];
+    const history = histories.get(scopeId), messages = history?.messages || [];
     const scrollTop = scroller.scrollTop;
     const atBottom = scroller.scrollHeight - scroller.clientHeight - scrollTop < 120;
     // 状态刷新会重建消息节点，按消息身份保留正文阅读位置，不抢回顶部。
@@ -954,13 +955,14 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   }
 
   /** Read messages by Room revision; Token updates only refresh cards and do not re-fetch the whole history. */
-  async function refresh(nextData, nextProjectId) {
+  async function refresh(nextData, nextProjectId, nextConversationId=nextProjectId) {
     data = nextData;
     roleHistory.refresh();
     if (roleDialog.open && !savingRole && !checkingRuntime) renderDeviceOptions(roleForm.elements.nodeId.value);
-    if (projectId !== nextProjectId) {
+    if (projectId !== nextProjectId || conversationId!==nextConversationId) {
       if(messageFullscreen?.open)messageFullscreen.close();
       projectId = nextProjectId;
+      conversationId=nextConversationId;scopeId=conversationId===projectId?projectId:JSON.stringify([projectId,conversationId]);
       if (projectId) input.value = draft().text || '';
     }
     if (!projectId) return;
@@ -970,30 +972,30 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     const viewing=data.runs?.find(r=>r.id===fullscreenView?.runId);
     if(viewing && (liveByRun.get(viewing.id)?.seq || 0)<viewing.lastSeq)void pullLive(viewing.id);
-    const revision = data.rooms?.find(r => r.id === projectId)?.revision || 0;
-    const previous = histories.get(projectId);
+    const revision = data.rooms?.find(r => r.id === conversationId)?.revision || 0;
+    const previous = histories.get(scopeId);
     if (previous?.revision === revision) return;
-    const id = projectId, key = `${id}:${revision}`;
+    const id = scopeId, targetProjectId=projectId, targetConversationId=conversationId, key = `${id}:${revision}`;
     if (pendingReads.has(key)) return;
     pendingReads.add(key);
     try {
-      const result = await api(`/api/projects/${encodeURIComponent(id)}/messages`);
+      const result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}`);
       const current = histories.get(id);
       if ((current?.revision ?? -1) > revision) return;
       const recentIds = new Set(result.messages.map(m => m.id));
       histories.set(id, { ...result, messages: [...(current?.messages || []).filter(m => !recentIds.has(m.id)), ...result.messages],
         hasMore: current ? current.hasMore : result.hasMore, nextBefore: current?.nextBefore || result.nextBefore, revision });
-      if (id === projectId) renderMessages();
-    } catch (e) { if (id === projectId) setError(t('Failed to load chat: {message}', { message: e.message })); }
+      if (id === scopeId) renderMessages();
+    } catch (e) { if (id === scopeId) setError(t('Failed to load chat: {message}', { message: e.message })); }
     finally { pendingReads.delete(key); }
   }
 
   older.addEventListener('click', async () => {
-    const id = projectId, history = histories.get(id); if (!history?.nextBefore) return;
+    const id = scopeId, targetProjectId=projectId, targetConversationId=conversationId, history = histories.get(id); if (!history?.nextBefore) return;
     older.disabled = true;
     try {
-      const result = await api(`/api/projects/${encodeURIComponent(id)}/messages?before=${encodeURIComponent(history.nextBefore)}`);
-      if (id !== projectId) return;
+      const result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}&before=${encodeURIComponent(history.nextBefore)}`);
+      if (id !== scopeId) return;
       const current = histories.get(id), ids = new Set(current.messages.map(m => m.id));
       const height = scroller.scrollHeight, top = scroller.scrollTop;
       histories.set(id, { ...current, messages: [...result.messages.filter(m => !ids.has(m.id)), ...current.messages], hasMore: result.hasMore, nextBefore: result.nextBefore });
@@ -1092,29 +1094,29 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   form.addEventListener('submit', async e => {
     e.preventDefault();
     hideMentionMenu();
-    if (!projectId || sendingProject || uploadCounts.get(projectId)) return;
-    const id = projectId, d = draft();
+    if (!projectId || sendingProject || uploadCounts.get(scopeId)) return;
+    const id = projectId, ownerId=scopeId, targetConversationId=conversationId, d = draft();
     if (d.textFiles?.length) { setError('Finish uploading the long-text attachment first, or restore it to the input box'); return; }
     if (!d.pending && input.value.length > 12000) {
       const entry = attachComposerText();
       if (!entry) return;
       await textUploads.get(entry.id);
-      if (projectId !== id || d.textFiles?.length) return;
+      if (scopeId !== ownerId || d.textFiles?.length) return;
     }
     if (!d.pending && !input.value.trim() && !d.attachments?.length) return;
     if(d.discussion&&d.attachments?.length){setError('Use text for discussion replies; send attachments as a separate regular message');return;}
-    d.pending ||= { clientMessageId: crypto.randomUUID(), text: input.value, replyToId: d.replyToId || null, attachmentIds:(d.attachments||[]).map(a=>a.id),...(d.discussion&&!hasMention(input.value)?{discussion:d.discussion}:{}) };
-    saveDrafts(); sendingProject = id; composer();
+    d.pending ||= { clientMessageId: crypto.randomUUID(), conversationId:targetConversationId, text: input.value, replyToId: d.replyToId || null, attachmentIds:(d.attachments||[]).map(a=>a.id),...(d.discussion&&!hasMention(input.value)?{discussion:d.discussion}:{}) };
+    saveDrafts(); sendingProject = ownerId; composer();
     try {
       if(d.pending.discussion)await api(`/api/projects/${encodeURIComponent(id)}/discussions/${encodeURIComponent(d.pending.discussion.threadId)}/reply`,{method:'POST',json:{...d.pending.discussion,requestId:d.pending.clientMessageId,text:d.pending.text}});
       else await api(`/api/projects/${encodeURIComponent(id)}/messages`, { method: 'POST', json: d.pending });
-      drafts[id] = { text: '', replyToId: null, replyLabel: '' };
-      if (projectId === id) input.value = '';
+      drafts[ownerId] = { projectId:id, text: '', replyToId: null, replyLabel: '' };
+      if (scopeId === ownerId) input.value = '';
       setError('');
       await refreshState({ quiet: true });
     } catch (error) {
       if (!error.isNetworkError) delete d.pending;
-      if (projectId === id) setError(error.message);
+      if (scopeId === ownerId) setError(error.message);
     } finally { sendingProject = null; saveDrafts(); composer(); }
   });
 

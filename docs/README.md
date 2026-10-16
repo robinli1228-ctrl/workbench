@@ -7,6 +7,9 @@
 | [PROGRESS](PROGRESS.md) | Append-only development changes and verification milestones | Current; does not imply public release or deployment |
 | [PRD](PRD.md) | Product goals, phase scope, business rules and acceptance direction | Scope reference. Not everything is implemented |
 | [design-coordination](design-coordination.md) | Supervisor, templates, custom roles, optional plans and fixed-version hand-off | Design. Partly implemented; see ARCHITECTURE |
+| [design-parallel-conversations](design-parallel-conversations.md) | Fresh parallel group chats sharing a project, plus team-only copying into empty projects | Specification approved; implementation plans await review. Not implemented |
+| [plan-parallel-conversations](plan-parallel-conversations.md) | Conversation identity, context/tool isolation, collaboration, automatic work and parallel-chat UI | Implementation plan awaiting review; not implemented |
+| [plan-team-project-copy](plan-team-project-copy.md) | Frozen team snapshots, strict empty-folder provisioning, retry receipts and copy UI | Separate implementation plan awaiting review; follows the parallel-chat increment |
 | [design-local-supervisor](design-local-supervisor.md) | Project supervisor, multi-repository setup, device and account configuration assistant | Implemented in the current code |
 | [design-role-responsibility](design-role-responsibility.md) | Separate coordination responsibilities from execution prompts, snapshot compatibility and acceptance coverage | Implemented; runtime limits recorded in section 11 |
 | [plan-role-responsibility](plan-role-responsibility.md) | Ordered implementation tasks and negative tests for excluding self responsibility from execution | Executed inline; design records actual verification coverage |

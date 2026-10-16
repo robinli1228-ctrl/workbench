@@ -3,6 +3,9 @@ import {t} from './i18n.js';
 const PREFIX='agent-workbench.list-order.v1.';
 const ids=values=>Array.isArray(values)?[...new Set(values.filter(value=>typeof value==='string'&&value.length>0&&value.length<=1000))]:[];
 
+/** Reuse the same saved presentation order when snapshotting a team from any project row. */
+export function readListOrder(scope){try{return ids(JSON.parse(localStorage.getItem(PREFIX+scope)||'[]'));}catch{return [];}}
+
 /** Filtered-out sessions keep their slots; reordering one view never discards other devices' saved positions. */
 export function mergeListOrder(previous,before,after) {
   const visible=new Set(before),pool=ids([...previous,...before]);let index=0;
@@ -98,5 +101,7 @@ export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{}}) {
   window.addEventListener('blur',()=>finish(false));
   document.addEventListener('visibilitychange',()=>{if(document.hidden)finish(false);});
   window.addEventListener('storage',event=>{if(event.key===storageKey()&&!gesture)onEnd();});
-  return {active:()=>Boolean(gesture),ordered:(values,key)=>orderedItems(values,read(storageKey()),key)};
+  return {active:()=>Boolean(gesture),ordered:(values,key)=>orderedItems(values,read(storageKey()),key),seedInitialOrder(order){
+    try{if(localStorage.getItem(storageKey())===null)localStorage.setItem(storageKey(),JSON.stringify(ids(order)));}catch{onError(t('Could not save the order in this browser.'));}
+  }};
 }

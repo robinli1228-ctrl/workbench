@@ -99,12 +99,16 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  /** Reuse role-card device identities; cloud numbering follows the full roster, not the filtered session list. */
  function renderList(){
   if(listOrder.active())return;
-  const roster=getData().workers||[],ordered=listOrder.ordered(groupNativeSessions(items),group=>key(group.latest)),signature=JSON.stringify([key(selected),ordered,roster.map(w=>[w.id,w.name,w.platform,w.nodeKind])]);
+  const activity=getData().sidebarExecutions||[];
+  const isRunning=item=>Boolean(nativeId(item))&&activity.some(run=>run.nodeId===item.nodeId&&run.runtime===item.runtime&&run.sessionId===nativeId(item));
+  const roster=getData().workers||[],ordered=listOrder.ordered(groupNativeSessions(items),group=>key(group.latest)),signature=JSON.stringify([key(selected),ordered,activity,roster.map(w=>[w.id,w.name,w.platform,w.nodeKind])]);
   if(signature===listSignature)return;listSignature=signature;
   const byId=new Map(roster.map(w=>[w.id,w])),cloudNumbers=new Map(roster.filter(w=>workerKind(w)==='cloud').map((w,index)=>[w.id,index+1]));
   const scroll=list.scrollTop;list.replaceChildren();
   const row=(item,latest)=>{
-   const b=el('button',`project-item${key(selected)===key(item)?' active':''}`);b.type='button';b.dataset.orderId=key(item);b.title=`${displayTitle(item)}\n${workerName(item.nodeId)}`;
+   const running=isRunning(item);
+   const b=el('button',`project-item${key(selected)===key(item)?' active':''}${running?' is-running':''}`);b.type='button';b.dataset.orderId=key(item);b.title=`${displayTitle(item)}\n${workerName(item.nodeId)}${running?` · ${t('In progress')}`:''}`;
+   b.setAttribute('aria-label',`${displayTitle(item)}${running?` · ${t('In progress')}`:''}`);
    const copy=el('span','project-item-copy'),heading=el('span','native-session-title'),title=el('strong','',displayTitle(item));title.translate=false;heading.append(title);
    const worker=byId.get(item.nodeId);
    if(worker){const deviceIcon=machineIconEl(worker,cloudNumbers.get(item.nodeId));deviceIcon.classList.add('native-session-device');heading.append(deviceIcon);}
@@ -114,6 +118,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
    list.append(row(group.latest,true));
    if(!group.history.length)continue;
    const history=el('details','native-session-history'),summary=el('summary','',t('Session history ({count})',{count:group.history.length}));
+   if(group.history.some(isRunning)){summary.classList.add('has-running-session');summary.title=t('In progress');}
    history.open=expandedHistory.has(group.id);history.append(summary,...group.history.map(item=>row(item,false)));
    history.addEventListener('toggle',()=>{if(!history.isConnected)return;if(history.open)expandedHistory.add(group.id);else expandedHistory.delete(group.id);});
    list.append(history);
@@ -356,5 +361,5 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
  // Only the visible Sessions page polls; returning from iTerm also refreshes immediately.
  setInterval(()=>{if(Date.now()-lastRefresh>=30000)refresh();},30000);
  list.hidden=filters.hidden=note.hidden=content.hidden=side.hidden=true;
- return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=!visible;content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){renderTitle();document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected)renderSessionControls(selected);if(changed)refresh();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
+ return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=!visible;content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){renderTitle();renderList();document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected)renderSessionControls(selected);if(changed)refresh();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
 }
