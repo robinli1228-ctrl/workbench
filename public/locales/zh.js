@@ -954,6 +954,8 @@ export default {
   "{s}s": "{s}秒",
   "Running since {time}": "开始于 {time}",
   "Handle this first": "先处理这条",
+  "Reply to {senderName}: {v}": "回复 {senderName}：{v}",
+  "Reply to: {v}": "回复：{v}",
   "{role} · no progress for a while, marked stalled": "{role} · 长时间无进展，已标记为卡住",
   "{role} · marked stalled after about {minutes} min without progress": "{role} · 约 {minutes} 分钟无进展将标记为卡住",
   "{role} · no collaboration progress for a while; needs attention. Choose Handle this first to let a queued item go": "{role} · 协作已长时间没有进展，需要处理；可点“先处理这条”放行排队项",

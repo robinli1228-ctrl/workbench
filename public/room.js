@@ -844,26 +844,34 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     col.append(nameLine);
     const bubble = create('div', 'chat-bubble is-live-card');
     const top = create('div', 'chat-bubble-top');
-    const source = messages.find(q => q.id === task.sourceMessageId);
-    if (source) {
-      const sourceText = simplifiedCliOutput(source.text || '');
-      const quote = create('button', 'quoted-message', t('{senderName}: {v}', { senderName: source.senderName, v: sourceText.slice(0, 180) + (sourceText.length >= 180 ? '...' : '') }));
-      quote.type = 'button'; quote.title = 'View quoted original'; quote.setAttribute('aria-label', 'View quoted original');
-      quote.addEventListener('click', () => void historyViewer.open(source.projectId || task.projectId, 'message', source.id, source.conversationId || source.projectId || task.projectId).catch(e => setError(e.message)));
-      top.append(quote);
-    }
     const sentAt = run?.startedAt || run?.createdAt || task.createdAt;
     const time = create('time', '', formatTime(sentAt));
     if (sentAt) time.dateTime = sentAt;
     top.append(time);
     bubble.append(top);
+    // Even before it starts, the card says which message it answers: the task's own source message, or its request text.
+    const source = messages.find(q => q.id === task.sourceMessageId) || null;
+    const sourceText = simplifiedCliOutput(source ? source.text || '' : task.title || task.prompt || '');
+    if (sourceText) {
+      const flat = sourceText.replace(/\s+/g, ' ').trim(), summary = flat.length > 240 ? `${flat.slice(0, 240)}…` : flat;
+      const label = source ? t('Reply to {senderName}: {v}', { senderName: source.senderName, v: summary }) : t('Reply to: {v}', { v: summary });
+      const quote = create(source ? 'button' : 'div', 'quoted-message chat-live-reply', label);
+      quote.translate = false;
+      if (source) {
+        quote.type = 'button'; quote.title = 'View quoted original'; quote.setAttribute('aria-label', 'View quoted original');
+        quote.addEventListener('click', () => void historyViewer.open(source.projectId || task.projectId, 'message', source.id, source.conversationId || source.projectId || task.projectId).catch(e => setError(e.message)));
+      }
+      bubble.append(quote);
+    }
     const preview = run && !run.explicitPublish ? liveText(run.id) : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id,`run:${run?.id || task.id}`));
     else {
       const typing = create('div', 'chat-typing');
       typing.append(create('span'), create('span'), create('span'));
       const typingRow = create('div', 'chat-typing-row');
-      typingRow.append(typing, create('span', 'chat-typing-label', label));
+      // The status line below already names the state; the dots only show the card is alive.
+      typing.setAttribute('role', 'status'); typing.setAttribute('aria-label', label);
+      typingRow.append(typing);
       bubble.append(typingRow);
     }
     col.append(bubble);
@@ -871,7 +879,6 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if(alert)col.append(create('p','run-alert',alert.reason));
     const approvals = run ? renderApprovalsInline(run) : null;
     if (approvals) col.append(approvals);
-    if(recoveryButton)col.append(recoveryButton);
     const actions = [];
     if (preview) actions.push(copyMessageButton(preview));
     actions.push(fullscreenMessageButton(preview, role.name, true, [], task.id, run?.id));
@@ -890,6 +897,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', label);
     if (running) { const elapsed = elapsedEl(create, run.startedAt); if (elapsed) status.append(elapsed); }
     const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
+    // The CLI occupancy check stays available, but as a small action in the row instead of a box standing in for the body.
+    if (recoveryButton) { recoveryButton.classList.add('chat-card-recovery'); actionBar.append(recoveryButton); }
     footer.append(status, actionBar); bubble.append(footer);
     row.append(col);
     if (run && ['starting', 'running', 'waiting_user', 'stopping'].includes(run.status)) void pullLive(run.id);
