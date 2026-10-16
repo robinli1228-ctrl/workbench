@@ -197,3 +197,9 @@
 
 - User selected a parallel new group chat while retaining the original usable chat. Added the proposed specification in `design-parallel-conversations.md` and registered it in the documentation index.
 - The proposal separates fresh conversation/native context from shared project files and roles, preserves workspace/process locks, and defines team-only copying into empty new project workspaces. Full specification review and the implementation plan remain pending; no application code, runtime configuration, histories or running tasks were changed by this documentation step.
+
+## 2026-10-16 — Parallel-chat and team-copy implementation plans
+
+- The user approved the specification by asking to continue development. Split execution into two independently testable plans: conversation/context isolation first, then configuration-only project copying with strict directory ownership and retryable readiness.
+- Self-review clarified group ownership versus existing source-isolated native partitions, mixed-version Worker capability checks, empty/custom prompt preservation, and the ambiguous mkdir-before-marker crash boundary. Plans include targeted failing tests, compatibility gates, real-browser/native acceptance and independent final review.
+- Implementation-plan review and execution-method confirmation are still pending under the planning workflow. This step changes documentation only, not source behavior, live configuration, history, files in business projects or services.

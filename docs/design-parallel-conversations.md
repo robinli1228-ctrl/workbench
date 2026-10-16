@@ -1,6 +1,6 @@
 # Parallel group chats and team-only project copying
 
-Status: proposed specification; parallel-chat direction approved, full specification awaiting review. Not implemented or deployed.
+Status: specification approved by the user's instruction to continue development on 2026-10-16. Implementation plans await review and execution-method confirmation. Not implemented or deployed.
 
 Source inspection baseline: `2790b8b10e824bd2fe887e04abf71580696b8c05` and its parent `6c2e597a518dae2ec6fe0683723c4ea26d29f21d`. This document is the single design source for these two actions; it does not change the existing collaboration-session or Git-branch contracts.
 
@@ -34,6 +34,8 @@ Preserve the existing default conversation identity: historical messages, Tasks,
 Carry the resolved `conversationId` through message storage, Task creation, Run context, role calls, plans, discussions, continuations, reports and result messages. Children inherit it from trusted parent records, not arbitrary model-provided IDs. An old running Run completes into its original chat regardless of the currently selected browser chat.
 
 Do not repurpose `collaborationSessionId`: the existing opt-in collaboration-session feature represents coordinated business work and review visibility, not the new sidebar chat container. Its records and receipts also need an owning conversation when created from a new chat; legacy records continue to belong to the default conversation.
+
+Existing source-isolated native sessions also have internal partition keys. Keep that native partition separate from the owning group-conversation identity; it must not accidentally become a new group, lose valid context, or reuse another group's native session. Preserve historical partition keys and add explicit group ownership for new records.
 
 No bulk rewrite of historical Runs, reports, prompts, native histories or queued work is required. Any materialized default-conversation record is idempotent and must not restart summaries or models.
 
