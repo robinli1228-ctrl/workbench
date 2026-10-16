@@ -19,6 +19,13 @@ const retryDelay=attempt=>[5000,15000,30000,60000,300000][Math.min(Math.max(atte
 // DOMException numeric codes describe transport failures, not permanent sync-policy failures.
 const transportFailure=error=>!error.code||typeof error.code!=='string'||['transfer_failed','ECONNRESET','ECONNREFUSED','ETIMEDOUT'].includes(error.code)||['AbortError','TimeoutError'].includes(error.name);
 
+/** Every replay path uses the same compact reference; durable result bytes and their hash remain unchanged. */
+function receiptEnvelope(commandId,result){
+  const inlineCancellation=result.status==='cancelled'&&result.files?.length===0;
+  const reference=result.base?{status:'completed',captureId:commandId}:Array.isArray(result.files)&&!inlineCancellation?{status:result.status,receiptId:commandId}:result;
+  return {type:'source_sync_receipt',commandId,result:reference,receiptHash:contentHash(JSON.stringify(result))};
+}
+
 /** The existing Home listener transports content; scoped transfer credentials never enter model input. */
 export class SourceSyncHome {
   constructor({db,data,online,socket,change,rooms,query}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change});this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;
@@ -255,7 +262,7 @@ export class SourceSyncClient {
       const settled=this.db.get('sourceSyncTransport',message.commandId);
       if(settled?.terminalResult){
         if(!this.db.get('sourceSyncReceipts',message.commandId))this.db.put('sourceSyncReceipts',{id:message.commandId,projectId:settled.projectId,result:settled.terminalResult,createdAt:new Date().toISOString()});
-        this.send({type:'source_sync_receipt',commandId:message.commandId,result:settled.terminalResult,receiptHash:contentHash(JSON.stringify(settled.terminalResult))});return;
+        this.send(receiptEnvelope(message.commandId,settled.terminalResult));return;
       }
       const prior=this.db.get('sourceSyncCommands',message.commandId);
       const command=prior?.result&&prior.command?prior.command:await (await this.request(message,'plan')).json();
@@ -309,17 +316,15 @@ export class SourceSyncClient {
       if(transport?.message){void this.execute(transport.message);return;}
       this.send({type:'source_sync_receipt',commandId:id,result:{status:'reconciling',reason:'recovery_required'}});return;
     }
-    this.send({type:'source_sync_receipt',commandId:id,result:transport?.terminalResult||record?.result||{status:'cancelled',files:[]}});
+    this.send(receiptEnvelope(id,transport?.terminalResult||record?.result||{status:'cancelled',files:[]}));
   }
   flush(){
     const at=Date.now(),exclude=[...this.inFlight];
     for(const transport of this.db.sourceReceiptTransports({at,exclude})){
       const receipt=this.db.get('sourceSyncReceipts',transport.id);if(!receipt)continue;
-      const inlineCancellation=receipt.result.status==='cancelled'&&receipt.result.files?.length===0;
-      const result=receipt.result.base?{status:'completed',captureId:receipt.id}:Array.isArray(receipt.result.files)&&!inlineCancellation?{status:receipt.result.status,receiptId:receipt.id}:receipt.result;
       const attempts=(transport.receiptAttempts||0)+1;
       this.db.put('sourceSyncTransport',{...transport,receiptAttempts:attempts,nextReceiptAt:at+retryDelay(attempts)});
-      this.send({type:'source_sync_receipt',commandId:receipt.id,result,receiptHash:contentHash(JSON.stringify(receipt.result))});this.sent.set(receipt.id,at);
+      this.send(receiptEnvelope(receipt.id,receipt.result));this.sent.set(receipt.id,at);
     }
     // Recover a lost upload response from saved bytes, one command at a time; never recapture or reapply.
     if(!this.inFlight.size)for(const transport of this.db.sourceReceiptTransports({ready:false,at,limit:1}))void this.execute(transport.message);

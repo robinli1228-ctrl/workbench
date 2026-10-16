@@ -1159,6 +1159,8 @@ server.on('upgrade', (req, socket, head) => {
 });
 wss.on('connection', ws => {
   let nodeId;
+  // Receiver errors (including oversized frames) close this socket, never the Home process or other Workers.
+  ws.on('error',error=>console.error('Worker WebSocket rejected',JSON.stringify({nodeId:nodeId||null,code:error.code||'socket_error'})));
   const registerTimer = setTimeout(() => { if (!nodeId) ws.close(); }, 10000);
   ws.alive = true; ws.on('pong', () => { ws.alive = true; });
   ws.on('message', data => {
