@@ -1,6 +1,8 @@
 import { spawn, execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
+import {randomUUID} from 'node:crypto';
+import {probeHistoryRoots,removeProbeHistory} from './claude-quota-history.mjs';
 import { tr } from './i18n.mjs';
 const exec = promisify(execFile);
 
@@ -429,30 +431,27 @@ function claudeQuotaEnv() {
 }
 
 /** Run `claude /usage`: stdin closed, about a 10s timeout; do not use -p (it spends quota). */
-function runClaudeUsage(bin) {
+export function runClaudeUsage(bin,extraArgs=[]) {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, ['/usage'], { stdio: ['ignore', 'pipe', 'pipe'], env: claudeQuotaEnv() });
-    let stdout = '', stderr = '';
-    const finish = (fn, payload) => {
-      if (timer) clearTimeout(timer);
-      timer = null;
-      fn(payload);
-    };
-    let timer = setTimeout(() => {
+    const sessionId=randomUUID(),env=claudeQuotaEnv();
+    const child = spawn(bin, ['--session-id',sessionId,'/usage',...extraArgs], { stdio: ['ignore', 'pipe', 'pipe'], env });
+    // Wait briefly for a wrapper to exec its real CLI before resolving that child's effective history root.
+    const roots=new Promise(done=>setTimeout(done,250)).then(()=>probeHistoryRoots(child.exitCode===null&&child.signalCode===null?child.pid:null,env));
+    let stdout = '', stderr = '', failure=null;
+    const timer = setTimeout(() => {
+      failure=new Error('claude /usage timeout');
       try { child.kill('SIGKILL'); } catch {}
-      const err = new Error('claude /usage timeout');
-      err.stdout = stdout;
-      err.stderr = stderr;
-      finish(reject, err);
     }, 10000);
     child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', (e) => {
-      e.stdout = stdout;
-      e.stderr = stderr;
-      finish(reject, e);
+    child.on('error', error => {failure=error;});
+    child.on('close', async () => {
+      clearTimeout(timer);
+      // Process closure, not timeout alone, proves our unique session is no longer being written.
+      try{const result=await removeProbeHistory(await roots,sessionId);if(result.preserved.length)console.warn('Claude quota probe history retained: content or file identity could not be verified');}
+      catch{console.warn('Claude quota probe history cleanup could not be verified');}
+      if(failure){failure.stdout=stdout;failure.stderr=stderr;reject(failure);}else resolve({stdout,stderr});
     });
-    child.on('close', () => finish(resolve, { stdout, stderr }));
   });
 }
 
@@ -475,15 +474,7 @@ async function probeClaudeQuota(bin) {
     if (parsed) return packOk(parsed);
   }
   try {
-    const json = await new Promise((resolve, reject) => {
-      const child = spawn(bin, ['/usage', '--output-format', 'json'], { stdio: ['ignore', 'pipe', 'pipe'], env: claudeQuotaEnv() });
-      let stdout = '', stderr = '';
-      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} reject(new Error('timeout')); }, 10000);
-      child.stdout.on('data', d => { stdout += d; });
-      child.stderr.on('data', d => { stderr += d; });
-      child.on('error', reject);
-      child.on('close', () => { clearTimeout(timer); resolve({ stdout, stderr }); });
-    });
+    const json = await runClaudeUsage(bin,['--output-format','json']);
     const parsed = parseClaudeUsageText(`${json.stdout}\n${json.stderr}`);
     if (parsed) return packOk(parsed);
   } catch { /* If the json probe fails, stay unavailable */ }

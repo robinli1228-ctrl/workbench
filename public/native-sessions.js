@@ -1,8 +1,10 @@
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
-import {agentIconEl,setActionIcon} from './role-icons.js';
+import {agentIconEl,machineIconEl,workerKind,setActionIcon} from './role-icons.js';
 import {createListOrder} from './list-order.js';
+import {groupNativeSessions,readNativeSessionPages} from './native-session-groups.js';
+import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
 import {liveSceneRows} from './live-scene.js';
 import {toolStatusLabel,stripAnsi} from './run-log-data.js';
@@ -22,6 +24,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  const filters=el('div','native-session-filters'),device=el('select'),tool=el('select');device.setAttribute('aria-label',t('Session device'));tool.setAttribute('aria-label',t('Agent tool'));filters.append(device,tool);list.before(filters);
  const note=el('p','workspace-note');list.before(note);note.classList.add('native-session-note');
  let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue='groups',lastRefresh=0,listSignature='',detailSignature='';
+ const expandedHistory=new Set();
  const active=()=>modeValue==='sessions';
  const endpoint=nodeId=>`/api/native-sessions/${encodeURIComponent(nodeId)}`;
  const key=item=>item?`${item.nodeId}/${item.runtime}/${item.entryId||item.id}`:'';
@@ -90,14 +93,39 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  function options(select,values){const old=select.value;select.replaceChildren(...values.map(([value,label])=>{const o=el('option','',label);o.value=value;return o;}));if(values.some(([v])=>v===old))select.value=old;}
  function populate(){const signature=JSON.stringify((getData().workers||[]).map(w=>[w.id,w.name,w.online,w.nodeKind,w.runtimes?.map(r=>[r.type,r.available,r.supported])]));if(signature===lastCatalog)return false;lastCatalog=signature;options(device,[['all',t('All sessions')],['created',t('Created sessions')],['group',t('Group chats')],['local',t('Local machine')],['cloud',t('Servers')],['other',t('Other devices')]]);options(tool,[['all',t('All Agents')],...Object.entries(names)]);return true;}
  function workers(){return(getData().workers||[]).filter(w=>['all','created','group'].includes(device.value)||(device.value==='other'?!['local','cloud'].includes(w.nodeKind):w.nodeKind===device.value));}
- function resetDetail(){detailVersion++;selected=null;detailSignature='';takeover.detach();content.replaceChildren(el('div','native-empty',t('Select a native session to view its details.')));side.replaceChildren(el('h2','native-side-title',t('Session details')),el('p','native-side-hint',t('Read-only preview. Take over at the bottom to continue here, or open iTerm.')));}
- function renderList(){if(listOrder.active())return;const ordered=listOrder.ordered(items,key),signature=JSON.stringify([key(selected),ordered]);if(signature===listSignature)return;listSignature=signature;const scroll=list.scrollTop;list.replaceChildren();for(const item of ordered){const b=el('button',`project-item${key(selected)===key(item)?' active':''}`);b.type='button';b.dataset.orderId=key(item);b.title=`${displayTitle(item)}\n${workerName(item.nodeId)}`;const copy=el('span','project-item-copy');const title=el('strong','',displayTitle(item));title.translate=false;copy.append(title,el('small','',`${names[item.runtime]} · ${time(item.modifiedAt||item.createdAt)}`));b.append(agentIconEl(item.runtime),copy);b.addEventListener('click',()=>read(item));list.append(b);}list.scrollTop=scroll;}
+ /** Keep the selected name in the shared header, including after state refreshes and selection resets. */
+ function renderTitle(){if(!active()||document.body.dataset.workspaceView==='settings')return;const title=document.querySelector('#workspace-title');title.translate=!selected;title.textContent=selected?displayTitle(selected):t('Native sessions');}
+ function resetDetail(){detailVersion++;selected=null;renderTitle();detailSignature='';takeover.detach();content.replaceChildren(el('div','native-empty',t('Select a native session to view its details.')));side.replaceChildren(el('h2','native-side-title',t('Session details')),el('p','native-side-hint',t('Read-only preview. Take over at the bottom to continue here, or open iTerm.')));}
+ /** Reuse role-card device identities; cloud numbering follows the full roster, not the filtered session list. */
+ function renderList(){
+  if(listOrder.active())return;
+  const roster=getData().workers||[],ordered=listOrder.ordered(groupNativeSessions(items),group=>key(group.latest)),signature=JSON.stringify([key(selected),ordered,roster.map(w=>[w.id,w.name,w.platform,w.nodeKind])]);
+  if(signature===listSignature)return;listSignature=signature;
+  const byId=new Map(roster.map(w=>[w.id,w])),cloudNumbers=new Map(roster.filter(w=>workerKind(w)==='cloud').map((w,index)=>[w.id,index+1]));
+  const scroll=list.scrollTop;list.replaceChildren();
+  const row=(item,latest)=>{
+   const b=el('button',`project-item${key(selected)===key(item)?' active':''}`);b.type='button';b.dataset.orderId=key(item);b.title=`${displayTitle(item)}\n${workerName(item.nodeId)}`;
+   const copy=el('span','project-item-copy'),heading=el('span','native-session-title'),title=el('strong','',displayTitle(item));title.translate=false;heading.append(title);
+   const worker=byId.get(item.nodeId);
+   if(worker){const deviceIcon=machineIconEl(worker,cloudNumbers.get(item.nodeId));deviceIcon.classList.add('native-session-device');heading.append(deviceIcon);}
+   copy.append(heading,el('small','',`${names[item.runtime]} · ${time(item.createdAt||item.modifiedAt)}`));b.append(agentIconEl(item.runtime),copy);b.addEventListener('click',()=>read(item));if(!latest)delete b.dataset.orderId;return b;
+  };
+  for(const group of ordered){
+   list.append(row(group.latest,true));
+   if(!group.history.length)continue;
+   const history=el('details','native-session-history'),summary=el('summary','',t('Session history ({count})',{count:group.history.length}));
+   history.open=expandedHistory.has(group.id);history.append(summary,...group.history.map(item=>row(item,false)));
+   history.addEventListener('toggle',()=>{if(!history.isConnected)return;if(history.open)expandedHistory.add(group.id);else expandedHistory.delete(group.id);});
+   list.append(history);
+  }
+  list.scrollTop=scroll;
+ }
  /** Fetch at most two device catalogues at a time; one unavailable device must not hide the others. */
  async function load({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet){items=[];resetDetail();renderList();note.textContent=t('Loading native sessions…');}
   // The API's all scope excludes managed group history; combine both scopes only for the unfiltered view.
   const scopes=device.value==='all'?['all','group']:[['created','group'].includes(device.value)?device.value:'all'];
   const jobs=workers().flatMap(w=>(tool.value==='all'?Object.keys(names):[tool.value]).filter(runtime=>device.value==='created'||w.runtimes?.some(r=>r.type===runtime&&r.available&&r.supported!==false)).flatMap(runtime=>scopes.map(scope=>({nodeId:w.id,runtime,scope})))),results=[],errors=[],failedJobs=new Set();let partial=false,index=0;
-  await Promise.all(Array.from({length:Math.min(2,jobs.length)},async()=>{while(index<jobs.length&&ticket===version&&active()){const job=jobs[index++];try{const result=await api(`${endpoint(job.nodeId)}?${new URLSearchParams({runtime:job.runtime,scope:job.scope})}`);results.push(...(result.items||[]).map(item=>({...item,nodeId:job.nodeId})));partial||=result.partial===true;}catch(e){failedJobs.add(`${job.nodeId}/${job.runtime}/${job.scope}`);errors.push(`${workerName(job.nodeId)}: ${t(e.message)}`);}}}));
+  await Promise.all(Array.from({length:Math.min(2,jobs.length)},async()=>{while(index<jobs.length&&ticket===version&&active()){const job=jobs[index++];try{const result=await readNativeSessionPages((offset,revision)=>api(`${endpoint(job.nodeId)}?${new URLSearchParams({runtime:job.runtime,scope:job.scope,offset:String(offset),revision})}`),()=>ticket===version&&active());results.push(...result.items.map(item=>({...item,nodeId:job.nodeId})));partial||=result.partial;}catch(e){failedJobs.add(`${job.nodeId}/${job.runtime}/${job.scope}`);errors.push(`${workerName(job.nodeId)}: ${t(e.message)}`);}}}));
   if(ticket!==version||!active())return;loading=false;
   if(quiet)results.push(...items.filter(item=>failedJobs.has(`${item.nodeId}/${item.runtime}/${device.value==='all'?(item.origin==='managed'?'group':'all'):scopes[0]}`)&&!results.some(r=>key(r)===key(item))));
   items=[...new Map(results.map(item=>[key(item),item])).values()].sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||''))||key(a).localeCompare(key(b)));
@@ -108,9 +136,9 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  }
  /** History scrolls above a persistent footer, so quiet refreshes never discard a takeover draft. */
  const scroll=el('div','native-session-scroll');
- async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;renderList();if(!quiet){onPreview?.();takeover.detach();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);detailSignature='';}
+ async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;renderTitle();renderList();if(!quiet){onPreview?.();takeover.detach();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);detailSignature='';}
   try{const id=nativeId(item),readable=id&&item.hasHistory!==false,value=readable?{...item,...await api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:id})}`),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:item;if(ticket!==detailVersion||!active()||key(selected)!==key(item))return;selected=value;const signature=JSON.stringify(value);if(quiet&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
-   const history=el('div','native-history');history.append(el('h2','native-title',displayTitle(value)));
+   const history=el('div','native-history');
    for(const m of value.messages||[]){const text=m.role==='user'?cleanUserText(m.text):m.text;const row=chatRow(m.role,text,value.runtime,m.timestamp);row.dataset.role=m.role;if(m.role==='user')row.dataset.text=text.trim();history.append(row);}
    if(value.notice||!value.messages?.length)history.append(el('p','workspace-note',t(value.notice||(value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'))));
    if(value.partial)history.append(el('p','workspace-note',t('Only recent readable content is shown. Full history is available in the CLI.')));
@@ -283,14 +311,16 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   const use=button('Use',()=>{if(!chosen||locked&&chosen.workspace!==locked)return;onUse(chosen.workspace);picker.close();},'primary');
   const select=item=>{chosen=item;selection.textContent=item?.path||'';use.disabled=!item||Boolean(locked&&item.workspace!==locked);message.textContent=t(locked&&item?.workspace!==locked?'An existing session keeps its original working folder.':item?.type==='file'?'Only the containing folder is used; the file is not read.':'Select an item, then choose Use.');for(const row of rows.querySelectorAll('[data-path]'))row.setAttribute('aria-pressed',String(row.dataset.path===item?.path));};
   const up=button('Parent folder',()=>browse(parent)),roots=button('Allowed folders',()=>browse(null)),more=button('Load more',()=>browse(current,nextOffset,true));toolbar.append(up,roots);more.hidden=true;
-  async function browse(target,offset=0,append=false){const ticket=++pickerVersion;use.disabled=true;more.disabled=true;message.textContent=t('Loading…');if(!append)rows.replaceChildren();
+  const newFolder=createFolderControl({api,onCreated:result=>browse(result.path)});toolbar.append(newFolder.button);
+  async function browse(target,offset=0,append=false){const ticket=++pickerVersion;newFolder.update();use.disabled=true;more.disabled=true;message.textContent=t('Loading…');if(!append)rows.replaceChildren();
    try{const result=await api(`${endpoint(nodeId)}/folders?${new URLSearchParams({...target?{path:target}:{},offset:String(offset)})}`);if(ticket!==pickerVersion||!picker.open)return;current=result.path;parent=result.parent;up.disabled=!parent;location.textContent=current||t('Allowed folders');nextOffset=result.nextOffset||0;more.hidden=!result.hasMore;
     for(const item of result.entries||(result.folders||[]).map(f=>({...f,type:'folder',workspace:f.path}))){const row=el('div','native-picker-row'),pick=button('',()=>select(item),'native-picker-item');pick.dataset.path=item.path;pick.setAttribute('aria-label',t('Select {name}',{name:item.name}));const icon=el('span','native-picker-glyph');icon.setAttribute('aria-hidden','true');icon.innerHTML=item.type==='folder'?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h7l2 3h9v11H3Z"/></svg>':'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 3h8l4 4v14H6Z"/><path d="M14 3v5h4M9 12h6m-6 4h6"/></svg>';const name=el('span','',item.name);name.translate=false;pick.append(icon,name);pick.title=item.path;row.append(pick);
      if(item.type==='folder'){pick.addEventListener('dblclick',()=>browse(item.path));const enter=button('›',()=>browse(item.path),'icon-button native-picker-enter');enter.setAttribute('aria-label',t('Open folder {name}',{name:item.name}));row.append(enter);}rows.append(row);
     }select(append&&chosen?chosen:current?{path:current,workspace:current,type:'folder'}:null);
+    newFolder.update({nodeId,path:current,enabled:getData().workers?.find(w=>w.id===nodeId)?.capabilities?.directoryCreate===1});
    }catch(error){if(ticket===pickerVersion){chosen=null;message.textContent=t(error.message);use.disabled=true;}}finally{if(ticket===pickerVersion)more.disabled=false;}
   }
-  actions.append(button('Cancel',()=>picker.close()),use);picker.append(heading,toolbar,location,rows,more,selection,message,actions);
+  actions.append(button('Cancel',()=>picker.close()),use);picker.append(heading,toolbar,newFolder.panel,location,rows,more,selection,message,actions);
   const closeWithParent=()=>picker.close();dialog.addEventListener('close',closeWithParent);picker.addEventListener('close',()=>{pickerVersion++;dialog.removeEventListener('close',closeWithParent);},{once:true});picker.showModal();void browse(path||null);
  }
  function openForm(session=null,defaults={}){populate();dialog.replaceChildren();const heading=el('div','dialog-heading');heading.append(el('h2','',t(session?.canReopen?'Open unstarted session':session?'Continue native session':'New native session')),closeButton(()=>dialog.close()));dialog.append(heading);
@@ -326,5 +356,5 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
  // Only the visible Sessions page polls; returning from iTerm also refreshes immediately.
  setInterval(()=>{if(Date.now()-lastRefresh>=30000)refresh();},30000);
  list.hidden=filters.hidden=note.hidden=content.hidden=side.hidden=true;
- return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=!visible;content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){document.querySelector('#workspace-title').textContent=t('Native sessions');document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected)renderSessionControls(selected);if(changed)refresh();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
+ return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=!visible;content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){renderTitle();document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected)renderSessionControls(selected);if(changed)refresh();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
 }
