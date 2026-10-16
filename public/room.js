@@ -204,8 +204,10 @@ function createMessageQueue({api,refreshState,create,setError}) {
     if(firstWait){
       const role=roleName(firstWait.roleId),left=Math.max(1,Math.ceil((Date.parse(firstWait.releaseAt)-Date.now())/60000));
       // Nothing is released automatically; a stalled wait only unlocks "Handle this first" for every queued item.
-      summary.append(create('span',`message-queue-wait${firstWait.stalled?' is-released':''}`,firstWait.stalled?t('{role} · no progress for a while, marked stalled',{role})
-        :t('{role} · marked stalled after about {minutes} min without progress',{role,minutes:left})));
+      const pill=create('span',`message-queue-wait${firstWait.stalled?' is-released':''}`,firstWait.stalled?t('{role} · no progress for a while, marked stalled',{role})
+        :t('{role} · marked stalled after about {minutes} min without progress',{role,minutes:left}));
+      // Already localized (including the role name); keep the page translator from re-mapping "总管" to the generic "Supervisor" entry.
+      pill.translate=false;summary.append(pill);
     }
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
@@ -1102,9 +1104,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const supervisorRole = project?.supervisorRoleId ? (data.supervisorRoles || []).find(r => r.id === project.supervisorRoleId) : null;
     const supervisor = supervisorRole ? { ...supervisorRole, name: t('Supervisor@@roleCard') } : null;
     const supervisorMatches = supervisor && (!q || supervisor.name.toLowerCase().includes(q) || 'supervisor'.startsWith(q) || '\u603b\u7ba1'.includes(q));
-    const roles = [...(supervisorMatches ? [supervisor] : []), ...projectRoles().filter(r => !q || r.name.toLowerCase().includes(q))];
+    const roles = projectRoles().filter(r => !q || r.name.toLowerCase().includes(q));
     const everyone = !q || 'everyone'.includes(q) || 'all'.startsWith(q);
-    mentionChoices = [...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...roles];
+    // The supervisor comes first, then @everyone, then the other roles.
+    mentionChoices = [...(supervisorMatches ? [supervisor] : []), ...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...roles];
     if (!mentionChoices.length) { hideMentionMenu(); return; }
     mentionIndex = Math.min(mentionIndex, mentionChoices.length - 1);
     mentionMenu.replaceChildren();
