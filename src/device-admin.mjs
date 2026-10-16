@@ -6,6 +6,7 @@ import { connect } from 'node:net';
 import { desktopTunnelSpec, normalizeDesktopConfig, probeExistingDesktopTunnel } from './remote-desktop.mjs';
 import { tr } from './i18n.mjs';
 import { switchSettled } from './role-switch-policy.mjs';
+import {createBuildManifest} from './software-version.mjs';
 
 /** Probes only the local loopback listener and never touches the public desktop port. */
 function localPortOpen(port) {
@@ -296,6 +297,8 @@ socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('err
       const files = {};
       for (const name of await readdir(join(this.base,'src'))) if (name.endsWith('.mjs')) files[`src/${name}`] = await readFile(join(this.base,'src',name),'utf8');
       for (const name of ['package.json','package-lock.json','bin/wb']) files[name] = await readFile(join(this.base,name),'utf8');
+      // Preserve source identity in source-only installs; dirty or legacy copies remain explicitly unknown.
+      files['software-build.json']=JSON.stringify(await createBuildManifest(this.base,Object.keys(files)).catch(()=>null));
       const config = { HOME_URL:d.homeUrl, WORKER_TOKEN:this.workerToken, WORKER_ROOTS:d.workspaceRoot, WORKSPACE_ROOT:d.workspaceRoot, NODE_NAME:d.name, NODE_ID:d.nodeId, NODE_KIND:'cloud' };
       const script = `import {mkdir,writeFile,readFile,open,chmod} from 'node:fs/promises'; import {homedir} from 'node:os'; import {join,dirname} from 'node:path'; import {execFileSync,spawn} from 'node:child_process';
 const dir=join(homedir(),'.agent-workbench',${JSON.stringify(d.id)}), config=${JSON.stringify(config)}, files=${JSON.stringify(files)};

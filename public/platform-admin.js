@@ -1,5 +1,6 @@
 import { t, dateLocale, getLanguage } from './i18n.js';
 import { setActionIcon } from './role-icons.js';
+import {configurationInformationUI} from './configuration-information.js';
 
 /** Connected Workers and server registrations share one card; registrations that are not connected keep their edit entry. */
 export function deviceEntries(workers = [], devices = []) {
@@ -10,15 +11,12 @@ export function deviceEntries(workers = [], devices = []) {
   return entries;
 }
 
-/** Basic settings manage only devices and accounts; conversations run existing platform tools through the fixed configuration assistant. */
+/** Device/account operations remain separate from read-only software information. */
 export function platformAdminUI({api,getData,refreshState,create}) {
-  const $=s=>document.querySelector(s), account=$('#hosting-account-form'), accountDialog=$('#hosting-account-dialog'), device=$('#device-enroll-form'), assistant=$('#configuration-assistant-form');
-  let signature='',assistantState={},loading=false,assistantConfigLoaded=false,pendingMessage=null,conversationSignature='';
+  const $=s=>document.querySelector(s), account=$('#hosting-account-form'), accountDialog=$('#hosting-account-dialog'), device=$('#device-enroll-form');
+  let signature='';
+  const information=configurationInformationUI({api,getData,create});
   const text=(target,value)=>{const el=typeof target==='string'?$(target):target;el.textContent=value;el.hidden=false;};
-  const option=(id,label)=>{const el=create('option','',label);el.value=id;return el;};
-  function choices(el,values,blank,preferred=''){
-    const old=el.value;el.replaceChildren(option('',blank),...values.map(v=>option(v.id,v.name||v.id)));el.value=values.some(v=>v.id===old)?old:values.some(v=>v.id===preferred)?preferred:'';
-  }
   async function action(button,feedback,fn){button.disabled=true;text(feedback,'Processing…');try{const result=await fn();text(feedback,result?.note||'Done; please check the status.');await refreshState({quiet:true});return result;}catch(e){text(feedback,e.message);}finally{button.disabled=false;}}
   /** Each hosting platform shows its own overview; tokens are entered only in the explicit edit dialog. */
   function openAccount(provider,saved=null){
@@ -115,71 +113,6 @@ export function platformAdminUI({api,getData,refreshState,create}) {
     detail.append(feedback);
     return detail;
   }
-  function assistantChoices(){
-    const data=getData(),saved=assistantState.config||{},defaults=data.settings||{};
-    const workers=(data.workers||[]).filter(w=>w.online&&w.capabilities?.projectSpace===1);
-    choices(assistant.elements.nodeId,workers,'Select execution device',saved.nodeId || (workers.length===1?workers[0].id:''));
-    const worker=workers.find(w=>w.id===assistant.elements.nodeId.value),runtimes=(worker?.runtimes||[]).filter(r=>r.supported&&r.available&&r.authReady===true);
-    choices(assistant.elements.runtime,runtimes.map(r=>({id:r.type,name:r.label})),'Select CLI',saved.runtime||defaults.defaultSupervisorRuntime);
-    const runtime=runtimes.find(r=>r.type===assistant.elements.runtime.value);
-    choices(assistant.elements.model,runtime?.models||[],'Select model',saved.model||defaults.defaultSupervisorModel);
-    const model=runtime?.models?.find(m=>m.id===assistant.elements.model.value);
-    choices(assistant.elements.effort,(model?.efforts||runtime?.efforts||[]).map(id=>({id})),'CLI default',saved.effort||defaults.defaultSupervisorEffort);
-    assistantRuntimeSummary();
-  }
-  function assistantRuntimeSummary(){
-    $('#assistant-runtime-summary').textContent=['nodeId','runtime','model','effort'].map(key=>assistant.elements[key].selectedOptions[0]?.textContent||t('Not selected')).join(' · ');
-  }
-  const runtimeComplete=()=>['nodeId','runtime','model'].every(key=>assistant.elements[key].value);
-  const assistantRuntimeDialog=$('#assistant-runtime-dialog');
-  let runtimeBeforeEdit=null;
-  $('#edit-assistant-runtime').addEventListener('click',()=>{
-    runtimeBeforeEdit={config:assistantState.config,values:Object.fromEntries(['nodeId','runtime','model','effort'].map(key=>[key,assistant.elements[key].value]))};
-    $('#assistant-runtime-feedback').hidden=true;
-    assistantRuntimeDialog.showModal();assistant.elements.nodeId.focus();
-  });
-  function cancelAssistantRuntime(){
-    if(runtimeBeforeEdit){
-      const original=assistantState.config;assistantState.config=runtimeBeforeEdit.values;
-      for(const key of ['nodeId','runtime','model','effort'])assistant.elements[key].value='';
-      assistantChoices();assistantState.config=runtimeBeforeEdit.config||original;
-    }
-    runtimeBeforeEdit=null;assistantRuntimeDialog.close();
-  }
-  for(const id of ['#close-assistant-runtime-dialog','#cancel-assistant-runtime-dialog'])$(id).addEventListener('click',cancelAssistantRuntime);
-  $('#save-assistant-runtime-dialog').addEventListener('click',()=>{if(!runtimeComplete())return text('#assistant-runtime-feedback','Please select a run device, CLI and model first.');runtimeBeforeEdit=null;$('#assistant-runtime-feedback').hidden=true;assistantRuntimeSummary();assistantRuntimeDialog.close();});
-  assistantRuntimeDialog.addEventListener('cancel',e=>{e.preventDefault();cancelAssistantRuntime();});
-  assistantRuntimeDialog.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName==='SELECT')e.preventDefault();});
-  for(const name of ['nodeId','runtime','model'])assistant.elements[name].addEventListener('change',()=>{assistantState.config={};if(name!=='model')assistant.elements.model.value='';assistantChoices();});
-  assistant.elements.effort.addEventListener('change',assistantRuntimeSummary);
-  assistant.addEventListener('submit',e=>{e.preventDefault();if(!runtimeComplete()){text('#assistant-runtime-feedback','Please select a run device, CLI and model first.');assistantRuntimeDialog.showModal();return;}const fields=Object.fromEntries(new FormData(assistant));pendingMessage ||= crypto.randomUUID();fields.clientMessageId=pendingMessage;void action(assistant.querySelector('[type=submit]'),'#assistant-feedback',async()=>{await api('/api/platform/assistant',{method:'POST',json:fields});pendingMessage=null;assistant.elements.text.value='';await refreshAssistant();return {note:'Configuration assistant received it; results will appear in the conversation.'};});});
-  $('#assistant-stop').addEventListener('click',e=>{const run=(assistantState.runs||[]).findLast(r=>!['succeeded','failed','interrupted'].includes(r.status));if(!run)return text('#assistant-feedback','No assistant session is running');void action(e.currentTarget,'#assistant-feedback',()=>api(`/api/runs/${encodeURIComponent(run.id)}/stop`,{method:'POST',json:{commandId:crypto.randomUUID()}}));});
-  async function refreshAssistant(){
-    if(loading)return;loading=true;
-    try{
-      assistantState=await api('/api/platform/assistant');
-      if(!assistantConfigLoaded){assistantChoices();assistantConfigLoaded=true;}
-      const active=(assistantState.tasks||[]).filter(t=>['ready','in_progress'].includes(t.status));
-      const nextConversation=JSON.stringify([assistantState.messages,active,assistantState.proposals,getLanguage()]);
-      if(nextConversation===conversationSignature)return;
-      conversationSignature=nextConversation;
-      const chat=$('.assistant-chat'),follow=chat.scrollHeight-chat.scrollTop-chat.clientHeight<80;
-      const conversation=$('#assistant-conversation');conversation.replaceChildren();
-      for(const m of (assistantState.messages||[]).slice(-20)){const card=create('article',`assistant-bubble ${m.sender==='human'?'assistant-bubble-human':''}`);card.append(create('strong','',m.sender==='human'?'Me':'Configuration assistant'),create('p','assistant-message',m.text));conversation.append(card);}
-      if(!conversation.children.length)conversation.append(create('p','assistant-empty','Describe what you want to configure…'));
-      if(active.length)conversation.append(create('p','workspace-note',active.map(t=>t.waitingReason||'Configuration assistant is working…').join(t('; '))));
-      $('#assistant-stop').hidden=!active.length;
-      const proposals=$('#assistant-proposals');proposals.replaceChildren();
-      for(const p of (assistantState.proposals||[]).filter(p=>['pending','running','blocked'].includes(p.status)).slice(-8)){
-        const card=create('article','settings-block');card.append(create('strong','',p.summary));
-        const details=create('details'),summary=create('summary','','Configuration details');details.append(summary,create('pre','prompt-preview',JSON.stringify(p.actions,null,2)));card.append(details);
-        if(p.error)card.append(create('p','inline-error',p.error));
-        if(p.status==='pending')for(const [act,label] of [['approve','Apply configuration'],['reject','Dismiss suggestion']]){const button=create('button','secondary',label);button.type='button';setActionIcon(button,act==='approve'?'check':'stop');button.addEventListener('click',()=>void action(button,'#assistant-feedback',async()=>{await api(`/api/platform/proposals/${p.id}/${act}`,{method:'POST',json:{}});await refreshAssistant();}));card.append(button);}
-        proposals.append(card);
-      }
-      if(follow)chat.scrollTop=chat.scrollHeight;
-    }catch(e){text('#assistant-feedback',e.message);}finally{loading=false;}
-  }
   function refresh(){
     const data=getData(),next=JSON.stringify([data.devices,data.hostingAccounts,data.settings?.hostingAccountId,(data.workers||[]).map(w=>[w.id,w.name,w.online,w.workspaceRoot,w.capacity,w.desiredCapacity]),getLanguage()]);
     if(next!==signature){signature=next;
@@ -199,10 +132,8 @@ export function platformAdminUI({api,getData,refreshState,create}) {
         }
         const add=create('button','secondary compact hosting-add',linked.length?'Add another account':'Connect account');add.type='button';add.setAttribute('aria-label',t('{v} {label} account', { v: linked.length?t('Add another'):t('Connect'), label }));setActionIcon(add,linked.length?'plus':'link');add.addEventListener('click',()=>openAccount(provider));card.append(add);accounts.append(card);
       }
-      assistantChoices();
     }
-    if(document.querySelector('[data-settings-panel="assistant"]')?.hidden===false)void refreshAssistant();
+    information.refresh();
   }
-  document.querySelector('[data-settings-tab="assistant"]').addEventListener('click',()=>void refreshAssistant());
   return {refresh,deviceDetails,deleteDeviceButton,deleteRuntimeButton};
 }

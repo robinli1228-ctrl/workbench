@@ -228,3 +228,9 @@
 
 - Replaced the need to choose a broad shared project parent with an automatically prepared `native-sessions` folder under each device's workspace root. Folder creation is idempotent and preserves contents; project overlap and file/symlink collisions are rejected. Manual selection/new-folder controls remain, and existing sessions retain their original directory.
 - Actual isolated Home, two Workers and Edge verified default creation/reuse, device switching, a delayed response not overwriting a manual choice, and a standalone terminal reservation/return without starting a CLI. No production service was restarted and no existing history or project directory was changed.
+
+## 2026-10-16 — Configuration information and read-only update checks
+
+- Replaced the configuration-assistant composer with Configuration Information after Platform Prompts. It shows Home and individual local/server Worker versions, manual GitHub main comparison and commit-summary update notes; it does not generate AI instructions or update/restart anything. Legacy assistant records, APIs and admitted work are retained.
+- Added startup source identity, clean-build stamping for source-only packaging, explicit unknown/modified/offline/ahead/diverged states and bounded, coalesced one-minute GitHub reads. Build verification detects changed, missing and additional runtime files and does not borrow project-binding SHAs or account credentials.
+- Local verification covered real isolated Home/Worker and Edge desktop/mobile navigation, language switching, error display, unchanged history/reports/prompts and zero dispatched tasks. Server registration and update-available/error cases used fixtures; public GitHub main was also queried read-only. This records local implementation and isolated verification, not deployment, server acceptance or a production restart.

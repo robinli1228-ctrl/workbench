@@ -130,8 +130,8 @@
               <button type="button" role="tab" data-settings-tab="general">Basic Settings</button>
               <button type="button" role="tab" data-settings-tab="devices">Devices and CLIs</button>
               <button type="button" role="tab" data-settings-tab="hosting">Code Hosting Accounts</button>
-              <button type="button" role="tab" data-settings-tab="assistant">Configuration Assistant</button>
               <button type="button" role="tab" data-settings-tab="prompts">Platform Prompts</button>
+              <button type="button" role="tab" data-settings-tab="information">Configuration Information</button>
             </nav>
             <nav id="project-settings-tabs" class="settings-tabs" role="tablist" aria-label="Project settings categories" hidden>
               <button id="project-tab-basic" type="button" role="tab" data-project-settings-tab="basic" aria-controls="project-panel-basic" aria-selected="true">Basic information</button>
@@ -299,24 +299,12 @@
               </dialog>
             </section>
 
-            <section class="settings-panel" data-settings-panel="assistant" hidden>
-              <h3>Platform Configuration Assistant</h3><p class="workspace-note">Tell the assistant what you want to configure. It will check the current setup and guide the next steps.</p>
-              <div class="assistant-workspace">
-                <div class="assistant-chat" aria-label="Configuration conversation"><div id="assistant-conversation" role="log" aria-live="polite"></div><div id="assistant-proposals"></div></div>
-                <form id="configuration-assistant-form" class="form-grid assistant-composer-card">
-                  <div class="assistant-runtime-card full-width"><p id="assistant-runtime-summary" class="workspace-note">Loading devices and models…</p><button class="secondary compact" id="edit-assistant-runtime" type="button" aria-label="Edit configuration assistant run parameters">Run configuration</button></div>
-                  <dialog id="assistant-runtime-dialog" class="settings-edit-dialog" aria-labelledby="assistant-runtime-dialog-title">
-                    <div class="dialog-heading"><div><p class="eyebrow">CONFIG ASSISTANT</p><h3 id="assistant-runtime-dialog-title">Edit run configuration</h3></div><button class="icon-button" id="close-assistant-runtime-dialog" type="button" aria-label="Close">×</button></div>
-                    <div class="form-grid">
-                      <label>Run device<select name="nodeId"></select></label><label>CLI<select name="runtime"></select></label><label>Model<select name="model"></select></label><label>Reasoning effort<select name="effort"></select></label>
-                    </div>
-                    <p id="assistant-runtime-feedback" class="form-feedback" role="status" hidden></p>
-                    <div class="form-actions"><button class="secondary" id="cancel-assistant-runtime-dialog" type="button">Cancel</button><button class="primary" id="save-assistant-runtime-dialog" type="button">Done</button></div>
-                  </dialog>
-                  <textarea class="full-width" name="text" rows="3" required aria-label="Request" placeholder="Describe what you want to configure…"></textarea>
-                  <div class="form-actions full-width"><button class="secondary" type="button" id="assistant-stop">Stop current run</button><button class="primary" type="submit">Send</button></div>
-                </form><p id="assistant-feedback" class="form-feedback" hidden></p>
-              </div>
+            <section class="settings-panel" data-settings-panel="information" hidden>
+              <div class="settings-panel-heading"><h3>Configuration Information</h3><p>Software versions and update notes only. This page does not call an AI, install updates or restart services.</p></div>
+              <div class="software-update-actions"><button class="primary" id="check-software-updates" type="button">Check for updates</button><p class="workspace-note">Compare with GitHub main. Results are cached for one minute.</p></div>
+              <p id="software-update-feedback" class="form-feedback" role="status" hidden></p>
+              <div id="software-latest" class="settings-block" hidden></div>
+              <div id="software-versions" class="software-versions" aria-live="polite"></div>
             </section>
 
             <section class="settings-panel" data-settings-panel="prompts" id="settings-prompts-panel" hidden>

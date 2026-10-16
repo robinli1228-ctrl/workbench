@@ -65,8 +65,12 @@ import { WechatChannel, wechatTransport } from './wechat-channel.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
 import { roleResponsibility } from './role-definition.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
+import {readSoftwareVersion} from './software-version.mjs';
+import {SoftwareUpdates} from './software-updates.mjs';
 
 const base = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const softwareVersion=await readSoftwareVersion(base);
+const softwareUpdates=new SoftwareUpdates({repository:softwareVersion.repository});
 const data = resolve(process.env.DATA_DIR || join(base, '.data/home'));
 initLanguage(data); // load the saved language (data/language.json) before any text is produced
 const host = process.env.HOST || '127.0.0.1';
@@ -304,6 +308,13 @@ async function dispatch(nodeId) {
   }
   } finally {dispatching.delete(nodeId);}
 }
+/** Deployment identity stays separate from bound project versions and task input commits. */
+function softwareInventory() {
+  const workers=db.list('workers'),known=new Set(workers.map(w=>w.id));
+  return [{id:'home',name:'Home',kind:'home',online:true,softwareVersion},
+    ...workers.map(w=>({id:w.id,name:w.name||w.id,kind:w.nodeKind||resolveNodeKind(null,w.platform),online:online(w.id),lastSeen:w.lastSeen,softwareVersion:w.softwareVersion||null})),
+    ...db.list('devices').filter(d=>!known.has(d.nodeId)).map(d=>({id:d.nodeId,name:d.name||d.nodeId,kind:'cloud',online:false,softwareVersion:null}))];
+}
 function snapshot() {
   const launchCommands=db.list('commands').filter(c=>c.type==='launch'),launches=new Map(launchCommands.map(c=>[c.runId,c]));
   const continuationLaunches=new Map(launchCommands.toReversed().map(c=>[c.runId,c]));
@@ -457,6 +468,12 @@ const server = http.createServer(async (req, res) => {
         if (!workerOk) return json(res, { error: tr('home.agentToolsOnlyAllowedThrough') }, 401);
       } else if (apiToken && !userOk) return json(res, { error: tr('home.accessTokenRequired') }, 401);
       if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) return json(res, { error: tr('home.crossSiteRequestRejected') }, 403);
+      if(pathname==='/api/platform/version'&&req.method==='GET')return json(res,{instances:softwareInventory()});
+      if(pathname==='/api/platform/updates'&&req.method==='GET'){
+        const instances=softwareInventory(),result=await softwareUpdates.check(instances.map(item=>item.softwareVersion));
+        const {versions,...summary}=result;
+        return json(res,{...summary,instances:instances.map((item,index)=>({...item,comparison:versions[index]}))});
+      }
       const switchHistory=pathname.match(/^\/api\/agent\/cli-switches\/([^/]+)\/history$/);
       if(switchHistory&&req.method==='GET') {
         const record=db.get('roleSwitchHistory',switchHistory[1]);if(!record)throw new Error('CLI switch history not found.');
@@ -1178,6 +1195,7 @@ const server = http.createServer(async (req, res) => {
     files['/cli-recovery.js']='cli-recovery.js';
     files['/session-queue.js']='session-queue.js';
     files['/browser-token.js']='browser-token.js';
+    files['/configuration-information.js']='configuration-information.js';
     files['/role-switch.js']='role-switch.js';
     files['/role-history.js']='role-history.js';
     files['/role-templates.js']='role-templates.js';

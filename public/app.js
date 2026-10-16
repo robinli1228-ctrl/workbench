@@ -144,9 +144,9 @@ const room = createRoomUI({ api, refreshState, openTask, stopRun, decideApproval
 } });
 // Action icons apply only to explicit entry points; tabs, project names and the text confirm buttons at the bottom of dialogs are unchanged.
 for(const [selector,icon,label] of [
-  ['#close-settings-page, dialog button.icon-button[id^="close-"], #folder-close','close'],['#show-device-enroll','plus'],['#edit-assistant-runtime','edit'],
+  ['#close-settings-page, dialog button.icon-button[id^="close-"], #folder-close','close'],['#show-device-enroll','plus'],
   ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit conversation organizer model'],['#edit-api-token','edit'],
-  ['#manage-wechat','settings'],['#assistant-stop','stop'],['#configuration-assistant-form > .form-actions [type=submit]','send'],
+  ['#manage-wechat','settings'],
   ['#token-usage-form [type=submit]','search'],['#token-usage-refresh','refresh'],['#open-project-timers','history'],
   ['#pick-settings-folder','folder'],['#project-prepare-form [type=submit]','refresh'],
   ['#project-repository-form [type=submit]','git'],['#save-settings-folder','save'],
