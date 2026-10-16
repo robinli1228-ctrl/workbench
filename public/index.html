@@ -172,7 +172,7 @@
                   <summary>Link an existing project folder (optional)</summary>
                   <div class="form-grid">
                   <label>Select the project folder on a registered device<select id="settings-workspace-node"></select></label>
-                  <div class="full-width"><label for="settings-local-root">Local project folder</label><div class="path-picker"><input id="settings-local-root" readonly placeholder="Browse folders after selecting a device"><button class="secondary" id="pick-settings-folder" type="button" data-action-label>Select folder</button></div></div>
+                  <div class="full-width"><label for="settings-local-root">Local project folder</label><div class="path-picker"><input id="settings-local-root" readonly placeholder="Browse folders after selecting a device"><button class="secondary" id="pick-settings-folder" type="button">Select folder</button></div></div>
                   <p class="workspace-note full-width">The folder must already exist and be within the device's allowed access scope. The node checks the path and no browser files are uploaded; changes affect later dispatches only.</p>
                   <div class="form-actions full-width"><button class="secondary" id="save-settings-folder" type="button" data-action-label>Check and save folder</button></div>
                   </div>
@@ -217,9 +217,9 @@
                   <form id="proactive-followup-form" class="form-grid">
                     <label class="checkbox-label full-width"><input type="checkbox" name="enabled">Enable supervisor follow-up</label>
                     <label>Silence duration (minutes)<input type="number" name="silenceMinutes" min="1" max="10080" step="1" value="10" required></label>
-                    <div class="form-actions full-width"><button type="submit" class="primary">Save follow-up settings</button><button type="button" class="secondary" id="refresh-followup">Refresh follow-up status</button><button type="button" class="secondary" id="view-followup" disabled>View latest follow-up</button></div>
+                    <div class="form-actions full-width"><button type="submit" class="primary">Save follow-up settings</button></div>
                   </form>
-                  <p class="workspace-note" id="followup-status" role="status"></p>
+                  <div class="followup-status-row"><p class="workspace-note" id="followup-status" role="status"></p><span class="followup-tools"><button type="button" class="secondary" id="refresh-followup">Refresh follow-up status</button><button type="button" class="secondary" id="view-followup" disabled>View latest follow-up</button></span></div>
                   <p id="followup-feedback" class="form-feedback" role="status" hidden></p>
                 </section>
                 <section class="settings-block" aria-labelledby="session-queue-heading">
@@ -237,7 +237,7 @@
                   </form>
                   <p id="session-queue-config-feedback" class="form-feedback" role="status" hidden></p>
                 </section>
-                <section class="settings-block project-timer-link"><div><h3>Scheduled Jobs</h3><p class="workspace-note">View and adjust scheduled dispatches and progress checks for the current project.</p></div><button class="secondary" id="open-project-timers" type="button" data-action-label>Manage scheduled jobs</button></section>
+                <section class="settings-block project-timer-link"><div><h3>Scheduled Jobs</h3><p class="workspace-note">View and adjust scheduled dispatches and progress checks for the current project.</p></div><button class="secondary" id="open-project-timers" type="button">Manage scheduled jobs</button></section>
                 </div>
               </div>
             </section>

@@ -1,4 +1,5 @@
 import {t,dateLocale} from './i18n.js';
+import {closeIcon} from './role-icons.js';
 import {partitionRunLog,mergeRunEvents,displayRunInput,shouldShowFinalResult,stripAnsi,toolStatusLabel} from './run-log-data.js';
 import {executionProgress} from './execution-progress.js';
 import {simplifiedCliOutput} from './output-language.js';
@@ -98,7 +99,7 @@ export function createLiveScene({api,getProjectId,onNewSession,onResumeSession})
     close();ensureDialog();const generation=version;
     const heading=node('h2','',t('Live execution')),status=node('p','live-scene-status',''),connection=node('p','live-scene-connection',t('Loading recorded events…'));
     const body=node('div','live-scene-body'),header=node('div','live-scene-heading'),titles=node('div','');titles.append(heading,status);
-    const actions=node('div','live-scene-actions'),follow=node('button','icon-button'),exit=node('button','icon-button','×');
+    const actions=node('div','live-scene-actions'),follow=node('button','icon-button'),exit=closeIcon(node('button','icon-button'),t('Close'));
     // These entries only open confirmation forms; viewing the scene never acquires a terminal.
     for(const [label,handler] of [['New session',onNewSession],['Resume session',onResumeSession]]){
       if(!role||!handler)continue;

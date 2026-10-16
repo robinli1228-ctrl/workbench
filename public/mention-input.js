@@ -78,5 +78,9 @@ export function createMentionInput(input,getNames) {
     const caret=input.selectionStart,token=ranges().find(r=>event.key==='ArrowLeft'?caret>r.start&&caret<=r.end:event.key==='ArrowRight'&&caret>=r.start&&caret<r.end);
     if(token){event.preventDefault();const at=event.key==='ArrowLeft'?token.start:token.end;input.setSelectionRange(at,at);}
   },{capture:true});
+  // Callers clear or restore the draft by assigning value (send, draft switch, reply prefix), which fires no input event.
+  // Redraw on every assignment so the mirror never keeps old text over the emptied box or its placeholder.
+  const native=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input),'value');
+  if(native?.set)Object.defineProperty(input,'value',{configurable:true,enumerable:native.enumerable,get(){return native.get.call(this);},set(value){native.set.call(this,value);refresh();}});
   const observer=new ResizeObserver(refresh);observer.observe(input);refresh();return {refresh};
 }

@@ -673,7 +673,10 @@ button.quoted-message:hover { color:#315b84; background:#e7eef5; }
 .mention-input { grid-column: 2; position: relative; min-width: 0; }
 .mention-input #chat-text { display: block; position: relative; z-index: 1; }
 .mention-input-mirror { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--ink); white-space: pre-wrap; overflow-wrap: break-word; }
-.chat-input-field #chat-text.has-role-mentions { color: transparent; caret-color: var(--ink); }
+.chat-input-field #chat-text.has-role-mentions { color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--ink); }
+/* Safari paints disabled text with its own fill colour; keep it transparent while sending so only the mirror shows, dimmed. */
+.chat-input-field #chat-text.has-role-mentions:disabled { color: transparent; -webkit-text-fill-color: transparent; opacity: 1; }
+.mention-input:has(#chat-text:disabled) .mention-input-mirror { opacity: .55; }
 .chat-input-field #chat-text.has-role-mentions::selection { color: transparent; background: rgb(77 135 233 / 24%); }
 .mention-menu {
   position: absolute; left: 0; right: 72px; bottom: calc(100% + 6px);
@@ -2319,15 +2322,6 @@ body { color: var(--text-body); -webkit-font-smoothing: antialiased; -moz-osx-fo
 .topbar-actions .icon-button:hover, .inspector-header .icon-button:hover, .chat-heading-actions .icon-button:hover { color: var(--accent); border-color: var(--card-hairline); background: #fff; }
 .topbar-actions button.secondary { min-height: 32px; padding: 0 12px; border-radius: var(--r-sm); font-size: var(--fs-sm); }
 
-/* Left navigation: segmented switch instead of loose underlined tabs. */
-.project-sidebar .navigation-mode {
-  flex: 1; min-width: 0; display: flex; gap: 2px; padding: 3px;
-  border-radius: var(--r-md); background: rgb(22 30 58 / 5%);
-}
-.project-sidebar .navigation-mode button { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 6px 7px; border-radius: var(--r-sm); color: var(--text-muted); font-size: 12.5px; font-weight: 600; letter-spacing: -.005em; white-space: nowrap; transition: background-color .15s, color .15s, box-shadow .15s; }
-.project-sidebar .navigation-mode button:hover { color: var(--text-strong); }
-.project-sidebar .navigation-mode button[aria-pressed="true"] { color: var(--text-strong); background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 8%), 0 0 0 1px rgb(22 30 58 / 4%); }
-.project-sidebar .navigation-mode button[aria-pressed="true"]::after { content: none; }
 body .project-sidebar .sidebar-heading { gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--card-hairline); }
 .project-sidebar .sidebar-heading .new-conversation-button { width: 30px; height: 30px; min-height: 30px; margin: 0; padding: 6px; border-radius: var(--r-sm); color: var(--accent); }
 .project-sidebar .sidebar-heading .new-conversation-button:hover { color: var(--accent-dark); background: #fff; box-shadow: 0 0 0 1px var(--card-hairline); }
@@ -2615,4 +2609,104 @@ button.danger:hover:not(:disabled), :is(dialog, #project-form-panel) button.dang
 }
 .message-queue-wait { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; color: var(--accent-dark); background: var(--accent-soft); font-size: 12px; }
 .message-queue-wait.is-released { color: #8a5a12; background: #fff1d8; }
-.message-queue-first { min-height: 30px; padding: 0 10px; font-size: 12px; white-space: nowrap; }
+
+/* ===== Refinement round (user feedback 2026-10-16) ===== */
+/* Role cards: one plain card; the model row sits directly on it, no inset strip or outline. */
+.role-id-row, .role-card.is-working .role-id-row { margin-top: 10px; padding: 0; border-radius: 0; background: transparent; box-shadow: none; }
+
+/* Inspector tabs: no fill or bar; the selected icon is blue, the others grey. */
+.inspector-tabs button, .inspector-tabs button:hover { background: transparent; }
+.inspector-tabs button[aria-selected="true"] { color: var(--accent); background: transparent; }
+.inspector-tabs button[aria-selected="true"]::before { content: none; }
+.inspector-tabs button:not([aria-selected="true"]) { color: #8a91a0; }
+.inspector-tabs button:not([aria-selected="true"]):hover { color: var(--text-body); }
+
+/* Light sweep at half the speed: the band now takes 2.7s to cross instead of 1.35s. */
+#project-list .project-item.is-running::after, #native-session-list .project-item.is-running::after, .role-card.is-working::after { animation: card-sweep-slow 9s var(--card-ease) infinite; }
+#project-list .project-item.is-running:nth-child(3n+2)::after, #native-session-list .project-item.is-running:nth-child(3n+2)::after, .role-card.is-working:nth-child(3n+2)::after { animation-delay: 3s; }
+#project-list .project-item.is-running:nth-child(3n)::after, #native-session-list .project-item.is-running:nth-child(3n)::after, .role-card.is-working:nth-child(3n)::after { animation-delay: 6s; }
+@keyframes card-sweep-slow { 0% { transform: translateX(-120%); } 30% { transform: translateX(120%); } 100% { transform: translateX(120%); } }
+
+/* Left chat cards: a slightly larger bare icon instead of a tile inside the card; blue when selected. */
+#project-list .project-item { grid-template-columns: 26px minmax(0, 1fr); gap: 10px; padding-left: 16px; }
+#project-list .project-item-icon, #project-list .project-item.active .project-item-icon, #project-list .project-item.active.is-running .project-item-icon {
+  width: 26px; height: 26px; border-radius: 0; background: transparent; box-shadow: none; filter: none; }
+#project-list .project-item-icon { color: var(--text-muted); }
+#project-list .project-item-icon svg { width: 22px; height: 22px; }
+#project-list .project-item.active .project-item-icon, #project-list .project-item.active.is-running .project-item-icon { color: var(--accent); }
+#project-list .project-item.is-running .project-item-icon { color: var(--text-muted); }
+#native-session-list .project-item { padding-left: 16px; }
+
+/* Running: a small dot at the left edge of the card. */
+#project-list .project-item.is-running::before, #native-session-list .project-item.is-running::before {
+  content: ''; position: absolute; left: 6px; top: 50%; z-index: 2; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px rgb(79 91 206 / 16%); }
+@media (min-width: 1001px) {
+  body[data-project-sidebar="collapsed"] #project-list .project-item, body[data-project-sidebar="collapsed"] #native-session-list .project-item { padding: 7px; }
+  body[data-project-sidebar="collapsed"] #project-list .project-item.is-running::before, body[data-project-sidebar="collapsed"] #native-session-list .project-item.is-running::before { left: 2px; }
+  body[data-project-sidebar="collapsed"] #project-list .project-item.is-running .project-item-icon, body[data-project-sidebar="collapsed"] #project-list .project-item.active.is-running .project-item-icon { box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #project-list .project-item.is-running::after, #native-session-list .project-item.is-running::after, .role-card.is-working::after { animation: none; display: none; }
+}
+
+/* Chat cards: one anatomy for every card — top line (reply-to on the left, send time on the right), body, status footer with actions. */
+.chat-bubble-top { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; margin: -2px 0 6px; }
+.chat-bubble-top .quoted-message { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.chat-bubble-top time { flex: none; margin-left: auto; color: var(--text-muted); font-family: var(--font-mono); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.chat-row.human .chat-bubble-top time { color: #565d6e; }
+.chat-message-header { justify-content: flex-start; }
+.chat-row.human .chat-message-header { justify-content: flex-end; }
+.chat-typing-row { display: flex; align-items: center; min-height: 22px; }
+.is-live-card .chat-card-footer .elapsed-time { margin-left: 6px; }
+.is-live-card .chat-card-footer .elapsed-time::before { content: '· '; }
+.is-live-card { min-width: min(320px, 100%); }
+
+/* Fix F1: the collapsed rail keeps the bare selected icon (no leftover tile shadow). */
+@media (min-width: 1001px) {
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active .project-item-icon,
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active.is-running .project-item-icon { box-shadow: none; }
+}
+/* Fix F2: the restored underlined tabs fit beside the new-chat button at the default 260px width in English. */
+.project-sidebar .navigation-mode { flex: 1 1 auto; min-width: 0; gap: 6px; }
+.project-sidebar .navigation-mode button { min-width: 0; padding: 8px 5px; font-size: 13.5px; white-space: nowrap; }
+.project-sidebar .navigation-mode button[aria-pressed="true"]::after { left: 5px; right: 5px; }
+body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
+
+/* Queue title row: count on the left, the collaboration wait status on the right. */
+.message-queue summary .message-queue-title { flex: none; }
+.message-queue summary .message-queue-wait { min-width: 0; margin: 0 0 0 auto; padding: 2px 8px; overflow: hidden; border-radius: 999px; color: var(--accent-dark); background: var(--accent-tint); font-size: var(--fs-xs); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.message-queue summary .message-queue-wait.is-released { color: #8a5a12; background: #fff1d8; }
+
+/* Card footer: status line under the hairline, actions on their own row below it. */
+.chat-card-footer { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 6px; }
+.chat-card-actions { flex-wrap: wrap; justify-content: flex-start; margin-left: -4px; }
+/* The reply line on a live card is the body while it waits, so it may run to two lines. */
+.is-live-card .chat-live-reply { display: block; margin: 0 0 8px; white-space: normal; }
+.is-live-card .chat-live-reply-text { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.is-live-card div.chat-live-reply { cursor: default; }
+
+/* Buttons: icon-only for utility actions, text-only for commits; a row never mixes them, and buttons keep clear of the text beside them. */
+.message-queue-item .message-queue-first.is-active { color: var(--accent); background: var(--accent-tint); }
+.message-queue-item .message-queue-first.is-active:disabled { opacity: 1; }
+.source-sync-heading button.action-icon-button { padding: 8px; }
+.worker-card-head strong { min-width: 0; }
+.worker-card-head > button:first-of-type { margin-left: auto; }
+.role-history-run { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.role-history-run strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-card-head .role-live-scene { margin-left: 2px; }
+
+.path-picker:has(.action-icon-button) { flex-wrap: nowrap; }
+.path-picker button.action-icon-button { width: 36px; min-height: 36px; }
+@media (max-width: 760px) { .path-picker button.action-icon-button { width: 44px; min-height: 44px; } }
+.project-timer-link .action-icon-button { align-self: center; }
+.followup-status-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.followup-status-row #followup-status { flex: 1 1 auto; min-width: 0; margin: 0; }
+.followup-tools { display: flex; flex: none; gap: 6px; }
+.native-workspace-row button.action-icon-button { width: 40px; min-width: 40px; padding: 0; }
+@media (max-width: 760px) { .native-workspace-row:has(.action-icon-button) { flex-wrap: nowrap; } .native-workspace-row:has(.action-icon-button) input { flex-basis: auto; } }
+.proposal-actions { justify-content: flex-start; margin-top: 10px; }
+
+/* Close/remove controls draw the same stroked SVG as their neighbours (closeIcon), so they share one optical centre. */
+.attachment-remove { display: grid; place-items: center; }
+.attachment-remove svg { display: block; width: 14px; height: 14px; pointer-events: none; }

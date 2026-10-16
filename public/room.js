@@ -1,6 +1,6 @@
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
-import { agentIconEl, UI_ICON, workerDisplayName } from './role-icons.js';
+import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
@@ -195,13 +195,19 @@ function createMessageQueue({api,refreshState,create,setError}) {
     // Home's own projection decides who is protected; the browser only labels it and never guesses from an idle CLI.
     const waits=(data.collaborationWaits||[]).filter(w=>w.projectId===projectId&&(!tasks.length||tasks.some(t=>(t.conversationId||t.projectId)===w.conversationId&&t.roleId===w.roleId)));
     const protectedRole=task=>waits.find(w=>!w.released&&w.roleId===task.roleId&&w.conversationId===(task.conversationId||task.projectId));
-    panel.hidden=!tasks.length;summary.textContent=t('Queue · {v}', { v: tasks.length });list.replaceChildren();
-    for(const wait of waits.filter((w,i,all)=>all.findIndex(x=>x.roleId===w.roleId&&x.conversationId===w.conversationId)===i)) {
-      const role=(data.roles||[]).find(r=>r.id===wait.roleId)?.name||t('Role');
-      const left=Math.max(1,Math.ceil((Date.parse(wait.releaseAt)-Date.now())/60000));
+    panel.hidden=!tasks.length;list.replaceChildren();
+    // The wait status sits on the queue title row, to the right of the count, so it is visible even when the queue is folded.
+    const roleName=id=>(data.supervisorRoles||[]).some(r=>r.id===id)?t('Supervisor@@roleCard'):(data.roles||[]).find(r=>r.id===id)?.name||t('Role');
+    const firstWait=[...waits].sort((a,b)=>Number(Boolean(b.stalled))-Number(Boolean(a.stalled))||Date.parse(a.releaseAt)-Date.parse(b.releaseAt))[0];
+    const title=create('span','message-queue-title',t('Queue · {v}', { v: tasks.length }));
+    summary.replaceChildren(title);
+    if(firstWait){
+      const role=roleName(firstWait.roleId),left=Math.max(1,Math.ceil((Date.parse(firstWait.releaseAt)-Date.now())/60000));
       // Nothing is released automatically; a stalled wait only unlocks "Handle this first" for every queued item.
-      list.append(create('p',`message-queue-wait${wait.stalled?' is-released':''}`,wait.stalled?t('{role} · no collaboration progress for a while; needs attention. Choose Handle this first to let a queued item go',{role})
-        :t('{role} · waiting for collaboration results · marked stalled after about {minutes} min without progress',{role,minutes:left})));
+      const pill=create('span',`message-queue-wait${firstWait.stalled?' is-released':''}`,firstWait.stalled?t('{role} · no progress for a while, marked stalled',{role})
+        :t('{role} · marked stalled after about {minutes} min without progress',{role,minutes:left}));
+      // Already localized (including the role name); keep the page translator from re-mapping "总管" to the generic "Supervisor" entry.
+      pill.translate=false;summary.append(pill);
     }
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
@@ -214,8 +220,10 @@ function createMessageQueue({api,refreshState,create,setError}) {
       const yieldBusy=tasks.some(x=>x.id!==task.id&&x.collaborationYield&&scopeOf(x))||waits.some(w=>w.yielded&&scopeOf(w));
       if((human||guard?.stalled)&&data.capabilities?.collaborationWait&&(guard||task.collaborationYield)) {
         // Handle this first keeps the waiting collaboration; it never stops or cancels anything.
-        const first=create('button','secondary compact message-queue-first',task.collaborationYield?t('Handling first'):t('Handle this first'));first.type='button';
-        first.title=t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
+        // Same icon style as steer and cancel on this row; the label lives in the tooltip and aria-label.
+        const first=create('button',`icon-button message-queue-first${task.collaborationYield?' is-active':''}`);first.type='button';first.innerHTML=UI_ICON.priority;
+        first.setAttribute('aria-label',task.collaborationYield?t('Handling first'):t('Handle this first'));
+        first.title=task.collaborationYield?t('Handling first'):t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
         first.disabled=Boolean(task.collaborationYield)||yieldBusy||pending.has(task.id)||data.settings?.paused;
         if(yieldBusy&&!task.collaborationYield)first.title=t('Another item for this role is being handled first; wait until it and its collaboration finish');
         first.onclick=async()=>{
@@ -240,7 +248,7 @@ function createMessageQueue({api,refreshState,create,setError}) {
         };
         row.append(steer);
       }
-      const cancel=create('button','icon-button','×');cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
+      const cancel=closeIcon(create('button','icon-button'));cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
       cancel.disabled=pending.has(task.id);cancel.onclick=async()=>{
         cancel.disabled=true;try{await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`,{method:'POST',json:{}});await refreshState({quiet:true});}catch(error){setError(error.message);cancel.disabled=false;}
       };row.append(cancel);list.append(row);
@@ -335,10 +343,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     open.append(create('span','attachment-name',item.name),create('small','',item.size<1024?`${item.size} B`:`${(item.size/1024).toFixed(1)} KB`));
     card.append(open);
     if (!removable) card.append(iconAction('transfer', 'Send to device', () => openAttachmentTransfer(item)));
-    if (removable) card.append(button('×', () => {
+    if (removable) card.append(closeIcon(button('', () => {
       const d = drafts[ownerId]; if (d?.pending || sendingProject === ownerId) return;
       d.attachments = (d.attachments || []).filter(a=>a.id!==item.id); saveDrafts(); composer();
-    },'attachment-remove'));
+    },'attachment-remove'), t('Remove attachment')));
     return card;
   }
 
@@ -427,9 +435,9 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     card.append(open);
     if (!busy) {
       card.append(iconAction('refresh',entry.error ? 'Retry upload' : 'Upload', () => { void uploadTextFile(entry, ownerId); }));
-      card.append(button('×', () => {
+      card.append(closeIcon(button('', () => {
         drafts[ownerId].textFiles = drafts[ownerId].textFiles.filter(value => value.id !== entry.id); saveDrafts(); composer();
-      }, 'attachment-remove'));
+      }, 'attachment-remove'), t('Remove attachment')));
     }
     if (entry.error) card.title = entry.error;
     return card;
@@ -833,24 +841,49 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const col = create('div', 'chat-col');
     const progress=taskProgress(task,run),label=t(progress.label);
     const running=progress.state==='running'&&run?.startedAt;
-    const nameLine=create('div', 'chat-name', `@${role.name || t('Role')} · ${label}`);
-    if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)nameLine.append(elapsed);}
+    const nameLine=create('div', 'chat-name', `@${role.name || t('Role')}`);
+    nameLine.translate=false;
     col.append(nameLine);
-    const bubble = create('div', 'chat-bubble');
+    const bubble = create('div', 'chat-bubble is-live-card');
+    const top = create('div', 'chat-bubble-top');
+    const sentAt = run?.startedAt || run?.createdAt || task.createdAt;
+    const time = create('time', '', formatTime(sentAt));
+    if (sentAt) time.dateTime = sentAt;
+    top.append(time);
+    bubble.append(top);
+    // Even before it starts, the card says which message it answers: the task's own source message, or its request text.
+    const source = messages.find(q => q.id === task.sourceMessageId) || null;
+    // An attachment-only source still names its sender and opens the original; its files stand in for the empty text.
+    const sourceFiles = source?.attachments?.length ? t('[Attachment] {v}', { v: source.attachments.map(a => a.name).filter(Boolean).join(t(', ')) || source.attachments.length }) : '';
+    const sourceText = simplifiedCliOutput(source ? source.text || sourceFiles || task.title || task.prompt || '' : task.title || task.prompt || '');
+    if (sourceText) {
+      const flat = sourceText.replace(/\s+/g, ' ').trim(), summary = flat.length > 240 ? `${flat.slice(0, 240)}…` : flat;
+      const label = source ? t('Reply to {senderName}: {v}', { senderName: source.senderName, v: summary }) : t('Reply to: {v}', { v: summary });
+      const quote = create(source ? 'button' : 'div', 'quoted-message chat-live-reply');
+      quote.append(create('span', 'chat-live-reply-text', label));
+      quote.translate = false;
+      if (source) {
+        quote.type = 'button'; quote.title = 'View quoted original'; quote.setAttribute('aria-label', 'View quoted original');
+        quote.addEventListener('click', () => void historyViewer.open(source.projectId || task.projectId, 'message', source.id, source.conversationId || source.projectId || task.projectId).catch(e => setError(e.message)));
+      }
+      bubble.append(quote);
+    }
     const preview = run && !run.explicitPublish ? liveText(run.id) : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id,`run:${run?.id || task.id}`));
     else {
       const typing = create('div', 'chat-typing');
       typing.append(create('span'), create('span'), create('span'));
-      bubble.append(typing, create('span', 'chat-typing-label', label));
-      if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)bubble.append(elapsed);}
+      const typingRow = create('div', 'chat-typing-row');
+      // The status line below already names the state; the dots only show the card is alive.
+      typing.setAttribute('role', 'status'); typing.setAttribute('aria-label', label);
+      typingRow.append(typing);
+      bubble.append(typingRow);
     }
     col.append(bubble);
     const alert=run&&data.runAlerts?.find(a=>a.id===run.id);
     if(alert)col.append(create('p','run-alert',alert.reason));
     const approvals = run ? renderApprovalsInline(run) : null;
     if (approvals) col.append(approvals);
-    if(recoveryButton)col.append(recoveryButton);
     const actions = [];
     if (preview) actions.push(copyMessageButton(preview));
     actions.push(fullscreenMessageButton(preview, role.name, true, [], task.id, run?.id));
@@ -865,7 +898,13 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       }));
     }
     if (run) actions.push(iconAction('log', 'Log', () => openTask(task.id,run.id)));
-    if (actions.length) col.append(chatMeta('', actions));
+    // Status and actions sit inside the card, the same footer as finished messages.
+    const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', label);
+    if (running) { const elapsed = elapsedEl(create, run.startedAt); if (elapsed) status.append(elapsed); }
+    const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
+    // The CLI occupancy check stays available as one more icon in the row, instead of a box standing in for the body.
+    if (recoveryButton) actionBar.append(recoveryButton);
+    footer.append(status, actionBar); bubble.append(footer);
     row.append(col);
     if (run && ['starting', 'running', 'waiting_user', 'stopping'].includes(run.status)) void pullLive(run.id);
     return row;
@@ -886,16 +925,20 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const sender=create('div', 'chat-name', agent ? m.senderName : 'Me');
     // Saved role names are identities, not UI dictionary keys.
     if(agent)sender.setAttribute('translate','no');
-    header.append(sender, time);
+    header.append(sender);
     col.append(header);
     const bubble = create('div', `chat-bubble${handoff || replyDirection ? ' handoff-card' : ''}`);
+    // Every card opens with one top line: what it replies to (if anything) on the left, its send time on the right.
+    const top = create('div', 'chat-bubble-top');
+    bubble.append(top);
     if (m.replyToId) {
       const source = m.replySource || messages.find(q => q.id === m.replyToId);
       const quoteText=source?simplifiedCliOutput(source.text):'';
       const quote=create(source?.id?'button':'div', 'quoted-message', source ? t('{senderName}: {v}', { senderName: source.senderName, v: quoteText.slice(0, 180)+(quoteText.length>=180?'...':'') }) : 'Quoting an earlier message');
       if(source?.id){quote.type='button';quote.title='View quoted original';quote.setAttribute('aria-label','View quoted original');quote.addEventListener('click',()=>void historyViewer.open(m.projectId,'message',source.id,m.conversationId||m.projectId).catch(error=>setError(error.message)));}
-      bubble.append(quote);
+      top.append(quote);
     }
+    top.append(time);
     const recipients=messageRecipients(m,replyDirection);
     const bodyText=messageDisplayText(handoff?m.handoff.summary||m.text:m.text,recipients);
     const body=replyPreview(bodyText,handoff||agent,m.runId,`message:${m.id}`);
@@ -1070,9 +1113,15 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     mentionRange = mentionQuery();
     if (!mentionRange || input.disabled) { hideMentionMenu(); return; }
     const q = mentionRange.query.toLowerCase();
+    // The project supervisor is routed by name on the server; offer it in the menu like any other role.
+    const project = data.projects?.find(p => p.id === projectId);
+    const supervisorRole = project?.supervisorRoleId ? (data.supervisorRoles || []).find(r => r.id === project.supervisorRoleId) : null;
+    const supervisor = supervisorRole ? { ...supervisorRole, name: t('Supervisor@@roleCard') } : null;
+    const supervisorMatches = supervisor && (!q || supervisor.name.toLowerCase().includes(q) || 'supervisor'.startsWith(q) || '\u603b\u7ba1'.includes(q));
     const roles = projectRoles().filter(r => !q || r.name.toLowerCase().includes(q));
     const everyone = !q || 'everyone'.includes(q) || 'all'.startsWith(q);
-    mentionChoices = [...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...roles];
+    // The supervisor comes first, then @everyone, then the other roles.
+    mentionChoices = [...(supervisorMatches ? [supervisor] : []), ...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...roles];
     if (!mentionChoices.length) { hideMentionMenu(); return; }
     mentionIndex = Math.min(mentionIndex, mentionChoices.length - 1);
     mentionMenu.replaceChildren();

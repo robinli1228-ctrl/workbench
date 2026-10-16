@@ -1,9 +1,10 @@
 import {t} from './i18n.js';
+import {closeIcon} from './role-icons.js';
 
 /** Creation changes navigation metadata only; the selected source is captured before any asynchronous work. */
 export function createGroupConversationUI({api,getSelection,onCreated,onCopyTeam}) {
   const dialog=document.createElement('dialog');dialog.className='group-conversation-dialog';
-  const heading=document.createElement('h3'),close=document.createElement('button');close.type='button';close.className='icon-button';close.textContent='×';close.setAttribute('aria-label',t('Close'));
+  const heading=document.createElement('h3'),close=document.createElement('button');close.type='button';close.className='icon-button';closeIcon(close,t('Close'));
   const header=document.createElement('div');header.className='group-conversation-heading';header.append(heading,close);
   const actions=document.createElement('div');actions.className='group-conversation-actions';
   const branch=document.createElement('button');branch.type='button';branch.textContent=t('Branch into new chat');actions.append(branch);
