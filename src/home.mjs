@@ -525,7 +525,7 @@ const server = http.createServer(async (req, res) => {
         const link = wechat.openProject(wechatProject[1]); void wechat.tick().catch(() => {}); return json(res, { id: link.id }, 201);
       }
       if(pathname.includes('native-')&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
-      const nativeMatch=pathname.match(/^\/api\/native-sessions\/([^/]+)(?:\/(terminal|folders))?$/);
+      const nativeMatch=pathname.match(/^\/api\/native-sessions\/([^/]+)(?:\/(terminal|folders|default-folder))?$/);
       if(nativeMatch){
         const nodeId=decodeURIComponent(nativeMatch[1]),worker=db.get('workers',nodeId);
         if(!worker)throw Error('Device is unavailable');
@@ -558,6 +558,11 @@ const server = http.createServer(async (req, res) => {
           return json(res,result);
         }
         if(!online(nodeId))throw Error('Device is offline');
+        if(req.method==='POST'&&nativeMatch[2]==='default-folder'){
+          if(worker.capabilities?.nativeDefaultFolder!==1)throw Error('Upgrade this Worker to prepare the default session folder.');
+          const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({localRoot:w.localRoot}));
+          return json(res,await workerQuery({nodeId},'native_default_folder',{bindings},15000));
+        }
         if(req.method==='GET'&&nativeMatch[2]==='folders')return json(res,await workerQuery({nodeId},'directories',{
           path:url.searchParams.get('path')||null,offset:Number(url.searchParams.get('offset')||0),includeFiles:true},15000));
         if(req.method!=='POST'||nativeMatch[2]!=='terminal')throw Error('Invalid session action');

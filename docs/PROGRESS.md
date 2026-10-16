@@ -223,3 +223,8 @@
 
 - Group-chat composer attachments now use 8:5 cards, truncated filenames and click-to-view details. Removed edit/restore and device-transfer buttons only from drafts; kept removal, upload retry, full original content and sent-message transfer.
 - Real isolated Home/Edge verification covered desktop/mobile dimensions, long filenames, text and image previews, binary metadata/download, reload persistence, selected removal and failed-upload retry. No production task, service, file or history was changed; not deployed or restarted.
+
+## 2026-10-16 — Default standalone native-session folder
+
+- Replaced the need to choose a broad shared project parent with an automatically prepared `native-sessions` folder under each device's workspace root. Folder creation is idempotent and preserves contents; project overlap and file/symlink collisions are rejected. Manual selection/new-folder controls remain, and existing sessions retain their original directory.
+- Actual isolated Home, two Workers and Edge verified default creation/reuse, device switching, a delayed response not overwriting a manual choice, and a standalone terminal reservation/return without starting a CLI. No production service was restarted and no existing history or project directory was changed.

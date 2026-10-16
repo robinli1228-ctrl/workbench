@@ -335,7 +335,18 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   if(session?.workspace)form.append(el('p','workspace-note native-full',t('An existing session keeps its original working folder.')));
   const permissions=el('label','native-permissions native-full');permissions.append(all,el('span','',t('Allow all operations (bypass native permission prompts)')));form.append(permissions,el('p','workspace-note native-full',t('Default uses native permissions. A related group chat waits while this terminal owns its folder; closing the CLI returns it automatically.')));
   const submit=el('button','primary',t('Prepare iTerm launch')),actions=el('div','native-session-actions native-full');submit.type='submit';actions.append(submit);form.append(feedback,actions,launch);dialog.append(form);
-  d.addEventListener('change',()=>{updateTools();folder.value='';launch.replaceChildren();});
+  let defaultFolderVersion=0;
+  // 设备切换或用户手选之后，旧回复不能覆盖新的目录；续接会话始终保留原目录。
+  async function fillDefaultFolder(){
+   if(session)return;const ticket=++defaultFolderVersion,nodeId=d.value;
+   if(!getData().workers?.find(w=>w.id===nodeId)?.online)return;
+   feedback.textContent=t('Preparing default session folder…');
+   try{const result=await api(`${endpoint(nodeId)}/default-folder`,{method:'POST',json:{}});if(ticket!==defaultFolderVersion||!dialog.open||!dialog.contains(form)||d.value!==nodeId||folder.value)return;folder.value=result.path;feedback.textContent='';}
+   catch(error){if(ticket===defaultFolderVersion&&dialog.open&&dialog.contains(form)&&d.value===nodeId&&!folder.value)feedback.textContent=t(error.message);}
+  }
+  folder.addEventListener('input',()=>{defaultFolderVersion++;feedback.textContent='';});
+  folder.addEventListener('change',()=>{defaultFolderVersion++;feedback.textContent='';});
+  d.addEventListener('change',()=>{updateTools();folder.value='';launch.replaceChildren();void fillDefaultFolder();});
   let operationId=null,lastInput='',prepared=null,opened=false;
   const releaseUnused=async()=>{if(!prepared||opened)return;const previous=prepared;prepared=null;operationId=null;lastInput='';await api(`/api/native-sessions/${encodeURIComponent(previous.nodeId)}/terminal`,{method:'POST',json:{action:'release',operationId:previous.operationId}});};
   const discard=()=>{launch.replaceChildren();submit.disabled=true;return releaseUnused().catch(error=>{feedback.textContent=t(error.message);}).finally(()=>{submit.disabled=false;});};
@@ -344,7 +355,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   form.addEventListener('submit',async e=>{e.preventDefault();if(!title.value.trim()){title.focus();feedback.textContent=t('Enter a session title.');return;}submit.disabled=true;for(const input of[d,r,folder,all,title,browseButton])input.disabled=true;feedback.textContent=t('Preparing…');launch.replaceChildren();
    const input={runtime:r.value,sessionId:session&&!session.canReopen?nativeId(session):null,...(session?.entryId?{entryId:session.entryId}:{}),title:title.value.trim(),workspace:folder.value.trim(),allowAll:all.checked,useLocalSshKey:true},signature=JSON.stringify([d.value,input]);if(signature!==lastInput){operationId=crypto.randomUUID();lastInput=signature;}
    try{const result=await api(`/api/native-sessions/${encodeURIComponent(d.value)}/terminal`,{method:'POST',json:{...input,operationId}});prepared={nodeId:d.value,operationId};opened=false;if(!dialog.open||!dialog.contains(form)){await releaseUnused();return;}feedback.textContent=t('Ready. Open iTerm to start or resume the native CLI.');const a=el('a','primary',t('Open iTerm'));a.href=result.url;a.addEventListener('click',()=>{opened=true;});launch.append(a,button('Copy terminal command',async()=>{await navigator.clipboard.writeText(result.command);opened=true;feedback.textContent=t('Copied');}));void load({quiet:true});}catch(error){feedback.textContent=t(error.message);}finally{submit.disabled=false;d.disabled=r.disabled=Boolean(session);folder.disabled=all.disabled=title.disabled=browseButton.disabled=false;}
-  });dialog.showModal();
+  });dialog.showModal();void fillDefaultFolder();
  }
  /** Segmented buttons share one mode transition; selecting the active side does not reload history. */
  const switches=[...mode.querySelectorAll('button[data-mode]')];
