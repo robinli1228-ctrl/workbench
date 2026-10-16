@@ -526,7 +526,9 @@ export class RoleDiscussions {
     const thread=this.db.get('discussionThreads',threadId);
     if(!thread||thread.projectId!==projectId)throw new Error(tr('roleDiscussions.threadStateHasChanged'));
     const prior=this.db.get('discussionActions',key(projectId,'human',requestId));
-    return {requestId,exists:Boolean(prior)};
+    // The idempotency key is shared by every human action in the project; only a user reply to this thread counts.
+    let action=null;try{action=prior?JSON.parse(prior.fingerprint):null;}catch{action=null;}
+    return {requestId,exists:action?.name==='userReply'&&action.input?.threadId===threadId};
   }
   userResolve(projectId,input) {
     fields(input,['requestId','threadId','revision','expectedQuestionId','directionRevision','conclusion','resumeAfterRunId']);text(input.conclusion,tr('roleDiscussions.conclusion2'));
