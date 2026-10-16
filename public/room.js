@@ -853,7 +853,9 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     bubble.append(top);
     // Even before it starts, the card says which message it answers: the task's own source message, or its request text.
     const source = messages.find(q => q.id === task.sourceMessageId) || null;
-    const sourceText = simplifiedCliOutput(source ? source.text || '' : task.title || task.prompt || '');
+    // An attachment-only source still names its sender and opens the original; its files stand in for the empty text.
+    const sourceFiles = source?.attachments?.length ? t('[Attachment] {v}', { v: source.attachments.map(a => a.name).filter(Boolean).join(t(', ')) || source.attachments.length }) : '';
+    const sourceText = simplifiedCliOutput(source ? source.text || sourceFiles || task.title || task.prompt || '' : task.title || task.prompt || '');
     if (sourceText) {
       const flat = sourceText.replace(/\s+/g, ' ').trim(), summary = flat.length > 240 ? `${flat.slice(0, 240)}…` : flat;
       const label = source ? t('Reply to {senderName}: {v}', { senderName: source.senderName, v: summary }) : t('Reply to: {v}', { v: summary });
