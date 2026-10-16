@@ -58,11 +58,19 @@ export function releaseMinutes(project) {
   return Number.isSafeInteger(value)&&value>=5&&value<=1440?value:COLLAB_RELEASE_DEFAULT_MINUTES;
 }
 
-/** Read-only view of roles whose own collaboration is unfinished. Unrelated same-role tasks in the same chat wait behind it,
- *  unless a human explicitly let one go first or the chain shows no progress for the project's release window. */
+/** Read-only view of roles whose own collaboration is unfinished: a formal call wait, its pending continuation, or a formal
+ *  discussion wait. Unrelated same-role tasks in the same chat stay queued. Nothing is released automatically: after the
+ *  project's no-progress window the chain is marked stalled and any queued task may then be let through by a human.
+ *  A human "handle this first" runs that task's whole chain before the waiting owner resumes, one at a time. */
 export function collaborationQueueView(db,time=Date.now()) {
   const heads=[...db.schedulableRequests(),...db.pendingCallResults().filter(r=>r.status==='running')];
   const states=[],seen=new Set();
+  const push=(base,progressAt,waiting)=>{
+    const minutes=releaseMinutes(db.get('projects',base.projectId)),releaseAt=progressAt+minutes*60000;
+    const rootTask=db.get('tasks',base.rootTaskId||'');
+    states.push({...base,progressAt:new Date(progressAt).toISOString(),releaseAt:new Date(releaseAt).toISOString(),
+      stalled:waiting&&time>=releaseAt,released:false,releaseMinutes:minutes,yielded:Boolean(rootTask?.collaborationYield)});
+  };
   for(const head of heads) {
     if(seen.has(head.id)||head.steeringTaskId||!head.targetRoleId)continue;seen.add(head.id);
     const waiting=head.status==='waiting_call'&&!head.continuationRequestId;
@@ -71,22 +79,35 @@ export function collaborationQueueView(db,time=Date.now()) {
     const root=collaborationRoot(db,head);
     let dependencies=[];try{dependencies=waiting?waitDependencies(db,head):[];}catch{dependencies=[];}
     const progressAt=Math.max(stamp(head.updatedAt),stamp(head.createdAt),stamp(head.waitEvent?.observedAt),...dependencies.map(d=>Math.max(stamp(d.updatedAt),stamp(d.createdAt))));
-    const minutes=releaseMinutes(db.get('projects',head.projectId)),releaseAt=progressAt+minutes*60000;
-    states.push({projectId:head.projectId,conversationId:conversationIdOf(head),roleId:head.targetRoleId,rootRequestId:root?.id||head.id,currentRequestId:head.id,
-      taskId:head.taskId||null,phase:waiting?'waiting_reply':head.currentRunId?'processing_reply':'resume_queued',
-      waitingRequestIds:dependencies.filter(d=>!settledStatuses.has(d.status)).map(d=>d.id),progressAt:new Date(progressAt).toISOString(),
-      releaseAt:new Date(releaseAt).toISOString(),released:waiting&&time>=releaseAt,releaseMinutes:minutes});
+    push({projectId:head.projectId,conversationId:conversationIdOf(head),roleId:head.targetRoleId,rootRequestId:root?.id||head.id,rootTaskId:root?.taskId||null,
+      currentRequestId:head.id,taskId:head.taskId||null,phase:waiting?'waiting_reply':head.currentRunId?'processing_reply':'resume_queued',
+      waitingRequestIds:dependencies.filter(d=>!settledStatuses.has(d.status)).map(d=>d.id)},progressAt,waiting);
   }
-  const scope=task=>states.filter(s=>s.projectId===task.projectId&&s.conversationId===conversationIdOf(task)&&s.roleId===task.roleId);
-  return {states,
-    /** allowed=false keeps the task queued; released chains free the queue and human messages are offered first. */
+  // Formal discussion waits protect the asking role just like call waits; its resume arrives as a discussion turn.
+  for(const task of db.tasksWaitingForDiscussion()) {
+    const request=task.requestId?db.get('coordinationRequests',task.requestId):null,root=request?collaborationRoot(db,request):null;
+    if(root&&states.some(s=>s.rootRequestId===root.id))continue;
+    push({projectId:task.projectId,conversationId:conversationIdOf(task),roleId:task.roleId,rootRequestId:root?.id||`task:${task.id}`,rootTaskId:root?.taskId||task.id,
+      currentRequestId:request?.id||null,taskId:task.id,phase:'waiting_discussion',waitingRequestIds:[]},
+      Math.max(stamp(task.updatedAt),stamp(task.createdAt),stamp(task.discussionWait?.since)),true);
+  }
+  const queuedYields=db.chatTasks(['ready','in_progress']).filter(t=>t.collaborationYield);
+  const sameScope=(a,b)=>a.projectId===b.projectId&&conversationIdOf(a)===conversationIdOf(b)&&a.roleId===b.roleId;
+  const scope=task=>states.filter(s=>sameScope(s,task));
+  const rootOf=task=>{const request=task.requestId?db.get('coordinationRequests',task.requestId):null;return request?collaborationRoot(db,request)?.id:`task:${task.id}`;};
+  /** A yield stays active until its task and any collaboration it started have settled. */
+  const activeYield=task=>queuedYields.find(t=>sameScope(t,task))||scope(task).find(s=>s.yielded)||null;
+  return {states,activeYield,
     forTask(task) {
-      const own=scope(task),blocking=own.filter(s=>!s.released);
-      if(!blocking.length)return {allowed:true,released:own.some(s=>s.released)};
+      const own=scope(task),yieldTask=queuedYields.find(t=>sameScope(t,task)),yieldChain=own.find(s=>s.yielded);
       if(task.collaborationYield)return {allowed:true,yielded:true};
-      const request=task.requestId?db.get('coordinationRequests',task.requestId):null,root=request?collaborationRoot(db,request)?.id:null;
-      if(root&&own.some(s=>s.rootRequestId===root))return {allowed:true,own:true};
-      const next=blocking.reduce((a,b)=>stamp(a.releaseAt)<=stamp(b.releaseAt)?a:b);
-      return {allowed:false,state:next,minutesLeft:Math.max(1,Math.ceil((stamp(next.releaseAt)-time)/60000))};
+      const root=rootOf(task);
+      if(yieldChain&&yieldChain.rootRequestId===root)return {allowed:true,own:true};
+      // While a human-chosen task (or the chain it started) is running, even the waiting owner's continuation waits.
+      if(yieldTask||yieldChain)return {allowed:false,yieldActive:true,state:yieldChain||own[0]||null,minutesLeft:null};
+      if(!own.length)return {allowed:true};
+      if(own.some(s=>s.rootRequestId===root))return {allowed:true,own:true};
+      const next=own.reduce((a,b)=>stamp(a.releaseAt)<=stamp(b.releaseAt)?a:b);
+      return {allowed:false,state:next,stalled:own.some(s=>s.stalled),minutesLeft:Math.max(0,Math.ceil((stamp(next.releaseAt)-time)/60000))};
     }};
 }

@@ -45,7 +45,10 @@ export function resolveRolePermissionScope({input,old,worker,runtime,configured,
   const requested=input?.permissionScope;
   // Empty means "keep" too: the form never offers a way back to the legacy, unlabelled behaviour.
   let scope=requested===undefined||requested===''||requested===null?old?.permissionScope:requested;
-  if(scope===undefined&&isNew&&configured&&worker?.capabilities?.permissionScopes?.[runtime]?.includes('project'))scope='project';
+  const offered=worker?.capabilities?.permissionScopes?.[runtime];
+  if(scope===undefined&&isNew&&configured&&offered?.includes('project'))scope='project';
+  // A new role on an upgraded Worker never silently inherits legacy or device-wide access: the user must pick.
+  if(scope===undefined&&isNew&&configured&&Array.isArray(offered))throw new Error(message('selectScope'));
   if(scope===undefined)return undefined;
   if(!isPermissionScope(scope))throw new Error(message('invalid',scope));
   // Unconfigured drafts cannot be checked yet; admission checks again against the bound Worker.
@@ -53,3 +56,15 @@ export function resolveRolePermissionScope({input,old,worker,runtime,configured,
   return scope;
 }
 export const withPermissionScope=(record,scope)=>{const {permissionScope:_,...rest}=record;return scope===undefined?rest:{...rest,permissionScope:scope};};
+
+/** Interactive role terminals use the same scope; approval cannot travel back through Workbench from a terminal, so that scope is refused. */
+export function terminalPermissionArgs(runtime,scope,{toolRoots=[]}={}) {
+  if(scope===undefined||scope===null)return null;
+  if(scope==='device-approval')throw new Error('rolePermissions.terminalApprovalUnsupported');
+  if(!supportedPermissionScopes(runtime,process.platform).includes(scope))throw new Error('rolePermissions.scope_unsupported');
+  if(runtime!=='codex')return [];
+  if(scope==='device')return ['--sandbox','danger-full-access','--ask-for-approval','never'];
+  const options=codexPermissionOptions('project',{toolRoots});
+  const table=Object.entries(options.config['permissions.workbench_project.filesystem']).map(([k,v])=>`${JSON.stringify(k)}=${JSON.stringify(v)}`).join(',');
+  return ['--ask-for-approval','never','-c',`permissions.workbench_project.filesystem={${table}}`,'-c','permissions.workbench_project.network={enabled=true}','-c','default_permissions="workbench_project"'];
+}

@@ -1045,12 +1045,14 @@ const server = http.createServer(async (req, res) => {
         }
         const {role,worker,workspace}=newTerminalBinding(db,projectId,roleId,id=>online(id)&&sockets.get(id).workerReady),device=db.list('devices').find(d=>d.nodeId===role.nodeId);
         if(worker.nodeKind==='cloud'&&!device)throw new Error(tr('home.cloudDeviceMissingSshRegistration'));
+        // A scoped role needs a Worker that applies the scope to terminals too; an older Worker would silently use legacy flags.
+        if(role.permissionScope&&worker.capabilities?.permissionContract!==1)throw new Error(tr('rolePermissions.worker_unsupported',{scope:role.permissionScope}));
         const claim={id:b.operationId,kind:'new',projectId,conversationId,roleId,nodeId:role.nodeId,runtime:role.runtime,model:role.model,status:'preparing',createdAt:new Date().toISOString()};
         db.put('terminalSessions',claim);change();
         try {
           const settings=normalizePlatformSettings(db.get('settings','main'));
           const info=await workerQuery(claim,'terminal_new',{id:claim.id,projectId,roleId,nodeId:role.nodeId,workspace,
-            roleSettings:{runtime:role.runtime,model:role.model,effort:role.effort||null,name:role.name,instructions:role.instructions||''},
+            roleSettings:{runtime:role.runtime,model:role.model,effort:role.effort||null,name:role.name,instructions:role.instructions||'',...(role.permissionScope?{permissionScope:role.permissionScope}:{})},
             platformPrompt:settings.platformPrompt,supervisorPrompt:role.systemSupervisor&&!role.platformAssistant?settings.supervisorPrompt:''},30000);
           const identityFile=b.useLocalSshKey===true&&process.platform==='darwin'&&device?(await credentials.get(device.id))?.keyPath:null;
           const command=terminalCommand(info,device||null,identityFile),value=terminalLaunchView({...claim,...info,status:'prepared',command});

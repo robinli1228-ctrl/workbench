@@ -13,6 +13,7 @@ import {waitDependencies} from './coordination-wait.mjs';
 import {followupFor} from './proactive-followup.mjs';
 import {reservePropagation} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
+import { permissionScopeIssue } from './role-permissions.mjs';
 
 const now=()=>new Date().toISOString();
 const closed=new Set(['succeeded','failed','interrupted','stopping','reconciling']);
@@ -72,7 +73,10 @@ export class RoleDiscussions {
         this.db.put('discussionDeliveries',{...delivery,waitingReason:'broadcast_paused'});return null;
       }
       const followup=followupFor(this.db,task);
-      const run={id:randomUUID(),taskId:task.id,businessTaskId:task.id,projectId:thread.projectId,conversationId:conversationIdOf(thread),sessionConversationId:session.conversationId,nodeId,roleId:role.id,roleSnapshot:{...role},
+      // Discussion turns run under the same frozen per-role scope as ordinary turns.
+      const permissionScope=role.permissionScope;
+      if(permissionScope!==undefined){const issue=permissionScopeIssue(this.db.get('workers',nodeId),role.runtime,permissionScope);if(issue)throw new Error(tr(`rolePermissions.${issue}`,{scope:permissionScope}));}
+      const run={...(permissionScope!==undefined?{permissionScope,permissionContract:1}:{}),id:randomUUID(),taskId:task.id,businessTaskId:task.id,projectId:thread.projectId,conversationId:conversationIdOf(thread),sessionConversationId:session.conversationId,nodeId,roleId:role.id,roleSnapshot:{...role},
         reviewGuarded:view.reviewGuarded===true,
         collaborationSessionId:source?.collaborationSessionId||sourceBatch?.sessionId||task.collaborationSessionId||null,
         collaborationCycleId:cycleId,...(automatic?{propagationBudget:'reserved'}:{}),documentViews:this.db.get('workers',nodeId)?.capabilities?.sessionQueue===2?1:0,

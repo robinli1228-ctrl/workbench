@@ -82,6 +82,10 @@ export class Store {
   activeRuns(nodeId) {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_active_runs WHERE kind='runs' AND ${activeRun}${nodeId===undefined?'':" AND json_extract(data,'$.nodeId')=?"} ORDER BY rowid`).all(...(nodeId===undefined?[]:[nodeId])).map(r=>JSON.parse(r.data));
   }
+  /** Tasks whose role is waiting for a formal discussion answer; scanned in SQL, not by parsing every task. */
+  tasksWaitingForDiscussion() {
+    return this.db.prepare(`SELECT data FROM records WHERE kind='tasks' AND (json_extract(data,'$.status')='waiting_discussion' OR json_extract(data,'$.discussionWait') IS NOT NULL) ORDER BY rowid`).all().map(r=>JSON.parse(r.data)).filter(t=>t.status!=='cancelled'&&t.status!=='completed'&&t.status!=='failed');
+  }
   chatTasks(statuses=['ready','in_progress']) {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_chat_tasks WHERE kind='tasks' AND ${chatTask} ORDER BY rowid`).all().map(r=>JSON.parse(r.data)).filter(t=>statuses.includes(t.status));
   }

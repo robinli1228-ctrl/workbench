@@ -245,3 +245,11 @@
 - The scope is frozen into the run at admission and included in the warm-process fingerprint (legacy fingerprints unchanged). Switch maintenance keeps its read-only boundary. Team copies keep the scope.
 - Role editor and supervisor settings show a scope selector; unsupported choices are listed with their reason. The superseded supervisor-only elevation switch (c194403) is not carried over; its goal-ownership supervisor prompt is.
 - Tests: `tests/role-permissions.test.mjs` (7); suite 89/89. Not yet done: real App Server end-to-end runs for each scope (project, device, approval hold/approve/reject/expiry), Mac verification, and browser acceptance. Not deployed.
+
+## 2026-10-16 — Review fixes for permissions and collaboration waits
+
+- A reused Codex process no longer copies the role's legacy `autoApprove` over the frozen scope: in `device-approval` every turn holds escalations for approval. Real App Server check: before the fix the second reused turn wrote outside the project with no approval; after it the escalation was held and the decline left the file absent.
+- New roles on an upgraded Worker must choose a scope when the CLI has no enforced project default (no silent legacy or device-wide access). Discussion turns freeze the role's scope like ordinary turns. Role terminals (new and resumed) launch Codex with the matching scope flags; the approval scope is refused for terminals, and scoped roles need a Worker with the permission contract.
+- "Handle this first" now holds the original owner (including its ready continuation) until the yielded task and any collaboration it started settle, and a second yield is refused while the first is queued, running or waiting.
+- The no-progress window no longer releases the queue by itself: the wait is marked stalled and then any queued item, not only human messages, can be let through with "Handle this first". Formal discussion waits now protect the asking role like call waits.
+- Tests: collaboration-wait 13, role-permissions 10; suite 111/111.

@@ -16,6 +16,12 @@ export function renderPermissionScope(select, note, { worker, runtime, saved, is
   const offered = worker?.capabilities?.permissionScopes?.[runtime];
   const previous = select.dataset.touched ? select.value : (saved ?? '');
   select.replaceChildren();
+  if (isNew && Array.isArray(offered) && !offered.includes('project')) {
+    // No safe default here: a new role must choose explicitly, never inherit device-wide access by accident.
+    const choose = document.createElement('option');
+    choose.value = ''; choose.textContent = t('Choose a permission scope'); choose.disabled = true;
+    select.append(choose);
+  }
   if (!isNew || !Array.isArray(offered)) {
     // Not a fourth level: leaving it keeps exactly the permissions the role has today.
     const keep = document.createElement('option');
@@ -31,7 +37,7 @@ export function renderPermissionScope(select, note, { worker, runtime, saved, is
     option.textContent = available ? t(LABELS[scope]) : `${t(LABELS[scope])} · ${t(Array.isArray(offered) ? 'not available for this CLI on this device' : 'Worker upgrade required')}`;
     select.append(option);
   }
-  const choice = [...select.options].find(o => o.value === previous && !o.disabled)
+  const choice = [...select.options].find(o => o.value === previous && (!o.disabled || o.value === ''))
     || (isNew && Array.isArray(offered) && offered.includes('project') ? [...select.options].find(o => o.value === 'project') : null)
     || select.options[0];
   select.value = choice?.value ?? '';

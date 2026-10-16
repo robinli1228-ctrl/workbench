@@ -7,6 +7,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { Store } from './store.mjs';
 import { tr } from './i18n.mjs';
 import {syncError} from './source-sync-manifest.mjs';
+import { terminalPermissionArgs } from './role-permissions.mjs';
 
 const sessionPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -21,6 +22,12 @@ export function nativeSessionId(raw, runtime) {
   return typeof id === 'string' && sessionPattern.test(id) ? id : null;
 }
 
+/** A scoped role keeps its frozen scope in a terminal; an unsupported or approval scope refuses the entry instead of falling back. */
+export function scopedTerminalArgs(runtime,permissionScope,toolRoots=[]) {
+  try { return terminalPermissionArgs(runtime,permissionScope,{toolRoots}); }
+  catch(error) { throw new Error(tr(error.message,{scope:permissionScope})); }
+}
+
 /** Use an explicit native ID; never last, continue, or fork. */
 export function resumeArgs(runtime, id) {
   if (!sessionPattern.test(id || '')) throw new Error(tr('terminalResume.validNativeSessionIdMissing'));
@@ -30,8 +37,10 @@ export function resumeArgs(runtime, id) {
 }
 
 /** Start an interactive CLI with the saved role settings; never continue, fork or reference an old native ID. */
-export function freshTerminalArgs({runtime,model,effort,instructions='',workspace}) {
+export function freshTerminalArgs({runtime,model,effort,instructions='',workspace,permissionScope,toolRoots=[]}) {
   if(typeof model!=='string'||!model||typeof instructions!=='string'||(effort&&typeof effort!=='string'))throw new Error(tr('roleTerminal.unconfigured'));
+  const scoped=scopedTerminalArgs(runtime,permissionScope,toolRoots);
+  if(runtime==='codex'&&scoped)return ['--model',model,...scoped,'-c',`developer_instructions=${JSON.stringify(instructions)}`,...(effort?['-c',`model_reasoning_effort=${JSON.stringify(effort)}`]:[])];
   if(runtime==='codex')return ['--model',model,'--sandbox','workspace-write','--ask-for-approval','never','-c',`developer_instructions=${JSON.stringify(instructions)}`,'-c','sandbox_workspace_write.network_access=true',...(effort?['-c',`model_reasoning_effort=${JSON.stringify(effort)}`]:[])];
   if(runtime==='claude')return ['--model',model,'--append-system-prompt',instructions,'--dangerously-skip-permissions',...(effort?['--effort',effort]:[])];
   if(runtime==='grok')return ['--cwd',workspace,'-m',model,'--rules',instructions,'--always-approve','--no-plan','--permission-mode','bypassPermissions',...(effort?['--reasoning-effort',effort]:[])];
@@ -352,7 +361,7 @@ async function runTerminal(dbPath,id) {
     (await import('./native-sessions.mjs')).assertNativeSessionIdle(db,{nodeId:before.nodeId,runtime:before.nativeSession.runtime,sessionId:before.nativeSession.id,workspace:before.workspace,projectId:before.projectId,claimId:id});
   }
   const session=claimTerminalSession(db,id,process.pid);
-  const args=session.kind==='native'?(await import('./native-sessions.mjs')).nativeTuiArgs(session.nativeSession.runtime,{id:session.nativeSession.id,...session.nativeOptions}):session.kind==='new'?freshTerminalArgs({...session.roleSettings,runtime:session.nativeSession.runtime,workspace:session.workspace}):resumeArgs(session.nativeSession.runtime,session.nativeSession.id);
+  const args=session.kind==='native'?(await import('./native-sessions.mjs')).nativeTuiArgs(session.nativeSession.runtime,{id:session.nativeSession.id,...session.nativeOptions}):session.kind==='new'?freshTerminalArgs({...session.roleSettings,runtime:session.nativeSession.runtime,workspace:session.workspace}):[...resumeArgs(session.nativeSession.runtime,session.nativeSession.id),...(scopedTerminalArgs(session.nativeSession.runtime,session.permissionScope,session.toolRoots)||[])];
   console.log(session.kind==='new'||session.kind==='native'&&!session.nativeSession.id?tr('roleTerminal.startingNew',{workspace:session.workspace}):tr('terminalResume.resumingOriginalSessionDirectoryPlatform', { id: session.nativeSession.id, workspace: session.workspace }));
   const env={...session.privateEnv};
   for(const key of ['TERM','COLORTERM','TERM_PROGRAM','TERM_PROGRAM_VERSION'])if(process.env[key])env[key]=process.env[key];

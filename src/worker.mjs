@@ -44,7 +44,7 @@ import { outboxBatch } from './worker-outbox.mjs';
 import { prepareProjectSpace } from './project-space.mjs';
 import { publishProjectDelivery, receiveProjectDelivery, fetchExecutionDeliveries } from './project-delivery.mjs';
 import { collectCcusageReport } from './token-usage.mjs';
-import { nativeEnvironment, findSessionHistory, projectTerminalLock, nativeTerminalProject, managedRunProcessState, releaseTerminalSession, checkTerminalSession, stopTerminalSession, resumeEnvironment, freshTerminalArgs } from './terminal-resume.mjs';
+import { scopedTerminalArgs, nativeEnvironment, findSessionHistory, projectTerminalLock, nativeTerminalProject, managedRunProcessState, releaseTerminalSession, checkTerminalSession, stopTerminalSession, resumeEnvironment, freshTerminalArgs } from './terminal-resume.mjs';
 import { receiveAttachments } from './attachments.mjs';
 import { inspectExecutionRepositories, prepareExecutionWorkspace, executionConflict, verifyExecutionVersions,resolveExecutionRepositories,inspectExecutionInput,assertExecutionInputVersions,executionInputBaselines } from './execution-workspace.mjs';
 import { createRunInput, instructionDelivery,executionInstructionComponents,executionEnvironmentHint } from './run-input.mjs';
@@ -770,7 +770,7 @@ async function query(m) {
         await warmSessions.closeProject(input.projectId);
         const workspace=await projectRoot(input.workspace),nativeSession={...await nativeEnvironment(role.runtime),id:null};
         const instructions=[runWithLanguage('en',()=>composeAgentInstructions(input.platformPrompt,[role.instructions,input.supervisorPrompt].filter(Boolean).join('\n\n'))),executionText('roleTerminal.manualContext')].filter(Boolean).join('\n\n');
-        const roleSettings={runtime:role.runtime,model:role.model,effort:role.effort||null,instructions};
+        const roleSettings={runtime:role.runtime,model:role.model,effort:role.effort||null,instructions,...(role.permissionScope?{permissionScope:role.permissionScope,toolRoots:[base]}:{})};
         freshTerminalArgs({...roleSettings,workspace});
         // Preparation can race a dispatch, a duplicate request or revocation while directories are checked.
         if(db.get('terminalSessions',id)||projectTerminalLock(db,input.projectId,identity.nodeId)||busy())throw new Error(tr('worker.executionStateHasChangedCheck'));
@@ -796,7 +796,9 @@ async function query(m) {
       const nativeSession={...native,id:native.id || r.nativeSessionId || r.threadId};
       if(nativeSession.user!==(await nativeEnvironment(nativeSession.runtime)).user)throw new Error(tr('worker.workerUserDoesNotMatch'));
       const historyFile=await findSessionHistory(nativeSession);
-      const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,createdAt:new Date().toISOString()};
+      // The resumed terminal keeps the scope frozen on the original run; refuse here rather than after the terminal opens.
+      if(r.permissionScope)scopedTerminalArgs(nativeSession.runtime,r.permissionScope,[base]);
+      const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,...(r.permissionScope?{permissionScope:r.permissionScope,toolRoots:[base]}:{}),createdAt:new Date().toISOString()};
       // A dispatch/revocation that occurred during the file check must be rejected again.
       if(db.get('terminalSessions',id) || projectTerminalLock(db,r.projectId,identity.nodeId) || db.list('runs').some(other=>other.projectId===r.projectId&&!terminal.has(other.status)))throw new Error(tr('worker.executionStateHasChangedCheck'));
       if(occupiedSlots()>=capacity)throw new Error(tr('capacity.full'));
