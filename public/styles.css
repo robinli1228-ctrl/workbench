@@ -2669,7 +2669,8 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 .chat-card-footer { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 6px; }
 .chat-card-actions { flex-wrap: wrap; justify-content: flex-start; margin-left: -4px; }
 /* The reply line on a live card is the body while it waits, so it may run to two lines. */
-.is-live-card .chat-live-reply { display: -webkit-box; margin: 0 0 8px; overflow: hidden; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.is-live-card .chat-live-reply { display: block; margin: 0 0 8px; white-space: normal; }
+.is-live-card .chat-live-reply-text { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
 .is-live-card div.chat-live-reply { cursor: default; }
 
 /* Buttons: icon-only for utility actions, text-only for commits; a row never mixes them, and buttons keep clear of the text beside them. */
@@ -2681,3 +2682,14 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 .role-history-run { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .role-history-run strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .role-card-head .role-live-scene { margin-left: 2px; }
+
+.path-picker:has(.action-icon-button) { flex-wrap: nowrap; }
+.path-picker button.action-icon-button { width: 36px; min-height: 36px; }
+@media (max-width: 760px) { .path-picker button.action-icon-button { width: 44px; min-height: 44px; } }
+.project-timer-link .action-icon-button { align-self: center; }
+.followup-status-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.followup-status-row #followup-status { flex: 1 1 auto; min-width: 0; margin: 0; }
+.followup-tools { display: flex; flex: none; gap: 6px; }
+.native-workspace-row button.action-icon-button { width: 40px; min-width: 40px; padding: 0; }
+@media (max-width: 760px) { .native-workspace-row:has(.action-icon-button) { flex-wrap: nowrap; } .native-workspace-row:has(.action-icon-button) input { flex-basis: auto; } }
+.proposal-actions { justify-content: flex-start; margin-top: 10px; }

@@ -150,7 +150,7 @@ for(const [selector,icon,label] of [
   ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit conversation organizer model'],['#edit-api-token','edit'],
   ['#manage-wechat','settings'],
   ['#token-usage-form [type=submit]','search'],['#token-usage-refresh','refresh'],['#open-project-timers','history'],
-  ['#pick-settings-folder','folder']
+  ['#pick-settings-folder','folder'],['#refresh-followup','refresh'],['#view-followup','log']
 ])document.querySelectorAll(selector).forEach(button=>setActionIcon(button,icon,label));
 const projectsUI = projectSettings({ api, getData: () => app.data, getProject: getCurrentProject, getConversationId:()=>app.selectedConversationId, refreshState, create, setError, openSettings, closeSettings,openTask });
 const supervisorsUI = supervisorSettings({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create,openTask });

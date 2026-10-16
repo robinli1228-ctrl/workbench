@@ -174,7 +174,7 @@ export function platformAdminUI({api,getData,refreshState,create}) {
         const card=create('article','settings-block');card.append(create('strong','',p.summary));
         const details=create('details'),summary=create('summary','','Configuration details');details.append(summary,create('pre','prompt-preview',JSON.stringify(p.actions,null,2)));card.append(details);
         if(p.error)card.append(create('p','inline-error',p.error));
-        if(p.status==='pending')for(const [act,label] of [['approve','Apply configuration'],['reject','Dismiss suggestion']]){const button=create('button','secondary',label);button.type='button';setActionIcon(button,act==='approve'?'check':'stop');button.addEventListener('click',()=>void action(button,'#assistant-feedback',async()=>{await api(`/api/platform/proposals/${p.id}/${act}`,{method:'POST',json:{}});await refreshAssistant();}));card.append(button);}
+        if(p.status==='pending'){const decide=create('div','form-actions proposal-actions');for(const [act,label] of [['approve','Apply configuration'],['reject','Dismiss suggestion']]){const button=create('button',act==='approve'?'primary compact':'secondary compact',label);button.type='button';button.addEventListener('click',()=>void action(button,'#assistant-feedback',async()=>{await api(`/api/platform/proposals/${p.id}/${act}`,{method:'POST',json:{}});await refreshAssistant();}));decide.append(button);}card.append(decide);}
         proposals.append(card);
       }
       if(follow)chat.scrollTop=chat.scrollHeight;

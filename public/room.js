@@ -857,7 +857,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (sourceText) {
       const flat = sourceText.replace(/\s+/g, ' ').trim(), summary = flat.length > 240 ? `${flat.slice(0, 240)}…` : flat;
       const label = source ? t('Reply to {senderName}: {v}', { senderName: source.senderName, v: summary }) : t('Reply to: {v}', { v: summary });
-      const quote = create(source ? 'button' : 'div', 'quoted-message chat-live-reply', label);
+      const quote = create(source ? 'button' : 'div', 'quoted-message chat-live-reply');
+      quote.append(create('span', 'chat-live-reply-text', label));
       quote.translate = false;
       if (source) {
         quote.type = 'button'; quote.title = 'View quoted original'; quote.setAttribute('aria-label', 'View quoted original');
