@@ -2222,6 +2222,7 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 }
 #project-list .project-item.is-running small, #native-session-list .project-item.is-running small { color: #6f7cae; }
 #project-list .project-item.is-running .project-item-icon { color: var(--accent); filter: none; }
+#project-list .project-item.active.is-running .project-item-icon { color: #fff; }
 #project-list .project-item.active.is-running, #native-session-list .project-item.active.is-running {
   color: var(--ink); background: var(--card-active-surface); box-shadow: var(--card-active-ring), inset 3px 0 0 var(--accent);
 }
@@ -2229,7 +2230,7 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 #project-list .project-item.is-running::after,
 #native-session-list .project-item.is-running::after,
 .role-card.is-working::after {
-  content: ''; position: absolute; inset: -1px; z-index: 1; display: block; pointer-events: none;
+  content: ''; position: absolute; inset: -1px; z-index: 1; display: block; width: auto; height: auto; border-radius: 0; pointer-events: none;
   background: var(--card-sweep); transform: translateX(-120%); will-change: transform;
   animation: card-sweep 7.5s var(--card-ease) infinite;
 }
@@ -2241,10 +2242,15 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
   100% { transform: translateX(120%); }
 }
 @media (min-width: 1001px) {
-  body[data-project-sidebar="collapsed"] #project-list .project-item { border-color: transparent; background: transparent; box-shadow: none; transform: none; }
+  body[data-project-sidebar="collapsed"] #project-list .project-item,
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item { border-color: transparent; background: transparent; box-shadow: none; transform: none; }
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item.active { background: var(--card-active-surface); box-shadow: var(--card-active-ring); }
   body[data-project-sidebar="collapsed"] #project-list .project-item.active .project-item-icon { box-shadow: inset 0 1px 0 rgb(255 255 255 / 28%), 0 2px 6px rgb(79 91 206 / 30%); }
-  body[data-project-sidebar="collapsed"] #project-list .project-item.is-running::after { display: none; }
+  body[data-project-sidebar="collapsed"] #project-list .project-item.is-running::after,
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item.is-running::after { display: none; animation: none; }
   body[data-project-sidebar="collapsed"] #project-list .project-item.is-running .project-item-icon { box-shadow: 0 0 0 2px rgb(79 91 206 / 28%); }
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active.is-running .project-item-icon { box-shadow: inset 0 1px 0 rgb(255 255 255 / 28%), 0 0 0 2px rgb(79 91 206 / 30%), 0 2px 6px rgb(79 91 206 / 30%); }
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item.is-running:not(.active) { box-shadow: inset 0 0 0 1px rgb(79 91 206 / 30%); }
 }
 @media (prefers-reduced-motion: reduce) {
   #project-list .project-item, #native-session-list .project-item, .role-card { transition: none; }
