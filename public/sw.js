@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v124';
+const CACHE = 'agent-workbench-static-v125';
 const STATIC = [
   '/group-conversations.js',
   '/project-team-copy.js',
@@ -6,7 +6,7 @@ const STATIC = [
   '/native-session-groups.js',
   '/native-history-timeline.js',
   '/', '/styles.css', '/app.js', '/native-sessions.js', '/list-order.js', '/select-controls.js', '/mention-input.js', '/context-usage.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png',
-  '/platform-admin.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',
+  '/platform-admin.js', '/configuration-information.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',
   '/markdown.js', '/project-settings.js', '/role-icons.js', '/settings-page.js',
   '/supervisor-settings.js', '/elapsed.js', '/permission-scope.js', '/role-templates.js', '/role-switch.js', '/role-history.js', '/project-setup.js', '/history-view.js', '/scheduled-jobs.js',
   '/git-version.js', '/plan-dock.js', '/agent-codex.png', '/agent-antigravity.png',

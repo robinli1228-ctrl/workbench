@@ -110,6 +110,14 @@ Use different `PORT`, `DATA_DIR` and `WORKER_DATA_DIR` values to run a second, i
 
 Run one Worker per machine. Restarting a Worker keeps its identity, so do not wipe its data directory. Set `NODE_KIND=local` or `cloud` if the automatic choice (Linux means cloud) is wrong for your machine.
 
+### 4.3 Release identity
+
+Configuration Information compares running software with the repository's GitHub `main`, not a project's working directory. Git deployments report the source checkout's startup HEAD and whether runtime paths have local changes. Keep release directories immutable while their processes are running; version observation is a startup snapshot, not continuous filesystem verification.
+
+Before packaging a clean source checkout without `.git`, run `node src/software-version.mjs --stamp` there and include the generated `software-build.json` alongside the copied sources. It is ignored by Git and contains the full commit plus a runtime-file hash inventory, never credentials. Home and Worker validate the manifest once at startup, including missing, changed and extra runtime files. Do not fabricate a stamp from a directory name or a bound project's HEAD. The existing device installer carries a verified subset stamp when its source is known and clean; otherwise the installed version stays unknown. Old Workers remain functional but need this software to report a commit. This is build provenance, not a cryptographic release signature or a dependency/environment attestation.
+
+The update button reads public GitHub metadata without using saved hosting credentials, and does not pull, install or restart. An inaccessible/private repository or API rate limit is a failed check, not evidence that no update exists. Update notes are commit summaries, not independent review or acceptance evidence.
+
 ## 5. Contributing workflow
 
 1. Fork the repository and create a branch from `main`: `feature/<topic>`, `fix/<topic>` or `docs/<topic>`.
