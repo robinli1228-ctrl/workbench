@@ -1,6 +1,7 @@
 import { t } from './i18n.js';
 import {createRoleSwitchUI} from './role-switch.js';
 import {createRoleHistoryTabs} from './role-history.js';
+import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
 /** 总管详情使用原有配置接口，页面调整不改变项目接待角色和会话绑定。 */
 export function supervisorSettings({ api, getData, getProject, refreshState, create, openTask }) {
   const form = document.querySelector('#supervisor-form');
@@ -63,16 +64,24 @@ export function supervisorSettings({ api, getData, getProject, refreshState, cre
     feedback.hidden = true;
     history.refresh();
   }
+  // Supervisors use the same per-role scope contract as every other role.
+  function permission() {
+    const data=getData(),role=data.supervisorRoles?.find(r=>r.id===getProject()?.supervisorRoleId);
+    renderPermissionScope(form.elements.permissionScope, form.querySelector('[data-permission-note]'), {
+      worker: data.workers.find(w => w.id === form.elements.nodeId.value), runtime: form.elements.runtime.value, saved: role?.permissionScope, isNew: !role || role.configured === false });
+  }
   function open() {
     if(busy||!getProject())return;
-    prepare();history.reset();host.showModal();form.elements.nodeId.focus();
+    prepare();delete form.elements.permissionScope.dataset.touched;permission();history.reset();host.showModal();form.elements.nodeId.focus();
     const data=getData(),role=data.supervisorRoles?.find(r=>r.id===getProject()?.supervisorRoleId);
     if(role){const pending=cliSwitch.resume({projectId,role,host:form,operation:data.roleSwitches?.find(op=>op.roleId===role.id&&!['committed','cancelled'].includes(op.status))});if(pending){busy=true;void pending.catch(error=>{feedback.textContent=error.message;feedback.hidden=false;}).finally(()=>{busy=false;});}}
   }
   document.querySelector('#close-supervisor-dialog').addEventListener('click',()=>{if(!busy)host.close();else void cliSwitch.cancel();});
   host.addEventListener('cancel',event=>{if(busy){event.preventDefault();void cliSwitch.cancel();}});
   form.elements.nodeId.addEventListener('change', nodeChanged);
-  form.elements.runtime.addEventListener('change', () => models());
+  form.elements.runtime.addEventListener('change', () => { models(); permission(); });
+  form.elements.nodeId.addEventListener('change', permission);
+  form.elements.permissionScope.addEventListener('change', () => { form.elements.permissionScope.dataset.touched = '1'; permission(); });
   form.elements.model.addEventListener('change', () => efforts(form.elements.effort.value));
   form.addEventListener('input', () => { feedback.hidden = true; });
   form.addEventListener('submit', async e => {
@@ -88,7 +97,8 @@ export function supervisorSettings({ api, getData, getProject, refreshState, cre
         return;
       }
       await api(`/api/projects/${encodeURIComponent(id)}/supervisors/${encodeURIComponent(fields.nodeId)}`, {
-        method: 'PUT', json: { runtime: fields.runtime, model: fields.model, effort: fields.effort, enabled: form.elements.enabled.checked, revision }
+        method: 'PUT', json: { runtime: fields.runtime, model: fields.model, effort: fields.effort, enabled: form.elements.enabled.checked, revision,
+          ...(permissionScopeValue(form.elements.permissionScope) ? { permissionScope: permissionScopeValue(form.elements.permissionScope) } : {}) }
       });
       await refreshState({ quiet: true }); busy = false;
       if (getProject()?.id !== id) return;

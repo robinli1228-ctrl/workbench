@@ -11,10 +11,12 @@ import { listRoleTemplates } from './role-templates.mjs';
 import { isRoleConfigured, isSupervisorName, isBroadcastName } from './default-roles.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
 import { executionConflict } from './execution-workspace.mjs';
+import { resolveRolePermissionScope, withPermissionScope } from './role-permissions.mjs';
 import { steeringWaitReason } from './role-steering.mjs';
 import { ConversationContext } from './conversation-context.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followup.mjs';
+import {collaborationQueueView,discussionCollaborationTask} from './coordination-wait.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -23,9 +25,24 @@ const now = () => new Date().toISOString();
 export function handoffOnly(run,report=run?.report){return run?.status==='succeeded'&&Boolean(run.handoffWait?.requestId)&&!['passed','failed','blocked','needs_input'].includes(report?.verdict);}
 
 /** Give a result continuation priority once at a turn boundary; after that, ordinary messages go first in their original FIFO order. */
-export function orderRoleQueue(tasks,priorityUsed,discussionUsed=()=>false) {
-  const rank=t=>t.steering ? -1 : (t.discussionDeliveryId||t.discussionIntentId) ? (discussionUsed(t.roleSnapshot?.nodeId)?1:0) : t.continuationRunId && !priorityUsed(t.roleId) ? 0 : t.scheduledJobId||t.proactiveInitial ? 2 : 1;
-  return [...tasks].sort((a,b)=>rank(a)-rank(b)||(Date.parse(a.createdAt)||0)-(Date.parse(b.createdAt)||0));
+/** Arrival time, or the slot the user dragged the queued item into; priority ranks still come first. */
+export const queueKey=t=>Number.isFinite(t.queueOrder)?t.queueOrder:(Date.parse(t.createdAt)||0);
+/** Queue label for a task held behind a collaboration wait. */
+export function collabWaitReason(check,role) {
+  if(check.yieldActive)return tr('collabWait.yieldRunning',{role});
+  if(check.stalled)return tr('collabWait.stalled',{role});
+  return tr('collabWait.queued',{role,minutes:Math.max(1,check.minutesLeft||0)});
+}
+export function orderRoleQueue(tasks,priorityUsed,discussionUsed=()=>false,humanFirst=()=>false) {
+  const rank=t=>t.steering||t.collaborationYield ? -1 : (t.discussionDeliveryId||t.discussionIntentId) ? (discussionUsed(t.roleSnapshot?.nodeId)?1:0) : t.continuationRunId && !priorityUsed(t.roleId) ? 0 : t.scheduledJobId||t.proactiveInitial ? 2 : humanFirst(t) ? 0.5 : 1;
+  return [...tasks].sort((a,b)=>rank(a)-rank(b)||queueKey(a)-queueKey(b));
+}
+/** Reordering permutes the queued items' existing keys, so other projects' items keep their relative positions. */
+export function reorderedQueueKeys(tasks,taskIds) {
+  const byId=new Map(tasks.map(t=>[t.id,t]));
+  if(new Set(taskIds).size!==taskIds.length||taskIds.some(id=>!byId.has(id)))throw new Error(tr('rooms.queueOrderMismatch'));
+  const keys=taskIds.map(id=>queueKey(byId.get(id))).sort((a,b)=>a-b);
+  return taskIds.map((id,index)=>[id,keys[index]+index*1e-3]);
 }
 export function mentionNames(text) {
   return [...new Set([...text.matchAll(/(?:^|[\s,.!?;:(\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a\uff08])@([\p{L}\p{N}_-]+)/gu)].map(m => m[1]))];
@@ -137,9 +154,11 @@ export class Rooms {
       if (!effort || effort.length > 32) throw new Error(tr('rooms.invalidReasoningEffort'));
     }
     const templateKey = old ? old.templateKey : listRoleTemplates(this.db).find(t => t.key === input.templateKey)?.key;
-    return { ...old, id: old?.id || randomUUID(), projectId, templateKey, revision: old ? (old.revision || 1) + 1 : 1,
+    const permissionScope = resolveRolePermissionScope({ input, old, worker: this.db.get('workers', input.nodeId), runtime, configured, isNew: !old,
+      message: (code, scope) => tr(`rolePermissions.${code}`, { scope }) });
+    return withPermissionScope({ ...old, id: old?.id || randomUUID(), projectId, templateKey, revision: old ? (old.revision || 1) + 1 : 1,
       name, repositoryId, nodeId: configured ? input.nodeId : '', runtime: configured ? runtime : '', model: configured ? input.model : '',
-      mode: 'workspace-write', effort, autoApprove, instructions: input.instructions.trim(), responsibility: normalizeResponsibility(input.responsibility, old?.responsibility || ''), configured, enabled: configured && input.enabled, updatedAt: now() };
+      mode: 'workspace-write', effort, autoApprove, instructions: input.instructions.trim(), responsibility: normalizeResponsibility(input.responsibility, old?.responsibility || ''), configured, enabled: configured && input.enabled, updatedAt: now() }, permissionScope);
   }
 
   /** Definition edits do not run a CLI probe or change any execution binding, including for offline roles. */
@@ -305,6 +324,18 @@ export class Rooms {
     return to ? { from: message.senderName, to } : null;
   }
 
+  /** Only items still waiting in this chat's queue can be reordered; running or finished work keeps its history. */
+  reorderQueue(projectId, input) {
+    const taskIds=Array.isArray(input?.taskIds)?input.taskIds.filter(id=>typeof id==='string'):[];
+    if(!taskIds.length||taskIds.length>500)throw new Error(tr('rooms.queueOrderMismatch'));
+    return this.db.transaction(()=>{
+      const tasks=taskIds.map(id=>this.db.get('tasks',id));
+      if(tasks.some(t=>!t||t.projectId!==projectId||t.origin!=='chat'||t.status!=='ready'||t.currentRunId))throw new Error(tr('rooms.queueOrderMismatch'));
+      for(const [id,queueOrder] of reorderedQueueKeys(tasks,taskIds))this.db.put('tasks',{...this.db.get('tasks',id),queueOrder});
+      return {taskIds};
+    });
+  }
+
   cancel(taskId) {
     const task = this.db.get('tasks', taskId);
     if (task?.origin !== 'chat' || task.currentRunId || !['ready', 'cancelled'].includes(task.status)) throw new Error(tr('rooms.onlyGroupChatAssignmentsHave'));
@@ -316,17 +347,22 @@ export class Rooms {
     const nodes = new Set(); let changed = false;
     const discussions=new RoleDiscussions(this.db,{online:isReady});changed=discussions.recover().changed;
     const candidates=[...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()];
+    const collaboration=collaborationQueueView(this.db);
+    // After a stalled collaboration is released, the human's own queued messages go ahead of other ordinary work.
     for (let task of orderRoleQueue(candidates,id=>this.db.get('roleQueueTurns',id)?.priorityUsed,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed)) {
       if(!task.discussionDeliveryId&&!task.discussionIntentId&&followupFor(this.db,task)){task=new ProactiveFollowup(this.db).prepareStart(task.id);if(!task){changed=true;continue;}}
       const discussion=Boolean(task.discussionDeliveryId||task.discussionIntentId);
       const kind=task.discussionDeliveryId?'discussionDeliveries':'discussionIntents',recordId=task.discussionDeliveryId||task.discussionIntentId;
       const role = effectiveExecutionRole(this.db,task), worker = this.db.get('workers', role.nodeId);
+      const collaborationTask=discussion?discussionCollaborationTask(this.db,this.db.get('tasks',task.businessTaskId),role.id):{...task,roleId:role.id};
+      const collaborationCheck=collaboration.forTask(collaborationTask);
       const recoveryReason=discussion?null:this.nativeRecoveryReason?.(task);
       const active = this.db.activeRuns();
       const reason = this.db.get('settings', 'main')?.paused ? tr('rooms.remoteExecutionPaused')
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)
+        : !task.steering&&!collaborationCheck.allowed ? collabWaitReason(collaborationCheck,role.name)
         : !task.contextPrepared ? tr('rooms.organizingConversation')
         : (task.sourceConflictId||task.sourceConflictPeerId||task.sourceConflictAssignmentRequestId)&&worker?.capabilities?.sourceSyncTools!==1 ? tr('sourceSync.failure',{code:'worker_unsupported',detail:''})
         : sourceInputWaitReason(this.db,task,role.nodeId) ? tr('sourceSync.failure',{code:sourceInputWaitReason(this.db,task,role.nodeId),detail:''})

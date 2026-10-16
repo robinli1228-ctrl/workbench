@@ -29,6 +29,7 @@ import { planDismissKey, planDockState, planMemberLabel, planStageActivity } fro
 import {createWorkspaceInspector,initWorkspaceColumns} from './workspace-inspector.js';
 import {applyStateUpdate} from './state-data.js';
 import { TOKEN_KEY, readApiToken, saveApiToken } from './browser-token.js';
+import { elapsedEl, startElapsedTicker } from './elapsed.js';
 
 const DRAFT_KEY = 'agent-workbench.drafts';
 const COMMAND_KEY = 'agent-workbench.commands';
@@ -515,6 +516,7 @@ async function refreshState({ quiet = false } = {}) {
     app.selectedProjectId=app.stateCache.projectId;app.selectedConversationId=app.stateCache.conversationId||app.selectedProjectId;
     app.data = {
       capabilities: data.capabilities || {},
+      collaborationWaits: data.collaborationWaits || [],
       conversations:data.conversations||[],
       projectCopies:data.projectCopies||[],
       projects: Array.isArray(data.projects) ? data.projects : [],
@@ -639,6 +641,7 @@ function renderExecutionPlans() {
   const progress=document.createElement('span');progress.className='execution-progress';progress.textContent=`${state.completed}/${state.total}`;
   const badge=document.createElement('span');badge.className='execution-status';badge.textContent=t(activity(state.current).label);
   summary.append(title,progress,badge);details.append(summary);panel.append(details);
+  panel.style.setProperty('--plan-progress',String(state.total?state.completed/state.total:0));
   if(state.dismissible.some(plan=>plan.id===state.current.id)) {
     const close=create('button','execution-plan-close');close.type='button';close.title='Close finished plan';close.setAttribute('aria-label','Close finished plan');
     close.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
@@ -924,7 +927,13 @@ function renderRoles() {
       dot.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' ')event.stopPropagation();});
       head.append(dot);
     }
-    if (activity.label !== 'Idle') head.append(create('span', `role-badge is-${activity.tone}`, activity.label));
+    if (activity.label !== 'Idle') {
+      const badge = create('span', `role-badge is-${activity.tone}`, activity.label);
+      // Running roles show how long the current execution has taken.
+      const elapsed = activity.startedAt ? elapsedEl(create, activity.startedAt, 'role-badge-elapsed') : null;
+      if (elapsed) badge.append(elapsed);
+      head.append(badge);
+    }
     const ids = create('div', 'role-id-row');
     if (configured) {
       ids.append(
@@ -2377,3 +2386,4 @@ window.addEventListener('pageshow', refreshAfterActivation);
 document.addEventListener('visibilitychange', refreshAfterActivation);
 connectUpdates();
 refreshState().finally(() => void syncLanguage());
+startElapsedTicker();

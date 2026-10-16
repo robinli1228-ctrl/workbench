@@ -1151,6 +1151,7 @@ repository.clone=true 仅在目标不存在时克隆；false 检查已有仓库�
   'rooms.projectNotFound3': '项目不存在',
   'rooms.historyCursorNotFound': '历史消息游标不存在',
   'rooms.onlyGroupChatAssignmentsHave': '只能取消尚未开始的群聊指派',
+  'rooms.queueOrderMismatch': '队列已变化，请刷新后重新排序',
   'rooms.remoteExecutionPaused': '远程执行已暂停',
   'rooms.organizingConversation': '正在整理会话',
   'rooms.projectUnderManualTerminalTakeover': '本项目正在终端人工接管，请先归还平台',
@@ -1820,6 +1821,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 
 - 规划：简单任务自己做完；复杂任务先请计划角色出方案，再交执行。派工前用 wb discuss peers 按职能、设备、可用性选人，尊重用户点名。有依赖或跨设备的任务用 wb schedule 排阶段，独立任务并行派出。
 - 流程：开发 → 审核 → 目标设备上的独立测试。审核意见交原实现者处理，修复后请原审核者复核；分歧组织补证，问题保持可见。
+- 目标负责：你对发起的任务目标负责。对照目标、验收标准和证据核对每次回复；不完整、证据不足、偏离目标或理由不充分时，继续追问或要求修改，写明差距和期望。对方给出充分依据才调整计划，不因单次回复改变方向；同一问题三轮仍未收敛时，组织补证或交用户决定。
 - 审核汇总：合并编号问题清单，区分共同意见与分歧；作者逐项说明处理结果并附版本差异，复核改动及受影响上下文，不隐藏未解决问题，也不提前泄露独立意见。
 - 跟进：主动检查进度，长任务可用 wb timer 巡检；发现停滞、反复失败或互相等待立即介入。
 - 阻塞归属：记录每项阻塞、负责人、需要的决定和下次检查时间，到时主动跟进；用户沉默不等于批准，不替用户猜测取舍。
@@ -1901,4 +1903,18 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wechatChannel.requestConflict': '该通知 requestId 已用于不同内容，新消息请使用新编号。',
   'wechatChannel.notificationTargetChanged': '原项目总管已不可用或发生变更，已关闭编号且未改派。',
   'wechatChannel.toolGuide': '仅项目总管可用：wb notify send \'{"requestId":"stable-id","text":"问题或通知，最多1600字符"}\'；wb notify status MESSAGE_ID。Home 使用已配置的平台和账号，从本轮执行身份确定真实项目及总管，不得指定其他项目或收件角色；消息自动标明所属项目。启用仅开放工具，不自动转发报告或审批。超时后使用相同 requestId 和内容重试；状态区分排队、发送及错误，不把发送当作已读。带编号的回复排入原项目总管队列，不打断运行中的 CLI。原生权限、仓库配置及 Git 交付保持原审批边界。',
+  'collabWait.queued': "{role} 正在等待协作结果，本条消息排队中。约 {minutes} 分钟内仍无进展会标记为卡住；随时可以点“先处理这条”",
+  'collabWait.notWaiting': "该角色当前没有在等待协作结果，消息会按正常顺序执行",
+  'collabWait.yieldPending': "该角色已有一条消息设为先处理，请等它完成后再操作",
+  'collabWait.steerDuringWait': "该角色正在等待协作结果。可以点“先处理这条”并保留它的工作，或刷新后选择明确的操作",
+  'collabWait.yielded': "本条消息先处理；正在等待的协作会保留，之后继续",
+  'collabWait.invalidMinutes': "协作等待自动放行时间必须是 5 到 1440 之间的整数分钟",
+  'rolePermissions.invalid': "未知的权限范围：{scope}",
+  'rolePermissions.worker_unsupported': "该设备的 Worker 尚不支持按角色设置权限；请升级 Worker，或保留当前权限",
+  'rolePermissions.scope_unsupported': "该设备上的这个 CLI 不支持权限范围 {scope}",
+  'rolePermissions.terminalApprovalUnsupported': "角色终端无法把审批回传到 Workbench；请把该角色切换到其他权限范围后再打开终端",
+  'rolePermissions.selectScope': "请为该角色选择权限范围",
+  'collabWait.stalled': "{role} 的协作已长时间没有进展，需要处理；本条消息会继续排队，直到你点“先处理这条”",
+  'collabWait.yieldRunning': "{role} 正在先处理另一条消息；本条要等它和原先等待的协作都结束后再执行",
+  'collabWait.stalledOnly': "等待被标记为卡住之前，只有你发的消息可以先处理",
 });

@@ -21,6 +21,7 @@ import {inspectReadSource,readSourceCurrent} from './cross-device-read-worker.mj
 import {executeReadQuery,normalizeFileRead,normalizeReadQuery,readError} from './node-query-recipes.mjs';
 import { CodexSession } from './codex.mjs';
 import { CliPrintSession } from './cli-print-session.mjs';
+import { supportedPermissionScopes, workerPermissionScopes, PERMISSION_CONTRACT_VERSION } from './role-permissions.mjs';
 import { browseFolders, createFolder, prepareNativeSessionFolder } from './folders.mjs';
 import {createWorkerNativeTurns} from './native-turns-worker.mjs';
 import {listNativeSessions,readNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
@@ -43,7 +44,7 @@ import { outboxBatch } from './worker-outbox.mjs';
 import { prepareProjectSpace } from './project-space.mjs';
 import { publishProjectDelivery, receiveProjectDelivery, fetchExecutionDeliveries } from './project-delivery.mjs';
 import { collectCcusageReport } from './token-usage.mjs';
-import { nativeEnvironment, findSessionHistory, projectTerminalLock, nativeTerminalProject, managedRunProcessState, releaseTerminalSession, checkTerminalSession, stopTerminalSession, resumeEnvironment, freshTerminalArgs } from './terminal-resume.mjs';
+import { scopedTerminalArgs, nativeEnvironment, findSessionHistory, projectTerminalLock, nativeTerminalProject, managedRunProcessState, releaseTerminalSession, checkTerminalSession, stopTerminalSession, resumeEnvironment, freshTerminalArgs } from './terminal-resume.mjs';
 import { receiveAttachments } from './attachments.mjs';
 import { inspectExecutionRepositories, prepareExecutionWorkspace, executionConflict, verifyExecutionVersions,resolveExecutionRepositories,inspectExecutionInput,assertExecutionInputVersions,executionInputBaselines } from './execution-workspace.mjs';
 import { createRunInput, instructionDelivery,executionInstructionComponents,executionEnvironmentHint } from './run-input.mjs';
@@ -216,7 +217,8 @@ async function command(m) {
     switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash,
     contextVersion:c.type==='launch'?m.run.contextVersion:undefined,turnPurpose:m.run.turnPurpose,permissionProfile:m.run.permissionProfile,
     requestId: m.run.requestId, continuationRunId: m.run.continuationRunId, deliveryId: c.deliveryId || m.run.deliveryId, deliveryCommit: m.delivery?.commit, planVersion: m.run.planVersion,
-    ...(m.run.execution ? {execution:m.run.execution}:{}),...(m.run.sourceInputs?.length?{sourceInputs:m.run.sourceInputs}:{}),...(m.run.attachments?.length ? {attachments:m.run.attachments}:{}) });
+    ...(m.run.execution ? {execution:m.run.execution}:{}),...(m.run.sourceInputs?.length?{sourceInputs:m.run.sourceInputs}:{}),...(m.run.attachments?.length ? {attachments:m.run.attachments}:{}),
+    ...(m.run.permissionScope!==undefined?{permissionScope:m.run.permissionScope,permissionContract:m.run.permissionContract}:{}) });
   const prior = db.get('commands', c.id);
   if (prior) {
     if (prior.signature !== signature) throw new Error(tr('worker.duplicateCommandParameterConflict'));
@@ -237,7 +239,9 @@ async function command(m) {
   if (c.type === 'launch') {
     const deferred=db.get('runs',c.runId);
     if (deferred&&!deferred.cliRecoveryWait) { send({ type: 'command_ack', id: c.id }); return; }
+    // Reconnect and terminal resume retain this run's frozen policy, never the role's mutable current settings.
     db.put('runs', { ...deferred,id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: deferred?.seq||0,cliRecoveryWait:false,error:null,
+      ...(m.run.permissionScope!==undefined?{permissionScope:m.run.permissionScope,permissionContract:m.run.permissionContract}:{}),
       collaborationBatchId:m.run.collaborationBatchId||null,collaborationBatch:m.run.collaborationBatch||null,
       collaborationCycleId:m.run.collaborationCycleId||null,propagationBudget:m.run.propagationBudget||null,
       switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash });
@@ -324,6 +328,9 @@ async function command(m) {
       const modelEffort = runtimes.find(r => r.type === runtimeType)?.models?.find(model => model.id === m.task.model)?.effort;
       const effort = m.run.roleSnapshot?.effort || modelEffort || null;
       const Session = runtimeType === 'codex' ? CodexSession : CliPrintSession;
+      // The scope was frozen by Home at admission; this Worker re-checks it against its own CLI/OS before any input is sent.
+      const permissionScope = m.run.permissionScope ?? null;
+      if (permissionScope !== null && !supportedPermissionScopes(runtimeType, platform()).includes(permissionScope)) throw new Error(`Permission scope ${permissionScope} is not supported for ${runtimeType} on this device.`);
       const root = await projectRoot(m.run.projectRoot ?? m.project.root);
       const knowledge = join(m.run.execution?.isolated ? folder : root,'.workbench');
       await mkdir(join(knowledge, 'docs'), { recursive: true });await mkdir(join(knowledge, 'handoffs'), { recursive: true });
@@ -397,9 +404,9 @@ async function command(m) {
       const roleInstructions = components?Object.values(components).filter(Boolean).join('\n\n'):traditionalInput(executionText('worker.projectDescriptionRepositoriesForRun', { p1: runWithLanguage('en',()=>composeAgentInstructions(m.platformPrompt,m.run.roleSnapshot?.instructions??'')), p2: String(m.project.description||'').slice(0,4000), p3: executionRepositories.filter(r=>r.localRoot).map(r=>`${r.key}: ${r.localRoot}`).join('\n'), p4: runtimeGuidance(runtimeType), p5: m.task.runtimeInstructions||'' }));
       const priorInput=nativeHistory.findLast(r=>r.id!==c.runId && r.projectId===m.run.projectId && r.roleSessionId===m.run.roleSessionId && r.nativeSession?.id===m.run.resumeNativeSessionId);
       let instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,components});
-      const fingerprint=warmSessionFingerprint({folder,runtimeType,model:m.task.model,effort,roleName:m.run.roleSnapshot?.name,roleInstructions,env:{...resumeEnvironment(wbEnv),WB_REQUIRE_TURN:wbEnv.WB_REQUIRE_TURN}});
+      const fingerprint=warmSessionFingerprint({folder,runtimeType,model:m.task.model,effort,roleName:m.run.roleSnapshot?.name,roleInstructions,env:{...resumeEnvironment(wbEnv),WB_REQUIRE_TURN:wbEnv.WB_REQUIRE_TURN},permissionScope});
       let session;
-      const options={ cwd: folder, writableRoots:repositoryRoots, attachments: inputFiles, model: m.task.model, mode: m.task.mode, effort, runtime: runtimeType, autoApprove: m.run.roleSnapshot?.autoApprove !== false,keepAlive,maintenance:Boolean(m.run.switchOperationId),
+      const options={ cwd: folder, writableRoots:repositoryRoots, attachments: inputFiles, model: m.task.model, mode: m.task.mode, effort, runtime: runtimeType, autoApprove: m.run.roleSnapshot?.autoApprove !== false,permissionScope,toolRoots:[base],keepAlive,maintenance:Boolean(m.run.switchOperationId),
         onProcess:proc=>{if(proc?.pid)emit(c.runId,'status',{pid:proc.pid,processIdentity:driverIdentity({...db.get('runs',c.runId),runtime:runtimeType},proc.pid)});},
         beforeInput:async()=>{
           if(m.run.collaborationBatch){const q={...m.run.collaborationBatch,roleId:m.run.roleId};try{await queueSlots.deliver(q.key,q.reservation,queueState(q,c.runId),()=>true);}catch(error){error.queueRetryable=true;throw error;}}
@@ -766,7 +773,7 @@ async function query(m) {
         await warmSessions.closeProject(input.projectId);
         const workspace=await projectRoot(input.workspace),nativeSession={...await nativeEnvironment(role.runtime),id:null};
         const instructions=[runWithLanguage('en',()=>composeAgentInstructions(input.platformPrompt,[role.instructions,input.supervisorPrompt].filter(Boolean).join('\n\n'))),executionText('roleTerminal.manualContext')].filter(Boolean).join('\n\n');
-        const roleSettings={runtime:role.runtime,model:role.model,effort:role.effort||null,instructions};
+        const roleSettings={runtime:role.runtime,model:role.model,effort:role.effort||null,instructions,...(role.permissionScope?{permissionScope:role.permissionScope,toolRoots:[base]}:{})};
         freshTerminalArgs({...roleSettings,workspace});
         // Preparation can race a dispatch, a duplicate request or revocation while directories are checked.
         if(db.get('terminalSessions',id)||projectTerminalLock(db,input.projectId,identity.nodeId)||busy())throw new Error(tr('worker.executionStateHasChangedCheck'));
@@ -792,7 +799,9 @@ async function query(m) {
       const nativeSession={...native,id:native.id || r.nativeSessionId || r.threadId};
       if(nativeSession.user!==(await nativeEnvironment(nativeSession.runtime)).user)throw new Error(tr('worker.workerUserDoesNotMatch'));
       const historyFile=await findSessionHistory(nativeSession);
-      const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,createdAt:new Date().toISOString()};
+      // The resumed terminal keeps the scope frozen on the original run; refuse here rather than after the terminal opens.
+      if(r.permissionScope)scopedTerminalArgs(nativeSession.runtime,r.permissionScope,[base]);
+      const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,...(r.permissionScope?{permissionScope:r.permissionScope,toolRoots:[base]}:{}),createdAt:new Date().toISOString()};
       // A dispatch/revocation that occurred during the file check must be rejected again.
       if(db.get('terminalSessions',id) || projectTerminalLock(db,r.projectId,identity.nodeId) || db.list('runs').some(other=>other.projectId===r.projectId&&!terminal.has(other.status)))throw new Error(tr('worker.executionStateHasChangedCheck'));
       if(occupiedSlots()>=capacity)throw new Error(tr('capacity.full'));
@@ -988,7 +997,7 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeHistoryPages:1,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeHistoryPages:1,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

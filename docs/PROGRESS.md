@@ -228,3 +228,35 @@
 
 - Replaced the need to choose a broad shared project parent with an automatically prepared `native-sessions` folder under each device's workspace root. Folder creation is idempotent and preserves contents; project overlap and file/symlink collisions are rejected. Manual selection/new-folder controls remain, and existing sessions retain their original directory.
 - Actual isolated Home, two Workers and Edge verified default creation/reuse, device switching, a delayed response not overwriting a manual choice, and a standalone terminal reservation/return without starting a CLI. No production service was restarted and no existing history or project directory was changed.
+
+## 2026-10-16 — Collaboration wait protection (P1)
+
+- While a role waits for its own collaboration results (`waiting_call`, or its continuation not yet finished), other queued messages for that role in the same group chat wait instead of interleaving. Other roles and other chats are unaffected; existing capacity, workspace and native-session locks are unchanged.
+- "Handle this first" in the waiting queue lets one human message run first. It records `collaborationYield` on that task only; no request, reply, plan or native history is cancelled or stopped. One such message per role and chat at a time; replays return the same decision.
+- A chain with no progress (teammate updates, wait events, continuations) for the project's release window, 40 minutes by default and configurable from 5 to 1440 in project settings, frees the queue and is shown as needing attention. Released human messages are ordered ahead of other ordinary work. A CLI still running or unverified keeps its existing lock.
+- The old steer action now has to state `mode: 'replace'`; an old client steering into a protected wait is rejected instead of silently cancelling the collaboration.
+- `collaborationQueueView` in `coordination-wait.mjs` is the single read-only projection used by the scheduler, the steer endpoint and the state feed (`collaborationWaits`). Tests: `tests/collaboration-wait.test.mjs` (8); maintained suite 90/90. Not yet browser-accepted or deployed; message send-time ordering and the P2 confirmation dialog remain separate work.
+
+## 2026-10-16 — Per-role permission scopes (first increment)
+
+- Implements `docs/design-role-permissions.md` for the scope model, Home/Worker validation, frozen admission and Codex: every role, supervisors included, can carry `permissionScope` = `project` | `device` | `device-approval`. A missing value keeps legacy behavior; old clients omitting the field keep the saved value; new roles on a CLI that enforces the project boundary start at `project`, otherwise they stay legacy.
+- Workers advertise `permissionScopes` per runtime/OS from verified evidence only: Codex on Linux offers all three; Codex on macOS and Claude/Grok/Agy offer `device` only (they already run without a native sandbox). Home validates on save and again at admission; the Worker re-checks before any input.
+- Codex: `project` runs under a named permission profile (minimal system reads, Node/CLI and Workbench install read, workspace roots and Git metadata write, network on). Server CLI evidence: outside files, home files, symlink escapes and child-process reads are refused; writes inside succeed and outside fail. `device` uses `danger-full-access`; `device-approval` uses the project profile with `on-request`, routing escalations to the existing approval cards instead of auto-accepting.
+- The scope is frozen into the run at admission and included in the warm-process fingerprint (legacy fingerprints unchanged). Switch maintenance keeps its read-only boundary. Team copies keep the scope.
+- Role editor and supervisor settings show a scope selector; unsupported choices are listed with their reason. The superseded supervisor-only elevation switch (c194403) is not carried over; its goal-ownership supervisor prompt is.
+- Tests: `tests/role-permissions.test.mjs` (7); suite 89/89. Not yet done: real App Server end-to-end runs for each scope (project, device, approval hold/approve/reject/expiry), Mac verification, and browser acceptance. Not deployed.
+
+## 2026-10-16 — Review fixes for permissions and collaboration waits
+
+- A reused Codex process no longer copies the role's legacy `autoApprove` over the frozen scope: in `device-approval` every turn holds escalations for approval. Real App Server check: before the fix the second reused turn wrote outside the project with no approval; after it the escalation was held and the decline left the file absent.
+- New roles on an upgraded Worker must choose a scope when the CLI has no enforced project default (no silent legacy or device-wide access). Discussion turns freeze the role's scope like ordinary turns. Role terminals (new and resumed) launch Codex with the matching scope flags; the approval scope is refused for terminals, and scoped roles need a Worker with the permission contract.
+- "Handle this first" now holds the original owner (including its ready continuation) until the yielded task and any collaboration it started settle, and a second yield is refused while the first is queued, running or waiting.
+- The no-progress window no longer releases the queue by itself: the wait is marked stalled and then any queued item, not only human messages, can be let through with "Handle this first". Formal discussion waits now protect the asking role like call waits.
+- Tests: collaboration-wait 13, role-permissions 10; suite 111/111.
+
+## 2026-10-16 — Follow-up integration fixes for permission and discussion admission
+
+- New role drafts now require a supported permission choice on first configuration, including when a Worker lacks the permission capability. Already configured legacy roles remain unchanged. Role and supervisor draft editors show the first-configuration selector rather than implying existing permissions can be retained.
+- Worker local Run persistence and launch-command identity retain the frozen scope and contract, so reconnect and role-terminal resume do not lose the admission policy.
+- Discussion answer and business-resume turns now obey the same collaboration owner as ordinary continuations. Child clarifications follow their actual caller chain; direct discussion admission cannot bypass scheduling protection. Requests, replies and native histories remain intact.
+- Follow-up regressions are kept in ignored local verification directories. No production deployment, restart or live-task manipulation is part of this integration.

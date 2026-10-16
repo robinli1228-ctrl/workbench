@@ -108,7 +108,7 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
 export function initWorkspaceColumns(){
   const shell=document.querySelector('.app-shell'),left=document.querySelector('.project-sidebar'),right=document.querySelector('.node-sidebar');
   const media=matchMedia('(min-width: 1001px)'),key='agent-workbench.column-widths';
-  let sizes={left:216,right:320};try{const saved=JSON.parse(localStorage.getItem(key));if(Number.isFinite(saved?.left)&&Number.isFinite(saved?.right))sizes=saved;}catch{}
+  let sizes={left:260,right:320};try{const saved=JSON.parse(localStorage.getItem(key));if(Number.isFinite(saved?.left)&&Number.isFinite(saved?.right))sizes=saved;}catch{}
   function apply(){
     if(!media.matches)return;
     const leftMax=Math.min(380,innerWidth-320-420),rightMax=Math.min(500,innerWidth-sizes.left-420);

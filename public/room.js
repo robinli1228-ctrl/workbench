@@ -8,7 +8,10 @@ import { createHistoryViewer } from './history-view.js';
 import {createRoleSwitchUI} from './role-switch.js';
 import {createRoleHistoryTabs} from './role-history.js';
 import {createCliRecoveryUI} from './cli-recovery.js';
+import {createListOrder} from './list-order.js';
+import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
 import {createMentionInput} from './mention-input.js';
+import { elapsedEl } from './elapsed.js';
 
 /** Long text only changes its carrier; the file content keeps the original line breaks, whitespace and trailing characters. */
 export function longTextFileName(text) {
@@ -171,18 +174,59 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
 /** Show existing dispatches without creating a separate queue; request retries reuse the ID to avoid repeated interruptions. */
 function createMessageQueue({api,refreshState,create,setError}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
-  const commands=new Map(),pending=new Set();let currentProject=null;
-  return {update(data,projectId){
-    if(currentProject!==projectId){panel.open=false;currentProject=projectId;}
+  const commands=new Map(),pending=new Set();let currentProject=null,lastData=null,optimistic=null;
+  const queueKey=task=>Number.isFinite(task.queueOrder)?task.queueOrder:(Date.parse(task.createdAt)||0);
+  // Long press reorders waiting items; Home stores the order and the scheduler runs them in that order.
+  const order=createListOrder({container:list,scope:()=>`queue:${currentProject||''}`,onEnd:()=>{if(lastData)view.update(lastData,currentProject);},onError:setError,
+    persist:async taskIds=>{
+      optimistic=taskIds;
+      try{await api(`/api/projects/${encodeURIComponent(currentProject)}/queue/order`,{method:'POST',json:{taskIds}});await refreshState({quiet:true});}
+      catch(error){setError(error.message);}
+      finally{optimistic=null;if(lastData)view.update(lastData,currentProject);}
+    }});
+  const view={update(data,projectId){
+    lastData=data;if(order.active())return;
+    if(currentProject!==projectId){panel.open=false;currentProject=projectId;optimistic=null;}
+    const rank=new Map((optimistic||[]).map((id,index)=>[id,index]));
     const tasks=(data.tasks||[]).filter(t=>t.projectId===projectId&&t.origin==='chat'&&t.status==='ready'&&!t.currentRunId)
-      .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering)));
+      .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||queueKey(a)-queueKey(b));
+    list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&tasks.length>1);
+    const conversation=tasks[0]?.conversationId||projectId;
+    // Home's own projection decides who is protected; the browser only labels it and never guesses from an idle CLI.
+    const waits=(data.collaborationWaits||[]).filter(w=>w.projectId===projectId&&(!tasks.length||tasks.some(t=>(t.conversationId||t.projectId)===w.conversationId&&t.roleId===w.roleId)));
+    const protectedRole=task=>waits.find(w=>!w.released&&w.roleId===task.roleId&&w.conversationId===(task.conversationId||task.projectId));
     panel.hidden=!tasks.length;summary.textContent=t('Queue · {v}', { v: tasks.length });list.replaceChildren();
+    for(const wait of waits.filter((w,i,all)=>all.findIndex(x=>x.roleId===w.roleId&&x.conversationId===w.conversationId)===i)) {
+      const role=(data.roles||[]).find(r=>r.id===wait.roleId)?.name||t('Role');
+      const left=Math.max(1,Math.ceil((Date.parse(wait.releaseAt)-Date.now())/60000));
+      // Nothing is released automatically; a stalled wait only unlocks "Handle this first" for every queued item.
+      list.append(create('p',`message-queue-wait${wait.stalled?' is-released':''}`,wait.stalled?t('{role} · no collaboration progress for a while; needs attention. Choose Handle this first to let a queued item go',{role})
+        :t('{role} · waiting for collaboration results · marked stalled after about {minutes} min without progress',{role,minutes:left})));
+    }
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
+      if(data.capabilities?.queueOrder&&!task.steering){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
       const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||t('Role')} · ${task.title||task.prompt}`);title.title=task.prompt||task.title;
       info.append(title,create('span','',task.steering?(task.waitingReason||'Continuing with the new instruction first'):(task.waitingReason||'Waiting to run')));row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
-      if(!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination) {
+      const human=!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination;
+      const guard=protectedRole(task),scopeOf=x=>(x.conversationId||x.projectId)===(task.conversationId||task.projectId)&&x.roleId===task.roleId;
+      const yieldBusy=tasks.some(x=>x.id!==task.id&&x.collaborationYield&&scopeOf(x))||waits.some(w=>w.yielded&&scopeOf(w));
+      if((human||guard?.stalled)&&data.capabilities?.collaborationWait&&(guard||task.collaborationYield)) {
+        // Handle this first keeps the waiting collaboration; it never stops or cancels anything.
+        const first=create('button','secondary compact message-queue-first',task.collaborationYield?t('Handling first'):t('Handle this first'));first.type='button';
+        first.title=t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
+        first.disabled=Boolean(task.collaborationYield)||yieldBusy||pending.has(task.id)||data.settings?.paused;
+        if(yieldBusy&&!task.collaborationYield)first.title=t('Another item for this role is being handled first; wait until it and its collaboration finish');
+        first.onclick=async()=>{
+          pending.add(task.id);first.disabled=true;
+          if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
+          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'yield_wait',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});await refreshState({quiet:true});}
+          catch(error){setError(error.message);}
+          finally{pending.delete(task.id);}
+        };
+        row.append(first);
+      } else if(human) {
         const steer=create('button','icon-button message-queue-steer');steer.type='button';steer.setAttribute('aria-label',t(task.steering?'Steering':'Steer now'));steer.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
         steer.title='Stop this role\'s current run and continue with this message after confirmation; actions already performed are not rolled back';
         steer.disabled=Boolean(task.steering)||pending.has(task.id)||data.settings?.paused||!data.capabilities?.roleSteering;
@@ -190,7 +234,7 @@ function createMessageQueue({api,refreshState,create,setError}) {
         steer.onclick=async()=>{
           pending.add(task.id);steer.disabled=true;
           if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
-          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});await refreshState({quiet:true});}
+          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'replace',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});await refreshState({quiet:true});}
           catch(error){setError(error.message);}
           finally{pending.delete(task.id);steer.disabled=Boolean(task.steering)||data.settings?.paused;}
         };
@@ -202,6 +246,7 @@ function createMessageQueue({api,refreshState,create,setError}) {
       };row.append(cancel);list.append(row);
     }
   }};
+  return view;
 }
 
 /** The chat only handles display and user actions; role selection, idempotency and scheduling are validated by Home. */
@@ -787,7 +832,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     row.append(avatarFor(role, role.name));
     const col = create('div', 'chat-col');
     const progress=taskProgress(task,run),label=t(progress.label);
-    col.append(create('div', 'chat-name', `@${role.name || t('Role')} · ${label}`));
+    const running=progress.state==='running'&&run?.startedAt;
+    const nameLine=create('div', 'chat-name', `@${role.name || t('Role')} · ${label}`);
+    if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)nameLine.append(elapsed);}
+    col.append(nameLine);
     const bubble = create('div', 'chat-bubble');
     const preview = run && !run.explicitPublish ? liveText(run.id) : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id,`run:${run?.id || task.id}`));
@@ -795,6 +843,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const typing = create('div', 'chat-typing');
       typing.append(create('span'), create('span'), create('span'));
       bubble.append(typing, create('span', 'chat-typing-label', label));
+      if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)bubble.append(elapsed);}
     }
     col.append(bubble);
     const alert=run&&data.runAlerts?.find(a=>a.id===run.id);
@@ -1112,7 +1161,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       && ['nodeId', 'runtime', 'model', 'effort'].every(key => fields[key].value === (role[key] || ''))
       && fields.mode.value === (role.mode || 'workspace-write')
       && fields.enabled.checked === Boolean(role.enabled)
-      && fields.autoApprove.checked === (role.autoApprove !== false);
+      && fields.autoApprove.checked === (role.autoApprove !== false)
+      && (!fields.permissionScope.value || fields.permissionScope.value === role.permissionScope);
   }
   function renderRoleSaveState() {
     if(!savingRole)document.querySelector('#role-save').textContent=editingRoleSnapshot?.runtime&&roleForm.elements.runtime.value!==editingRoleSnapshot.runtime?'Handoff and switch':'Save role';
@@ -1254,6 +1304,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   roleForm.elements.runtime.addEventListener('change', () => { preferredRuntime = roleForm.elements.runtime.value; renderModelOptions(); });
   roleForm.elements.model.addEventListener('change', () => { preferredModel = roleForm.elements.model.value; renderModelOptions(); });
   roleForm.elements.effort.addEventListener('change', () => { preferredEffort = roleForm.elements.effort.value; });
+  const renderRolePermission = () => renderPermissionScope(roleForm.elements.permissionScope, roleForm.querySelector('[data-permission-note]'), {
+    worker: data.workers?.find(w => w.id === roleForm.elements.nodeId.value), runtime: roleForm.elements.runtime.value,
+    saved: editingRoleSnapshot?.permissionScope, isNew: !editingRoleId || editingRoleSnapshot?.configured === false });
+  roleForm.elements.permissionScope.addEventListener('change', () => { roleForm.elements.permissionScope.dataset.touched = '1'; renderRolePermission(); });
+  roleForm.elements.nodeId.addEventListener('change', renderRolePermission);
+  roleForm.elements.runtime.addEventListener('change', renderRolePermission);
   roleForm.elements.enabled.addEventListener('change', renderModelOptions);
 
   function openRoleEditor(roleId) {
@@ -1265,6 +1321,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     editingProjectId = projectId;
     const role = roleId ? (data.roles || []).find(r => r.id === roleId) : null;
     populateRole(role || undefined);
+    delete roleForm.elements.permissionScope.dataset.touched; renderRolePermission();
     roleDialog.showModal();
     if(role){const pending=cliSwitch.resume({projectId:editingProjectId,role,host:roleForm,operation:data.roleSwitches?.find(op=>op.roleId===role.id&&!['committed','cancelled'].includes(op.status))});if(pending){savingRole=true;void pending.then(op=>{if(op.status==='committed')roleDialog.close();}).catch(error=>setError(error.message)).finally(()=>{savingRole=false;renderRoleSaveState();});}}
   }
@@ -1296,6 +1353,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const values = Object.fromEntries(new FormData(roleForm));
     // Disabled saved options are omitted by FormData; keep the binding shown by the editor instead of treating omission as a CLI switch or clear.
     for(const key of ['nodeId','runtime','model','effort'])values[key]=roleForm.elements[key].value;
+    delete values.permissionScope; const permissionScope = permissionScopeValue(roleForm.elements.permissionScope); if (permissionScope) values.permissionScope = permissionScope;
     const onlyDefinition = definitionOnly();
     const effort = String(values.effort || '').trim();
     const body = { ...values, id: editingRoleId || undefined, enabled: roleForm.elements.enabled.checked, autoApprove: roleForm.elements.autoApprove.checked, effort: effort || null };

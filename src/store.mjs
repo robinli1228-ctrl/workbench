@@ -19,6 +19,7 @@ import {sourceInputWaitReason,sourceConflictContext} from './source-sync-input.m
 import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followup.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {tagMessage,SessionQueue,reservePropagation,settlePropagation} from './session-queue.mjs';
+import { permissionScopeIssue } from './role-permissions.mjs';
 
 export const terminal = new Set(['succeeded', 'failed', 'interrupted']);
 const now = () => new Date().toISOString();
@@ -80,6 +81,10 @@ export class Store {
   /** Poll only live scheduling candidates; unknown Run states still reserve capacity, and history stays intact. */
   activeRuns(nodeId) {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_active_runs WHERE kind='runs' AND ${activeRun}${nodeId===undefined?'':" AND json_extract(data,'$.nodeId')=?"} ORDER BY rowid`).all(...(nodeId===undefined?[]:[nodeId])).map(r=>JSON.parse(r.data));
+  }
+  /** Tasks whose role is waiting for a formal discussion answer; scanned in SQL, not by parsing every task. */
+  tasksWaitingForDiscussion() {
+    return this.db.prepare(`SELECT data FROM records WHERE kind='tasks' AND (json_extract(data,'$.status')='waiting_discussion' OR json_extract(data,'$.discussionWait') IS NOT NULL) ORDER BY rowid`).all().map(r=>JSON.parse(r.data)).filter(t=>t.status!=='cancelled'&&t.status!=='completed'&&t.status!=='failed');
   }
   chatTasks(statuses=['ready','in_progress']) {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_chat_tasks WHERE kind='tasks' AND ${chatTask} ORDER BY rowid`).all().map(r=>JSON.parse(r.data)).filter(t=>statuses.includes(t.status));
@@ -152,13 +157,16 @@ export class Store {
     return this.put('projects', { id, name: name.trim(), root, description, repoUrl: repository?.url || '', repository, createdAt: now() });
   }
   /** Project metadata never changes any node's Git remote or account credentials. */
-  updateProject(id, { name, description = '', repoUrl = '' }) {
+  updateProject(id, { name, description = '', repoUrl = '', collaborationWaitReleaseMinutes }) {
     assertProjectReady(this,id);
     const p = this.get('projects', id); if (!p) throw new Error(tr('store.projectNotFound'));
     if (typeof name !== 'string' || !name.trim()) throw new Error(tr('store.projectNameRequired2'));
     if (typeof description !== 'string' || description.length > 12000) throw new Error(tr('store.descriptionMustBeAtMost'));
+    // Omitted keeps the saved value; older clients that do not send it cannot reset it.
+    if (collaborationWaitReleaseMinutes!==undefined && !(Number.isSafeInteger(collaborationWaitReleaseMinutes)&&collaborationWaitReleaseMinutes>=5&&collaborationWaitReleaseMinutes<=1440)) throw new Error(tr('collabWait.invalidMinutes'));
     const repository = giteeRepository(repoUrl);
-    return this.put('projects', { ...p, name: name.trim(), description, repoUrl: repository?.url || '', repository });
+    return this.put('projects', { ...p, name: name.trim(), description, repoUrl: repository?.url || '', repository,
+      ...(collaborationWaitReleaseMinutes!==undefined?{collaborationWaitReleaseMinutes}:{}) });
   }
   deleteProject(id) {
     return this.transaction(() => {
@@ -260,6 +268,9 @@ export class Store {
       const repositoryId = null;
       const binding = roleWorkspace(this, task.projectId, nodeId, repositoryId);
       if (!binding) throw new Error(tr('store.bindProjectWorkspaceOnNode'));
+      // Freeze the role's saved scope for this execution; switch maintenance keeps its own read-only boundary.
+      const permissionScope = task.origin==='chat'&&!isSwitchMaintenance(task) ? (this.get('roles', task.roleSnapshot?.id||task.roleId)?.permissionScope ?? task.roleSnapshot?.permissionScope) : undefined;
+      if (permissionScope !== undefined) { const issue = permissionScopeIssue(this.get('workers', nodeId), task.roleSnapshot?.runtime || 'codex', permissionScope); if (issue) throw new Error(tr(`rolePermissions.${issue}`, { scope: permissionScope })); }
       const repositories = projectRepositories(this, task.projectId, nodeId).filter(r=>!task.execution?.repositoryKeys||task.execution.repositoryKeys.includes(r.key));
       if (!task.roleSnapshot?.systemSupervisor && repositories.some(repo => !repo.localRoot)) throw new Error(tr('store.projectRepositoriesOnDeviceNot'));
       const sourceWait=sourceInputWaitReason(this,task,nodeId);if(sourceWait)throw syncError(sourceWait);
@@ -283,6 +294,7 @@ export class Store {
         documentViews:this.get('workers',nodeId)?.capabilities?.sessionQueue===2?1:0,
         repositoryUrl: repositoryId ? this.get('repositories', repositoryId)?.repoUrl : null,
         projectRoot: binding.localRoot, model: task.model, mode: task.mode, status: 'queued', lastSeq: 0, createdAt: now(), updatedAt: now(),
+        ...(permissionScope !== undefined ? { permissionScope, permissionContract: 1 } : {}),
         ...(task.collaborationBatchId?{collaborationBatchId:task.collaborationBatchId,collaborationBatch:task.collaborationBatch,explicitPublish:true}:{}),
         requestId: task.requestId || null, deliveryId: task.deliveryId || null, continuationRunId: task.continuationRunId || null, planId: task.planId || null, planVersion: task.planVersion || null, stepId: task.stepId || null,
         ...(task.origin === 'chat' ? { roleId: task.roleId, roleSnapshot: task.roleSnapshot, sourceMessageId: task.sourceMessageId, sourceRunId: task.sourceRunId, hop: task.hop || 0 } : {}) };

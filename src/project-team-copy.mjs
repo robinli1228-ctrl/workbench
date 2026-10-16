@@ -4,7 +4,7 @@ import {join,isAbsolute,resolve} from 'node:path';
 import {runtimeIssue} from './runtime-probe.mjs';
 import {tr} from './i18n.mjs';
 
-const fields=['name','templateKey','responsibility','instructions','nodeId','runtime','model','effort','mode','autoApprove','enabled'];
+const fields=['name','templateKey','responsibility','instructions','nodeId','runtime','model','effort','mode','autoApprove','enabled','permissionScope'];
 const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const stamp=()=>new Date().toISOString();
@@ -23,7 +23,7 @@ export class ProjectTeamCopy {
     const working=this.db.listProject('roles',project.id).filter(r=>r.id!==supervisor.id&&!r.systemSupervisor&&!r.archivedAt);
     const order=roleOrder===undefined?working.map(r=>r.id):roleOrder;
     if(!Array.isArray(order)||order.length!==working.length||new Set(order).size!==order.length||order.some(id=>!working.some(r=>r.id===id)))throw new Error(tr('teamCopy.invalidOrder'));
-    const selected=[{...supervisor,...Object.fromEntries(['nodeId','runtime','model','effort','enabled'].map(k=>[k,supervisorConfig[k]]))},...order.map(id=>working.find(r=>r.id===id))];
+    const selected=[{...supervisor,...Object.fromEntries(['nodeId','runtime','model','effort','enabled','permissionScope'].filter(k=>supervisorConfig[k]!==undefined||k!=='permissionScope').map(k=>[k,supervisorConfig[k]]))},...order.map(id=>working.find(r=>r.id===id))];
     const roles=selected.map(r=>({id:r.id,revision:r.revision||1,...Object.fromEntries(fields.filter(k=>Object.hasOwn(r,k)).map(k=>[k,r[k]])),systemSupervisor:r.id===supervisor.id}));
     const snapshot={sourceProjectId,sourceName:project.name,supervisorRevision:supervisorConfig.revision||1,roles,roleOrder:[...order],requiredDeviceIds:[...new Set(roles.filter(r=>r.systemSupervisor||r.enabled).map(r=>r.nodeId))]};
     if(snapshot.requiredDeviceIds.some(id=>typeof id!=='string'||!id))throw new Error(tr('teamCopy.sourceInvalid'));

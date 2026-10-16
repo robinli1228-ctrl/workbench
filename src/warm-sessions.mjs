@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 
 /** Compare process-level configuration only; a change of role identity also forces a rebuild, while the Run/tool entry points do not take part in the comparison. */
-export function warmSessionFingerprint({folder,runtimeType,model,effort,roleName,roleInstructions,env}) {
-  return createHash('sha256').update(JSON.stringify({folder,runtimeType,model,effort,roleName,roleInstructions,env})).digest('hex');
+export function warmSessionFingerprint({folder,runtimeType,model,effort,roleName,roleInstructions,env,permissionScope}) {
+  // Legacy roles keep their previous fingerprint; a scoped process never serves another scope.
+  return createHash('sha256').update(JSON.stringify({folder,runtimeType,model,effort,roleName,roleInstructions,env,...(permissionScope?{permissionScope}:{})})).digest('hex');
 }
 
 /** Only cache processes of completed turns; active Runs are still managed by the Worker's existing concurrency table. */

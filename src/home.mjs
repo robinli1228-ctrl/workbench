@@ -34,6 +34,7 @@ import {recentProjectArtifacts} from './run-artifacts.mjs';
 import {ProjectFiles} from './project-files.mjs';
 import {CrossDeviceRead} from './cross-device-read.mjs';
 import { RoleSteering } from './role-steering.mjs';
+import { collaborationQueueView } from './coordination-wait.mjs';
 import { WorkspaceStateFeed } from './workspace-state.mjs';
 import { messageProgress, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries } from './git-delivery.mjs';
@@ -309,7 +310,7 @@ function snapshot() {
   const continuationLaunches=new Map(launchCommands.toReversed().map(c=>[c.runId,c]));
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1,projectTeamCopy:1}, homePlatform: process.platform, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
+  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1,projectTeamCopy:1,queueOrder:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -987,8 +988,12 @@ const server = http.createServer(async (req, res) => {
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/steer$/)) && req.method === 'POST') {
         const input=await body(req),result=steering.request(m[1],m[2],input.commandId,input);
-        for(const id of result.waitForRunIds)dispatch(db.get('runs',id).nodeId);
+        // A non-destructive yield stops nothing; only a replacing steer has runs to wait for.
+        for(const id of result.waitForRunIds||[])dispatch(db.get('runs',id).nodeId);
         scheduleChat();change();return json(res,result);
+      }
+      if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/queue\/order$/)) && req.method === 'POST') {
+        const r = rooms.reorderQueue(m[1], await body(req)); scheduleChat(); change(); return json(res, r);
       }
       if ((m = pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/)) && req.method === 'POST') {
         const r = rooms.cancel(m[1]); if (r.requestId) calls.cancel(r.requestId); change(); return json(res, r);
@@ -1040,12 +1045,14 @@ const server = http.createServer(async (req, res) => {
         }
         const {role,worker,workspace}=newTerminalBinding(db,projectId,roleId,id=>online(id)&&sockets.get(id).workerReady),device=db.list('devices').find(d=>d.nodeId===role.nodeId);
         if(worker.nodeKind==='cloud'&&!device)throw new Error(tr('home.cloudDeviceMissingSshRegistration'));
+        // A scoped role needs a Worker that applies the scope to terminals too; an older Worker would silently use legacy flags.
+        if(role.permissionScope&&worker.capabilities?.permissionContract!==1)throw new Error(tr('rolePermissions.worker_unsupported',{scope:role.permissionScope}));
         const claim={id:b.operationId,kind:'new',projectId,conversationId,roleId,nodeId:role.nodeId,runtime:role.runtime,model:role.model,status:'preparing',createdAt:new Date().toISOString()};
         db.put('terminalSessions',claim);change();
         try {
           const settings=normalizePlatformSettings(db.get('settings','main'));
           const info=await workerQuery(claim,'terminal_new',{id:claim.id,projectId,roleId,nodeId:role.nodeId,workspace,
-            roleSettings:{runtime:role.runtime,model:role.model,effort:role.effort||null,name:role.name,instructions:role.instructions||''},
+            roleSettings:{runtime:role.runtime,model:role.model,effort:role.effort||null,name:role.name,instructions:role.instructions||'',...(role.permissionScope?{permissionScope:role.permissionScope}:{})},
             platformPrompt:settings.platformPrompt,supervisorPrompt:role.systemSupervisor&&!role.platformAssistant?settings.supervisorPrompt:''},30000);
           const identityFile=b.useLocalSshKey===true&&process.platform==='darwin'&&device?(await credentials.get(device.id))?.keyPath:null;
           const command=terminalCommand(info,device||null,identityFile),value=terminalLaunchView({...claim,...info,status:'prepared',command});
@@ -1166,7 +1173,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, { error: tr('home.endpointNotFound') }, 404);
     }
     if (req.method !== 'GET') return json(res, { error: tr('home.unsupportedRequest') }, 405);
-    const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
+    const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
     Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
     files['/workspace-inspector.js']='workspace-inspector.js';
     files['/source-sync.js']='source-sync.js';

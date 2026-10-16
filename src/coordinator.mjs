@@ -1,6 +1,7 @@
 import { runtimeIssue } from './runtime-probe.mjs';
 import { tr } from './i18n.mjs';
 import {assertBindingEditAllowed} from './role-switch-policy.mjs';
+import { resolveRolePermissionScope, withPermissionScope } from './role-permissions.mjs';
 
 /** The system supervisor configuration is independent of worker roles; no option may silently replace the user's runtime configuration. */
 export class Coordinator {
@@ -21,7 +22,7 @@ export class Coordinator {
     const config = this.validateSupervisor(projectId, nodeId, input);
     if (project.supervisorRoleId) {
       const role = this.db.get('roles', project.supervisorRoleId);
-      this.db.put('roles', {...role,nodeId,runtime:config.runtime,model:config.model,effort:config.effort,revision:(role.revision||1)+1});
+      this.db.put('roles', withPermissionScope({...role,nodeId,runtime:config.runtime,model:config.model,effort:config.effort,revision:(role.revision||1)+1},config.permissionScope));
       this.db.put('projects', {...project,supervisorNodeId:nodeId});
     }
     return this.db.put('supervisorConfigs',config);
@@ -48,8 +49,12 @@ export class Coordinator {
     if (project.supervisorRoleId) {
       if (!input.enabled) throw new Error(tr('coordinator.projectMustKeepItsLocal'));
     }
-    return { id, projectId, nodeId, runtime, model, effort,
-      enabled: input.enabled, revision: (old?.revision || 0) + 1, updatedAt: new Date().toISOString() };
+    // Supervisors use the same per-role scope contract; the saved value lives on the supervisor role.
+    const role = project.supervisorRoleId ? this.db.get('roles', project.supervisorRoleId) : null;
+    const permissionScope = resolveRolePermissionScope({ input, old: role || old, worker, runtime, configured: Boolean(runtime && model), isNew: !role && !old,
+      message: (code, scope) => tr(`rolePermissions.${code}`, { scope }) });
+    return withPermissionScope({ id, projectId, nodeId, runtime, model, effort,
+      enabled: input.enabled, revision: (old?.revision || 0) + 1, updatedAt: new Date().toISOString() }, permissionScope);
   }
 
   /** Only the intake node is configured here; the model selects collaborators for each task. */
