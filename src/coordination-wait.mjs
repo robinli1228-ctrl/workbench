@@ -58,6 +58,18 @@ export function releaseMinutes(project) {
   return Number.isSafeInteger(value)&&value>=5&&value<=1440?value:COLLAB_RELEASE_DEFAULT_MINUTES;
 }
 
+/** Replies retain their task owner; a child's clarification uses its real caller chain, never the asking role's yield grant. */
+export function discussionCollaborationTask(db,task,roleId) {
+  if(task.roleId===roleId)return task;
+  let request=db.get('coordinationRequests',task.requestId||'');const seen=new Set();
+  while(request&&!seen.has(request.id)) {
+    seen.add(request.id);assertConversationRecord(task,request);
+    if(request.targetRoleId===roleId)return {...task,roleId,requestId:request.id,collaborationYield:null};
+    request=db.get('coordinationRequests',request.continuationOf||request.parentRequestId||'');
+  }
+  return {...task,roleId,requestId:null,collaborationYield:null};
+}
+
 /** Read-only view of roles whose own collaboration is unfinished: a formal call wait, its pending continuation, or a formal
  *  discussion wait. Unrelated same-role tasks in the same chat stay queued. Nothing is released automatically: after the
  *  project's no-progress window the chain is marked stalled and any queued task may then be let through by a human.

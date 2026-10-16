@@ -1306,7 +1306,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   roleForm.elements.effort.addEventListener('change', () => { preferredEffort = roleForm.elements.effort.value; });
   const renderRolePermission = () => renderPermissionScope(roleForm.elements.permissionScope, roleForm.querySelector('[data-permission-note]'), {
     worker: data.workers?.find(w => w.id === roleForm.elements.nodeId.value), runtime: roleForm.elements.runtime.value,
-    saved: editingRoleSnapshot?.permissionScope, isNew: !editingRoleId });
+    saved: editingRoleSnapshot?.permissionScope, isNew: !editingRoleId || editingRoleSnapshot?.configured === false });
   roleForm.elements.permissionScope.addEventListener('change', () => { roleForm.elements.permissionScope.dataset.touched = '1'; renderRolePermission(); });
   roleForm.elements.nodeId.addEventListener('change', renderRolePermission);
   roleForm.elements.runtime.addEventListener('change', renderRolePermission);

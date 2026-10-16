@@ -253,3 +253,10 @@
 - "Handle this first" now holds the original owner (including its ready continuation) until the yielded task and any collaboration it started settle, and a second yield is refused while the first is queued, running or waiting.
 - The no-progress window no longer releases the queue by itself: the wait is marked stalled and then any queued item, not only human messages, can be let through with "Handle this first". Formal discussion waits now protect the asking role like call waits.
 - Tests: collaboration-wait 13, role-permissions 10; suite 111/111.
+
+## 2026-10-16 — Follow-up integration fixes for permission and discussion admission
+
+- New role drafts now require a supported permission choice on first configuration, including when a Worker lacks the permission capability. Already configured legacy roles remain unchanged. Role and supervisor draft editors show the first-configuration selector rather than implying existing permissions can be retained.
+- Worker local Run persistence and launch-command identity retain the frozen scope and contract, so reconnect and role-terminal resume do not lose the admission policy.
+- Discussion answer and business-resume turns now obey the same collaboration owner as ordinary continuations. Child clarifications follow their actual caller chain; direct discussion admission cannot bypass scheduling protection. Requests, replies and native histories remain intact.
+- Follow-up regressions are kept in ignored local verification directories. No production deployment, restart or live-task manipulation is part of this integration.

@@ -217,7 +217,8 @@ async function command(m) {
     switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash,
     contextVersion:c.type==='launch'?m.run.contextVersion:undefined,turnPurpose:m.run.turnPurpose,permissionProfile:m.run.permissionProfile,
     requestId: m.run.requestId, continuationRunId: m.run.continuationRunId, deliveryId: c.deliveryId || m.run.deliveryId, deliveryCommit: m.delivery?.commit, planVersion: m.run.planVersion,
-    ...(m.run.execution ? {execution:m.run.execution}:{}),...(m.run.sourceInputs?.length?{sourceInputs:m.run.sourceInputs}:{}),...(m.run.attachments?.length ? {attachments:m.run.attachments}:{}) });
+    ...(m.run.execution ? {execution:m.run.execution}:{}),...(m.run.sourceInputs?.length?{sourceInputs:m.run.sourceInputs}:{}),...(m.run.attachments?.length ? {attachments:m.run.attachments}:{}),
+    ...(m.run.permissionScope!==undefined?{permissionScope:m.run.permissionScope,permissionContract:m.run.permissionContract}:{}) });
   const prior = db.get('commands', c.id);
   if (prior) {
     if (prior.signature !== signature) throw new Error(tr('worker.duplicateCommandParameterConflict'));
@@ -238,7 +239,9 @@ async function command(m) {
   if (c.type === 'launch') {
     const deferred=db.get('runs',c.runId);
     if (deferred&&!deferred.cliRecoveryWait) { send({ type: 'command_ack', id: c.id }); return; }
+    // Reconnect and terminal resume retain this run's frozen policy, never the role's mutable current settings.
     db.put('runs', { ...deferred,id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: deferred?.seq||0,cliRecoveryWait:false,error:null,
+      ...(m.run.permissionScope!==undefined?{permissionScope:m.run.permissionScope,permissionContract:m.run.permissionContract}:{}),
       collaborationBatchId:m.run.collaborationBatchId||null,collaborationBatch:m.run.collaborationBatch||null,
       collaborationCycleId:m.run.collaborationCycleId||null,propagationBudget:m.run.propagationBudget||null,
       switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash });

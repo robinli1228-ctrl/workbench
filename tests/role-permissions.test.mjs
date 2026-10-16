@@ -41,7 +41,7 @@ test('saves keep, default and validate the scope', () => {
   assert.equal(resolveRolePermissionScope({ ...base, input: {}, old: { permissionScope: 'device' }, isNew: false }), 'device', 'old clients keep the saved scope');
   assert.equal(resolveRolePermissionScope({ ...base, input: { permissionScope: '' }, old: { permissionScope: 'device' }, isNew: false }), 'device');
   assert.equal(resolveRolePermissionScope({ ...base, input: {}, old: {}, isNew: false }), undefined, 'legacy roles stay legacy');
-  assert.equal(resolveRolePermissionScope({ ...base, worker: worker(undefined), input: {}, old: null, isNew: true }), undefined, 'old Worker: no silent default');
+  assert.throws(() => resolveRolePermissionScope({ ...base, worker: worker(undefined), input: {}, old: null, isNew: true }), /worker_unsupported/, 'new roles cannot silently use legacy permissions on an old Worker');
   assert.throws(() => resolveRolePermissionScope({ ...base, runtime: 'claude', input: { permissionScope: 'project' }, old: null, isNew: true }), /scope_unsupported/);
   assert.throws(() => resolveRolePermissionScope({ ...base, input: { permissionScope: 'root' }, old: null, isNew: true }), /invalid/);
   assert.throws(() => resolveRolePermissionScope({ ...base, runtime: 'claude', input: {}, old: { permissionScope: 'project' }, isNew: false }), /scope_unsupported/, 'a runtime change re-validates');

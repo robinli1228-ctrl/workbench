@@ -39,16 +39,17 @@ export function codexPermissionOptions(scope,{toolRoots=[],writeRoots=[]}={}) {
     config:{'permissions.workbench_project.filesystem':filesystem,'permissions.workbench_project.network':{enabled:true},default_permissions:'workbench_project'}};
 }
 
-/** Role/supervisor saves: an omitted field keeps the saved scope (old clients cannot reset it); a new role on a CLI that
- *  enforces the project boundary starts at "project"; anything else stays legacy until the user picks a scope. */
+/** Role/supervisor saves retain existing configured legacy roles; new roles and draft activation require a supported
+ *  scope, defaulting to "project" only when the Worker enforces that boundary. */
 export function resolveRolePermissionScope({input,old,worker,runtime,configured,isNew,message}) {
   const requested=input?.permissionScope;
   // Empty means "keep" too: the form never offers a way back to the legacy, unlabelled behaviour.
   let scope=requested===undefined||requested===''||requested===null?old?.permissionScope:requested;
   const offered=worker?.capabilities?.permissionScopes?.[runtime];
-  if(scope===undefined&&isNew&&configured&&offered?.includes('project'))scope='project';
-  // A new role on an upgraded Worker never silently inherits legacy or device-wide access: the user must pick.
-  if(scope===undefined&&isNew&&configured&&Array.isArray(offered))throw new Error(message('selectScope'));
+  const needsScope=configured&&(isNew||old?.configured===false);
+  if(scope===undefined&&needsScope&&Array.isArray(offered)&&offered.includes('project'))scope='project';
+  // Saving a draft first cannot turn a new role into a legacy role; old Workers cannot admit scoped roles either.
+  if(scope===undefined&&needsScope)throw new Error(message(Array.isArray(offered)?'selectScope':'worker_unsupported'));
   if(scope===undefined)return undefined;
   if(!isPermissionScope(scope))throw new Error(message('invalid',scope));
   // Unconfigured drafts cannot be checked yet; admission checks again against the bound Worker.

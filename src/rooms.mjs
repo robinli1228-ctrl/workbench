@@ -16,7 +16,7 @@ import { steeringWaitReason } from './role-steering.mjs';
 import { ConversationContext } from './conversation-context.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followup.mjs';
-import {collaborationQueueView} from './coordination-wait.mjs';
+import {collaborationQueueView,discussionCollaborationTask} from './coordination-wait.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -354,13 +354,15 @@ export class Rooms {
       const discussion=Boolean(task.discussionDeliveryId||task.discussionIntentId);
       const kind=task.discussionDeliveryId?'discussionDeliveries':'discussionIntents',recordId=task.discussionDeliveryId||task.discussionIntentId;
       const role = effectiveExecutionRole(this.db,task), worker = this.db.get('workers', role.nodeId);
+      const collaborationTask=discussion?discussionCollaborationTask(this.db,this.db.get('tasks',task.businessTaskId),role.id):{...task,roleId:role.id};
+      const collaborationCheck=collaboration.forTask(collaborationTask);
       const recoveryReason=discussion?null:this.nativeRecoveryReason?.(task);
       const active = this.db.activeRuns();
       const reason = this.db.get('settings', 'main')?.paused ? tr('rooms.remoteExecutionPaused')
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)
-        : !discussion&&!task.steering&&!collaboration.forTask({...task,roleId:role.id}).allowed ? collabWaitReason(collaboration.forTask({...task,roleId:role.id}),role.name)
+        : !task.steering&&!collaborationCheck.allowed ? collabWaitReason(collaborationCheck,role.name)
         : !task.contextPrepared ? tr('rooms.organizingConversation')
         : (task.sourceConflictId||task.sourceConflictPeerId||task.sourceConflictAssignmentRequestId)&&worker?.capabilities?.sourceSyncTools!==1 ? tr('sourceSync.failure',{code:'worker_unsupported',detail:''})
         : sourceInputWaitReason(this.db,task,role.nodeId) ? tr('sourceSync.failure',{code:sourceInputWaitReason(this.db,task,role.nodeId),detail:''})
