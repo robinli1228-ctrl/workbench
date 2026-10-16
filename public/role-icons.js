@@ -128,7 +128,7 @@ export function roleActivity(role, tasks = [], runs = [], {requests=[],warm=fals
     at:latest.run?.finishedAt||latest.request?.finishedAt||latest.task.createdAt}:null;
   const withHistory=activity=>({...activity,...(lastFailure?{lastFailure}:{})});
   const active=ownRuns.find(r=>['queued','starting','preparing','running','waiting_user','stopping','reconciling'].includes(r.status)||r.status==='failed'&&r.processSettled===false);
-  if(active){const e=entries.find(e=>e.run?.id===active.id),p=executionProgress({run:active.status==='failed'?{...active,status:'reconciling'}:active,task:e?.task,request:e?.request,online});return withHistory({...p,detail:p.reason||p.detail});}
+  if(active){const e=entries.find(e=>e.run?.id===active.id),p=executionProgress({run:active.status==='failed'?{...active,status:'reconciling'}:active,task:e?.task,request:e?.request,online});return withHistory({...p,detail:p.reason||p.detail,...(p.state==='running'&&active.startedAt?{startedAt:active.startedAt}:{})});}
   const pending=entries.find(e=>e.progress.state==='waiting'&&(['waiting_call','waiting_delivery','waiting_dependencies','waiting_input'].includes(e.request?.status)||e.task.discussionWait||e.task.status==='waiting_discussion'))
     ||entries.find(e=>['queued','waiting'].includes(e.progress.state)&&(e.task.status==='ready'||e.task.status==='in_progress'&&!e.run));
   if(pending){const p=executionProgress({...pending,online});return withHistory({...p,detail:p.reason||p.detail||pending.task.title});}

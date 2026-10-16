@@ -18,8 +18,8 @@ export function orderedItems(items,order,key=item=>item.id) {
   return [...items].sort((a,b)=>(ranks.get(key(a))??Infinity)-(ranks.get(key(b))??Infinity));
 }
 
-/** Long press is local presentation only. Pending gestures defer live rerenders; release never clicks a moved card. */
-export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{}}) {
+/** Long press is local presentation unless `persist` hands the new order to Home. Pending gestures defer live rerenders; release never clicks a moved card. */
+export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{},persist=null}) {
   let gesture=null,frame=0,suppressClickUntil=0;
   const storageKey=()=>PREFIX+(typeof scope==='function'?scope():scope);
   const read=key=>{try{return ids(JSON.parse(localStorage.getItem(key)||'[]'));}catch{return [];}};
@@ -63,7 +63,10 @@ export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{}}) {
       suppressClickUntil=performance.now()+500;
       const after=items().map(item=>item.dataset.orderId),bounds=container.getBoundingClientRect();
       const inside=g.x>=bounds.left-24&&g.x<=bounds.right+24&&g.y>=bounds.top-24&&g.y<=bounds.bottom+24;
-      if(save&&inside&&g.key===storageKey()&&JSON.stringify(after)!==JSON.stringify(g.before)){
+      if(save&&inside&&g.key===storageKey()&&JSON.stringify(after)!==JSON.stringify(g.before)&&persist){
+        saved=true;announce.textContent=t('Queue order saved.');
+        Promise.resolve().then(()=>persist(after,g.before)).catch(error=>onError(error?.message||String(error)));
+      } else if(save&&inside&&g.key===storageKey()&&JSON.stringify(after)!==JSON.stringify(g.before)){
         try{localStorage.setItem(g.key,JSON.stringify(mergeListOrder(read(g.key),g.before,after)));saved=true;announce.textContent=t('Order saved in this browser.');}
         catch{announce.textContent=t('Could not save the order in this browser.');onError(announce.textContent);}
       }
