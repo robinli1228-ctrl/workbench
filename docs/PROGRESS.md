@@ -192,3 +192,8 @@
 - Added static blue shading, fine borders and soft shadows for executing group chats and exact native sessions. Selected rows remain distinct; historical running sessions are indicated in the expandable history entry. Queued, waiting, offline and idle states are not labeled as executing.
 - Compact cross-project activity metadata reuses the existing state feed; no new polling, model calls, continuous animation or history rewrites. Native identity matching includes device, runtime and session ID.
 - Focused projection tests and real isolated Home/Edge checks covered unselected projects, exact native matching, selected styling, history expansion, completion updates without catalogue refetching and mobile layout. The maintained suite passed 82/82. This change is not deployed and does not restart production services.
+
+## 2026-10-16 — Parallel-chat and team-copy design
+
+- User selected a parallel new group chat while retaining the original usable chat. Added the proposed specification in `design-parallel-conversations.md` and registered it in the documentation index.
+- The proposal separates fresh conversation/native context from shared project files and roles, preserves workspace/process locks, and defines team-only copying into empty new project workspaces. Full specification review and the implementation plan remain pending; no application code, runtime configuration, histories or running tasks were changed by this documentation step.
