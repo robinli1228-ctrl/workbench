@@ -52,7 +52,11 @@ export async function inspectCodex() {
     } while (cursor && result.models.length < 500);
     result.available = result.authReady && result.models.length > 0;
     result.reason = !result.authReady ? tr('runtimeProbe.runCodexLoginOnDevice') : !result.models.length ? tr('runtimeProbe.cliReturnedNoAvailableModels') : '';
-  } catch (e) { result.reason = tr('runtimeProbe.checkCliOnDeviceThen', { message: e.message }); if (e.transient) result.transient = true; }
+  } catch (e) {
+    // Once account/read has confirmed a missing login, a later transport error must not make the result look transient.
+    if (result.authReady === false) result.reason = tr('runtimeProbe.runCodexLoginOnDevice');
+    else { result.reason = tr('runtimeProbe.checkCliOnDeviceThen', { message: e.message }); if (e.transient) result.transient = true; }
+  }
   finally { clearTimeout(timer); lines.close(); proc.stdin.end(); proc.kill(); }
   return result;
 }

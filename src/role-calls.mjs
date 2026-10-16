@@ -14,7 +14,11 @@ import {conversationIdOf,resolveConversationId,assertConversationRecord} from '.
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
 export const BLOCKED_WAKE_MS = 10 * 60000;
 
-/** A queued dependency whose task has been blocked for the window and not yet reported for this blocked episode. */
+/**
+ * A queued dependency whose task has been blocked for the window and not yet reported for this blocked episode.
+ * waitDependencies hands back the effective continuation's fields under the original id, so the mark is read here and
+ * written by resume() on that same effective record (resultRequestId), never on the original child.
+ */
 export function blockedDependency(db,request,time=Date.now()) {
   if(!['queued','waiting_delivery'].includes(request?.status))return null;
   const task=db.get('tasks',request.taskId||'');
@@ -303,7 +307,7 @@ export class RoleCalls {
         summary: `${header}${packCoordinationResults(children, Math.max(0, 12000 - header.length))}`.slice(0, 12000) });
       this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), continuationRequestId: next.id, updatedAt: new Date().toISOString() });
       // Mark the episode as reported only once the wake exists, so a failed wake can be retried.
-      for(const {request,block} of blocked)this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',request.id),blockedWake:{kind:block.kind,since:block.since,notifiedAt:new Date(time).toISOString()}});
+      for(const {request,block} of blocked){const id=request.resultRequestId||request.id;this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',id),blockedWake:{kind:block.kind,since:block.since,notifiedAt:new Date(time).toISOString()}});}
     } catch (error) { this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), waitingReason: error.message }); }
     });
   }

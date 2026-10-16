@@ -2,10 +2,10 @@
 // its waiter once, like an early timeout; O4: wb call --file also finds project-root relative paths.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mergeRuntimeReports, runtimeIssue } from '../src/runtime-probe.mjs';
+import { mergeRuntimeReports, runtimeIssue, inspectCodex } from '../src/runtime-probe.mjs';
 import { Store } from '../src/store.mjs';
 import { Rooms } from '../src/rooms.mjs';
 import { RoleCalls, BLOCKED_WAKE_MS } from '../src/role-calls.mjs';
@@ -50,6 +50,27 @@ test('O1: definite failures and version changes are reported at once', () => {
   const neverGood = mergeRuntimeReports([], [flaky()], {});
   assert.equal(neverGood.runtimes[0].available, false);
   assert.equal(neverGood.retryMs, 30000);
+});
+
+test('O1: a confirmed missing login stays a definite failure even if the App Server then exits', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'wb-o1-')), bin = join(dir, 'codex'), before = process.env.CODEX_BIN;
+  // Fake Codex: answers initialize and a logged-out account/read, then exits on the next request.
+  await writeFile(bin, `#!${process.execPath}
+if (process.argv[2] === '--version') { console.log('codex 1.0'); process.exit(0); }
+const rl = require('node:readline').createInterface({ input: process.stdin });
+rl.on('line', line => { const m = JSON.parse(line); if (m.id === undefined) return;
+  if (m.method === 'initialize') console.log(JSON.stringify({ id: m.id, result: {} }));
+  else if (m.method === 'account/read') console.log(JSON.stringify({ id: m.id, result: { account: null, requiresOpenaiAuth: true } }));
+  else process.exit(1); });
+`); await chmod(bin, 0o755);
+  try {
+    process.env.CODEX_BIN = bin;
+    const report = await inspectCodex();
+    assert.equal(report.available, false);
+    assert.equal(report.authReady, false);
+    assert.equal(report.transient, undefined, 'a login failure must not be retried as transient');
+    assert.equal(mergeRuntimeReports([good()], [report], {}).runtimes[0].available, false);
+  } finally { if (before === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = before; await rm(dir, { recursive: true, force: true }); }
 });
 
 const P = 'p1';
@@ -112,6 +133,29 @@ test('O2: the same blocked episode is not reported again after the waiter waits 
   e.db.put('runs', { ...e.db.get('runs', 'r2'), status: 'succeeded' });
   e.calls.resume(next.id, since + 2 * BLOCKED_WAKE_MS);
   assert.equal(e.db.get('coordinationRequests', next.id).continuationRequestId, undefined);
+});
+
+test('O2: a dependency that already continued is marked on its effective continuation, so it is reported once', () => {
+  const e = waiting(), old = new Date(Date.now() - 2 * BLOCKED_WAKE_MS).toISOString();
+  const c1 = e.db.get('coordinationRequests', 'c1'), first = e.db.get('tasks', c1.taskId);
+  e.db.put('tasks', { ...first, status: 'completed' });
+  e.db.put('tasks', { id: 'tn', projectId: P, origin: 'chat', roleId: 'b', roleSnapshot: e.db.get('roles', 'b'), prompt: 'continue', status: 'ready', contextPrepared: true, blockedKind: 'cli_unavailable', blockedSince: old, waitingReason: 'App Server exited' });
+  e.db.put('coordinationRequests', { id: 'c1n', projectId: P, parentRequestId: c1.parentRequestId, targetRoleId: 'b', kind: 'continuation', continuationOf: 'c1', status: 'queued', taskId: 'tn', summary: 'continue', createdAt: old, updatedAt: old });
+  e.db.put('coordinationRequests', { ...c1, status: 'waiting_call', continuationRequestId: 'c1n' });
+  e.calls.resume(e.parent.id);
+  const next = e.db.get('coordinationRequests', e.db.get('coordinationRequests', e.parent.id).continuationRequestId);
+  assert.equal(next.wakeReason, 'blocked');
+  assert.equal(e.db.get('coordinationRequests', 'c1n').blockedWake?.since, old, 'the mark lands on the record that was read');
+  assert.equal(e.db.get('coordinationRequests', 'c1').blockedWake, undefined);
+  e.calls.reconcile(next.id);
+  const resumed = e.db.get('coordinationRequests', next.id);
+  e.db.put('runs', { id: 'r2', projectId: P, taskId: resumed.taskId, roleId: 'a', roleSnapshot: e.db.get('roles', 'a'), nodeId: 'w1', requestId: next.id, status: 'running', lastSeq: 0 });
+  e.db.put('tasks', { ...e.db.get('tasks', resumed.taskId), status: 'in_progress', currentRunId: 'r2' });
+  e.db.put('coordinationRequests', { ...resumed, status: 'running', currentRunId: 'r2' });
+  e.calls.wait(e.db.get('runs', 'r2'), 'still waiting', { requestIds: ['c1'] });
+  e.db.put('runs', { ...e.db.get('runs', 'r2'), status: 'succeeded' });
+  e.calls.resume(next.id);
+  assert.equal(e.db.get('coordinationRequests', next.id).continuationRequestId, undefined, 'the same episode is not reported again');
 });
 
 test('O2: normal queueing and a paused Home never trigger a blocked wake', () => {
