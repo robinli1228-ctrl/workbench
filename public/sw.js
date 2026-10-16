@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-parallel-groups-v107';
+const CACHE = 'agent-workbench-parallel-groups-v108';
 const STATIC = [
   '/group-conversations.js',
   '/project-team-copy.js',

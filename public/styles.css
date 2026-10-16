@@ -1653,7 +1653,7 @@ button.action-icon-button { display: inline-flex; align-items: center; justify-c
 .artifact-code { white-space:pre-wrap; font-size:12px; }
 .column-splitter { display:none; }
 @media (min-width:1001px) {
-  body[data-project-sidebar] .app-shell { position:relative; grid-template-columns:var(--project-width,216px) minmax(420px,1fr) var(--inspector-width,320px); transition:none; height:var(--app-height,100dvh); min-height:0; }
+  body[data-project-sidebar] .app-shell { position:relative; grid-template-columns:var(--project-width,248px) minmax(420px,1fr) var(--inspector-width,320px); transition:none; height:var(--app-height,100dvh); min-height:0; }
   body[data-project-sidebar="collapsed"] .app-shell { grid-template-columns:64px minmax(420px,1fr) var(--inspector-width,320px); }
   body[data-project-sidebar="hidden"] .app-shell { grid-template-columns:minmax(420px,1fr) var(--inspector-width,320px); }
   body[data-project-sidebar] .project-sidebar { height:100%; padding:0 14px; min-height:0; transition:none; }
@@ -2243,8 +2243,11 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 }
 @media (min-width: 1001px) {
   body[data-project-sidebar="collapsed"] #project-list .project-item,
-  body[data-project-sidebar="collapsed"] #native-session-list .project-item { border-color: transparent; background: transparent; box-shadow: none; transform: none; }
-  body[data-project-sidebar="collapsed"] #native-session-list .project-item.active { background: var(--card-active-surface); box-shadow: var(--card-active-ring); }
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item,
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active,
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item.active,
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active.is-running,
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item.active.is-running { min-height: 44px; padding: 7px; border-color: transparent; background: transparent; box-shadow: none; transform: none; }
   body[data-project-sidebar="collapsed"] #project-list .project-item.active .project-item-icon { box-shadow: inset 0 1px 0 rgb(255 255 255 / 28%), 0 2px 6px rgb(79 91 206 / 30%); }
   body[data-project-sidebar="collapsed"] #project-list .project-item.is-running::after,
   body[data-project-sidebar="collapsed"] #native-session-list .project-item.is-running::after { display: none; animation: none; }
@@ -2257,3 +2260,156 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
   #project-list .project-item:hover, #native-session-list .project-item:hover, .role-card:hover { transform: none; }
   #project-list .project-item.is-running::after, #native-session-list .project-item.is-running::after, .role-card.is-working::after { animation: none; display: none; }
 }
+
+/* ===== Design system pass =====
+   One type scale, one spacing rhythm, one radius set and one accent across the shell, chat, inspector and dialogs.
+   Type 11 / 12 / 13 / 14 / 16 / 18 · spacing 4 / 8 / 12 / 16 / 20 / 24 · radius 8 controls / 12 cards / 16 dialogs. */
+:root {
+  --fs-xs: 11px; --fs-sm: 12px; --fs-base: 13px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 18px;
+  --r-sm: 8px; --r-md: 10px; --r-lg: 12px; --r-xl: 16px;
+  --text-strong: #1f2433; --text-body: #3a4152; --text-muted: #7c8496; --text-faint: #a0a7b5;
+  --surface-sunken: #f4f5f8; --surface-chat: #f7f8fb;
+  --accent-tint: rgb(79 91 206 / 8%); --accent-tint-strong: rgb(79 91 206 / 14%);
+  --accent-fill: linear-gradient(180deg, #5d68d8 0%, var(--accent) 100%);
+  --focus-ring: 0 0 0 3px rgb(79 91 206 / 18%);
+  --elev-float: 0 1px 2px rgb(16 24 40 / 5%), 0 10px 30px rgb(16 24 40 / 9%);
+}
+body { color: var(--text-body); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+
+/* Header bars: same height, same translucent surface and hairline on all three columns. */
+.app-shell .brand, .app-shell .topbar, .app-shell .inspector-header {
+  background: rgb(250 250 252 / 86%); -webkit-backdrop-filter: saturate(1.4) blur(10px); backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--card-hairline); box-shadow: none;
+}
+.topbar h1 { color: var(--text-strong); font-size: var(--fs-xl); font-weight: 650; letter-spacing: -.01em; }
+.inspector-header h2 { color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; letter-spacing: 0; }
+.brand-copy strong { color: var(--text-strong); font-weight: 680; letter-spacing: -.01em; }
+.brand-copy span { color: var(--text-faint); letter-spacing: .02em; }
+
+/* Icon buttons: quiet by default, a soft tile on hover. */
+.topbar-actions .icon-button, .inspector-header .icon-button, .chat-heading-actions .icon-button {
+  border: 1px solid transparent; border-radius: var(--r-sm); color: var(--text-muted); background: transparent; box-shadow: none;
+  transition: background-color .15s, color .15s, border-color .15s;
+}
+.topbar-actions .icon-button:hover, .inspector-header .icon-button:hover, .chat-heading-actions .icon-button:hover { color: var(--accent); border-color: var(--card-hairline); background: #fff; }
+.topbar-actions button.secondary { min-height: 32px; padding: 0 12px; border-radius: var(--r-sm); font-size: var(--fs-sm); }
+
+/* Left navigation: segmented switch instead of loose underlined tabs. */
+.project-sidebar .navigation-mode {
+  flex: 1; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 3px;
+  border-radius: var(--r-md); background: rgb(22 30 58 / 5%);
+}
+.project-sidebar .navigation-mode button { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 6px 8px; border-radius: var(--r-sm); color: var(--text-muted); font-size: var(--fs-base); font-weight: 600; white-space: nowrap; transition: background-color .15s, color .15s, box-shadow .15s; }
+.project-sidebar .navigation-mode button:hover { color: var(--text-strong); }
+.project-sidebar .navigation-mode button[aria-pressed="true"] { color: var(--text-strong); background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 8%), 0 0 0 1px rgb(22 30 58 / 4%); }
+.project-sidebar .navigation-mode button[aria-pressed="true"]::after { content: none; }
+body .project-sidebar .sidebar-heading { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--card-hairline); }
+.project-sidebar .sidebar-heading .new-conversation-button { width: 32px; height: 32px; min-height: 32px; border-radius: var(--r-sm); color: var(--accent); }
+.project-sidebar .sidebar-heading .new-conversation-button:hover { color: var(--accent-dark); background: #fff; box-shadow: 0 0 0 1px var(--card-hairline); }
+.native-session-filters select { height: 32px; min-height: 32px; border-color: var(--card-hairline); border-radius: var(--r-sm); background-color: #fff; font-size: var(--fs-sm); }
+.sidebar-footer { border-top-color: var(--card-hairline); }
+.sidebar-footer .icon-button, .inspector-tabs button { border-radius: var(--r-sm); color: var(--text-muted); transition: background-color .15s, color .15s; }
+.sidebar-footer .icon-button:hover, .inspector-tabs button:hover { color: var(--accent); background: rgb(255 255 255 / 80%); }
+.inspector-tabs { border-top: 1px solid var(--card-hairline); }
+.column-splitter:hover::after, .column-splitter:focus-visible::after { background: var(--accent); }
+
+/* Chat canvas: neutral paper instead of tinted blue, bubbles as soft cards. */
+.chat-panel, .chat-panel.panel { background: var(--surface-chat); }
+.chat-heading { border-color: var(--card-hairline); background: rgb(250 250 252 / 86%); }
+.chat-feed { padding: 20px 20px 24px; }
+.chat-avatar, .chat-avatar .role-icon, .chat-avatar .role-icon svg { border-radius: var(--r-md); }
+.chat-avatar { box-shadow: 0 0 0 1px var(--card-hairline), 0 1px 2px rgb(16 24 40 / 5%); }
+.chat-name { color: var(--text-body); font-size: var(--fs-sm); font-weight: 600; }
+.chat-row time, .chat-meta time { color: var(--text-faint); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.chat-bubble {
+  padding: 10px 14px; border: 1px solid var(--card-hairline); border-radius: 4px var(--r-lg) var(--r-lg) var(--r-lg);
+  color: var(--text-strong); background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 4%); font-size: var(--fs-md); line-height: 1.65;
+}
+.chat-row.human .chat-bubble, .native-session-content .chat-row.human .chat-bubble {
+  border-color: rgb(79 91 206 / 16%); border-radius: var(--r-lg) 4px var(--r-lg) var(--r-lg); color: #262c5c;
+  background: linear-gradient(180deg, #f1f2ff 0%, #e9ebfd 100%); box-shadow: 0 1px 2px rgb(79 91 206 / 8%);
+}
+.quoted-message, .chat-quote { border-left-color: rgb(79 91 206 / 35%); border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--text-muted); background: var(--surface-sunken); }
+.message-progress { border-top-color: var(--card-hairline); color: var(--text-muted); font-size: var(--fs-sm); }
+
+/* Composer: a floating card with a filled send button. */
+.chat-composer { padding: 10px 16px 16px; border-color: transparent; background: linear-gradient(180deg, rgb(247 248 251 / 0%) 0%, var(--surface-chat) 40%); }
+.chat-input-field {
+  border: 1px solid var(--card-hairline-strong); border-radius: var(--r-lg); background: #fff;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 4px 14px rgb(16 24 40 / 5%); transition: border-color .15s, box-shadow .15s;
+}
+.chat-input-field:focus-within { border-color: rgb(79 91 206 / 45%); box-shadow: var(--focus-ring), 0 4px 14px rgb(16 24 40 / 6%); }
+.chat-input-field #chat-attach { border-radius: var(--r-sm); color: var(--text-muted); }
+.chat-input-field #chat-attach:hover { color: var(--accent); background: var(--accent-tint); }
+.chat-input-bar > button.primary { min-height: 42px; padding: 0 18px; border-radius: var(--r-lg); }
+
+/* Buttons: one height, radius and weight; primary carries a subtle depth. */
+button.primary, button.secondary, button.danger, .pause-button { border-radius: var(--r-sm); font-weight: 650; letter-spacing: .005em; transition: background .15s, border-color .15s, box-shadow .15s, color .15s, filter .15s; }
+button.primary { border-color: transparent; background: var(--accent-fill); box-shadow: 0 1px 2px rgb(16 24 40 / 10%), inset 0 1px 0 rgb(255 255 255 / 16%); }
+button.primary:hover:not(:disabled) { background: var(--accent-fill); filter: brightness(1.06); box-shadow: 0 2px 8px rgb(79 91 206 / 28%), inset 0 1px 0 rgb(255 255 255 / 16%); }
+button.secondary, .pause-button { border-color: var(--card-hairline-strong); color: var(--text-body); background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 4%); }
+button.secondary:hover:not(:disabled), .pause-button:hover:not(:disabled) { border-color: rgb(79 91 206 / 35%); color: var(--accent-dark); background: #fff; }
+button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Fields */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), textarea { border-color: var(--card-hairline-strong); border-radius: var(--r-sm); }
+.chat-input-field #chat-text, .native-takeover-form textarea { border: 0; border-radius: 0; }
+input:focus, textarea:focus, select:focus { border-color: rgb(79 91 206 / 55%); box-shadow: var(--focus-ring); }
+.chat-input-field #chat-text:focus, .native-takeover-form textarea:focus { box-shadow: none; }
+
+/* Chips and badges: compact pills with a leading status dot. */
+.role-badge, .status-chip, .count-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; letter-spacing: .01em; line-height: 18px; }
+.role-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .75; }
+.role-badge { color: var(--text-muted); background: var(--surface-sunken); }
+.role-badge.is-working { color: var(--accent-dark); background: var(--accent-tint-strong); }
+.role-badge.is-working::before { animation: badge-pulse 1.8s ease-in-out infinite; }
+@keyframes badge-pulse { 50% { opacity: .25; } }
+
+/* Role card interior: clear hierarchy — name row, runtime row, status row. */
+.role-list { gap: 10px; }
+.role-card { padding: 14px 14px 12px; }
+.role-card-head { gap: 6px; }
+.role-card-head .role-name-device, .role-card-head .role-live-scene { color: var(--text-faint); }
+.role-card-head .role-live-scene:hover { color: var(--accent); background: var(--accent-tint); }
+.role-id-row { gap: 8px; margin-top: 10px; padding: 6px 8px; border-radius: var(--r-sm); background: var(--surface-sunken); }
+.role-id-row .role-agent, .role-id-row .role-agent[data-runtime="codex"] { width: 22px; height: 22px; }
+.role-model { flex: 1; min-width: 0; overflow: hidden; color: var(--text-body); font-family: inherit; font-size: var(--fs-sm); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.role-activity-row { margin-top: 8px; }
+.role-activity { color: var(--text-muted); font-size: var(--fs-xs); }
+.role-card.is-working .role-id-row { background: rgb(255 255 255 / 70%); box-shadow: inset 0 0 0 1px rgb(79 91 206 / 12%); }
+
+/* Supervisor plan dock: a floating card with a progress rail and a stage timeline. */
+.execution-plans { left: 16px; right: 16px; bottom: calc(100% + 8px); border: 1px solid var(--card-hairline); border-radius: var(--r-lg); background: rgb(255 255 255 / 94%); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: var(--elev-float); font-size: var(--fs-sm); overflow: hidden; }
+.execution-plans summary { position: relative; gap: 10px; min-height: 44px; padding: 10px 14px 12px; color: var(--text-strong); }
+.execution-plans summary::after { content: ''; position: absolute; left: 14px; right: 14px; bottom: 6px; height: 3px; border-radius: 3px; background: linear-gradient(90deg, var(--accent) 0 calc(var(--plan-progress, 0) * 100%), rgb(22 30 58 / 7%) calc(var(--plan-progress, 0) * 100%) 100%); }
+.execution-plans.is-dismissible summary::after { right: 46px; }
+.execution-plans summary strong { font-size: var(--fs-base); font-weight: 650; }
+.execution-progress { padding: 1px 8px; border-radius: 999px; color: var(--accent-dark); background: var(--accent-tint-strong); font-size: var(--fs-xs); font-weight: 700; }
+.execution-status { color: var(--text-muted); font-size: var(--fs-xs); font-weight: 600; }
+.execution-plan-close { top: 2px; right: 2px; border-radius: var(--r-sm); color: var(--text-faint); }
+.execution-plan-close:hover { color: var(--accent); background: var(--accent-tint); }
+.execution-plan-list { padding: 4px 14px 12px; border-top: 1px solid var(--card-hairline); }
+.execution-plan-count { color: var(--text-faint); font-size: var(--fs-xs); }
+.execution-plan-item { padding: 10px 0; border-top-color: var(--card-hairline); }
+.execution-plan-item h3 { color: var(--text-strong); font-size: var(--fs-base); font-weight: 650; }
+.execution-plan-item p { color: var(--text-muted); }
+.execution-stage { position: relative; gap: 2px; padding: 6px 0 6px 18px; }
+.execution-stage::before { content: ''; position: absolute; left: 3px; top: 12px; width: 7px; height: 7px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px rgb(79 91 206 / 45%); }
+.execution-stage:not(:last-child)::after { content: ''; position: absolute; left: 6px; top: 22px; bottom: -6px; width: 1px; background: rgb(79 91 206 / 18%); }
+.execution-stage > span { color: var(--text-body); font-weight: 600; }
+.execution-stage small { color: var(--text-muted); }
+
+/* Inspector and session detail panels */
+.native-session-sidebar { background: transparent; }
+.native-session-sidebar h2.native-side-title { color: var(--text-strong); font-size: var(--fs-lg); font-weight: 650; }
+.native-session-sidebar > :not(.native-side-card) > h3 { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; }
+.native-side-card { border-color: var(--card-hairline); border-radius: var(--r-lg); background: #fff; box-shadow: var(--card-shadow); }
+.native-side-card h3 { color: var(--text-faint); font-size: var(--fs-xs); font-weight: 650; letter-spacing: .06em; }
+.artifact-section-heading h3, .inspector-panel h3 { color: var(--text-strong); font-size: var(--fs-base); font-weight: 650; }
+
+/* Dialogs: larger radius, deeper float and a blurred backdrop. */
+dialog { border: 1px solid var(--card-hairline); border-radius: var(--r-xl); color: var(--text-body); box-shadow: 0 2px 6px rgb(16 24 40 / 6%), 0 24px 64px rgb(16 24 40 / 18%); }
+dialog::backdrop { background: rgb(22 26 40 / 32%); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+dialog .dialog-heading h2 { color: var(--text-strong); font-size: var(--fs-xl); font-weight: 650; letter-spacing: -.01em; }
+
+@media (prefers-reduced-motion: reduce) { .role-badge.is-working::before { animation: none; } }

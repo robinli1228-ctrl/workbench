@@ -639,6 +639,7 @@ function renderExecutionPlans() {
   const progress=document.createElement('span');progress.className='execution-progress';progress.textContent=`${state.completed}/${state.total}`;
   const badge=document.createElement('span');badge.className='execution-status';badge.textContent=t(activity(state.current).label);
   summary.append(title,progress,badge);details.append(summary);panel.append(details);
+  panel.style.setProperty('--plan-progress',String(state.total?state.completed/state.total:0));
   if(state.dismissible.some(plan=>plan.id===state.current.id)) {
     const close=create('button','execution-plan-close');close.type='button';close.title='Close finished plan';close.setAttribute('aria-label','Close finished plan');
     close.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
