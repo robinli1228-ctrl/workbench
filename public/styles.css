@@ -2161,3 +2161,6 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 .native-history-loader .workspace-note:empty { display: none; }
 .native-history-separator { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .native-history-separator::before, .native-history-separator::after { content: ''; flex: 1; min-width: 12px; height: 1px; background: var(--border); }
+.message-queue-wait { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; color: var(--accent-dark); background: var(--accent-soft); font-size: 12px; }
+.message-queue-wait.is-released { color: #8a5a12; background: #fff1d8; }
+.message-queue-first { min-height: 30px; padding: 0 10px; font-size: 12px; white-space: nowrap; }

@@ -15,6 +15,7 @@ import { steeringWaitReason } from './role-steering.mjs';
 import { ConversationContext } from './conversation-context.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followup.mjs';
+import {collaborationQueueView} from './coordination-wait.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -23,8 +24,8 @@ const now = () => new Date().toISOString();
 export function handoffOnly(run,report=run?.report){return run?.status==='succeeded'&&Boolean(run.handoffWait?.requestId)&&!['passed','failed','blocked','needs_input'].includes(report?.verdict);}
 
 /** Give a result continuation priority once at a turn boundary; after that, ordinary messages go first in their original FIFO order. */
-export function orderRoleQueue(tasks,priorityUsed,discussionUsed=()=>false) {
-  const rank=t=>t.steering ? -1 : (t.discussionDeliveryId||t.discussionIntentId) ? (discussionUsed(t.roleSnapshot?.nodeId)?1:0) : t.continuationRunId && !priorityUsed(t.roleId) ? 0 : t.scheduledJobId||t.proactiveInitial ? 2 : 1;
+export function orderRoleQueue(tasks,priorityUsed,discussionUsed=()=>false,humanFirst=()=>false) {
+  const rank=t=>t.steering||t.collaborationYield ? -1 : (t.discussionDeliveryId||t.discussionIntentId) ? (discussionUsed(t.roleSnapshot?.nodeId)?1:0) : t.continuationRunId && !priorityUsed(t.roleId) ? 0 : t.scheduledJobId||t.proactiveInitial ? 2 : humanFirst(t) ? 0.5 : 1;
   return [...tasks].sort((a,b)=>rank(a)-rank(b)||(Date.parse(a.createdAt)||0)-(Date.parse(b.createdAt)||0));
 }
 export function mentionNames(text) {
@@ -316,7 +317,10 @@ export class Rooms {
     const nodes = new Set(); let changed = false;
     const discussions=new RoleDiscussions(this.db,{online:isReady});changed=discussions.recover().changed;
     const candidates=[...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()];
-    for (let task of orderRoleQueue(candidates,id=>this.db.get('roleQueueTurns',id)?.priorityUsed,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed)) {
+    const collaboration=collaborationQueueView(this.db);
+    // After a stalled collaboration is released, the human's own queued messages go ahead of other ordinary work.
+    const humanFirst=t=>!t.requestId?false:collaboration.forTask(t).released&&this.db.get('roomMessages',t.sourceMessageId||'')?.sender==='human'&&!this.db.get('coordinationRequests',t.requestId)?.parentRequestId;
+    for (let task of orderRoleQueue(candidates,id=>this.db.get('roleQueueTurns',id)?.priorityUsed,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed,humanFirst)) {
       if(!task.discussionDeliveryId&&!task.discussionIntentId&&followupFor(this.db,task)){task=new ProactiveFollowup(this.db).prepareStart(task.id);if(!task){changed=true;continue;}}
       const discussion=Boolean(task.discussionDeliveryId||task.discussionIntentId);
       const kind=task.discussionDeliveryId?'discussionDeliveries':'discussionIntents',recordId=task.discussionDeliveryId||task.discussionIntentId;
@@ -327,6 +331,7 @@ export class Rooms {
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)
+        : !discussion&&!task.steering&&!collaboration.forTask({...task,roleId:role.id}).allowed ? tr('collabWait.queued',{role:role.name,minutes:collaboration.forTask({...task,roleId:role.id}).minutesLeft})
         : !task.contextPrepared ? tr('rooms.organizingConversation')
         : (task.sourceConflictId||task.sourceConflictPeerId||task.sourceConflictAssignmentRequestId)&&worker?.capabilities?.sourceSyncTools!==1 ? tr('sourceSync.failure',{code:'worker_unsupported',detail:''})
         : sourceInputWaitReason(this.db,task,role.nodeId) ? tr('sourceSync.failure',{code:sourceInputWaitReason(this.db,task,role.nodeId),detail:''})

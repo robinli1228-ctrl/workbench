@@ -152,6 +152,8 @@
                   <label>Project name<input name="name" required maxlength="80"></label>
                   <label>Project folder name<input id="project-folder-name" readonly></label>
                   <label class="full-width">Project description<textarea name="description" rows="3" maxlength="12000"></textarea></label>
+                  <label>Collaboration wait auto-release (minutes)<input name="collaborationWaitReleaseMinutes" type="number" min="5" max="1440" step="1" inputmode="numeric"></label>
+                  <p class="workspace-note">While a role waits for its own collaboration results, other messages for it queue. After this many minutes without progress they run anyway; the collaboration is kept.</p>
                   <label class="full-width legacy-repository">Gitee repository URL<input name="repoUrl" placeholder="https://gitee.com/org/repo or git@gitee.com:org/repo.git"></label>
                   <p class="workspace-note full-width legacy-repository">Uses the node's existing SSH key or Git credentials; do not put an account password or Token in the URL. Saving the URL does not set origin, clone, pull or push.</p>
                   <label class="legacy-repository">Node to check<select name="nodeId"></select></label><div class="check-action legacy-repository"><button class="secondary" id="repository-check" type="button">Check saved repository</button></div>
