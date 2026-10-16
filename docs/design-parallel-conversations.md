@@ -1,6 +1,6 @@
 # Parallel group chats and team-only project copying
 
-Status: specification approved by the user's instruction to continue development on 2026-10-16. Implementation plans await review and execution-method confirmation. Not implemented or deployed.
+Status: implemented and locally committed on 2026-10-16 after the user selected native execution. Isolated browser, real local Codex and real Mac/server directory-copy acceptance passed; final independent-review findings were reproduced and corrected. Not pushed, deployed or activated on business projects. Verification limits are recorded below.
 
 Source inspection baseline: `2790b8b10e824bd2fe887e04abf71580696b8c05` and its parent `6c2e597a518dae2ec6fe0683723c4ea26d29f21d`. This document is the single design source for these two actions; it does not change the existing collaboration-session or Git-branch contracts.
 
@@ -125,4 +125,15 @@ Do not rewrite the established Worker execution protocol unless propagation anal
 
 ## 11. Delivery boundary
 
-Review this specification before writing the implementation plan. The plan must order conversation propagation and context-isolation checks before exposing the new UI actions, then add team copying and independent verification. Deployment, service restart and real business-project activation remain separate steps; this document authorizes none of them and changes no running task.
+The two implementation plans delivered conversation propagation/context isolation before the new navigation, then strict team-only copying. Deployment, service restart and real business-project activation remain separate steps; this document authorizes none of them.
+
+## 12. Implemented acceptance and limits
+
+- Implementation began at `a0f627828a20d09cd88bbc35e8e3484a616657a0`; team-copy work began at `84c522f6907cbbaf42cfd3c237828db83e03dcdb`. Real native acceptance used the parallel-chat implementation; real server copy preparation used the isolated `60d421a224e63d2ec1fd0aed1436885bc7867f41` artifact. Neither artifact changed the production release or service.
+- An actual local Codex original Run survived branch creation and finished successfully. The branch Run started only after the original finished, with a distinct native-session ID and no resume ID or old marker in its context packet. All four adapter input paths also passed deterministic marker-isolation checks; real Grok, Claude and Antigravity startup was not repeated for this feature.
+- Real isolated Home/Edge checks covered desktop/mobile layout, same-title sibling navigation, separate drafts, reload selection, late original-chat results, slow stale-state responses, scheduled-job sibling navigation and deleted-project recovery. Copy checks covered empty/custom prompt previews, blank/duplicate-name rejection, offline partial progress, same-operation retry, source/destination ordering, independent copied-role edits, and copied settings surviving language refresh and Home restart.
+- Real isolated Mac and server Workers created exactly the ownership marker, `AGENTS.md` and `CLAUDE.md` in each copied business directory. A disconnected target blocked readiness; reconnect/retry completed the same destination. The copy created no Tasks, Runs or repository records. The production Worker PID was unchanged and only test-owned processes were stopped. The first server test attempt lacked the existing CLI environment; it was retained as a failed test, then rerun as the existing service user with its CLI path, without changing credentials or production configuration.
+- One independent whole-branch review found five important gaps: CLI-switch history input, setup-catalog scope, setup notice routing, deleted-project selection and scheduled-job navigation. Each was reproduced before correction and verified by regression tests. No review finding was silently reclassified as passed.
+- Shared capacity may serialize sibling chats. CLI switching requires one unarchived native slot. Copied preset text is a frozen independent definition, not an automatically relocalized default. Shared-source conflicts retain the existing project/default-chat notification policy. Global supervisor/prompt execution semantics were not redesigned. These are explicit boundaries, not claims of cross-chat filesystem isolation.
+
+Private scripts, logs, native identities, directory receipts and screenshots remain under ignored `.local/parallel-conversations/` and `.local/team-project-copy/`; no credentials or personal paths are committed.

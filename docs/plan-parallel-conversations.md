@@ -10,7 +10,7 @@
 
 **Spec:** [design-parallel-conversations](design-parallel-conversations.md), sections 1–6 and 8–11. Team-only copying has a separate [implementation plan](plan-team-project-copy.md).
 
-**Source baseline:** `0fe1d98aa3e532f877f2f494bc737556c3117d28`. Status: specification approved by the user's instruction to continue development; this implementation plan awaits review and execution-method confirmation. No feature code implemented.
+**Execution baseline:** `a0f627828a20d09cd88bbc35e8e3484a616657a0`. Status: Tasks 1–7 implemented through user-selected native execution; final review corrections and acceptance are recorded in the [specification](design-parallel-conversations.md#12-implemented-acceptance-and-limits). The checklists below retain the implementation procedure; the linked acceptance record states what was actually verified and its limits. Not pushed or deployed.
 
 ## Global Constraints
 
@@ -133,4 +133,4 @@ Native catalogue `roleBinding.conversationId` and running-row metadata expose th
 
 ## Handoff
 
-Recommended execution: **Native** in this session, with a single independent whole-branch review at the end. The identity, context and continuation tasks share interfaces and benefit from one implementer; task-by-task fresh contexts would add coordination overhead. Review this plan before implementation. This plan does not approve service restart, production model dispatch, or GitHub publication.
+Executed **Native** with a single independent whole-branch review shared with the team-copy increment. The identity, context and continuation tasks share interfaces. This plan does not approve service restart, production model dispatch, or GitHub publication.

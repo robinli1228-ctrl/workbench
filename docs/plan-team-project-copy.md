@@ -10,7 +10,7 @@
 
 **Spec:** [design-parallel-conversations](design-parallel-conversations.md), especially sections 7–8 and acceptance 9–11. This is a separate deliverable from [parallel chats](plan-parallel-conversations.md), but follows that plan in the chosen release order.
 
-**Source baseline:** `0fe1d98aa3e532f877f2f494bc737556c3117d28`; record the verified parallel-chat commit as the execution baseline before implementing this second increment, without discarding other changes or rewriting branches. Status: awaiting plan review; not implemented.
+**Execution baseline:** `84c522f6907cbbaf42cfd3c237828db83e03dcdb`. Status: Tasks 1–4 implemented through user-selected native execution, including real isolated Mac/server preparation. The checklists below retain the implementation procedure; the [acceptance record](design-parallel-conversations.md#12-implemented-acceptance-and-limits) states verified behavior and limits. Not pushed or deployed.
 
 ## Global Constraints
 
@@ -96,4 +96,4 @@ Return per-device preparation states through the existing workspace state feed a
 
 ## Handoff
 
-Recommended execution: **Native**, after the parallel-chat plan, with independent review before integration. Directory provisioning has a separate acceptance gate even if its UI ships in the same release. This plan does not authorize deployment, service restart, business-project activation, account changes or GitHub publication.
+Executed **Native**, after the parallel-chat implementation, with one shared independent review before integration. Directory provisioning passed its separate isolated Mac/server acceptance gate. This plan does not authorize deployment, service restart, business-project activation, account changes or GitHub publication.
