@@ -532,6 +532,8 @@
           <label>Select model<select name="model" required></select></label>
           <label>Reasoning effort / effort<select name="effort"><option value="">Use CLI default</option></select></label>
         </div>
+        <label class="full-width">Permission scope<select name="permissionScope"></select></label>
+        <p class="workspace-note full-width" data-permission-note></p>
         <h3 class="role-section-title full-width">Role responsibility and prompt</h3>
         <label class="full-width">Role responsibility<textarea id="supervisor-responsibility" name="responsibility" rows="3" readonly></textarea></label>
         <div class="full-width">
@@ -560,6 +562,8 @@
           <label>Select model<select name="model" required></select></label>
           <label id="role-effort-field" hidden>Reasoning effort / effort<select name="effort"><option value="">Default (unspecified)</option></select></label>
         </div>
+        <label class="full-width">Permission scope<select name="permissionScope"></select></label>
+        <p class="workspace-note full-width" data-permission-note></p>
         <p id="role-runtime-note" class="workspace-note full-width"></p>
         <input type="hidden" name="mode" value="workspace-write">
         <label class="checkbox-label full-width" id="role-auto-approve-field" hidden><input type="checkbox" name="autoApprove" checked>Skip approvals by default</label>

@@ -39,7 +39,10 @@ const LEGACY_SUPERVISOR_DEFAULTS = new Set([
   'bc1b43525dbdd2642f780776d9f7974f62eb41691d80fb3671a56fb6cecc6118',
   'febb81a33a504d8393ffe0a8d053ed953f9a9b8ae8879f782db09adcfd1d9b3e',
   'be0c5fc6adbdc4bd7ace76de8489a94d2b944ee6b577e346b18730c195c3eba1',
-  'f4fdcbae86b204daad8506f4f8a431c48fa73052980abafdd6cd55434f2414fe'
+  'f4fdcbae86b204daad8506f4f8a431c48fa73052980abafdd6cd55434f2414fe',
+  // Defaults before the goal-ownership line; saved copies of them follow the new built-in template.
+  '2f93053a4afdc8f4f1e9c3a9a1134cf6915e3ad1481bb61a14cf53b1abccfa01',
+  '5028d377bc872bb766d72588011c48dbaa4446350c5b3ca908d4517b02e3ad69'
 ]);
 const LEGACY_PLATFORM_DEFAULTS = new Set([
   '4a7bd0d1a4bedbfd714d1493b7fd6c9a439bfec754a23f43d150a845ff249324',

@@ -8,6 +8,7 @@ import { createHistoryViewer } from './history-view.js';
 import {createRoleSwitchUI} from './role-switch.js';
 import {createRoleHistoryTabs} from './role-history.js';
 import {createCliRecoveryUI} from './cli-recovery.js';
+import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
 import {createMentionInput} from './mention-input.js';
 
 /** Long text only changes its carrier; the file content keeps the original line breaks, whitespace and trailing characters. */
@@ -1112,7 +1113,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       && ['nodeId', 'runtime', 'model', 'effort'].every(key => fields[key].value === (role[key] || ''))
       && fields.mode.value === (role.mode || 'workspace-write')
       && fields.enabled.checked === Boolean(role.enabled)
-      && fields.autoApprove.checked === (role.autoApprove !== false);
+      && fields.autoApprove.checked === (role.autoApprove !== false)
+      && (!fields.permissionScope.value || fields.permissionScope.value === role.permissionScope);
   }
   function renderRoleSaveState() {
     if(!savingRole)document.querySelector('#role-save').textContent=editingRoleSnapshot?.runtime&&roleForm.elements.runtime.value!==editingRoleSnapshot.runtime?'Handoff and switch':'Save role';
@@ -1254,6 +1256,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   roleForm.elements.runtime.addEventListener('change', () => { preferredRuntime = roleForm.elements.runtime.value; renderModelOptions(); });
   roleForm.elements.model.addEventListener('change', () => { preferredModel = roleForm.elements.model.value; renderModelOptions(); });
   roleForm.elements.effort.addEventListener('change', () => { preferredEffort = roleForm.elements.effort.value; });
+  const renderRolePermission = () => renderPermissionScope(roleForm.elements.permissionScope, roleForm.querySelector('[data-permission-note]'), {
+    worker: data.workers?.find(w => w.id === roleForm.elements.nodeId.value), runtime: roleForm.elements.runtime.value,
+    saved: editingRoleSnapshot?.permissionScope, isNew: !editingRoleId });
+  roleForm.elements.permissionScope.addEventListener('change', () => { roleForm.elements.permissionScope.dataset.touched = '1'; renderRolePermission(); });
+  roleForm.elements.nodeId.addEventListener('change', renderRolePermission);
+  roleForm.elements.runtime.addEventListener('change', renderRolePermission);
   roleForm.elements.enabled.addEventListener('change', renderModelOptions);
 
   function openRoleEditor(roleId) {
@@ -1265,6 +1273,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     editingProjectId = projectId;
     const role = roleId ? (data.roles || []).find(r => r.id === roleId) : null;
     populateRole(role || undefined);
+    delete roleForm.elements.permissionScope.dataset.touched; renderRolePermission();
     roleDialog.showModal();
     if(role){const pending=cliSwitch.resume({projectId:editingProjectId,role,host:roleForm,operation:data.roleSwitches?.find(op=>op.roleId===role.id&&!['committed','cancelled'].includes(op.status))});if(pending){savingRole=true;void pending.then(op=>{if(op.status==='committed')roleDialog.close();}).catch(error=>setError(error.message)).finally(()=>{savingRole=false;renderRoleSaveState();});}}
   }
@@ -1296,6 +1305,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const values = Object.fromEntries(new FormData(roleForm));
     // Disabled saved options are omitted by FormData; keep the binding shown by the editor instead of treating omission as a CLI switch or clear.
     for(const key of ['nodeId','runtime','model','effort'])values[key]=roleForm.elements[key].value;
+    delete values.permissionScope; const permissionScope = permissionScopeValue(roleForm.elements.permissionScope); if (permissionScope) values.permissionScope = permissionScope;
     const onlyDefinition = definitionOnly();
     const effort = String(values.effort || '').trim();
     const body = { ...values, id: editingRoleId || undefined, enabled: roleForm.elements.enabled.checked, autoApprove: roleForm.elements.autoApprove.checked, effort: effort || null };

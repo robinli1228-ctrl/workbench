@@ -11,6 +11,7 @@ import { listRoleTemplates } from './role-templates.mjs';
 import { isRoleConfigured, isSupervisorName, isBroadcastName } from './default-roles.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
 import { executionConflict } from './execution-workspace.mjs';
+import { resolveRolePermissionScope, withPermissionScope } from './role-permissions.mjs';
 import { steeringWaitReason } from './role-steering.mjs';
 import { ConversationContext } from './conversation-context.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
@@ -137,9 +138,11 @@ export class Rooms {
       if (!effort || effort.length > 32) throw new Error(tr('rooms.invalidReasoningEffort'));
     }
     const templateKey = old ? old.templateKey : listRoleTemplates(this.db).find(t => t.key === input.templateKey)?.key;
-    return { ...old, id: old?.id || randomUUID(), projectId, templateKey, revision: old ? (old.revision || 1) + 1 : 1,
+    const permissionScope = resolveRolePermissionScope({ input, old, worker: this.db.get('workers', input.nodeId), runtime, configured, isNew: !old,
+      message: (code, scope) => tr(`rolePermissions.${code}`, { scope }) });
+    return withPermissionScope({ ...old, id: old?.id || randomUUID(), projectId, templateKey, revision: old ? (old.revision || 1) + 1 : 1,
       name, repositoryId, nodeId: configured ? input.nodeId : '', runtime: configured ? runtime : '', model: configured ? input.model : '',
-      mode: 'workspace-write', effort, autoApprove, instructions: input.instructions.trim(), responsibility: normalizeResponsibility(input.responsibility, old?.responsibility || ''), configured, enabled: configured && input.enabled, updatedAt: now() };
+      mode: 'workspace-write', effort, autoApprove, instructions: input.instructions.trim(), responsibility: normalizeResponsibility(input.responsibility, old?.responsibility || ''), configured, enabled: configured && input.enabled, updatedAt: now() }, permissionScope);
   }
 
   /** Definition edits do not run a CLI probe or change any execution binding, including for offline roles. */

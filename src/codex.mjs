@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { tr } from './i18n.mjs';
 import { executionText } from './input-language.mjs';
 import { contextSample } from './context-usage.mjs';
+import { codexPermissionOptions } from './role-permissions.mjs';
 
 const git = promisify(execFile);
 const MAX_TOOL_OUTPUT = 12000;
@@ -58,7 +59,7 @@ async function gitMetadataRoots(roots) {
 
 /** A managed role may briefly reuse the App Server, rebinding instructions and events every turn; stdio exposes no control port. */
 export class CodexSession {
-  constructor({ cwd, writableRoots = [], attachments = [], model, mode, emit, roleInstructions = '', roleName = '', effort = 'low', autoApprove = true, env = process.env, resumeSessionId = null, keepAlive = false, maintenance = false,minimalInstructions=false,configurationUpdate='',beforeInput,onProcess }) {
+  constructor({ cwd, writableRoots = [], attachments = [], model, mode, emit, roleInstructions = '', roleName = '', effort = 'low', autoApprove = true, env = process.env, resumeSessionId = null, keepAlive = false, maintenance = false,minimalInstructions=false,configurationUpdate='',beforeInput,onProcess,permissionScope=null,toolRoots=[] }) {
     this.beforeInput=beforeInput;this.onProcess=onProcess;this.inputAttempted=false;
     this.minimalInstructions=minimalInstructions;
     this.configurationUpdate=configurationUpdate;
@@ -67,7 +68,9 @@ export class CodexSession {
     this.cwd = cwd; this.model = model; this.mode = maintenance ? 'read-only' : 'workspace-write'; this.emit = emit;
     this.roleInstructions = roleInstructions; this.roleName = roleName;
     this.writableRoots = writableRoots;
-    this.effort = effort; this.autoApprove = true; this.env = env;
+    // A frozen role scope replaces the legacy sandbox; approval scope routes escalation requests to the human instead of auto-accepting.
+    this.permissionScope = maintenance ? null : permissionScope; this.toolRoots = toolRoots;
+    this.effort = effort; this.autoApprove = this.permissionScope !== 'device-approval'; this.env = env;
     this.resumeSessionId = resumeSessionId;
     this.nextId = 0; this.pending = new Map(); this.approvals = new Map();
     this.stopping = false; this.done = false;
@@ -141,12 +144,14 @@ export class CodexSession {
     // Loaded-thread resume ignores environment overrides. Retain the process and native ID, but release this idle subscription before reloading.
     if(this.minimalInstructions&&this.threadId)await this.request('thread/unsubscribe',{threadId:this.threadId});
     const writableRoots = [...new Set([...this.writableRoots, ...await gitMetadataRoots([this.cwd, ...this.writableRoots])])];
+    const scoped = this.permissionScope ? codexPermissionOptions(this.permissionScope, { toolRoots: this.toolRoots, writeRoots: writableRoots }) : null;
+    if (this.permissionScope && !scoped) throw new Error(`Unsupported permission scope: ${this.permissionScope}`);
     const options = {
-      cwd: this.cwd, model: this.model, approvalPolicy: this.autoApprove ? 'never' : 'untrusted',
-      sandbox:this.mode,
+      cwd: this.cwd, model: this.model, approvalPolicy: scoped ? scoped.approvalPolicy : this.autoApprove ? 'never' : 'untrusted',
+      ...(scoped ? (scoped.sandbox ? { sandbox: scoped.sandbox } : {}) : { sandbox: this.mode }),
       // Git sync and cross-device wb communication need network access; the workspace write boundary is kept and re-applied on resume.
       config: { ...Object.fromEntries(['GIT_CONFIG_GLOBAL', 'GIT_TERMINAL_PROMPT', 'WB_TURN_CONTEXT', 'WB_PROJECT_ROOT', 'WB_KNOWLEDGE', 'WB_WORKSPACE', 'WB_RUN_ID', 'WB_ROLE_SESSION_ID', 'WB_CONVERSATION_ID', 'WB_REQUEST_ID', 'WB_ROLE', 'WB_HOP', 'WB_HOME', 'WB_MODE', 'WB_BRIDGE', 'WB_CLI', 'WB_REPOSITORIES', 'WB_SOURCE_SYNC']
-        .filter(key => typeof this.env[key] === 'string').map(key => [`shell_environment_policy.set.${key}`, this.env[key]])), 'sandbox_workspace_write.writable_roots':writableRoots, 'sandbox_workspace_write.network_access':true },
+        .filter(key => typeof this.env[key] === 'string').map(key => [`shell_environment_policy.set.${key}`, this.env[key]])), ...(scoped ? scoped.config : { 'sandbox_workspace_write.writable_roots':writableRoots, 'sandbox_workspace_write.network_access':true }) },
       developerInstructions: this.minimalInstructions?this.roleInstructions:executionText('codex.you', { p1: this.roleName ? executionText('codex.roleInProjectGroupChat', { roleName: this.roleName }) : executionText('codex.executorTask'), p2: this.roleInstructions || '' })
     };
     const response = await this.request(this.resumeSessionId?'thread/resume':'thread/start',this.resumeSessionId?{threadId:this.resumeSessionId,...options}:options);
