@@ -260,3 +260,9 @@
 - Worker local Run persistence and launch-command identity retain the frozen scope and contract, so reconnect and role-terminal resume do not lose the admission policy.
 - Discussion answer and business-resume turns now obey the same collaboration owner as ordinary continuations. Child clarifications follow their actual caller chain; direct discussion admission cannot bypass scheduling protection. Requests, replies and native histories remain intact.
 - Follow-up regressions are kept in ignored local verification directories. No production deployment, restart or live-task manipulation is part of this integration.
+
+## 2026-10-16 — Configuration information and read-only update checks
+
+- Replaced the configuration-assistant composer with Configuration Information after Platform Prompts. It shows Home and individual local/server Worker versions, manual GitHub main comparison and commit-summary update notes; it does not generate AI instructions or update/restart anything. Legacy assistant records, APIs and admitted work are retained.
+- Added startup source identity, clean-build stamping for source-only packaging, explicit unknown/modified/offline/ahead/diverged states and bounded, coalesced one-minute GitHub reads. Build verification detects changed, missing and additional runtime files and does not borrow project-binding SHAs or account credentials.
+- Local verification covered real isolated Home/Worker and Edge desktop/mobile navigation, language switching, error display, unchanged history/reports/prompts and zero dispatched tasks. Server registration and update-available/error cases used fixtures; public GitHub main was also queried read-only. This records local implementation and isolated verification, not deployment, server acceptance or a production restart.

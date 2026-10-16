@@ -1,3 +1,13 @@
+.software-update-actions,.software-version-heading { display:flex;align-items:center;gap:12px;flex-wrap:wrap; }
+.software-versions { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px; }
+.software-version-card { min-width:0; }
+.software-version-heading h4 { margin:0;overflow-wrap:anywhere; }
+.software-commit { display:block;overflow-wrap:anywhere;font-size:12px; }
+.software-update-status { display:block;margin:14px 0 8px;color:var(--muted); }
+.software-update-update_available { color:#1765ab; }
+.software-update-latest { color:#137848; }
+.software-update-modified,.software-update-diverged,.software-update-check_failed { color:#95610d; }
+.software-update-notes { padding-left:20px;overflow-wrap:anywhere;line-height:1.7; }
 .chat-composer-shell { position: relative; flex-shrink: 0; z-index: 3; }
 .message-progress { margin-top:8px; padding-top:7px; border-top:1px solid var(--accent-line); color:var(--muted,#667e96); font-size:12px; line-height:1.5; }
 .message-progress.needs-attention { color:#996000; }
