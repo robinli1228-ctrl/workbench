@@ -187,6 +187,7 @@ export class Store {
       }
       for (const t of this.list('tasks').filter(t => t.projectId === id)) this.remove('tasks', t.id);
       for (const m of this.list('roomMessages').filter(m => m.projectId === id)) this.remove('roomMessages', m.id);
+      for (const c of this.listProject('groupConversations',id)) this.remove('groupConversations',c.id);
       this.remove('proactiveFollowups',id);
       // Only explicit project deletion releases its private read evidence; there is no background eviction.
       const readOperations=this.listProject('readOperations',id),readUsage=this.get('readStorageUsage','home');

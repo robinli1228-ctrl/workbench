@@ -1,6 +1,12 @@
 // English message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  'conversations.invalid': 'Group conversation not found in this project.',
+  'conversations.recordMismatch': 'This record belongs to a different group conversation.',
+  'conversations.systemProject': 'System configuration projects cannot create group conversations.',
+  'conversations.invalidRequest': 'A distinct UUID creation request ID is required.',
+  'conversations.invalidTitle': 'Chat title must contain 1 to 80 characters.',
+  'conversations.retryConflict': 'This creation request was already used with different arguments.',
   'roleTemplates.localDeveloper': 'Local-Developer',
   'roleTemplates.localDeveloperResponsibility': 'Implement and fix code on the local machine, run self-tests and follow up on review and testing issues.',
   'roleTemplates.localDeveloperInstructions': `You are the local development role. Implement and fix project code on the local machine and run self-tests there.

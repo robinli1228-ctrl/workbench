@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Store, terminal } from './store.mjs';
+import {GroupConversations} from './group-conversations.mjs';
 import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
 import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
 import {validateCliCapacity,reservedTerminalSlots,registrationCapacity} from './device-capacity.mjs';
@@ -459,6 +460,11 @@ const server = http.createServer(async (req, res) => {
       }
       if((pathname.startsWith('/api/agent/source-inputs/')||pathname.startsWith('/api/agent/source-candidates/'))&&await sourceSync.inputHttp(req,res,pathname))return;
       if(await sourceSync.browserHttp(req,res,pathname))return;
+      const conversationsRoute=pathname.match(/^\/api\/projects\/([^/]+)\/conversations$/);
+      if(conversationsRoute&&req.method==='GET')return json(res,new GroupConversations(db).list(conversationsRoute[1]));
+      if(conversationsRoute&&req.method==='POST'){
+        const result=new GroupConversations(db).create(conversationsRoute[1],await body(req));change();return json(res,result,201);
+      }
       const uploadMatch = pathname.match(/^\/api\/projects\/([^/]+)\/attachments$/);
       if (uploadMatch && req.method === 'POST') return json(res, await attachments.upload(uploadMatch[1], req), 201);
       const transferMatch=pathname.match(/^\/api\/projects\/([^/]+)\/attachment-transfers$/);

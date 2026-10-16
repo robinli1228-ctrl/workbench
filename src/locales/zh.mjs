@@ -1,6 +1,12 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  'conversations.invalid': '此项目中不存在指定的群聊。',
+  'conversations.recordMismatch': '这条记录属于其他群聊。',
+  'conversations.systemProject': '系统配置项目不能新建群聊。',
+  'conversations.invalidRequest': '新建请求必须使用独立的 UUID。',
+  'conversations.invalidTitle': '群聊名称须包含 1 至 80 个字符。',
+  'conversations.retryConflict': '此新建请求已使用过，重试参数不一致。',
   'roleTemplates.localDeveloper': '本地开发',
   'roleTemplates.localDeveloperResponsibility': '在本机实现和修复代码、完成自测，并跟进审核和测试问题。',
   'roleTemplates.localDeveloperInstructions': `你是本地开发角色，在本机为项目实现和修复代码，并在本机完成自测。
