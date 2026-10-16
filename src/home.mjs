@@ -466,7 +466,13 @@ const server = http.createServer(async (req, res) => {
       const copyPreviewRoute=pathname.match(/^\/api\/projects\/([^/]+)\/team-copy\/preview$/);
       if(copyPreviewRoute&&req.method==='GET')return json(res,projectTeamCopy.preview(copyPreviewRoute[1],{roleOrder:url.searchParams.has('roleOrder')?JSON.parse(url.searchParams.get('roleOrder')):undefined}));
       const teamCopyRoute=pathname.match(/^\/api\/projects\/([^/]+)\/team-copies$/);
-      if(teamCopyRoute&&req.method==='POST')return json(res,projectTeamCopy.begin(teamCopyRoute[1],await body(req)),201);
+      if(teamCopyRoute&&req.method==='POST'){
+        const result=projectTeamCopy.begin(teamCopyRoute[1],await body(req));
+        void projectTeamCopy.retry(result.id).catch(error=>console.error('Team copy preparation failed:',error.message));
+        return json(res,result,201);
+      }
+      const copyRetryRoute=pathname.match(/^\/api\/project-copies\/([^/]+)\/retry$/);
+      if(copyRetryRoute&&req.method==='POST')return json(res,await projectTeamCopy.retry(copyRetryRoute[1]));
       const copyDetailRoute=pathname.match(/^\/api\/project-copies\/([^/]+)$/);
       if(copyDetailRoute&&req.method==='GET')return json(res,projectTeamCopy.get(copyDetailRoute[1]));
       if(conversationsRoute&&req.method==='GET')return json(res,new GroupConversations(db).list(conversationsRoute[1]));

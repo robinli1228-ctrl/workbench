@@ -1,5 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {folderName} from './project-space.mjs';
+import {folderName,within} from './project-space.mjs';
+import {join,isAbsolute,resolve} from 'node:path';
+import {runtimeIssue} from './runtime-probe.mjs';
 import {tr} from './i18n.mjs';
 
 const fields=['name','templateKey','responsibility','instructions','nodeId','runtime','model','effort','mode','autoApprove','enabled'];
@@ -39,10 +41,70 @@ export class ProjectTeamCopy {
       const destinationProjectId=randomUUID(),roleIdMap=Object.fromEntries(snapshot.roles.map(r=>[r.id,r.systemSupervisor?`supervisor-${destinationProjectId}`:randomUUID()]));
       this.db.put('projects',{id:destinationProjectId,name,folderName:folder,description:'',root:'',repoUrl:'',repository:null,projectScope:true,setupStatus:'copy_pending',copyOperationId:input.requestId,createdAt:stamp()});
       this.db.put('projectCopyOperations',{id:input.requestId,sourceProjectId,destinationProjectId,name,folderName:folder,fingerprint,sourceRevision:snapshot.sourceRevision,snapshot,roleIdMap,
-        deviceReceipts:Object.fromEntries(snapshot.requiredDeviceIds.map(nodeId=>[nodeId,{nodeId,status:'pending'}])),status:'pending',createdAt:stamp(),updatedAt:stamp()});
+        deviceReceipts:Object.fromEntries(snapshot.requiredDeviceIds.map(nodeId=>[nodeId,{nodeId,workspaceRoot:this.db.get('workers',nodeId)?.workspaceRoot||this.db.get('workers',nodeId)?.allowedRoots?.[0]||null,status:'pending'}])),status:'pending',createdAt:stamp(),updatedAt:stamp()});
       this.change();return this.get(input.requestId);
     });
   }
   /** Explicit detail may contain prompts; the periodic state projection uses projectCopyView instead. */
   get(id){const op=this.db.get('projectCopyOperations',id);if(!op)throw new Error(tr('teamCopy.notFound'));return {...projectCopyView(op),snapshot:op.snapshot};}
+
+  /** One bounded attempt per click; concurrent retries share the same in-process operation. */
+  retry(id){
+    if(this.inflight.has(id))return this.inflight.get(id);
+    const attempt=this.prepare(id).finally(()=>this.inflight.delete(id));this.inflight.set(id,attempt);return attempt;
+  }
+  save(id,patch){const op=this.db.get('projectCopyOperations',id);if(!op)throw new Error(tr('teamCopy.notFound'));const result=this.db.put('projectCopyOperations',{...op,...patch,updatedAt:stamp()});this.change();return result;}
+  receipt(id,nodeId,patch){const op=this.db.get('projectCopyOperations',id);return this.save(id,{deviceReceipts:{...op.deviceReceipts,[nodeId]:{...op.deviceReceipts[nodeId],...patch}}});}
+  async prepare(id){
+    let op=this.db.get('projectCopyOperations',id);if(!op)throw new Error(tr('teamCopy.notFound'));if(op.status==='ready')return this.get(id);
+    op=this.save(id,{status:'preparing',error:null});
+    const pending=Object.values(op.deviceReceipts).filter(r=>r.status!=='ready');
+    const prepareNode=async receipt=>{
+      const {nodeId}=receipt;
+      try{
+        if(this.db.get('settings','main')?.paused)throw new Error('dispatch_paused');
+        const worker=this.db.get('workers',nodeId);if(!this.online(nodeId))throw new Error('device_offline');
+        if(worker?.capabilities?.projectTeamCopy!==1)throw new Error('worker_upgrade_required');
+        const workspaceRoot=receipt.workspaceRoot||worker.workspaceRoot||worker.allowedRoots?.[0];
+        if(!isAbsolute(workspaceRoot||''))throw new Error('workspace_root_unavailable');
+        this.receipt(id,nodeId,{status:'preparing',workspaceRoot,error:null});
+        const result=await this.query({nodeId},'project_directory',{projectId:op.destinationProjectId,folder:op.folderName,workspaceRoot,creationOperationId:id});
+        const currentWorker=this.db.get('workers',nodeId);
+        if(currentWorker?.capabilities?.projectTeamCopy!==1||result?.projectId!==op.destinationProjectId||result.creationOperationId!==id||result.managed!==true||result.folderName!==op.folderName||!isAbsolute(result.localRoot||'')||resolve(result.localRoot)!==join(workspaceRoot,op.folderName)||!(currentWorker.allowedRoots||[]).some(root=>within(root,result.localRoot)))throw new Error('directory_receipt_mismatch');
+        this.receipt(id,nodeId,{status:'ready',result,verifiedAt:stamp(),error:null});
+      }catch(error){this.receipt(id,nodeId,{status:'blocked',error:String(error.message).slice(0,500)});}
+    };
+    // Do not create a device storm for large teams, and never repeat verified filesystem work.
+    for(let i=0;i<pending.length;i+=2)await Promise.all(pending.slice(i,i+2).map(prepareNode));
+    op=this.db.get('projectCopyOperations',id);
+    if(Object.values(op.deviceReceipts).some(r=>r.status!=='ready')){this.save(id,{status:'blocked',error:'workspace_preparation_incomplete'});return this.get(id);}
+    try{
+      for(const receipt of Object.values(op.deviceReceipts)){
+        const worker=this.db.get('workers',receipt.nodeId);
+        if(worker?.capabilities?.projectTeamCopy!==1||!(worker.allowedRoots||[]).some(root=>within(root,receipt.result.localRoot)))throw new Error('directory_binding_changed');
+      }
+      for(const role of op.snapshot.roles.filter(r=>r.systemSupervisor||r.enabled)){
+        if(!this.online(role.nodeId))throw new Error('device_offline');
+        const issue=runtimeIssue(this.db.get('workers',role.nodeId),role.runtime,role.model);if(issue)throw new Error(issue);
+      }
+      if(this.db.get('settings','main')?.paused)throw new Error('dispatch_paused');
+      this.db.transaction(()=>{
+        const current=this.db.get('projectCopyOperations',id);if(current.status==='ready')return;
+        const project=this.db.get('projects',op.destinationProjectId);if(project?.copyOperationId!==id||project.setupStatus!=='copy_pending')throw new Error('destination_ownership_changed');
+        for(const receipt of Object.values(op.deviceReceipts))this.db.bindWorkspace(project.id,receipt.nodeId,receipt.result);
+        for(const original of op.snapshot.roles){
+          const {id:sourceId,revision,...settings}=original;
+          const configured=Boolean(op.deviceReceipts[settings.nodeId]?.status==='ready'&&!runtimeIssue(this.db.get('workers',settings.nodeId),settings.runtime,settings.model));
+          this.db.put('roles',{...settings,id:op.roleIdMap[sourceId],projectId:project.id,revision:1,configured});
+        }
+        const supervisor=op.snapshot.roles.find(r=>r.systemSupervisor),supervisorRoleId=op.roleIdMap[supervisor.id];
+        this.db.put('supervisorConfigs',{id:`${project.id}:${supervisor.nodeId}`,projectId:project.id,nodeId:supervisor.nodeId,runtime:supervisor.runtime,model:supervisor.model,effort:supervisor.effort??null,enabled:supervisor.enabled,revision:1,updatedAt:stamp()});
+        this.db.put('projects',{...project,supervisorRoleId,supervisorNodeId:supervisor.nodeId,initialRoleOrder:op.snapshot.roleOrder.map(id=>op.roleIdMap[id]),setupStatus:'ready'});
+        this.db.put('roomMessages',{id:`welcome-${project.id}`,projectId:project.id,conversationId:project.id,sender:'system',senderName:'Workbench',text:tr('teamCopy.welcome'),taskIds:[],createdAt:stamp()});
+        this.db.put('rooms',{id:project.id,projectId:project.id,conversationId:project.id,revision:1});
+        this.save(id,{status:'ready',error:null});
+      });
+    }catch(error){this.save(id,{status:'blocked',error:String(error.message).slice(0,500)});}
+    return this.get(id);
+  }
 }

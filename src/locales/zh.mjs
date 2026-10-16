@@ -9,6 +9,7 @@ export default Object.freeze({
   'teamCopy.destinationExists':'新项目名称或目录名已被占用。',
   'teamCopy.notFound':'未找到项目复制操作。',
   'teamCopy.notReady':'角色复制的工作目录尚未全部准备完成。',
+  'teamCopy.welcome':'已将角色复制到空业务目录，没有复制代码、依赖或历史。开始工作前请检查提示词中的项目名称和路径。',
   'conversations.invalid': '此项目中不存在指定的群聊。',
   'conversations.workerUpgrade': '目标设备的 Worker 需要升级后才能执行并列群聊任务。',
   'conversations.recordMismatch': '这条记录属于其他群聊。',

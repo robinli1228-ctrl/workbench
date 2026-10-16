@@ -9,6 +9,7 @@ export default Object.freeze({
   'teamCopy.destinationExists':'The destination project name or folder is already reserved.',
   'teamCopy.notFound':'Project copy operation not found.',
   'teamCopy.notReady':'Team copy workspace preparation is not complete.',
+  'teamCopy.welcome':'Team copied into empty business workspaces. No code, dependencies or history were copied. Review project-specific prompts before starting work.',
   'conversations.invalid': 'Group conversation not found in this project.',
   'conversations.workerUpgrade': 'Upgrade the target Worker before executing a parallel group chat.',
   'conversations.recordMismatch': 'This record belongs to a different group conversation.',
