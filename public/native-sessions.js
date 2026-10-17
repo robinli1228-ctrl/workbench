@@ -119,6 +119,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
    const entry=row(group.latest,true);
    if(group.history.some(item=>key(item)===key(selected)))entry.classList.add('active');
    if(group.history.some(isRunning)){entry.classList.add('is-running');entry.title+=` · ${t('An older session is running')}`;}
+   if(entry.classList.contains('active'))entry.setAttribute('aria-current','true');
    list.append(entry);
   }
   list.scrollTop=scroll;
