@@ -10,7 +10,7 @@ export function steeringWaitReason(db,task) {
     if(task.steering.waitForRunIds.some(id=>!terminal.has(db.get('runs',id)?.status))) return tr('roleSteering.interruptingWaitingForOldRun');
     return null;
   }
-  if(db.list('tasks').some(t=>t.projectId===task.projectId && t.roleId===task.roleId && t.steering &&
+  if(db.roleSteeringTasks(task.projectId,task.roleId).some(t=>t.steering &&
     (t.status==='ready' || (t.currentRunId && !terminal.has(db.get('runs',t.currentRunId)?.status))))) return tr('roleSteering.waitingForRoleContinueWith');
   return null;
 }

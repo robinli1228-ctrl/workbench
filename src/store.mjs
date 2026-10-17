@@ -48,6 +48,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_source_command_pending ON records(json_extract(data,'$.projectId'),json_extract(data,'$.nodeId')) WHERE kind='sourceSyncCommands' AND ${pendingSourceCommand};
       CREATE INDEX IF NOT EXISTS records_active_runs ON records(json_extract(data,'$.nodeId')) WHERE kind='runs' AND ${activeRun};
       CREATE INDEX IF NOT EXISTS records_chat_tasks ON records(id) WHERE kind='tasks' AND ${chatTask};
+      CREATE INDEX IF NOT EXISTS records_role_steering ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId')) WHERE kind='tasks' AND json_extract(data,'$.steering') IS NOT NULL;
       CREATE INDEX IF NOT EXISTS records_schedulable_requests ON records(id) WHERE kind='coordinationRequests' AND ${schedulableRequest};
       CREATE INDEX IF NOT EXISTS records_pending_call_results ON records(id) WHERE kind='coordinationRequests' AND ${pendingCallResult};
       CREATE INDEX IF NOT EXISTS records_conflict_runs ON records(json_extract(data,'$.sourceConflictId')) WHERE kind='runs' AND json_extract(data,'$.sourceConflictId') IS NOT NULL;
@@ -88,6 +89,10 @@ export class Store {
   }
   chatTasks(statuses=['ready','in_progress']) {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_chat_tasks WHERE kind='tasks' AND ${chatTask} ORDER BY rowid`).all().map(r=>JSON.parse(r.data)).filter(t=>statuses.includes(t.status));
+  }
+  /** Steering checks read only this role's barriers, with fresh records rather than cached scheduling state. */
+  roleSteeringTasks(projectId,roleId) {
+    return this.db.prepare("SELECT data FROM records INDEXED BY records_role_steering WHERE kind='tasks' AND json_extract(data,'$.steering') IS NOT NULL AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.roleId')=? ORDER BY rowid").all(projectId,roleId).map(r=>JSON.parse(r.data));
   }
   schedulableRequests() {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_schedulable_requests WHERE kind='coordinationRequests' AND ${schedulableRequest} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
