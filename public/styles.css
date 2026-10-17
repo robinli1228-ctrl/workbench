@@ -2654,8 +2654,10 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 .message-queue summary .message-queue-wait.is-released { color: #8a5a12; background: #fff1d8; }
 
 /* Card footer: the status on the left and its action icons on the right, on one line under the hairline. */
-.chat-card-footer { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
-.chat-card-footer .chat-card-kind { flex: 1 1 auto; min-width: 0; }
+.chat-card-footer { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; }
+/* The status takes only the room the icons leave and wraps inside it, so a long status or elapsed time keeps the
+   icons on its line; they drop below only on a card too narrow for 72px of status plus the icon group. */
+.chat-card-footer .chat-card-kind { flex: 1 1 0; min-width: 72px; overflow-wrap: break-word; }
 .chat-card-actions { flex-wrap: nowrap; justify-content: flex-end; margin-left: auto; }
 /* Send time on the name line, outside the card. */
 .chat-row .chat-message-header, .chat-row.is-handoff .chat-message-header { flex-wrap: nowrap; }
