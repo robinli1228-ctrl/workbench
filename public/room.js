@@ -174,24 +174,27 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
 }
 
 /** Show existing dispatches without creating a separate queue; request retries reuse the ID to avoid repeated interruptions. */
-function createMessageQueue({api,refreshState,create,setError}) {
+function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
+  // The displayed queue owns these tasks until its next render, including while a drag is active.
+  let displayedTaskIds=new Set();
   const commands=new Map(),pending=new Set();let currentProject=null,lastData=null,optimistic=null;
   const queueKey=task=>Number.isFinite(task.queueOrder)?task.queueOrder:(Date.parse(task.createdAt)||0);
   // Long press reorders waiting items; Home stores the order and the scheduler runs them in that order.
-  const order=createListOrder({container:list,scope:()=>`queue:${currentProject||''}`,onEnd:()=>{if(lastData)view.update(lastData,currentProject);},onError:setError,
+  const order=createListOrder({container:list,scope:()=>`queue:${currentProject||''}`,onEnd:()=>{if(lastData){view.update(lastData,currentProject);onUpdate();}},onError:setError,
     persist:async taskIds=>{
       optimistic=taskIds;
       try{await api(`/api/projects/${encodeURIComponent(currentProject)}/queue/order`,{method:'POST',json:{taskIds}});await refreshState({quiet:true});}
       catch(error){setError(error.message);}
       finally{optimistic=null;if(lastData)view.update(lastData,currentProject);}
     }});
-  const view={update(data,projectId){
+  const view={hasTask:id=>displayedTaskIds.has(id),update(data,projectId){
     lastData=data;if(order.active())return;
     if(currentProject!==projectId){panel.open=false;currentProject=projectId;optimistic=null;}
     const rank=new Map((optimistic||[]).map((id,index)=>[id,index]));
     const tasks=(data.tasks||[]).filter(t=>t.projectId===projectId&&t.origin==='chat'&&t.status==='ready'&&!t.currentRunId)
       .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||queueKey(a)-queueKey(b));
+    displayedTaskIds=new Set(tasks.map(task=>task.id));
     list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&tasks.length>1);
     const conversation=tasks[0]?.conversationId||projectId;
     // Home's own projection decides who is protected; the browser only labels it and never guesses from an idle CLI.
@@ -250,6 +253,9 @@ function createMessageQueue({api,refreshState,create,setError}) {
         };
         row.append(steer);
       }
+      // A queued task has no chat placeholder; keep its existing recovery action accessible here.
+      const recovery=cliRecoveryUI.button(task);
+      if(recovery){recovery.className='icon-button cli-recovery-open';row.append(recovery);}
       const cancel=closeIcon(create('button','icon-button'));cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
       cancel.disabled=pending.has(task.id);cancel.onclick=async()=>{
         cancel.disabled=true;try{await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`,{method:'POST',json:{}});await refreshState({quiet:true});}catch(error){setError(error.message);cancel.disabled=false;}
@@ -262,8 +268,8 @@ function createMessageQueue({api,refreshState,create,setError}) {
 /** The chat only handles display and user actions; role selection, idempotency and scheduling are validated by Home. */
 export function createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice }) {
   const historyViewer=createHistoryViewer({api});
-  const messageQueue=createMessageQueue({api,refreshState,create,setError});
   const cliRecoveryUI=createCliRecoveryUI({api,refreshState,getData:()=>data,create});
+  const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages()});
   const feed = document.querySelector('#chat-feed');
   // Configuration, plans and messages share one scroll area so status cards do not permanently crowd out the body.
   const scroller = document.querySelector('#chat-scroll');
@@ -857,6 +863,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   }
 
   function renderLiveBubble(task, messages) {
+    // Share the queue's actual displayed membership rather than maintaining a second eligibility rule.
+    if(messageQueue.hasTask(task.id))return null;
     const run = data.runs?.find(r => r.id === task.currentRunId);
     const recoveryButton=cliRecoveryUI.button(task);
     if(task.backgroundFollowup||run?.backgroundFollowup){const approvals=run?renderApprovalsInline(run):null;if(!recoveryButton)return approvals;const entry=create('div','chat-approvals');if(approvals)entry.append(approvals);entry.append(recoveryButton);return entry;}
