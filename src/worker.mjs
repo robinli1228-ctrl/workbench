@@ -247,6 +247,9 @@ async function command(m) {
       collaborationBatchId:m.run.collaborationBatchId||null,collaborationBatch:m.run.collaborationBatch||null,
       collaborationCycleId:m.run.collaborationCycleId||null,propagationBudget:m.run.propagationBudget||null,
       switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash });
+    // Clearing only the Worker record leaves Home retrying the accepted launch and preserving a false terminal wait.
+    // Send an ordered transition for this recovery retry; later guards may report a fresh wait, failure or cancellation.
+    if(deferred?.cliRecoveryWait)emit(c.runId,'status',{status:'starting',cliRecoveryWait:false,cliRecovery:null,error:null});
     send({ type: 'command_ack', id: c.id });
     let bridge, ending=false,provenance;
     const reservation = { preparing: true, stopRequested: false };

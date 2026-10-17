@@ -158,7 +158,7 @@ const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>
 const viewers = new Set();
 const queries = new Map();
 const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
-rooms.nativeRecoveryReason=task=>cliRecovery.reason(task);
+rooms.nativeRecoveryReason=(task,checked)=>cliRecovery.scheduleReason(task,checked);
 const workspaceFeed = new WorkspaceStateFeed();
 const roleSwitches=new RoleSwitches(db);
 const roleSwitchRuntime=new RoleSwitchRuntime({db,switches:roleSwitches,query:workerQuery,dispatch,change:()=>change(),

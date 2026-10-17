@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile, rename, lstat, unlink, rmdir } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, rename, link, lstat, unlink, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { tr } from './i18n.mjs';
@@ -108,9 +108,14 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend 
             if(input.payload?.runId&&input.payload.runId!==runId)throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));
             response = { result: await homeRequest(home, token, input.pathname, { ...input.payload, runId }) };
           } catch (error) { response = { error: error.message,status:error.status,outcomeUnknown:error.outcomeUnknown }; }
-          await writeFile(join(directory, file.replace('.request', '.response')), JSON.stringify(response), { flag: 'wx', mode: 0o600 }).catch(() => {});
+          const responseFile = join(directory, file.replace('.request', '.response'));
+          const temporary = `${responseFile}.tmp`;
+          await writeFile(temporary, JSON.stringify(response), { flag: 'wx', mode: 0o600 });
+          try { await link(temporary, responseFile); }
+          finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
         };
-        const task = handle(); pending.add(task); void task.finally(() => pending.delete(task));
+        const task = handle(); pending.add(task);
+        void task.finally(() => pending.delete(task)).catch(error => console.error('Failed to publish Agent bridge response:', error));
       }
     } catch { /* Do not recreate the communication directory during exit cleanup. */ }
     finally { scanning = false; }
@@ -119,7 +124,7 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend 
   return { directory, async stop() {
     stopped = true; clearInterval(timer); await Promise.allSettled([...pending]);
     for (const file of await readdir(directory).catch(() => [])) {
-      if (/^[a-f0-9-]{36}\.(request|response|tmp)$/.test(file) || ['turn-context.json','turn-context.json.tmp'].includes(file)) await unlink(join(directory, file)).catch(() => {});
+      if (/^[a-f0-9-]{36}\.(request|response|response\.tmp|tmp)$/.test(file) || ['turn-context.json','turn-context.json.tmp'].includes(file)) await unlink(join(directory, file)).catch(() => {});
     }
     await rmdir(directory).catch(() => {});
   } };

@@ -353,7 +353,7 @@ export class Rooms {
 
   /** Dispatch synchronously within a single Home, with one active run per role, respecting each node's total capacity. */
   schedule(isReady) {
-    const nodes = new Set(); let changed = false;
+    const nodes = new Set(), recoveryChecks = new Set(); let changed = false;
     const discussions=new RoleDiscussions(this.db,{online:isReady});changed=discussions.recover().changed;
     const candidates=[...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()];
     const collaboration=collaborationQueueView(this.db);
@@ -365,7 +365,6 @@ export class Rooms {
       const role = effectiveExecutionRole(this.db,task), worker = this.db.get('workers', role.nodeId);
       const collaborationTask=discussion?discussionCollaborationTask(this.db,this.db.get('tasks',task.businessTaskId),role.id):{...task,roleId:role.id};
       const collaborationCheck=collaboration.forTask(collaborationTask);
-      const recoveryReason=discussion?null:this.nativeRecoveryReason?.(task);
       const active = this.db.activeRuns();
       const reason = this.db.get('settings', 'main')?.paused ? tr('rooms.remoteExecutionPaused')
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
@@ -387,11 +386,11 @@ export class Rooms {
         : task.execution && worker.capabilities.executionScheduling !== 1 ? tr('rooms.upgradeWorkerRunSupervisorSchedules')
         : task.requiresCoordination && worker?.capabilities?.coordinationVersion !== 1 ? tr('rooms.upgradeWorkerSupportCrossDevice')
         : runtimeIssue(worker, role.runtime, role.model) ? runtimeIssue(worker, role.runtime, role.model)
-        : recoveryReason ? recoveryReason
         : active.some(r => r.roleId === role.id) ? tr('rooms.waitingForRoleFinishIts')
         : executionConflict({...task,nodeId:role.nodeId},active) ? (task.execution?.exclusive ? tr('rooms.waitingForExclusiveOperationWindow') : tr('rooms.waitingForProjectWorkspaceExclusive'))
         : active.some(r => r.nodeId === role.nodeId && r.status === 'reconciling') ? tr('rooms.nodeHasRunsAwaitingReconciliation')
-        : active.filter(r => r.nodeId === role.nodeId).length+reservedTerminalSlots(this.db,role.nodeId)+(worker.capabilities.cliCapacity!==1&&worker.capabilities.summaryBatches===1?0:worker.organizerBusy||0) >= (worker.capacity || 1) ? tr('rooms.waitingForNodeBecomeIdle') : null;
+        : active.filter(r => r.nodeId === role.nodeId).length+reservedTerminalSlots(this.db,role.nodeId)+(worker.capabilities.cliCapacity!==1&&worker.capabilities.summaryBatches===1?0:worker.organizerBusy||0) >= (worker.capacity || 1) ? tr('rooms.waitingForNodeBecomeIdle')
+        : discussion ? null : this.nativeRecoveryReason?.(task,recoveryChecks);
       if (reason) {
         const record=discussion?this.db.get(kind,recordId):task;
         if (record?.waitingReason !== reason) { this.db.put(discussion?kind:'tasks', { ...record, waitingReason: reason }); changed = true; }

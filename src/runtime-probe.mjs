@@ -14,15 +14,16 @@ export async function inspectCodex() {
   catch { return { ...result, reason: tr('runtimeProbe.noRunnableCodexCliFound') }; }
   const proc = spawn(bin, ['app-server', '--listen', 'stdio://'], { stdio: ['pipe', 'pipe', 'ignore'] });
   const lines = createInterface({ input: proc.stdout });
-  const pending = new Map(); let id = 0;
-  const fail = error => { for (const p of pending.values()) p.reject(error); pending.clear(); };
+  const pending = new Map(); let id = 0, transportError = null;
+  // Optional quota failures must not send another RPC into a transport that has already exited.
+  const fail = error => { transportError ||= error; for (const p of pending.values()) p.reject(transportError); pending.clear(); };
   proc.on('error', () => fail(new Error(tr('runtimeProbe.appServerCouldNotStart'))));
   proc.on('exit', () => fail(new Error(tr('runtimeProbe.appServerHasExited'))));
   const timer = setTimeout(() => { fail(new Error(tr('runtimeProbe.cliStatusProbeTimedOut'))); proc.kill(); }, 15000);
   lines.on('line', line => {
     try { const m = JSON.parse(line), p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.error ? p.reject(new Error(tr('runtimeProbe.cliDoesNotSupportRequired'))) : p.resolve(m.result); } catch {}
   });
-  const call = (method, params) => new Promise((resolve, reject) => { const key = ++id; pending.set(key, { resolve, reject }); proc.stdin.write(`${JSON.stringify({ id: key, method, params })}\n`); });
+  const call = (method, params) => new Promise((resolve, reject) => { if(transportError)return reject(transportError);const key = ++id; pending.set(key, { resolve, reject }); proc.stdin.write(`${JSON.stringify({ id: key, method, params })}\n`); });
   proc.stdin.on('error', () => fail(new Error(tr('runtimeProbe.cliConnectionWasClosedDisconnect'))));
   try {
     await call('initialize', { clientInfo: { name: 'agent_workbench_probe', version: '0.3.0' } });

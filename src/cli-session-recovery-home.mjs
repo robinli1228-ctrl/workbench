@@ -30,6 +30,14 @@ export class CliRecoveryHome {
     if(record?.state==='ready'&&JSON.stringify(record.binding)===JSON.stringify(binding))return null;
     return record?.reason||tr('cliRecovery.checking');
   }
+  /** Probe only schedulable queue heads; defer duplicate targets without sharing task-bound results or consent. */
+  scheduleReason(task,checked){
+    const binding=this.binding(task);if(!binding)return null;
+    const {taskId,...target}=binding,key=JSON.stringify(target);
+    if(checked.has(key))return tr('cliRecovery.checking');
+    checked.add(key);void this.check(task);
+    return this.reason(task);
+  }
   async check(task){
     const binding=this.binding(task);if(!binding||!this.online(binding.nodeId)||this.pending.has(task.id))return;
     const previous=this.db.get('cliRecoveries',task.id);
@@ -51,7 +59,9 @@ export class CliRecoveryHome {
     this.pending.set(task.id,operation);operation.finally(()=>{if(this.pending.get(task.id)===operation)this.pending.delete(task.id);}).catch(()=>{});await operation;
   }
   tick(){
-    for(const task of this.db.chatTasks().filter(t=>t.status==='ready'||this.db.get('runs',t.currentRunId||'')?.cliRecoveryWait)){
+    // Accepted launches waiting on a last-moment race must retry even while their own Run holds capacity.
+    // Ordinary ready tasks are checked by Room only after the other admission gates pass.
+    for(const task of this.db.chatTasks().filter(t=>this.db.get('runs',t.currentRunId||'')?.cliRecoveryWait)){
       if(!this.db.get('settings','main')?.paused)void this.check(task);
     }
     for(const record of this.db.unresolvedRecoveries())if(!this.current(record))this.db.put('cliRecoveries',{...record,state:'resolved',canStop:false});
