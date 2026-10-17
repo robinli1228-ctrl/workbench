@@ -996,7 +996,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     const actions = [],discussionActions=[];
     if(discussion?.canReply) {
-      actions.push(iconAction('reply','Reply to this question',()=>{quoteReply(m,{mentionSender:false});draft().discussion={threadId:discussion.thread.id,expectedQuestionId:discussion.questionId,revision:discussion.thread.revision,directionRevision:discussion.thread.directionRevision};saveDrafts();}));
+      actions.push(iconAction('quote','Reply to this question',()=>{quoteReply(m,{mentionSender:false});draft().discussion={threadId:discussion.thread.id,expectedQuestionId:discussion.questionId,revision:discussion.thread.revision,directionRevision:discussion.thread.directionRevision};saveDrafts();}));
     } else actions.push(iconAction('quote', 'Reply', () => quoteReply(m)));
     if(discussion?.canReply||discussion?.canResume) {
       discussionActions.push(iconAction('check',discussion.canResume?'Changes verified; continue the original task':'Mark question as handled',async b=>{
