@@ -344,8 +344,22 @@ function snapshot() {
     deliveries: db.list('deliveries').map(({ fingerprint, ...r }) => r),
     workers: db.list('workers').map(w => ({ ...w, runtimes: visibleRuntimes(w.runtimes,db.get('workerConfigs',w.id)?.hiddenRuntimes), online: online(w.id) })) };
 }
-/** Scheduling does not call a model; it only issues new executions after the Worker has finished reconnection verification. */
+const chatScheduleErrors=new Map();
+/** Keep bounded diagnostics without turning a bad persisted request into a process-wide restart loop. */
+function chatScheduleError(error,requestId='') {
+  const message=String(error?.message||error).slice(0,4000),key=`${requestId}:${message}`,at=Date.now();
+  if(!chatScheduleErrors.has(key)||at-chatScheduleErrors.get(key)>=30000){
+    console.error('Chat scheduling failed',requestId,message);
+    chatScheduleErrors.delete(key);chatScheduleErrors.set(key,at);
+    if(chatScheduleErrors.size>100)chatScheduleErrors.delete(chatScheduleErrors.keys().next().value);
+  }
+}
+/** Every entry point (timer, HTTP and Worker events) shares the same exception boundary. */
 function scheduleChat() {
+  try {scheduleChatTurn();}catch(error){chatScheduleError(error);}
+}
+/** Scheduling does not call a model; it only issues new executions after the Worker has finished reconnection verification. */
+function scheduleChatTurn() {
   cliRecovery.tick();
   void roleSwitchRuntime.tick();
   if(reconcileCallResults(db,calls))change();
@@ -355,8 +369,13 @@ function scheduleChat() {
   for (const task of db.chatTasks().filter(t => !t.switchOperationId && !t.requestId)) calls.adoptTask(task.id);
   if(calls.expireWaits())change();
   for (const request of db.schedulableRequests()) {
-    if (request.status === 'waiting_call') calls.resume(request.id);
-    if (['queued', 'waiting_delivery'].includes(request.status)) calls.reconcile(request.id);
+    try {
+      if (request.status === 'waiting_call') calls.resume(request.id);
+      if (['queued', 'waiting_delivery'].includes(request.status)) {
+        const next=calls.reconcile(request.id);
+        if(next?.status==='failed'&&next.admissionError)change();
+      }
+    }catch(error){chatScheduleError(error,request.id);}
   }
   try {if(proactiveFollowup.tick())change();}catch(error){console.error('Proactive follow-up:',error.message);}
   for(const task of db.chatTasks(['ready']))prepareChatContext(task);

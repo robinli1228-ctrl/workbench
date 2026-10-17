@@ -1,5 +1,11 @@
 # Development Progress
 
+## 2026-10-17 — Isolate invalid source-input admission from Home lifecycle
+
+- Reproduced the directory-sync batch admission crash in an isolated real Home. Added early call/schedule validation, safe handling of legacy unstarted requests, shared queue/continuation settlement and synchronous scheduler exception boundaries. Existing code-delivery guards, Runs, reports, files and request history remain intact.
+- Corrected both language versions of the sync tool guide: directory receipts are file-sync evidence, not fixed-code inputs or general task dependency IDs.
+- Focused regressions cover early rejection, atomic rollback, legacy admission, queue receipts, parent/continuation settlement, safe storage-outage handling and preservation of active work. Real isolated Home/Edge verification covers healthy HTTP/page reads beside a rejected request, scheduler ticks across a restart, exactly one healthy Task, no synthetic failed Run or stop command, and unchanged report/file fixtures. These results do not imply the business task was rerun or that other services were restarted.
+
 ## 2026-10-10 — Managed input language
 
 - Implemented English Workbench-maintained execution templates independently from interface localization, with send-only Simplified-to-Traditional prose conversion for all four managed dialogue adapters. Original chat/configuration records and exact executable/identity text remain unchanged. Current behavior and exclusions are defined once in [ARCHITECTURE](ARCHITECTURE.md#managed-input-language).

@@ -3,7 +3,7 @@ import { terminal } from './store.mjs';
 import { callTerminal, packCoordinationResults } from './role-calls.mjs';
 import {runFailureKind} from './run-reports.mjs';
 import { tr } from './i18n.mjs';
-import {freezeSourceInputs} from './source-sync-input.mjs';
+import {freezeSourceInputs,sourceInputBatch} from './source-sync-input.mjs';
 import {syncError} from './source-sync-manifest.mjs';
 
 const now=()=>new Date().toISOString();
@@ -44,7 +44,7 @@ export class ExecutionPlans {
       if (s.mode==='parallel' && !(members.every(m=>m.purpose==='audit') || members.every(m=>m.purpose==='develop'))) throw new Error(tr('executionPlans.onlyIndependentReviewsDevelopmentMay'));
       if (s.mode==='serial' && members.length>1 && new Set(members.map(m=>m.purpose)).size>1) throw new Error(tr('executionPlans.differentPurposesWithDependenciesMust'));
       if (s.mode==='serial' && members.length>1) throw new Error(tr('executionPlans.forSequentialExecutionSplitEach'));
-      if(s.sourceSyncBatchId&&this.db.get('sourceSyncBatches',s.sourceSyncBatchId)?.projectId!==run.projectId)throw syncError('source_input_not_ready');
+      if(s.sourceSyncBatchId)sourceInputBatch(this.db,s.sourceSyncBatchId,run.projectId);
       return {index,title:s.title.trim(),mode:s.mode,exclusive:isExclusive,members,status:'pending',...(s.sourceSyncBatchId?{sourceSyncBatchId:s.sourceSyncBatchId}:{})};
     });
     if (stages.reduce((n,s)=>n+s.members.length,0)>12) throw new Error(tr('executionPlans.scheduleAllowsAtMost12'));
@@ -165,7 +165,7 @@ export class ExecutionPlans {
             const nodes=[...new Set(plan.stages.flatMap(s=>s.members.map(m=>m.nodeId)))];
             if(nodes.some(id=>this.db.get('workers',id)?.capabilities?.executionScheduling!==1)) { throw new Error(tr('executionPlans.targetWorkerHasNotBeen')); }
             if(stage.sourceSyncBatchId){
-              const batch=this.db.get('sourceSyncBatches',stage.sourceSyncBatchId);if(batch?.status!=='completed')continue;
+              const batch=sourceInputBatch(this.db,stage.sourceSyncBatchId,plan.projectId);if(batch.status!=='completed')continue;
               const inputs=freezeSourceInputs(this.db,batch.id,stage.members[0].nodeId,plan.projectId);
               for(const member of stage.members)freezeSourceInputs(this.db,batch.id,member.nodeId,plan.projectId);
               plan.baselines=inputs.filter(i=>!plan.repositoryKeys||plan.repositoryKeys.includes(this.db.get('repositories',i.repositoryId)?.key)).map(i=>({id:i.repositoryId,key:this.db.get('repositories',i.repositoryId)?.key,commit:i.baseCommit}));
