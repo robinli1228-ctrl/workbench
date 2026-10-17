@@ -2326,16 +2326,21 @@ body .project-sidebar .sidebar-heading { gap: 8px; margin-bottom: 12px; padding-
 .quoted-message, .chat-quote { border-left-color: rgb(79 91 206 / 35%); border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--text-muted); background: var(--surface-sunken); }
 .message-progress { border-top-color: var(--card-hairline); color: var(--text-muted); font-size: var(--fs-sm); }
 
-/* Composer: a floating card with a filled send button. */
-.chat-composer { padding: 10px 16px 16px; border-color: transparent; background: linear-gradient(180deg, rgb(247 248 251 / 0%) 0%, var(--surface-chat) 40%); }
+/* Keep the composer boundary visible and aligned with the desktop side footers. */
+.chat-composer { padding: 10px 16px 16px; border-color: var(--card-hairline); background: var(--surface-chat); }
+@media (min-width: 1001px) {
+  #chat-form { min-height: 67px; padding-block: 13px; }
+}
 .chat-input-field {
   border: 1px solid var(--card-hairline-strong); border-radius: var(--r-lg); background: #fff;
   box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 4px 14px rgb(16 24 40 / 5%); transition: border-color .15s, box-shadow .15s;
 }
 .chat-input-field:focus-within { border-color: rgb(79 91 206 / 45%); box-shadow: var(--focus-ring), 0 4px 14px rgb(16 24 40 / 6%); }
 .chat-input-field #chat-attach { border-radius: var(--r-sm); color: var(--text-muted); }
+.chat-input-field #chat-attach { margin-block: 2.8px; }
+.chat-input-field #chat-text { min-height: 37.6px; height: 37.6px; padding-block: 8px; }
 .chat-input-field #chat-attach:hover { color: var(--accent); background: var(--accent-tint); }
-.chat-input-bar > button.primary { min-height: 42px; padding: 0 18px; border-radius: var(--r-lg); }
+.chat-input-bar > button.primary { min-height: 37.8px; padding: 0 18px; border-radius: var(--r-lg); }
 
 /* Buttons: one height, radius and weight; primary carries a subtle depth. */
 button.primary, button.secondary, button.danger, .pause-button { border-radius: var(--r-sm); font-weight: 650; letter-spacing: .005em; transition: background .15s, border-color .15s, box-shadow .15s, color .15s, filter .15s; }
@@ -2426,7 +2431,9 @@ dialog .dialog-heading h2 { color: var(--text-strong); font-size: var(--fs-xl); 
 .chat-approval { border: 1px solid rgb(201 135 0 / 22%); border-radius: var(--r-lg); background: #fffaf0; }
 .attachment-card { border-color: var(--card-hairline); border-radius: var(--r-md); background: #fff; }
 .chat-row.human .attachment-card { background: rgb(255 255 255 / 75%); }
-.chat-card-footer { border-top-color: var(--card-hairline); color: var(--text-muted); }
+/* Include the bubble's bottom inset in the footer, then balance it above and below the controls. */
+.chat-card-footer { margin-bottom: -10px; padding-block: 4px; border-top-color: var(--card-hairline); color: var(--text-muted); }
+.chat-card-actions .chat-icon-btn { height: 24.2px; }
 .chat-icon-btn { border-radius: var(--r-sm); color: var(--text-muted); }
 .chat-icon-btn:hover { color: var(--accent); background: var(--accent-tint); }
 .mention-menu { border-color: var(--card-hairline); border-radius: var(--r-lg); box-shadow: var(--elev-float); }

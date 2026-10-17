@@ -481,7 +481,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   inputField.addEventListener('dragover',e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();inputField.classList.add('is-dragging');}});
   inputField.addEventListener('dragleave',()=>inputField.classList.remove('is-dragging'));
   inputField.addEventListener('drop',e=>{inputField.classList.remove('is-dragging');if(e.dataTransfer?.files.length){e.preventDefault();void uploadFiles(e.dataTransfer.files);}});
-  function resizeInput() { input.style.height='auto'; input.style.height=`${Math.min(120,Math.max(40,input.scrollHeight))}px`;mentionInput.refresh(); }
+  // Respect the compact CSS baseline while retaining automatic growth for actual text.
+  function resizeInput() { input.style.height='auto'; input.style.height=`${Math.min(120,Math.max(parseFloat(getComputedStyle(input).minHeight),input.scrollHeight))}px`;mentionInput.refresh(); }
   let mentionChoices = [];
   let mentionIndex = 0;
   let mentionRange = null;
