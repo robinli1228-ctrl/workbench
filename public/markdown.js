@@ -123,11 +123,20 @@ export function linkRunDocuments(root,runId){
 
 /** 仅在 Mac 实际读取确认后替换可见路径；异步返回只更新原链接，不触碰新项目的 DOM。 */
 const documentMetadata=new Map();
+const documentMetadataQueue=[];let documentMetadataActive=0;
+/** Background link decoration leaves browser connections available for chat and native-history reads. */
+function queueDocumentMetadata(read){
+  return new Promise((resolve,reject)=>{
+    documentMetadataQueue.push({read,resolve,reject});
+    const drain=()=>{while(documentMetadataActive<2&&documentMetadataQueue.length){const next=documentMetadataQueue.shift();documentMetadataActive++;Promise.resolve().then(next.read).then(next.resolve,next.reject).finally(()=>{documentMetadataActive--;drain();});}};
+    drain();
+  });
+}
 export function localizeDocumentLinks(root,runId,api){
   for(const link of [...root.querySelectorAll('a[data-document-path]')].slice(0,12)){
     const original=link.dataset.documentPath;
     const key=JSON.stringify([runId,original]);let cached=documentMetadata.get(key);
-    if(!cached||Date.now()-cached.at>15000){cached={at:Date.now(),promise:api(`/api/runs/${encodeURIComponent(runId)}/document?metadata=1&path=${encodeURIComponent(original)}`)};documentMetadata.set(key,cached);if(documentMetadata.size>200)documentMetadata.delete(documentMetadata.keys().next().value);}
+    if(!cached||cached.at&&Date.now()-cached.at>15000){const entry={at:0};entry.promise=queueDocumentMetadata(()=>api(`/api/runs/${encodeURIComponent(runId)}/document?metadata=1&path=${encodeURIComponent(original)}`)).finally(()=>{entry.at=Date.now();});cached=entry;documentMetadata.set(key,cached);if(documentMetadata.size>200){const settled=[...documentMetadata].find(([,value])=>value.at);if(settled)documentMetadata.delete(settled[0]);}}
     void cached.promise.then(result=>{
       if(!result.shared)return;link.dataset.syncState=result.syncState;
       if(result.path){if(link.textContent===original)link.textContent=result.path;link.title=result.path;link.setAttribute('translate','no');}
