@@ -26,6 +26,8 @@ export function recordSourceBinding(db,command,root){
 export function buildSourceBindings(db,projectId,repositoryIds,nodeIds,{scopeKind,contentMode}={}){
   const directory=scopeKind==='directory',withProject=repositoryIds.includes(projectFileScopeId(projectId));
   if(contentMode!==undefined&&!['source-only','source-and-outputs'].includes(contentMode)||contentMode==='source-and-outputs'&&!directory)throw syncError('invalid_scope');
+  // Reuse only within this synchronous check; a later call must see newly created isolated workspaces.
+  let isolationRuns;
   const bindings=repositoryIds.flatMap(repositoryId=>nodeIds.map(nodeId=>{
     const projectScope=isProjectFileScope(projectId,repositoryId),binding=sourceScopeBinding(db,projectId,repositoryId,nodeId),worker=db.get('workers',nodeId),repo=db.get('repositories',repositoryId);
     if(projectScope&&!directory)throw syncError('invalid_scope');
@@ -35,7 +37,7 @@ export function buildSourceBindings(db,projectId,repositoryIds,nodeIds,{scopeKin
     if(binding.readOnly||repo?.readOnly)throw syncError('scope_read_only');
     const root=resolve(binding.localRoot);
     // Resumed history may retain registered repository metadata: only the actual isolated workspace owns private paths.
-    if(directory&&db.listProject('runs',projectId).some(r=>r.nodeId===nodeId&&r.execution?.isolated&&r.workspace&&r.workspace!==r.projectRoot&&beneath(r.workspace,root)!==null))throw syncError('deliver_to_project_first');
+    if(directory&&(isolationRuns??=db.sourceIsolationRuns(projectId)).some(r=>r.nodeId===nodeId&&r.execution?.isolated&&r.workspace&&r.workspace!==r.projectRoot&&beneath(r.workspace,root)!==null))throw syncError('deliver_to_project_first');
     if(!directory)return {repositoryId,nodeId,root,repoUrl:repo.repoUrl};
     const projectRoot=db.get('workspaces',`${projectId}:${nodeId}`)?.localRoot;
     const others=db.list('repositoryWorkspaces').filter(b=>b.projectId===projectId&&b.nodeId===nodeId&&b.repositoryId!==repositoryId&&b.localRoot);

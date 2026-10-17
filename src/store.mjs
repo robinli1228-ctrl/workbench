@@ -108,6 +108,13 @@ export class Store {
   }
   /** Project-local sync metadata must not scan or serialize other projects' full manifests. */
   listProject(kind,projectId) {return this.db.prepare("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.projectId')=? ORDER BY rowid").all(kind,projectId).map(r=>JSON.parse(r.data));}
+  /** Scope checks need only identity and paths, not full historical outputs on every sync resend. */
+  sourceIsolationRuns(projectId) {
+    return this.db.prepare(`SELECT json_object('nodeId',data -> '$.nodeId',
+      'execution',json_object('isolated',data -> '$.execution.isolated'),
+      'workspace',data -> '$.workspace','projectRoot',data -> '$.projectRoot') AS data
+      FROM records WHERE kind='runs' AND json_extract(data,'$.projectId')=? ORDER BY rowid`).all(projectId).map(r=>JSON.parse(r.data));
+  }
   /** Filter before materializing manifest bodies; keep history and the existing row order intact. */
   listSourceSyncCommands({projectId,batchId,nodeId,repositoryId,action,pending=false}={}) {
     const conditions=["kind='sourceSyncCommands'"],params=[];
