@@ -4,6 +4,10 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Session is not registered with Workbench':'此会话未登记到 Workbench，不能读取。',
+  'Upgrade this Worker to read only Workbench sessions; external history scanning is disabled':'请升级此 Worker 后读取 Workbench 会话；已禁止扫描外部历史。',
+  'Registered native session history is unavailable; no external histories were scanned':'已登记的原生会话历史暂不可用；未扫描外部历史。',
+  'Registered history could not be read':'无法读取已登记的会话历史。',
   'Configuration Information':'配置说明',
   'Software versions and update notes only. This page does not call an AI, install updates or restart services.':'仅展示软件版本和更新说明，不调用 AI、不安装更新、不重启服务。',
   'Compare with GitHub main. Results are cached for one minute.':'与 GitHub main 对比，检测结果缓存一分钟。',

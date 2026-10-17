@@ -2,6 +2,7 @@ import {readdir,open,realpath,stat,lstat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
 import {join,basename,dirname,relative,isAbsolute} from 'node:path';
 import {resumeArgs,managedRunProcessState,terminalOwnsProject} from './terminal-resume.mjs';
 
@@ -16,7 +17,7 @@ export function assertNativeSessionIdle(db,{runtime,sessionId,workspace,projectI
  if(db.list('terminalSessions').some(s=>s.id!==claimId&&(!nodeId||s.nodeId===nodeId)&&!['released','cancelled'].includes(s.status)&&(terminalOwnsProject(db,s,projectId)||overlap(s.workspace)||sessionId&&(s.nativeSession?.runtime||s.runtime)===runtime&&(s.nativeSession?.id||s.sessionId)===sessionId)))throw Error('Session is occupied; no second CLI was started');
 }
 
-/** Only discover vendor-owned history directories; no browser-supplied file path is accepted. */
+/** Exact registered histories must remain inside the configured vendor directory. */
 function historyRoots(runtime,env){
  if(!runtimes.has(runtime))throw Error('Unsupported CLI');
  const home=env.HOME||homedir();
@@ -38,45 +39,45 @@ function messagesFrom(rows,runtime){return rows.flatMap(row=>{
 });}
 
 const fileStamp=info=>info?[info.dev,info.ino,info.birthtimeMs,info.size,info.mtimeMs,info.ctimeMs,info.mode].join(':'):null;
-const optionalStat=async path=>{try{return await stat(path);}catch(error){if(error.code==='ENOENT')return null;throw error;}};
 function remember(cache,key,value,limit){cache.delete(key);cache.set(key,value);if(cache.size>limit)cache.delete(cache.keys().next().value);}
 
-async function discover(runtime,env){
- const files=[],directories=[];let visited=0,partial=false;
- for(const root of historyRoots(runtime,env)){
-  async function walk(dir,depth){
-   if(depth>6||visited>=20000){partial=true;return;}
-   directories.push({path:dir,stamp:fileStamp(await optionalStat(dir))});
-   const entries=await readdir(dir,{withFileTypes:true}).catch(e=>{if(e.code==='ENOENT')return [];throw e;});
-   entries.sort((a,b)=>b.name.localeCompare(a.name));
-   for(const e of entries){if(++visited>20000){partial=true;break;}const path=join(dir,e.name);
-    if(e.isSymbolicLink())continue;
-    if(e.isDirectory()&&!['subagents','resources_state','terminal'].includes(e.name))await walk(path,depth+1);
-    else if(e.isFile()){
-     const id=runtime==='codex'?e.name.match(/-([a-f0-9]{8}-[a-f0-9-]{27})\.jsonl$/i)?.[1]:runtime==='grok'&&e.name==='chat_history.jsonl'?basename(dir):['claude','agy'].includes(runtime)&&/\.(jsonl|db|pb)$/.test(e.name)?e.name.replace(/\.(jsonl|db|pb)$/,''):null;
-     if(id&&idPattern.test(id)){const info=await stat(path);files.push({id,path,root,modifiedAt:info.mtime.toISOString()});}
-    }
-   }
+/** Consult only an exact ID's index entry/path; missing metadata never triggers a history-directory walk. */
+async function registeredFile(runtime,id,env,record){
+ if(!record||(record.sessionId||record.nativeSessionId||record.id)!==id||record.runtime&&record.runtime!==runtime)throw Error('Session is not registered with Workbench');
+ const roots=historyRoots(runtime,env),paths=[];
+ if(runtime==='codex'){
+  const home=dirname(roots[0]);
+  // Enumerate index filenames only, never sessions/ or archived_sessions/ or transcript rows.
+  const indexes=(await readdir(home).catch(e=>{if(e.code==='ENOENT')return [];throw e;})).filter(name=>/^state_\d+\.sqlite$/.test(name)).sort((a,b)=>Number(b.match(/\d+/)[0])-Number(a.match(/\d+/)[0]));
+  for(const name of indexes){
+   const path=join(home,name);if(!(await lstat(path)).isFile())continue;
+   const db=new DatabaseSync(path,{readOnly:true});
+   try{const row=db.prepare('SELECT rollout_path FROM threads WHERE id=?').get(id);if(row?.rollout_path&&basename(row.rollout_path).endsWith(`-${id}.jsonl`))paths.push(row.rollout_path);}
+   finally{db.close();}
+   if(paths.length)break;
   }
-  await walk(root,0);
+ }else if(runtime==='claude'){
+  if(typeof record.workspace==='string'&&isAbsolute(record.workspace))paths.push(join(roots[0],record.workspace.replace(/[^a-zA-Z0-9]/g,'-'),`${id}.jsonl`));
+ }else if(runtime==='grok')paths.push(join(roots[0],id,'chat_history.jsonl'));
+ else for(const ext of ['jsonl','db','pb'])paths.push(join(roots[0],`${id}.${ext}`));
+ const files=[];
+ for(const path of paths){
+  const root=roots.find(root=>inside(root,path));if(!root)throw Error('History outside CLI directory');
+  let info;try{info=await lstat(path);}catch(error){if(error.code==='ENOENT')continue;throw error;}
+  if(!info.isFile()||!inside(await realpath(root),await realpath(path)))throw Error('History outside CLI directory');
+  files.push({id,path,root,modifiedAt:info.mtime.toISOString()});
  }
- return {files:files.sort((a,b)=>b.modifiedAt.localeCompare(a.modifiedAt)),partial,directories};
+ return files.sort((a,b)=>b.modifiedAt.localeCompare(a.modifiedAt))[0]||null;
 }
-const discoveryCache=new Map();
-/** Reuse unchanged directories without delaying new, moved or deleted histories until expiry. */
-async function cachedDiscovery(runtime,env,after=0,force=false){
- const key=JSON.stringify([runtime,...historyRoots(runtime,env)]),prior=discoveryCache.get(key);
- if(prior&&Date.now()-prior.at<20000&&prior.at>=after){
-  if(prior.pending)return prior.pending;
-  if(!force){
-   let unchanged=true;for(const dir of prior.value.directories){if(fileStamp(await optionalStat(dir.path))!==dir.stamp){unchanged=false;break;}}
-   if(discoveryCache.get(key)!==prior)return cachedDiscovery(runtime,env,after,force);
-   if(unchanged)return prior.value;
-  }
- }
- const entry={at:Date.now()};
- entry.pending=discover(runtime,env).then(value=>{entry.value=value;delete entry.pending;return value;},error=>{if(discoveryCache.get(key)===entry)discoveryCache.delete(key);throw error;});
- remember(discoveryCache,key,entry,32);return entry.pending;
+
+/** Worker-side provenance comes from durable Workbench records, never transcript contents or titles. */
+export function registeredNativeSession(db,runtime,sessionId){
+ const catalog=db.list('nativeCatalogEntries').find(r=>r.runtime===runtime&&r.sessionId===sessionId);
+ if(catalog)return {...catalog,sessionId};
+ const run=db.list('runs').find(r=>r.nativeSession?.runtime===runtime&&r.nativeSession.id===sessionId);
+ if(run)return {runtime,sessionId,workspace:run.workspace,createdAt:run.createdAt};
+ const lease=db.list('terminalSessions').find(r=>['native','native-turn'].includes(r.kind)&&(r.runtime||r.nativeSession?.runtime)===runtime&&(r.sessionId||r.nativeSession?.id||r.nativeOptions?.freshId)===sessionId);
+ return lease?{runtime,sessionId,workspace:lease.workspace,createdAt:lease.createdAt}:null;
 }
 
 async function describeUncached(runtime,file){
@@ -104,13 +105,6 @@ async function describe(runtime,file){
  try{return {...await entry.value};}catch(error){if(descriptionCache.get(key)===entry)descriptionCache.delete(key);throw error;}
 }
 
-/** An exact native ID can have multiple files; appending an older copy must select that newer file. */
-async function newestExactFile(files,id){
- const matches=files.filter(file=>file.id===id);if(matches.length<2)return matches[0];
- const current=await Promise.all(matches.map(async file=>{const info=await optionalStat(file.path);return info?{...file,modifiedAt:info.mtime.toISOString()}:null;}));
- return current.filter(Boolean).sort((a,b)=>b.modifiedAt.localeCompare(a.modifiedAt))[0];
-}
-
 const nativeView=(history,{nodeId=null,runtime=history?.runtime,origin='vendor',title=null,createdAt=null,id=history?.id,sessionId=history?.id,status=history?'ready':'missing_history',workspace=null,exactLastScan=null}={})=>({
  id,...(origin==='dialog'?{entryId:id}:{}),nodeId,runtime,sessionId:sessionId||null,title:title||history?.title||sessionId||id,
  createdAt:createdAt||null,modifiedAt:history?.modifiedAt||createdAt||null,workspace:workspace||history?.workspace||null,origin,status,
@@ -118,37 +112,35 @@ const nativeView=(history,{nodeId=null,runtime=history?.runtime,origin='vendor',
 });
 
 /** Native history remains on its device; every filtered item is matched by an exact native ID. */
-export async function listNativeSessions(runtime,{env=process.env,limit=100,scope='all',registry=[],managedSessions=[],nodeId=null}={}){
+export async function listNativeSessions(runtime,{env=process.env,limit=100,scope='all',registry=[],managedSessions=[],adoptedSessions=[],nodeId=null}={}){
  if(!['created','group','all'].includes(scope))throw Error('Invalid native session scope');
- const dialogRecords=registry.filter(record=>record?.runtime===runtime),records=scope==='created'?dialogRecords:scope==='group'?managedSessions:[];
- const needsHistory=scope==='all'||records.some(record=>idPattern.test((record?.sessionId||record?.id)||'')&&!['draft','prepared','active'].includes(record.status));
- const refreshAfter=Math.max(0,...dialogRecords.map(record=>Date.parse(record.exactLastScan)||0)),{files=[],partial=false}=needsHistory?await cachedDiscovery(runtime,env,refreshAfter):{},unique=[...new Map(files.toReversed().map(f=>[f.id,f])).values()].sort((a,b)=>b.modifiedAt.localeCompare(a.modifiedAt)),byId=new Map(unique.map(file=>[file.id,file]));
+ historyRoots(runtime,env);
+ const dialogRecords=registry.filter(record=>record?.runtime===runtime),records=scope==='group'?managedSessions:dialogRecords;
  const described=new Map();
- const history=async id=>{
-  if(!idPattern.test(id||'')||!byId.has(id))return null;
-  if(!described.has(id)){const file=byId.get(id);try{described.set(id,await describe(runtime,file));}catch{described.set(id,{id,runtime,title:id,modifiedAt:file.modifiedAt,workspace:null,previewAvailable:false,error:'History could not be read'});}}
+ const history=async(id,record)=>{
+  if(!idPattern.test(id||''))return null;
+  if(!described.has(id)){try{const file=await registeredFile(runtime,id,env,record);described.set(id,file?await describe(runtime,file):null);}catch{described.set(id,{id,runtime,title:id,modifiedAt:null,workspace:null,previewAvailable:false,error:'Registered history could not be read'});}}
   return described.get(id);
  };
- let items=[],scopedTotal=0;
+ let items=[];
  if(scope==='created'){
   for(const record of records){
    const entryId=record.entryId||record.id;if(typeof entryId!=='string'||!entryId)continue;
-   const exact=await history(record.sessionId),status=exact?(record.status==='active'||record.status==='prepared'?record.status:'ready'):record.sessionId?(record.status==='active'||record.status==='prepared'||record.status==='draft'?record.status:'awaiting_history'):(record.status||'awaiting_native_id');
+   const exact=await history(record.sessionId,record),status=exact?(record.status==='active'||record.status==='prepared'?record.status:'ready'):record.sessionId?(record.status==='active'||record.status==='prepared'||record.status==='draft'?record.status:'awaiting_history'):(record.status||'awaiting_native_id');
    items.push(nativeView(exact,{nodeId,runtime,origin:'dialog',id:entryId,sessionId:record.sessionId,title:record.title,createdAt:record.createdAt,status,workspace:record.workspace,exactLastScan:record.exactLastScan}));
   }
  }else if(scope==='group'){
   for(const record of managedSessions){
    const sessionId=record?.sessionId||record?.id;if(!idPattern.test(sessionId||''))continue;
-   items.push(nativeView(await history(sessionId),{nodeId,runtime,origin:'managed',id:sessionId,sessionId,title:record.title,createdAt:record.createdAt,status:byId.has(sessionId)?'ready':'missing_history',workspace:record.workspace}));
+   const exact=await history(sessionId,record);items.push(nativeView(exact,{nodeId,runtime,origin:'managed',id:sessionId,sessionId,title:record.title,createdAt:record.createdAt,status:exact?'ready':'missing_history',workspace:record.workspace}));
   }
  }else{
   const managedIds=new Set(managedSessions.map(record=>record?.sessionId||record?.id).filter(id=>idPattern.test(id||''))),dialogIds=new Set(dialogRecords.map(record=>record.sessionId).filter(id=>idPattern.test(id||'')));
-  for(const record of dialogRecords){const entryId=record.entryId||record.id;if(typeof entryId!=='string'||!entryId)continue;const exact=await history(record.sessionId),status=exact?(record.status==='active'||record.status==='prepared'?record.status:'ready'):record.sessionId?(record.status==='active'||record.status==='prepared'||record.status==='draft'?record.status:'awaiting_history'):(record.status||'awaiting_native_id');items.push(nativeView(exact,{nodeId,runtime,origin:'dialog',id:entryId,sessionId:record.sessionId,title:record.title,createdAt:record.createdAt,status,workspace:record.workspace,exactLastScan:record.exactLastScan}));}
-  const vendorFiles=unique.filter(file=>!managedIds.has(file.id)&&!dialogIds.has(file.id));scopedTotal=items.length+vendorFiles.length;
-  for(const file of vendorFiles.slice(0,Math.max(0,limit-items.length))){const exact=await history(file.id);items.push(nativeView(exact,{nodeId}));}
+  for(const record of dialogRecords){const entryId=record.entryId||record.id;if(typeof entryId!=='string'||!entryId)continue;const exact=await history(record.sessionId,record),status=exact?(record.status==='active'||record.status==='prepared'?record.status:'ready'):record.sessionId?(record.status==='active'||record.status==='prepared'||record.status==='draft'?record.status:'awaiting_history'):(record.status||'awaiting_native_id');items.push(nativeView(exact,{nodeId,runtime,origin:'dialog',id:entryId,sessionId:record.sessionId,title:record.title,createdAt:record.createdAt,status,workspace:record.workspace,exactLastScan:record.exactLastScan}));}
+  for(const record of adoptedSessions){const id=record.sessionId;if(!idPattern.test(id||'')||managedIds.has(id)||dialogIds.has(id)||record.runtime!==runtime)continue;items.push(nativeView(await history(id,record),{nodeId,runtime,origin:'takeover',id,sessionId:id,workspace:record.workspace,createdAt:record.createdAt}));}
  }
  items.sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||'')));
- return {items:items.slice(0,limit),partial:partial||items.length>limit||(scope==='all'&&scopedTotal>limit)};
+ return {items:items.slice(0,limit),partial:items.length>limit};
 }
 
 /** Read backwards at line boundaries, pinning the original tail while a live CLI appends.
@@ -189,10 +181,9 @@ async function historyPage(file,runtime,id,cursor,snapshot){
 }
 
 /** Resume and preview resolve an exact native ID on the selected device, never a filename from the client. */
-export async function readNativeSession(runtime,id,{env=process.env,historyPage:paged=false,cursor=null,snapshot=null}={}){
+export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null}={}){
  if(!idPattern.test(id||''))throw Error('Invalid native session ID');
- let {files}=await cachedDiscovery(runtime,env),file=await newestExactFile(files,id);
- if(!file){({files}=await cachedDiscovery(runtime,env,0,true));file=await newestExactFile(files,id);}if(!file)throw Error('Native session not found on this device');
+ const file=await registeredFile(runtime,id,env,record);if(!file)throw Error('Registered native session history is unavailable; no external histories were scanned');
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
  if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot)};
  const window=await readWindow(file.path,file.root,true,524288),messages=messagesFrom(jsonLines(window.text),runtime);

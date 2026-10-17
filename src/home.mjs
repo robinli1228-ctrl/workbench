@@ -155,7 +155,7 @@ db.transaction(()=>{
 for (const run of db.list('runs').filter(r => !terminal.has(r.status))) db.put('runs', { ...run, status: run.status === 'stopping' ? 'stopping' : 'reconciling' });
 const sockets = new Map();
 /** Sessions-page takeover hook (src/native-turns-home.mjs). */
-const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>send(sockets.get(nodeId),{...payload,language:getLanguage()}),online:id=>sockets.get(id)?.readyState===1,change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId)});
+const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>send(sockets.get(nodeId),{...payload,language:getLanguage()}),online:id=>sockets.get(id)?.readyState===1,change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession});
 const viewers = new Set();
 const queries = new Map();
 const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
@@ -459,6 +459,18 @@ function managedNativeSessions(nodeId,runtime){
     items.set(session.nativeSessionId,{sessionId:session.nativeSessionId,title,workspace:session.workspace||session.workspaceRoot||null,createdAt:session.createdAt||null,roleBinding:ambiguous?null:binding,ambiguous:Boolean(ambiguous)});
   }return [...items.values()].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))||a.sessionId.localeCompare(b.sessionId));
 }
+/** A saved takeover is explicit provenance; a matching title or project folder is not. */
+function adoptedNativeSessions(nodeId,runtime){
+  const records=new Map();for(const claim of db.list('terminalSessions')){
+    const sessionId=claim.sessionId||claim.nativeSession?.id;
+    if(claim.nodeId!==nodeId||!['native','native-turn'].includes(claim.kind)||(claim.runtime||claim.nativeSession?.runtime)!==runtime||!sessionId||claim.status==='cancelled')continue;
+    records.set(sessionId,{runtime,sessionId,workspace:claim.workspace||null,createdAt:claim.createdAt});
+  }return [...records.values()];
+}
+/** Resolve browser reads solely from Home's saved Workbench ownership, before contacting a Worker. */
+function ownedNativeSession(nodeId,runtime,sessionId){
+  return nativeCatalogRecords(nodeId,runtime).find(r=>r.sessionId===sessionId)||managedNativeSessions(nodeId,runtime).find(r=>r.sessionId===sessionId)||adoptedNativeSessions(nodeId,runtime).find(r=>r.sessionId===sessionId)||null;
+}
 function cacheNativeCatalog(items,nodeId,runtime){
   db.transaction(()=>{for(const item of items||[]){if(item.origin!=='dialog'||item.nodeId!==nodeId||item.runtime!==runtime||!item.entryId)continue;const current=db.get('nativeCatalogEntries',item.entryId);if(current?.nodeId!==nodeId||current.runtime!==runtime)continue;db.put('nativeCatalogEntries',{...current,sessionId:item.sessionId||null,title:item.title,workspace:item.workspace||current.workspace,status:item.status,hasHistory:item.hasHistory===true,previewAvailable:item.previewAvailable===true,exactLastScan:item.exactLastScan||current.exactLastScan||null,modifiedAt:item.modifiedAt||current.modifiedAt});}});
 }
@@ -571,6 +583,9 @@ const server = http.createServer(async (req, res) => {
         if(req.method==='GET'&&!nativeMatch[2]){
           const runtime=url.searchParams.get('runtime'),sessionId=url.searchParams.get('sessionId'),scope=url.searchParams.get('scope')||'created';
           if(!['created','group','all'].includes(scope))throw Error('Invalid native session scope');
+          if(worker.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
+          const record=sessionId?ownedNativeSession(nodeId,runtime,sessionId):null;
+          if(sessionId&&!record)throw Error('Session is not registered with Workbench');
           if(!online(nodeId)){
             // Offline All can show cached independent entries, but must not imply complete native history.
             if(!sessionId&&['created','all'].includes(scope))return json(res,{items:nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem),partial:scope==='all',offline:true});
@@ -586,7 +601,7 @@ const server = http.createServer(async (req, res) => {
           const paged=Boolean(sessionId&&url.searchParams.get('historyPage')==='1'),cursor=url.searchParams.get('cursor'),historySnapshot=url.searchParams.get('snapshot');
           if((cursor||historySnapshot)&&(!paged||cursor?.length>2048||historySnapshot?.length>2048||cursor&&historySnapshot))throw Error('Invalid native history cursor');
           if(paged&&worker.capabilities?.nativeHistoryPages!==1)throw Error('Upgrade this Worker to load older native history.');
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,managedSessions:page,...(paged?{historyPage:true,cursor,snapshot:historySnapshot}:{})},30000);
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:historySnapshot}:{})},30000);
           if(!sessionId&&scope==='group'){
             const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));
             return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});
@@ -606,6 +621,9 @@ const server = http.createServer(async (req, res) => {
         if(req.method!=='POST'||nativeMatch[2]!=='terminal')throw Error('Invalid session action');
         const b=await body(req);
         if(b.action==='release'||b.action==='stop'){const claim=db.get('terminalSessions',b.operationId);if(claim?.kind!=='native'||claim.nodeId!==nodeId)throw Error('Invalid native terminal binding');return json(res,await returnTerminal(claim,b.action));}
+        if(worker.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
+        const historyRecord=b.sessionId?ownedNativeSession(nodeId,b.runtime,b.sessionId):null;
+        if(b.sessionId&&!historyRecord)throw Error('Session is not registered with Workbench');
         if(worker.capabilities?.nativeTakeover!==1)throw Error('Upgrade this Worker to safely take over native sessions');
         if(typeof b.operationId!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(b.operationId)||typeof b.allowAll!=='boolean')throw Error('Invalid terminal request');
         const fresh=!b.sessionId,catalogEntryId=b.entryId||(fresh?b.operationId:nativeCatalogRecords(nodeId,b.runtime).find(entry=>entry.sessionId===b.sessionId)?.id||null),entry=catalogEntryId?db.get('nativeCatalogEntries',catalogEntryId):null,prior=db.get('terminalSessions',b.operationId);
@@ -619,7 +637,7 @@ const server = http.createServer(async (req, res) => {
         const device=db.list('devices').find(d=>d.nodeId===nodeId);
         if(worker.nodeKind==='cloud'&&!device)throw Error('Register SSH access for this server first');
         const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
-        const input={runtime:b.runtime,sessionId:b.sessionId||null,freshSessionId,entryId:catalogEntryId,title:fresh?b.title.trim():null,workspace:b.workspace,allowAll:b.allowAll,bindings,managedProjectIds:nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId})};
+        const input={runtime:b.runtime,sessionId:b.sessionId||null,record:historyRecord,freshSessionId,entryId:catalogEntryId,title:fresh?b.title.trim():null,workspace:b.workspace,allowAll:b.allowAll,bindings,managedProjectIds:nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId})};
         const preview=await workerQuery({nodeId},'native_terminal_preview',input,30000);
         input.managedProjectIds=nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId});
         const owner=nativeTerminalProject(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId,folderProjectIds:preview.projectId?[preview.projectId]:[]}),projectId=owner||`native-tui:${b.operationId}`;
