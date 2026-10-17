@@ -393,7 +393,12 @@ export class Rooms {
         : discussion ? null : this.nativeRecoveryReason?.(task,recoveryChecks);
       if (reason) {
         const record=discussion?this.db.get(kind,recordId):task;
-        if (record?.waitingReason !== reason) { this.db.put(discussion?kind:'tasks', { ...record, waitingReason: reason }); changed = true; }
+        // Only an offline device or an unusable CLI counts as blocked; busy roles, capacity and workspace exclusivity are normal queueing.
+        const blockedKind=discussion?null:reason===tr('rooms.waitingForNodeComeOnline')?'device_offline':worker&&reason===runtimeIssue(worker, role.runtime, role.model)?'cli_unavailable':null;
+        const blockedSince=blockedKind?(record?.blockedKind===blockedKind&&record.blockedSince?record.blockedSince:new Date().toISOString()):null;
+        if (record?.waitingReason !== reason || (!discussion && ((record?.blockedKind||null)!==blockedKind || (record?.blockedSince||null)!==blockedSince))) {
+          this.db.put(discussion?kind:'tasks', { ...record, waitingReason: reason, ...(discussion?{}:{blockedKind,blockedSince}) }); changed = true;
+        }
         continue;
       }
       try {

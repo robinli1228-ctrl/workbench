@@ -17,14 +17,16 @@ export async function inspectCodex() {
   const pending = new Map(); let id = 0, transportError = null;
   // Optional quota failures must not send another RPC into a transport that has already exited.
   const fail = error => { transportError ||= error; for (const p of pending.values()) p.reject(transportError); pending.clear(); };
-  proc.on('error', () => fail(new Error(tr('runtimeProbe.appServerCouldNotStart'))));
-  proc.on('exit', () => fail(new Error(tr('runtimeProbe.appServerHasExited'))));
-  const timer = setTimeout(() => { fail(new Error(tr('runtimeProbe.cliStatusProbeTimedOut'))); proc.kill(); }, 15000);
+  // Process-level failures may clear up on the next attempt; login, catalog and protocol errors are definite answers.
+  const transient = key => Object.assign(new Error(tr(key)), { transient: true });
+  proc.on('error', () => fail(transient('runtimeProbe.appServerCouldNotStart')));
+  proc.on('exit', () => fail(transient('runtimeProbe.appServerHasExited')));
+  const timer = setTimeout(() => { fail(transient('runtimeProbe.cliStatusProbeTimedOut')); proc.kill(); }, 15000);
   lines.on('line', line => {
     try { const m = JSON.parse(line), p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.error ? p.reject(new Error(tr('runtimeProbe.cliDoesNotSupportRequired'))) : p.resolve(m.result); } catch {}
   });
   const call = (method, params) => new Promise((resolve, reject) => { if(transportError)return reject(transportError);const key = ++id; pending.set(key, { resolve, reject }); proc.stdin.write(`${JSON.stringify({ id: key, method, params })}\n`); });
-  proc.stdin.on('error', () => fail(new Error(tr('runtimeProbe.cliConnectionWasClosedDisconnect'))));
+  proc.stdin.on('error', () => fail(transient('runtimeProbe.cliConnectionWasClosedDisconnect')));
   try {
     await call('initialize', { clientInfo: { name: 'agent_workbench_probe', version: '0.3.0' } });
     proc.stdin.write(`${JSON.stringify({ method: 'initialized' })}\n`);
@@ -51,7 +53,11 @@ export async function inspectCodex() {
     } while (cursor && result.models.length < 500);
     result.available = result.authReady && result.models.length > 0;
     result.reason = !result.authReady ? tr('runtimeProbe.runCodexLoginOnDevice') : !result.models.length ? tr('runtimeProbe.cliReturnedNoAvailableModels') : '';
-  } catch (e) { result.reason = tr('runtimeProbe.checkCliOnDeviceThen', { message: e.message }); }
+  } catch (e) {
+    // Once account/read has confirmed a missing login, a later transport error must not make the result look transient.
+    if (result.authReady === false) result.reason = tr('runtimeProbe.runCodexLoginOnDevice');
+    else { result.reason = tr('runtimeProbe.checkCliOnDeviceThen', { message: e.message }); if (e.transient) result.transient = true; }
+  }
   finally { clearTimeout(timer); lines.close(); proc.stdin.end(); proc.kill(); }
   return result;
 }
@@ -489,6 +495,29 @@ async function probeClaudeQuota(bin) {
     if (parsed) return packOk(parsed);
   } catch { /* If the json probe fails, stay unavailable */ }
   return empty;
+}
+
+export const RUNTIME_TRANSIENT_LIMIT = 2;
+export const RUNTIME_RETRY_MS = Object.freeze([30000, 60000, 120000]);
+
+/**
+ * One process-level probe failure (for example the App Server exiting mid-probe) keeps the last good report of the
+ * same CLI version, so dispatch is not blocked for a whole probe interval. The kept report retains its original
+ * checkedAt, so the ten-minute expiry in runtimeIssue still bounds how stale it can get. The second consecutive
+ * failure reports the CLI unavailable. Failed probes are retried after 30s, 60s, then every 120s until one succeeds.
+ */
+export function mergeRuntimeReports(previous, next, failures = {}) {
+  const counts = {};
+  const runtimes = (Array.isArray(next) ? next : []).map(report => {
+    if (!report?.transient || report.available) return report;
+    const count = (failures[report.type] || 0) + 1, warning = { reason: report.reason, at: report.checkedAt, failures: count };
+    counts[report.type] = count;
+    const last = (Array.isArray(previous) ? previous : []).find(item => item?.type === report.type);
+    if (count < RUNTIME_TRANSIENT_LIMIT && last?.available && !last.probeWarning && last.version === report.version) return { ...last, probeWarning: warning };
+    return { ...report, probeWarning: warning };
+  });
+  const worst = Math.max(0, ...Object.values(counts));
+  return { runtimes, failures: counts, retryMs: worst ? RUNTIME_RETRY_MS[Math.min(worst, RUNTIME_RETRY_MS.length) - 1] : null };
 }
 
 /** Saving and dispatching use the same contract; the status comes from that node, and cross-device model lists are not accepted. */

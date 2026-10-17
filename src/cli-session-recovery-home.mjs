@@ -14,6 +14,10 @@ export class CliRecoveryHome {
     if(run&&(run.stopRequested||['stopping','succeeded','failed','interrupted'].includes(run.status)))return null;
     const role=effectiveExecutionRole(this.db,task),worker=this.db.get('workers',role?.nodeId);
     if(!role?.enabled||worker?.capabilities?.cliRecovery!==1||activeRoleSwitch(this.db,role.id)||projectTerminalLock(this.db,task.projectId,role.nodeId))return null;
+    // A healthy admitted turn invalidates both in-flight probes and previously offered stop approvals.
+    // Own deferred launches and uncertain orphan processes still use the recovery route.
+    if(this.db.activeRuns(role.nodeId).some(r=>r.id!==task.currentRunId&&r.projectId===task.projectId&&r.roleId===role.id
+      &&['queued','starting','running','waiting_user'].includes(r.status)&&!r.cliRecoveryWait&&!r.controlLost))return null;
     const session=run?.roleSessionId?this.db.get('roleSessions',run.roleSessionId):this.db.list('roleSessions').find(s=>s.projectId===task.projectId&&s.conversationId===taskConversationId(task)&&s.roleId===role.id&&s.status!=='archived'&&!s.candidateFor);
     if(session&&(session.projectId!==task.projectId||session.roleId!==role.id||groupConversationIdOfSession(session)!==conversationIdOf(task)||session.conversationId!==taskConversationId(task)||session.status==='archived'))return null;
     const prior=this.db.get('runs',task.continuationRunId||session?.lastRunId||session?.activeRunId||'');
