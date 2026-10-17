@@ -31,11 +31,12 @@ export class SourceSyncAgent {
       const sides=nodeIds.map(nodeId=>{
         const ack=acks.find(d=>d.nodeId===nodeId),entry=entryOf(ack?.entries,path),online=Boolean(this.sync.online(nodeId));
         const same=ack&&(entry?.hash||null)===(canonical?.hash||null);
-        const state=conflicts.some(c=>c.repositoryId===m.repositoryId)?'conflict':same?'consistent'
-          :online&&batches.some(b=>b.repositoryIds?.includes(m.repositoryId)&&(b.nodeIds||[]).includes(nodeId))?'in_transit':'unknown';
+        // An offline device's last acknowledgement is history, not a current match: it stays unknown even when the hash agrees.
+        const state=conflicts.some(c=>c.repositoryId===m.repositoryId)?'conflict':!online?'unknown':same?'consistent'
+          :batches.some(b=>b.repositoryIds?.includes(m.repositoryId)&&(b.nodeIds||[]).includes(nodeId))?'in_transit':'unknown';
         const veil=hidden(nodeId);
         return {nodeId,online,state,hash:veil?null:entry?.hash||null,size:veil?null:entry?.size??null,observedAt:ack?.updatedAt||null,
-          ...(veil?{reason:'review_document_not_released'}:!ack?{reason:'no_acknowledgement'}:!online&&!same?{reason:'device_offline'}:{})};
+          ...(veil?{reason:'review_document_not_released'}:!ack?{reason:'no_acknowledgement'}:!online?{reason:'device_offline'}:{})};
       });
       const state=sides.some(s=>s.state==='conflict')?'conflict':sides.every(s=>s.state==='consistent')?'consistent':sides.some(s=>s.state==='in_transit')?'in_transit':'unknown';
       return {repositoryId:m.repositoryId,state,canonical:hidden(run.nodeId)?null:canonical?{hash:canonical.hash,size:canonical.size??null}:null,
