@@ -9,11 +9,20 @@ export function sourceConflictContext(value={}) {
   return Object.fromEntries(['sourceConflictId','sourceConflictGeneration','sourceConflictAssignmentId','sourceConflictPeerId','sourceConflictAssignmentRequestId','sourceSessionKey'].filter(k=>value?.[k]!==undefined).map(k=>[k,value[k]]));
 }
 
+/** Reject incompatible identities before queueing; a directory receipt is not a fixed code input or a file-ready dependency. */
+export function sourceInputBatch(db,batchId,projectId) {
+  const batch=db.get('sourceSyncBatches',batchId);
+  if(!batch||batch.projectId!==projectId)throw syncError('source_input_not_ready');
+  if(batch.scopeKind==='directory')throw syncError('directory_sync_is_not_git_delivery','For documents, check wb sync status and target file hashes separately; use a fixed commit delivery for code.');
+  // Legacy version batches omitted kind; previews/evidence and unknown states can never produce execution inputs.
+  if(batch.kind!==undefined&&!['sync','resolution'].includes(batch.kind)||!['queued','capturing','applying','completed'].includes(batch.status))throw syncError('source_input_not_ready',batch.reason||batch.status);
+  return batch;
+}
+
 /** Freeze the completed batch's version, never whatever canonical happens to be current later. */
 export function freezeSourceInputs(db,batchId,nodeId,projectId) {
-  const batch=db.get('sourceSyncBatches',batchId);
-  if(batch?.projectId===projectId&&batch.scopeKind==='directory')throw syncError('directory_sync_is_not_git_delivery');
-  if(batch?.projectId!==projectId||batch.status!=='completed'||batch.sourceInputsReady===false||!(batch.sourceInputNodeIds||batch.nodeIds).includes(nodeId)||!batch.sourceInputs?.length)throw syncError('source_input_not_ready');
+  const batch=sourceInputBatch(db,batchId,projectId),nodes=batch.sourceInputNodeIds||batch.nodeIds;
+  if(batch.status!=='completed'||batch.sourceInputsReady===false||!Array.isArray(nodes)||!nodes.includes(nodeId)||!Array.isArray(batch.sourceInputs)||!batch.sourceInputs.length)throw syncError('source_input_not_ready');
   return structuredClone(batch.sourceInputs);
 }
 

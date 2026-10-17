@@ -51,7 +51,7 @@ export async function main(argv = process.argv.slice(2)) {
       const text=process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wbCli.wbScheduleJsonSupervisorSubmits',{HELP:helpText()}):helpText();
       return out(process.env.WB_DISCUSSION_PROTOCOL==='2'?`${text}\n\n${discussionHelp()}`:text);
     }
-    if(!['notify','read','collaboration','sync','discuss','capabilities','session','chat','setup','pass','report','history','result','schedule','timer','role','boot','status','docs','git','note','ask','wait','deliver','call','handoff'].includes(cmd))throw new Error(tr('wbCli.unknownCommand',{cmd,HELP:helpText()}));
+    if(!['notify','read','collaboration','sync','discuss','capabilities','session','chat','setup','pass','report','progress','history','result','schedule','timer','role','boot','status','docs','git','note','ask','wait','deliver','call','handoff'].includes(cmd))throw new Error(tr('wbCli.unknownCommand',{cmd,HELP:helpText()}));
     loadTurnContext(process.env,{turnId});
     const supervisor = process.env.WB_SYSTEM_SUPERVISOR === '1';
     const roleSession=Boolean(process.env.WB_ROLE_SESSION_ID),discussion=roleSession&&process.env.WB_DISCUSSION_PROTOCOL==='2';
@@ -89,6 +89,11 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'pass') return out(await agentRequest('/api/agent/pass',{runId:process.env.WB_RUN_ID}));
     if(cmd==='report'&&sub==='status'){if(rest.length!==1)throw new Error(tr('runReports.invalidSubmissionId'));return out(await agentRequest('/api/agent/report',{runId:process.env.WB_RUN_ID,action:'status',submissionId:rest[0]}));}
     if (cmd === 'report') return out(await agentRequest('/api/agent/report',{...JSON.parse(tail.join(' ')),runId:process.env.WB_RUN_ID}));
+    if (cmd === 'progress') {
+      if(!sub||sub==='list')return out(await agentRequest('/api/agent/progress',{runId:process.env.WB_RUN_ID,action:'list'}));
+      if(sub==='verify'&&rest.length)return out(await agentRequest('/api/agent/progress',{runId:process.env.WB_RUN_ID,action:'verify',input:JSON.parse(rest.join(' '))}));
+      throw new Error(tr('resultReceipts.usage'));
+    }
     if (cmd === 'history' && sub === 'search') return out(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,query:rest.join(' ')}));
     if ((cmd === 'history' || cmd === 'result') && sub === 'read') return out(await agentRequest('/api/agent/history/read',{runId:process.env.WB_RUN_ID,kind:cmd==='history'?'message':'result',id:rest[0],offset:rest[1]===undefined?0:Number(rest[1]),version:rest[2]}));
     if (cmd === 'schedule') {

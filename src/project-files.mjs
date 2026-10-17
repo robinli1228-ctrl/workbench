@@ -20,7 +20,7 @@ export class ProjectFiles {
   readBindings(projectId,nodeId){
     const repositories=this.db.list('repositoryWorkspaces').filter(b=>b.projectId===projectId&&b.nodeId===nodeId&&b.localRoot&&this.db.get('repositories',b.repositoryId)?.projectId===projectId);
     const project=this.db.get('workspaces',`${projectId}:${nodeId}`),scopes=[...(project?.localRoot?[{...project,repositoryId:projectFileScopeId(projectId)}]:[]),...repositories];
-    const isolated=this.db.listProject('runs',projectId).filter(r=>r.nodeId===nodeId&&r.execution?.isolated&&r.workspace&&r.workspace!==r.projectRoot);
+    const isolated=this.db.sourceIsolationRuns(projectId).filter(r=>r.nodeId===nodeId&&r.execution?.isolated&&r.workspace&&r.workspace!==r.projectRoot);
     return scopes.filter(b=>!isolated.some(r=>beneath(resolve(r.workspace),resolve(b.localRoot))!==null)).map(b=>{
       const root=resolve(b.localRoot),sharedDocs=isProjectFileScope(projectId,b.repositoryId);
       const excludeRoots=scopes.filter(other=>other.repositoryId!==b.repositoryId).map(other=>beneath(root,resolve(other.localRoot))).filter(p=>p!==null);
@@ -42,8 +42,13 @@ export class ProjectFiles {
   reference(run,path){
     if(!this.db.get('projects',run.projectId))throw syncError('project_missing');
     if(typeof path!=='string'||path.length>4096)return null;
-    if(!isAbsolute(path)&&!run.workspace)return null;
-    const absolute=isAbsolute(path)?resolve(path):resolve(run.workspace,path);
+    const logicalDocument=!isAbsolute(path)&&path.startsWith('.workbench/docs/');
+    // This logical shared root is resolved separately from the Run workspace; validate its original spelling first.
+    if(logicalDocument)try{validateSourcePath(path,{sharedDocs:true,excludeRoots:[]});}catch{return null;}
+    const projectRoot=this.db.get('workspaces',`${run.projectId}:${run.nodeId}`)?.localRoot;
+    if(logicalDocument&&(!run.projectRoot||!projectRoot||resolve(run.projectRoot)!==resolve(projectRoot)))return null;
+    if(!isAbsolute(path)&&!run.workspace&&!logicalDocument)return null;
+    const absolute=isAbsolute(path)?resolve(path):resolve(logicalDocument?run.projectRoot:run.workspace,path);
     for(const binding of this.readBindings(run.projectId,run.nodeId).sort((a,b)=>b.root.length-a.root.length)){
       if(sourceScopeBinding(this.db,run.projectId,binding.repositoryId,run.nodeId)?.localRoot!==binding.root)continue;
       const rel=relative(binding.root,absolute);if(!rel||isAbsolute(rel)||rel==='..'||rel.startsWith('../'))continue;

@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v142-runtime-recovery';
+const CACHE = 'agent-workbench-static-v144-progress-history-sidebar';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

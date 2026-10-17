@@ -89,12 +89,14 @@ export class ProactiveFollowup {
   coveringRequest(state){
     const messages=(state.messageIds||[]).map(id=>this.db.get('roomMessages',id)).filter(Boolean);
     if(!messages.length)return null;
-    const requests=this.db.listProject('coordinationRequests',state.projectId).filter(r=>r.targetRoleId===this.db.get('projects',state.projectId)?.supervisorRoleId&&!['succeeded','failed','cancelled'].includes(r.status));
+    // Reuse one synchronous read, retaining completed child evidence without caching across calls.
+    const projectRequests=this.db.listProject('coordinationRequests',state.projectId),supervisorRoleId=this.db.get('projects',state.projectId)?.supervisorRoleId;
+    const requests=projectRequests.filter(r=>r.targetRoleId===supervisorRoleId&&!['succeeded','failed','cancelled'].includes(r.status));
     for(const request of requests){
       const task=this.db.get('tasks',request.taskId||''),origin=followupFor(this.db,request);
       // A quoted background message is not evidence that this request undertook that independent goal.
       const refs=new Set([request.sourceMessageId,...(task?.followupMessageIds||[]),...(origin?.messageIds||[])]);
-      for(const child of this.db.listProject('coordinationRequests',state.projectId).filter(r=>(request.continuationOf&&r.parentRequestId===request.continuationOf)||r.parentRequestId===request.id))if(child.currentRunId)refs.add(`result-${child.currentRunId}`);
+      for(const child of projectRequests.filter(r=>(request.continuationOf&&r.parentRequestId===request.continuationOf)||r.parentRequestId===request.id))if(child.currentRunId)refs.add(`result-${child.currentRunId}`);
       if(messages.every(m=>refs.has(m.id)))return request;
     }
     return null;

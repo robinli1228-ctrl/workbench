@@ -32,6 +32,12 @@ Worker 在受管启动时记录 PID、操作系统启动标识、运行用户及
 
 Home 复用原 Room/Task/Run 和设备容量规则。常规派发先查询 Worker；最后一刻发生占用竞争时，Worker 保存等待，之后重发同一 launch 命令和 Run，不重做业务派工。停止或取消在异步核验期间也生效，不能因此重新执行或泄漏容量。隔离源码任务使用与正式派发相同的独立会话绑定。
 
+## Admission probing
+
+Ordinary queued tasks query occupancy only after role availability, workspace, capacity and other Room admission gates pass. Each queue scan probes the first task for an identical recovery target (including project, role, device, native/platform session and prior/current Run); later tasks defer without reusing another task's result, fingerprint or consent. Different targets may progress independently. The existing five-second per-task cooldown is unchanged. Accepted launches deferred by a last-moment occupancy race retain their separate retry path, and the Worker still rechecks live ownership before launch.
+
+A retry accepted after `CLI_RECOVERY_WAIT` emits an ordered `starting` event that explicitly clears `cliRecoveryWait`, the current recovery detail and that wait's error on both Worker and Home. This transition is limited to recovery acceptance, not every successful event. Fresh occupancy, failures and cancellation still produce their own subsequent status; existing sequence and terminal-result guards remain unchanged. Historical terminal records are not rewritten by this transition.
+
 ## 协议与边界
 
 Home 与 Worker 通过 `cliRecovery:1` 协商。旧 Worker 保持旧契约；新 Worker 对旧 Home 不返回对方无法处理的等待／确认流程，保留保守占用拒绝及正常 Warm 复用。旧记录缺少可信启动证明时不自动补造证明，不强制结束。

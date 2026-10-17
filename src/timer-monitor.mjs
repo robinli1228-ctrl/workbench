@@ -1,5 +1,6 @@
 import { terminal } from './store.mjs';
 import { tr } from './i18n.mjs';
+import { receiptFindings } from './result-receipts.mjs';
 
 /** Read-only inspection of the current project, so that earlier failed plans are not repeatedly treated as new faults. */
 export function progressFindings(db, projectId, _now) {
@@ -20,5 +21,7 @@ export function progressFindings(db, projectId, _now) {
     if (!run || terminal.has(run.status)) continue;
     findings.push({ key: `run:${run.id}:${alert.reason}`, text: tr('timerMonitor.run', { id: run.id, reason: alert.reason }) });
   }
+  // Undelivered results wake an idle owner once per new receipt; no new receipt keeps the same key and wakes nobody.
+  findings.push(...receiptFindings(db, projectId));
   return findings;
 }

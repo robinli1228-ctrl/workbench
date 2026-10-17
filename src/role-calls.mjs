@@ -4,12 +4,13 @@ import { terminal } from './store.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
 import {outcomeFor,runFailureKind} from './run-reports.mjs';
 import { tr } from './i18n.mjs';
-import {freezeSourceInputs,sourceConflictContext} from './source-sync-input.mjs';
+import {freezeSourceInputs,sourceInputBatch,sourceConflictContext} from './source-sync-input.mjs';
 import {createHash} from 'node:crypto';
 import {currentContinuation,waitDependencies} from './coordination-wait.mjs';
 import {SessionQueue} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
+import {registerResultReceipt} from './result-receipts.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
 export const BLOCKED_WAKE_MS = 10 * 60000;
@@ -113,6 +114,7 @@ export class RoleCalls {
       if(normalized.sourceRunId && this.db.get('runs',normalized.sourceRunId)?.projectId!==input.projectId)throw new Error(tr('roleCalls.sourceMessageDoesNotBelong'));
       if (normalized.deliveryId && this.db.get('deliveries', normalized.deliveryId)?.projectId !== input.projectId) throw new Error(tr('roleCalls.deliveryDoesNotBelongProject'));
       if(normalized.sourceSyncBatchId&&this.db.get('sourceSyncBatches',normalized.sourceSyncBatchId)?.projectId!==input.projectId)throw new Error(tr('roleCalls.deliveryDoesNotBelongProject'));
+      if(normalized.sourceSyncBatchId)sourceInputBatch(this.db,normalized.sourceSyncBatchId,input.projectId);
       if (this.db.get('settings', 'main')?.paused) throw new Error(tr('roleCalls.remoteExecutionPaused'));
       const now = new Date().toISOString();
       return this.db.put('coordinationRequests', { ...normalized, conversationId, fingerprint,
@@ -164,14 +166,14 @@ export class RoleCalls {
 
   /** Materialize a Task once; trusted request provenance and publication policy survive native-session continuations. */
   reconcile(requestId) {
-    return this.db.transaction(() => {
+    try {return this.db.transaction(() => {
       const r = this.db.get('coordinationRequests', requestId);
       if (!r || callTerminal.has(r.status) || this.db.get('settings', 'main')?.paused) return r;
-      if (r.taskId || !['queued', 'waiting_delivery'].includes(r.status)) return r;
+      if (r.taskId || r.currentRunId || !['queued', 'waiting_delivery'].includes(r.status)) return r;
       if(reviewView(this.db,{projectId:r.projectId,roleId:r.targetRoleId}).get('coordinationRequests',r.id)?.reviewRedacted)
         return this.db.put('coordinationRequests',{...r,waitingReason:'review_isolation'});
       const delivery = r.deliveryId ? this.db.get('deliveries', r.deliveryId) : null;
-      if(r.sourceSyncBatchId&&this.db.get('sourceSyncBatches',r.sourceSyncBatchId)?.status!=='completed')return r;
+      if(r.sourceSyncBatchId&&sourceInputBatch(this.db,r.sourceSyncBatchId,r.projectId).status!=='completed')return r;
       if (r.kind === 'handoff' && !r.sourceSyncBatchId && delivery?.status !== 'ready') return r;
       const role = r.targetSnapshot;
       const previous = r.continuationOf ? this.db.get('coordinationRequests', r.continuationOf) : null;
@@ -192,6 +194,21 @@ export class RoleCalls {
         execution:r.execution || null,attachments:r.attachments || [],reportRequired:true,scheduledJobId:r.scheduledJobId||null });
       const next = this.db.put('coordinationRequests', { ...r,sourceInputs,sourceSessionKey, status: 'queued', taskId: task.id, updatedAt: new Date().toISOString() });
       new SessionQueue(this.db).attachRequest(next);
+      return next;
+    });}catch(error){return this.failAdmission(requestId,error);}
+  }
+
+  /** A rolled-back admission has no execution to stop. Keep the failed request as evidence, settle its queue and wake only its waiter. */
+  failAdmission(requestId,error) {
+    if(/^(?:ERR_SQLITE|SQLITE_)/.test(error?.code||'')||['ENOSPC','EIO','EROFS'].includes(error?.code))throw error;
+    return this.db.transaction(()=>{
+      const r=this.db.get('coordinationRequests',requestId);
+      if(!r||r.taskId||r.currentRunId||!['queued','waiting_delivery'].includes(r.status))throw error;
+      const at=new Date().toISOString(),message=String(error?.message||error).slice(0,4000);
+      const next=this.db.put('coordinationRequests',{...r,status:'failed',notExecutedReason:message,
+        admissionError:{code:typeof error?.code==='string'?error.code:'request_admission_failed',message,at},
+        result:tr('executionPlans.notExecuted',{message}),updatedAt:at});
+      this.settleResult(next);
       return next;
     });
   }
@@ -254,6 +271,13 @@ export class RoleCalls {
         status: run.status === 'succeeded' && !missingReply ? 'succeeded' : 'failed',
         result: run.result || run.error || '', updatedAt: new Date().toISOString() });
     }
+    // Register the settled call before resuming its owner, so the safe continuation includes this result.
+    if(callTerminal.has(r.status))registerResultReceipt(this.db,{run,request:r});
+    this.settleResult(r);
+  }
+
+  /** Run results and pre-execution failures must settle the same queue and continuation chain; neither rewrites historical Runs or reports. */
+  settleResult(r) {
     this.resume(r.id);
     new SessionQueue(this.db).settleRequest(r);
     if (r.parentRequestId) this.resume(r.parentRequestId);
@@ -264,7 +288,9 @@ export class RoleCalls {
         seen.add(previousId);
         const prior = this.db.get('coordinationRequests', previousId);
         if (!prior || callTerminal.has(prior.status)) break;
-        this.db.put('coordinationRequests', { ...prior, status: r.status, result: r.result, outcome:r.outcome,runStatus:r.runStatus,failureKind:r.failureKind||null,reportSummary:r.reportSummary,error:r.error||null,updatedAt: r.updatedAt });
+        const next=this.db.put('coordinationRequests', { ...prior, status: r.status, result: r.result, outcome:r.outcome,runStatus:r.runStatus,failureKind:r.failureKind||null,reportSummary:r.reportSummary,error:r.error||null,
+          ...(r.notExecutedReason?{notExecutedReason:r.notExecutedReason,admissionError:r.admissionError}:{}),updatedAt: r.updatedAt });
+        new SessionQueue(this.db).settleRequest(next);
         if (prior.parentRequestId) this.resume(prior.parentRequestId);
         previousId = prior.continuationOf;
       }

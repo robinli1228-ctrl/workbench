@@ -1,5 +1,11 @@
 # Development Progress
 
+## 2026-10-17 — Isolate invalid source-input admission from Home lifecycle
+
+- Reproduced the directory-sync batch admission crash in an isolated real Home. Added early call/schedule validation, safe handling of legacy unstarted requests, shared queue/continuation settlement and synchronous scheduler exception boundaries. Existing code-delivery guards, Runs, reports, files and request history remain intact.
+- Corrected both language versions of the sync tool guide: directory receipts are file-sync evidence, not fixed-code inputs or general task dependency IDs.
+- Focused regressions cover early rejection, atomic rollback, legacy admission, queue receipts, parent/continuation settlement, safe storage-outage handling and preservation of active work. Real isolated Home/Edge verification covers healthy HTTP/page reads beside a rejected request, scheduler ticks across a restart, exactly one healthy Task, no synthetic failed Run or stop command, and unchanged report/file fixtures. These results do not imply the business task was rerun or that other services were restarted.
+
 ## 2026-10-10 — Managed input language
 
 - Implemented English Workbench-maintained execution templates independently from interface localization, with send-only Simplified-to-Traditional prose conversion for all four managed dialogue adapters. Original chat/configuration records and exact executable/identity text remain unchanged. Current behavior and exclusions are defined once in [ARCHITECTURE](ARCHITECTURE.md#managed-input-language).
@@ -286,3 +292,14 @@
 - Integrated the existing admission-order correction: ordinary queued work does not probe occupied roles, duplicate targets are deferred within a scheduling pass, and accepted recovery retries clear the old wait with an ordered transition. Histories and task-bound approval identities are preserved.
 - A real Worker sample showed synchronous process inspection starving its event loop. Read-only historical-data reproduction performed 254 identity queries for 140 matching turns in approximately 2.6 seconds; a fresh asynchronous snapshot observed the same ready state in approximately 22 milliseconds while timers progressed. Failed/partial observations remain conservative and signal paths still recheck identities.
 - A separate red/green subprocess case verifies that Codex exiting during an optional quota request cannot strand a later model-list RPC. Focused checks and the existing suite passed before integration; final combined release verification is recorded separately. No account, role model, permission or history migration is included.
+
+## 2026-10-17 — Native history loading and historical document references
+
+- Logical shared-document links now resolve through the recorded, still-registered project root rather than a historical Run worktree. Original path spelling is validated before resolution; ordinary paths, selected display-device rules and missing-file behavior are preserved. Read-binding checks reuse the narrow isolation projection instead of materializing full historical Run outputs.
+- Background document metadata reads are limited to two concurrent requests and share pending lookups. Native catalogues publish complete responses incrementally, without waiting for every peer. Late same-role sessions join the open timeline without discarding its sections, pending page, draft or selected identity; intermediate sessions retain their own pagination cursors.
+- Local red/green cases cover blocked-peer rendering, background request pressure, path aliases and late history pages. Existing tests pass, and independent review closed the path and lineage findings. Isolated real-browser checks include unchanged real document bytes. Histories, original task identities and runtime processes were not mutated; formal-service deployment and restart are not part of this change.
+
+## 2026-10-17 — Combined publication admission review
+
+- Independent integration review found that preview/evidence batches could remain queued forever as execution dependencies. Source-input admission now permits only version-sync/resolution batches and their actual pending/completed states, retaining compatibility with legacy records that omitted kind. Non-input and unknown states fail without creating an execution; running requests remain untouched.
+- Added ignored red/green coverage for invalid batch kinds/states and legitimate pending version dependencies. This is a publication correction, not a production-state migration or a service restart.

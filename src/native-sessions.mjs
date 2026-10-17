@@ -1,4 +1,4 @@
-import {readdir,open,realpath,stat} from 'node:fs/promises';
+import {readdir,open,realpath,stat,lstat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
@@ -37,11 +37,16 @@ function messagesFrom(rows,runtime){return rows.flatMap(row=>{
  const text=bodyText(m.content);return text?[{role:m.role,text:text.slice(0,12000),timestamp:row.timestamp||null}]:[];
 });}
 
+const fileStamp=info=>info?[info.dev,info.ino,info.birthtimeMs,info.size,info.mtimeMs,info.ctimeMs,info.mode].join(':'):null;
+const optionalStat=async path=>{try{return await stat(path);}catch(error){if(error.code==='ENOENT')return null;throw error;}};
+function remember(cache,key,value,limit){cache.delete(key);cache.set(key,value);if(cache.size>limit)cache.delete(cache.keys().next().value);}
+
 async function discover(runtime,env){
- const files=[];let visited=0,partial=false;
+ const files=[],directories=[];let visited=0,partial=false;
  for(const root of historyRoots(runtime,env)){
   async function walk(dir,depth){
    if(depth>6||visited>=20000){partial=true;return;}
+   directories.push({path:dir,stamp:fileStamp(await optionalStat(dir))});
    const entries=await readdir(dir,{withFileTypes:true}).catch(e=>{if(e.code==='ENOENT')return [];throw e;});
    entries.sort((a,b)=>b.name.localeCompare(a.name));
    for(const e of entries){if(++visited>20000){partial=true;break;}const path=join(dir,e.name);
@@ -55,16 +60,26 @@ async function discover(runtime,env){
   }
   await walk(root,0);
  }
- return {files:files.sort((a,b)=>b.modifiedAt.localeCompare(a.modifiedAt)),partial};
+ return {files:files.sort((a,b)=>b.modifiedAt.localeCompare(a.modifiedAt)),partial,directories};
 }
 const discoveryCache=new Map();
-async function cachedDiscovery(runtime,env,after=0){
+/** Reuse unchanged directories without delaying new, moved or deleted histories until expiry. */
+async function cachedDiscovery(runtime,env,after=0,force=false){
  const key=JSON.stringify([runtime,...historyRoots(runtime,env)]),prior=discoveryCache.get(key);
- if(prior&&Date.now()-prior.at<20000&&prior.at>=after)return prior.value;
- const value=await discover(runtime,env);discoveryCache.set(key,{at:Date.now(),value});return value;
+ if(prior&&Date.now()-prior.at<20000&&prior.at>=after){
+  if(prior.pending)return prior.pending;
+  if(!force){
+   let unchanged=true;for(const dir of prior.value.directories){if(fileStamp(await optionalStat(dir.path))!==dir.stamp){unchanged=false;break;}}
+   if(discoveryCache.get(key)!==prior)return cachedDiscovery(runtime,env,after,force);
+   if(unchanged)return prior.value;
+  }
+ }
+ const entry={at:Date.now()};
+ entry.pending=discover(runtime,env).then(value=>{entry.value=value;delete entry.pending;return value;},error=>{if(discoveryCache.get(key)===entry)discoveryCache.delete(key);throw error;});
+ remember(discoveryCache,key,entry,32);return entry.pending;
 }
 
-async function describe(runtime,file){
+async function describeUncached(runtime,file){
  const row={id:file.id,runtime,title:file.id,workspace:null,modifiedAt:file.modifiedAt,previewAvailable:!file.path.endsWith('.db')&&!file.path.endsWith('.pb')};
  if(!row.previewAvailable)return row;
  const lines=jsonLines((await readWindow(file.path,file.root)).text);
@@ -75,6 +90,25 @@ async function describe(runtime,file){
   try{const meta=JSON.parse((await readWindow(join(dirname(file.path),'summary.json'),file.root)).text);row.title=meta.generated_title||row.title;}catch{}
  }
  return row;
+}
+
+const descriptionCache=new Map();
+/** Cache only summaries, checking current file identity, change times and Grok sidecars on every read. */
+async function describe(runtime,file){
+ const info=await lstat(file.path);if(!info.isFile())throw Error('Not a history file');
+ if(!inside(await realpath(file.root),await realpath(file.path)))throw Error('History outside CLI directory');
+ const sidecars=runtime==='grok'?await Promise.all(['prompt_context.json','summary.json'].map(async name=>{try{return fileStamp(await lstat(join(dirname(file.path),name)));}catch(error){return error.code;}})):[];
+ const key=JSON.stringify([runtime,file.root,file.path]),stamp=JSON.stringify([fileStamp(info),...sidecars]),prior=descriptionCache.get(key);
+ if(prior&&prior.stamp===stamp&&Date.now()-prior.at<20000){remember(descriptionCache,key,prior,500);return {...await prior.value};}
+ const entry={at:Date.now(),stamp,value:describeUncached(runtime,{...file,modifiedAt:info.mtime.toISOString()})};remember(descriptionCache,key,entry,500);
+ try{return {...await entry.value};}catch(error){if(descriptionCache.get(key)===entry)descriptionCache.delete(key);throw error;}
+}
+
+/** An exact native ID can have multiple files; appending an older copy must select that newer file. */
+async function newestExactFile(files,id){
+ const matches=files.filter(file=>file.id===id);if(matches.length<2)return matches[0];
+ const current=await Promise.all(matches.map(async file=>{const info=await optionalStat(file.path);return info?{...file,modifiedAt:info.mtime.toISOString()}:null;}));
+ return current.filter(Boolean).sort((a,b)=>b.modifiedAt.localeCompare(a.modifiedAt))[0];
 }
 
 const nativeView=(history,{nodeId=null,runtime=history?.runtime,origin='vendor',title=null,createdAt=null,id=history?.id,sessionId=history?.id,status=history?'ready':'missing_history',workspace=null,exactLastScan=null}={})=>({
@@ -157,7 +191,8 @@ async function historyPage(file,runtime,id,cursor,snapshot){
 /** Resume and preview resolve an exact native ID on the selected device, never a filename from the client. */
 export async function readNativeSession(runtime,id,{env=process.env,historyPage:paged=false,cursor=null,snapshot=null}={}){
  if(!idPattern.test(id||''))throw Error('Invalid native session ID');
- const {files}=await discover(runtime,env),file=files.find(f=>f.id===id);if(!file)throw Error('Native session not found on this device');
+ let {files}=await cachedDiscovery(runtime,env),file=await newestExactFile(files,id);
+ if(!file){({files}=await cachedDiscovery(runtime,env,0,true));file=await newestExactFile(files,id);}if(!file)throw Error('Native session not found on this device');
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
  if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot)};
  const window=await readWindow(file.path,file.root,true,524288),messages=messagesFrom(jsonLines(window.text),runtime);

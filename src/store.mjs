@@ -20,6 +20,7 @@ import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followu
 import {reviewView} from './collaboration-sessions.mjs';
 import {tagMessage,SessionQueue,reservePropagation,settlePropagation} from './session-queue.mjs';
 import { permissionScopeIssue } from './role-permissions.mjs';
+import {claimResultReceipts,settleResultReceipts} from './result-receipts.mjs';
 
 export const terminal = new Set(['succeeded', 'failed', 'interrupted']);
 const now = () => new Date().toISOString();
@@ -48,6 +49,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_source_command_pending ON records(json_extract(data,'$.projectId'),json_extract(data,'$.nodeId')) WHERE kind='sourceSyncCommands' AND ${pendingSourceCommand};
       CREATE INDEX IF NOT EXISTS records_active_runs ON records(json_extract(data,'$.nodeId')) WHERE kind='runs' AND ${activeRun};
       CREATE INDEX IF NOT EXISTS records_chat_tasks ON records(id) WHERE kind='tasks' AND ${chatTask};
+      CREATE INDEX IF NOT EXISTS records_role_steering ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId')) WHERE kind='tasks' AND json_extract(data,'$.steering') IS NOT NULL;
       CREATE INDEX IF NOT EXISTS records_schedulable_requests ON records(id) WHERE kind='coordinationRequests' AND ${schedulableRequest};
       CREATE INDEX IF NOT EXISTS records_pending_call_results ON records(id) WHERE kind='coordinationRequests' AND ${pendingCallResult};
       CREATE INDEX IF NOT EXISTS records_conflict_runs ON records(json_extract(data,'$.sourceConflictId')) WHERE kind='runs' AND json_extract(data,'$.sourceConflictId') IS NOT NULL;
@@ -88,6 +90,10 @@ export class Store {
   }
   chatTasks(statuses=['ready','in_progress']) {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_chat_tasks WHERE kind='tasks' AND ${chatTask} ORDER BY rowid`).all().map(r=>JSON.parse(r.data)).filter(t=>statuses.includes(t.status));
+  }
+  /** Steering checks read only this role's barriers, with fresh records rather than cached scheduling state. */
+  roleSteeringTasks(projectId,roleId) {
+    return this.db.prepare("SELECT data FROM records INDEXED BY records_role_steering WHERE kind='tasks' AND json_extract(data,'$.steering') IS NOT NULL AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.roleId')=? ORDER BY rowid").all(projectId,roleId).map(r=>JSON.parse(r.data));
   }
   schedulableRequests() {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_schedulable_requests WHERE kind='coordinationRequests' AND ${schedulableRequest} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
@@ -317,7 +323,10 @@ export class Store {
         const messages=view.list('roomMessages').filter(message=>message.projectId===task.projectId && (message.conversationId||message.projectId)===(task.conversationId||task.projectId) && message.kind!=='summary');
         const quote=task.quoteMessageId?view.get('roomMessages',task.quoteMessageId):null;
         const request=task.requestId?this.get('coordinationRequests',task.requestId):null;
-        run.contextPacket=buildRunContext({run,task:{...task,coordinationKind:request?.kind},role:task.roleSnapshot,
+        // Results that reached this role since its last accepted turn travel with this input, never as a separate task.
+        const receipts=claimResultReceipts(this,run);
+        if(receipts)run.resultReceipts={ids:receipts.ids,omitted:receipts.omitted};
+        run.contextPacket=buildRunContext({run,task:{...task,coordinationKind:request?.kind},role:task.roleSnapshot,receipts,
           previousRun:roleSession?.lastRunId?this.get('runs',roleSession.lastRunId):null,
           environment:{cwd:binding.localRoot,repositories:repositories.map(repository=>({key:repository.key,localRoot:repository.localRoot})),attachments:(task.attachments||[]).map(item=>({id:item.id,name:item.name}))},
           conversation:context,organizer:this.get('summaryQueues',`${task.projectId}:${task.conversationId||task.projectId}`),
@@ -392,6 +401,8 @@ export class Store {
         if(this.get('sessionBatches',r.collaborationBatchId)?.status==='reserved'&&accepted)queue.confirmStarted(r.collaborationBatchId,{runId:r.id,reservationId:r.collaborationBatch.reservation.id});
       }
       this.put('runs', next);
+      if(e.type==='status'&&next.resultReceipts&&!terminal.has(r.status))settleResultReceipts(this,next,{ended:terminal.has(next.status),
+        accepted:e.payload.inputDeliveryState==='accepted'||next.status==='succeeded'&&next.inputDeliveryState!=='not_delivered'});
       if (next.roleSessionId && e.type === 'status' && e.payload.nativeSession?.id) {
         new RoleSessions(this).recordNative(next.roleSessionId,next.id,e.payload.nativeSession,next.workspace);
       }
