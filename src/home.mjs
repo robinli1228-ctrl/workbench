@@ -461,10 +461,13 @@ function managedNativeSessions(nodeId,runtime){
 }
 /** A saved takeover is explicit provenance; a matching title or project folder is not. */
 function adoptedNativeSessions(nodeId,runtime){
+  // Clearing a role hides its old native association, including released takeover aliases, not its audit records.
+  const cleared=new Set(db.db.prepare("SELECT json_extract(data,'$.nativeSession.id') AS id FROM records WHERE kind='runs' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.nativeSession.runtime')=? AND json_extract(data,'$.historyClearedAt') IS NOT NULL").all(nodeId,runtime).map(row=>row.id));
   const records=new Map();for(const claim of db.list('terminalSessions')){
     const sessionId=claim.sessionId||claim.nativeSession?.id;
-    if(claim.nodeId!==nodeId||!['native','native-turn'].includes(claim.kind)||(claim.runtime||claim.nativeSession?.runtime)!==runtime||!sessionId||claim.status==='cancelled')continue;
-    records.set(sessionId,{runtime,sessionId,workspace:claim.workspace||null,createdAt:claim.createdAt});
+    if(claim.nodeId!==nodeId||!['native','native-turn'].includes(claim.kind)||(claim.runtime||claim.nativeSession?.runtime)!==runtime||!sessionId||cleared.has(sessionId)||claim.status==='cancelled')continue;
+    const previous=records.get(sessionId);
+    records.set(sessionId,{runtime,sessionId,workspace:claim.workspace||previous?.workspace||null,createdAt:previous?.createdAt||claim.createdAt});
   }return [...records.values()];
 }
 /** Resolve browser reads solely from Home's saved Workbench ownership, before contacting a Worker. */

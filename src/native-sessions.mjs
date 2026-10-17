@@ -70,6 +70,12 @@ async function registeredFile(runtime,id,env,record){
  return files.sort((a,b)=>b.modifiedAt.localeCompare(a.modifiedAt))[0]||null;
 }
 
+/** Shared by registered history reads and saved terminal/managed resume admission. */
+export async function registeredNativeHistoryFile(runtime,id,{env=process.env,record}={}){
+ if(!idPattern.test(id||''))throw Error('Invalid native session ID');
+ return registeredFile(runtime,id,env,record);
+}
+
 /** Worker-side provenance comes from durable Workbench records, never transcript contents or titles. */
 export function registeredNativeSession(db,runtime,sessionId){
  const catalog=db.list('nativeCatalogEntries').find(r=>r.runtime===runtime&&r.sessionId===sessionId);

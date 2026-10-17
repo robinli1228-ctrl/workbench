@@ -395,7 +395,7 @@ async function command(m) {
       if(m.run.resumeNativeSessionId) {
         const prior=m.run.resumeNativeSession;
         if(!prior || prior.id!==m.run.resumeNativeSessionId || prior.runtime!==runtimeType || prior.user!==native.user || prior.home!==native.home)throw new Error(tr('worker.nativeSessionIdentityHasChanged'));
-        await findSessionHistory(prior);
+        await findSessionHistory(prior,folder);
         await checkNativeDriver(m);
       }
       db.put('runtimeEnvironments',{id:c.runId,env:resumeEnvironment(wbEnv)});
@@ -811,7 +811,7 @@ async function query(m) {
       const native=r.nativeSession || await nativeEnvironment('codex');
       const nativeSession={...native,id:native.id || r.nativeSessionId || r.threadId};
       if(nativeSession.user!==(await nativeEnvironment(nativeSession.runtime)).user)throw new Error(tr('worker.workerUserDoesNotMatch'));
-      const historyFile=await findSessionHistory(nativeSession);
+      const historyFile=await findSessionHistory(nativeSession,workspace);
       // The resumed terminal keeps the scope frozen on the original run; refuse here rather than after the terminal opens.
       if(r.permissionScope)scopedTerminalArgs(nativeSession.runtime,r.permissionScope,[base]);
       const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,...(r.permissionScope?{permissionScope:r.permissionScope,toolRoots:[base]}:{}),createdAt:new Date().toISOString()};
