@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v137-claude-models';
+const CACHE = 'agent-workbench-static-v142-runtime-recovery';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

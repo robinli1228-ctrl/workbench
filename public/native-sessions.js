@@ -152,9 +152,10 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  }
  /** Same row/bubble structure as the group chat, so both views share one visual language. */
  function chatRow(role,text,runtime,at,extra){const agent=role!=='user',row=el('article',`chat-row ${agent?'agent':'human'} native-chat-row`);if(agent){const avatar=el('span','chat-avatar');avatar.append(agentIconEl(runtime));row.append(avatar);}
-  const col=el('div','chat-col'),header=el('div','chat-message-header'),name=el('div','chat-name',agent?names[runtime]||t('Assistant'):t('Me'));name.translate=false;header.append(name);col.append(header);
-  // Same card anatomy as the group chat: send time top-right, a status line with its actions at the bottom.
-  const bubble=el('div','chat-bubble'),top=el('div','chat-bubble-top'),body=simplifiedCliOutput(text||'');if(at){const stamp=el('time','',time(at));stamp.dateTime=at;top.append(stamp);}bubble.append(top);
+  const col=el('div','chat-col'),header=el('div','chat-message-header'),name=el('div','chat-name',agent?names[runtime]||t('Assistant'):t('Me'));name.translate=false;name.title=name.textContent;header.append(name);col.append(header);
+  // Same card anatomy as the group chat: send time on the name line, a status line with its actions at the bottom.
+  if(at){const stamp=el('time','',time(at));stamp.dateTime=at;header.append(stamp);}
+  const bubble=el('div','chat-bubble'),body=simplifiedCliOutput(text||'');
   if(agent){const md=renderMarkdown(body);md.classList?.add('markdown-body');bubble.append(md);}else bubble.append(el('div','chat-message-text',body));if(extra)bubble.append(extra);
   const footer=el('div','chat-card-footer'),actions=el('div','chat-card-actions'),copy=el('button','chat-icon-btn');copy.type='button';copy.setAttribute('aria-label',t('Copy'));setActionIcon(copy,'copy',t('Copy'));
   copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));actions.append(copy);
