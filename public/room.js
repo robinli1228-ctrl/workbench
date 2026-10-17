@@ -881,7 +881,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const progress=taskProgress(task,run),label=t(progress.label);
     const running=progress.state==='running'&&run?.startedAt;
     const nameLine=create('div', 'chat-name', `@${role.name || t('Role')}`);
-    nameLine.translate=false;
+    nameLine.translate=false;nameLine.title=nameLine.textContent;
     // The time sits on the name line outside the card, like every other message.
     const header = create('div', 'chat-message-header');
     const sentAt = run?.startedAt || run?.createdAt || task.createdAt;
@@ -964,6 +964,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const sender=create('div', 'chat-name', agent ? m.senderName : 'Me');
     // Saved role names are identities, not UI dictionary keys.
     if(agent)sender.setAttribute('translate','no');
+    if(agent)sender.title=m.senderName||'';
     // Name and send time share the line above the card; the card itself starts with the reply quote, if any.
     header.append(sender, time);
     col.append(header);

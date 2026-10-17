@@ -152,7 +152,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  }
  /** Same row/bubble structure as the group chat, so both views share one visual language. */
  function chatRow(role,text,runtime,at,extra){const agent=role!=='user',row=el('article',`chat-row ${agent?'agent':'human'} native-chat-row`);if(agent){const avatar=el('span','chat-avatar');avatar.append(agentIconEl(runtime));row.append(avatar);}
-  const col=el('div','chat-col'),header=el('div','chat-message-header'),name=el('div','chat-name',agent?names[runtime]||t('Assistant'):t('Me'));name.translate=false;header.append(name);col.append(header);
+  const col=el('div','chat-col'),header=el('div','chat-message-header'),name=el('div','chat-name',agent?names[runtime]||t('Assistant'):t('Me'));name.translate=false;name.title=name.textContent;header.append(name);col.append(header);
   // Same card anatomy as the group chat: send time on the name line, a status line with its actions at the bottom.
   if(at){const stamp=el('time','',time(at));stamp.dateTime=at;header.append(stamp);}
   const bubble=el('div','chat-bubble'),body=simplifiedCliOutput(text||'');
