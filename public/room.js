@@ -882,14 +882,14 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const running=progress.state==='running'&&run?.startedAt;
     const nameLine=create('div', 'chat-name', `@${role.name || t('Role')}`);
     nameLine.translate=false;
-    col.append(nameLine);
-    const bubble = create('div', 'chat-bubble is-live-card');
-    const top = create('div', 'chat-bubble-top');
+    // The time sits on the name line outside the card, like every other message.
+    const header = create('div', 'chat-message-header');
     const sentAt = run?.startedAt || run?.createdAt || task.createdAt;
     const time = create('time', '', formatTime(sentAt));
     if (sentAt) time.dateTime = sentAt;
-    top.append(time);
-    bubble.append(top);
+    header.append(nameLine, time);
+    col.append(header);
+    const bubble = create('div', 'chat-bubble is-live-card');
     // Even before it starts, the card says which message it answers: the task's own source message, or its request text.
     const source = messages.find(q => q.id === task.sourceMessageId) || null;
     // An attachment-only source still names its sender and opens the original; its files stand in for the empty text.
@@ -964,20 +964,19 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const sender=create('div', 'chat-name', agent ? m.senderName : 'Me');
     // Saved role names are identities, not UI dictionary keys.
     if(agent)sender.setAttribute('translate','no');
-    header.append(sender);
+    // Name and send time share the line above the card; the card itself starts with the reply quote, if any.
+    header.append(sender, time);
     col.append(header);
     const bubble = create('div', `chat-bubble${handoff || replyDirection ? ' handoff-card' : ''}`);
-    // Every card opens with one top line: what it replies to (if anything) on the left, its send time on the right.
     const top = create('div', 'chat-bubble-top');
-    bubble.append(top);
     if (m.replyToId) {
       const source = m.replySource || messages.find(q => q.id === m.replyToId);
       const quoteText=source?simplifiedCliOutput(source.text):'';
       const quote=create(source?.id?'button':'div', 'quoted-message', source ? t('{senderName}: {v}', { senderName: source.senderName, v: quoteText.slice(0, 180)+(quoteText.length>=180?'...':'') }) : 'Quoting an earlier message');
       if(source?.id){quote.type='button';quote.title='View quoted original';quote.setAttribute('aria-label','View quoted original');quote.addEventListener('click',()=>void historyViewer.open(m.projectId,'message',source.id,m.conversationId||m.projectId).catch(error=>setError(error.message)));}
       top.append(quote);
+      bubble.append(top);
     }
-    top.append(time);
     const recipients=messageRecipients(m,replyDirection);
     const bodyText=messageDisplayText(handoff?m.handoff.summary||m.text:m.text,recipients);
     const body=replyPreview(bodyText,handoff||agent,m.runId,`message:${m.id}`);

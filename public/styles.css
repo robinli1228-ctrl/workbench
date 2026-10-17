@@ -2653,9 +2653,14 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 .message-queue summary .message-queue-wait { min-width: 0; margin: 0 0 0 auto; padding: 2px 8px; overflow: hidden; border-radius: 999px; color: var(--accent-dark); background: var(--accent-tint); font-size: var(--fs-xs); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .message-queue summary .message-queue-wait.is-released { color: #8a5a12; background: #fff1d8; }
 
-/* Card footer: status line under the hairline, actions on their own row below it. */
-.chat-card-footer { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 6px; }
-.chat-card-actions { flex-wrap: wrap; justify-content: flex-start; margin-left: -4px; }
+/* Card footer: the status on the left and its action icons on the right, on one line under the hairline. */
+.chat-card-footer { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
+.chat-card-footer .chat-card-kind { flex: 1 1 auto; min-width: 0; }
+.chat-card-actions { flex-wrap: nowrap; justify-content: flex-end; margin-left: auto; }
+/* Send time on the name line, outside the card. */
+.chat-row .chat-message-header time { margin-left: auto; color: var(--text-muted); font-family: var(--font-mono); font-size: 10.5px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.chat-row.human .chat-message-header time { color: #565d6e; }
+.chat-bubble-top:empty { display: none; }
 /* The reply line on a live card is the body while it waits, so it may run to two lines. */
 .is-live-card .chat-live-reply { display: block; margin: 0 0 8px; white-space: normal; }
 .is-live-card .chat-live-reply-text { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
