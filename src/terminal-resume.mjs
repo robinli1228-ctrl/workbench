@@ -276,34 +276,13 @@ export async function nativeEnvironment(runtime, env = process.env) {
   return { runtime, user:userInfo().username, home:env.HOME || homedir(), binary, env:paths };
 }
 
-/** Search the vendor session directory by exact ID only; if missing, refuse to create a blank session. */
-export async function findSessionHistory(session) {
+/** Resolve saved native identity exactly; never walk unrelated histories to recover a missing index. */
+export async function findSessionHistory(session,workspace=session.workspace) {
   const { runtime, id, home, env = {} } = session;
   resumeArgs(runtime, id);
-  const roots = {
-    codex:[join(env.CODEX_HOME || join(home,'.codex'),'sessions'),join(env.CODEX_HOME || join(home,'.codex'),'archived_sessions')],
-    claude:[join(env.CLAUDE_CONFIG_DIR || join(home,'.claude'),'projects')],
-    grok:[join(home,'.grok','sessions')],
-    agy:[join(home,'.gemini','antigravity-cli','conversations')]
-  }[runtime];
-  let visited = 0;
-  async function walk(dir, depth = 0) {
-    let entries; try { entries = await readdir(dir,{withFileTypes:true}); } catch (e) { if(e.code==='ENOENT')return null; throw e; }
-    for (const entry of entries) {
-      if (++visited > 20000) throw new Error(tr('terminalResume.sessionDirectoryTooLargeCould'));
-      const file = join(dir,entry.name);
-      if (entry.isFile() && (entry.name === `${id}.jsonl` || entry.name === `${id}.pb` || (runtime==='agy'&&entry.name===`${id}.db`) || (runtime==='codex' && entry.name.endsWith(`-${id}.jsonl`)))) return file;
-      if (runtime==='grok' && entry.isDirectory() && entry.name===id) {
-        const history = join(file,'chat_history.jsonl');
-        try { if((await stat(history)).size>0)return history; } catch {}
-      }
-      if (entry.isDirectory() && depth < 5 && !['subagents','resources_state','terminal'].includes(entry.name)) {
-        const match = await walk(file,depth+1); if(match)return match;
-      }
-    }
-    return null;
-  }
-  for (const root of roots) { const file=await walk(root); if(file && (await stat(file)).size>0)return file; }
+  const {registeredNativeHistoryFile}=await import('./native-sessions.mjs');
+  const file=await registeredNativeHistoryFile(runtime,id,{env:{HOME:home,...env},record:{runtime,sessionId:id,workspace}});
+  if(file&&(await stat(file.path)).size>0)return file.path;
   throw new Error(tr('terminalResume.nativeSessionHistoryForUser'));
 }
 
@@ -353,7 +332,7 @@ async function runTerminal(dbPath,id) {
   if(!before?.nativeSession || before.nativeSession.user!==userInfo().username)throw new Error(tr('terminalResume.runningUserDoesNotMatch'));
   if(!(await stat(before.workspace)).isDirectory())throw new Error(tr('terminalResume.originalWorkingDirectoryDoesNot'));
   if(['new','native'].includes(before.kind)&&await realpath(before.workspace)!==before.workspace)throw new Error(tr('terminalResume.originalWorkingDirectoryDoesNot'));
-  if(before.kind!=='new'&&(before.kind!=='native'||before.nativeSession.id))await findSessionHistory(before.nativeSession);
+  if(before.kind!=='new'&&(before.kind!=='native'||before.nativeSession.id))await findSessionHistory(before.nativeSession,before.workspace);
   await access(before.nativeSession.binary,constants.X_OK);
   if(before.kind==='native'){
     const owner=nativeTerminalProject(db,{nodeId:before.nodeId,runtime:before.nativeSession.runtime,sessionId:before.nativeSession.id});
