@@ -263,6 +263,7 @@ export class RoleCalls {
     let r = run.requestId ? this.db.get('coordinationRequests', run.requestId)
       : this.db.list('coordinationRequests').find(c => c.currentRunId === runId);
     if (!r || (r.currentRunId && r.currentRunId !== runId) || r.status === 'cancelled') return;
+    const settledBefore=callTerminal.has(r.status);
     if (!callTerminal.has(r.status) && (r.status !== 'waiting_call' || run.status !== 'succeeded')) {
       const outcome=outcomeFor(this.db,run), report=this.db.get('runReports',run.id);
       // A negative review is a delivered answer. Only execution or missing-response errors fail a call.
@@ -271,8 +272,9 @@ export class RoleCalls {
         status: run.status === 'succeeded' && !missingReply ? 'succeeded' : 'failed',
         result: run.result || run.error || '', updatedAt: new Date().toISOString() });
     }
-    // Register the settled call before resuming its owner, so the safe continuation includes this result.
-    if(callTerminal.has(r.status))registerResultReceipt(this.db,{run,request:r});
+    // Register the settled call before resuming its owner, so the safe continuation includes this result. Replaying a call
+    // that had already settled (Home restart, upgrade) only refreshes an existing receipt and never backfills history.
+    if(callTerminal.has(r.status))registerResultReceipt(this.db,{run,request:r,refreshOnly:settledBefore});
     this.settleResult(r);
   }
 

@@ -25,10 +25,10 @@ function ownerOf(db,request) {
 }
 
 /** Idempotent per call, Run and report revision: replays and Home restarts refresh status facts but keep delivery and verification. */
-export function registerResultReceipt(db,{run,request=null,report=null}) {
-  return db.transaction(()=>register(db,{run,request,report}));
+export function registerResultReceipt(db,{run,request=null,report=null,refreshOnly=false}) {
+  return db.transaction(()=>register(db,{run,request,report,refreshOnly}));
 }
-function register(db,{run,request,report}) {
+function register(db,{run,request,report,refreshOnly}) {
   if(!run?.id)return null;
   request=request||(run.requestId?db.get('coordinationRequests',run.requestId):null);
   if(!request||request.projectId!==run.projectId)return null;
@@ -40,6 +40,7 @@ function register(db,{run,request,report}) {
     const refreshed={...previous,runStatus:run.status,requestStatus:request.status};
     return JSON.stringify(refreshed)===JSON.stringify(previous)?previous:db.put(KIND,{...refreshed,updatedAt:now()});
   }
+  if(refreshOnly)return null;
   for(const older of db.listProject(KIND,run.projectId).filter(r=>r.runId===run.id&&r.requestId===request.id&&r.reportRevision<revision&&!r.supersededBy))
     db.put(KIND,{...older,supersededBy:id,updatedAt:now()});
   const time=now();
@@ -63,7 +64,7 @@ function visibleTo(db,receipt,roleId) {
 
 /** A claim held by a Run that ended without accepting its input is released, so a failed launch cannot consume receipts. */
 function deliverable(db,receipt) {
-  if(receipt.deliveredRunId||receipt.supersededBy)return false;
+  if(receipt.deliveredRunId||receipt.supersededBy||receipt.archived)return false;
   if(!receipt.pendingRunId)return true;
   const holder=db.get('runs',receipt.pendingRunId);
   return !holder||runEnded.has(holder.status);
@@ -122,7 +123,7 @@ export function verifyResultReceipt(db,run,input={}) {
 /** Progress per original item, derived only from receipts and owner decisions; a pass for an older SHA is kept but stale. */
 export function progressItems(db,{projectId,roleId}) {
   const groups=new Map();
-  for(const r of ownedReceipts(db,{projectId,roleId}).filter(r=>!r.supersededBy))groups.set(r.item,[...(groups.get(r.item)||[]),r]);
+  for(const r of ownedReceipts(db,{projectId,roleId}).filter(r=>!r.supersededBy&&!r.archived))groups.set(r.item,[...(groups.get(r.item)||[]),r]);
   return [...groups].map(([item,receipts])=>{
     const latest=receipts.at(-1),version=receipts.findLast(r=>r.version)?.version||null;
     const stages=Object.fromEntries(RECEIPT_STAGES.map(stage=>{
@@ -143,7 +144,27 @@ export function progressItems(db,{projectId,roleId}) {
 }
 
 export function receiptList(db,{projectId,roleId}) {
-  return {items:progressItems(db,{projectId,roleId}),receipts:ownedReceipts(db,{projectId,roleId}).map(publicReceipt)};
+  const owned=ownedReceipts(db,{projectId,roleId});
+  return {items:progressItems(db,{projectId,roleId}),receipts:owned.filter(r=>!r.archived).map(publicReceipt),archived:owned.filter(r=>r.archived).length};
+}
+
+const HISTORY_GAP_MS=10*60000;
+/**
+ * Receipts created by replaying calls that had settled before receipts existed are history, not new results. A live
+ * receipt is registered in the same transaction that settles its call or saves its report, so its time matches them;
+ * a replayed one is much later. Archive those once at Home start: kept and listable as a count, never delivered.
+ */
+export function archiveHistoricalReceipts(db) {
+  return db.transaction(()=>{
+    let archived=0;
+    for(const r of db.list(KIND)) {
+      if(r.archived||r.verification||r.supersededBy)continue;
+      const facts=[db.get('coordinationRequests',r.requestId)?.updatedAt,db.get('runReports',r.runId)?.updatedAt,db.get('runs',r.runId)?.finishedAt].map(v=>Date.parse(v||'')).filter(Number.isFinite);
+      if(facts.length&&Date.parse(r.receivedAt)-Math.max(...facts)<=HISTORY_GAP_MS)continue;
+      db.put(KIND,{...r,archived:true,archivedReason:'settled_before_receipts',state:'archived',pendingRunId:null,updatedAt:now()});archived++;
+    }
+    return archived;
+  });
 }
 
 /** Patrol finding only while the owner is idle in that chat: a busy or waiting owner gets the receipts at its next safe turn. */

@@ -53,7 +53,7 @@ import { Attachments, AttachmentTransfers } from './attachments.mjs';
 import { ExecutionPlans, schedulingRules } from './execution-plans.mjs';
 import { History } from './history.mjs';
 import { saveRunReport,readReportSubmission } from './run-reports.mjs';
-import { receiptList,verifyResultReceipt } from './result-receipts.mjs';
+import { receiptList,verifyResultReceipt,archiveHistoricalReceipts } from './result-receipts.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
@@ -151,6 +151,7 @@ db.transaction(()=>{
   discussions.recover();
   calls.recoverTerminalRuns();
   for (const run of db.list('runs').filter(r=>terminal.has(r.status))) rooms.complete(run);
+  archiveHistoricalReceipts(db);
 });
 for (const run of db.list('runs').filter(r => !terminal.has(r.status))) db.put('runs', { ...run, status: run.status === 'stopping' ? 'stopping' : 'reconciling' });
 const sockets = new Map();
