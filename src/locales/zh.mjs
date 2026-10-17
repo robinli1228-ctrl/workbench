@@ -1583,6 +1583,9 @@ wb history read 编号 [offset] [version]  分段读消息原文
 wb result read 编号 [offset] [version]   分段读执行/调用完整报告
 wb report JSON       提交 verdict/summary/evidence/next 业务结论
 wb report status 编号  只读查询本轮报告提交回执
+wb report JSON 可附 "version"（完整 40 位提交 SHA）、"stage"（implemented/reviewed/tested/merged/deployed，merged 与 deployed 必须带 version）和 "item"（原事项编号）
+wb progress          列出你发起的调用的结果回执，以及据此派生的逐项进度
+wb progress verify JSON  对一条回执记录核对结论：{"receiptId":"rr:…","decision":"accepted|rejected","note":"…"}；未经 accepted 的回执不算通过
 报告超时后先查回执，确认未保存才复用原编号重试一次。pending_confirmation 表示结果待确认，不代表失败，请查询后再决定下一步。相同内容复用原编号；确需新版本可显式指定新的 submissionId。
 wb docs              列出文档
 wb docs read 路径     读取 .workbench 内文件
@@ -1817,18 +1820,15 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 
 如实报告：完成时用 wb report 说明做了什么、实际验证结果和证据、未完成项和下一步；区分已写代码、已提交、已部署、已实测。未经授权不推送、不合并、不部署。`,
   'minimal.supervisorDefault': '理解目标，自主选择有效的执行方式。按任务需要直接完成工作或与同伴协作。',
-  'minimal.supervisorTemplate': `你是项目总管，对目标的最终完成负责：主动规划、派工、跟进、排障和收尾，不等用户逐步指挥。
+  'minimal.supervisorTemplate': `你是项目总管，对目标从规划到收尾负责：主动规划、派工、跟进、排障和收尾，不等用户逐步指挥。
 
-- 规划：简单任务自己做完；复杂任务先请计划角色出方案，再交执行。派工前用 wb discuss peers 按职能、设备、可用性选人，尊重用户点名。有依赖或跨设备的任务用 wb schedule 排阶段，独立任务并行派出。
-- 流程：开发 → 审核 → 目标设备上的独立测试。审核意见交原实现者处理，修复后请原审核者复核；分歧组织补证，问题保持可见。
-- 目标负责：你对发起的任务目标负责。对照目标、验收标准和证据核对每次回复；不完整、证据不足、偏离目标或理由不充分时，继续追问或要求修改，写明差距和期望。对方给出充分依据才调整计划，不因单次回复改变方向；同一问题三轮仍未收敛时，组织补证或交用户决定。
-- 审核汇总：合并编号问题清单，区分共同意见与分歧；作者逐项说明处理结果并附版本差异，复核改动及受影响上下文，不隐藏未解决问题，也不提前泄露独立意见。
-- 跟进：主动检查进度，长任务可用 wb timer 巡检；发现停滞、反复失败或互相等待立即介入。
-- 阻塞归属：记录每项阻塞、负责人、需要的决定和下次检查时间，到时主动跟进；用户沉默不等于批准，不替用户猜测取舍。
-- 失效替换：额度用尽或鉴权失败，不重试，把原任务交给同职能、可用的其他角色接手；网络或服务暂时错误，重试一次仍失败再替换；输出截断则续做或拆小。审核不能由原实现者替补，测试不能由原开发者替补。需要换账号、CLI、模型或设备时，用 wb setup propose 提交，由用户确认。
-- 跨设备：临时查看、文档沟通和明确指定的快检可使用范围内已同步文件，派工写设备、路径和哈希，先核对同步证据；不能把快检当正式验收。同一文件明确写入负责人，不同时派两端修改。正式审核和验收使用固定 commit 交付，提醒用户批准必要交付，接收并核对 SHA 后再执行，不重复创建排程已有交付；目标设备不可用时说明阻塞，不改派冒充。
-- 决策：只有用户取舍、新增权限、账号或付费变化才问用户，其余自行决定并记录理由。
-- 收尾：汇总实现、审核、真实测试、替换过的角色和剩余事项。`,
+- 派工：简单任务自己完成；复杂任务先请计划角色出方案。用 wb discuss peers 按职能、设备和可用性选人，尊重用户点名；有依赖或跨设备的阶段用 wb schedule。
+- 目标负责：你对发起的任务目标负责。你发起的调用结果以结果回执到达（已收到 → 已送达 → 已核对）；对照目标核对每条回执的证据和准确版本后，用 wb progress verify 记录结论。回执、进程结束或消息发出都不等于通过。wb progress 显示每项的阶段（已实现、已独审、已实测、已合并、已部署）；新 SHA 不沿用旧 SHA 的通过。
+- 审核与验收：保留独立审核和目标设备上的真实测试。每轮审核汇总成一份清单；只把本需求违例、功能、数据、安全类必修问题退回修改，纯建议单列。复核改动及受影响处，复用未改动的同 SHA 证据。最多修复一轮后仍有实质分歧，写明具体缺口交用户决定，不无限循环；不得因达到轮次而谎报通过。
+- 失效与跨设备：额度用尽或鉴权失败不重试，交同职能的可用角色接手；正式审核和验收使用固定 commit 交付，同步文件只用于临时查看。
+- 收尾：清单确定后冻结，新建议留到下一轮；全部事项核对通过后锁定版本，交付合版。
+- 决策：只有取舍、新增权限、账号或付费变化才问用户，其余自行决定并记录理由。
+- 每次回复只写四件事：已完成什么、还差什么、卡在哪里、下一步由谁处理。`,
   'minimal.identity': '当前通过 Workbench 执行，角色为 {name}（角色 ID：{roleId}）。可按需使用协作工具，通过 wb help 发现入口。',
   'minimal.inputRepositoryVersions': '任务启动时的实际输入（工作目录 {cwd}）：{versions}。commit 是执行目录 HEAD；boundCommit 仅是当前项目的对照，不代表旧会话内的代码。代码任务先核对指定版本和这些实际路径，不静默更新旧目录。',
   'platformPrompts.independentReviewBoundary': '独立审核只读。核对指定版本，报告问题位置、触发条件、影响及证据，修复后核对新版本。仍有必须修改的问题报告 failed；无法核实报告 blocked；需要用户决定报告 needs_input；只有非阻塞建议可以随 passed 交回。',
@@ -1918,4 +1918,20 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'collabWait.stalled': "{role} 的协作已长时间没有进展，需要处理；本条消息会继续排队，直到你点“先处理这条”",
   'collabWait.yieldRunning': "{role} 正在先处理另一条消息；本条要等它和原先等待的协作都结束后再执行",
   'collabWait.stalledOnly': "等待被标记为卡住之前，只有你发的消息可以先处理",
+  'runContext.resultReceipts': '待你核对的结果回执（已收到、尚未核对；回执不等于通过）。核对证据和准确版本后，用 wb progress verify 逐条记录结论；wb progress 列出全部事项和阶段：\n{p1}{p2}',
+  'runContext.resultReceiptsOmitted': '\n另有 {count} 条未送达回执，可用 wb progress 查看。',
+  'runContext.receiptNoStage': '阶段未知',
+  'runContext.receiptNoVersion': '版本未知',
+  'runReports.invalidVersion': 'version 必须是完整的 40 位小写提交 SHA',
+  'runReports.invalidStage': 'stage 只能是 implemented、reviewed、tested、merged 或 deployed',
+  'runReports.stageNeedsVersion': 'merged 和 deployed 报告必须在 version 写明准确的提交 SHA',
+  'runReports.invalidItem': 'item 只能是 1–120 个字母、数字、冒号、点、下划线或连字符',
+  'resultReceipts.invalidReceipt': '结果回执编号无效',
+  'resultReceipts.notFound': '找不到属于当前角色的结果回执',
+  'resultReceipts.superseded': '这条回执已被更新的报告版本取代，请核对 {id}',
+  'resultReceipts.invalidDecision': 'decision 只能是 accepted 或 rejected',
+  'resultReceipts.noteRequired': '驳回必须写明理由（最多 1000 字符）',
+  'resultReceipts.invalidAction': '未知的进度操作',
+  'resultReceipts.usage': '用法：wb progress [list] | wb progress verify \'{"receiptId":"rr:…","decision":"accepted|rejected","note":"…"}\'',
+  'timerMonitor.resultReceipts': '{role} 空闲中，有 {count} 条结果回执尚未送达；请用 wb progress 核对',
 });

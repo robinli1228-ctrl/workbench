@@ -10,6 +10,7 @@ import {currentContinuation,waitDependencies} from './coordination-wait.mjs';
 import {SessionQueue} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
+import {registerResultReceipt} from './result-receipts.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
 export const BLOCKED_WAKE_MS = 10 * 60000;
@@ -270,6 +271,8 @@ export class RoleCalls {
         status: run.status === 'succeeded' && !missingReply ? 'succeeded' : 'failed',
         result: run.result || run.error || '', updatedAt: new Date().toISOString() });
     }
+    // Register the settled call before resuming its owner, so the safe continuation includes this result.
+    if(callTerminal.has(r.status))registerResultReceipt(this.db,{run,request:r});
     this.settleResult(r);
   }
 

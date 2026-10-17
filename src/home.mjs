@@ -53,6 +53,7 @@ import { Attachments, AttachmentTransfers } from './attachments.mjs';
 import { ExecutionPlans, schedulingRules } from './execution-plans.mjs';
 import { History } from './history.mjs';
 import { saveRunReport,readReportSubmission } from './run-reports.mjs';
+import { receiptList,verifyResultReceipt } from './result-receipts.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
@@ -712,6 +713,12 @@ const server = http.createServer(async (req, res) => {
         if (!run || terminal.has(run.status) || ['stopping', 'reconciling'].includes(run.status)) throw new Error(tr('home.currentExecutionHasEndedStopping'));
         if(db.get('settings','main')?.paused&&!allowsPausedAgentOperation(pathname,b))throw new Error(tr('home.remoteExecutionPaused'));
         if(run.switchOperationId&&!['/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/sessions/list','/api/agent/sessions/summary','/api/agent/sessions/read','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
+        if (pathname === '/api/agent/progress') {
+          // Receipts and derived progress belong to the calling role; verification is its explicit, recorded decision.
+          if(b.action==='list'||b.action===undefined)return json(res,receiptList(db,{projectId:run.projectId,roleId:run.roleId}));
+          if(b.action==='verify'){const result=verifyResultReceipt(db,run,b.input||{});if(!result.replayed)change();return json(res,result);}
+          throw new Error(tr('resultReceipts.invalidAction'));
+        }
         if (pathname === '/api/agent/notify') {
           if (Object.keys(b).some(key=>!['runId','action','input'].includes(key))) throw new Error(tr('wechatChannel.toolGuide'));
           const result=wechat.notify(run,b.action,b.input); void wechat.tick().catch(()=>{}); return json(res,result);

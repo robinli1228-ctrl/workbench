@@ -20,6 +20,7 @@ import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followu
 import {reviewView} from './collaboration-sessions.mjs';
 import {tagMessage,SessionQueue,reservePropagation,settlePropagation} from './session-queue.mjs';
 import { permissionScopeIssue } from './role-permissions.mjs';
+import {claimResultReceipts,settleResultReceipts} from './result-receipts.mjs';
 
 export const terminal = new Set(['succeeded', 'failed', 'interrupted']);
 const now = () => new Date().toISOString();
@@ -322,7 +323,10 @@ export class Store {
         const messages=view.list('roomMessages').filter(message=>message.projectId===task.projectId && (message.conversationId||message.projectId)===(task.conversationId||task.projectId) && message.kind!=='summary');
         const quote=task.quoteMessageId?view.get('roomMessages',task.quoteMessageId):null;
         const request=task.requestId?this.get('coordinationRequests',task.requestId):null;
-        run.contextPacket=buildRunContext({run,task:{...task,coordinationKind:request?.kind},role:task.roleSnapshot,
+        // Results that reached this role since its last accepted turn travel with this input, never as a separate task.
+        const receipts=claimResultReceipts(this,run);
+        if(receipts)run.resultReceipts={ids:receipts.ids,omitted:receipts.omitted};
+        run.contextPacket=buildRunContext({run,task:{...task,coordinationKind:request?.kind},role:task.roleSnapshot,receipts,
           previousRun:roleSession?.lastRunId?this.get('runs',roleSession.lastRunId):null,
           environment:{cwd:binding.localRoot,repositories:repositories.map(repository=>({key:repository.key,localRoot:repository.localRoot})),attachments:(task.attachments||[]).map(item=>({id:item.id,name:item.name}))},
           conversation:context,organizer:this.get('summaryQueues',`${task.projectId}:${task.conversationId||task.projectId}`),
@@ -397,6 +401,8 @@ export class Store {
         if(this.get('sessionBatches',r.collaborationBatchId)?.status==='reserved'&&accepted)queue.confirmStarted(r.collaborationBatchId,{runId:r.id,reservationId:r.collaborationBatch.reservation.id});
       }
       this.put('runs', next);
+      if(e.type==='status'&&next.resultReceipts&&!terminal.has(r.status))settleResultReceipts(this,next,{ended:terminal.has(next.status),
+        accepted:e.payload.inputDeliveryState==='accepted'||next.status==='succeeded'&&next.inputDeliveryState!=='not_delivered'});
       if (next.roleSessionId && e.type === 'status' && e.payload.nativeSession?.id) {
         new RoleSessions(this).recordNative(next.roleSessionId,next.id,e.payload.nativeSession,next.workspace);
       }

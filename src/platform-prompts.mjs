@@ -42,7 +42,10 @@ const LEGACY_SUPERVISOR_DEFAULTS = new Set([
   'f4fdcbae86b204daad8506f4f8a431c48fa73052980abafdd6cd55434f2414fe',
   // Defaults before the goal-ownership line; saved copies of them follow the new built-in template.
   '2f93053a4afdc8f4f1e9c3a9a1134cf6915e3ad1481bb61a14cf53b1abccfa01',
-  '5028d377bc872bb766d72588011c48dbaa4446350c5b3ca908d4517b02e3ad69'
+  '5028d377bc872bb766d72588011c48dbaa4446350c5b3ca908d4517b02e3ad69',
+  // Defaults before the receipt/four-item close-out template.
+  'd190ea330847f51e444ed00ff69ca8dce4581ab6e6ff7269c046dbfdf56e2284',
+  'ba52194b15a44c3e211e6b9d11ff63600ad4f53b831e55685b5deb3625b1206b'
 ]);
 const LEGACY_PLATFORM_DEFAULTS = new Set([
   '4a7bd0d1a4bedbfd714d1493b7fd6c9a439bfec754a23f43d150a845ff249324',

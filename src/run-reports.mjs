@@ -2,6 +2,7 @@ import {terminal} from './store.mjs';
 import { tr } from './i18n.mjs';
 import {createHash} from 'node:crypto';
 import {reportFingerprint,reportSubmissionId} from './report-submission.mjs';
+import {registerResultReceipt,RECEIPT_STAGES} from './result-receipts.mjs';
 
 const verdicts=new Set(['passed','failed','blocked','needs_input']);
 // Reject obvious probe placeholders without pretending to judge the truth of substantive evidence.
@@ -60,6 +61,11 @@ export function saveRunReport(db,run,input) {return db.transaction(()=>{
   if(input.verdict==='passed'&&!evidence.length) throw new Error(tr('runReports.passedVerdictMustIncludeActual'));
   if(placeholder(input.summary)||evidence.some(placeholder))throw new Error(tr('runReports.placeholderNotEvidence'));
   if(input.next!=null && (typeof input.next!=='string'||input.next.length>1000)) throw new Error(tr('runReports.nextStepMustBeAt'));
+  // Optional progress facts: an exact commit, the stage it evidences and the original item. Merged or deployed needs a real SHA.
+  if(input.version!=null&&(typeof input.version!=='string'||!/^[0-9a-f]{40}$/.test(input.version)))throw new Error(tr('runReports.invalidVersion'));
+  if(input.stage!=null&&!RECEIPT_STAGES.includes(input.stage))throw new Error(tr('runReports.invalidStage'));
+  if(['merged','deployed'].includes(input.stage)&&!input.version)throw new Error(tr('runReports.stageNeedsVersion'));
+  if(input.item!=null&&(typeof input.item!=='string'||!/^[\w:.-]{1,120}$/.test(input.item)))throw new Error(tr('runReports.invalidItem'));
   const old=db.get('runReports',run.id);
   // Before replacing a pre-receipt report, freeze its content-derived ID so a late legacy retry cannot restore it.
   if(old&&!old.submissionId){
@@ -68,8 +74,10 @@ export function saveRunReport(db,run,input) {return db.transaction(()=>{
       result:{runId:run.id,verdict:old.verdict,revision:old.revision},createdAt:old.updatedAt||new Date().toISOString()});
   }
   const report=db.put('runReports',{id:run.id,projectId:run.projectId,roleId:run.roleId,requestId:run.requestId,submissionId,
-    verdict:input.verdict,summary:input.summary.trim(),evidence,next:input.next||'',revision:(old?.revision||0)+1,updatedAt:new Date().toISOString()});
+    verdict:input.verdict,summary:input.summary.trim(),evidence,next:input.next||'',revision:(old?.revision||0)+1,updatedAt:new Date().toISOString(),
+    ...(input.version?{version:input.version}:{}),...(input.stage?{stage:input.stage}:{}),...(input.item?{item:input.item}:{})});
   db.put('runs',{...db.get('runs',run.id),report});
+  registerResultReceipt(db,{run:db.get('runs',run.id),report});
   const result={runId:run.id,verdict:report.verdict,revision:report.revision};
   db.put('reportSubmissions',{id:submissionKey(run.id,submissionId),projectId:run.projectId,runId:run.id,submissionId,fingerprint,result,createdAt:report.updatedAt});
   return {...result,protocol:1,state:'saved',saved:true,submissionId,note:tr('runReports.businessVerdictRecordedEndTurn')};

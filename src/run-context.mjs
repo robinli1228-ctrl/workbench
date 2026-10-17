@@ -13,7 +13,7 @@ function excerpt(message,limit) {
 }
 
 /** Pin this turn's instruction and the organizer version; only material with a clear source enters the prompt. */
-export function buildRunContext({run,task,role={},environment={},conversation=null,messages=[],deliveries=[],references=[],completion=null,previousRun=null,organizer=null}) {
+export function buildRunContext({run,task,role={},environment={},conversation=null,messages=[],deliveries=[],references=[],completion=null,previousRun=null,organizer=null,receipts=null}) {
   const instruction=String(task?.prompt||'');
   if(run.backgroundFollowup){
     const visible=messages.filter(m=>m.visibility!=='internal'&&['human','agent'].includes(m.sender));
@@ -47,7 +47,8 @@ export function buildRunContext({run,task,role={},environment={},conversation=nu
       sourceMessageIds:conversation?.sourceMessageIds||[],uncovered},
     deliveries:deliveries.filter(item=>item.id===task?.deliveryId).map(item=>({id:item.id,summary:item.summary||'',commit:item.commit||null})),
     references:references.map(item=>item.followupExcerpt||excerpt(item,8000)),
-    completion:completion||null
+    completion:completion||null,
+    ...(receipts?.items?.length?{receipts:{items:receipts.items,omitted:receipts.omitted||0}}:{})
   };
   // Save the full snapshot for auditing; identical content already delivered to the native history is omitted only at render time.
   const prior=sameNativeSession(run,previousRun)?previousRun.contextPacket?.context:null;
@@ -59,6 +60,13 @@ export function buildRunContext({run,task,role={},environment={},conversation=nu
   return packet;
 }
 
+/** Receipts are references for the owner to verify, never results already accepted. */
+function renderReceipts(receipts) {
+  if(!receipts?.items?.length)return '';
+  const lines=receipts.items.map(r=>`- [${r.id}] ${JSON.stringify(r.role)} · ${r.verdict}${r.reportRevision?` (report r${r.reportRevision})`:''} · ${r.stage||tr('runContext.receiptNoStage')} · ${r.version||tr('runContext.receiptNoVersion')} · run ${r.runStatus} · ${r.summary||''} · ${r.readCommand}`);
+  return tr('runContext.resultReceipts',{p1:lines.join('\n'),p2:receipts.omitted?tr('runContext.resultReceiptsOmitted',{count:receipts.omitted}):''});
+}
+
 /** The source text is not rewritten by the summarizer; the background carries a coverage range and a fallback marker so it is not mistaken for a new instruction. */
 export function renderRunPrompt(packet,{minimal=false}={}) {
   if(minimal)return [packet.instruction,
@@ -68,7 +76,7 @@ export function renderRunPrompt(packet,{minimal=false}={}) {
     packet.schedulingRoster?.length?tr('runContext.rolesTurnMustCoverFixed',{p1:packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(', ')}):'',
     ...(packet.references||[]).map(item=>`${JSON.stringify(item.author)} [${item.id}]:\n${item.text}${item.truncated?`\n${item.readCommand}`:''}`),
     ...(packet.deliveries||[]).map(item=>`${item.id} ${item.commit||''} ${item.summary||''}`),
-    packet.completion?tr('runContext.explicitCompletionRequirement',{completion:packet.completion}):''].filter(Boolean).join('\n\n');
+    packet.completion?tr('runContext.explicitCompletionRequirement',{completion:packet.completion}):'',renderReceipts(packet.receipts)].filter(Boolean).join('\n\n');
   const lines=[tr('runContext.originalInstructionForTurnVerbatim', { instruction: packet.instruction })];
   if(packet.followup)lines.push(tr('followup.context',{context:JSON.stringify(packet.followup)}));
   if(packet.discussionResolution)lines.push(tr('runContext.questionOnOriginalTaskHas', { p1: JSON.stringify(packet.discussionResolution) }));
@@ -95,6 +103,7 @@ export function renderRunPrompt(packet,{minimal=false}={}) {
   if(packet.deliveries.length)lines.push(tr('runContext.deliveriesRelatedTurn', { p1: packet.deliveries.map(item=>`${item.id} ${item.commit||''} ${item.summary}`).join('\n') }));
   if(packet.references.length)lines.push(tr('runContext.sourceTextQuotedByUser', { p1: packet.references.map(showMessage).join('\n') }));
   if(packet.completion)lines.push(tr('runContext.explicitCompletionRequirement', { completion: packet.completion }));
+  if(packet.receipts)lines.push(renderReceipts(packet.receipts));
   lines.push(tr('runContext.currentPlatformSessionTurnS', { p1: packet.roleSessionId||tr('runContext.notCreated'), runId: packet.runId }));
   return lines.join('\n\n');
 }
