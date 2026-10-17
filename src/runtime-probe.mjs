@@ -316,17 +316,17 @@ function probeClaudeModels(bin) {
       child.stdin.end(); child.kill('SIGKILL');
       resolve(models);
     };
-    const timer = setTimeout(() => finish([]), 5000);
-    child.on('error', () => finish([]));
-    child.on('close', () => finish([]));
-    child.stdin.on('error', () => finish([]));
-    child.stdout.on('data', chunk => { bytes += chunk.length; if (bytes > 1048576) finish([]); });
+    const timer = setTimeout(() => finish(null), 5000);
+    child.on('error', () => finish(null));
+    child.on('close', () => finish(null));
+    child.stdin.on('error', () => finish(null));
+    child.stdout.on('data', chunk => { bytes += chunk.length; if (bytes > 1048576) finish(null); });
     lines.on('line', line => {
       try {
         const message = JSON.parse(line), response = message.response;
         if (message.type !== 'control_response' || response?.request_id !== 'wb-model-capabilities') return;
         const models = response.subtype === 'success' ? response.response?.models : null;
-        finish(Array.isArray(models) ? models : []);
+        finish(Array.isArray(models) ? models : null);
       } catch { /* Ignore non-protocol startup output; the bounded timeout still applies. */ }
     });
     child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'wb-model-capabilities', request: { subtype: 'initialize' } })}\n`);
@@ -376,12 +376,21 @@ export async function inspectClaude() {
     { id: 'haiku', name: 'Haiku', effort: null, efforts: [] },
   ];
   const [nativeModels, quota] = await Promise.all([authReady ? probeClaudeModels(bin) : [], probeClaudeQuota(bin)]);
-  const models = authReady ? known.map(model => {
-    const native = nativeModels.find(m => m?.value === model.id)
-      || (providerModel ? nativeModels.find(m => m?.resolvedModel === providerModel) : null);
+  // An empty successful catalog is authoritative; only an unavailable probe keeps legacy aliases.
+  const seen = new Set();
+  const catalog = nativeModels?.filter(m => {
+    if (typeof m?.value !== 'string' || !m.value.trim() || seen.has(m.value)) return false;
+    seen.add(m.value); return true;
+  });
+  const choices = providerModel || !catalog ? known : catalog.map(m => ({id:m.value,name:typeof m.displayName==='string'&&m.displayName.trim()?m.displayName:m.value,effort:null,efforts:[]}));
+  const models = authReady ? choices.map(model => {
+    const native = catalog?.find(m => m.value === model.id)
+      || (providerModel ? catalog?.find(m => m.resolvedModel === providerModel) : null);
     const efforts = native?.supportsEffort === true && Array.isArray(native.supportedEffortLevels)
       ? [...new Set(native.supportedEffortLevels.filter(value => ['low', 'medium', 'high', 'xhigh', 'max'].includes(value)))] : [];
-    return { ...model, efforts };
+    const resolvedModel = typeof native?.resolvedModel === 'string' ? native.resolvedModel : null;
+    const usageCreditsMayApply = [model.id,resolvedModel].some(id=>typeof id==='string'&&/^(?:fable(?:$|\[)|claude-fable-)/i.test(id));
+    return { ...model, efforts, ...(resolvedModel ? {resolvedModel} : {}), ...(usageCreditsMayApply ? {usageCreditsMayApply:true} : {}) };
   }) : [];
   result.models = models;
   result.authReady = authReady;

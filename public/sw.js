@@ -1,6 +1,7 @@
-const CACHE = 'agent-workbench-static-v136';
+const CACHE = 'agent-workbench-static-v137-claude-models';
 const STATIC = [
   '/group-conversations.js',
+  '/model-usage.js',
   '/project-team-copy.js',
   '/create-folder.js',
   '/native-session-groups.js',

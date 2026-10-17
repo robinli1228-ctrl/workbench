@@ -10,6 +10,7 @@ import {createRoleHistoryTabs} from './role-history.js';
 import {createCliRecoveryUI} from './cli-recovery.js';
 import {createListOrder} from './list-order.js';
 import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
+import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl } from './elapsed.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
@@ -1360,6 +1361,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (savedBinding) retainSavedOption(select, editingRoleSnapshot.model);
     select.value = [...select.options].some(o => o.value === preferredModel) ? preferredModel : '';
     renderEffortOptions(r?.models?.find(m => m.id === select.value) || null, r);
+    renderModelUsageNotice(roleForm.querySelector('[data-model-usage-note]'),roleForm.elements.runtime.value,r?.models?.find(m=>m.id===select.value)||{id:select.value});
     const fresh = r?.checkedAt && Date.now() - Date.parse(r.checkedAt) < 600000;
     const binding = roleBinding(w?.id);
     const ready = w?.online && w.capabilities?.runtimeDiscovery && r?.supported && r.available && fresh && select.value && binding;

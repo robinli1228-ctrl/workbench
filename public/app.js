@@ -3,6 +3,7 @@ import {simplifiedCliOutput} from './output-language.js';
 import {createNativeSessionUI} from './native-sessions.js';
 import {createListOrder} from './list-order.js';
 import {installSelectControls} from './select-controls.js';
+import {renderModelUsageNotice} from './model-usage.js';
 
 installSelectControls();
 import {roleContextRing} from './context-usage.js';
@@ -1277,6 +1278,7 @@ function renderSupervisorDefaultChoices(values = {}) {
     'Choose manually when creating a project'
   );
   const selectedModels = selectedRuntimes.flatMap(item => item.models || []).filter(item => item.id === model);
+  renderModelUsageNotice(dom.promptsForm.querySelector('[data-model-usage-note]'),runtime,{id:model,usageCreditsMayApply:selectedModels.some(m=>m.usageCreditsMayApply)});
   setSupervisorDefaultOptions(
     'defaultSupervisorEffort',
     [...new Set(selectedModels.flatMap(item => item.efforts || []).concat(selectedRuntimes.flatMap(item => item.efforts || [])))].map(id => ({ id })),
@@ -1325,6 +1327,7 @@ function refreshOrganizerChoices(saved={}) {
   const runtime=runtimes.find(item=>item.type===organizerForm.elements.runtime.value);
   organizerOptions(organizerForm.elements.model,(runtime?.models||[]).map(model=>({id:model.id,name:model.name||model.id})),saved.model||organizerForm.elements.model.value,'Select model');
   const model=runtime?.models?.find(item=>item.id===organizerForm.elements.model.value);
+  renderModelUsageNotice(organizerForm.querySelector('[data-model-usage-note]'),runtime?.type,model||{id:organizerForm.elements.model.value});
   organizerOptions(organizerForm.elements.effort,[...new Set(model?.efforts||runtime?.efforts||[])].map(id=>({id})),saved.effort||organizerForm.elements.effort.value,'CLI default');
 }
 

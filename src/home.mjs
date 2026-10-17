@@ -1216,7 +1216,7 @@ const server = http.createServer(async (req, res) => {
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';
-    files['/list-order.js']='list-order.js';files['/select-controls.js']='select-controls.js';
+    files['/list-order.js']='list-order.js';files['/select-controls.js']='select-controls.js';files['/model-usage.js']='model-usage.js';
     files['/mention-input.js']='mention-input.js';
     files['/context-usage.js']='context-usage.js';
     files['/vendor/opencc-t2cn.js']='vendor/opencc-t2cn.js';

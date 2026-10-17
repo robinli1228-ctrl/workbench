@@ -108,6 +108,7 @@
             <label>Supervisor model<select name="supervisorModel" required></select></label>
             <label>Reasoning effort<select name="supervisorEffort"></select></label>
             <p id="project-supervisor-note" class="workspace-note full-width"></p>
+            <p class="workspace-note full-width" data-model-usage-note role="note" hidden></p>
             <label>Code repository<select name="repositoryMode"><option value="none">Do not use Git for now</option><option value="existing">Link an existing repository</option><option value="create">Create a repository automatically</option></select></label>
             <label>Baseline source branch (optional)<input name="baseBranch" placeholder="Leave blank to use the repository's current default branch"></label>
             <label>Hosting account<select name="hostingAccountId"></select></label>
@@ -344,6 +345,7 @@
                     <label>CLI<select name="runtime"></select></label>
                     <label>Model<select name="model"></select></label>
                   </div>
+                  <p class="workspace-note full-width" data-model-usage-note role="note" hidden></p>
                   <label>Reasoning effort<select name="effort"></select></label>
                   <label>Organizer prompt<textarea name="prompt" rows="12" maxlength="6000"></textarea></label>
                   <p id="conversation-organizer-feedback" class="form-feedback" role="status" hidden></p>
@@ -370,6 +372,7 @@
                       <label>Default supervisor model<select name="defaultSupervisorModel"></select></label>
                       <label>Default reasoning effort<select name="defaultSupervisorEffort"></select></label>
                     </div>
+                    <p class="workspace-note" data-model-usage-note role="note" hidden></p>
                     <p class="workspace-note">Used only to preselect values when creating a project; configured projects are unchanged.</p>
                   </section>
                   <p id="platform-prompts-feedback" class="form-feedback" role="status" hidden></p>
@@ -521,6 +524,7 @@
           <label>Select model<select name="model" required></select></label>
           <label>Reasoning effort / effort<select name="effort"><option value="">Use CLI default</option></select></label>
         </div>
+        <p class="workspace-note full-width" data-model-usage-note role="note" hidden></p>
         <label class="full-width">Permission scope<select name="permissionScope"></select></label>
         <p class="workspace-note full-width" data-permission-note></p>
         <h3 class="role-section-title full-width">Role responsibility and prompt</h3>
@@ -553,6 +557,7 @@
         </div>
         <label class="full-width">Permission scope<select name="permissionScope"></select></label>
         <p class="workspace-note full-width" data-permission-note></p>
+        <p class="workspace-note full-width" data-model-usage-note role="note" hidden></p>
         <p id="role-runtime-note" class="workspace-note full-width"></p>
         <input type="hidden" name="mode" value="workspace-write">
         <label class="checkbox-label full-width" id="role-auto-approve-field" hidden><input type="checkbox" name="autoApprove" checked>Skip approvals by default</label>

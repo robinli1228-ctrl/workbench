@@ -1,4 +1,5 @@
 import { t, getLanguage } from './i18n.js';
+import {renderModelUsageNotice} from './model-usage.js';
 /** Keep the user's current selection; with no draft use platform defaults, and only then auto-select a sole option. */
 export function preferredSelectValue(values, current, preferred) {
   if (values.some(value => value.id === current)) return current;
@@ -33,6 +34,7 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     const runtime = runtimes.find(r => r.type === form.elements.supervisorRuntime.value);
     select('supervisorModel', runtime?.models || [], 'Select supervisor model', settings.defaultSupervisorModel);
     const model = runtime?.models?.find(m => m.id === form.elements.supervisorModel.value);
+    renderModelUsageNotice(form.querySelector('[data-model-usage-note]'),runtime?.type,model||{id:form.elements.supervisorModel.value});
     select('supervisorEffort', (model?.efforts || runtime?.efforts || []).map(id => ({ id })), 'CLI default', settings.defaultSupervisorEffort);
     document.querySelector('#project-supervisor-note').textContent = workers.length
       ? 'The supervisor can run locally or on a server; when a Git repository is linked, a project baseline Worktree is created, and other devices can join in project settings.'
