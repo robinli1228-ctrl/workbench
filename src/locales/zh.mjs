@@ -105,7 +105,7 @@ export default Object.freeze({
   "sourceSync.failure": "源代码同步：{code} {detail}",
   "sourceSync.systemName": "源代码同步",
   "sourceSync.continuedReceipt": "继续使用同一任务拥有的工作目录，原先已核对的源码输入为：{versions}。你上一轮的修改保留，不会被初始快照覆盖。请重读当前文件；这份回执不表示修改后的产物仍等于初始输入。",
-  "sourceSync.toolGuide": "源码工具：wb sync status [JSON]；wb sync read {\"conflictId\":\"...\"} 查看 expectedHashes 和所有设备版本，可指定 side=\"base\" 或所列版本的 endpointId（设备 ID 仅在版本唯一时可用）、offset/limit 分页读正文；wb sync request {\"requestId\":\"...\",\"targetNodeIds\":[\"...\"],\"repositoryIds\":[\"...\"]}；wb sync assign {\"conflictId\":\"...\",\"generation\":1,\"roleId\":\"...\"}（仅主管）；wb sync propose {\"requestId\":\"...\",\"conflictId\":\"...\",\"generation\":1,\"expectedHashes\":{},\"rationale\":\"...\",\"evidence\":[\"...\"]}（仅当前修复负责人，先运行检查）。候选采集是异步的，结束本轮前用 wb sync status {\"candidateId\":\"...\"} 核对 proposed 或 blocked。工具不会启用尚未启用的项目。同步请求可能等待写入回合结束。目录批次（scopeKind=directory）只同步文件，禁止把其 ID 填入 wb call --source-sync-batch-id 或计划阶段 sourceSyncBatchId。文档依赖用 wb sync status 和目标路径、哈希核对；需要时结束写入回合，在后续回合检查。这两个代码输入字段只接受受支持的版本输入批次，不是通用的文件就绪依赖。正式代码审核和测试使用已批准的固定 commit 交付。排队不等于送达，不得悄悄使用旧文件。",
+  "sourceSync.toolGuide": "源码工具：wb sync status [JSON]；wb sync read {\"conflictId\":\"...\"} 查看 expectedHashes 和所有设备版本，可指定 side=\"base\" 或所列版本的 endpointId（设备 ID 仅在版本唯一时可用）、offset/limit 分页读正文；wb sync request {\"requestId\":\"...\",\"targetNodeIds\":[\"...\"],\"repositoryIds\":[\"...\"]}；wb sync assign {\"conflictId\":\"...\",\"generation\":1,\"roleId\":\"...\"}（仅主管）；wb sync propose {\"requestId\":\"...\",\"conflictId\":\"...\",\"generation\":1,\"expectedHashes\":{},\"rationale\":\"...\",\"evidence\":[\"...\"]}（仅当前修复负责人，先运行检查）。候选采集是异步的，结束本轮前用 wb sync status {\"candidateId\":\"...\"} 核对 proposed 或 blocked。工具不会启用尚未启用的项目。同步请求可能等待写入回合结束。目录批次（scopeKind=directory）只同步文件，禁止把其 ID 填入 wb call --source-sync-batch-id 或计划阶段 sourceSyncBatchId。文档依赖用 wb sync status 和目标路径、哈希核对；wb sync status {\"path\":\"相对路径\"} 返回各设备的哈希和观察时间，以及总体状态 consistent（一致）、in_transit（传输中）、conflict（冲突）或 unknown（未知），离线设备记为未知，不算没到；需要时结束写入回合，在后续回合检查。这两个代码输入字段只接受受支持的版本输入批次，不是通用的文件就绪依赖。正式代码审核和测试使用已批准的固定 commit 交付。排队不等于送达，不得悄悄使用旧文件。",
   "sourceSync.assignmentTask": "文件 {path} 存在源码冲突 {id}，原因：{reason}。请通过 wb sync status/read 和当前团队名单核对信息，找到合适的修改者，用 wb sync assign 明确指派修复。不要亲自改文件，也不要根据角色名称猜作者。",
   "sourceSync.peerTask": "文件 {path} 存在源码冲突 {id}，唯一修复负责人为 {owner}。请通过 wb sync read 查阅双方版本，在本任务结果中说明你的原始意图和依据。这是解释请求，不是第二份修改任务；不要修改冲突文件。",
   "sourceSync.repairTask": "解决源码冲突 {id}，轮次 {generation}，文件 {path}。预期版本：{hashes}。对方说明任务：{peerTaskId}。先用 wb sync read 查看基线和双方内容，按需查询历史、向同伴核实意图，只在专用修复目录修改这个文件。不得覆盖原设备目录，也不提交或推送 Git。运行相关检查后，用 wb sync propose 提交候选、理由和证据；确实验证后再用 wb report passed 结束。提交候选不等于同步完成，平台还会复核版本和接收回执。需要补充需求、修改其他文件或独立审核时，报告 needs_input，不要猜测。",
@@ -1585,8 +1585,9 @@ wb report JSON       提交 verdict/summary/evidence/next 业务结论
 wb report status 编号  只读查询本轮报告提交回执
 wb report JSON 可附 "version"（完整 40 位提交 SHA）、"stage"（implemented/reviewed/tested/merged/deployed，merged 与 deployed 必须带 version）和 "item"（原事项编号）
 wb progress          列出你发起的调用的结果回执，以及据此派生的逐项进度
-wb progress verify JSON  对一条回执记录核对结论：{"receiptId":"rr:…","decision":"accepted|rejected","note":"…"}；未经 accepted 的回执不算通过
-报告超时后先查回执，确认未保存才复用原编号重试一次。pending_confirmation 表示结果待确认，不代表失败，请查询后再决定下一步。相同内容复用原编号；确需新版本可显式指定新的 submissionId。
+wb progress verify JSON  对一条回执记录核对结论：{"receiptId":"rr:…","decision":"accepted|rejected|acknowledged","note":"…"}；也可用 "receiptIds":[…] 一次核对最多 50 条，逐条返回结果并各自保留历史。acknowledged 只表示已知悉；未经 accepted 的回执不算通过
+wb report JSON 可附 "files":["路径",…]（绑定项目内 1–3 个 UTF-8 文件，合计 48000 字节以内），随报告记录大小和 SHA256；用 wb report file 执行或请求编号 [路径] [偏移] 读取。附件的可见范围与报告完全相同；受保护的独立审核不能附文件
+工具拒绝时错误以 [code] 开头。run_reconciling 和 home_disconnected 表示请求未执行，工具会用同一请求编号自动重试几次，之后可原样重试；run_stopping、run_ended、paused 表示本次尝试已结束，本轮不要重试。报告超时后先查回执，确认未保存才复用原编号重试一次。pending_confirmation 表示结果待确认，不代表失败，请查询后再决定下一步。相同内容复用原编号；确需新版本可显式指定新的 submissionId。
 wb docs              列出文档
 wb docs read 路径     读取 .workbench 内文件
 wb git               查看仓库状态和 origin（只读）
@@ -1594,6 +1595,7 @@ wb chat 文本         在项目群聊留一条话（不派单）
 wb ask 角色 说明      兼容咨询入口；同一轮同一目标只接受一份请求
 wb call --role 角色完整名称或ID --kind consult --request-id 编号 --text 说明
   同一正文给多人时重复 --role，例如 --role 审核甲 --role 审核乙；只填一个也可以。平台只展示一条指令，返回各目标独立请求的 requestIds。发送成功代表这条指令已完成，不代表接收方处理完成；重试相同内容与目标复用编号，不要拆成多次调用。需要执行顺序或阶段依赖时使用 wb schedule。
+  可选 --goal（目标）、--scope（角色、能改和不能改什么）、--input（设备、目录、完整 SHA 或路径与哈希）、--return（交回什么、交给谁），会在 --text 前生成带标签的行，此时 --text 可省略。不做截断：超过约 1500 字符照常发出并附 lengthNote，版本、授权范围和验收标准必须保留。
   可加 --file 路径，直接读取绑定项目、工作区或仓库内的 UTF-8 文档并附 SHA256；--text 仍用于本次任务说明。沿用 12000 字符调用限制，较大的共享文档用 wb docs read 读取。不要重抄长 Base64 或压缩文本；解码、校验失败时，读取原文件或请发送者提供可读引用，不要猜测替换字符。
   复用 CLI 时按本轮工具入口在操作前加 --turn RUN_ID。上下文失效时 wb help 仍可用。没有 wb run status 命令；查询会话身份用 session current。报告保存成功回执只确认登记，不表示 CLI 已退出：完成分工后给出最终回复，不用轮询自己是否已经结束。
                     发起可跨设备的咨询；重试复用编号
@@ -1793,39 +1795,41 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'minimal.teamHelp': 'wb discuss peers：查询当前项目完整团队、职能和跨设备可用状态。可选 JSON {"view":"detail","includeArchived":true} 返回详情。通过 wb call 联系角色，发送不意味着必须等待；只有依赖回复时才用 wb wait 登记等待。',
   'minimal.platformDefault': '通过 Workbench 自主执行。按任务需要使用协作工具，仍须落实用户的明确要求。项目规则和决策见 AGENTS.md（各 CLI 原生加载）；历史用 wb history search 查询。规则或关键决策变化时，任何角色都可以更新 AGENTS.md；保持简洁、只写结论，并提交修改。',
   'minimal.platformDefaultLegacy1': '通过 Workbench 自主执行。按任务需要使用协作工具，仍须落实用户的明确要求。',
-  'minimal.platformTemplate': `你是当前身份对应的 Workbench 协作团队成员，和队友、用户一起完成项目目标。任务可能来自用户、总管或同伴。
+  'minimal.platformTemplate': `你是本项目的 Workbench 团队成员，和队友、用户一起完成项目目标。任务来自用户、总管或同伴。
 
-主动推进：
-- 收到任务就推进到可验证的结果，能自己完成和验证的直接做完，不等别人催。
-- 只有自己的设备、环境、账号或权限做不到，或用户明确要求他人参与时，才找队友：先 wb discuss peers 看谁在线、谁负责，再 wb call。发出后继续做不依赖它的工作，真正依赖结果时才 wb wait。
-- 发现阻塞、风险或别人的问题，直接告诉相关角色并说明依据；与当前任务无关的讨论可以不回应。
-- 需要用户决定或授权时，用 wb report needs_input 写清问题和选项，其余工作继续。
+推进
+- 收到任务就推进到可验证的结果；自己能做完、能验证的直接做完，不等别人催。
+- 本设备做不了，或属于大型编译、整套测试、浏览器验收这类重活时，用 wb discuss peers 选职能匹配、设备合适且空闲的角色，用 wb call 交出去；发出后继续做不依赖它的部分，真正依赖结果时才 wb wait。
+- 你发起的调用，结果会以“结果回执”出现在之后的输入里，包括写明原因的“未执行”。回执只表示收到，不等于通过：看证据和版本后用 wb progress verify 记录 accepted 或 rejected；与当前目标无关的标记 acknowledged（已知悉）。结果没变化，就不为同一件事再派人、再核对。
+- 发现阻塞、风险或别人的问题，直接告诉相关角色并说明依据。需要用户决定或授权时，用 wb report needs_input 写清问题和选项，其余工作继续。
 
-派任务或请求协助时，写清四点：
-1. 目标：要解决什么，做到什么程度算完成。
-2. 角色：请对方以什么身份做（实现、审核、测试、查询），能改什么、不能改什么。
-3. 输入：设备、目录、完整提交 SHA 或文件路径与哈希，不说“最新版本”“刚才那个”。
-4. 返回：需要交回什么（结论、证据、提交 SHA、文件），交给谁。
+派工
+- 写清目标和完成标准、对方角色和可改范围、输入（设备、路径或完整 SHA）、交回什么给谁，可用 wb call 的 --goal、--scope、--input、--return 分项写。尽量写短，但版本、授权范围和验收标准不能删。
+- 背景放 .workbench/docs，只给路径和哈希；不整段转发历史，不要求对方把已有报告全文附回。
 
-背景材料放在授权范围内的 .workbench/docs，派发时引用路径和哈希，不重复塞入整段历史，也不泄露尚未公开的独立审核意见。代码任务开工前核对指定版本、实际 HEAD、目录和工作区状态；不一致时说明，不能把旧会话目录自动改成“最新”。决定与证据也应读取同一指定版本。
+审核
+- 独立审核只读，审核意见在释放前不公开。只有违反需求、功能错误、数据错误、安全问题算必修，其余写成建议单列，不要求返工。
+- 复核只看改动和受影响的地方；未改动、同一 SHA 的证据直接复用。
+- 结论交回原实现者：passed / failed（列出编号的必修问题）/ blocked（无法核实）/ needs_input（需用户决定）。
 
-独立审核只读：每个问题写清位置、触发条件、影响和证据。修复后核对新版本和编号修改清单，按需补读受影响上下文。临时审阅同步的未提交修改时，记录设备、实际目录、观察时间、路径和 SHA256，前后核对输入；结论仅针对这些字节，不冒充已提交版本的正式审核。仍有必须修改的问题就报告 failed；无法核实报告 blocked；需要用户决定报告 needs_input。只有非阻塞建议可以随 passed 交回。
+跨设备与交付
+- 正式审核、测试和合版用已提交的 commit（完整 SHA）交付；同步目录只用于临时查看，不当作交付。
+- 依赖他端文件前，用 wb sync status '{"path":"相对路径"}' 查看你依赖的那一端：consistent 才算已到；in_transit、conflict 或 unknown（含设备离线）如实说明，不说成“没到”，也不猜。
+- 不同时让两台设备改同一个文件。
 
-跨设备：
-- 仅在项目已启用同步、设备和绑定目录纳入范围时，符合当前策略的保存内容才会同步，包括未提交修改；以实际同步范围、排除规则和回执为准，不保证所有文件或固定时限。隔离 worktree 不会自动纳入；不要凭目录名或 Git ignore 推断文件已同步。
-- 依赖另一设备的文件前，用 wb sync status 核对范围、冲突、待处理批次和回执；项目级状态不等于单文件一致，必要时核对源/目标实际字节的 SHA256 和观察时间。同步不是冻结快照，输入变化后重新核对。
-- 修改绑定目录前，用 wb discuss peers 查看相关任务，明确负责的文件并协调重叠；peers 不是文件锁，不同时派两端修改同一文件。
-- 给其他设备看的文档和小文件优先放获准且已纳入同步的绑定项目 .workbench/docs，交接写明设备、路径和哈希并确认接收；不要只留在隔离目录。未共享、被排除或设备离线时如实说明，不公开未释放的独立审核材料。
-- 正式审核、测试验收及其他固定版本执行，代码通过已提交 commit 交付（wb deliver 或排程自动交付，勿重复建立），写完整 SHA 并保留审批。同步文件可供临时查看和快检，但不能充当正式验收版本，也不替代开发提交。本设备做不了的交给目标设备上的角色，不冒称已在别处完成。
-
-如实报告：完成时用 wb report 说明做了什么、实际验证结果和证据、未完成项和下一步；区分已写代码、已提交、已部署、已实测。未经授权不推送、不合并、不部署。`,
+报告与工具
+- 用 wb report 如实写：做了什么、实际验证结果、没做完的、下一步；分清已写代码、已提交、已部署、已实测。较长的清单或报告用 "files" 附上，别人用 wb report file 读取。
+- 工具报错以 [code] 开头：run_reconciling、home_disconnected 表示未执行，用同一请求编号重试；run_stopping、run_ended、paused 本轮不再重试。
+- 没有授权不推送、不合并、不部署、不重启。`,
   'minimal.supervisorDefault': '理解目标，自主选择有效的执行方式。按任务需要直接完成工作或与同伴协作。',
   'minimal.supervisorTemplate': `你是项目总管，对目标从规划到收尾负责：主动规划、派工、跟进、排障和收尾，不等用户逐步指挥。
 
 - 派工：简单任务自己完成；复杂任务先请计划角色出方案。用 wb discuss peers 按职能、设备和可用性选人，尊重用户点名；有依赖或跨设备的阶段用 wb schedule。
-- 目标负责：你对发起的任务目标负责。你发起的调用结果以结果回执到达（已收到 → 已送达 → 已核对）；对照目标核对每条回执的证据和准确版本后，用 wb progress verify 记录结论。回执、进程结束或消息发出都不等于通过。wb progress 显示每项的阶段（已实现、已独审、已实测、已合并、已部署）；新 SHA 不沿用旧 SHA 的通过。
+- 目标负责：你对发起的任务目标负责。你发起的调用结果以结果回执到达，调用未执行、被取消或持续受阻时也会有回执。对照目标核对每条回执的证据和准确版本后，用 wb progress verify 记录 accepted 或 rejected（多条可用 receiptIds 一次处理）；acknowledged 只表示已知悉与目标无关的回执。回执、进程结束或消息发出都不等于通过。wb progress 显示每项的阶段（已实现、已独审、已实测、已合并、已部署）；新 SHA 不沿用旧 SHA 的通过。
+- 不做纯交接回合：不要求角色重发已有报告全文，不重复核对没有变化的哈希，不为已定的结论再派一次盘点。报告附件用 wb report file 读取，文件是否到达用 wb sync status '{"path":"..."}' 查看。
 - 审核与验收：保留独立审核和目标设备上的真实测试。每轮审核汇总成一份清单；只把本需求违例、功能、数据、安全类必修问题退回修改，纯建议单列。复核改动及受影响处，复用未改动的同 SHA 证据。最多修复一轮后仍有实质分歧，写明具体缺口交用户决定，不无限循环；不得因达到轮次而谎报通过。
-- 失效与跨设备：额度用尽或鉴权失败不重试，交同职能的可用角色接手；正式审核和验收使用固定 commit 交付，同步文件只用于临时查看。
+- 失效与跨设备：额度用尽或鉴权失败不重试，交同职能的可用角色接手。“未执行”回执写明了原因：先处理原因或改派一次，不原样重发。正式审核和验收使用固定 commit 交付，同步文件只用于临时查看。
+- 巡检：只保留一套提醒。巡检定时器只在有新结果或新异常时唤醒你；没有变化就不再汇报、不再派工。
 - 收尾：清单确定后冻结，新建议留到下一轮；全部事项核对通过后锁定版本，交付合版。
 - 决策：只有取舍、新增权限、账号或付费变化才问用户，其余自行决定并记录理由。
 - 每次回复只写四件事：已完成什么、还差什么、卡在哪里、下一步由谁处理。`,
@@ -1918,7 +1922,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'collabWait.stalled': "{role} 的协作已长时间没有进展，需要处理；本条消息会继续排队，直到你点“先处理这条”",
   'collabWait.yieldRunning': "{role} 正在先处理另一条消息；本条要等它和原先等待的协作都结束后再执行",
   'collabWait.stalledOnly': "等待被标记为卡住之前，只有你发的消息可以先处理",
-  'runContext.resultReceipts': '待你核对的结果回执（已收到、尚未核对；回执不等于通过）。核对证据和准确版本后，用 wb progress verify 逐条记录结论；wb progress 列出全部事项和阶段：\n{p1}{p2}',
+  'runContext.resultReceipts': '待你核对的结果回执（已收到、尚未核对；回执不等于通过）。核对证据和准确版本后，用 wb progress verify 记录结论（accepted 或 rejected；acknowledged 只表示已知悉；receiptIds 可一次处理多条）；wb progress 列出全部事项和阶段：\n{p1}{p2}',
   'runContext.resultReceiptsOmitted': '\n另有 {count} 条未送达回执，可用 wb progress 查看。',
   'runContext.receiptNoStage': '阶段未知',
   'runContext.receiptNoVersion': '版本未知',
@@ -1929,9 +1933,26 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'resultReceipts.invalidReceipt': '结果回执编号无效',
   'resultReceipts.notFound': '找不到属于当前角色的结果回执',
   'resultReceipts.superseded': '这条回执已被更新的报告版本取代，请核对 {id}',
-  'resultReceipts.invalidDecision': 'decision 只能是 accepted 或 rejected',
+  'resultReceipts.invalidDecision': 'decision 只能是 accepted、rejected 或 acknowledged',
   'resultReceipts.noteRequired': '驳回必须写明理由（最多 1000 字符）',
   'resultReceipts.invalidAction': '未知的进度操作',
-  'resultReceipts.usage': '用法：wb progress [list] | wb progress verify \'{"receiptId":"rr:…","decision":"accepted|rejected","note":"…"}\'',
+  'resultReceipts.usage': '用法：wb progress [list] | wb progress verify \'{"receiptId":"rr:…","decision":"accepted|rejected|acknowledged","note":"…"}\' | wb progress verify \'{"receiptIds":["rr:…","rr:…"],"decision":"acknowledged"}\'',
   'timerMonitor.resultReceipts': '{role} 空闲中，有 {count} 条结果回执尚未送达；请用 wb progress 核对',
+  'home.runReconciling': '主控正在重启后对账这次执行，本次请求未执行。请稍后用同一请求编号重试',
+  'home.runStopping': '这次执行正在停止，本次请求未执行。本轮不要再重试',
+  'agentBridge.homeDisconnected': '本设备与主控的连接已断开，请求未发出。请用同一请求编号重试',
+  'agentBridge.remotePaused': '这次执行的远程操作已暂停，本次请求未执行',
+  'resultReceipts.cancelledReason': '调用在产生结果前已取消',
+  'runContext.receiptNoRun': '未执行',
+  'runContext.receiptFiles': '附 {count} 个文件，用 wb report file 读取',
+  'runReports.otherRun': '这份提交已由执行 {runId} 保存，本次执行没有再保存',
+  'runReports.invalidFiles': 'files 只能列出 1–3 个不重复的 UTF-8 文本文件，合计不超过 48000 字节，整个报告请求不超过 60 KB；主控会重新核对每个文件的大小和 SHA256',
+  'runReports.fileNotFound': '找不到你有权读取的该执行、请求或路径对应的报告附件',
+  'runReports.fileUsage': '用法：wb report file <runId|requestId> [path] [offset]',
+  'wbTools.callFieldEmpty': '给出的 --goal、--scope、--input、--return 不能为空',
+  'wbTools.callTextLong': '已原样发出。这段派工有 {chars} 个字符，控制在约 1500 字符内更易读；但不能为了缩短而删掉版本、授权范围或验收标准',
+  'wbTools.callField.goal': '目标',
+  'wbTools.callField.scope': '角色与范围',
+  'wbTools.callField.input': '输入',
+  'wbTools.callField.return': '返回',
 });

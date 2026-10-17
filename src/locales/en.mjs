@@ -105,7 +105,7 @@ export default Object.freeze({
   "sourceSync.failure": "Source synchronization: {code} {detail}",
   "sourceSync.systemName": "Source synchronization",
   "sourceSync.continuedReceipt": "Continuing the same owned workspace from these previously verified source inputs: {versions}. Your prior turn edits are retained, not overwritten with the original snapshot. Re-read current files; this receipt is not a claim that your output still equals the initial input.",
-  "sourceSync.toolGuide": "Source tools: wb sync status [JSON], wb sync read {\"conflictId\":\"...\"} (lists expectedHashes and all node sides; pass side=\"base\" or an endpointId from the listed sides (a node ID works only when unique), offset/limit to read bytes as text), wb sync request {\"requestId\":\"...\",\"targetNodeIds\":[\"...\"],\"repositoryIds\":[\"...\"]}, wb sync assign {\"conflictId\":\"...\",\"generation\":1,\"roleId\":\"...\"} (supervisor only), wb sync propose {\"requestId\":\"...\",\"conflictId\":\"...\",\"generation\":1,\"expectedHashes\":{},\"rationale\":\"...\",\"evidence\":[\"...\"]} (assigned owner only, after running checks). Proposal capture is asynchronous: read wb sync status {\"candidateId\":\"...\"} until proposed or blocked before ending the turn. Requests do not enable disabled projects. A sync request can wait for the writing turn to end. Directory batches (scopeKind=directory) only synchronize files: never pass their IDs as wb call --source-sync-batch-id or stage sourceSyncBatchId. For documents, use wb sync status and verify target paths and hashes before use; end the writing turn when required, then inspect on a later turn. These code-input fields accept only supported version-input batches, not general file-ready dependencies. Formal code review/test uses an approved fixed-commit delivery. Never infer delivery from a queued request or silently use old files.",
+  "sourceSync.toolGuide": "Source tools: wb sync status [JSON], wb sync read {\"conflictId\":\"...\"} (lists expectedHashes and all node sides; pass side=\"base\" or an endpointId from the listed sides (a node ID works only when unique), offset/limit to read bytes as text), wb sync request {\"requestId\":\"...\",\"targetNodeIds\":[\"...\"],\"repositoryIds\":[\"...\"]}, wb sync assign {\"conflictId\":\"...\",\"generation\":1,\"roleId\":\"...\"} (supervisor only), wb sync propose {\"requestId\":\"...\",\"conflictId\":\"...\",\"generation\":1,\"expectedHashes\":{},\"rationale\":\"...\",\"evidence\":[\"...\"]} (assigned owner only, after running checks). Proposal capture is asynchronous: read wb sync status {\"candidateId\":\"...\"} until proposed or blocked before ending the turn. Requests do not enable disabled projects. A sync request can wait for the writing turn to end. Directory batches (scopeKind=directory) only synchronize files: never pass their IDs as wb call --source-sync-batch-id or stage sourceSyncBatchId. For documents, use wb sync status and verify target paths and hashes before use; wb sync status {\"path\":\"RELATIVE/PATH\"} returns every device's hash and observation time and an overall state of consistent, in_transit, conflict or unknown (an offline device is unknown, never missing); end the writing turn when required, then inspect on a later turn. These code-input fields accept only supported version-input batches, not general file-ready dependencies. Formal code review/test uses an approved fixed-commit delivery. Never infer delivery from a queued request or silently use old files.",
   "sourceSync.assignmentTask": "Source conflict {id} in {path}: {reason}. Inspect wb sync status/read and the current team directory. Identify an appropriate modifier and use wb sync assign to explicitly assign repair. Do not edit the file yourself or guess an author from a role name.",
   "sourceSync.peerTask": "Source conflict {id} in {path}. {owner} is the single repair owner. Read both versions through wb sync read and provide your original intent and evidence in this task result. This is an explanation request, not a second editing assignment; do not change the conflicted file.",
   "sourceSync.repairTask": "Resolve source conflict {id}, generation {generation}, file {path}. Expected versions: {hashes}. Peer explanation task: {peerTaskId}. Use wb sync read to inspect base and both sides, query history and peers for missing intent, and edit only this file in the dedicated resolution workspace. Never overwrite the original device directories or commit/push. Run relevant checks, submit wb sync propose with its rationale and evidence, then wb report passed only if verified. A proposal is not synchronization completion; the platform rechecks hashes and receiving receipts. If requirements, other files or independent review are needed, report needs_input rather than guessing.",
@@ -1585,8 +1585,9 @@ wb report JSON       Submit the verdict/summary/evidence/next business conclusio
 wb report status ID  Read this Run's submission receipt without writing a report
 wb report JSON may add "version" (full 40-character commit SHA), "stage" (implemented/reviewed/tested/merged/deployed; merged and deployed need version) and "item" (original item key)
 wb progress          List result receipts for calls you issued and the per-item progress derived from them
-wb progress verify JSON  Record your decision on one receipt: {"receiptId":"rr:…","decision":"accepted|rejected","note":"…"}; a receipt is not a pass until accepted
-Report timeouts query the receipt before one same-ID retry. pending_confirmation means unknown, not failed; query it before deciding next steps. Identical content reuses its ID; an explicit new submissionId requests a deliberate new revision.
+wb progress verify JSON  Record your decision on one receipt: {"receiptId":"rr:…","decision":"accepted|rejected|acknowledged","note":"…"}, or on up to 50 at once with "receiptIds":[…] (each result and history is kept separately). acknowledged only means noted; a receipt is not a pass until accepted
+wb report JSON may add "files":["PATH",…] (1-3 UTF-8 files from the bound project, 48000 bytes together) to attach them with size and SHA256; read them with wb report file RUN_OR_REQUEST_ID [PATH] [OFFSET]. Files are readable exactly where the report is; a protected independent review cannot attach files
+Refused tool calls start with a [code]. run_reconciling and home_disconnected mean nothing ran; the tool retries the same request ID a few times by itself, then you may retry it unchanged. run_stopping, run_ended and paused end this attempt: do not retry in this turn. Report timeouts query the receipt before one same-ID retry. pending_confirmation means unknown, not failed; query it before deciding next steps. Identical content reuses its ID; an explicit new submissionId requests a deliberate new revision.
 wb docs              List documents
 wb docs read PATH     Read a file inside .workbench
 wb git               Show repository status and origin (read-only)
@@ -1594,6 +1595,7 @@ wb chat TEXT         Leave a note in the project group chat (does not dispatch)
 wb ask ROLE DESCRIPTION      Compatibility consultation entry; only one request per target is accepted in the same turn
 wb call --role FULL_ROLE_NAME_OR_ID --kind consult --request-id ID --text DESCRIPTION
   Repeat --role for more recipients of the same text, e.g. --role REVIEWER_A --role REVIEWER_B. One target is valid. The call creates one visible instruction and returns requestIds for the separate recipient tasks. Successful sending completes the instruction message, not the recipients' work. Retry unchanged content/targets with the same ID; do not send separate copies. Use wb schedule when execution order or stage dependencies are required.
+  Optional --goal, --scope (role, what may and may not change), --input (device, directory, full SHA or path and hash) and --return (what to hand back, to whom) become labelled lines ahead of --text, which may then be omitted. Nothing is shortened: a brief over about 1500 characters is sent unchanged with a lengthNote, and the version, authorised scope and acceptance criteria must stay.
   Add --file PATH to copy a UTF-8 document from the bound project/workspace/repositories with its SHA256; keep --text for the actual task. The existing 12000-character call limit still applies. Read larger shared documents with wb docs read. Do not retype long Base64/compressed text; if a decode/check fails, read the original file or ask its sender for a readable reference instead of guessing replacement bytes.
   With a retained CLI, prepend --turn RUN_ID to operations using the current-turn tool entry. wb help works with expired context. There is no wb run status command; use session current for session identity. A saved report receipt confirms registration, not that the CLI has exited: finish the assignment and return the final reply without polling your own completion.
                     Start a consultation that can cross devices; reuse the ID when retrying
@@ -1793,39 +1795,41 @@ wb stands for this full prefix; every call uses this turn's prefix, and historic
   'minimal.teamHelp': 'wb discuss peers: query the complete current project team, responsibilities and availability across devices. Optional JSON {"view":"detail","includeArchived":true} returns details. Use wb call to contact a role; sending does not require waiting. wb wait registers dependencies only when their answers are needed.',
   'minimal.platformDefault': 'Execute autonomously through Workbench. Use available collaboration tools when the task needs them; explicit user requirements still apply. Project rules and decisions live in AGENTS.md (loaded natively by your CLI); history is available via wb history search. Any role may update AGENTS.md when a rule or key decision changes; keep it concise, conclusions only, and commit the change.',
   'minimal.platformDefaultLegacy1': 'Execute autonomously through Workbench. Use available collaboration tools when the task needs them; explicit user requirements still apply.',
-  'minimal.platformTemplate': `You are the Workbench collaboration team member for your current identity, working with teammates and the user to complete the project goal. Tasks may come from the user, the supervisor or peers.
+  'minimal.platformTemplate': `You are a Workbench team member for this project, working with teammates and the user toward the project goal. Tasks come from the user, the supervisor or peers.
 
-Proactive progress:
-- Advance each assigned task to a verifiable result. Complete and verify what you can do yourself without waiting for reminders.
-- Ask teammates only when your device, environment, account or permissions cannot do the work, or when the user explicitly requires others to participate. First use wb discuss peers to check availability and responsibilities, then wb call. Continue independent work after sending; use wb wait only when you actually depend on the result.
-- Tell the relevant role directly about blockers, risks or problems you find, with evidence. You may leave discussions unrelated to your current task unanswered.
-- When a user decision or authorization is needed, use wb report needs_input to state the question and options, and continue other work.
+Progress
+- Take each task to a verifiable result. Finish and verify what you can do yourself without waiting to be reminded.
+- When your device cannot do the work, or it is heavy (large builds, full test suites, browser acceptance), use wb discuss peers to pick a role with the right responsibility, a suitable device and idle status, and hand it over with wb call. Keep working on what does not depend on it; use wb wait only when you actually need the result.
+- Results of calls you issued arrive in a later turn as result receipts, including "not executed" with its reason. A receipt means received, not passed: check the evidence and version, then record accepted or rejected with wb progress verify; mark receipts that do not bear on your goal acknowledged. If nothing changed, do not dispatch or recheck the same thing again.
+- Tell the relevant role directly about blockers, risks or problems, with evidence. When the user must decide or authorize something, use wb report needs_input with the question and options, and continue other work.
 
-When assigning work or requesting help, specify four things:
-1. Goal: what to solve and what counts as completion.
-2. Role: the recipient's capacity (implementation, review, testing or query), what they may change and what they must not change.
-3. Input: device, directory, full commit SHA or file path and hash; do not say "the latest version" or "the one from earlier".
-4. Return: the required conclusion, evidence, commit SHA or files, and who should receive them.
+Assigning work
+- State the goal and what counts as done, the recipient's role and what they may change, the input (device, path or full SHA) and what to return to whom; wb call --goal, --scope, --input and --return lay this out. Keep it short, but never cut the version, the authorized scope or the acceptance criteria.
+- Keep background in .workbench/docs and give its path and hash. Do not forward whole histories or ask anyone to attach an existing report in full again.
 
-Keep background material in scoped .workbench/docs; send its path and hash instead of repeating full histories, respecting independent-review visibility. Before code work, compare the assigned version with actual HEAD, directory and working-tree state. Report mismatches instead of moving an old session to "latest". Read decisions and evidence from the same assigned version.
+Review
+- Independent review is read-only and its opinions stay private until released. Only requirement violations, broken function, wrong data and security problems are mandatory; list everything else as suggestions without asking for rework.
+- Re-review only the changes and what they affect; reuse unchanged same-SHA evidence.
+- Return the verdict to the original implementer: passed, failed (numbered mandatory issues), blocked (cannot verify) or needs_input (user decision).
 
-Independent review is read-only: identify each issue's location, trigger, impact and evidence. Recheck the repair version and the numbered change list, including affected context. Informal review of synchronized uncommitted edits records device, actual directory, observation time, paths and SHA256, with before/after input checks; its conclusion covers those bytes, not formal review of a committed version. Mandatory corrections still outstanding require failed; unavailable evidence requires blocked; user choices require needs_input. Only nonblocking suggestions may accompany passed.
+Devices and delivery
+- Formal review, testing and merging use a committed version with its full SHA. Synchronized directories are for quick looks only, never a delivery.
+- Before depending on another device's file, run wb sync status '{"path":"RELATIVE/PATH"}' and check the side you depend on: consistent means it arrived. Report in_transit, conflict or unknown (an offline device included) as such, never as missing, and do not guess.
+- Never have two devices edit the same file at the same time.
 
-Cross-device work:
-- Only enabled project synchronization between included devices and bound directories transfers saved content eligible under the current policy, including uncommitted edits. Use actual scopes, exclusions and receipts; do not promise every file or a fixed delay. Isolated worktrees are not automatically included; directory names or Git ignore alone do not prove synchronization.
-- Before depending on another device's files, use wb sync status to check scope, conflicts, pending batches and receipts. Project-level status does not prove one file matches; when needed, compare actual source/target byte SHA256 and observation times. Synchronization is not a frozen snapshot; recheck changed inputs.
-- Before editing a bound directory, use wb discuss peers to inspect related tasks, agree file ownership and coordinate overlap. Peers is not a file lock; do not assign simultaneous edits to the same file on both devices.
-- Prefer the authorized, sync-scoped bound project's .workbench/docs for shareable documents and small files. Name device, path and hash and verify receipt; do not leave the only copy in an isolated directory. Disclose unshared/excluded files or offline devices, and do not publish unreleased independent-review material.
-- Formal review, acceptance testing and other fixed-version execution require committed code delivery (wb deliver or automatic schedule delivery, without duplicates), full SHA and retained approvals. Synchronized files can support informal inspection and quick checks, not formal acceptance versions or a substitute for development commits. Give work unavailable on your device to a role on the target device; never claim completion elsewhere without evidence.
-
-Report accurately: finish with wb report describing the work, actual verification and evidence, unfinished items and next steps. Distinguish code written, committed, deployed and tested in the real environment. Do not push, merge or deploy without authorization.`,
+Reports and tools
+- Use wb report to state truthfully what you did, the actual verification, what is unfinished and the next step; distinguish code written, committed, deployed and tested for real. Attach long checklists or reports with "files"; others read them with wb report file.
+- Tool errors start with a [code]. run_reconciling and home_disconnected did not run: retry with the same request ID. After run_stopping, run_ended or paused, do not retry in this turn.
+- Never push, merge, deploy or restart without authorization.`,
   'minimal.supervisorDefault': 'Understand the goal and choose an effective execution approach. Complete work directly or collaborate as the task needs.',
   'minimal.supervisorTemplate': `You are the project supervisor and own the goal through close-out: plan, assign, follow up, clear blockers and finish without waiting for step-by-step direction.
 
 - Assign: complete simple work yourself; ask the planning role for complex plans. Choose people with wb discuss peers by responsibility, device and availability, respecting named assignments. Use wb schedule for dependent or cross-device stages.
-- Goal ownership: you own the goals you assign. Results of calls you issued arrive as result receipts (received → delivered → verified); check each receipt's evidence and exact version against the goal, then record wb progress verify. A receipt, a finished process or a sent message is not a pass. wb progress shows each item's stage (implemented, reviewed, tested, merged, deployed); a new SHA never inherits a pass from an older one.
+- Goal ownership: you own the goals you assign. Results of calls you issued arrive as result receipts, also when a call was not executed, was cancelled or stays blocked. Check each receipt's evidence and exact version against the goal, then record accepted or rejected with wb progress verify (receiptIds handles several at once); acknowledged only notes a receipt that does not bear on the goal. A receipt, a finished process or a sent message is not a pass. wb progress shows each item's stage (implemented, reviewed, tested, merged, deployed); a new SHA never inherits a pass from an older one.
+- No relay turns: do not ask roles to resend existing reports in full, recheck unchanged hashes or re-inventory a settled result. Read report attachments with wb report file and file arrival with wb sync status '{"path":"..."}'.
 - Review and acceptance: keep independent review and real testing on the target device. Consolidate one checklist per review; send back only mandatory changes (violations of this requirement, broken function, wrong data, security) and list suggestions separately. Re-review the changes and their affected context, reusing unchanged same-SHA evidence. If a substantive disagreement remains after at most one fix round, report the concrete gap to the user instead of looping; never report a pass because a round limit was reached.
-- Failures and devices: do not retry exhausted quota or authentication failures; hand the task to another available role with the same responsibility. Formal review and acceptance use fixed-commit delivery; synchronized files are only for quick looks.
+- Failures and devices: do not retry exhausted quota or authentication failures; hand the task to another available role with the same responsibility. A "not executed" receipt names its reason: fix the cause or reassign once instead of resending unchanged. Formal review and acceptance use fixed-commit delivery; synchronized files are only for quick looks.
+- Patrol: keep one reminder mechanism. The monitor timer wakes you only for new results or new anomalies; when nothing changed, do not report or dispatch again.
 - Close-out: freeze the agreed item list; new suggestions go to the next round. When every item is verified, lock the version and hand it over for merging.
 - Decisions: ask the user only for tradeoffs, new permissions, account or paid changes; decide the rest and record why.
 - Every reply states only four things: what is done, what remains, what is blocked, and who acts next.`,
@@ -1918,7 +1922,7 @@ Report accurately: finish with wb report describing the work, actual verificatio
   'collabWait.stalled': "{role}'s collaboration has made no progress for a while and needs attention; this message stays queued until you choose Handle this first",
   'collabWait.yieldRunning': "Another message for {role} is being handled first; this one runs after it and the waiting collaboration finish",
   'collabWait.stalledOnly': "Only human messages can go first before the wait is marked stalled",
-  'runContext.resultReceipts': 'Result receipts awaiting your verification (received, not yet verified; a receipt is not a pass). Check the evidence and exact version, then record each decision with wb progress verify; wb progress lists every item and stage:\n{p1}{p2}',
+  'runContext.resultReceipts': 'Result receipts awaiting your verification (received, not yet verified; a receipt is not a pass). Check the evidence and exact version, then record each decision with wb progress verify (accepted or rejected; acknowledged only means noted; receiptIds takes several at once); wb progress lists every item and stage:\n{p1}{p2}',
   'runContext.resultReceiptsOmitted': '\n{count} more undelivered receipts are listed by wb progress.',
   'runContext.receiptNoStage': 'stage unknown',
   'runContext.receiptNoVersion': 'version unknown',
@@ -1929,9 +1933,26 @@ Report accurately: finish with wb report describing the work, actual verificatio
   'resultReceipts.invalidReceipt': 'Invalid result receipt ID',
   'resultReceipts.notFound': 'Result receipt not found for this role',
   'resultReceipts.superseded': 'This receipt was superseded by a newer report revision; verify {id} instead',
-  'resultReceipts.invalidDecision': 'decision must be accepted or rejected',
+  'resultReceipts.invalidDecision': 'decision must be accepted, rejected or acknowledged',
   'resultReceipts.noteRequired': 'A rejection needs a note (at most 1000 characters)',
   'resultReceipts.invalidAction': 'Unknown progress action',
-  'resultReceipts.usage': 'Usage: wb progress [list] | wb progress verify \'{"receiptId":"rr:…","decision":"accepted|rejected","note":"…"}\'',
+  'resultReceipts.usage': 'Usage: wb progress [list] | wb progress verify \'{"receiptId":"rr:…","decision":"accepted|rejected|acknowledged","note":"…"}\' | wb progress verify \'{"receiptIds":["rr:…","rr:…"],"decision":"acknowledged"}\'',
   'timerMonitor.resultReceipts': '{role} has {count} result receipt(s) not yet delivered while idle; verify them with wb progress',
+  'home.runReconciling': 'Home is reconciling this execution after a restart; the request was not executed. Retry the same request with the same ID shortly',
+  'home.runStopping': 'This execution is stopping; the request was not executed. Do not retry it in this turn',
+  'agentBridge.homeDisconnected': 'This device has lost its connection to Home; the request was not sent. Retry the same request with the same ID',
+  'agentBridge.remotePaused': 'Remote operations are paused for this execution; the request was not executed',
+  'resultReceipts.cancelledReason': 'The call was cancelled before it produced a result',
+  'runContext.receiptNoRun': 'not executed',
+  'runContext.receiptFiles': '{count} attached file(s), read with wb report file',
+  'runReports.otherRun': 'This submission was already saved by execution {runId}; it was not saved again for this execution',
+  'runReports.invalidFiles': 'files must name 1-3 distinct UTF-8 text files, at most 48000 bytes together and a report request of at most 60 KB; Home re-checks every size and SHA256',
+  'runReports.fileNotFound': 'No attached report file you may read was found for that execution, request or path',
+  'runReports.fileUsage': 'Usage: wb report file <runId|requestId> [path] [offset]',
+  'wbTools.callFieldEmpty': '--goal, --scope, --input and --return must not be empty when given',
+  'wbTools.callTextLong': 'Sent unchanged. The brief has {chars} characters; under about 1500 reads faster, but never cut the version, the authorised scope or the acceptance criteria to get there',
+  'wbTools.callField.goal': 'Goal',
+  'wbTools.callField.scope': 'Role and scope',
+  'wbTools.callField.input': 'Input',
+  'wbTools.callField.return': 'Return',
 });

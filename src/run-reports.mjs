@@ -42,6 +42,11 @@ export function readReportSubmission(db,run,input) {
   if(!run)throw new Error(tr('runReports.reportCanOnlyBeSubmitted'));
   const submissionId=checkedId(input.submissionId),saved=savedResult(db,run,submissionId,input.fingerprint);
   if(saved)return saved;
+  // An explicit lookup (no fingerprint, so never the submit retry path) of an ID this role saved in another Run says so instead of
+  // "not saved". Other roles' submissions are never matched, so a verdict cannot be read across roles or review isolation.
+  const elsewhere=input.fingerprint===undefined?db.listProject('reportSubmissions',run.projectId)
+    .find(r=>r.submissionId===submissionId&&r.runId!==run.id&&db.get('runs',r.runId)?.roleId===run.roleId):null;
+  if(elsewhere)return {protocol:1,state:'other_run',saved:false,runId:run.id,savedInRunId:elsewhere.runId,submissionId,result:elsewhere.result,canSubmit:active(run),note:tr('runReports.otherRun',{runId:elsewhere.runId})};
   if(!acceptsBusinessReport(run))return {protocol:1,state:'ignored',runId:run.id,submissionId,ignored:true,note:tr('runReports.businessReportNotRecordedDiscussion')};
   return {protocol:1,state:'not_saved',saved:false,runId:run.id,submissionId,canSubmit:active(run)};
 }
@@ -66,6 +71,7 @@ export function saveRunReport(db,run,input) {return db.transaction(()=>{
   if(input.stage!=null&&!RECEIPT_STAGES.includes(input.stage))throw new Error(tr('runReports.invalidStage'));
   if(['merged','deployed'].includes(input.stage)&&!input.version)throw new Error(tr('runReports.stageNeedsVersion'));
   if(input.item!=null&&(typeof input.item!=='string'||!/^[\w:.-]{1,120}$/.test(input.item)))throw new Error(tr('runReports.invalidItem'));
+  const files=checkedFiles(input.files);
   const old=db.get('runReports',run.id);
   // Before replacing a pre-receipt report, freeze its content-derived ID so a late legacy retry cannot restore it.
   if(old&&!old.submissionId){
@@ -75,13 +81,47 @@ export function saveRunReport(db,run,input) {return db.transaction(()=>{
   }
   const report=db.put('runReports',{id:run.id,projectId:run.projectId,roleId:run.roleId,requestId:run.requestId,submissionId,
     verdict:input.verdict,summary:input.summary.trim(),evidence,next:input.next||'',revision:(old?.revision||0)+1,updatedAt:new Date().toISOString(),
-    ...(input.version?{version:input.version}:{}),...(input.stage?{stage:input.stage}:{}),...(input.item?{item:input.item}:{})});
+    ...(input.version?{version:input.version}:{}),...(input.stage?{stage:input.stage}:{}),...(input.item?{item:input.item}:{}),
+    ...(files.length?{files:files.map(({text,...meta})=>meta)}:{})});
+  // File bodies live beside the report revision, so runs, receipts and workspace state only ever carry path, size and SHA256.
+  if(files.length)db.put('runReportFiles',{id:`${run.id}:${report.revision}`,projectId:run.projectId,runId:run.id,revision:report.revision,files});
   db.put('runs',{...db.get('runs',run.id),report});
   registerResultReceipt(db,{run:db.get('runs',run.id),report});
   const result={runId:run.id,verdict:report.verdict,revision:report.revision};
   db.put('reportSubmissions',{id:submissionKey(run.id,submissionId),projectId:run.projectId,runId:run.id,submissionId,fingerprint,result,createdAt:report.updatedAt});
   return {...result,protocol:1,state:'saved',saved:true,submissionId,note:tr('runReports.businessVerdictRecordedEndTurn')};
 });}
+
+const FILE_TOTAL_BYTES=48000;
+/** Up to three UTF-8 files travel with a report; the digest and size are recomputed so a copied or edited text is refused. */
+function checkedFiles(files) {
+  if(files==null)return [];
+  if(!Array.isArray(files)||!files.length||files.length>3)throw new Error(tr('runReports.invalidFiles'));
+  let total=0;
+  const checked=files.map(f=>{
+    if(!f||typeof f.path!=='string'||!f.path||f.path.length>300||typeof f.text!=='string'||!/^[0-9a-f]{64}$/.test(f.sha256||''))throw new Error(tr('runReports.invalidFiles'));
+    const bytes=Buffer.from(f.text,'utf8');total+=bytes.length;
+    if(bytes.length!==f.bytes||createHash('sha256').update(bytes).digest('hex')!==f.sha256)throw new Error(tr('runReports.invalidFiles'));
+    return {path:f.path,bytes:bytes.length,sha256:f.sha256,text:f.text};
+  });
+  if(total>FILE_TOTAL_BYTES||new Set(checked.map(f=>f.path)).size!==checked.length)throw new Error(tr('runReports.invalidFiles'));
+  return checked;
+}
+
+/** `view` is the caller's review and conversation lens, so report files are readable exactly where the report itself is. */
+export function readReportFile(view,run,input={}) {
+  const target=typeof input.target==='string'?input.target:'';
+  const request=view.get('coordinationRequests',target),runId=view.get('runs',target)?.projectId===run.projectId?target:request?.projectId===run.projectId?request.currentRunId:null;
+  const report=runId?view.get('runReports',runId):null;
+  const stored=report?.projectId===run.projectId&&report.files?.length?view.get('runReportFiles',`${runId}:${report.revision}`):null;
+  if(!stored)throw new Error(tr('runReports.fileNotFound'));
+  const list=report.files;
+  if(input.path===undefined)return {runId,revision:report.revision,files:list};
+  const file=stored.files.find(f=>f.path===input.path),offset=input.offset??0;
+  if(!file)throw new Error(tr('runReports.fileNotFound'));
+  if(!Number.isSafeInteger(offset)||offset<0)throw new Error(tr('runReports.invalidFiles'));
+  return {runId,revision:report.revision,files:list,file:{path:file.path,bytes:file.bytes,sha256:file.sha256,offset,content:file.text.slice(offset,offset+20000),nextOffset:offset+20000<file.text.length?offset+20000:null}};
+}
 
 /** No report means unverified; process failures remain in runStatus/error, not fabricated business verdicts. */
 export function outcomeFor(db,run) {

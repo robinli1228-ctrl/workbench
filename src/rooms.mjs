@@ -1,4 +1,5 @@
 import { tr } from './i18n.mjs';
+import {registerCallOutcome,BLOCKED_NOTICE_MS} from './result-receipts.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 import {assertBindingEditAllowed, activeRoleSwitch,roleSwitchWaitReason,effectiveExecutionRole} from './role-switch-policy.mjs';
 import {sourceInputWaitReason} from './source-sync-input.mjs';
@@ -393,9 +394,14 @@ export class Rooms {
         : discussion ? null : this.nativeRecoveryReason?.(task,recoveryChecks);
       if (reason) {
         const record=discussion?this.db.get(kind,recordId):task;
-        // Only an offline device or an unusable CLI counts as blocked; busy roles, capacity and workspace exclusivity are normal queueing.
-        const blockedKind=discussion?null:reason===tr('rooms.waitingForNodeComeOnline')?'device_offline':worker&&reason===runtimeIssue(worker, role.runtime, role.model)?'cli_unavailable':null;
+        // Offline devices and unusable CLIs keep queueing but count as blocked; a disabled target role waits for a person. Busy
+        // roles, capacity, workspace exclusivity and Worker upgrades during a rolling deploy are normal queueing.
+        const blockedKind=discussion?null:reason===tr('rooms.waitingForNodeComeOnline')?'device_offline':worker&&reason===runtimeIssue(worker, role.runtime, role.model)?'cli_unavailable'
+          :reason===tr('rooms.roleDisabled2')?'role_disabled':null;
         const blockedSince=blockedKind?(record?.blockedKind===blockedKind&&record.blockedSince?record.blockedSince:new Date().toISOString()):null;
+        // The caller hears about a block once per episode: at once when a person must act, after the wake window otherwise.
+        if(blockedKind&&task.requestId&&(blockedKind==='role_disabled'||Date.now()-Date.parse(blockedSince)>=BLOCKED_NOTICE_MS))
+          registerCallOutcome(this.db,this.db.get('coordinationRequests',task.requestId),{outcome:'blocked',reason,episode:`${blockedKind}:${blockedSince}`});
         if (record?.waitingReason !== reason || (!discussion && ((record?.blockedKind||null)!==blockedKind || (record?.blockedSince||null)!==blockedSince))) {
           this.db.put(discussion?kind:'tasks', { ...record, waitingReason: reason, ...(discussion?{}:{blockedKind,blockedSince}) }); changed = true;
         }

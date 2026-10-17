@@ -11,7 +11,8 @@ import {tr} from './i18n.mjs';
  * it ("verified"). Registration never creates a task, run or room message and never calls a model.
  */
 export const RECEIPT_STAGES=['implemented','reviewed','tested','merged','deployed'];
-const KIND='resultReceipts';
+export const BLOCKED_NOTICE_MS=10*60000;
+const KIND='resultReceipts',OUTCOMES=new Set(['not_executed','cancelled','blocked']),DECISIONS=new Set(['accepted','rejected','acknowledged']);
 const runEnded=new Set(['succeeded','failed','interrupted']);
 const now=()=>new Date().toISOString();
 const short=(text,limit)=>{const value=String(text||'').replace(/\s+/g,' ').trim();return value.length>limit?`${value.slice(0,limit-1)}…`:value;};
@@ -51,15 +52,37 @@ function register(db,{run,request,report,refreshOnly}) {
     // Only a saved report carries a verdict; a settled process without one stays unverified.
     verdict:report?.verdict||null,version:report?.version||null,stage:report?.stage||null,
     summary:short(report?.summary||request.error||request.result||'',300),next:short(report?.next||'',300),evidenceCount:report?.evidence?.length||0,
-    runStatus:run.status,requestStatus:request.status,state:'received',receivedAt:time,updatedAt:time,
+    files:(report?.files||[]).map(f=>({path:f.path,bytes:f.bytes,sha256:f.sha256})),runStatus:run.status,requestStatus:request.status,state:'received',receivedAt:time,updatedAt:time,
     pendingRunId:null,deliveredRunId:null,deliveredAt:null,verification:null,verifications:[]});
+}
+
+/**
+ * A call that never produced a result still reaches its caller once: admission failure (not_executed), cancellation
+ * while the caller's own chain stays active (cancelled), or a block that needs a person (blocked, one per episode).
+ * It is registered only at that transition, so a replay refreshes nothing and history is never backfilled.
+ */
+export function registerCallOutcome(db,request,{outcome,reason='',episode=''}) {
+  return db.transaction(()=>{
+    if(!request?.id||!OUTCOMES.has(outcome))return null;
+    const ownerRoleId=ownerOf(db,request);
+    if(!ownerRoleId)return null;
+    const id=receiptId(request.id,null,`${outcome}:${episode}`),previous=db.get(KIND,id);
+    if(previous)return previous;
+    const time=now();
+    return db.put(KIND,{id,projectId:request.projectId,conversationId:conversationIdOf(request),ownerRoleId,requestId:request.id,
+      rootRequestId:request.rootRequestId||request.id,item:collaborationRoot(db,request)?.id||request.id,taskId:request.taskId||null,runId:null,
+      sourceRoleId:request.targetRoleId,sourceRoleName:request.targetSnapshot?.name||db.get('roles',request.targetRoleId)?.name||null,
+      reportRevision:0,verdict:null,outcome,version:null,stage:null,summary:short(reason,300),next:'',evidenceCount:0,files:[],
+      runStatus:null,requestStatus:request.status,state:'received',receivedAt:time,updatedAt:time,
+      pendingRunId:null,deliveredRunId:null,deliveredAt:null,verification:null,verifications:[]});
+  });
 }
 
 /** Independent-review guards and owner scoping apply to every read: other roles never see a receipt. */
 function visibleTo(db,receipt,roleId) {
   if(receipt.ownerRoleId!==roleId)return false;
   const view=reviewView(db,{projectId:receipt.projectId,roleId});
-  return view===db||!view.get('runs',receipt.runId)?.reviewRedacted&&!view.get('coordinationRequests',receipt.requestId)?.reviewRedacted;
+  return view===db||!(receipt.runId&&view.get('runs',receipt.runId)?.reviewRedacted)&&!view.get('coordinationRequests',receipt.requestId)?.reviewRedacted;
 }
 
 /** A claim held by a Run that ended without accepting its input is released, so a failed launch cannot consume receipts. */
@@ -74,8 +97,9 @@ export function ownedReceipts(db,{projectId,roleId,conversationId}) {
   return db.listProject(KIND,projectId).filter(r=>(conversationId===undefined||r.conversationId===conversationId)&&visibleTo(db,r,roleId));
 }
 
-const digest=r=>({id:r.id,role:r.sourceRoleName||r.sourceRoleId,requestId:r.requestId,runId:r.runId,item:r.item,verdict:r.verdict||'unverified',
-  reportRevision:r.reportRevision,version:r.version,stage:r.stage,runStatus:r.runStatus,summary:r.summary,readCommand:`wb result read ${r.requestId}`});
+const digest=r=>({id:r.id,role:r.sourceRoleName||r.sourceRoleId,requestId:r.requestId,runId:r.runId,item:r.item,verdict:r.verdict||r.outcome||'unverified',
+  outcome:r.outcome||null,reportRevision:r.reportRevision,version:r.version,stage:r.stage,runStatus:r.runStatus,summary:r.summary,
+  files:(r.files||[]).length,readCommand:`wb result read ${r.requestId}`});
 
 /** At a safe launch point, attach the owner's undelivered receipts (summaries and references only) to this Run's input. */
 export function claimResultReceipts(db,run,{limit=20}={}) {
@@ -97,24 +121,34 @@ export function settleResultReceipts(db,run,{accepted,ended}) {
   }
 }
 
-const publicReceipt=r=>({...digest(r),state:r.state,receivedAt:r.receivedAt,deliveredRunId:r.deliveredRunId,
+const publicReceipt=r=>({...digest(r),fileList:r.files||[],state:r.state,receivedAt:r.receivedAt,deliveredRunId:r.deliveredRunId,
   supersededBy:r.supersededBy||null,verification:r.verification,verifications:r.verifications||[]});
 
-/** Only the owning role decides; a newer report revision must be verified on its own receipt, and every decision is kept. */
+/**
+ * Only the owning role decides; a newer report revision must be verified on its own receipt, and every decision is kept.
+ * "acknowledged" records that the owner has seen a receipt and is never an acceptance. A list applies one decision to
+ * each receipt separately and returns a result per receipt.
+ */
 export function verifyResultReceipt(db,run,input={}) {
+  if(input.receiptIds===undefined)return verifyOne(db,run,input);
+  if(!Array.isArray(input.receiptIds)||!input.receiptIds.length||input.receiptIds.length>50||new Set(input.receiptIds).size!==input.receiptIds.length)
+    throw new Error(tr('resultReceipts.invalidReceipt'));
+  return {results:input.receiptIds.map(receiptId=>{try{return verifyOne(db,run,{...input,receiptId,receiptIds:undefined});}catch(error){return {id:receiptId,error:error.message};}})};
+}
+function verifyOne(db,run,input) {
   return db.transaction(()=>{
     const id=input.receiptId;
     if(typeof id!=='string'||!/^rr:[0-9a-f]{32}$/.test(id))throw new Error(tr('resultReceipts.invalidReceipt'));
     const r=db.get(KIND,id);
     if(!r||r.projectId!==run.projectId||!visibleTo(db,r,run.roleId))throw new Error(tr('resultReceipts.notFound'));
     if(r.supersededBy)throw new Error(tr('resultReceipts.superseded',{id:r.supersededBy}));
-    if(!['accepted','rejected'].includes(input.decision))throw new Error(tr('resultReceipts.invalidDecision'));
+    if(!DECISIONS.has(input.decision))throw new Error(tr('resultReceipts.invalidDecision'));
     const note=typeof input.note==='string'?input.note.trim():'';
     if(note.length>1000||input.decision==='rejected'&&!note)throw new Error(tr('resultReceipts.noteRequired'));
     const last=r.verifications?.at(-1);
     if(last&&last.decision===input.decision&&last.note===note&&last.runId===run.id)return {...publicReceipt(r),replayed:true};
     const entry={decision:input.decision,note,runId:run.id,at:now()};
-    const next=db.put(KIND,{...r,state:'verified',verification:entry,verifications:[...(r.verifications||[]),entry],
+    const next=db.put(KIND,{...r,state:input.decision==='acknowledged'?'acknowledged':'verified',verification:entry,verifications:[...(r.verifications||[]),entry],
       deliveredRunId:r.deliveredRunId||run.id,deliveredAt:r.deliveredAt||entry.at,updatedAt:entry.at});
     return {...publicReceipt(next),replayed:false};
   });
@@ -130,14 +164,15 @@ export function progressItems(db,{projectId,roleId}) {
       const r=receipts.findLast(x=>x.stage===stage);
       if(!r)return [stage,null];
       const decision=r.verification?.decision||null;
-      const status=!decision?'awaiting_verification':decision==='rejected'?'rejected'
+      const status=!decision?'awaiting_verification':decision==='rejected'?'rejected':decision==='acknowledged'?'acknowledged'
         :r.verdict!=='passed'?`verified_${r.verdict||'unverified'}`:r.version&&version&&r.version!==version?'stale':'verified_passed';
       return [stage,{status,version:r.version,verdict:r.verdict||'unverified',receiptId:r.id}];
     }));
-    const blocked=['failed','blocked','needs_input'].includes(latest.verdict)||!latest.verdict&&['failed','interrupted'].includes(latest.runStatus);
+    const blocked=['failed','blocked','needs_input'].includes(latest.verdict)||!latest.verdict&&(Boolean(latest.outcome)||['failed','interrupted'].includes(latest.runStatus));
     return {item,assignee:latest.sourceRoleName||latest.sourceRoleId,version,stages,
-      unstaged:receipts.filter(r=>!r.stage).map(r=>({receiptId:r.id,verdict:r.verdict||'unverified',decision:r.verification?.decision||null})),
-      blocker:blocked?{receiptId:latest.id,verdict:latest.verdict||'unverified',runStatus:latest.runStatus,summary:latest.summary}:null,
+      unstaged:receipts.filter(r=>!r.stage).map(r=>({receiptId:r.id,verdict:r.verdict||r.outcome||'unverified',decision:r.verification?.decision||null})),
+      // An acknowledged blocker stays listed with that decision: noting a result never turns it into a pass.
+      blocker:blocked?{receiptId:latest.id,verdict:latest.verdict||latest.outcome||'unverified',runStatus:latest.runStatus,summary:latest.summary,decision:latest.verification?.decision||null}:null,
       next:latest.next||null,awaitingVerification:receipts.filter(r=>!r.verification).map(r=>r.id),
       evidence:receipts.map(r=>({receiptId:r.id,state:r.state,readCommand:`wb result read ${r.requestId}`}))};
   });
@@ -158,8 +193,9 @@ export function archiveHistoricalReceipts(db) {
   return db.transaction(()=>{
     let archived=0;
     for(const r of db.list(KIND)) {
-      if(r.archived||r.verification||r.supersededBy)continue;
-      const facts=[db.get('coordinationRequests',r.requestId)?.updatedAt,db.get('runReports',r.runId)?.updatedAt,db.get('runs',r.runId)?.finishedAt].map(v=>Date.parse(v||'')).filter(Number.isFinite);
+      // Run-less outcome receipts only ever exist from a live transition; only replayed run receipts can be history.
+      if(r.archived||r.verification||r.supersededBy||r.outcome)continue;
+      const facts=[db.get('coordinationRequests',r.requestId)?.updatedAt,r.runId&&db.get('runReports',r.runId)?.updatedAt,r.runId&&db.get('runs',r.runId)?.finishedAt].map(v=>Date.parse(v||'')).filter(Number.isFinite);
       if(facts.length&&Date.parse(r.receivedAt)-Math.max(...facts)<=HISTORY_GAP_MS)continue;
       db.put(KIND,{...r,archived:true,archivedReason:'settled_before_receipts',state:'archived',pendingRunId:null,updatedAt:now()});archived++;
     }

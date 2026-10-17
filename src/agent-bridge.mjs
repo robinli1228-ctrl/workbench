@@ -23,10 +23,30 @@ export function allowsPausedAgentOperation(pathname,input={}) {
     ||['/api/agent/read-source','/api/agent/node-query','/api/agent/file-read'].includes(pathname);
 }
 
-/** Pause is not cancellation: retained identity, connection and live process checks still apply to every tool call. */
-export function canSendAgentOperation({paused,quitting,connected,status},pathname,input) {
+/**
+ * Why an operation cannot be sent now, or null. Pause is not cancellation: retained identity, connection and live process
+ * checks still apply to every tool call. The code tells the caller whether retrying the same request can help.
+ */
+export function agentOperationBlock({paused,quitting,connected,status},pathname,input) {
   const reportStatus=pathname==='/api/agent/report'&&input?.action==='status'&&['running','starting','succeeded','failed','interrupted','stopping','reconciling'].includes(status);
-  return !quitting&&connected&&(reportStatus||['running','starting'].includes(status))&&(!paused||allowsPausedAgentOperation(pathname,input));
+  if(quitting)return 'run_ended';
+  if(!connected)return 'home_disconnected';
+  if(!reportStatus&&!['running','starting'].includes(status))return status==='stopping'?'run_stopping':status==='reconciling'?'run_reconciling':'run_ended';
+  if(paused&&!allowsPausedAgentOperation(pathname,input))return 'paused';
+  return null;
+}
+export function canSendAgentOperation(state,pathname,input) {return !agentOperationBlock(state,pathname,input);}
+/** Refused before anything ran, so the identical request may be sent again. */
+const RETRYABLE=new Set(['run_reconciling','home_disconnected']),RETRY_DELAYS=[1000,2000,4000,5000,5000];
+const blockMessage=code=>tr({home_disconnected:'agentBridge.homeDisconnected',paused:'agentBridge.remotePaused',run_stopping:'home.runStopping',run_reconciling:'home.runReconciling'}[code]||'agentBridge.executionHasStoppedRemoteOperations');
+async function withRetry(send) {
+  for(let attempt=0;;attempt++) {
+    try{return await send();}
+    catch(error){
+      if(!RETRYABLE.has(error.code)||attempt>=RETRY_DELAYS.length){if(error.code&&!error.message.startsWith(`[${error.code}]`))error.message=`[${error.code}] ${error.message}`;throw error;}
+      await delay(RETRY_DELAYS[attempt]);
+    }
+  }
 }
 
 /** Sender identity belongs to the persisted Run; target role/session identifiers remain valid tool input. */
@@ -51,8 +71,8 @@ export function agentProcessEnv(base, additions) {
 
 /** The CLI sandbox needs no network access; requests can only land in this workspace and are sent on its behalf by the Worker that holds the connection. */
 export async function agentRequest(pathname, payload) {
-  if(pathname==='/api/agent/report'&&payload.action!=='status')return submitReport(input=>agentRequestOnce(pathname,input),payload);
-  return agentRequestOnce(pathname,payload);
+  if(pathname==='/api/agent/report'&&payload.action!=='status')return submitReport(input=>withRetry(()=>agentRequestOnce(pathname,input)),payload);
+  return withRetry(()=>agentRequestOnce(pathname,payload));
 }
 async function agentRequestOnce(pathname,payload) {
   if (!allowed.has(pathname)) throw new Error(tr('agentBridge.operationNotAgentTool'));
@@ -65,7 +85,7 @@ async function agentRequestOnce(pathname,payload) {
   while (Date.now() < deadline) {
     try {
       const response = JSON.parse(await readFile(join(directory, `${id}.response`), 'utf8'));
-      if (response.error) throw Object.assign(new Error(response.error),{status:response.status,outcomeUnknown:response.outcomeUnknown});
+      if (response.error) throw Object.assign(new Error(response.error),{status:response.status,code:response.code,outcomeUnknown:response.outcomeUnknown});
       return response.result;
     } catch (e) { if (e.code !== 'ENOENT') throw e; }
     await delay(150);
@@ -80,13 +100,13 @@ export async function homeRequest(home, token, pathname, payload) {
   const response = await fetch(new URL(pathname, home), { method: 'POST', signal: AbortSignal.timeout(20000),
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token || ''}` }, body: JSON.stringify(payload) });
   const data = await response.json();
-  if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`),{status:response.status,outcomeUnknown:response.status>=500});
+  if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`),{status:response.status,code:data.code,outcomeUnknown:response.status>=500});
   return data;
   }catch(error){if(!error.status)error.outcomeUnknown=true;throw error;}
 }
 
 /** Each Run gets its own bridge directory, and on exit only the communication files it created are cleaned up. */
-export async function startAgentBridge({ workspace, runId, home, token, canSend }) {
+export async function startAgentBridge({ workspace, runId, home, token, canSend, blockReason }) {
   const directory = join(workspace, `.wb-bridge-${runId}`);
   await mkdir(directory, { mode: 0o700 });
   const consumed = new Set(), pending = new Set();
@@ -105,10 +125,11 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend 
             if (!info.isFile() || info.size > 65536) throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
             const input = JSON.parse(await readFile(path, 'utf8'));
             assertAgentSender(input.payload);
-            if (!canSend(input.pathname,input.payload)) throw new Error(tr('agentBridge.executionHasStoppedRemoteOperations'));
+            const block=blockReason?blockReason(input.pathname,input.payload):canSend(input.pathname,input.payload)?null:'run_ended';
+            if (block) throw Object.assign(new Error(blockMessage(block)),{code:block});
             if(input.payload?.runId&&input.payload.runId!==runId)throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));
             response = { result: await homeRequest(home, token, input.pathname, { ...input.payload, runId }) };
-          } catch (error) { response = { error: error.message,status:error.status,outcomeUnknown:error.outcomeUnknown }; }
+          } catch (error) { response = { error: error.message,status:error.status,code:error.code,outcomeUnknown:error.outcomeUnknown }; }
           const responseFile = join(directory, file.replace('.request', '.response'));
           const temporary = `${responseFile}.tmp`;
           await writeFile(temporary, JSON.stringify(response), { flag: 'wx', mode: 0o600 });
