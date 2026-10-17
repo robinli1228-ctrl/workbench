@@ -58,7 +58,10 @@ async function registeredFile(runtime,id,env,record){
   }
  }else if(runtime==='claude'){
   if(typeof record.workspace==='string'&&isAbsolute(record.workspace))paths.push(join(roots[0],record.workspace.replace(/[^a-zA-Z0-9]/g,'-'),`${id}.jsonl`));
- }else if(runtime==='grok')paths.push(join(roots[0],id,'chat_history.jsonl'));
+ }else if(runtime==='grok'){
+  if(typeof record.workspace==='string'&&isAbsolute(record.workspace))paths.push(join(roots[0],encodeURIComponent(record.workspace),id,'chat_history.jsonl'));
+  paths.push(join(roots[0],id,'chat_history.jsonl'));
+ }
  else for(const ext of ['jsonl','db','pb'])paths.push(join(roots[0],`${id}.${ext}`));
  const files=[];
  for(const path of paths){
