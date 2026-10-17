@@ -1,6 +1,6 @@
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
-import { agentIconEl, UI_ICON, workerDisplayName } from './role-icons.js';
+import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
@@ -10,8 +10,10 @@ import {createRoleHistoryTabs} from './role-history.js';
 import {createCliRecoveryUI} from './cli-recovery.js';
 import {createListOrder} from './list-order.js';
 import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
+import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl } from './elapsed.js';
+import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
 
 /** Long text only changes its carrier; the file content keeps the original line breaks, whitespace and trailing characters. */
 export function longTextFileName(text) {
@@ -195,13 +197,19 @@ function createMessageQueue({api,refreshState,create,setError}) {
     // Home's own projection decides who is protected; the browser only labels it and never guesses from an idle CLI.
     const waits=(data.collaborationWaits||[]).filter(w=>w.projectId===projectId&&(!tasks.length||tasks.some(t=>(t.conversationId||t.projectId)===w.conversationId&&t.roleId===w.roleId)));
     const protectedRole=task=>waits.find(w=>!w.released&&w.roleId===task.roleId&&w.conversationId===(task.conversationId||task.projectId));
-    panel.hidden=!tasks.length;summary.textContent=t('Queue · {v}', { v: tasks.length });list.replaceChildren();
-    for(const wait of waits.filter((w,i,all)=>all.findIndex(x=>x.roleId===w.roleId&&x.conversationId===w.conversationId)===i)) {
-      const role=(data.roles||[]).find(r=>r.id===wait.roleId)?.name||t('Role');
-      const left=Math.max(1,Math.ceil((Date.parse(wait.releaseAt)-Date.now())/60000));
+    panel.hidden=!tasks.length;list.replaceChildren();
+    // The wait status sits on the queue title row, to the right of the count, so it is visible even when the queue is folded.
+    const roleName=id=>(data.supervisorRoles||[]).some(r=>r.id===id)?t('Supervisor@@roleCard'):(data.roles||[]).find(r=>r.id===id)?.name||t('Role');
+    const firstWait=[...waits].sort((a,b)=>Number(Boolean(b.stalled))-Number(Boolean(a.stalled))||Date.parse(a.releaseAt)-Date.parse(b.releaseAt))[0];
+    const title=create('span','message-queue-title',t('Queue · {v}', { v: tasks.length }));
+    summary.replaceChildren(title);
+    if(firstWait){
+      const role=roleName(firstWait.roleId),left=Math.max(1,Math.ceil((Date.parse(firstWait.releaseAt)-Date.now())/60000));
       // Nothing is released automatically; a stalled wait only unlocks "Handle this first" for every queued item.
-      list.append(create('p',`message-queue-wait${wait.stalled?' is-released':''}`,wait.stalled?t('{role} · no collaboration progress for a while; needs attention. Choose Handle this first to let a queued item go',{role})
-        :t('{role} · waiting for collaboration results · marked stalled after about {minutes} min without progress',{role,minutes:left})));
+      const pill=create('span',`message-queue-wait${firstWait.stalled?' is-released':''}`,firstWait.stalled?t('{role} · no progress for a while, marked stalled',{role})
+        :t('{role} · marked stalled after about {minutes} min without progress',{role,minutes:left}));
+      // Already localized (including the role name); keep the page translator from re-mapping "总管" to the generic "Supervisor" entry.
+      pill.translate=false;summary.append(pill);
     }
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
@@ -214,8 +222,10 @@ function createMessageQueue({api,refreshState,create,setError}) {
       const yieldBusy=tasks.some(x=>x.id!==task.id&&x.collaborationYield&&scopeOf(x))||waits.some(w=>w.yielded&&scopeOf(w));
       if((human||guard?.stalled)&&data.capabilities?.collaborationWait&&(guard||task.collaborationYield)) {
         // Handle this first keeps the waiting collaboration; it never stops or cancels anything.
-        const first=create('button','secondary compact message-queue-first',task.collaborationYield?t('Handling first'):t('Handle this first'));first.type='button';
-        first.title=t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
+        // Same icon style as steer and cancel on this row; the label lives in the tooltip and aria-label.
+        const first=create('button',`icon-button message-queue-first${task.collaborationYield?' is-active':''}`);first.type='button';first.innerHTML=UI_ICON.priority;
+        first.setAttribute('aria-label',task.collaborationYield?t('Handling first'):t('Handle this first'));
+        first.title=task.collaborationYield?t('Handling first'):t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
         first.disabled=Boolean(task.collaborationYield)||yieldBusy||pending.has(task.id)||data.settings?.paused;
         if(yieldBusy&&!task.collaborationYield)first.title=t('Another item for this role is being handled first; wait until it and its collaboration finish');
         first.onclick=async()=>{
@@ -240,7 +250,7 @@ function createMessageQueue({api,refreshState,create,setError}) {
         };
         row.append(steer);
       }
-      const cancel=create('button','icon-button','×');cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
+      const cancel=closeIcon(create('button','icon-button'));cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
       cancel.disabled=pending.has(task.id);cancel.onclick=async()=>{
         cancel.disabled=true;try{await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`,{method:'POST',json:{}});await refreshState({quiet:true});}catch(error){setError(error.message);cancel.disabled=false;}
       };row.append(cancel);list.append(row);
@@ -331,14 +341,15 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (item.mime.startsWith('image/')) {
       const thumb = create('img'); thumb.alt = item.name; open.append(thumb);
       void attachmentUrl(item).then(url=>{thumb.src=url;}).catch(()=>{thumb.alt='Preview failed to load; click to retry';});
-    } else open.append(create('span','attachment-file-icon','▤'));
+    } else if (removable) { const icon = create('span','attachment-file-icon'); icon.innerHTML = UI_ICON.original; open.append(icon); }
+    else open.append(create('span','attachment-file-icon','▤'));
     open.append(create('span','attachment-name',item.name),create('small','',item.size<1024?`${item.size} B`:`${(item.size/1024).toFixed(1)} KB`));
     card.append(open);
     if (!removable) card.append(iconAction('transfer', 'Send to device', () => openAttachmentTransfer(item)));
-    if (removable) card.append(button('×', () => {
+    if (removable) card.append(closeIcon(button('', () => {
       const d = drafts[ownerId]; if (d?.pending || sendingProject === ownerId) return;
       d.attachments = (d.attachments || []).filter(a=>a.id!==item.id); saveDrafts(); composer();
-    },'attachment-remove'));
+    },'attachment-remove'), t('Remove attachment')));
     return card;
   }
 
@@ -419,17 +430,18 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     textUploads.set(entry.id, job); return job;
   }
   function textDraftCard(entry, ownerId) {
-    const card = create('div', 'attachment-card attachment-file-card attachment-text-card attachment-text-draft');
+    const card = create('div', `attachment-card attachment-file-card attachment-text-card attachment-text-draft${entry.error && !textUploads.has(entry.id) ? ' is-error' : ''}`);
     card.title = entry.name;
     const busy = textUploads.has(entry.id);
     const open = button('', () => previewText(entry.text, entry.name), 'attachment-open');
-    open.append(create('span', 'attachment-file-icon', '▤'), create('span', 'attachment-name', entry.name), create('small', '', busy ? 'Uploading…' : entry.error ? 'Upload failed; original text kept' : 'Pending upload'));
+    const icon = create('span', 'attachment-file-icon'); icon.innerHTML = UI_ICON.original;
+    open.append(icon, create('span', 'attachment-name', entry.name), create('small', '', busy ? 'Uploading…' : entry.error ? 'Upload failed; original text kept' : 'Pending upload'));
     card.append(open);
     if (!busy) {
       card.append(iconAction('refresh',entry.error ? 'Retry upload' : 'Upload', () => { void uploadTextFile(entry, ownerId); }));
-      card.append(button('×', () => {
+      card.append(closeIcon(button('', () => {
         drafts[ownerId].textFiles = drafts[ownerId].textFiles.filter(value => value.id !== entry.id); saveDrafts(); composer();
-      }, 'attachment-remove'));
+      }, 'attachment-remove'), t('Remove attachment')));
     }
     if (entry.error) card.title = entry.error;
     return card;
@@ -487,6 +499,47 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     catch { setError('Not enough browser draft storage; the original text is still on this page. Copy a backup first and do not close the page'); return false; }
   };
   const draft = () => drafts[scopeId] ||= { projectId, text: '', replyToId: null, replyLabel: '' };
+  // Send lifecycle per draft scope (see send-state.js). Home already treats a repeated clientMessageId idempotently.
+  // Nothing here adds polling: checks run after a send fails and when the existing state refresh redraws the room,
+  // at most every few seconds per scope.
+  const verifying = new Set(), verifiedAt = new Map(), submitLocks = new Set();
+  const sendState = (d, ownerId = scopeId) => sendStateOf(d, sendingProject === ownerId);
+  const scopeProject = ownerId => { try { return ownerId.startsWith('[') ? JSON.parse(ownerId)[0] : ownerId; } catch { return ownerId; } };
+  /** Clear only what the confirmed send carried; text typed afterwards or another scope's draft is never touched. */
+  function settleSent(ownerId, sent) {
+    const d = drafts[ownerId];
+    if (!d) return;
+    if ((d.text || '') === (sent.text || '')) {
+      drafts[ownerId] = { projectId: d.projectId || scopeProject(ownerId), text: '', replyToId: null, replyLabel: '' };
+      if (ownerId === scopeId) input.value = '';
+      return;
+    }
+    const carried = new Set(sent.attachmentIds || []);
+    delete d.pending; delete d.sendState;
+    d.attachments = (d.attachments || []).filter(a => !carried.has(a.id));
+    if (d.replyToId === sent.replyToId) { d.replyToId = null; d.replyLabel = ''; delete d.replyMention; delete d.discussion; }
+  }
+  /** Ask Home for an exact receipt of the frozen id; only a confirmed absence leads back to Send. */
+  async function verifyPending(ownerId, force = false) {
+    const d = drafts[ownerId], sent = d?.pending;
+    if (!sent || sendingProject === ownerId || verifying.has(ownerId) || d.sendState === 'failed') return;
+    if (!force && Date.now() - (verifiedAt.get(ownerId) || 0) < 5000) return;
+    verifying.add(ownerId); verifiedAt.set(ownerId, Date.now());
+    if (ownerId === scopeId) composer();
+    const targetProjectId = d.projectId || scopeProject(ownerId);
+    try {
+      // Read-only receipts on the same authenticated routes; a recent-message window never decides that a send is missing.
+      const receipt = sent.discussion
+        ? await api(`/api/projects/${encodeURIComponent(targetProjectId)}/discussions/${encodeURIComponent(sent.discussion.threadId)}/reply?requestId=${encodeURIComponent(sent.clientMessageId)}`)
+        : await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(sent.conversationId || targetProjectId)}&id=${encodeURIComponent(sent.clientMessageId)}`);
+      if (drafts[ownerId]?.pending?.clientMessageId !== sent.clientMessageId) return;
+      if (receipt?.exists === true) { settleSent(ownerId, sent); if (ownerId === scopeId) setError(''); }
+      else if (receipt?.exists === false) drafts[ownerId].sendState = 'failed';
+    } catch (error) {
+      // 401/403/429 or an unreachable Home say nothing about the original POST: stay unknown and look again later.
+      if (drafts[ownerId]?.pending?.clientMessageId === sent.clientMessageId) drafts[ownerId].sendState = lookupFailureState(error);
+    } finally { verifying.delete(ownerId); saveDrafts(); if (ownerId === scopeId) composer(); }
+  }
   const mentionInput=createMentionInput(input,()=>{
     const names=[...(data.roles||[]),...(data.supervisorRoles||[])].filter(r=>r.projectId===projectId&&!r.archivedAt).map(r=>r.name);
     if(data.projects?.find(p=>p.id===projectId)?.supervisorRoleId)names.push('Supervisor','supervisor','\u603b\u7ba1');
@@ -514,11 +567,11 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   function composer() {
     if (!projectId) return;
     input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, new messages go to the supervisor; replies target the sender, and @ several roles dispatches to each' : 'Type a message; @role to start work';
-    const d = draft(), busy = sendingProject === scopeId;
+    const d = draft(), busy = sendingProject === scopeId, state = sendState(d);
     input.disabled = busy || !!d.pending;
-    send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length);
+    send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length) || sendLocked(state) || verifying.has(scopeId);
     attachButton.disabled = busy || !!d.pending;
-    send.textContent = busy ? 'Sending…' : d.pending ? 'Retry send' : 'Send';
+    send.textContent = SEND_LABELS[state] || 'Send';
     attachTray.replaceChildren();
     for (const item of d.attachments || []) attachTray.append(attachmentCard(item,true));
     for (const entry of d.textFiles || []) attachTray.append(textDraftCard(entry, scopeId));
@@ -532,11 +585,6 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       delete d.replyMention;
       d.replyToId = null; d.replyLabel = ''; delete d.discussion;saveDrafts(); composer();
     }));
-    const note = document.querySelector('#chat-send-note');
-    if (note) {
-      note.hidden = !d.pending;
-      note.textContent = d.pending ? 'Sending is not yet confirmed; clicking Send retries the same message without dispatching twice.' : '';
-    }
   }
 
   function liveText(runId) {
@@ -833,24 +881,49 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const col = create('div', 'chat-col');
     const progress=taskProgress(task,run),label=t(progress.label);
     const running=progress.state==='running'&&run?.startedAt;
-    const nameLine=create('div', 'chat-name', `@${role.name || t('Role')} · ${label}`);
-    if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)nameLine.append(elapsed);}
-    col.append(nameLine);
-    const bubble = create('div', 'chat-bubble');
+    const nameLine=create('div', 'chat-name', `@${role.name || t('Role')}`);
+    nameLine.translate=false;nameLine.title=nameLine.textContent;
+    // The time sits on the name line outside the card, like every other message.
+    const header = create('div', 'chat-message-header');
+    const sentAt = run?.startedAt || run?.createdAt || task.createdAt;
+    const time = create('time', '', formatTime(sentAt));
+    if (sentAt) time.dateTime = sentAt;
+    header.append(nameLine, time);
+    col.append(header);
+    const bubble = create('div', 'chat-bubble is-live-card');
+    // Even before it starts, the card says which message it answers: the task's own source message, or its request text.
+    const source = messages.find(q => q.id === task.sourceMessageId) || null;
+    // An attachment-only source still names its sender and opens the original; its files stand in for the empty text.
+    const sourceFiles = source?.attachments?.length ? t('[Attachment] {v}', { v: source.attachments.map(a => a.name).filter(Boolean).join(t(', ')) || source.attachments.length }) : '';
+    const sourceText = simplifiedCliOutput(source ? source.text || sourceFiles || task.title || task.prompt || '' : task.title || task.prompt || '');
+    if (sourceText) {
+      const flat = sourceText.replace(/\s+/g, ' ').trim(), summary = flat.length > 240 ? `${flat.slice(0, 240)}…` : flat;
+      const label = source ? t('Reply to {senderName}: {v}', { senderName: source.senderName, v: summary }) : t('Reply to: {v}', { v: summary });
+      const quote = create(source ? 'button' : 'div', 'quoted-message chat-live-reply');
+      quote.append(create('span', 'chat-live-reply-text', label));
+      quote.translate = false;
+      if (source) {
+        quote.type = 'button'; quote.title = 'View quoted original'; quote.setAttribute('aria-label', 'View quoted original');
+        quote.addEventListener('click', () => void historyViewer.open(source.projectId || task.projectId, 'message', source.id, source.conversationId || source.projectId || task.projectId).catch(e => setError(e.message)));
+      }
+      bubble.append(quote);
+    }
     const preview = run && !run.explicitPublish ? liveText(run.id) : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id,`run:${run?.id || task.id}`));
     else {
       const typing = create('div', 'chat-typing');
       typing.append(create('span'), create('span'), create('span'));
-      bubble.append(typing, create('span', 'chat-typing-label', label));
-      if(running){const elapsed=elapsedEl(create,run.startedAt);if(elapsed)bubble.append(elapsed);}
+      const typingRow = create('div', 'chat-typing-row');
+      // The status line below already names the state; the dots only show the card is alive.
+      typing.setAttribute('role', 'status'); typing.setAttribute('aria-label', label);
+      typingRow.append(typing);
+      bubble.append(typingRow);
     }
     col.append(bubble);
     const alert=run&&data.runAlerts?.find(a=>a.id===run.id);
     if(alert)col.append(create('p','run-alert',alert.reason));
     const approvals = run ? renderApprovalsInline(run) : null;
     if (approvals) col.append(approvals);
-    if(recoveryButton)col.append(recoveryButton);
     const actions = [];
     if (preview) actions.push(copyMessageButton(preview));
     actions.push(fullscreenMessageButton(preview, role.name, true, [], task.id, run?.id));
@@ -865,7 +938,13 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       }));
     }
     if (run) actions.push(iconAction('log', 'Log', () => openTask(task.id,run.id)));
-    if (actions.length) col.append(chatMeta('', actions));
+    // Status and actions sit inside the card, the same footer as finished messages.
+    const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', label);
+    if (running) { const elapsed = elapsedEl(create, run.startedAt); if (elapsed) status.append(elapsed); }
+    const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
+    // The CLI occupancy check stays available as one more icon in the row, instead of a box standing in for the body.
+    if (recoveryButton) actionBar.append(recoveryButton);
+    footer.append(status, actionBar); bubble.append(footer);
     row.append(col);
     if (run && ['starting', 'running', 'waiting_user', 'stopping'].includes(run.status)) void pullLive(run.id);
     return row;
@@ -886,15 +965,19 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const sender=create('div', 'chat-name', agent ? m.senderName : 'Me');
     // Saved role names are identities, not UI dictionary keys.
     if(agent)sender.setAttribute('translate','no');
+    if(agent)sender.title=m.senderName||'';
+    // Name and send time share the line above the card; the card itself starts with the reply quote, if any.
     header.append(sender, time);
     col.append(header);
     const bubble = create('div', `chat-bubble${handoff || replyDirection ? ' handoff-card' : ''}`);
+    const top = create('div', 'chat-bubble-top');
     if (m.replyToId) {
       const source = m.replySource || messages.find(q => q.id === m.replyToId);
       const quoteText=source?simplifiedCliOutput(source.text):'';
       const quote=create(source?.id?'button':'div', 'quoted-message', source ? t('{senderName}: {v}', { senderName: source.senderName, v: quoteText.slice(0, 180)+(quoteText.length>=180?'...':'') }) : 'Quoting an earlier message');
       if(source?.id){quote.type='button';quote.title='View quoted original';quote.setAttribute('aria-label','View quoted original');quote.addEventListener('click',()=>void historyViewer.open(m.projectId,'message',source.id,m.conversationId||m.projectId).catch(error=>setError(error.message)));}
-      bubble.append(quote);
+      top.append(quote);
+      bubble.append(top);
     }
     const recipients=messageRecipients(m,replyDirection);
     const bodyText=messageDisplayText(handoff?m.handoff.summary||m.text:m.text,recipients);
@@ -914,7 +997,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     const actions = [],discussionActions=[];
     if(discussion?.canReply) {
-      actions.push(iconAction('reply','Reply to this question',()=>{quoteReply(m,{mentionSender:false});draft().discussion={threadId:discussion.thread.id,expectedQuestionId:discussion.questionId,revision:discussion.thread.revision,directionRevision:discussion.thread.directionRevision};saveDrafts();}));
+      actions.push(iconAction('quote','Reply to this question',()=>{quoteReply(m,{mentionSender:false});draft().discussion={threadId:discussion.thread.id,expectedQuestionId:discussion.questionId,revision:discussion.thread.revision,directionRevision:discussion.thread.directionRevision};saveDrafts();}));
     } else actions.push(iconAction('quote', 'Reply', () => quoteReply(m)));
     if(discussion?.canReply||discussion?.canResume) {
       discussionActions.push(iconAction('check',discussion.canResume?'Changes verified; continue the original task':'Mark question as handled',async b=>{
@@ -996,6 +1079,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     if (!projectId) return;
     messageQueue.update(data,projectId);composer(); renderMessages();
+    if (draft().pending && sendState(draft()) !== 'failed') void verifyPending(scopeId);
     for (const run of (data.runs || []).filter(r => r.projectId === projectId && ['starting', 'running', 'waiting_user', 'stopping'].includes(r.status))) {
       void pullLive(run.id);
     }
@@ -1070,9 +1154,15 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     mentionRange = mentionQuery();
     if (!mentionRange || input.disabled) { hideMentionMenu(); return; }
     const q = mentionRange.query.toLowerCase();
+    // The project supervisor is routed by name on the server; offer it in the menu like any other role.
+    const project = data.projects?.find(p => p.id === projectId);
+    const supervisorRole = project?.supervisorRoleId ? (data.supervisorRoles || []).find(r => r.id === project.supervisorRoleId) : null;
+    const supervisor = supervisorRole ? { ...supervisorRole, name: t('Supervisor@@roleCard') } : null;
+    const supervisorMatches = supervisor && (!q || supervisor.name.toLowerCase().includes(q) || 'supervisor'.startsWith(q) || '\u603b\u7ba1'.includes(q));
     const roles = projectRoles().filter(r => !q || r.name.toLowerCase().includes(q));
     const everyone = !q || 'everyone'.includes(q) || 'all'.startsWith(q);
-    mentionChoices = [...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...roles];
+    // The supervisor comes first, then @everyone, then the other roles.
+    mentionChoices = [...(supervisorMatches ? [supervisor] : []), ...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...roles];
     if (!mentionChoices.length) { hideMentionMenu(); return; }
     mentionIndex = Math.min(mentionIndex, mentionChoices.length - 1);
     mentionMenu.replaceChildren();
@@ -1123,8 +1213,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   form.addEventListener('submit', async e => {
     e.preventDefault();
     hideMentionMenu();
-    if (!projectId || sendingProject || uploadCounts.get(scopeId)) return;
+    if (!projectId || sendingProject || uploadCounts.get(scopeId) || submitLocks.has(scopeId)) return;
     const id = projectId, ownerId=scopeId, targetConversationId=conversationId, d = draft();
+    // Click, double click, Enter and redraws all land here: an in-flight or unknown send is only ever looked up, never resent.
+    if (d.pending && d.sendState !== 'failed') { void verifyPending(ownerId, true); return; }
+    submitLocks.add(ownerId);
+    try {
     if (d.textFiles?.length) { setError('Finish uploading the long-text attachment first, or restore it to the input box'); return; }
     if (!d.pending && input.value.length > 12000) {
       const entry = attachComposerText();
@@ -1134,19 +1228,28 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     if (!d.pending && !input.value.trim() && !d.attachments?.length) return;
     if(d.discussion&&d.attachments?.length){setError('Use text for discussion replies; send attachments as a separate regular message');return;}
-    d.pending ||= { clientMessageId: crypto.randomUUID(), conversationId:targetConversationId, text: input.value, replyToId: d.replyToId || null, attachmentIds:(d.attachments||[]).map(a=>a.id),...(d.discussion&&!hasMention(input.value)?{discussion:d.discussion}:{}) };
+    if (!d.pending) {
+      const payload = { conversationId:targetConversationId, text: input.value, replyToId: d.replyToId || null, attachmentIds:(d.attachments||[]).map(a=>a.id),...(d.discussion&&!hasMention(input.value)?{discussion:d.discussion}:{}) };
+      // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
+      d.pending = { clientMessageId: sameSend(d.rejected?.payload, payload) ? d.rejected.clientMessageId : crypto.randomUUID(), ...payload };
+    }
+    delete d.rejected; d.sendState = 'sending'; d.projectId ||= id;
+    const sent = d.pending;
     saveDrafts(); sendingProject = ownerId; composer();
     try {
-      if(d.pending.discussion)await api(`/api/projects/${encodeURIComponent(id)}/discussions/${encodeURIComponent(d.pending.discussion.threadId)}/reply`,{method:'POST',json:{...d.pending.discussion,requestId:d.pending.clientMessageId,text:d.pending.text}});
-      else await api(`/api/projects/${encodeURIComponent(id)}/messages`, { method: 'POST', json: d.pending });
-      drafts[ownerId] = { projectId:id, text: '', replyToId: null, replyLabel: '' };
-      if (scopeId === ownerId) input.value = '';
+      if(sent.discussion)await api(`/api/projects/${encodeURIComponent(id)}/discussions/${encodeURIComponent(sent.discussion.threadId)}/reply`,{method:'POST',json:{...sent.discussion,requestId:sent.clientMessageId,text:sent.text}});
+      else await api(`/api/projects/${encodeURIComponent(id)}/messages`, { method: 'POST', json: sent });
+      settleSent(ownerId, sent);
       setError('');
       await refreshState({ quiet: true });
     } catch (error) {
-      if (!error.isNetworkError) delete d.pending;
+      // Lost connections, timeouts and server errors leave the outcome unknown: keep the id and look it up.
+      // A definite rejection (4xx) stored nothing, so the draft becomes editable again with its text and files.
+      if (uncertainSend(error)) d.sendState = 'checking';
+      else { const { clientMessageId, ...payload } = sent; d.rejected = { clientMessageId, payload }; delete d.pending; delete d.sendState; }
       if (scopeId === ownerId) setError(error.message);
-    } finally { sendingProject = null; saveDrafts(); composer(); }
+    } finally { sendingProject = null; saveDrafts(); composer(); if (drafts[ownerId]?.pending === sent && drafts[ownerId].sendState === 'checking') void verifyPending(ownerId, true); }
+    } finally { submitLocks.delete(ownerId); }
   });
 
   const customPreset = { key: 'custom', name: '', mode: 'workspace-write', autoApprove: true, responsibility: '', instructions: '' };
@@ -1258,6 +1361,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (savedBinding) retainSavedOption(select, editingRoleSnapshot.model);
     select.value = [...select.options].some(o => o.value === preferredModel) ? preferredModel : '';
     renderEffortOptions(r?.models?.find(m => m.id === select.value) || null, r);
+    renderModelUsageNotice(roleForm.querySelector('[data-model-usage-note]'),roleForm.elements.runtime.value,r?.models?.find(m=>m.id===select.value)||{id:select.value});
     const fresh = r?.checkedAt && Date.now() - Date.parse(r.checkedAt) < 600000;
     const binding = roleBinding(w?.id);
     const ready = w?.online && w.capabilities?.runtimeDiscovery && r?.supported && r.available && fresh && select.value && binding;

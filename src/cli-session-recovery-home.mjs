@@ -14,6 +14,10 @@ export class CliRecoveryHome {
     if(run&&(run.stopRequested||['stopping','succeeded','failed','interrupted'].includes(run.status)))return null;
     const role=effectiveExecutionRole(this.db,task),worker=this.db.get('workers',role?.nodeId);
     if(!role?.enabled||worker?.capabilities?.cliRecovery!==1||activeRoleSwitch(this.db,role.id)||projectTerminalLock(this.db,task.projectId,role.nodeId))return null;
+    // A healthy admitted turn invalidates both in-flight probes and previously offered stop approvals.
+    // Own deferred launches and uncertain orphan processes still use the recovery route.
+    if(this.db.activeRuns(role.nodeId).some(r=>r.id!==task.currentRunId&&r.projectId===task.projectId&&r.roleId===role.id
+      &&['queued','starting','running','waiting_user'].includes(r.status)&&!r.cliRecoveryWait&&!r.controlLost))return null;
     const session=run?.roleSessionId?this.db.get('roleSessions',run.roleSessionId):this.db.list('roleSessions').find(s=>s.projectId===task.projectId&&s.conversationId===taskConversationId(task)&&s.roleId===role.id&&s.status!=='archived'&&!s.candidateFor);
     if(session&&(session.projectId!==task.projectId||session.roleId!==role.id||groupConversationIdOfSession(session)!==conversationIdOf(task)||session.conversationId!==taskConversationId(task)||session.status==='archived'))return null;
     const prior=this.db.get('runs',task.continuationRunId||session?.lastRunId||session?.activeRunId||'');
@@ -29,6 +33,14 @@ export class CliRecoveryHome {
     const record=this.db.get('cliRecoveries',task.id);
     if(record?.state==='ready'&&JSON.stringify(record.binding)===JSON.stringify(binding))return null;
     return record?.reason||tr('cliRecovery.checking');
+  }
+  /** Probe only schedulable queue heads; defer duplicate targets without sharing task-bound results or consent. */
+  scheduleReason(task,checked){
+    const binding=this.binding(task);if(!binding)return null;
+    const {taskId,...target}=binding,key=JSON.stringify(target);
+    if(checked.has(key))return tr('cliRecovery.checking');
+    checked.add(key);void this.check(task);
+    return this.reason(task);
   }
   async check(task){
     const binding=this.binding(task);if(!binding||!this.online(binding.nodeId)||this.pending.has(task.id))return;
@@ -51,7 +63,9 @@ export class CliRecoveryHome {
     this.pending.set(task.id,operation);operation.finally(()=>{if(this.pending.get(task.id)===operation)this.pending.delete(task.id);}).catch(()=>{});await operation;
   }
   tick(){
-    for(const task of this.db.chatTasks().filter(t=>t.status==='ready'||this.db.get('runs',t.currentRunId||'')?.cliRecoveryWait)){
+    // Accepted launches waiting on a last-moment race must retry even while their own Run holds capacity.
+    // Ordinary ready tasks are checked by Room only after the other admission gates pass.
+    for(const task of this.db.chatTasks().filter(t=>this.db.get('runs',t.currentRunId||'')?.cliRecoveryWait)){
       if(!this.db.get('settings','main')?.paused)void this.check(task);
     }
     for(const record of this.db.unresolvedRecoveries())if(!this.current(record))this.db.put('cliRecoveries',{...record,state:'resolved',canStop:false});

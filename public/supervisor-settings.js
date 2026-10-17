@@ -2,6 +2,7 @@ import { t } from './i18n.js';
 import {createRoleSwitchUI} from './role-switch.js';
 import {createRoleHistoryTabs} from './role-history.js';
 import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
+import {renderModelUsageNotice} from './model-usage.js';
 /** 总管详情使用原有配置接口，页面调整不改变项目接待角色和会话绑定。 */
 export function supervisorSettings({ api, getData, getProject, refreshState, create, openTask }) {
   const form = document.querySelector('#supervisor-form');
@@ -22,13 +23,16 @@ export function supervisorSettings({ api, getData, getProject, refreshState, cre
   };
   function models(selected = '') {
     const runtime = getData().workers.find(w => w.id === form.elements.nodeId.value)?.runtimes?.find(r => r.type === form.elements.runtime.value);
-    selectOptions(form.elements.model, runtime?.models || [], selected, 'Select an available model');
+    const values=[...(runtime?.models||[])];
+    if(selected&&!values.some(m=>m.id===selected))values.push({id:selected,name:t('{value} (saved; unavailable)',{value:selected})});
+    selectOptions(form.elements.model, values, selected, 'Select an available model');
     efforts();
   }
   /** Only offer the selected model's advertised levels; keep unavailable saved values visible until explicitly changed. */
   function efforts(selected = '', preserveSaved = false) {
     const runtime = getData().workers.find(w => w.id === form.elements.nodeId.value)?.runtimes?.find(r => r.type === form.elements.runtime.value);
     const model = runtime?.models?.find(m => m.id === form.elements.model.value);
+    renderModelUsageNotice(form.querySelector('[data-model-usage-note]'),form.elements.runtime.value,model||{id:form.elements.model.value});
     const values = [...new Set(model ? (model.efforts || runtime.efforts || []) : [])].map(id => ({ id }));
     if (selected && !values.some(v => v.id === selected)) {
       if (preserveSaved) values.push({ id: selected, name: t('{value} (saved; unavailable)', { value: selected }) });

@@ -26,7 +26,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   list.before(newFolder.panel);
   const followupForm=document.querySelector('#proactive-followup-form'),followupFeedback=document.querySelector('#followup-feedback'),followupStatus=document.querySelector('#followup-status'),viewFollowup=document.querySelector('#view-followup');
   let followupVersion=0,followupConfig=null,followupProject=null;
-  function followupDisabled(value){for(const element of followupForm.elements)element.disabled=value;viewFollowup.disabled=value||!followupConfig?.execution?.taskId;}
+  function followupDisabled(value){for(const element of followupForm.elements)element.disabled=value;document.querySelector('#refresh-followup').disabled=value;viewFollowup.disabled=value||!followupConfig?.execution?.taskId;}
   function showFollowup(value){
     followupConfig=value;followupForm.elements.enabled.checked=value.enabled;followupForm.elements.silenceMinutes.value=value.silenceMinutes;
     const execution=value.execution;

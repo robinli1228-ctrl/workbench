@@ -1,10 +1,11 @@
 import {t} from './i18n.js';
+import {UI_ICON,closeIcon} from './role-icons.js';
 
 /** 弹窗只确认已登记任务的旧驱动退出，不接管会话、不修改任务正文或重新派工。 */
 export function createCliRecoveryUI({api,refreshState,getData,create}) {
   const dialog=create('dialog','cli-recovery-dialog');dialog.setAttribute('aria-labelledby','cli-recovery-title');
   const heading=create('div','dialog-heading'),title=create('h2','','The original session still has a CLI process');title.id='cli-recovery-title';
-  const close=create('button','icon-button','×');close.type='button';close.setAttribute('aria-label',t('Close'));
+  const close=closeIcon(create('button','icon-button'),t('Close'));close.type='button';
   heading.append(title,close);
   const description=create('p','workspace-note','The original session cannot continue directly. Stop the old CLI, restore the original session and execute the pending task? This may interrupt work in the old process, but keeps session history.');
   const info=create('p','workspace-note'),reason=create('p','inline-error');reason.setAttribute('role','status');
@@ -36,6 +37,8 @@ export function createCliRecoveryUI({api,refreshState,getData,create}) {
   return {refresh,button(task){
     const record=(getData().cliRecoveries||[]).find(r=>r.taskId===task.id&&r.projectId===task.projectId&&!['ready','resolved'].includes(r.state));
     if(!record)return null;
-    const button=create('button','secondary compact','Check CLI session occupancy');button.type='button';button.onclick=()=>{selected={taskId:task.id,projectId:task.projectId,requestId:record.requestId};dialog.showModal();refresh();};return button;
+    // An icon like the other card actions; the dialog behind it is unchanged.
+    const button=create('button','chat-icon-btn cli-recovery-open');button.type='button';button.innerHTML=UI_ICON.diagnose;
+    button.title=t('Check CLI session occupancy');button.setAttribute('aria-label',button.title);button.onclick=()=>{selected={taskId:task.id,projectId:task.projectId,requestId:record.requestId};dialog.showModal();refresh();};return button;
   }};
 }

@@ -1842,6 +1842,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'minimal.invalidWait': '等待只能引用本任务关联请求，timeoutSeconds 须为 60 到 86400 的整数。',
   'minimal.waitHelp': 'wb wait "续接摘要" 等待当前依赖，默认 30 分钟。也可 wb wait JSON {"summary":"...","requestIds":["原请求编号"],"timeoutSeconds":1800}。超时后原请求仍有效，可以再次等待，不必重新派工。wb call --kind consult 用于咨询；--kind direct 用于子任务委派；wb note 发布通知，不改变任务归属。',
   'minimal.waitTimeout': '依赖等待已超时，原请求仍有效：{requestIds}。没有取消或重跑同伴。可继续独立工作，或再次等待这些原请求。此前任务状态：{resumeSummary}\n',
+  'minimal.waitBlocked': '依赖已阻塞超过 10 分钟，暂时无法开始：{reasons}。原请求仍有效：{requestIds}，没有取消或重派。可以改派、报告阻塞，或再次等待这些原请求。此前任务状态：{resumeSummary}\n',
   'minimal.dependencyEvent': '本任务原依赖在实际启动时的最新状态：{events}',
   'minimal.externalRepositories': '本轮另有工作目录之外的仓库映射：{repositories}。仅操作本任务已授权的目标。',
   'cliRecovery.identityUnknown': '进程身份尚未确认，继续核对中，暂不允许强制结束。',

@@ -1,4 +1,5 @@
 import {t,getLanguage} from './i18n.js';
+import {UI_ICON} from './role-icons.js';
 
 /** The terminal picker is a shortcut, not history retention: never mutate or delete the source Runs. */
 export function latestTerminalRun(role,runs=[]) {
@@ -68,8 +69,8 @@ export function createRoleHistoryTabs({getConversationId=()=>getRole()?.projectI
     }
     const known=new Set(sessions.map(s=>s.id));
     for(const run of runs.filter(r=>!known.has(r.roleSessionId)).reverse()){
-      const card=create('section','settings-block');card.append(create('strong','',`${formatTime(run.createdAt)} · ${run.status}`));
-      if(openTask){const view=create('button','secondary compact','View run');view.type='button';view.onclick=()=>openTask(run.taskId);card.append(view);}panel.append(card);
+      const card=create('section','settings-block role-history-run');card.append(create('strong','',`${formatTime(run.createdAt)} · ${run.status}`));
+      if(openTask){const view=create('button','chat-icon-btn');view.type='button';view.innerHTML=UI_ICON.log;view.title=t('View run');view.setAttribute('aria-label',view.title);view.onclick=()=>openTask(run.taskId);card.append(view);}panel.append(card);
     }
   }
   select('settings');

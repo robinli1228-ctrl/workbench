@@ -1,13 +1,14 @@
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
-import {agentIconEl,machineIconEl,workerKind,setActionIcon} from './role-icons.js';
+import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON} from './role-icons.js';
 import {createListOrder} from './list-order.js';
 import {groupNativeSessions,readNativeSessionPages} from './native-session-groups.js';
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
 import {liveSceneRows} from './live-scene.js';
+import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {toolStatusLabel,stripAnsi} from './run-log-data.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
@@ -151,8 +152,14 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  }
  /** Same row/bubble structure as the group chat, so both views share one visual language. */
  function chatRow(role,text,runtime,at,extra){const agent=role!=='user',row=el('article',`chat-row ${agent?'agent':'human'} native-chat-row`);if(agent){const avatar=el('span','chat-avatar');avatar.append(agentIconEl(runtime));row.append(avatar);}
-  const col=el('div','chat-col'),header=el('div','chat-message-header'),name=el('div','chat-name',agent?names[runtime]||t('Assistant'):t('Me'));name.translate=false;header.append(name);if(at){const stamp=el('time','',time(at));stamp.dateTime=at;header.append(stamp);}col.append(header);
-  const bubble=el('div','chat-bubble'),body=simplifiedCliOutput(text||'');if(agent){const md=renderMarkdown(body);md.classList?.add('markdown-body');bubble.append(md);}else bubble.append(el('div','chat-message-text',body));if(extra)bubble.append(extra);col.append(bubble);row.append(col);return row;}
+  const col=el('div','chat-col'),header=el('div','chat-message-header'),name=el('div','chat-name',agent?names[runtime]||t('Assistant'):t('Me'));name.translate=false;name.title=name.textContent;header.append(name);col.append(header);
+  // Same card anatomy as the group chat: send time on the name line, a status line with its actions at the bottom.
+  if(at){const stamp=el('time','',time(at));stamp.dateTime=at;header.append(stamp);}
+  const bubble=el('div','chat-bubble'),body=simplifiedCliOutput(text||'');
+  if(agent){const md=renderMarkdown(body);md.classList?.add('markdown-body');bubble.append(md);}else bubble.append(el('div','chat-message-text',body));if(extra)bubble.append(extra);
+  const footer=el('div','chat-card-footer'),actions=el('div','chat-card-actions'),copy=el('button','chat-icon-btn');copy.type='button';copy.setAttribute('aria-label',t('Copy'));setActionIcon(copy,'copy',t('Copy'));
+  copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));actions.append(copy);
+  footer.append(el('span','chat-card-kind',`${t(agent?'Reply':'Message')} · ${t('Completed')}`),actions);bubble.append(footer);col.append(bubble);row.append(col);return row;}
  function renderSide(value,id,readable){
   side.replaceChildren();const head=el('div','native-side-head'),title=el('h2','native-side-title',t('Session details')),badge=el('span',`native-side-badge ${takeover.isOn(value)?'is-live':''}`,t(takeover.isOn(value)?'Taken over':'Read-only'));head.append(title,badge);side.append(head);
   const card=(heading,rows)=>{const section=el('section','native-side-card');section.append(el('h3','',t(heading)));const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}section.append(list);side.append(section);};
@@ -203,7 +210,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   if(!model.rows.length)body.append(el('p','live-scene-empty',t('Waiting for recorded execution events…')));
   box.append(body);return box;
  }
- /** Takeover reuses the group-chat composer behaviour: Enter sends, Shift+Enter breaks lines, paste/drag/attach uploads files, an unconfirmed send retries the same message ID. */
+ /** Takeover reuses the group-chat composer behaviour: Enter sends, Shift+Enter breaks lines, paste/drag/attach uploads files. An unconfirmed send keeps Send disabled while the same message ID is looked up; only a confirmed absence allows a retry with that ID. */
  function createTakeover(){
   const stored=(name,fallback)=>{try{return JSON.parse(sessionStorage.getItem(name)||JSON.stringify(fallback));}catch{return fallback;}};
   const consentKey='agent-workbench.native-takeover-v3-consent',on=new Set(stored(consentKey,[])),drafts=stored('agent-workbench.native-takeover-drafts',{}),operations=new Map();
@@ -217,14 +224,50 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   const isReleasing=value=>operation(sessionKey(value)).releasing;
   const activeTurn=()=>turns.find(x=>['queued','starting','running','waiting_user','stopping'].includes(x.status));
   const turnsUrl=()=>`${endpoint(current.nodeId)}/turns`;
+  // Same send lifecycle as the group chat (send-state.js); the takeover API is idempotent by clientTurnId.
+  const sendState=(d,op)=>sendStateOf(d,Boolean(op?.sending));
+  let checkedAt=0;
+  /** Clear only what the confirmed send carried; text typed afterwards stays. */
+  function settleTurn(id,sent){const d=drafts[id];if(!d)return;
+   if((d.text||'')===(sent.text||'')){drafts[id]={text:'',attachments:[]};if(k()===id)input.value='';}
+   else{const carried=new Set(sent.attachmentIds||[]);delete d.pending;delete d.sendState;d.attachments=(d.attachments||[]).filter(a=>!carried.has(a.id));}
+   operation(id).message='';save();}
+  /** Exact read-only receipt for the frozen clientTurnId in this session; only a confirmed absence re-enables Send. */
+  async function verifyTurn(id){const d=drafts[id],op=operation(id),value=current;if(!d?.pending||op.sending||op.verifying||d.sendState==='failed'||!value||k()!==id)return;
+   op.verifying=true;checkedAt=Date.now();const sent=d.pending;render();
+   try{const receipt=await api(`${endpoint(value.nodeId)}/turns?${new URLSearchParams({runtime:value.runtime,sessionId:value.sessionId,clientTurnId:sent.clientTurnId})}`);
+    if(drafts[id]?.pending?.clientTurnId!==sent.clientTurnId)return;
+    if(receipt?.exists===true)settleTurn(id,sent);else if(receipt?.exists===false)drafts[id].sendState='failed';}
+   catch(error){
+    // An unreachable Home or 401/403/429 says nothing about the original POST: stay unknown and look again later.
+    if(drafts[id]?.pending?.clientTurnId===sent.clientTurnId)drafts[id].sendState=lookupFailureState(error);op.message=t(error.message);}
+   finally{op.verifying=false;save();if(current&&k()===id)render();}}
+  /** Redraws from the existing state refresh re-check an unknown send at most every few seconds; no new polling. */
+  function recheck(){if(!current)return;const d=drafts[k()];if(!d?.pending||d.sendState==='failed'||operation().sending||Date.now()-checkedAt<5000)return;void verifyTurn(k());}
   const draft=(id=k())=>drafts[id]||={text:'',attachments:[]};
   const fileUrl=(nodeId,item)=>{const id=`${nodeId}:${item.id}`;if(!urls.has(id))urls.set(id,api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(item.id)}`,{blob:true}).then(blob=>URL.createObjectURL(blob)).catch(e=>{urls.delete(id);throw e;}));return urls.get(id);};
   const revokeAttachment=(nodeId,id)=>{const key=`${nodeId}:${id}`,pending=urls.get(key);urls.delete(key);if(pending)void Promise.resolve(pending).then(url=>URL.revokeObjectURL(url)).catch(()=>{});};
   const revokeUrls=()=>{for(const id of [...urls.keys()]){const split=id.indexOf(':');revokeAttachment(id.slice(0,split),id.slice(split+1));}};
+  let previewDialog=null;
+  /** The full original (images) or its name and size (other files); the 48px card thumbnail is only a crop. */
+  function previewAttachment(item){if(!current)return;
+   if(!previewDialog){previewDialog=el('dialog','attachment-dialog');document.body.append(previewDialog);}
+   const close=closeIcon(el('button','icon-button'),t('Close'));close.type='button';close.onclick=()=>previewDialog.close();
+   previewDialog.setAttribute('aria-label',item.name);previewDialog.replaceChildren(close);
+   if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});previewDialog.append(img);}
+   previewDialog.append(el('p','attachment-text',`${item.name} · ${sizeText(item.size)}`));previewDialog.showModal();}
   function attachmentCard(item,remove){const card=el('div',`attachment-card${item.mime?.startsWith('image/')?'':' attachment-file-card'}`);card.title=item.name;
+   if(remove){
+    // Composer card: same 224×64 layout as the group chat. The body opens the preview; the × keeps its own column.
+    const open=el('button','attachment-open');open.type='button';open.addEventListener('click',()=>previewAttachment(item));
+    if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);}
+    else{const icon=el('span','native-file-icon');icon.innerHTML=UI_ICON.original;open.append(icon);}
+    open.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));
+    card.append(open,closeIcon(button('',remove,'attachment-remove'),t('Remove attachment')));return card;
+   }
    if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});card.append(img);}else card.append(el('span','native-file-icon','\u{1F4C4}'));
    if(remove||!item.mime?.startsWith('image/')){const info=el('span','native-file-info');info.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));card.append(info);}
-   if(remove){const x=button('×',remove,'attachment-remove');x.setAttribute('aria-label',t('Remove attachment'));card.append(x);}return card;}
+   if(remove){const x=closeIcon(button('',remove,'attachment-remove'),t('Remove attachment'));card.append(x);}return card;}
   function detach(){current=null;turns=[];historyEl=null;feed.replaceChildren();shell.remove();clearInterval(poll);poll=null;revokeUrls();}
   function attach(value,{readable,historyAt:at,history}){const same=current&&k()===`${value.nodeId}/${value.runtime}/${value.sessionId}`;current=value;historyAt=at;historyEl=history;if(!same){turns=[];feed.replaceChildren();}
    const worker=getData().workers?.find(w=>w.id===value.nodeId);supported=worker?.capabilities?.nativeTurns===3;
@@ -261,10 +304,10 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
    const id=k(),d=draft(id),op=operation(id),busy=Boolean(activeTurn());
    const form=el('form','chat-composer native-takeover-form'),barRow=el('div','chat-input-bar'),field=el('div','chat-input-field'),note=el('p','workspace-note native-takeover-note'),tray=el('div','chat-attachments native-takeover-tray');
    input.placeholder=t('Message {tool}; replies continue this native session',{tool:names[value.runtime]||value.runtime});if(input.value!==d.text)input.value=d.text||'';
-   note.textContent=op.message||(d.pending?t('Sending is not yet confirmed; clicking Send retries the same message without dispatching twice.'):'');note.hidden=!note.textContent;
+   note.textContent=op.message||'';note.hidden=!note.textContent;const state=sendState(d,op);
    for(const item of d.attachments||[])tray.append(attachmentCard(item,()=>{if(!d.pending)void removeAttachment(id,value.nodeId,item);}));
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
-   sendButton.disabled=op.sending||op.releasing||busy||op.uploads>0;sendButton.textContent=t(op.sending?'Sending…':d.pending?'Retry send':'Send');input.disabled=op.sending||op.releasing;attachButton.disabled=op.sending||op.releasing||Boolean(d.pending);
+   sendButton.disabled=op.sending||op.releasing||busy||op.uploads>0||sendLocked(state)||Boolean(op.verifying);sendButton.textContent=t(SEND_LABELS[state]||'Send');input.disabled=op.sending||op.releasing||Boolean(d.pending);attachButton.disabled=op.sending||op.releasing||Boolean(d.pending);
    field.append(tray,attachButton,input);barRow.append(field,sendButton);
    const release=button(op.releasing?'Ending takeover…':'End takeover',()=>void endTakeover(value),'secondary compact native-release');release.disabled=busy||op.sending||op.uploads>0||op.releasing;
    const status=el('div','native-takeover-status');status.append(el('span',`native-takeover-dot${residentState==='open'?' is-resident':''}`),el('span','',t(op.releasing?'Ending page takeover; waiting for the CLI to exit…':busy?'This session is replying…':residentState==='open'?'Taken over · CLI is resident; messages continue this native session':'Taken over · the next message starts the CLI')),release);
@@ -292,15 +335,21 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   const resize=()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(40,input.scrollHeight))}px`;};
   input.addEventListener('input',()=>{draft().text=input.value;save();resize();});
   input.addEventListener('keydown',e=>{if(window.matchMedia('(max-width: 1000px)').matches)return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!sendButton.disabled){e.preventDefault();input.form?.requestSubmit();}});
-  async function submit(){if(!current||activeTurn())return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.uploads)return;if(!d.pending&&!input.value.trim()&&!d.attachments?.length)return;op.message='';
-   d.pending||={clientTurnId:crypto.randomUUID(),text:input.value,attachmentIds:(d.attachments||[]).map(a=>a.id)};save();op.sending=true;render();
+  async function submit(){if(!current||activeTurn())return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.uploads)return;
+   // An in-flight or unknown send is only looked up again (click, double click, Enter); it is never resent with a new ID.
+   if(d.pending&&d.sendState!=='failed'){void verifyTurn(id);return;}
+   if(!d.pending&&!input.value.trim()&&!d.attachments?.length)return;op.message='';
+   if(!d.pending){const payload={text:input.value,attachmentIds:(d.attachments||[]).map(a=>a.id)};
+    // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
+    d.pending={clientTurnId:sameSend(d.rejected?.payload,payload)?d.rejected.clientTurnId:crypto.randomUUID(),...payload};}
+   delete d.rejected;d.sendState='sending';const sent=d.pending;save();op.sending=true;render();
    try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});drafts[id]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
-   catch(error){if(!error.isNetworkError)delete d.pending;op.message=t(error.message);}
-   finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;}}}
+   catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;}op.message=t(error.message);}
+   finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[id]?.pending&&drafts[id].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}
-  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;residentState=result.process||'closed';turns=result.items||[];if(op.releasing&&residentState==='closed'){op.releasing=false;on.delete(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
+  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;residentState=result.process||'closed';turns=result.items||[];{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&residentState==='closed'){op.releasing=false;on.delete(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
   function schedule(){clearInterval(poll);poll=null;if(current&&(activeTurn()||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
-  return {feed,attach,detach,isOn,isReleasing,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh};
+  return {feed,attach,detach,isOn,isReleasing,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh,recheck};
  }
  const dialog=el('dialog','settings-edit-dialog native-session-dialog');dialog.id='native-session-dialog';document.body.append(dialog);
  const picker=el('dialog','settings-edit-dialog native-file-picker');picker.id='native-file-picker';document.body.append(picker);let pickerVersion=0;
@@ -331,7 +380,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   const updateTools=()=>{options(r,(getData().workers?.find(w=>w.id===d.value)?.runtimes||[]).filter(x=>x.available&&x.supported!==false&&names[x.type]).map(x=>[x.type,names[x.type]]));};updateTools();if(session?.runtime)r.value=session.runtime;else if(defaults.runtime)r.value=defaults.runtime;else if(tool.value!=='all'&&[...r.options].some(o=>o.value===tool.value))r.value=tool.value;d.disabled=r.disabled=Boolean(session);if(session?.workspace)folder.readOnly=true;
   field('Session title',title,true);field('Device',d);field('Agent tool',r);const folderField=field('Working folder',folder,true),pathRow=el('div','native-workspace-row');
   const feedback=el('p','native-form-feedback native-full'),launch=el('div','native-launch-result native-full');feedback.setAttribute('role','status');
-  const browseButton=button('Select file or folder',()=>openFilePicker({nodeId:d.value,path:folder.value,locked:session?.workspace||null,onUse:path=>{folder.value=path;folder.dispatchEvent(new Event('change',{bubbles:true}));}}));pathRow.append(folder,browseButton);folderField.append(pathRow);
+  const browseButton=button('Select file or folder',()=>openFilePicker({nodeId:d.value,path:folder.value,locked:session?.workspace||null,onUse:path=>{folder.value=path;folder.dispatchEvent(new Event('change',{bubbles:true}));}}));setActionIcon(browseButton,'folder');pathRow.append(folder,browseButton);folderField.append(pathRow);
   if(session?.workspace)form.append(el('p','workspace-note native-full',t('An existing session keeps its original working folder.')));
   const permissions=el('label','native-permissions native-full');permissions.append(all,el('span','',t('Allow all operations (bypass native permission prompts)')));form.append(permissions,el('p','workspace-note native-full',t('Default uses native permissions. A related group chat waits while this terminal owns its folder; closing the CLI returns it automatically.')));
   const submit=el('button','primary',t('Prepare iTerm launch')),actions=el('div','native-session-actions native-full');submit.type='submit';actions.append(submit);form.append(feedback,actions,launch);dialog.append(form);
@@ -368,5 +417,5 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
  // Only the visible Sessions page polls; returning from iTerm also refreshes immediately.
  setInterval(()=>{if(Date.now()-lastRefresh>=30000)refresh();},30000);
  list.hidden=filters.hidden=note.hidden=content.hidden=side.hidden=true;
- return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=!visible;content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){renderTitle();renderList();document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected)renderSessionControls(selected);if(changed)refresh();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
+ return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=!visible;content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){renderTitle();renderList();document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected)renderSessionControls(selected);if(changed)refresh();takeover.recheck();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
 }

@@ -26,7 +26,7 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
   async function act(fn,b){if(action)return;action=true;if(b)b.disabled=true;const e=epoch;try{await fn();if(e===epoch){await load(true);await refreshState();}}catch(error){if(e===epoch){const note=el('p','workspace-note',error.message);note.setAttribute('role','alert');panel.append(note);}}finally{action=false;if(b?.isConnected)b.disabled=false;}}
   function draw(){
     panel.replaceChildren();if(!state)return;
-    const h=el('div','source-sync-heading');h.append(el('h3','',t('Project file sync')),button('Configure project file sync',configure));panel.append(h,el('p','workspace-note',t(state.config.enabled?'Enabled':'Disabled')));
+    const h=el('div','source-sync-heading');h.append(el('h3','',t('Project file sync')),setActionIcon(button('Configure project file sync',configure),'settings',t('Configure project file sync')));panel.append(h,el('p','workspace-note',t(state.config.enabled?'Enabled':'Disabled')));
     panel.append(el('p','workspace-note',t('Saved code, documents and resources; Git delivery remains separate.')),el('p','workspace-note',t(state.config.contentMode==='source-and-outputs'?'Source and outputs':'Source only')));
     if(state.config.mode==='continuous')panel.append(el('p','workspace-note',t('Automatic two-way sync continues while this page is closed.')),el('p','workspace-note',`${t('Local display device')}: ${name(state.config.displayNodeId)}`));
     for(const watcher of state.watchers||[])if(watcher.generation===state.config.generation&&watcher.status!=='watching')panel.append(el('p','workspace-note',`${name(watcher.nodeId)} · ${status(watcher.status)}${watcher.error?' · '+issue(watcher.error,watcher.limit):''}`));
