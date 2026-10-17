@@ -14,7 +14,8 @@ export function sourceInputBatch(db,batchId,projectId) {
   const batch=db.get('sourceSyncBatches',batchId);
   if(!batch||batch.projectId!==projectId)throw syncError('source_input_not_ready');
   if(batch.scopeKind==='directory')throw syncError('directory_sync_is_not_git_delivery','For documents, check wb sync status and target file hashes separately; use a fixed commit delivery for code.');
-  if(['blocked','failed','cancelling','cancelled','partial_conflict'].includes(batch.status))throw syncError('source_input_not_ready',batch.reason||batch.status);
+  // Legacy version batches omitted kind; previews/evidence and unknown states can never produce execution inputs.
+  if(batch.kind!==undefined&&!['sync','resolution'].includes(batch.kind)||!['queued','capturing','applying','completed'].includes(batch.status))throw syncError('source_input_not_ready',batch.reason||batch.status);
   return batch;
 }
 
