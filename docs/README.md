@@ -13,6 +13,7 @@
 | [design-local-supervisor](design-local-supervisor.md) | Project supervisor, multi-repository setup, device and account configuration assistant | Implemented in the current code |
 | [design-role-responsibility](design-role-responsibility.md) | Separate coordination responsibilities from execution prompts, snapshot compatibility and acceptance coverage | Implemented; runtime limits recorded in section 11 |
 | [design-role-permissions](design-role-permissions.md) | Three per-role CLI permission scopes, one-time approval, legacy preservation and real execution acceptance | Written specification awaiting user review; not implemented |
+| [plan-collaboration-wait-yield](plan-collaboration-wait-yield.md) | Same-role collaboration protection, explicit non-destructive human yield and queue presentation | Implementation plan awaiting review; not implemented |
 | [plan-role-responsibility](plan-role-responsibility.md) | Ordered implementation tasks and negative tests for excluding self responsibility from execution | Executed inline; design records actual verification coverage |
 | [design-minimal-injection](design-minimal-injection.md) | Four-adapter minimal input, trusted discovery and reliable continuation | Selectively deployed; adapter-specific acceptance limits are recorded |
 | [plan-minimal-injection](plan-minimal-injection.md) | Unified implementation and verification of minimal execution context | Implemented; source synchronization excluded |
