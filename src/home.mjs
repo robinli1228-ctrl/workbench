@@ -52,8 +52,8 @@ import { TokenUsage, createTokenUsageBackgroundCollector } from './token-usage.m
 import { Attachments, AttachmentTransfers } from './attachments.mjs';
 import { ExecutionPlans, schedulingRules } from './execution-plans.mjs';
 import { History } from './history.mjs';
-import { saveRunReport,readReportSubmission } from './run-reports.mjs';
-import { receiptList,verifyResultReceipt } from './result-receipts.mjs';
+import { saveRunReport,readReportSubmission,readReportFile } from './run-reports.mjs';
+import { receiptList,verifyResultReceipt,archiveHistoricalReceipts } from './result-receipts.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
@@ -151,6 +151,7 @@ db.transaction(()=>{
   discussions.recover();
   calls.recoverTerminalRuns();
   for (const run of db.list('runs').filter(r=>terminal.has(r.status))) rooms.complete(run);
+  archiveHistoricalReceipts(db);
 });
 for (const run of db.list('runs').filter(r => !terminal.has(r.status))) db.put('runs', { ...run, status: run.status === 'stopping' ? 'stopping' : 'reconciling' });
 const sockets = new Map();
@@ -705,13 +706,17 @@ const server = http.createServer(async (req, res) => {
         assertAgentSender(b);
         const run = db.get('runs', b.runId);
         if(pathname==='/api/agent/report') {
-          if(!run)throw new Error(tr('home.currentExecutionHasEndedStopping'));
+          if(!run)throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
           if(run.switchOperationId)throw new Error('CLI handoff maintenance permits history reads only.');
           if(b.action==='status')return json(res,readReportSubmission(db,run,b));
+          if(b.action==='file')return json(res,readReportFile(conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run),run,b));
           const result=saveRunReport(db,run,b);if(!result.replayed&&!result.ignored)change();return json(res,result);
         }
-        if (!run || terminal.has(run.status) || ['stopping', 'reconciling'].includes(run.status)) throw new Error(tr('home.currentExecutionHasEndedStopping'));
-        if(db.get('settings','main')?.paused&&!allowsPausedAgentOperation(pathname,b))throw new Error(tr('home.remoteExecutionPaused'));
+        // Distinct codes: reconciling is retryable with the same request; stopping and ended are final for this Run.
+        if (run?.status === 'reconciling') throw Object.assign(new Error(tr('home.runReconciling')),{code:'run_reconciling'});
+        if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
+        if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
+        if(db.get('settings','main')?.paused&&!allowsPausedAgentOperation(pathname,b))throw Object.assign(new Error(tr('home.remoteExecutionPaused')),{code:'paused'});
         if(run.switchOperationId&&!['/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/sessions/list','/api/agent/sessions/summary','/api/agent/sessions/read','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
         if (pathname === '/api/agent/progress') {
           // Receipts and derived progress belong to the calling role; verification is its explicit, recorded decision.

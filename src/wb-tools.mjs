@@ -139,8 +139,18 @@ export async function askRole(name, text) {
 }
 
 /** The platform handles cross-node communication; local tools neither connect to other CLIs directly nor read their workspaces. */
-export async function callRole({ role, roles, kind = 'consult', requestId, text, file, deliveryId,sourceSyncBatchId }) {
+/** Optional dispatch fields become labelled lines ahead of the free text; nothing is trimmed, so versions, scope and acceptance survive verbatim. */
+export function composeCallText({goal,scope,input,returns,text}) {
+  const fields=[['goal',goal],['scope',scope],['input',input],['return',returns]].filter(([,value])=>value!==undefined);
+  if(fields.some(([,value])=>typeof value!=='string'||!value.trim()))throw new Error(tr('wbTools.callFieldEmpty'));
+  return [...fields.map(([key,value])=>`${tr(`wbTools.callField.${key}`)}: ${value.trim()}`),...(text?[text]:[])].join('\n')||text;
+}
+
+export async function callRole({ role, roles, kind = 'consult', requestId, text, file, deliveryId,sourceSyncBatchId,goal,scope,input,returns }) {
+  text=composeCallText({goal,scope,input,returns,text});
   if ((!role && !roles) || !text || !requestId) throw new Error(tr('wbTools.roleTextStableRequestId'));
+  // A soft hint only, measured on the brief itself (not an attached --file): the call is sent unchanged.
+  const lengthNote=text.length>1500?tr('wbTools.callTextLong',{chars:text.length}):null;
   if(role!==undefined&&roles!==undefined||roles!==undefined&&(!Array.isArray(roles)||!roles.length||roles.some(r=>typeof r!=='string'||!r.trim())))throw new Error(tr('wbTools.invalidCallTargets'));
   if (!['consult', 'handoff','direct'].includes(kind)) throw new Error(tr('wbTools.kindMustBeConsultHandoff'));
   if(file!==undefined) {
@@ -149,8 +159,9 @@ export async function callRole({ role, roles, kind = 'consult', requestId, text,
     text=`${text}\n\n${tr('wbTools.callDocumentReference')}\n${JSON.stringify(document)}`;
   }
   if(text.length>12000)throw new Error(tr('wbTools.callDocumentTooLong'));
-  return homeFetch('/api/agent/calls', { runId: context().runId, ...(roles===undefined?{role}:{roles}), kind,
+  const result=await homeFetch('/api/agent/calls', { runId: context().runId, ...(roles===undefined?{role}:{roles}), kind,
     requestId: `${context().runId}:${requestId}`, text, deliveryId,sourceSyncBatchId });
+  return lengthNote&&result&&typeof result==='object'?{...result,lengthNote}:result;
 }
 
 /** Read only caller-bound files; copying bytes here avoids asking the model to retype an encoded document. */

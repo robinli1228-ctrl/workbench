@@ -10,7 +10,7 @@ import {currentContinuation,waitDependencies} from './coordination-wait.mjs';
 import {SessionQueue} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
-import {registerResultReceipt} from './result-receipts.mjs';
+import {registerResultReceipt,registerCallOutcome} from './result-receipts.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
 export const BLOCKED_WAKE_MS = 10 * 60000;
@@ -23,7 +23,7 @@ export const BLOCKED_WAKE_MS = 10 * 60000;
 export function blockedDependency(db,request,time=Date.now()) {
   if(!['queued','waiting_delivery'].includes(request?.status))return null;
   const task=db.get('tasks',request.taskId||'');
-  if(task?.status!=='ready'||task.currentRunId||!['device_offline','cli_unavailable'].includes(task.blockedKind))return null;
+  if(task?.status!=='ready'||task.currentRunId||!['device_offline','cli_unavailable','role_disabled'].includes(task.blockedKind))return null;
   const since=Date.parse(task.blockedSince);
   if(!Number.isFinite(since)||time-since<BLOCKED_WAKE_MS)return null;
   if(request.blockedWake?.kind===task.blockedKind&&request.blockedWake?.since===task.blockedSince)return null;
@@ -208,6 +208,7 @@ export class RoleCalls {
       const next=this.db.put('coordinationRequests',{...r,status:'failed',notExecutedReason:message,
         admissionError:{code:typeof error?.code==='string'?error.code:'request_admission_failed',message,at},
         result:tr('executionPlans.notExecuted',{message}),updatedAt:at});
+      registerCallOutcome(this.db,next,{outcome:'not_executed',reason:message});
       this.settleResult(next);
       return next;
     });
@@ -263,6 +264,7 @@ export class RoleCalls {
     let r = run.requestId ? this.db.get('coordinationRequests', run.requestId)
       : this.db.list('coordinationRequests').find(c => c.currentRunId === runId);
     if (!r || (r.currentRunId && r.currentRunId !== runId) || r.status === 'cancelled') return;
+    const settledBefore=callTerminal.has(r.status);
     if (!callTerminal.has(r.status) && (r.status !== 'waiting_call' || run.status !== 'succeeded')) {
       const outcome=outcomeFor(this.db,run), report=this.db.get('runReports',run.id);
       // A negative review is a delivered answer. Only execution or missing-response errors fail a call.
@@ -271,8 +273,9 @@ export class RoleCalls {
         status: run.status === 'succeeded' && !missingReply ? 'succeeded' : 'failed',
         result: run.result || run.error || '', updatedAt: new Date().toISOString() });
     }
-    // Register the settled call before resuming its owner, so the safe continuation includes this result.
-    if(callTerminal.has(r.status))registerResultReceipt(this.db,{run,request:r});
+    // Register the settled call before resuming its owner, so the safe continuation includes this result. Replaying a call
+    // that had already settled (Home restart, upgrade) only refreshes an existing receipt and never backfills history.
+    if(callTerminal.has(r.status))registerResultReceipt(this.db,{run,request:r,refreshOnly:settledBefore});
     this.settleResult(r);
   }
 
@@ -375,7 +378,7 @@ export class RoleCalls {
     const ids = new Set([root.id]);
     const all = this.db.list('coordinationRequests').filter(r => r.projectId === root.projectId);
     for (let i = 0; i < all.length; i++) for (const r of all) if (ids.has(r.parentRequestId) || ids.has(r.continuationOf)) ids.add(r.id);
-    const runs = [];
+    const runs = [], cancelledNow = [];
     this.db.transaction(() => {
       for (const r of all.filter(r => ids.has(r.id))) {
         const task = r.taskId ? this.db.get('tasks', r.taskId) : null;
@@ -388,6 +391,7 @@ export class RoleCalls {
           runs.push(...stopRunIds);
           // Fix the original stop targets in the same transaction as the cancelled state; a crash before Home sends the command can still be retransmitted without scanning later runs.
           this.db.put('coordinationRequests', { ...r, status: 'cancelled', cancelRunIds:[...new Set([...(r.cancelRunIds||[]),...stopRunIds])], updatedAt: new Date().toISOString() });
+          if(!staleWait)cancelledNow.push(r.id);
           new SessionQueue(this.db).settleRequest(this.db.get('coordinationRequests',r.id));
           // While waiting for a reply the finished business run ID is retained; no further terminal event will clean up the Task for it.
           // Read the record after invalidation handling to avoid writing back the old discussionWait; active/unknown runs still wait for stop verification.
@@ -401,6 +405,11 @@ export class RoleCalls {
         // Cancelling a call does not mean the process has exited; a repeated cancel must still wait for stop confirmation from the active child runs.
         const run = r.currentRunId ? this.db.get('runs', r.currentRunId) : null;
         if (run && !terminal.has(run.status)) runs.push(run.id);
+      }
+      // Tell a caller whose own chain goes on that its call was cancelled; a cancelled chain needs no notice to itself.
+      for(const id of cancelledNow) {
+        const r=this.db.get('coordinationRequests',id),parent=r?.parentRequestId?currentContinuation(this.db,r.parentRequestId):null;
+        if(parent&&!ids.has(r.parentRequestId)&&!callTerminal.has(parent.status))registerCallOutcome(this.db,r,{outcome:'cancelled',reason:tr('resultReceipts.cancelledReason')});
       }
     });
     return [...new Set(runs)];

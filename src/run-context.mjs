@@ -63,7 +63,7 @@ export function buildRunContext({run,task,role={},environment={},conversation=nu
 /** Receipts are references for the owner to verify, never results already accepted. */
 function renderReceipts(receipts) {
   if(!receipts?.items?.length)return '';
-  const lines=receipts.items.map(r=>`- [${r.id}] ${JSON.stringify(r.role)} · ${r.verdict}${r.reportRevision?` (report r${r.reportRevision})`:''} · ${r.stage||tr('runContext.receiptNoStage')} · ${r.version||tr('runContext.receiptNoVersion')} · run ${r.runStatus} · ${r.summary||''} · ${r.readCommand}`);
+  const lines=receipts.items.map(r=>`- [${r.id}] ${JSON.stringify(r.role)} · ${r.verdict}${r.reportRevision?` (report r${r.reportRevision})`:''} · ${r.stage||tr('runContext.receiptNoStage')} · ${r.version||tr('runContext.receiptNoVersion')} · ${r.runStatus?`run ${r.runStatus}`:tr('runContext.receiptNoRun')}${r.files?` · ${tr('runContext.receiptFiles',{count:r.files})}`:''} · ${r.summary||''} · ${r.readCommand}`);
   return tr('runContext.resultReceipts',{p1:lines.join('\n'),p2:receipts.omitted?tr('runContext.resultReceiptsOmitted',{count:receipts.omitted}):''});
 }
 
