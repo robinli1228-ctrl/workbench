@@ -339,6 +339,8 @@ export class RoleCalls {
       return;
     }
     try {
+      // Creating the continuation and linking it to the wait must roll back together before recording a retry/failure.
+      this.db.transaction(()=>{
       const header = reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')})
         :reason==='blocked'?tr('minimal.waitBlocked',{resumeSummary:parent.resumeSummary,requestIds:blocked.map(x=>x.request.id).join(', '),reasons:blocked.map(x=>`${x.request.id}: ${x.block.reason}`).join('; ')})
         :tr('roleCalls.assistanceResultsContextOnly', { resumeSummary: parent.resumeSummary });
@@ -351,6 +353,7 @@ export class RoleCalls {
       this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), continuationRequestId: next.id, updatedAt: new Date().toISOString() });
       // Mark the episode as reported only once the wake exists, so a failed wake can be retried.
       for(const {request,block} of blocked){const id=request.resultRequestId||request.id;this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',id),blockedWake:{kind:block.kind,since:block.since,notifiedAt:new Date(time).toISOString()}});}
+      });
     } catch (error) { this.resumeFailed(parent.id,error,time); }
     });
   }
@@ -387,6 +390,8 @@ export class RoleCalls {
       const ended=[];
       for(const r of this.db.list('coordinationRequests')) {
         if(r.status!=='waiting_call'||r.continuationRequestId||r.steeringTaskId||!r.waitingReason)continue;
+        // Review admission can leave this reason after release; it is not evidence of a failed continuation.
+        if(r.waitingReason==='review_isolation')continue;
         if(this.db.get('tasks',r.taskId||'')?.status==='cancelled'||this.db.get('runs',r.currentRunId||'')?.status!=='succeeded')continue;
         let dependencies=[];try{dependencies=this.dependencies(r);}catch{continue;}
         if(!dependencies.length||!dependencies.every(d=>callTerminal.has(d.status)))continue;

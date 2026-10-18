@@ -119,7 +119,7 @@ export function quietHandoff(run,data={}) {
 export function handoffWaitState(run, data) {
   if(!quietHandoff(run,data))return null;
   const parent=data.requests?.find(r=>r.id===run.handoffWait.requestId);
-  if(!parent||parent.status!=='waiting_call'||parent.continuationRequestId||(parent.currentRunId&&parent.currentRunId!==run.id))return null;
+  if(!parent||parent.status!=='waiting_call'||parent.resumeError?.kind==='transient'||parent.continuationRequestId||(parent.currentRunId&&parent.currentRunId!==run.id))return null;
   const ids=parent.waitRequestIds||run.handoffWait.requestIds||[];
   const names=[...new Set(ids.map(id=>data.requests?.find(r=>r.id===id)).filter(Boolean)
     .map(r=>data.roles?.find(role=>role.id===r.targetRoleId)?.name||r.targetSnapshot?.name).filter(Boolean))];
@@ -1064,6 +1064,15 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     for(const run of (data.runs||[]).filter(r=>r.projectId===projectId&&r.discussionDeliveryId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status))) {
       const live=renderLiveBubble({id:run.taskId,currentRunId:run.id,roleSnapshot:run.roleSnapshot},messages);if(live)feed.append(live);
+    }
+    // A finished handoff has no live reply card; show continuation failures/retries separately from its historical result.
+    for(const request of (data.requests||[]).filter(r=>r.projectId===projectId&&(r.conversationId||r.projectId)===conversationId&&!r.continuationRequestId&&
+      (r.status==='waiting_call'&&r.resumeError?.kind==='transient'||r.status==='failed'&&r.failureKind==='resume_failed'))) {
+      const task=data.tasks?.find(t=>t.id===request.taskId);if(task?.status==='cancelled')continue;
+      const role=task?.roleSnapshot||data.roles?.find(r=>r.id===request.targetRoleId)||{};
+      const progress=executionProgress({task,request}),row=create('article','chat-row agent is-resume-notice'),col=create('div','chat-col');
+      const line=create('div','chat-name handoff-wait-line',`${role.name||t('Role')} · ${t(progress.detail)}`);line.setAttribute('role','status');line.title=progress.reason||request.error||request.resumeError?.message||'';
+      col.append(line);if(task)col.append(chatMeta('',[iconAction('log','Log',()=>openTask(task.id,request.currentRunId))]));row.append(avatarFor(role,role.name),col);feed.append(row);
     }
     const queueStrip=renderSessionQueue(data.sessionQueues?.[projectId],{create,api,refreshState,projectId,roleName:id=>(data.roles||[]).find(r=>r.id===id)?.name||id});
     if(queueStrip)feed.append(queueStrip);
