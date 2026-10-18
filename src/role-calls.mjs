@@ -14,6 +14,9 @@ import {registerResultReceipt,registerCallOutcome} from './result-receipts.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
 export const BLOCKED_WAKE_MS = 10 * 60000;
+/** Storage errors get this many resume attempts; a wait whose replies settled longer ago than STALE_WAIT_MS is history at Home start. */
+const RESUME_ATTEMPTS = 3;
+export const STALE_WAIT_MS = 10 * 60000;
 
 /**
  * A queued dependency whose task has been blocked for the window and not yet reported for this blocked episode.
@@ -96,7 +99,10 @@ export class RoleCalls {
         if (this.db.get('coordinationRequests', id)?.projectId !== input.projectId) throw new Error(tr('roleCalls.sourceCallDoesNotBelong'));
       }
       let ancestor = normalized.parentRequestId ? this.db.get('coordinationRequests', normalized.parentRequestId) : null;
-      if (ancestor && (callTerminal.has(ancestor.status) || ancestor.steeringTaskId)) throw new Error(tr('roleCalls.sourceCallHasEndedBeen'));
+      // A new call needs a live source call. A continuation only resumes work already delegated, so an upstream turn that
+      // simply finished (succeeded or failed) does not end it; an explicit cancel or a user redirect does.
+      const sourceEnded = ancestor && (normalized.kind === 'continuation' ? ancestor.status === 'cancelled' : callTerminal.has(ancestor.status));
+      if (ancestor && (sourceEnded || ancestor.steeringTaskId)) throw new Error(tr('roleCalls.sourceCallHasEndedBeen'));
       // Schedule completion and different reviewers also cause continuations; bound actual calls with the root budget and cycle checks, not wake-up count.
       let depth = 0, rootRequestId = ancestor?.rootRequestId || ancestor?.id || normalized.id;
       while (ancestor) {
@@ -280,10 +286,10 @@ export class RoleCalls {
   }
 
   /** Run results and pre-execution failures must settle the same queue and continuation chain; neither rewrites historical Runs or reports. */
-  settleResult(r) {
+  settleResult(r,{resumeParents=true}={}) {
     this.resume(r.id);
     new SessionQueue(this.db).settleRequest(r);
-    if (r.parentRequestId) this.resume(r.parentRequestId);
+    if (resumeParents&&r.parentRequestId) this.resume(r.parentRequestId);
     if (r.continuationOf && callTerminal.has(r.status)) {
       let previousId = r.continuationOf;
       const seen=new Set();
@@ -294,7 +300,7 @@ export class RoleCalls {
         const next=this.db.put('coordinationRequests', { ...prior, status: r.status, result: r.result, outcome:r.outcome,runStatus:r.runStatus,failureKind:r.failureKind||null,reportSummary:r.reportSummary,error:r.error||null,
           ...(r.notExecutedReason?{notExecutedReason:r.notExecutedReason,admissionError:r.admissionError}:{}),updatedAt: r.updatedAt });
         new SessionQueue(this.db).settleRequest(next);
-        if (prior.parentRequestId) this.resume(prior.parentRequestId);
+        if (resumeParents&&prior.parentRequestId) this.resume(prior.parentRequestId);
         previousId = prior.continuationOf;
       }
     }
@@ -324,6 +330,14 @@ export class RoleCalls {
     const reason=ready?'results':expired?'timeout':'blocked';
     if(!parent.waitEvent)this.db.put('coordinationRequests',{...parent,waitEvent:{id:`wait:${parent.id}`,reason,observedAt:new Date(time).toISOString(),requestIds:children.map(r=>r.id)}});
     if (this.db.get('settings', 'main')?.paused) return;
+    // The user cancelled or redirected the work this wait served: keep the late replies, close the wait, start nothing.
+    const source=parent.parentRequestId?this.db.get('coordinationRequests',parent.parentRequestId):null;
+    if(source&&(source.status==='cancelled'||source.steeringTaskId)) {
+      const closed=this.db.put('coordinationRequests',{...parent,status:'cancelled',cancelReason:'source_cancelled',result:tr('roleCalls.lateReplyAfterCancel'),
+        waitingReason:null,updatedAt:new Date(time).toISOString()});
+      this.settleResult(closed);
+      return;
+    }
     try {
       const header = reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')})
         :reason==='blocked'?tr('minimal.waitBlocked',{resumeSummary:parent.resumeSummary,requestIds:blocked.map(x=>x.request.id).join(', '),reasons:blocked.map(x=>`${x.request.id}: ${x.block.reason}`).join('; ')})
@@ -337,7 +351,55 @@ export class RoleCalls {
       this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), continuationRequestId: next.id, updatedAt: new Date().toISOString() });
       // Mark the episode as reported only once the wake exists, so a failed wake can be retried.
       for(const {request,block} of blocked){const id=request.resultRequestId||request.id;this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',id),blockedWake:{kind:block.kind,since:block.since,notifiedAt:new Date(time).toISOString()}});}
-    } catch (error) { this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), waitingReason: error.message }); }
+    } catch (error) { this.resumeFailed(parent.id,error,time); }
+    });
+  }
+
+  /**
+   * Replies arrived but the continuation could not be created. Storage errors are retried on later scheduling passes
+   * (same deterministic continuation ID); anything else, or repeated storage errors, ends the wait as resume_failed so
+   * the role is no longer held by a wait that cannot continue. Replies and history stay linked; the delegating role is told once.
+   */
+  resumeFailed(parentId,error,time=Date.now()) {
+    const current=this.db.get('coordinationRequests',parentId);
+    if(current?.status!=='waiting_call'||current.continuationRequestId)return null;
+    const message=String(error?.message||error).slice(0,1000),at=new Date(time).toISOString();
+    const transient=/^(?:ERR_SQLITE|SQLITE_)/.test(error?.code||'')||['ENOSPC','EIO','EROFS','EBUSY'].includes(error?.code);
+    const attempts=(current.resumeError?.kind==='transient'?current.resumeError.attempts||0:0)+1;
+    if(transient&&attempts<RESUME_ATTEMPTS)
+      return this.db.put('coordinationRequests',{...current,waitingReason:message,resumeError:{kind:'transient',message,attempts,at}});
+    const reason=tr('roleCalls.resumeFailed',{message});
+    const failed=this.db.put('coordinationRequests',{...current,status:'failed',failureKind:'resume_failed',error:reason,result:reason,waitingReason:null,
+      resumeError:{kind:transient?'transient':'deterministic',message,attempts,at},updatedAt:at});
+    registerCallOutcome(this.db,failed,{outcome:'resume_failed',reason});
+    this.settleResult(failed);
+    return failed;
+  }
+
+  /**
+   * Once at Home start, before replaying results: a wait the old resume bug left behind (all dependencies settled, no
+   * continuation, and the failed attempt recorded in waitingReason) is ended as resume_failed when its replies settled
+   * long ago, instead of being revived on stale context. Recent ones are left to the normal resume, which now succeeds.
+   * Waits held for other reasons (paused Home, running plan, discussion) carry no failure and are never touched.
+   */
+  reconcileStuckWaits(time=Date.now()) {
+    return this.db.transaction(()=>{
+      const ended=[];
+      for(const r of this.db.list('coordinationRequests')) {
+        if(r.status!=='waiting_call'||r.continuationRequestId||r.steeringTaskId||!r.waitingReason)continue;
+        if(this.db.get('tasks',r.taskId||'')?.status==='cancelled'||this.db.get('runs',r.currentRunId||'')?.status!=='succeeded')continue;
+        let dependencies=[];try{dependencies=this.dependencies(r);}catch{continue;}
+        if(!dependencies.length||!dependencies.every(d=>callTerminal.has(d.status)))continue;
+        const last=Math.max(...dependencies.map(d=>Date.parse(d.updatedAt||d.createdAt||'')).filter(Number.isFinite));
+        if(Number.isFinite(last)&&time-last<STALE_WAIT_MS)continue;
+        const at=new Date(time).toISOString(),reason=tr('roleCalls.staleWaitEnded',{reason:r.waitingReason});
+        const failed=this.db.put('coordinationRequests',{...r,status:'failed',failureKind:'resume_failed',error:reason,result:reason,waitingReason:null,
+          resumeError:{kind:'stale',message:r.waitingReason,at},updatedAt:at});
+        // History closes without new work: no receipt, and parents are left to the normal scheduler.
+        this.settleResult(failed,{resumeParents:false});
+        ended.push(r.id);
+      }
+      return ended;
     });
   }
 

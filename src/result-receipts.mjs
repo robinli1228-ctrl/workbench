@@ -12,7 +12,7 @@ import {tr} from './i18n.mjs';
  */
 export const RECEIPT_STAGES=['implemented','reviewed','tested','merged','deployed'];
 export const BLOCKED_NOTICE_MS=10*60000;
-const KIND='resultReceipts',OUTCOMES=new Set(['not_executed','cancelled','blocked']),DECISIONS=new Set(['accepted','rejected','acknowledged']);
+const KIND='resultReceipts',OUTCOMES=new Set(['not_executed','cancelled','blocked','resume_failed']),DECISIONS=new Set(['accepted','rejected','acknowledged']);
 const runEnded=new Set(['succeeded','failed','interrupted']);
 const now=()=>new Date().toISOString();
 const short=(text,limit)=>{const value=String(text||'').replace(/\s+/g,' ').trim();return value.length>limit?`${value.slice(0,limit-1)}…`:value;};

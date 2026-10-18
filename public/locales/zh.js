@@ -924,6 +924,8 @@ export default {
   'This round was stopped': '本轮执行已停止',
   'Awaiting reply · CLI ready': '等待回复 · CLI 已就绪',
   'Waiting for other roles to reply': '等待其他角色回复',
+  'Replies arrived; retrying the follow-up': '回复已到，正在重试后续处理',
+  'Replies arrived, but the follow-up failed': '回复已到，但后续处理失败',
   'This round was cancelled': '本轮任务已取消',
   'Execution finished; see this round\'s verdict': '执行已完成，请查看本轮结论',
   'Task did not start; see the logs': '任务未启动，请查看日志',

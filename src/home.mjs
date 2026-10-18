@@ -149,6 +149,8 @@ const executionPlans = new ExecutionPlans(db,calls,workerQuery,{
 const deliveries = new Deliveries(db);
 db.transaction(()=>{
   discussions.recover();
+  // Stuck waits from before the resume fix end explicitly here, so replaying results below cannot revive them.
+  calls.reconcileStuckWaits();
   calls.recoverTerminalRuns();
   for (const run of db.list('runs').filter(r=>terminal.has(r.status))) rooms.complete(run);
   archiveHistoricalReceipts(db);
