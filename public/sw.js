@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v145-queue-exclusive-display';
+const CACHE = 'agent-workbench-static-v146-consolidated-20261018';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',
