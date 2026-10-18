@@ -24,7 +24,7 @@ import { CliPrintSession } from './cli-print-session.mjs';
 import { supportedPermissionScopes, workerPermissionScopes, PERMISSION_CONTRACT_VERSION } from './role-permissions.mjs';
 import { browseFolders, createFolder, prepareNativeSessionFolder } from './folders.mjs';
 import {createWorkerNativeTurns} from './native-turns-worker.mjs';
-import {listNativeSessions,readNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
+import {listNativeSessions,readNativeSession,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import { giteeRepository } from './repository.mjs';
 import { inspectRuntimes, runtimeIssue, mergeRuntimeReports } from './runtime-probe.mjs';
 import { writeHandoff } from './wb-tools.mjs';
@@ -37,7 +37,7 @@ import { publishDelivery, receiveDelivery } from './git-delivery.mjs';
 import { composeAgentInstructions, englishExecutionRules } from './platform-prompts.mjs';
 import { runtimeGuidance } from './runtime-guidance.mjs';
 import { prepareSupervisorDirectory, setupRepository } from './setup-workspace.mjs';
-import { startAgentBridge, agentProcessEnv, canSendAgentOperation } from './agent-bridge.mjs';
+import { startAgentBridge, agentProcessEnv, canSendAgentOperation, agentOperationBlock } from './agent-bridge.mjs';
 import { QueueSlots,terminalDeliveryFacts } from './session-queue-worker.mjs';
 import { TurnStates } from './session-queue-adapters.mjs';
 import { outboxBatch } from './worker-outbox.mjs';
@@ -355,7 +355,8 @@ async function command(m) {
       }
       if (reservation.stopRequested || paused || ws?.readyState !== 1) { emit(c.runId,'status',{status:'interrupted',error:tr('worker.executionInterruptedByStopDisconnect')});return; }
       bridge = await startAgentBridge({ workspace: folder, runId: c.runId, home: homeHttp, token,
-        canSend: (pathname,input) => canSendAgentOperation({paused,quitting,connected:ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input) });
+        canSend: (pathname,input) => canSendAgentOperation({paused,quitting,connected:ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input),
+        blockReason: (pathname,input) => agentOperationBlock({paused,quitting,connected:ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input) });
       const wbEnv = agentProcessEnv(await runtimeGitEnvironment({directory:join(data,'git-auth'),key:m.run.roleSessionId||c.runId,repositories:executionRepositories,credentials:m.gitCredentials,env:process.env}), {
         PATH: `${join(base, 'bin')}${delimiter}${process.env.PATH || ''}`,
         WB_PROJECT_ROOT: m.run.execution?.isolated ? folder : root,
@@ -395,7 +396,7 @@ async function command(m) {
       if(m.run.resumeNativeSessionId) {
         const prior=m.run.resumeNativeSession;
         if(!prior || prior.id!==m.run.resumeNativeSessionId || prior.runtime!==runtimeType || prior.user!==native.user || prior.home!==native.home)throw new Error(tr('worker.nativeSessionIdentityHasChanged'));
-        await findSessionHistory(prior);
+        await findSessionHistory(prior,folder);
         await checkNativeDriver(m);
       }
       db.put('runtimeEnvironments',{id:c.runId,env:resumeEnvironment(wbEnv)});
@@ -722,13 +723,14 @@ async function query(m) {
     if(['native_sessions','native_session','native_terminal_preview','native_terminal_prepare'].includes(m.action)) {
       const input=m.path||{},runtime=input.runtime;
       if(m.action!=='native_sessions'&&!runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false))throw Error('CLI is not available on this device');
-      if(m.action==='native_sessions'){send({type:'reply',id:m.id,result:await listNativeSessions(runtime,{scope:input.scope||'created',registry:db.list('nativeCatalogEntries'),managedSessions:input.managedSessions||[],nodeId:identity.nodeId})});return;}
-      if(m.action==='native_session'){send({type:'reply',id:m.id,result:await readNativeSession(runtime,input.sessionId,{historyPage:input.historyPage===true,cursor:input.cursor,snapshot:input.snapshot})});return;}
+      if(m.action==='native_sessions'){send({type:'reply',id:m.id,result:await listNativeSessions(runtime,{scope:input.scope||'created',registry:db.list('nativeCatalogEntries'),managedSessions:input.managedSessions||[],adoptedSessions:input.adoptedSessions||[],nodeId:identity.nodeId})});return;}
+      const record=input.record||registeredNativeSession(db,runtime,input.sessionId);
+      if(m.action==='native_session'){send({type:'reply',id:m.id,result:await readNativeSession(runtime,input.sessionId,{record,historyPage:input.historyPage===true,cursor:input.cursor,snapshot:input.snapshot})});return;}
       if(paused)throw Error('Remote execution is paused');
       const freshId=input.sessionId?null:input.freshSessionId||null;
       if(!input.sessionId&&['claude','grok'].includes(runtime)&&!freshId)throw Error('Upgrade Home to create an exact native session ID');
       nativeTuiArgs(runtime,{id:input.sessionId,freshId,allowAll:input.allowAll??false});
-      const history=input.sessionId?await readNativeSession(runtime,input.sessionId):null;
+      const history=input.sessionId?await readNativeSession(runtime,input.sessionId,{record}):null;
       if(history?.workspace&&input.workspace&&await realpath(input.workspace)!==await realpath(history.workspace))throw Error('Resume must use the original working folder');
       const workspace=await projectRoot(history?.workspace||input.workspace);
       const projectIds=new Set();
@@ -810,7 +812,7 @@ async function query(m) {
       const native=r.nativeSession || await nativeEnvironment('codex');
       const nativeSession={...native,id:native.id || r.nativeSessionId || r.threadId};
       if(nativeSession.user!==(await nativeEnvironment(nativeSession.runtime)).user)throw new Error(tr('worker.workerUserDoesNotMatch'));
-      const historyFile=await findSessionHistory(nativeSession);
+      const historyFile=await findSessionHistory(nativeSession,workspace);
       // The resumed terminal keeps the scope frozen on the original run; refuse here rather than after the terminal opens.
       if(r.permissionScope)scopedTerminalArgs(nativeSession.runtime,r.permissionScope,[base]);
       const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,...(r.permissionScope?{permissionScope:r.permissionScope,toolRoots:[base]}:{}),createdAt:new Date().toISOString()};
@@ -1009,7 +1011,7 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeHistoryPages:1,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

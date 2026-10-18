@@ -4,6 +4,10 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Session is not registered with Workbench':'此会话未登记到 Workbench，不能读取。',
+  'Upgrade this Worker to read only Workbench sessions; external history scanning is disabled':'请升级此 Worker 后读取 Workbench 会话；已禁止扫描外部历史。',
+  'Registered native session history is unavailable; no external histories were scanned':'已登记的原生会话历史暂不可用；未扫描外部历史。',
+  'Registered history could not be read':'无法读取已登记的会话历史。',
   'Configuration Information':'配置说明',
   'Software versions and update notes only. This page does not call an AI, install updates or restart services.':'仅展示软件版本和更新说明，不调用 AI、不安装更新、不重启服务。',
   'Compare with GitHub main. Results are cached for one minute.':'与 GitHub main 对比，检测结果缓存一分钟。',
@@ -924,6 +928,8 @@ export default {
   'This round was stopped': '本轮执行已停止',
   'Awaiting reply · CLI ready': '等待回复 · CLI 已就绪',
   'Waiting for other roles to reply': '等待其他角色回复',
+  'Replies arrived; retrying the follow-up': '回复已到，正在重试后续处理',
+  'Replies arrived, but the follow-up failed': '回复已到，但后续处理失败',
   'This round was cancelled': '本轮任务已取消',
   'Execution finished; see this round\'s verdict': '执行已完成，请查看本轮结论',
   'Task did not start; see the logs': '任务未启动，请查看日志',
@@ -979,6 +985,10 @@ export default {
   'Continuing with the new instruction first': '优先按新指令继续',
   'Waiting to run': '等待执行',
   'Steering': '引导中',
+  'Steering needs attention': '引导需要处理',
+  'Steering needs attention: {reason}': '引导需要处理：{reason}',
+  'Interrupting and starting this message': '正在打断当前执行并启动这条引导',
+  'Interrupt this role now and run this message first; actions already performed are not rolled back': '立即打断该角色并优先执行这条引导；已执行操作不会回滚',
   'Steer now': '立即引导',
   "{h}h {m}m": "{h}小时{m}分",
   "{m}m {s}s": "{m}分{s}秒",
@@ -1646,6 +1656,10 @@ export default {
   "Template deleted.": "模板已删除。",
   "Built-in template restored.": "内置模板已恢复。",
   "Template saved.": "模板已保存。",
+  "Return queued message to input": "取回排队消息到输入框",
+  "Keep or send the current draft before editing a queued message": "请先保留或发送输入框中的草稿，再编辑排队消息",
+  "Retrieving queued message…": "正在取回排队消息…",
+  "Retry editing queued message": "重试取回排队消息",
   "Waiting for {names} to reply": "等待 {names} 回复",
   "Fable may use paid usage credits depending on your plan. Workbench runs Claude Code non-interactively, so charges may occur without another confirmation. Check your account billing before saving. Discovery does not run the model or enable credit purchases; current tasks keep their model.": "Fable 可能按你的套餐使用额外付费 credits。Workbench 通过非交互方式运行 Claude Code，可能直接计费，不会再次弹出费用确认。保存前请核对账号计费设置。模型探测不会发起推理或开启购买；正在执行的任务仍使用原模型。",
 };

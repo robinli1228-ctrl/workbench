@@ -11,7 +11,7 @@ import { nativeTerminalProject, projectTerminalLock } from './terminal-resume.mj
  * Takeover files reuse the Attachments storage/validation code but live in their own directory and record kind,
  * while project/native ownership and capacity use the existing shared terminal leases.
  */
-export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>false}) {
+export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>false,sessionRecord}) {
   const ownDb=Object.create(db,{
     get:{value:(kind,id)=>kind==='projects'&&String(id).startsWith('native:')?{id}:db.get(kind==='attachments'?'nativeTurnAttachments':kind,id)},
     put:{value:(kind,value)=>db.put(kind==='attachments'?'nativeTurnAttachments':kind,value)}
@@ -21,6 +21,9 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
   const finishTurns=(nodeId,runtime,sessionId)=>{for(const t of nativeTurnRows(db,{nodeId,runtime,sessionId,active:true,limit:-1}))db.put('nativeTurns',{...t,status:'interrupted',phase:null,endedAt:new Date().toISOString()});};
   const leases={held,
     reserve({nodeId,runtime,sessionId,previous}){
+      const record=sessionRecord?.(nodeId,runtime,sessionId);
+      if(sessionRecord&&!record)throw Error('Session is not registered with Workbench');
+      if(sessionRecord&&db.get('workers',nodeId)?.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
       if(db.get('settings','main')?.paused)throw Error('Remote execution is paused');
       const existing=previous?.leaseId&&held(previous.leaseId)?db.get('terminalSessions',previous.leaseId):null;
       if(existing&&(previous.status!=='open'||existing.status==='stopping'))throw Error('The previous takeover is still closing');
@@ -31,7 +34,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       assertNativeSessionIdle(db,{nodeId,runtime,sessionId,projectId,claimId:leaseId});
       if(!existing)db.put('terminalSessions',{id:leaseId,kind:'native-turn',nodeId,runtime,sessionId,projectId,nativeSession:{runtime,id:sessionId},status:'preparing',createdAt:new Date().toISOString()});
       const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
-      return {leaseId,projectId,managedProjectIds:owner?[owner]:[],bindings};
+      return {leaseId,projectId,managedProjectIds:owner?[owner]:[],bindings,record};
     },
     stopping(id){const s=db.get('terminalSessions',id);if(s&&held(id))db.put('terminalSessions',{...s,status:'stopping'});},
     update(nodeId,m){const s=db.get('terminalSessions',m.leaseId);if(!s||s.nodeId!==nodeId||s.runtime!==m.runtime||s.sessionId!==m.sessionId||!held(s.id))return;

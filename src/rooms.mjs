@@ -1,4 +1,5 @@
 import { tr } from './i18n.mjs';
+import {registerCallOutcome,BLOCKED_NOTICE_MS} from './result-receipts.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 import {assertBindingEditAllowed, activeRoleSwitch,roleSwitchWaitReason,effectiveExecutionRole} from './role-switch-policy.mjs';
 import {sourceInputWaitReason} from './source-sync-input.mjs';
@@ -289,6 +290,32 @@ export class Rooms {
     return { id, exists: Boolean(message && message.projectId === projectId && conversationIdOf(message) === conversationId && message.visibility !== 'internal') };
   }
 
+  /** Resolve the immediate public request, not the ancestral user input; continuation links never cross chats. */
+  replySourceFor(record) {
+    const get=(kind,id)=>{
+      const value=id?this.db.get(kind,id):null;
+      return value?.projectId===record.projectId&&conversationIdOf(value)===conversationIdOf(record)&&value.visibility!=='internal'?value:null;
+    };
+    let request=get('coordinationRequests',record.requestId),seen=new Set();
+    while(request){
+      if(seen.has(request.id))return null;
+      seen.add(request.id);
+      const call=get('roomMessages',request.callMessageId||`call:${request.id}`);
+      if(call)return call;
+      if(request.callMessageId)return null;
+      if(request.reassignedFrom){
+        const previous=get('coordinationRequests',request.reassignedFrom);
+        if(!previous||previous.reassignedTo!==request.id)return null;
+        request=previous;continue;
+      }
+      if(request.kind!=='continuation')return request.parentRequestId||['consult','handoff'].includes(request.kind)?null:get('roomMessages',record.sourceMessageId);
+      const previous=get('coordinationRequests',request.continuationOf);
+      if(!previous||previous.targetRoleId!==request.targetRoleId)return null;
+      request=previous;
+    }
+    return record.requestId?null:get('roomMessages',record.sourceMessageId);
+  }
+
   messages(projectId, before, conversationId) {
     conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound3'));
@@ -297,12 +324,29 @@ export class Rooms {
     if (end < 0) throw new Error(tr('rooms.historyCursorNotFound'));
     const start = Math.max(0, end - 60), messages = all.slice(start, end).map(message => {
       const dialogue = this.messageDialogue(message);
-      const source=message.replyToId?this.db.get('roomMessages',message.replyToId):null;
-      const replySource=source?.projectId===projectId&&conversationIdOf(source)===conversationId&&source.visibility!=='internal'?{id:source.id,senderName:source.senderName,text:String(source.text||'').slice(0,180)}:null;
-      return {...message,...(dialogue?{dialogue}:{}),...(replySource?{replySource}:{})};
+      const run=message.sender==='agent'&&message.runId?this.db.get('runs',message.runId):null;
+      // Correct legacy ancestral quotes in the read view only; explicit message replies and stored history remain intact.
+      const derived=run?.projectId===projectId&&conversationIdOf(run)===conversationId&&message.replyToId===run.sourceMessageId;
+      const source=derived?this.replySourceFor(run):message.replyToId?this.db.get('roomMessages',message.replyToId):null;
+      const replySource=source?.projectId===projectId&&conversationIdOf(source)===conversationId&&source.visibility!=='internal'?this.quoteSummary(source):null;
+      return {...message,...(derived?{replyToId:replySource?.id||null}:{}),...(dialogue?{dialogue}:{}),...(replySource?{replySource}:{})};
     });
-    return { messages, hasMore: start > 0, nextBefore: messages[0]?.id || null };
+    // Include only bounded quote excerpts for active cards, even when their call is outside the 60-message page.
+    const liveReplySources={};
+    if(!before){
+      const tasks=new Map(this.db.chatTasks().filter(t=>t.projectId===projectId&&conversationIdOf(t)===conversationId).map(t=>[t.id,t]));
+      const taskIds=new Set([...messages.flatMap(m=>m.taskIds||[]),...this.db.activeRuns().filter(r=>r.projectId===projectId&&conversationIdOf(r)===conversationId).map(r=>r.taskId)]);
+      for(const id of taskIds){const task=this.db.get('tasks',id);if(task?.projectId===projectId&&conversationIdOf(task)===conversationId)tasks.set(id,task);}
+      for(const task of tasks.values()){
+        const source=this.replySourceFor(task);
+        liveReplySources[task.id]=source?this.quoteSummary(source):null;
+      }
+    }
+    return { messages, liveReplySources, hasMore: start > 0, nextBefore: messages[0]?.id || null };
   }
+
+  /** Quote metadata carries no private prompt or file contents; the original stays behind the history endpoint. */
+  quoteSummary(source){return {id:source.id,projectId:source.projectId,conversationId:conversationIdOf(source),senderName:source.senderName,text:String(source.text||'').slice(0,240),attachments:(source.attachments||[]).map(a=>({name:a.name}))};}
 
   /** Resolve display-only recipients before pagination loses their source; never rewrite history or publish private Run output. */
   messageDialogue(message) {
@@ -342,6 +386,24 @@ export class Rooms {
       if(tasks.some(t=>!t||t.projectId!==projectId||t.origin!=='chat'||t.status!=='ready'||t.currentRunId))throw new Error(tr('rooms.queueOrderMismatch'));
       for(const [id,queueOrder] of reorderedQueueKeys(tasks,taskIds))this.db.put('tasks',{...this.db.get('tasks',id),queueOrder});
       return {taskIds};
+    });
+  }
+
+  /** Recall one human message atomically, including its queued recipients; never stop a Run or rewrite the original. */
+  editQueuedMessage(projectId,taskId,{commandId,conversationId}={}) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
+    if(typeof commandId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(commandId))throw new Error(tr('rooms.invalidMessageId'));
+    return this.db.transaction(()=>{
+      const selected=this.db.get('tasks',taskId),message=selected&&this.db.get('roomMessages',selected.sourceMessageId);
+      const belongs=value=>value?.projectId===projectId&&conversationIdOf(value)===conversationId;
+      if(!belongs(selected)||!belongs(message)||message.sender!=='human'||!message.taskIds?.includes(taskId))throw new Error(tr('rooms.queueEditUnavailable'));
+      const tasks=message.taskIds.map(id=>this.db.get('tasks',id));
+      const editable=task=>belongs(task)&&task.origin==='chat'&&task.sourceMessageId===message.id&&!task.currentRunId&&!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination&&!task.steering&&!task.collaborationYield;
+      const replay=tasks.every(task=>editable(task)&&task.status==='cancelled'&&task.queueEditId===commandId);
+      if(!replay&&tasks.some(task=>!editable(task)||task.status!=='ready'))throw new Error(tr('rooms.queueEditUnavailable'));
+      if(!replay){for(const task of tasks)this.db.put('tasks',{...this.cancel(task.id),queueEditId:commandId});this.touch(projectId,conversationId);}
+      const quote=message.replyToId&&this.db.get('roomMessages',message.replyToId);
+      return {message,requestIds:tasks.map(task=>task.requestId).filter(Boolean),replySource:belongs(quote)&&quote.visibility!=='internal'?this.quoteSummary(quote):null};
     });
   }
 
@@ -393,9 +455,14 @@ export class Rooms {
         : discussion ? null : this.nativeRecoveryReason?.(task,recoveryChecks);
       if (reason) {
         const record=discussion?this.db.get(kind,recordId):task;
-        // Only an offline device or an unusable CLI counts as blocked; busy roles, capacity and workspace exclusivity are normal queueing.
-        const blockedKind=discussion?null:reason===tr('rooms.waitingForNodeComeOnline')?'device_offline':worker&&reason===runtimeIssue(worker, role.runtime, role.model)?'cli_unavailable':null;
+        // Offline devices and unusable CLIs keep queueing but count as blocked; a disabled target role waits for a person. Busy
+        // roles, capacity, workspace exclusivity and Worker upgrades during a rolling deploy are normal queueing.
+        const blockedKind=discussion?null:reason===tr('rooms.waitingForNodeComeOnline')?'device_offline':worker&&reason===runtimeIssue(worker, role.runtime, role.model)?'cli_unavailable'
+          :reason===tr('rooms.roleDisabled2')?'role_disabled':null;
         const blockedSince=blockedKind?(record?.blockedKind===blockedKind&&record.blockedSince?record.blockedSince:new Date().toISOString()):null;
+        // The caller hears about a block once per episode: at once when a person must act, after the wake window otherwise.
+        if(blockedKind&&task.requestId&&(blockedKind==='role_disabled'||Date.now()-Date.parse(blockedSince)>=BLOCKED_NOTICE_MS))
+          registerCallOutcome(this.db,this.db.get('coordinationRequests',task.requestId),{outcome:'blocked',reason,episode:`${blockedKind}:${blockedSince}`});
         if (record?.waitingReason !== reason || (!discussion && ((record?.blockedKind||null)!==blockedKind || (record?.blockedSince||null)!==blockedSince))) {
           this.db.put(discussion?kind:'tasks', { ...record, waitingReason: reason, ...(discussion?{}:{blockedKind,blockedSince}) }); changed = true;
         }
@@ -430,11 +497,10 @@ export class Rooms {
     const body = typeof text === 'string' ? text.trim() : '';
     if (!body || body.length > 8000) throw new Error(tr('rooms.noteMustBe18000'));
     if (!run?.projectId || !run.roleSnapshot?.name) throw new Error(tr('rooms.currentRunInvalid'));
-    const request=this.db.get('coordinationRequests',run.requestId||'');
-    const call=request?.callMessageId?this.db.get('roomMessages',request.callMessageId):null;
+    const source=this.replySourceFor(run);
     const message = this.db.put('roomMessages', {
       id: randomUUID(), projectId: run.projectId, conversationId:conversationIdOf(run), sender: 'agent', senderName: run.roleSnapshot.name,
-      roleId: run.roleId, text: body, replyToId: call?.projectId===run.projectId?call.id:run.sourceMessageId || null, runId: run.id, taskIds: [], createdAt: now()
+      roleId: run.roleId, text: body, replyToId: source?.id||null, runId: run.id, taskIds: [], createdAt: now()
     });
     if (run.collaborationBatchId||run.continuationBatchId) new SessionQueue(this.db).recordReply(run, message.id);
     this.touch(run.projectId,conversationIdOf(run));
@@ -455,11 +521,10 @@ export class Rooms {
       if(quiet&&!question)return;
       const text = quiet||(run.explicitPublish||run.handoffWait&&question)&&run.status==='succeeded'?question:run.status === 'succeeded' ? (run.result || question || tr('rooms.runHasEndedRuntimeReturned'))
         : tr('rooms.text', { p1: run.status === 'interrupted' ? tr('rooms.runStopped') : tr('rooms.runFailed'), p2: run.error || tr('rooms.seeRunDetails'), p3: !run.explicitPublish && run.result ? tr('rooms.existingOutput', { result: run.result }) : '' });
-      const request=this.db.get('coordinationRequests',run.requestId||'');
-      const handoff=this.db.get('roomMessages',request?.callMessageId||`call:${run.requestId}`);
+      const source=this.replySourceFor(run);
       this.db.put('roomMessages', { id, projectId: run.projectId, conversationId:conversationIdOf(run), sender: 'agent', senderName: run.roleSnapshot.name,
         ...(run.explicitPublish?{kind:question?'user_question':'technical_notice'}:{}),
-        roleId: run.roleId, text, replyToId: handoff?.projectId===run.projectId?handoff.id:run.sourceMessageId,
+        roleId: run.roleId, text, replyToId: source?.id||null,
         runId: run.id, taskIds: [], createdAt: now() });
       this.touch(run.projectId,conversationIdOf(run));
     });

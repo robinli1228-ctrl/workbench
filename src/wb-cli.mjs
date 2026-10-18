@@ -6,7 +6,7 @@ import {discussionHelp} from './discussion-policy.mjs';
 import { setupCatalog, setupPropose, updateRolePrompt } from './setup-tools.mjs';
 import {
   helpText, boot, docsList, docsRead,inspectReadSource,queryNodeReadOnly,readDeviceFile,
-  gitStatus, chatPost, notifySupervisor, askRole, callRole, waitForRole, requestDelivery, writeHandoff, handoffLast
+  gitStatus, chatPost, notifySupervisor, askRole, callRole, callDocument, waitForRole, requestDelivery, writeHandoff, handoffLast
 } from './wb-tools.mjs';
 import { tr } from './i18n.mjs';
 
@@ -88,7 +88,15 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'setup' && sub === 'catalog') return out(await setupCatalog());
     if (cmd === 'pass') return out(await agentRequest('/api/agent/pass',{runId:process.env.WB_RUN_ID}));
     if(cmd==='report'&&sub==='status'){if(rest.length!==1)throw new Error(tr('runReports.invalidSubmissionId'));return out(await agentRequest('/api/agent/report',{runId:process.env.WB_RUN_ID,action:'status',submissionId:rest[0]}));}
-    if (cmd === 'report') return out(await agentRequest('/api/agent/report',{...JSON.parse(tail.join(' ')),runId:process.env.WB_RUN_ID}));
+    if(cmd==='report'&&sub==='file'){if(!rest.length||rest.length>3)throw new Error(tr('runReports.fileUsage'));return out(await agentRequest('/api/agent/report',{runId:process.env.WB_RUN_ID,action:'file',target:rest[0],...(rest[1]!==undefined?{path:rest[1]}:{}),...(rest[2]!==undefined?{offset:Number(rest[2])}:{})}));}
+    if (cmd === 'report') {
+      const input=JSON.parse(tail.join(' '));
+      // Attached files are read here by path, with the same allow-list and SHA256 as wb call --file; Home re-checks both.
+      if(input.files!==undefined){if(!Array.isArray(input.files)||!input.files.length||input.files.length>3||input.files.some(f=>typeof f!=='string'))throw new Error(tr('runReports.invalidFiles'));input.files=await Promise.all(input.files.map(f=>callDocument(f)));}
+      const body={...input,runId:process.env.WB_RUN_ID};
+      if(input.files&&Buffer.byteLength(JSON.stringify(body))>60000)throw new Error(tr('runReports.invalidFiles'));
+      return out(await agentRequest('/api/agent/report',body));
+    }
     if (cmd === 'progress') {
       if(!sub||sub==='list')return out(await agentRequest('/api/agent/progress',{runId:process.env.WB_RUN_ID,action:'list'}));
       if(sub==='verify'&&rest.length)return out(await agentRequest('/api/agent/progress',{runId:process.env.WB_RUN_ID,action:'verify',input:JSON.parse(rest.join(' '))}));
@@ -122,7 +130,8 @@ export async function main(argv = process.argv.slice(2)) {
       return out(await requestDelivery(sub, rest[0], rest.slice(1).join(' ')));
     }
     if (cmd === 'call') {
-      const values = {}, flags = { '--role': 'role', '--kind': 'kind', '--request-id': 'requestId', '--text': 'text', '--file':'file', '--delivery-id': 'deliveryId','--source-sync-batch-id':'sourceSyncBatchId' };
+      const values = {}, flags = { '--role': 'role', '--kind': 'kind', '--request-id': 'requestId', '--text': 'text', '--file':'file', '--delivery-id': 'deliveryId','--source-sync-batch-id':'sourceSyncBatchId',
+        '--goal':'goal','--scope':'scope','--input':'input','--return':'returns' };
       for (let i = 0; i < tail.length; i += 2) {
         const key = flags[tail[i]];
         if (!key || tail[i + 1] === undefined || key!=='role'&&values[key] !== undefined) throw new Error(tr('wbCli.invalidDuplicateWbCallParameters'));

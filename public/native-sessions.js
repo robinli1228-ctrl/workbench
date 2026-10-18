@@ -126,15 +126,16 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  }
  /** Fetch at most two device catalogues at a time; one unavailable device must not hide the others. */
  async function load({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet){items=[];resetDetail();renderList();note.textContent=t('Loading native sessions…');}
-  // The API's all scope excludes managed group history; combine both scopes only for the unfiltered view.
-  const scopes=device.value==='all'?['all','group']:[['created','group'].includes(device.value)?device.value:'all'];
+  // Both device filters and All include registered independent entries plus managed role history.
+  const scopes=['created','group'].includes(device.value)?[device.value]:['all','group'];
   const jobs=workers().flatMap(w=>(tool.value==='all'?Object.keys(names):[tool.value]).filter(runtime=>device.value==='created'||w.runtimes?.some(r=>r.type===runtime&&r.available&&r.supported!==false)).flatMap(runtime=>scopes.map(scope=>({nodeId:w.id,runtime,scope})))),results=[],errors=[],failedJobs=new Set();let partial=false,index=0;
   // Publish complete catalogue snapshots as they arrive; a slow peer cannot block selecting already-read history.
-  const previous=quiet?items:[],ordered=values=>[...new Map(values.map(item=>[key(item),item])).values()].sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||''))||key(a).localeCompare(key(b)));
+  const owned=item=>['dialog','managed','takeover'].includes(item.origin);
+  const previous=quiet?items.filter(owned):[],ordered=values=>[...new Map(values.filter(owned).map(item=>[key(item),item])).values()].sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||''))||key(a).localeCompare(key(b)));
   const updateLineage=()=>{if(!selected)return;const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(selected)));if(group){const chain=[group.latest,...group.history];timeline.setOlder(selected,chain.slice(chain.findIndex(row=>key(row)===key(selected))+1));}};
   await Promise.all(Array.from({length:Math.min(2,jobs.length)},async()=>{while(index<jobs.length&&ticket===version&&active()){const job=jobs[index++];try{const result=await readNativeSessionPages((offset,revision)=>api(`${endpoint(job.nodeId)}?${new URLSearchParams({runtime:job.runtime,scope:job.scope,offset:String(offset),revision})}`),()=>ticket===version&&active());if(ticket!==version||!active())return;results.push(...result.items.map(item=>({...item,nodeId:job.nodeId})));partial||=result.partial;items=ordered([...previous,...results]);updateLineage();renderList();}catch(e){failedJobs.add(`${job.nodeId}/${job.runtime}/${job.scope}`);errors.push(`${workerName(job.nodeId)}: ${t(e.message)}`);}}}));
   if(ticket!==version||!active())return;loading=false;
-  if(quiet)results.push(...items.filter(item=>failedJobs.has(`${item.nodeId}/${item.runtime}/${device.value==='all'?(item.origin==='managed'?'group':'all'):scopes[0]}`)&&!results.some(r=>key(r)===key(item))));
+  if(quiet)results.push(...items.filter(item=>owned(item)&&failedJobs.has(`${item.nodeId}/${item.runtime}/${scopes.length>1?(item.origin==='managed'?'group':'all'):scopes[0]}`)&&!results.some(r=>key(r)===key(item))));
   items=ordered(results);
   note.textContent=errors.length?[t('Some devices could not be read.'),...new Set(errors)].join(' '):t(partial?'Showing recent sessions. Updates automatically.':items.length?'':'No sessions in this filter. Create one using the top-right button.');
   if(selected){const next=items.find(item=>key(item)===key(selected));if(next){selected={...selected,...next};if(quiet&&!dialog.open)void read(selected,{quiet:true});}else resetDetail();}renderList();
@@ -253,7 +254,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   const revokeAttachment=(nodeId,id)=>{const key=`${nodeId}:${id}`,pending=urls.get(key);urls.delete(key);if(pending)void Promise.resolve(pending).then(url=>URL.revokeObjectURL(url)).catch(()=>{});};
   const revokeUrls=()=>{for(const id of [...urls.keys()]){const split=id.indexOf(':');revokeAttachment(id.slice(0,split),id.slice(split+1));}};
   let previewDialog=null;
-  /** The full original (images) or its name and size (other files); the 48px card thumbnail is only a crop. */
+  /** The full original (images) or its name and size (other files); the draft thumbnail is only a crop. */
   function previewAttachment(item){if(!current)return;
    if(!previewDialog){previewDialog=el('dialog','attachment-dialog');document.body.append(previewDialog);}
    const close=closeIcon(el('button','icon-button'),t('Close'));close.type='button';close.onclick=()=>previewDialog.close();
@@ -262,7 +263,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
    previewDialog.append(el('p','attachment-text',`${item.name} · ${sizeText(item.size)}`));previewDialog.showModal();}
   function attachmentCard(item,remove){const card=el('div',`attachment-card${item.mime?.startsWith('image/')?'':' attachment-file-card'}`);card.title=item.name;
    if(remove){
-    // Composer card: same 224×64 layout as the group chat. The body opens the preview; the × keeps its own column.
+    // Match group-chat draft tiles: image preview with a corner remove control, details for other files.
     const open=el('button','attachment-open');open.type='button';open.addEventListener('click',()=>previewAttachment(item));
     if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);}
     else{const icon=el('span','native-file-icon');icon.innerHTML=UI_ICON.original;open.append(icon);}

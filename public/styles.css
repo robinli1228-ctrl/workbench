@@ -2596,6 +2596,10 @@ button.danger:hover:not(:disabled), :is(dialog, #project-form-panel) button.dang
 /* Role cards: one plain card; the model row sits directly on it, no inset strip or outline. */
 .role-id-row, .role-card.is-working .role-id-row { margin-top: 10px; padding: 0; border-radius: 0; background: transparent; box-shadow: none; }
 
+/* One left-aligned decorative mark for every role: 8 × the 22px model icon, 96% transparent, never a hit target. */
+.role-card-watermark { position: absolute; left: -18px; top: 50%; width: 176px; height: 176px; transform: translateY(-50%); opacity: .04; pointer-events: none; user-select: none; z-index: -1; }
+.role-card-watermark > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+
 /* Inspector tabs: no fill or bar; the selected icon is blue, the others grey. */
 .inspector-tabs button, .inspector-tabs button:hover { background: transparent; }
 .inspector-tabs button[aria-selected="true"] { color: var(--accent); background: transparent; }
@@ -2610,14 +2614,16 @@ button.danger:hover:not(:disabled), :is(dialog, #project-form-panel) button.dang
 @keyframes card-sweep-slow { 0% { transform: translateX(-120%); } 30% { transform: translateX(120%); } 100% { transform: translateX(120%); } }
 
 /* Left chat cards: a slightly larger bare icon instead of a tile inside the card; blue when selected. */
-#project-list .project-item { grid-template-columns: 26px minmax(0, 1fr); gap: 10px; padding-left: 16px; }
+#project-list .project-item { grid-template-columns: 29.9px minmax(0, 1fr); gap: 10px; padding-left: 16px; }
 #project-list .project-item-icon, #project-list .project-item.active .project-item-icon, #project-list .project-item.active.is-running .project-item-icon {
-  width: 26px; height: 26px; border-radius: 0; background: transparent; box-shadow: none; filter: none; }
+  width: 29.9px; height: 29.9px; border-radius: 0; background: transparent; box-shadow: none; filter: none; }
 #project-list .project-item-icon { color: var(--text-muted); }
-#project-list .project-item-icon svg { width: 22px; height: 22px; }
+#project-list .project-item-icon svg { width: 25.3px; height: 25.3px; }
 #project-list .project-item.active .project-item-icon, #project-list .project-item.active.is-running .project-item-icon { color: var(--accent); }
 #project-list .project-item.is-running .project-item-icon { color: var(--text-muted); }
 #native-session-list .project-item { padding-left: 16px; }
+#native-session-list .project-item > .role-agent { width: 29.9px; height: 29.9px; }
+#native-session-list .project-item > .role-agent:not([data-runtime="codex"]) > svg { width: 100%; height: 100%; }
 
 /* Running: a small dot at the left edge of the card. */
 #project-list .project-item.is-running::before, #native-session-list .project-item.is-running::before {
@@ -2684,6 +2690,10 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 /* Buttons: icon-only for utility actions, text-only for commits; a row never mixes them, and buttons keep clear of the text beside them. */
 .message-queue-item .message-queue-first.is-active { color: var(--accent); background: var(--accent-tint); }
 .message-queue-item .message-queue-first.is-active:disabled { opacity: 1; }
+.message-queue-item .message-queue-steer.is-active { color: var(--accent); background: var(--accent-tint); opacity: 1; }
+.message-queue-item .message-queue-steer.is-error { color: var(--danger, #b42318); opacity: 1; }
+.message-queue-spinner { animation: role-refresh-spin 1.2s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .message-queue-spinner { animation: none; } }
 .source-sync-heading button.action-icon-button { padding: 8px; }
 .worker-card-head strong { min-width: 0; }
 .worker-card-head > button:first-of-type { margin-left: auto; }
@@ -2706,9 +2716,8 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 .attachment-remove { display: grid; place-items: center; }
 .attachment-remove svg { display: block; width: 14px; height: 14px; pointer-events: none; }
 
-/* Composer attachments (group chat and native takeover) share one fixed 224×64 horizontal card: a 48px preview or
-   file icon, the name on one line, size or upload status below it, and the actions in their own right column so
-   they never cover text. Desktop wraps; narrow screens scroll the row sideways. Sent attachments keep their layout. */
+/* Draft files use horizontal detail cards; draft images use compact preview tiles below.
+   Desktop wraps; narrow screens scroll sideways. Sent attachments keep their existing layout. */
 :is(#chat-attachments, .native-takeover-tray) { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 8px; min-width: 0; max-width: 100%; max-height: 144px; overflow-x: hidden; overflow-y: auto; }
 :is(#chat-attachments, .native-takeover-tray)[hidden] { display: none; }
 :is(#chat-attachments, .native-takeover-tray) > :is(.attachment-card, .attachment-uploading) { box-sizing: border-box; flex: 0 0 224px; width: 224px; min-width: 224px; max-width: 224px; height: 64px; margin: 0; aspect-ratio: auto; }
@@ -2726,6 +2735,16 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 :is(#chat-attachments, .native-takeover-tray) > .attachment-card:has(> .chat-icon-btn) > .attachment-remove { grid-row: 1; align-self: end; margin-bottom: 1px; }
 :is(#chat-attachments, .native-takeover-tray) > .attachment-card > .chat-icon-btn { grid-row: 2; align-self: start; margin-top: 1px; }
 :is(#chat-attachments, .native-takeover-tray) > .attachment-uploading { display: grid; place-items: center; padding: 0 12px; border: 1px dashed var(--card-hairline); border-radius: 12px; color: var(--text-muted); background: var(--surface-sunken); font-size: 12px; }
+/* Image drafts match the small native-chat preview: image only, with a corner remove control on interaction. */
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) { display: block; flex-basis: 120px; width: 120px; min-width: 120px; max-width: 120px; height: 120px; border-color: var(--card-hairline-strong); }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) > .attachment-open { display: block; width: 100%; height: 100%; padding: 0; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) > .attachment-open > img { display: block; width: 100%; height: 100%; border-radius: 0; object-fit: cover; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) > .attachment-open > :is(.attachment-name, small) { display: none; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) > .attachment-remove { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border: 1px solid var(--card-hairline); border-radius: 50%; color: var(--text-body); background: rgb(255 255 255 / 96%); box-shadow: 0 1px 4px rgb(16 24 40 / 12%); opacity: 0; pointer-events: none; transition: opacity .12s; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card):is(:hover, :focus-within) > .attachment-remove { opacity: 1; pointer-events: auto; }
+@media (hover: none) {
+  :is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) > .attachment-remove { opacity: 1; pointer-events: auto; }
+}
 @media (max-width: 760px) {
   :is(#chat-attachments, .native-takeover-tray) { flex-wrap: nowrap; max-height: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding-bottom: 2px; }
   :is(#chat-attachments, .native-takeover-tray) > :is(.attachment-card, .attachment-uploading) { scroll-snap-align: start; }
@@ -2745,24 +2764,34 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
   border-color: var(--card-hairline); background: var(--card-surface); box-shadow: var(--card-shadow);
 }
 
-/* Running group chats and native sessions, selected or not: a steady 6px accent dot at the right end of the row is the
-   only running cue. The former left dot moves there (no second dot); the tinted surface, halo and light sweep are gone.
-   Every row keeps room for the dot, so long names stop before it and nothing shifts when a run starts or ends. */
-#project-list .project-item, #native-session-list .project-item { padding-right: 24px; }
+/* Both lists share a slowly rotating hourglass. Reserve its full rotation footprint even on idle rows so names never shift. */
+#project-list .project-item, #native-session-list .project-item { padding-right: 34px; }
 #project-list .project-item.is-running, #native-session-list .project-item.is-running {
   border-color: var(--card-hairline); background: var(--card-surface); box-shadow: var(--card-shadow);
 }
 #project-list .project-item.is-running small, #native-session-list .project-item.is-running small { color: #656c7d; }
 #project-list .project-item.is-running::after, #native-session-list .project-item.is-running::after { content: none; animation: none; }
-#project-list .project-item.is-running::before, #native-session-list .project-item.is-running::before { left: auto; right: 10px; box-shadow: none; }
+#project-list .project-item.is-running::before, #native-session-list .project-item.is-running::before {
+  left: auto; right: 11px; width: 14px; height: 14px; margin-top: -7px; border-radius: 0; box-shadow: none;
+  background: var(--accent);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 3h10M7 21h10M8 3v3.5c0 2 2 3.5 4 5.5-2 2-4 3.5-4 5.5V21m8-18v3.5c0 2-2 3.5-4 5.5 2 2 4 3.5 4 5.5V21'/%3E%3Cpath d='m9.5 18 2.5-2.5 2.5 2.5Z' fill='black' stroke='none'/%3E%3C/svg%3E") center / contain no-repeat;
+  animation: sidebar-hourglass-spin 6s linear infinite;
+}
+@keyframes sidebar-hourglass-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #project-list .project-item.is-running::before, #native-session-list .project-item.is-running::before { animation: none; }
+}
 #project-list .project-item.active:hover, #native-session-list .project-item.active:hover,
 #project-list .project-item.is-running:hover, #native-session-list .project-item.is-running:hover {
   border-color: var(--card-hairline-strong); background: var(--card-surface); box-shadow: var(--card-shadow-hover);
 }
 @media (min-width: 1001px) {
   body[data-project-sidebar="collapsed"] .project-sidebar .sidebar-heading { padding-bottom: 12px; }
+  /* The narrow rail places status below the enlarged mark rather than painting over it. */
+  body[data-project-sidebar="collapsed"] #project-list .project-item,
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item { min-height: 60px; padding: 4px 7px 22px; }
   body[data-project-sidebar="collapsed"] #project-list .project-item.is-running::before,
-  body[data-project-sidebar="collapsed"] #native-session-list .project-item.is-running::before { left: auto; right: 3px; }
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item.is-running::before { left: auto; right: 4px; top: auto; bottom: 4px; margin-top: 0; }
   body[data-project-sidebar="collapsed"] #project-list .project-item.is-running:hover,
   body[data-project-sidebar="collapsed"] #native-session-list .project-item.is-running:hover,
   body[data-project-sidebar="collapsed"] #native-session-list .project-item.is-running:not(.active) { border-color: transparent; background: transparent; box-shadow: none; }

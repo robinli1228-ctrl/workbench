@@ -22,7 +22,9 @@ export function executionProgress({run,task,request,online=true}={}) {
   if(run?.status==='queued')return result('queued','queued','Waiting to be scheduled',task?.waitingReason||'');
   if(task?.discussionWait||task?.status==='waiting_discussion'||run?.discussionWaiting)return result('waiting','waiting_reply','Waiting for the current question to be handled',task?.waitingReason||'');
   const waiting={waiting_call:['waiting_reply','Waiting for other roles to reply'],waiting_delivery:['waiting_files','Waiting for file delivery'],waiting_dependencies:['waiting_dependencies','Waiting on prior steps'],waiting_input:['waiting_user','Waiting for user confirmation']}[request?.status];
+  if(request?.status==='waiting_call'&&request.resumeError?.kind==='transient')return result('waiting','resume_retrying','Replies arrived; retrying the follow-up',request.resumeError.message||'');
   if(waiting)return result('waiting',...waiting,request.waitingReason||'');
+  if(request?.status==='failed'&&request.failureKind==='resume_failed')return result('error','resume_failed','Replies arrived, but the follow-up failed',request.error||'');
   if(request?.status==='failed'&&(!run||run.status!=='succeeded'||request.error||request.failureKind||request.notExecutedReason))return result('error','failed','Task did not start; see the logs',request.error||request.notExecutedReason||'');
   if(task?.status==='ready')return result(online?'queued':'waiting',online?'queued':'waiting_device',online?'Waiting to be scheduled':'Waiting for the device to connect',task.waitingReason||'');
   if(run?.status==='succeeded'||request?.status==='succeeded') {

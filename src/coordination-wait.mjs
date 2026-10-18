@@ -92,7 +92,7 @@ export function collaborationQueueView(db,time=Date.now()) {
     let dependencies=[];try{dependencies=waiting?waitDependencies(db,head):[];}catch{dependencies=[];}
     const progressAt=Math.max(stamp(head.updatedAt),stamp(head.createdAt),stamp(head.waitEvent?.observedAt),...dependencies.map(d=>Math.max(stamp(d.updatedAt),stamp(d.createdAt))));
     push({projectId:head.projectId,conversationId:conversationIdOf(head),roleId:head.targetRoleId,rootRequestId:root?.id||head.id,rootTaskId:root?.taskId||null,
-      currentRequestId:head.id,taskId:head.taskId||null,phase:waiting?'waiting_reply':head.currentRunId?'processing_reply':'resume_queued',
+      currentRequestId:head.id,taskId:head.taskId||null,phase:waiting?(head.resumeError?.kind==='transient'?'resume_retrying':'waiting_reply'):head.currentRunId?'processing_reply':'resume_queued',
       waitingRequestIds:dependencies.filter(d=>!settledStatuses.has(d.status)).map(d=>d.id)},progressAt,waiting);
   }
   // Formal discussion waits protect the asking role just like call waits; its resume arrives as a discussion turn.

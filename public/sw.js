@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v144-progress-history-sidebar';
+const CACHE = 'agent-workbench-static-v146-consolidated-20261018';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

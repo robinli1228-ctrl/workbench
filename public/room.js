@@ -119,7 +119,7 @@ export function quietHandoff(run,data={}) {
 export function handoffWaitState(run, data) {
   if(!quietHandoff(run,data))return null;
   const parent=data.requests?.find(r=>r.id===run.handoffWait.requestId);
-  if(!parent||parent.status!=='waiting_call'||parent.continuationRequestId||(parent.currentRunId&&parent.currentRunId!==run.id))return null;
+  if(!parent||parent.status!=='waiting_call'||parent.resumeError?.kind==='transient'||parent.continuationRequestId||(parent.currentRunId&&parent.currentRunId!==run.id))return null;
   const ids=parent.waitRequestIds||run.handoffWait.requestIds||[];
   const names=[...new Set(ids.map(id=>data.requests?.find(r=>r.id===id)).filter(Boolean)
     .map(r=>data.roles?.find(role=>role.id===r.targetRoleId)?.name||r.targetSnapshot?.name).filter(Boolean))];
@@ -174,50 +174,54 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
 }
 
 /** Show existing dispatches without creating a separate queue; request retries reuse the ID to avoid repeated interruptions. */
-function createMessageQueue({api,refreshState,create,setError}) {
+function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
-  const commands=new Map(),pending=new Set();let currentProject=null,lastData=null,optimistic=null;
+  // The displayed queue owns these tasks until its next render, including while a drag is active.
+  let displayedTaskIds=new Set();
+  const commands=new Map(),pending=new Set(),steeringPending=new Set(),steeringErrors=new Map();let currentProject=null,lastData=null,optimistic=null;
   const queueKey=task=>Number.isFinite(task.queueOrder)?task.queueOrder:(Date.parse(task.createdAt)||0);
   // Long press reorders waiting items; Home stores the order and the scheduler runs them in that order.
-  const order=createListOrder({container:list,scope:()=>`queue:${currentProject||''}`,onEnd:()=>{if(lastData)view.update(lastData,currentProject);},onError:setError,
+  const order=createListOrder({container:list,scope:()=>`queue:${currentProject||''}`,onEnd:()=>{if(lastData){view.update(lastData,currentProject);onUpdate();}},onError:setError,
     persist:async taskIds=>{
       optimistic=taskIds;
       try{await api(`/api/projects/${encodeURIComponent(currentProject)}/queue/order`,{method:'POST',json:{taskIds}});await refreshState({quiet:true});}
       catch(error){setError(error.message);}
       finally{optimistic=null;if(lastData)view.update(lastData,currentProject);}
     }});
-  const view={update(data,projectId){
+  const view={hasTask:id=>displayedTaskIds.has(id),update(data,projectId){
     lastData=data;if(order.active())return;
     if(currentProject!==projectId){panel.open=false;currentProject=projectId;optimistic=null;}
     const rank=new Map((optimistic||[]).map((id,index)=>[id,index]));
-    const tasks=(data.tasks||[]).filter(t=>t.projectId===projectId&&t.origin==='chat'&&t.status==='ready'&&!t.currentRunId)
+    const runs=new Map((data.runs||[]).map(run=>[run.id,run]));
+    const tasks=(data.tasks||[]).filter(task=>{
+      if(task.projectId!==projectId||task.origin!=='chat')return false;
+      if(task.status==='ready'&&!task.currentRunId)return true;
+      if(!task.steering||!['ready','in_progress','blocked'].includes(task.status))return false;
+      const run=runs.get(task.currentRunId);
+      // Creating a Run is not input acceptance. Keep the interruption/startup visible, including a failed launch.
+      return !run||!(run.inputDeliveryState==='accepted'||run.status==='succeeded');
+    })
       .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||queueKey(a)-queueKey(b));
+    displayedTaskIds=new Set(tasks.map(task=>task.id));
     list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&tasks.length>1);
     const conversation=tasks[0]?.conversationId||projectId;
     // Home's own projection decides who is protected; the browser only labels it and never guesses from an idle CLI.
     const waits=(data.collaborationWaits||[]).filter(w=>w.projectId===projectId&&(!tasks.length||tasks.some(t=>(t.conversationId||t.projectId)===w.conversationId&&t.roleId===w.roleId)));
     const protectedRole=task=>waits.find(w=>!w.released&&w.roleId===task.roleId&&w.conversationId===(task.conversationId||task.projectId));
     panel.hidden=!tasks.length;list.replaceChildren();
-    // The wait status sits on the queue title row, to the right of the count, so it is visible even when the queue is folded.
-    const roleName=id=>(data.supervisorRoles||[]).some(r=>r.id===id)?t('Supervisor@@roleCard'):(data.roles||[]).find(r=>r.id===id)?.name||t('Role');
-    const firstWait=[...waits].sort((a,b)=>Number(Boolean(b.stalled))-Number(Boolean(a.stalled))||Date.parse(a.releaseAt)-Date.parse(b.releaseAt))[0];
     const title=create('span','message-queue-title',t('Queue · {v}', { v: tasks.length }));
     summary.replaceChildren(title);
-    if(firstWait){
-      const role=roleName(firstWait.roleId),left=Math.max(1,Math.ceil((Date.parse(firstWait.releaseAt)-Date.now())/60000));
-      // Nothing is released automatically; a stalled wait only unlocks "Handle this first" for every queued item.
-      const pill=create('span',`message-queue-wait${firstWait.stalled?' is-released':''}`,firstWait.stalled?t('{role} · no progress for a while, marked stalled',{role})
-        :t('{role} · marked stalled after about {minutes} min without progress',{role,minutes:left}));
-      // Already localized (including the role name); keep the page translator from re-mapping "总管" to the generic "Supervisor" entry.
-      pill.translate=false;summary.append(pill);
-    }
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
-      if(data.capabilities?.queueOrder&&!task.steering){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
+      if(data.capabilities?.queueOrder&&!task.steering&&!steeringPending.has(task.id)){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
       const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||t('Role')} · ${task.title||task.prompt}`);title.title=task.prompt||task.title;
-      info.append(title,create('span','',task.steering?(task.waitingReason||'Continuing with the new instruction first'):(task.waitingReason||'Waiting to run')));row.append(info);
+      info.append(title);row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
       const human=!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination;
+      if(human&&!task.steering&&!task.collaborationYield){
+        const edit=create('button','icon-button message-queue-edit');edit.type='button';edit.innerHTML=UI_ICON.edit;edit.title='Return queued message to input';edit.setAttribute('aria-label',t('Return queued message to input'));
+        edit.disabled=pending.has(task.id);edit.onclick=async()=>{pending.add(task.id);edit.disabled=true;try{await editQueued(task);}finally{pending.delete(task.id);edit.disabled=false;}};row.append(edit);
+      }
       const guard=protectedRole(task),scopeOf=x=>(x.conversationId||x.projectId)===(task.conversationId||task.projectId)&&x.roleId===task.roleId;
       const yieldBusy=tasks.some(x=>x.id!==task.id&&x.collaborationYield&&scopeOf(x))||waits.some(w=>w.yielded&&scopeOf(w));
       if((human||guard?.stalled)&&data.capabilities?.collaborationWait&&(guard||task.collaborationYield)) {
@@ -237,21 +241,34 @@ function createMessageQueue({api,refreshState,create,setError}) {
         };
         row.append(first);
       } else if(human) {
-        const steer=create('button','icon-button message-queue-steer');steer.type='button';steer.setAttribute('aria-label',t(task.steering?'Steering':'Steer now'));steer.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
-        steer.title='Stop this role\'s current run and continue with this message after confirmation; actions already performed are not rolled back';
+        const run=runs.get(task.currentRunId),stopped=(task.steering?.waitForRunIds||[]).map(id=>runs.get(id));
+        const error=task.steering?(task.error||run?.error||stopped.find(r=>r?.status==='reconciling')?.error):steeringErrors.get(task.id);
+        const busy=(Boolean(task.steering)||steeringPending.has(task.id))&&!error;
+        const steer=create('button',`icon-button message-queue-steer${busy?' is-active':''}${error?' is-error':''}`);steer.type='button';
+        steer.setAttribute('aria-busy',String(busy));steer.setAttribute('aria-label',error?t('Steering needs attention'):t(busy?'Steering':'Steer now'));
+        steer.innerHTML=busy?'<svg class="message-queue-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>':error?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></svg>':'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
+        steer.title=error?t('Steering needs attention: {reason}',{reason:error}):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):t('Interrupt this role now and run this message first; actions already performed are not rolled back');
         steer.disabled=Boolean(task.steering)||pending.has(task.id)||data.settings?.paused||!data.capabilities?.roleSteering;
         if(!data.capabilities?.roleSteering)steer.title='Steer now becomes available after the service is upgraded';
         steer.onclick=async()=>{
-          pending.add(task.id);steer.disabled=true;
+          pending.add(task.id);steeringPending.add(task.id);steeringErrors.delete(task.id);setError('');view.update(lastData,currentProject);
           if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
-          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'replace',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});await refreshState({quiet:true});}
-          catch(error){setError(error.message);}
-          finally{pending.delete(task.id);steer.disabled=Boolean(task.steering)||data.settings?.paused;}
+          try {
+            const receipt=await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'replace',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});
+            // A successful stop request stays busy even if the following workspace refresh fails.
+            const current=lastData.tasks?.find(t=>t.id===task.id);if(current)current.steering=receipt;
+            await refreshState({quiet:true});
+          }
+          catch(error){steeringErrors.set(task.id,error.message);setError(error.message);}
+          finally{pending.delete(task.id);steeringPending.delete(task.id);if(lastData)view.update(lastData,currentProject);onUpdate();}
         };
         row.append(steer);
       }
+      // A queued task has no chat placeholder; keep its existing recovery action accessible here.
+      const recovery=cliRecoveryUI.button(task);
+      if(recovery){recovery.className='icon-button cli-recovery-open';row.append(recovery);}
       const cancel=closeIcon(create('button','icon-button'));cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
-      cancel.disabled=pending.has(task.id);cancel.onclick=async()=>{
+      cancel.disabled=pending.has(task.id)||Boolean(task.currentRunId)||task.status!=='ready';cancel.onclick=async()=>{
         cancel.disabled=true;try{await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`,{method:'POST',json:{}});await refreshState({quiet:true});}catch(error){setError(error.message);cancel.disabled=false;}
       };row.append(cancel);list.append(row);
     }
@@ -262,8 +279,8 @@ function createMessageQueue({api,refreshState,create,setError}) {
 /** The chat only handles display and user actions; role selection, idempotency and scheduling are validated by Home. */
 export function createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice }) {
   const historyViewer=createHistoryViewer({api});
-  const messageQueue=createMessageQueue({api,refreshState,create,setError});
   const cliRecoveryUI=createCliRecoveryUI({api,refreshState,getData:()=>data,create});
+  const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued});
   const feed = document.querySelector('#chat-feed');
   // Configuration, plans and messages share one scroll area so status cards do not permanently crowd out the body.
   const scroller = document.querySelector('#chat-scroll');
@@ -400,7 +417,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     targetChanged();transferDialog.showModal();
   }
   async function uploadFiles(files) {
-    if (!projectId || draft().pending || sendingProject === scopeId) return;
+    if (!projectId || draft().pending || draft().queueEdit || sendingProject === scopeId) return;
     const id = scopeId, targetProjectId=projectId, d = draft(), incoming = [...files];
     if ((d.attachments?.length || 0) + (d.textFiles?.length || 0) + (uploadCounts.get(id) || 0) + incoming.length > 6) { setError('At most 6 attachments per message'); return; }
     if (incoming.some(f=>!f.size || f.size>20*1024*1024)) { setError('Attachments cannot be empty; each file is limited to 20 MB'); return; }
@@ -447,7 +464,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     return card;
   }
   function queueTextFile(text, remaining) {
-    if (!projectId || draft().pending || sendingProject === scopeId) return null;
+    if (!projectId || draft().pending || draft().queueEdit || sendingProject === scopeId) return null;
     const d = draft(), ownerId = scopeId;
     if ((d.attachments?.length || 0) + (d.textFiles?.length || 0) + (uploadCounts.get(ownerId) || 0) >= 6) { setError('Attachments are full; the long text stays in the input box. Remove an attachment first'); return null; }
     if (new Blob([text]).size > 20 * 1024 * 1024) { setError('Text exceeds the 20 MB per-attachment limit; the original is kept, please split it before sending'); return null; }
@@ -500,6 +517,27 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     catch { setError('Not enough browser draft storage; the original text is still on this page. Copy a backup first and do not close the page'); return false; }
   };
   const draft = () => drafts[scopeId] ||= { projectId, text: '', replyToId: null, replyLabel: '' };
+  const queueEditing=new Set();
+  /** Save the recall identity first so a lost response can be retried without dispatching or losing the original. */
+  async function editQueued(task) {
+    const ownerId=scopeId,d=draft();
+    if(d.queueEdit||d.pending||sendingProject||uploadCounts.get(ownerId)||d.text?.trim()||d.attachments?.length||d.textFiles?.length||d.replyToId){setError('Keep or send the current draft before editing a queued message');return;}
+    d.queueEdit={projectId,conversationId,taskId:task.id,commandId:crypto.randomUUID()};
+    if(!saveDrafts()){delete d.queueEdit;return;}
+    await finishQueueEdit(ownerId);
+  }
+  async function finishQueueEdit(ownerId) {
+    const d=drafts[ownerId],pending=d?.queueEdit;if(!pending||queueEditing.has(ownerId))return;
+    queueEditing.add(ownerId);if(ownerId===scopeId)composer();
+    try{
+      const result=await api(`/api/projects/${encodeURIComponent(pending.projectId)}/tasks/${encodeURIComponent(pending.taskId)}/edit-queued`,{method:'POST',json:{commandId:pending.commandId,conversationId:pending.conversationId}});
+      const message=result.message,quote=result.replySource;
+      drafts[ownerId]={projectId:pending.projectId,text:message.text||'',attachments:message.attachments||[],replyToId:message.replyToId||null,replyLabel:quote?`${quote.senderName}: ${quote.text}`:'Quoting an earlier message',inlineLongText:true};
+      saveDrafts();if(ownerId===scopeId){input.value=drafts[ownerId].text;setError('');composer();input.focus();}
+      await refreshState({quiet:true});
+    }catch(error){if(error.status>=400&&error.status<500){delete d.queueEdit;saveDrafts();}setError(error.message);}
+    finally{queueEditing.delete(ownerId);if(ownerId===scopeId)composer();}
+  }
   // Send lifecycle per draft scope (see send-state.js). Home already treats a repeated clientMessageId idempotently.
   // Nothing here adds polling: checks run after a send fails and when the existing state refresh redraws the room,
   // at most every few seconds per scope.
@@ -569,10 +607,11 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (!projectId) return;
     input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, new messages go to the supervisor; replies target the sender, and @ several roles dispatches to each' : 'Type a message; @role to start work';
     const d = draft(), busy = sendingProject === scopeId, state = sendState(d);
-    input.disabled = busy || !!d.pending;
+    input.disabled = busy || !!d.pending || !!d.queueEdit;
     send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length) || sendLocked(state) || verifying.has(scopeId);
-    attachButton.disabled = busy || !!d.pending;
+    attachButton.disabled = busy || !!d.pending || !!d.queueEdit;
     send.textContent = SEND_LABELS[state] || 'Send';
+    if(d.queueEdit){send.textContent=queueEditing.has(scopeId)?'Retrieving queued message…':'Retry editing queued message';send.disabled=queueEditing.has(scopeId)||!!sendingProject;}
     attachTray.replaceChildren();
     for (const item of d.attachments || []) attachTray.append(attachmentCard(item,true));
     for (const entry of d.textFiles || []) attachTray.append(textDraftCard(entry, scopeId));
@@ -610,7 +649,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   }
 
   function quoteReply(m,{mentionSender=true}={}) {
-    if (draft().pending || sendingProject === scopeId) return;
+    if (draft().pending || draft().queueEdit || sendingProject === scopeId) return;
     const d=draft();
     // Replace only our own previous prefix; explicit mentions and the unsent body remain the user's choice.
     if(d.replyMention&&input.value.startsWith(d.replyMention))input.value=input.value.slice(d.replyMention.length);
@@ -857,6 +896,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   }
 
   function renderLiveBubble(task, messages) {
+    // A recalled draft never ran: keep its human history, without inventing a stopped Agent reply.
+    if(task.queueEditId&&!task.currentRunId)return null;
+    // Share the queue's actual displayed membership rather than maintaining a second eligibility rule.
+    if(messageQueue.hasTask(task.id))return null;
     const run = data.runs?.find(r => r.id === task.currentRunId);
     const recoveryButton=cliRecoveryUI.button(task);
     if(task.backgroundFollowup||run?.backgroundFollowup){const approvals=run?renderApprovalsInline(run):null;if(!recoveryButton)return approvals;const entry=create('div','chat-approvals');if(approvals)entry.append(approvals);entry.append(recoveryButton);return entry;}
@@ -892,8 +935,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     header.append(nameLine, time);
     col.append(header);
     const bubble = create('div', 'chat-bubble is-live-card');
-    // Even before it starts, the card says which message it answers: the task's own source message, or its request text.
-    const source = messages.find(q => q.id === task.sourceMessageId) || null;
+    // Home resolves the immediate call before pagination; older Homes can still resolve visible call cards locally.
+    const request=data.requests?.find(r=>r.id===(run?.requestId||task.requestId));
+    const quotes=histories.get(scopeId)?.liveReplySources;
+    const source = quotes&&Object.hasOwn(quotes,task.id)?quotes[task.id]:messages.find(q=>q.id===(request?.callMessageId||`call:${request?.id}`))||(!request?.parentRequestId&&!['consult','handoff','continuation'].includes(request?.kind)?messages.find(q=>q.id===task.sourceMessageId):null);
     // An attachment-only source still names its sender and opens the original; its files stand in for the empty text.
     const sourceFiles = source?.attachments?.length ? t('[Attachment] {v}', { v: source.attachments.map(a => a.name).filter(Boolean).join(t(', ')) || source.attachments.length }) : '';
     const sourceText = simplifiedCliOutput(source ? source.text || sourceFiles || task.title || task.prompt || '' : task.title || task.prompt || '');
@@ -974,7 +1019,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const top = create('div', 'chat-bubble-top');
     if (m.replyToId) {
       const source = m.replySource || messages.find(q => q.id === m.replyToId);
-      const quoteText=source?simplifiedCliOutput(source.text):'';
+      const quoteText=source?simplifiedCliOutput(source.text|| (source.attachments?.length?t('[Attachment] {v}',{v:source.attachments.map(a=>a.name).filter(Boolean).join(t(', '))||source.attachments.length}):'')):'';
       const quote=create(source?.id?'button':'div', 'quoted-message', source ? t('{senderName}: {v}', { senderName: source.senderName, v: quoteText.slice(0, 180)+(quoteText.length>=180?'...':'') }) : 'Quoting an earlier message');
       if(source?.id){quote.type='button';quote.title='View quoted original';quote.setAttribute('aria-label','View quoted original');quote.addEventListener('click',()=>void historyViewer.open(m.projectId,'message',source.id,m.conversationId||m.projectId).catch(error=>setError(error.message)));}
       top.append(quote);
@@ -1056,6 +1101,15 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     for(const run of (data.runs||[]).filter(r=>r.projectId===projectId&&r.discussionDeliveryId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status))) {
       const live=renderLiveBubble({id:run.taskId,currentRunId:run.id,roleSnapshot:run.roleSnapshot},messages);if(live)feed.append(live);
+    }
+    // A finished handoff has no live reply card; show continuation failures/retries separately from its historical result.
+    for(const request of (data.requests||[]).filter(r=>r.projectId===projectId&&(r.conversationId||r.projectId)===conversationId&&!r.continuationRequestId&&
+      (r.status==='waiting_call'&&r.resumeError?.kind==='transient'||r.status==='failed'&&r.failureKind==='resume_failed'))) {
+      const task=data.tasks?.find(t=>t.id===request.taskId);if(task?.status==='cancelled')continue;
+      const role=task?.roleSnapshot||data.roles?.find(r=>r.id===request.targetRoleId)||{};
+      const progress=executionProgress({task,request}),row=create('article','chat-row agent is-resume-notice'),col=create('div','chat-col');
+      const line=create('div','chat-name handoff-wait-line',`${role.name||t('Role')} · ${t(progress.detail)}`);line.setAttribute('role','status');line.title=progress.reason||request.error||request.resumeError?.message||'';
+      col.append(line);if(task)col.append(chatMeta('',[iconAction('log','Log',()=>openTask(task.id,request.currentRunId))]));row.append(avatarFor(role,role.name),col);feed.append(row);
     }
     const queueStrip=renderSessionQueue(data.sessionQueues?.[projectId],{create,api,refreshState,projectId,roleName:id=>(data.roles||[]).find(r=>r.id===id)?.name||id});
     if(queueStrip)feed.append(queueStrip);
@@ -1216,6 +1270,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     hideMentionMenu();
     if (!projectId || sendingProject || uploadCounts.get(scopeId) || submitLocks.has(scopeId)) return;
     const id = projectId, ownerId=scopeId, targetConversationId=conversationId, d = draft();
+    if(d.queueEdit){await finishQueueEdit(ownerId);return;}
     // Click, double click, Enter and redraws all land here: an in-flight or unknown send is only ever looked up, never resent.
     if (d.pending && d.sendState !== 'failed') { void verifyPending(ownerId, true); return; }
     submitLocks.add(ownerId);

@@ -52,8 +52,8 @@ import { TokenUsage, createTokenUsageBackgroundCollector } from './token-usage.m
 import { Attachments, AttachmentTransfers } from './attachments.mjs';
 import { ExecutionPlans, schedulingRules } from './execution-plans.mjs';
 import { History } from './history.mjs';
-import { saveRunReport,readReportSubmission } from './run-reports.mjs';
-import { receiptList,verifyResultReceipt } from './result-receipts.mjs';
+import { saveRunReport,readReportSubmission,readReportFile } from './run-reports.mjs';
+import { receiptList,verifyResultReceipt,archiveHistoricalReceipts } from './result-receipts.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
@@ -149,13 +149,16 @@ const executionPlans = new ExecutionPlans(db,calls,workerQuery,{
 const deliveries = new Deliveries(db);
 db.transaction(()=>{
   discussions.recover();
+  // Stuck waits from before the resume fix end explicitly here, so replaying results below cannot revive them.
+  calls.reconcileStuckWaits();
   calls.recoverTerminalRuns();
   for (const run of db.list('runs').filter(r=>terminal.has(r.status))) rooms.complete(run);
+  archiveHistoricalReceipts(db);
 });
 for (const run of db.list('runs').filter(r => !terminal.has(r.status))) db.put('runs', { ...run, status: run.status === 'stopping' ? 'stopping' : 'reconciling' });
 const sockets = new Map();
 /** Sessions-page takeover hook (src/native-turns-home.mjs). */
-const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>send(sockets.get(nodeId),{...payload,language:getLanguage()}),online:id=>sockets.get(id)?.readyState===1,change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId)});
+const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>send(sockets.get(nodeId),{...payload,language:getLanguage()}),online:id=>sockets.get(id)?.readyState===1,change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession});
 const viewers = new Set();
 const queries = new Map();
 const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
@@ -459,6 +462,21 @@ function managedNativeSessions(nodeId,runtime){
     items.set(session.nativeSessionId,{sessionId:session.nativeSessionId,title,workspace:session.workspace||session.workspaceRoot||null,createdAt:session.createdAt||null,roleBinding:ambiguous?null:binding,ambiguous:Boolean(ambiguous)});
   }return [...items.values()].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))||a.sessionId.localeCompare(b.sessionId));
 }
+/** A saved takeover is explicit provenance; a matching title or project folder is not. */
+function adoptedNativeSessions(nodeId,runtime){
+  // Clearing a role hides its old native association, including released takeover aliases, not its audit records.
+  const cleared=new Set(db.db.prepare("SELECT json_extract(data,'$.nativeSession.id') AS id FROM records WHERE kind='runs' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.nativeSession.runtime')=? AND json_extract(data,'$.historyClearedAt') IS NOT NULL").all(nodeId,runtime).map(row=>row.id));
+  const records=new Map();for(const claim of db.list('terminalSessions')){
+    const sessionId=claim.sessionId||claim.nativeSession?.id;
+    if(claim.nodeId!==nodeId||!['native','native-turn'].includes(claim.kind)||(claim.runtime||claim.nativeSession?.runtime)!==runtime||!sessionId||cleared.has(sessionId)||claim.status==='cancelled')continue;
+    const previous=records.get(sessionId);
+    records.set(sessionId,{runtime,sessionId,workspace:claim.workspace||previous?.workspace||null,createdAt:previous?.createdAt||claim.createdAt});
+  }return [...records.values()];
+}
+/** Resolve browser reads solely from Home's saved Workbench ownership, before contacting a Worker. */
+function ownedNativeSession(nodeId,runtime,sessionId){
+  return nativeCatalogRecords(nodeId,runtime).find(r=>r.sessionId===sessionId)||managedNativeSessions(nodeId,runtime).find(r=>r.sessionId===sessionId)||adoptedNativeSessions(nodeId,runtime).find(r=>r.sessionId===sessionId)||null;
+}
 function cacheNativeCatalog(items,nodeId,runtime){
   db.transaction(()=>{for(const item of items||[]){if(item.origin!=='dialog'||item.nodeId!==nodeId||item.runtime!==runtime||!item.entryId)continue;const current=db.get('nativeCatalogEntries',item.entryId);if(current?.nodeId!==nodeId||current.runtime!==runtime)continue;db.put('nativeCatalogEntries',{...current,sessionId:item.sessionId||null,title:item.title,workspace:item.workspace||current.workspace,status:item.status,hasHistory:item.hasHistory===true,previewAvailable:item.previewAvailable===true,exactLastScan:item.exactLastScan||current.exactLastScan||null,modifiedAt:item.modifiedAt||current.modifiedAt});}});
 }
@@ -571,6 +589,9 @@ const server = http.createServer(async (req, res) => {
         if(req.method==='GET'&&!nativeMatch[2]){
           const runtime=url.searchParams.get('runtime'),sessionId=url.searchParams.get('sessionId'),scope=url.searchParams.get('scope')||'created';
           if(!['created','group','all'].includes(scope))throw Error('Invalid native session scope');
+          if(worker.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
+          const record=sessionId?ownedNativeSession(nodeId,runtime,sessionId):null;
+          if(sessionId&&!record)throw Error('Session is not registered with Workbench');
           if(!online(nodeId)){
             // Offline All can show cached independent entries, but must not imply complete native history.
             if(!sessionId&&['created','all'].includes(scope))return json(res,{items:nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem),partial:scope==='all',offline:true});
@@ -586,7 +607,7 @@ const server = http.createServer(async (req, res) => {
           const paged=Boolean(sessionId&&url.searchParams.get('historyPage')==='1'),cursor=url.searchParams.get('cursor'),historySnapshot=url.searchParams.get('snapshot');
           if((cursor||historySnapshot)&&(!paged||cursor?.length>2048||historySnapshot?.length>2048||cursor&&historySnapshot))throw Error('Invalid native history cursor');
           if(paged&&worker.capabilities?.nativeHistoryPages!==1)throw Error('Upgrade this Worker to load older native history.');
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,managedSessions:page,...(paged?{historyPage:true,cursor,snapshot:historySnapshot}:{})},30000);
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:historySnapshot}:{})},30000);
           if(!sessionId&&scope==='group'){
             const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));
             return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});
@@ -606,6 +627,9 @@ const server = http.createServer(async (req, res) => {
         if(req.method!=='POST'||nativeMatch[2]!=='terminal')throw Error('Invalid session action');
         const b=await body(req);
         if(b.action==='release'||b.action==='stop'){const claim=db.get('terminalSessions',b.operationId);if(claim?.kind!=='native'||claim.nodeId!==nodeId)throw Error('Invalid native terminal binding');return json(res,await returnTerminal(claim,b.action));}
+        if(worker.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
+        const historyRecord=b.sessionId?ownedNativeSession(nodeId,b.runtime,b.sessionId):null;
+        if(b.sessionId&&!historyRecord)throw Error('Session is not registered with Workbench');
         if(worker.capabilities?.nativeTakeover!==1)throw Error('Upgrade this Worker to safely take over native sessions');
         if(typeof b.operationId!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(b.operationId)||typeof b.allowAll!=='boolean')throw Error('Invalid terminal request');
         const fresh=!b.sessionId,catalogEntryId=b.entryId||(fresh?b.operationId:nativeCatalogRecords(nodeId,b.runtime).find(entry=>entry.sessionId===b.sessionId)?.id||null),entry=catalogEntryId?db.get('nativeCatalogEntries',catalogEntryId):null,prior=db.get('terminalSessions',b.operationId);
@@ -619,7 +643,7 @@ const server = http.createServer(async (req, res) => {
         const device=db.list('devices').find(d=>d.nodeId===nodeId);
         if(worker.nodeKind==='cloud'&&!device)throw Error('Register SSH access for this server first');
         const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
-        const input={runtime:b.runtime,sessionId:b.sessionId||null,freshSessionId,entryId:catalogEntryId,title:fresh?b.title.trim():null,workspace:b.workspace,allowAll:b.allowAll,bindings,managedProjectIds:nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId})};
+        const input={runtime:b.runtime,sessionId:b.sessionId||null,record:historyRecord,freshSessionId,entryId:catalogEntryId,title:fresh?b.title.trim():null,workspace:b.workspace,allowAll:b.allowAll,bindings,managedProjectIds:nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId})};
         const preview=await workerQuery({nodeId},'native_terminal_preview',input,30000);
         input.managedProjectIds=nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId});
         const owner=nativeTerminalProject(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId,folderProjectIds:preview.projectId?[preview.projectId]:[]}),projectId=owner||`native-tui:${b.operationId}`;
@@ -705,13 +729,17 @@ const server = http.createServer(async (req, res) => {
         assertAgentSender(b);
         const run = db.get('runs', b.runId);
         if(pathname==='/api/agent/report') {
-          if(!run)throw new Error(tr('home.currentExecutionHasEndedStopping'));
+          if(!run)throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
           if(run.switchOperationId)throw new Error('CLI handoff maintenance permits history reads only.');
           if(b.action==='status')return json(res,readReportSubmission(db,run,b));
+          if(b.action==='file')return json(res,readReportFile(conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run),run,b));
           const result=saveRunReport(db,run,b);if(!result.replayed&&!result.ignored)change();return json(res,result);
         }
-        if (!run || terminal.has(run.status) || ['stopping', 'reconciling'].includes(run.status)) throw new Error(tr('home.currentExecutionHasEndedStopping'));
-        if(db.get('settings','main')?.paused&&!allowsPausedAgentOperation(pathname,b))throw new Error(tr('home.remoteExecutionPaused'));
+        // Distinct codes: reconciling is retryable with the same request; stopping and ended are final for this Run.
+        if (run?.status === 'reconciling') throw Object.assign(new Error(tr('home.runReconciling')),{code:'run_reconciling'});
+        if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
+        if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
+        if(db.get('settings','main')?.paused&&!allowsPausedAgentOperation(pathname,b))throw Object.assign(new Error(tr('home.remoteExecutionPaused')),{code:'paused'});
         if(run.switchOperationId&&!['/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/sessions/list','/api/agent/sessions/summary','/api/agent/sessions/read','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
         if (pathname === '/api/agent/progress') {
           // Receipts and derived progress belong to the calling role; verification is its explicit, recorded decision.
@@ -1041,6 +1069,10 @@ const server = http.createServer(async (req, res) => {
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/queue\/order$/)) && req.method === 'POST') {
         const r = rooms.reorderQueue(m[1], await body(req)); scheduleChat(); change(); return json(res, r);
+      }
+      if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/edit-queued$/)) && req.method === 'POST') {
+        const input=await body(req),result=db.transaction(()=>{const recalled=rooms.editQueuedMessage(m[1],m[2],input);for(const id of recalled.requestIds)calls.cancel(id);return recalled;});
+        change();return json(res,result);
       }
       if ((m = pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/)) && req.method === 'POST') {
         const r = rooms.cancel(m[1]); if (r.requestId) calls.cancel(r.requestId); change(); return json(res, r);

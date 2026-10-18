@@ -3,7 +3,7 @@ import { join, relative, isAbsolute } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { NativeTurnRunner } from './native-turns.mjs';
 import { createNativeSession } from './native-turn-sessions.mjs';
-import { readNativeSession, assertNativeSessionIdle } from './native-sessions.mjs';
+import { readNativeSession, registeredNativeSession, assertNativeSessionIdle } from './native-sessions.mjs';
 import { nativeTerminalProject, projectTerminalLock, terminalProcessIdentity, processIdentityKey, checkTerminalSession, stopTerminalSession } from './terminal-resume.mjs';
 
 const LIMIT=20*1024*1024,COUNT=6,uuid=/^[a-f0-9-]{36}$/;
@@ -87,7 +87,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
       return {files,images};
     },
     resolveSession:async(runtime,sessionId,{message:m})=>{
-      const history=await readNativeSession(runtime,sessionId);if(!history.workspace)return {workspace:null};
+      const history=await readNativeSession(runtime,sessionId,{record:m.record||registeredNativeSession(db,runtime,sessionId)});if(!history.workspace)return {workspace:null};
       const workspace=await projectRoot(history.workspace),projects=[];
       const inside=(a,b)=>{const r=relative(a,b);return !r||r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
       for(const binding of m.bindings||[]){const root=await realpath(binding.localRoot).catch(()=>null);if(root&&(inside(root,workspace)||inside(workspace,root)))projects.push(binding.projectId);}

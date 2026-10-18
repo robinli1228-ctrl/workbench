@@ -45,13 +45,25 @@ const LEGACY_SUPERVISOR_DEFAULTS = new Set([
   '5028d377bc872bb766d72588011c48dbaa4446350c5b3ca908d4517b02e3ad69',
   // Defaults before the receipt/four-item close-out template.
   'd190ea330847f51e444ed00ff69ca8dce4581ab6e6ff7269c046dbfdf56e2284',
-  'ba52194b15a44c3e211e6b9d11ff63600ad4f53b831e55685b5deb3625b1206b'
+  'ba52194b15a44c3e211e6b9d11ff63600ad4f53b831e55685b5deb3625b1206b',
+  // Defaults before not-executed receipts, acknowledged/batch verification and the single-patrol rule.
+  '97cb5f80cacbe949d4174487ee050d686f803b87210fef6a679244e893926917',
+  '2e1f318253219def1ff5dd028af03961a368639bd4fc9bde5b8f518be081c46a',
+  // Exact defaults before the operator-aligned templates; never include customized prompt text.
+  '05423256820bf20af920b4876484122f324ba86b7738d4f57d5ce6152bf6d57e',
+  '3d93b7e8d344da4e1fc565d50cfe541c7073e50238c07d809f705a8014dfb034'
 ]);
 const LEGACY_PLATFORM_DEFAULTS = new Set([
   '4a7bd0d1a4bedbfd714d1493b7fd6c9a439bfec754a23f43d150a845ff249324',
   '1b15541e57fced0e26eaf3f6b601629e3099cd8a292d8196fcbfcfa38b88d2a9',
   '45204542deb0ef8dc50cf0793405c91417f586d7b8af901158c658667a2b82fe',
-  '3be86c9e60917e7f697d6a17f50efd7a36793a69ee8551b49f7df5436aad7671'
+  '3be86c9e60917e7f697d6a17f50efd7a36793a69ee8551b49f7df5436aad7671',
+  // Long defaults before the concise template with receipts, structured calls, per-file sync status and error codes.
+  '46251e959abf53517d8f8f4a8f20e036b4a9f251fbe9f590779bcfe5159b6b33',
+  '59bd2efea7e7abfdbf2080ba5c50d0114800e9d4694f273bfbd141fe8baec0a1',
+  // Exact defaults before the operator-aligned templates; custom and explicitly empty prompts remain unchanged.
+  'b69fedfb2ef0c528a66f62b624095c0353d62948bb86879b1b98cd21c034bc69',
+  '1f60ca54f13ca8da234dd30bef95ba7b19f38d8e4f4b4dd0ab38e07bf9c44f3f'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */

@@ -10,9 +10,47 @@ export class SourceSyncAgent {
     if(!this.visible(run,c))throw syncError('review_document_not_released');return c;}
   /** Sync storage is not an alternate route around independent-review document visibility. */
   visible(run,c){return !reviewView(this.db,run).reviewGuarded||c.sides?.length>0&&c.sides.every(s=>reviewSourceFileAllowed(this.db,run,{sourceNodeId:s.nodeId,sourceRunId:s.sourceRunId,reviewPath:c.path.replace(/^\.workbench\//,''),hash:s.entry?.hash,scopeId:c.repositoryId}));}
+  /**
+   * Has one file arrived? Per scope, the canonical entry and each participating device's acknowledged entry with its
+   * observation time: consistent, in_transit (a sync batch is active for that device), conflict, or unknown. An offline
+   * device or a missing acknowledgement is unknown, never "not arrived". Unreleased review documents show no hashes.
+   */
+  fileStatus(run,input){
+    const path=input.path;
+    if(typeof path!=='string'||!path||path.length>500||path.startsWith('/')||path.split('/').some(part=>part==='..'||part===''))throw syncError('invalid_path');
+    const config=this.db.get('sourceSyncConfigs',run.projectId),guarded=reviewView(this.db,run).reviewGuarded;
+    // Historical scopes and acknowledgements remain stored, but cannot prove delivery in the current configuration.
+    const nodeIds=[...new Set(config?.nodeIds||[])];
+    const manifests=this.db.listProject('sourceSyncManifests',run.projectId).filter(m=>config?.enabled&&config.repositoryIds?.includes(m.repositoryId)&&m.generation===config.generation&&(input.repositoryId===undefined||m.repositoryId===input.repositoryId));
+    const devices=this.db.listProject('sourceSyncDevices',run.projectId).filter(d=>d.generation===config?.generation&&nodeIds.includes(d.nodeId)),batches=this.db.listProject('sourceSyncBatches',run.projectId).filter(b=>b.generation===config?.generation&&['queued','capturing','applying'].includes(b.status));
+    const conflicts=this.db.listProject('sourceSyncConflicts',run.projectId).filter(c=>c.path===path&&!['resolved','cancelled'].includes(c.status));
+    const entryOf=(entries,key)=>entries&&Object.hasOwn(entries,key)?entries[key]:null;
+    const scopes=manifests.map(m=>{
+      const canonical=entryOf(m.entries,path),acks=devices.filter(d=>d.repositoryId===m.repositoryId);
+      if(!canonical&&!acks.some(d=>entryOf(d.entries,path)))return null;
+      // Authorize the actual returned version; a permitted canonical baseline does not release a newer peer acknowledgement.
+      const hidden=(nodeId,hash)=>guarded&&path.startsWith('.workbench/')&&!reviewSourceFileAllowed(this.db,run,{sourceNodeId:nodeId,reviewPath:path.replace(/^\.workbench\//,''),hash,scopeId:m.repositoryId});
+      const sides=nodeIds.map(nodeId=>{
+        const ack=acks.find(d=>d.nodeId===nodeId),entry=entryOf(ack?.entries,path),online=Boolean(this.sync.online(nodeId));
+        const same=ack&&(entry?.hash||null)===(canonical?.hash||null);
+        // An offline device's last acknowledgement is history, not a current match: it stays unknown even when the hash agrees.
+        const state=conflicts.some(c=>c.repositoryId===m.repositoryId)?'conflict':!online?'unknown':same?'consistent'
+          :batches.some(b=>b.repositoryIds?.includes(m.repositoryId)&&(b.nodeIds||[]).includes(nodeId))?'in_transit':'unknown';
+        const veil=hidden(nodeId,entry?.hash);
+        return {nodeId,online,state,hash:veil?null:entry?.hash||null,size:veil?null:entry?.size??null,observedAt:ack?.updatedAt||null,
+          ...(veil?{reason:'review_document_not_released'}:!ack?{reason:'no_acknowledgement'}:!online?{reason:'device_offline'}:{})};
+      });
+      const state=sides.some(s=>s.state==='conflict')?'conflict':sides.length&&sides.every(s=>s.state==='consistent')?'consistent':sides.some(s=>s.state==='in_transit')?'in_transit':'unknown';
+      return {repositoryId:m.repositoryId,state,canonical:hidden(run.nodeId,canonical?.hash)?null:canonical?{hash:canonical.hash,size:canonical.size??null}:null,
+        canonicalUpdatedAt:m.updatedAt||null,devices:sides,conflictIds:conflicts.filter(c=>c.repositoryId===m.repositoryId).map(c=>c.id)};
+    }).filter(Boolean);
+    return {path,observedAt:new Date().toISOString(),enabled:Boolean(config?.enabled),state:scopes.length?scopes.some(s=>s.state==='conflict')?'conflict':scopes.every(s=>s.state==='consistent')?'consistent':scopes.some(s=>s.state==='in_transit')?'in_transit':'unknown':'unknown',
+      ...(scopes.length?{}:{reason:'not_in_sync_scope'}),scopes};
+  }
   async execute(run,action,input={}){
     if(!input||typeof input!=='object'||Array.isArray(input))throw syncError('invalid_request');
     if(action==='status'){
+      if(input.path!==undefined)return this.fileStatus(run,input);
       if(input.candidateId){const c=this.db.get('sourceSyncCandidates',input.candidateId);if(c?.projectId!==run.projectId||c.runId!==run.id)throw syncError('candidate_not_ready');this.conflict(run,c.conflictId);return {candidateId:c.id,status:c.status,result:c.result,error:c.error};}
       const state=this.sync.status(run.projectId);return reviewView(this.db,run).reviewGuarded?{...state,conflicts:state.conflicts.filter(c=>this.visible(run,c))}:state;
     }

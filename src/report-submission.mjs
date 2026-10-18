@@ -7,7 +7,8 @@ export function reportFingerprint(input) {
     summary:typeof input.summary==='string'?input.summary.trim():input.summary,
     evidence:input.evidence||[],next:input.next||'',
     // Progress fields join the fingerprint only when present, so earlier receipts keep their content-derived IDs.
-    ...(input.version!=null?{version:input.version}:{}),...(input.stage!=null?{stage:input.stage}:{}),...(input.item!=null?{item:input.item}:{})})).digest('hex');
+    ...(input.version!=null?{version:input.version}:{}),...(input.stage!=null?{stage:input.stage}:{}),...(input.item!=null?{item:input.item}:{}),
+    ...(input.files!=null?{files:Array.isArray(input.files)?input.files.map(f=>[f?.path,f?.sha256]):input.files}:{})})).digest('hex');
 }
 export const reportSubmissionId=input=>input.submissionId===undefined?reportFingerprint(input):input.submissionId;
 const uncertain=error=>error.outcomeUnknown===true || (!error.status&&/timeout|timed out|fetch failed|ECONNRESET|ETIMEDOUT|EPIPE|\u8d85\u65f6|\u8d85\u6642/i.test(error.message||''));
