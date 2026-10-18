@@ -63,6 +63,8 @@ Minimal input still includes the short maintained stage boundaries and required-
 
 ## Key features
 
+The Sessions page lists only Workbench-created sessions, managed group-role sessions and explicitly recorded takeovers. External CLI conversations and helper-agent sessions are not discovered. History reads resolve registered IDs directly through the native index or exact workspace path; missing lookup metadata remains unavailable rather than falling back to a directory scan. Home and Worker must both support this ownership contract. Original vendor histories and active tasks are not deleted or interrupted by this change.
+
 Resolved role recipients appear as blue labels inline with the message body. The composer highlights known `@role` names with the same blue frame while keeping the native textarea and plaintext message format. Backspace, Delete, partial selections and cut/replacement consume a complete role label; ordinary prose, IME composition and existing mention routing remain supported.
 
 Role cards, group-chat entries and native-session entries support press-and-hold dragging to reorder. Quick swipes still scroll; dragging near a list edge scrolls it, and releasing saves the order in this browser. Role order is per project and the fixed supervisor stays first. Session filtering preserves hidden entries' positions. Sorting changes only presentation, not role configuration, scheduling or native history.
