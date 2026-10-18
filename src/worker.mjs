@@ -46,6 +46,7 @@ import { publishProjectDelivery, receiveProjectDelivery, fetchExecutionDeliverie
 import { collectCcusageReport } from './token-usage.mjs';
 import { scopedTerminalArgs, nativeEnvironment, findSessionHistory, projectTerminalLock, nativeTerminalProject, managedRunProcessState, releaseTerminalSession, checkTerminalSession, stopTerminalSession, resumeEnvironment, freshTerminalArgs } from './terminal-resume.mjs';
 import { receiveAttachments } from './attachments.mjs';
+import {statMedia,streamMedia,hashMedia,receiveMedia} from './media-files.mjs';
 import { inspectExecutionRepositories, prepareExecutionWorkspace, executionConflict, verifyExecutionVersions,resolveExecutionRepositories,inspectExecutionInput,assertExecutionInputVersions,executionInputBaselines } from './execution-workspace.mjs';
 import { createRunInput, instructionDelivery,executionInstructionComponents,executionEnvironmentHint } from './run-input.mjs';
 import { inspectGitRepositoryVersion } from './git-version.mjs';
@@ -720,6 +721,29 @@ async function query(m) {
       const files=await receiveAttachments({items:input.items,workspace,transferId:input.transferId,home,token});
       send({type:'reply',id:m.id,result:{files}});return;
     }
+    // Large files stay where they are: stat, hash and ranged reads are served from allowed roots; bytes go over HTTP.
+    if(['media_stat','media_stream','media_hash','media_receive'].includes(m.action)) {
+      const input=m.path||{},homeHttp=homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,'');
+      if(m.action==='media_receive'){
+        if(paused)throw new Error(tr('worker.remoteOperationsPaused2'));
+        if(typeof input.path!=='string'||!/^\/media\/[A-Za-z0-9_.-]+\?download=1$/.test(input.path))throw new Error('invalid_media_path');
+        const workspace=await projectRoot(input.workspace);
+        send({type:'reply',id:m.id,result:await receiveMedia({url:homeHttp+input.path,size:input.size,sha256:input.sha256,name:input.name,transferId:input.transferId,workspace})});return;
+      }
+      const root=await projectRoot(input.root);
+      if(m.action==='media_stat'){send({type:'reply',id:m.id,result:await statMedia({root,path:input.file})});return;}
+      if(m.action==='media_hash'){send({type:'reply',id:m.id,result:await hashMedia({root,path:input.file,version:input.version})});return;}
+      if(typeof input.path!=='string'||!/^\/api\/worker\/media-streams\/[a-f0-9-]{36}$/.test(input.path)||typeof input.secret!=='string'||!input.secret)throw new Error('invalid_media_path');
+      const info=await statMedia({root,path:input.file}),expected=input.version||{};
+      if(info.size!==expected.size||info.mtimeMs!==expected.mtimeMs||info.ino!==expected.ino||info.dev!==expected.dev)throw new Error('file_changed');
+      // Acknowledge first, then upload this range on its own request; a later failure simply ends that request.
+      send({type:'reply',id:m.id,result:{accepted:true}});
+      void streamMedia({root,path:input.file,version:expected,start:input.start,end:input.end,url:homeHttp+input.path,secret:input.secret}).catch(error=>{
+        // Players cancel ranges while seeking and Home closes relays for closed viewers; only unexpected failures are logged.
+        if(!/HTTP 4\d\d|abort|ECONNRESET|socket|terminated|fetch failed/i.test(error.message))console.error('Media stream failed:',error.message);
+      });
+      return;
+    }
     if(['native_sessions','native_session','native_terminal_preview','native_terminal_prepare'].includes(m.action)) {
       const input=m.path||{},runtime=input.runtime;
       if(m.action!=='native_sessions'&&!runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false))throw Error('CLI is not available on this device');
@@ -1011,7 +1035,7 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

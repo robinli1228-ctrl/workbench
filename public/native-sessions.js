@@ -7,6 +7,7 @@ import {groupNativeSessions,readNativeSessionPages} from './native-session-group
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
+import {linkMedia} from './media.js';
 import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {toolStatusLabel,stripAnsi} from './run-log-data.js';
@@ -145,7 +146,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  /** History scrolls above a persistent footer, so quiet refreshes never discard a takeover draft. */
  const scroll=el('div','native-session-scroll');
  const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(cursor?{cursor}:{}),...(snapshot?{snapshot}:{})})}`);
- const timeline=createNativeHistoryTimeline({scroll,readPage,t,onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text,row=chatRow(m.role,text,item.runtime,m.timestamp);row.dataset.role=m.role;if(m.role==='user')row.dataset.text=text.trim();return row;}});
+ const timeline=createNativeHistoryTimeline({scroll,readPage,t,onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text,row=chatRow(m.role,text,item.runtime,m.timestamp,null,item);row.dataset.role=m.role;if(m.role==='user')row.dataset.text=text.trim();return row;}});
  async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;renderTitle();renderList();if(!quiet){onPreview?.();takeover.detach();const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);detailSignature='';}
   try{const id=nativeId(item),readable=id&&item.hasHistory!==false,value=readable?{...item,...await readPage(item,null,quiet?item.historySnapshot:null),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:item;if(ticket!==detailVersion||!active()||key(selected)!==key(item))return;selected=value;const signature=JSON.stringify(value);if(quiet&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
    const history=timeline.update({...value,...(!value.messages?.length&&!value.notice?{notice:value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'}:{})});
@@ -156,12 +157,15 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
   }catch(e){if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[],notice:e.message});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
  }
  /** Same row/bubble structure as the group chat, so both views share one visual language. */
- function chatRow(role,text,runtime,at,extra){const agent=role!=='user',row=el('article',`chat-row ${agent?'agent':'human'} native-chat-row`);if(agent){const avatar=el('span','chat-avatar');avatar.append(agentIconEl(runtime));row.append(avatar);}
+ /** Paths in native replies resolve only inside that registered session's working directory, on its own device. */
+ const mediaContext=session=>{const sessionId=session&&(nativeId(session)||session.sessionId);if(!session?.nodeId||!sessionId)return null;
+  return {key:`native:${session.nodeId}:${session.runtime}:${sessionId}`,describe:path=>api(`${endpoint(session.nodeId)}/media?${new URLSearchParams({runtime:session.runtime,sessionId,path})}`)};};
+ function chatRow(role,text,runtime,at,extra,session){const agent=role!=='user',row=el('article',`chat-row ${agent?'agent':'human'} native-chat-row`);if(agent){const avatar=el('span','chat-avatar');avatar.append(agentIconEl(runtime));row.append(avatar);}
   const col=el('div','chat-col'),header=el('div','chat-message-header'),name=el('div','chat-name',agent?names[runtime]||t('Assistant'):t('Me'));name.translate=false;name.title=name.textContent;header.append(name);col.append(header);
   // Same card anatomy as the group chat: send time on the name line, a status line with its actions at the bottom.
   if(at){const stamp=el('time','',time(at));stamp.dateTime=at;header.append(stamp);}
   const bubble=el('div','chat-bubble'),body=simplifiedCliOutput(text||'');
-  if(agent){const md=renderMarkdown(body);md.classList?.add('markdown-body');bubble.append(md);}else bubble.append(el('div','chat-message-text',body));if(extra)bubble.append(extra);
+  if(agent){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));bubble.append(md);}else bubble.append(el('div','chat-message-text',body));if(extra)bubble.append(extra);
   const footer=el('div','chat-card-footer'),actions=el('div','chat-card-actions'),copy=el('button','chat-icon-btn');copy.type='button';copy.setAttribute('aria-label',t('Copy'));setActionIcon(copy,'copy',t('Copy'));
   copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));actions.append(copy);
   footer.append(el('span','chat-card-kind',`${t(agent?'Reply':'Message')} · ${t('Completed')}`),actions);bubble.append(footer);col.append(bubble);row.append(col);return row;}
@@ -301,7 +305,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
     else if(turn.status!=='succeeded')meta.append(el('span','native-turn-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` · ${t(turn.error)}`:''}`));
     const extra=el('div','native-turn-extra');const block=processBlock(turn,{open:live||openProcesses.has(turn.id)});block.addEventListener('toggle',()=>{if(!live)block.open?openProcesses.add(turn.id):openProcesses.delete(turn.id);});
     if(live||hasProcess(turn))extra.append(block);if(meta.childElementCount)extra.append(meta);
-    feed.append(chatRow('assistant',replyText(turn),current.runtime,null,extra));
+    feed.append(chatRow('assistant',replyText(turn),current.runtime,null,extra,current));
    }}
   function render(){
    if(!current)return;const value=current,taken=isOn(value);shell.replaceChildren();renderFeed();

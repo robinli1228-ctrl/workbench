@@ -227,7 +227,7 @@ export class Store {
       for (const w of this.list('workspaces').filter(w => w.projectId === id)) this.remove('workspaces', w.id);
       for (const g of this.list('gitChecks').filter(g => g.projectId === id)) this.remove('gitChecks', g.id);
       if (this.list('setupProposals').some(p => p.projectId === id && p.status === 'running')) throw new Error(tr('store.projectSetupOperationStillRunning'));
-      for (const kind of ['repositories', 'repositoryWorkspaces', 'repositoryOperations', 'setupProposals', 'rolePromptChanges', 'supervisorConfigs', 'coordinationRequests', 'deliveries', 'plans', 'planVersions', 'planSteps', 'reports', 'executionPlans', 'attachments', 'scheduledJobs', 'scheduledOccurrences', 'timerActions', 'runReports', 'runReportFiles', 'resultReceipts', 'reportSubmissions', 'runAlerts', 'projectGitVersions', 'roleSessions']) {
+      for (const kind of ['repositories', 'repositoryWorkspaces', 'repositoryOperations', 'setupProposals', 'rolePromptChanges', 'supervisorConfigs', 'coordinationRequests', 'deliveries', 'plans', 'planVersions', 'planSteps', 'reports', 'executionPlans', 'attachments', 'scheduledJobs', 'scheduledOccurrences', 'timerActions', 'runReports', 'runReportFiles', 'mediaTransfers', 'resultReceipts', 'reportSubmissions', 'runAlerts', 'projectGitVersions', 'roleSessions']) {
         for (const record of this.list(kind).filter(r => r.projectId === id)) this.remove(kind, record.id);
       }
       this.remove('rooms', id);
