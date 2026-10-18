@@ -1960,4 +1960,5 @@ Tool errors start with a [code]: run_reconciling and home_disconnected did not r
   'wbTools.callField.scope': 'Role and scope',
   'wbTools.callField.input': 'Input',
   'wbTools.callField.return': 'Return',
+  'rooms.queueEditUnavailable': 'Only a human message whose recipients are all still queued can be returned for editing. Started or coordinated work is unchanged.',
 });

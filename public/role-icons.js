@@ -187,6 +187,20 @@ export function agentIconEl(runtime, label) {
   return node;
 }
 
+/** Decorative copy of the existing model mark; separate SVG image scope keeps clip IDs out of the live controls. */
+export function agentWatermarkEl(runtime) {
+  const node=el('span','role-card-watermark'),art=agentIconEl(runtime).firstElementChild;
+  node.setAttribute('aria-hidden','true');
+  if(art.tagName.toLowerCase()==='svg'){
+    // Small icon tiles are useful in a model row, but only the brand silhouette belongs on the card background.
+    if(runtime==='claude')art.querySelector('rect')?.remove();
+    if(runtime==='grok')art.querySelector('path')?.remove();
+    if(runtime==='claude'||runtime==='grok')for(const part of art.querySelectorAll('[fill="#fff"]'))part.setAttribute('fill',runtime==='claude'?'#D97757':'#111');
+    const image=el('img');image.src=`data:image/svg+xml,${encodeURIComponent(art.outerHTML)}`;image.alt='';image.draggable=false;node.append(image);
+  }else{art.alt='';art.draggable=false;node.append(art);}
+  return node;
+}
+
 const STROKE = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
 export const UI_ICON = {
   close: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m6 6 12 12M18 6 6 18"/></svg>`,

@@ -64,7 +64,6 @@
             <button class="icon-button" id="show-history" type="button" aria-label="History" title="History"></button>
             <button class="icon-button" id="show-plan-history" type="button" aria-label="View current plan" title="View current plan" hidden></button>
             <button class="icon-button" id="show-project-settings" type="button" aria-label="Project Settings" title="Project Settings"></button>
-            <button class="icon-button" id="group-chat-actions" type="button" aria-label="Group chat actions" title="Group chat actions" hidden>⋯</button>
           </div>
         </header>
         <div id="project-repository" class="repository-bar" hidden></div>
@@ -161,6 +160,10 @@
                   <div class="form-actions full-width"><button class="primary" id="save-project-settings" type="button" data-action-label>Save basic information</button></div>
                 </form>
                 <p id="project-settings-feedback" class="form-feedback" role="status" hidden></p>
+                <div id="project-group-actions" class="form-actions" hidden>
+                  <button id="branch-group-chat" class="secondary" type="button">Branch into new chat</button>
+                  <button id="copy-project-team" class="secondary" type="button">Copy team into new project</button>
+                </div>
                 </section>
                 <section class="settings-block project-danger-zone" aria-labelledby="project-danger-heading">
                   <div><h3 id="project-danger-heading">Danger zone</h3><p class="workspace-note">Deleting a project requires confirmation.</p></div>

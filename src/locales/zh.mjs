@@ -1960,4 +1960,5 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wbTools.callField.scope': '角色与范围',
   'wbTools.callField.input': '输入',
   'wbTools.callField.return': '返回',
+  'rooms.queueEditUnavailable': '只能取回所有接收方均未开始执行的用户消息；已启动或协作中的任务保持不变。',
 });

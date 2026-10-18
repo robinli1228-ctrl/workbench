@@ -1049,6 +1049,10 @@ const server = http.createServer(async (req, res) => {
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/queue\/order$/)) && req.method === 'POST') {
         const r = rooms.reorderQueue(m[1], await body(req)); scheduleChat(); change(); return json(res, r);
       }
+      if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/edit-queued$/)) && req.method === 'POST') {
+        const input=await body(req),result=db.transaction(()=>{const recalled=rooms.editQueuedMessage(m[1],m[2],input);for(const id of recalled.requestIds)calls.cancel(id);return recalled;});
+        change();return json(res,result);
+      }
       if ((m = pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/)) && req.method === 'POST') {
         const r = rooms.cancel(m[1]); if (r.requestId) calls.cancel(r.requestId); change(); return json(res, r);
       }

@@ -253,7 +253,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   const revokeAttachment=(nodeId,id)=>{const key=`${nodeId}:${id}`,pending=urls.get(key);urls.delete(key);if(pending)void Promise.resolve(pending).then(url=>URL.revokeObjectURL(url)).catch(()=>{});};
   const revokeUrls=()=>{for(const id of [...urls.keys()]){const split=id.indexOf(':');revokeAttachment(id.slice(0,split),id.slice(split+1));}};
   let previewDialog=null;
-  /** The full original (images) or its name and size (other files); the 48px card thumbnail is only a crop. */
+  /** The full original (images) or its name and size (other files); the draft thumbnail is only a crop. */
   function previewAttachment(item){if(!current)return;
    if(!previewDialog){previewDialog=el('dialog','attachment-dialog');document.body.append(previewDialog);}
    const close=closeIcon(el('button','icon-button'),t('Close'));close.type='button';close.onclick=()=>previewDialog.close();
@@ -262,7 +262,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
    previewDialog.append(el('p','attachment-text',`${item.name} · ${sizeText(item.size)}`));previewDialog.showModal();}
   function attachmentCard(item,remove){const card=el('div',`attachment-card${item.mime?.startsWith('image/')?'':' attachment-file-card'}`);card.title=item.name;
    if(remove){
-    // Composer card: same 224×64 layout as the group chat. The body opens the preview; the × keeps its own column.
+    // Match group-chat draft tiles: image preview with a corner remove control, details for other files.
     const open=el('button','attachment-open');open.type='button';open.addEventListener('click',()=>previewAttachment(item));
     if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);}
     else{const icon=el('span','native-file-icon');icon.innerHTML=UI_ICON.original;open.append(icon);}

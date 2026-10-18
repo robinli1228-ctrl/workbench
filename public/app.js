@@ -15,7 +15,7 @@ import { createRoomUI, createRoleRefresh } from './room.js';
 import { projectSettings } from './project-settings.js';
 import {createGroupConversationUI} from './group-conversations.js';
 import {createProjectTeamCopyUI} from './project-team-copy.js';
-import { agentIconEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl, closeIcon } from './role-icons.js';
+import { agentIconEl, agentWatermarkEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl, closeIcon } from './role-icons.js';
 import { activateSettingsTab, normalizeSettingsTab, settingsView, initProjectSettingsTabs } from './settings-page.js';
 import { supervisorSettings } from './supervisor-settings.js';
 import { roleTemplatesUI } from './role-templates.js';
@@ -445,9 +445,8 @@ function getDetailRun(taskId) {
 }
 
 /** Switching projects immediately isolates old data and in-flight details so late responses are not shown in another project. */
-const teamCopyUI=createProjectTeamCopyUI({api,getData:()=>app.data,onCreated:async op=>{selectProject(op.destinationProjectId);render();await refreshState({quiet:true});}});
-const groupConversationsUI=createGroupConversationUI({api,getSelection:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),onCopyTeam:selection=>teamCopyUI.open(selection.projectId),onCreated:async chat=>{selectProject(chat.projectId,chat.id);render();await refreshState({quiet:true});}});
-document.querySelector('#group-chat-actions').addEventListener('click',()=>groupConversationsUI.open());
+const teamCopyUI=createProjectTeamCopyUI({api,getData:()=>app.data,onCreated:async op=>{closeSettings();selectProject(op.destinationProjectId);render();await refreshState({quiet:true});}});
+createGroupConversationUI({api,getSelection:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),onCopyTeam:selection=>teamCopyUI.open(selection.projectId),onCreated:async chat=>{closeSettings();selectProject(chat.projectId,chat.id);render();await refreshState({quiet:true});}});
 
 function selectProject(projectId,conversationId=projectId) {
   liveScene.close();
@@ -717,7 +716,6 @@ function renderProjects() {
       render();
       await refreshState({quiet:true});
     });
-    button.addEventListener('contextmenu',event=>{if(app.data.capabilities?.groupConversations!==1)return;event.preventDefault();groupConversationsUI.open({projectId:project.id,conversationId:chat.id});});
     dom.projectList.append(button);
   }
 }
@@ -952,7 +950,7 @@ function renderRoles() {
       const quota = roleNameQuota(quotaForRole(runtime, worker, role.model));
       if (quota.childElementCount) activityRow.append(quota);
     }
-    card.append(head, ids, activityRow);
+    card.append(agentWatermarkEl(role.runtime), head, ids, activityRow);
     const open = () => {
       if(!isSupervisor){room.openRoleEditor(role.id);return;}
       supervisorsUI.open();
@@ -1498,7 +1496,9 @@ function renderWorkspace() {
   dom.contentGrid.hidden = settingsOpen || !project || !dom.projectFormPanel.hidden;
   dom.workspaceTitle.translate = settingsOpen || !project;
   dom.workspaceTitle.textContent = settingsOpen ? settingsView(app.settingsTab).title : (app.data.conversations?.find(c=>c.id===app.selectedConversationId)?.title||project?.name||'Select a project');
-  document.querySelector('#group-chat-actions').hidden=settingsOpen||nativeSessionUI.active()||!project||app.data.capabilities?.groupConversations!==1;
+  document.querySelector('#project-group-actions').hidden=!project;
+  document.querySelector('#branch-group-chat').disabled=app.data.capabilities?.groupConversations!==1;
+  document.querySelector('#copy-project-team').disabled=app.data.capabilities?.projectTeamCopy!==1;
   document.querySelector('#show-project-settings').disabled = !project;
   const repoBar = document.querySelector('#project-repository'); repoBar.replaceChildren(); repoBar.hidden = settingsOpen || !project?.repository;
   if (!settingsOpen && project?.repository) { const link = create('a', '', `Gitee · ${project.repository.owner}/${project.repository.repo}`); link.href = project.repository.webUrl; link.target = '_blank'; link.rel = 'noopener noreferrer'; repoBar.append(link); }

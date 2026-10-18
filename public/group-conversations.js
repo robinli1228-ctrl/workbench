@@ -6,17 +6,15 @@ export function createGroupConversationUI({api,getSelection,onCreated,onCopyTeam
   const dialog=document.createElement('dialog');dialog.className='group-conversation-dialog';
   const heading=document.createElement('h3'),close=document.createElement('button');close.type='button';close.className='icon-button';closeIcon(close,t('Close'));
   const header=document.createElement('div');header.className='group-conversation-heading';header.append(heading,close);
-  const actions=document.createElement('div');actions.className='group-conversation-actions';
-  const branch=document.createElement('button');branch.type='button';branch.textContent=t('Branch into new chat');actions.append(branch);
-  const copy=document.createElement('button');copy.type='button';copy.textContent=t('Copy team into new project');copy.hidden=!onCopyTeam;actions.append(copy);
+  const branch=document.querySelector('#branch-group-chat'),copy=document.querySelector('#copy-project-team');
   const form=document.createElement('form'),label=document.createElement('label'),title=document.createElement('input'),note=document.createElement('p'),save=document.createElement('button'),error=document.createElement('p');
   title.id='group-conversation-title';title.required=true;title.maxLength=80;label.textContent=t('Chat title');label.append(title);
   note.textContent=t('Same project folders and roles; no messages or native context are copied. The original chat remains usable.');
   save.id='create-group-conversation';save.type='submit';save.className='primary';save.textContent=t('Create chat');error.setAttribute('role','status');
-  form.append(label,note,error,save);dialog.append(header,actions,form);document.body.append(dialog);
+  form.append(label,note,error,save);dialog.append(header,form);document.body.append(dialog);
   let source=null,requestId=null,busy=false;
-  close.onclick=()=>dialog.close();copy.onclick=()=>{dialog.close();onCopyTeam?.(source);};
-  branch.onclick=()=>{actions.hidden=true;form.hidden=false;heading.textContent=t('Branch into new chat');title.focus();};
+  close.onclick=()=>dialog.close();copy.onclick=()=>{const selection=getSelection();if(selection?.projectId)onCopyTeam?.({...selection});};
+  branch.onclick=()=>open();
   form.onsubmit=async event=>{
     event.preventDefault();if(busy||!title.value.trim())return;
     busy=true;save.disabled=true;error.textContent='';requestId||=crypto.randomUUID();
@@ -25,9 +23,11 @@ export function createGroupConversationUI({api,getSelection,onCreated,onCopyTeam
       await onCreated(created);dialog.close();
     }catch(e){error.textContent=e.message;}finally{busy=false;save.disabled=false;}
   };
-  return {open(selection=getSelection()){
+  function open(selection=getSelection()){
     if(!selection?.projectId||busy)return;
-    source={...selection};requestId=null;heading.textContent=t('Group chat actions');actions.hidden=false;form.hidden=true;title.value='';error.textContent='';
+    source={...selection};requestId=null;heading.textContent=t('Branch into new chat');title.value='';error.textContent='';
     if(!dialog.open)dialog.showModal();
-  }};
+    title.focus();
+  }
+  return {open};
 }
