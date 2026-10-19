@@ -8,7 +8,7 @@ export function warmSessionFingerprint({folder,runtimeType,model,effort,roleName
 
 /** Only cache processes of completed turns; active Runs are still managed by the Worker's existing concurrency table. */
 export class WarmSessions {
-  constructor({idleMs=300000,max=4,changed=()=>{},retired=()=>{}}={}) {
+  constructor({idleMs=900000,max=4,changed=()=>{},retired=()=>{}}={}) {
     this.idleMs=idleMs; this.max=max; this.changed=changed; this.retired=retired; this.entries=new Map();
   }
   alive(session) { return Boolean(session?.proc && !session.proc.killed && session.proc.exitCode===null && session.proc.signalCode===null); }

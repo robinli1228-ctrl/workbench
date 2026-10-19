@@ -6,6 +6,7 @@ import { executionText } from './input-language.mjs';
 import { ClaudeContextUsage } from './context-usage.mjs';
 
 const MAX_TOOL_OUTPUT = 12000;
+const SUMMARY_TURN_GRACE_MS = 15000;
 
 function extractText(content) {
   if (typeof content === 'string') return content;
@@ -44,6 +45,7 @@ export class CliPrintSession {
     this.resumeSessionId = resumeSessionId;
     this.inheritInstructions = inheritInstructions;
     this.stopping = false; this.done = false;
+    this.backgroundTasks = new Set(); this.awaitingBackground = false;
     this.lastThinkingAt = 0;
     this.contextTracker = runtime==='claude'?new ClaudeContextUsage():null;
     this.answer = ''; this.textBuffer = ''; this.finalText = ''; this.runtimeError = '';
@@ -92,7 +94,7 @@ export class CliPrintSession {
   /** Claude/Agy keep the process with bidirectional input; Grok keeps using single-turn resume with the specified native ID. */
   reuse(options) {
     if(!this.keepAlive || !this.done || !this.proc || this.proc.killed || this.proc.exitCode!==null || this.proc.signalCode!==null)throw new Error(tr('cliPrintSession.cliProcessCannotBeReused'));
-    Object.assign(this,options);this.done=false;this.stopping=false;
+    Object.assign(this,options);this.done=false;this.stopping=false;this.awaitingBackground=false;clearTimeout(this.backgroundTimer);
     this.answer='';this.textBuffer='';this.finalText='';this.bestAnswer='';this.runtimeError='';this.emittedFinal=false;
     this.lastThinkingAt=0;
   }
@@ -165,6 +167,13 @@ export class CliPrintSession {
     if(type==='content_block_delta'&&m.delta?.type==='thinking_delta'&&(!this.lastThinkingAt||Date.now()-this.lastThinkingAt>=15000)) {
       this.lastThinkingAt=Date.now();this.emit('log',{text:tr('cliPrintSession.modelThinkingNativeProgressEvent')});
     }
+    // Claude reports the full list of its live background tasks (subagents, background shells) on every change.
+    if(type==='system'&&m.subtype==='background_tasks_changed'&&Array.isArray(m.tasks)) {
+      this.backgroundTasks=new Set(m.tasks.map(t=>t?.task_id).filter(Boolean));
+      if(this.awaitingBackground&&!this.backgroundTasks.size)this.awaitSummaryTurn();
+    }
+    // A finished background task makes Claude start a summary turn by itself; that turn's result ends the Run.
+    if(type==='system'&&(m.subtype==='init'||m.subtype==='status'&&m.status==='requesting'))clearTimeout(this.backgroundTimer);
     if (type === 'error' || m.error) {
       // Claude may put auth errors in assistant.message objects; handoff and UI need the actual text.
       const errText = extractText(m.error?.message) || extractText(m.message) || extractText(m.error) || tr('cliPrintSession.runtimeError');
@@ -190,6 +199,8 @@ export class CliPrintSession {
         this.emit('log', { text: this.runtimeError });
       } else if(m.status==='SUCCESS' || m.subtype==='success') this.runtimeError='';
       if(this.keepAlive) {
+        // Background tasks still run in this process: this reply is only progress, so the Run stays active (slot held, never pooled as idle).
+        if(!this.runtimeError&&this.backgroundTasks.size){this.awaitingBackground=true;this.flushText();this.bestAnswer='';return;}
         this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);
         if(this.runtimeError)this.shutdown();
       }
@@ -241,6 +252,12 @@ export class CliPrintSession {
     else this.appendText(text);
   }
   flushText() { clearTimeout(this.textTimer); this.textTimer = null; if (this.textBuffer) { this.emit('text', { text: this.textBuffer }); this.textBuffer = ''; } }
+  /** If no summary turn follows the last background task (for example it was stopped), end with the reply already received. */
+  awaitSummaryTurn() {
+    clearTimeout(this.backgroundTimer);
+    this.backgroundTimer=setTimeout(()=>{if(this.awaitingBackground&&!this.backgroundTasks.size)this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);},SUMMARY_TURN_GRACE_MS);
+    this.backgroundTimer.unref?.();
+  }
   approve() { throw new Error(tr('cliPrintSession.runtimeAutoApprovesInPrint')); }
   async stop() {
     if (this.done) return;
@@ -258,7 +275,7 @@ export class CliPrintSession {
       this.emit('message', { text: answer, phase: 'final_answer' });
       this.emittedFinal = true;
     }
-    this.done = true; clearTimeout(this.killTimer);
+    this.done = true; this.awaitingBackground = false; clearTimeout(this.killTimer); clearTimeout(this.backgroundTimer);
     this.emit('status', { status, ...(error ? { error } : {}) });
   }
   shutdown() {
