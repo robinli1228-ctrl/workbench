@@ -1,6 +1,12 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  'deviceAdmin.reconnectUnsupported':'手动重连需要 Home 管理的反向 SSH 隧道、已保存的 SSH 密钥及可核验的 Linux Worker。',
+  'deviceAdmin.reconnectBusy':'该设备有待处理或运行中的任务、常驻 CLI，或正在执行其他连接操作。未停止任何任务，请空闲后重试。',
+  'deviceAdmin.reconnectUnverified':'无法确认该 Worker 当前空闲，未停止隧道。请检查 SSH 连接，并先结束活动会话。',
+  'deviceAdmin.reconnectChanged':'检查期间设备连接信息发生变化，请重新打开设备详情后重试。',
+  'deviceAdmin.reconnectExitTimeout':'旧 SSH 隧道未正常退出，未强制终止进程，也未重启任何服务。',
+  'deviceAdmin.reconnectHeartbeatTimeout':'已重建隧道，但未及时收到 Worker 的新心跳。请检查 SSH 和 Worker，当前不能认定设备已恢复。',
   'teamCopy.sourceInvalid':'源项目需要已保存的总管和有效的角色配置。',
   'teamCopy.invalidOrder':'排序必须包含每个现有工作角色且不得重复。',
   'teamCopy.promptWarning':'提示词将原样复制，其中可能包含旧项目名称和路径，请在使用前检查。',

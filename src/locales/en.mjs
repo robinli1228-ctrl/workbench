@@ -1,6 +1,12 @@
 // English message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  'deviceAdmin.reconnectUnsupported':'Manual reconnection requires a Home-managed reverse SSH tunnel, a saved SSH key and a verifiable Linux Worker.',
+  'deviceAdmin.reconnectBusy':'This device has pending or active work, a retained CLI, or another connection operation. Nothing was stopped; try again when it is idle.',
+  'deviceAdmin.reconnectUnverified':'Cannot confirm that this Worker is idle. No tunnel was stopped. Check SSH access and finish active sessions first.',
+  'deviceAdmin.reconnectChanged':'The device connection changed during verification. Reopen the device details and try again.',
+  'deviceAdmin.reconnectExitTimeout':'The old SSH tunnel did not exit. No force termination or service restart was performed.',
+  'deviceAdmin.reconnectHeartbeatTimeout':'The tunnel was restarted, but no fresh Worker heartbeat arrived in time. Check SSH and the Worker; do not assume the device recovered.',
   'teamCopy.sourceInvalid':'The source project needs a saved supervisor and valid team configuration.',
   'teamCopy.invalidOrder':'Role order must contain every current working role exactly once.',
   'teamCopy.promptWarning':'Prompts are copied exactly and may reference the source project or old paths. Review them before use.',
