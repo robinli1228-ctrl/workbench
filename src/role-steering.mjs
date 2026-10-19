@@ -85,7 +85,7 @@ export class RoleSteering {
       if(active.some(r=>r.nodeId!==task.roleSnapshot.nodeId||r.roleSnapshot?.runtime!==task.roleSnapshot.runtime))throw new Error(tr('roleSteering.roleDeviceCliHasChanged'));
       if(task.requestId && this.db.get('coordinationRequests',task.requestId)?.status!=='queued')throw new Error(tr('roleSteering.messageStateHasChangedRefresh'));
       // Replacing a waiting collaboration cancels it; an old client must not do that without saying so.
-      // Even an explicit replace must say it means to cancel a protected wait; the queue never offers that by default.
+      // Only an explicit human steering click opts into replacing the protected wait; ordinary sends never do.
       if(!collaborationQueueView(this.db).forTask(task).allowed&&!(input.mode==='replace'&&input.confirmReplaceWait===true))throw new Error(tr('collabWait.steerDuringWait'));
       const stopped=new Set(active.map(r=>r.id)), blocked=new Set(), planIds=new Set();
       const discussions=new RoleDiscussions(this.db);
@@ -98,7 +98,7 @@ export class RoleSteering {
       const requests=this.db.list('coordinationRequests').filter(r=>r.projectId===projectId&&conversationIdOf(r)===conversationId&&r.targetRoleId===task.roleId&&r.taskId!==taskId&&
         (active.some(run=>run.id===r.currentRunId)||r.status==='waiting_call'));
       for(const request of requests) {
-        for(const id of this.calls.cancel(request.id))stopped.add(id);
+        for(const id of this.calls.cancel(request.id,{preserveRunningChildren:true}))stopped.add(id);
         let current=request;
         while(current&&!blocked.has(current.id)) {
           blocked.add(current.id);if(current.planId)planIds.add(current.planId);
@@ -118,7 +118,7 @@ export class RoleSteering {
       for(const id of stopped)this.db.requestStop(id,`steer:${taskId}:${id}`);
       const steering={commandId,waitForRunIds:[...stopped],planIds:[...planIds],createdAt:new Date().toISOString()};
       task=this.db.get('tasks',taskId);
-      this.db.put('tasks',{...task,steering,contextPrepared:true,contextState:'excerpt',waitingReason:stopped.size?tr('roleSteering.interruptingWaitingForOldRun2'):tr('roleSteering.continueWithNewInstructionFirst')});
+      this.db.put('tasks',{...task,steering,collaborationYield:null,contextPrepared:true,contextState:'excerpt',waitingReason:stopped.size?tr('roleSteering.interruptingWaitingForOldRun2'):tr('roleSteering.continueWithNewInstructionFirst')});
       return steering;
     });
   }

@@ -1011,6 +1011,7 @@ export default {
   'Steering needs attention: {reason}': '引导需要处理：{reason}',
   'Interrupting and starting this message': '正在打断当前执行并启动这条引导',
   'Interrupt this role now and run this message first; actions already performed are not rolled back': '立即打断该角色并优先执行这条引导；已执行操作不会回滚',
+  'Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept': '立即打断该角色，在原会话中处理这条引导；旧任务不自动续跑，已有修改保留',
   'Steer now': '立即引导',
   "{h}h {m}m": "{h}小时{m}分",
   "{m}m {s}s": "{m}分{s}秒",
