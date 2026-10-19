@@ -1,0 +1,174 @@
+/** Session transcript rendering: one activity line per turn (expandable steps), file chips with a preview sheet, and a single working line.
+ * Pure DOM helpers; the data still comes from the turn events (live-scene rows) that the Sessions page already loads. */
+import {stripAnsi} from './run-log-data.js';
+
+const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
+const MAX_DIFF_LINES=4000,MAX_PREVIEW=400000;
+
+const ICONS={
+ read:'<path d="M4 3.5h7.5L16 8v8.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1Z"/><path d="M11.5 3.5V8H16"/>',
+ edit:'<path d="M12.5 4.5l3 3L7 16H4v-3l8.5-8.5Z"/><path d="M11 6l3 3"/>',
+ write:'<path d="M4 3.5h7.5L16 8v8.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1Z"/><path d="M10 9v5M7.5 11.5h5"/>',
+ command:'<path d="M4 6l4 4-4 4"/><path d="M10 14h6"/>',
+ search:'<circle cx="9" cy="9" r="5"/><path d="M13 13l4 4"/>',
+ web:'<circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2.5 2.5 2.5 11.5 0 14M10 3c-2.5 2.5-2.5 11.5 0 14"/>',
+ agent:'<circle cx="10" cy="7" r="3"/><path d="M4 17c0-3 2.7-5 6-5s6 2 6 5"/>',
+ note:'<path d="M5 5h10M5 9h10M5 13h6"/>',
+ error:'<circle cx="10" cy="10" r="7"/><path d="M7.5 7.5l5 5M12.5 7.5l-5 5"/>',
+ other:'<circle cx="10" cy="10" r="2"/><circle cx="4.5" cy="10" r="1.5"/><circle cx="15.5" cy="10" r="1.5"/>'
+};
+export function stepIcon(kind){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 20 20');svg.setAttribute('aria-hidden','true');svg.classList.add('nt-icon',`is-${kind}`);svg.innerHTML=ICONS[kind]||ICONS.other;return svg;}
+
+const parseArgs=value=>{if(!value)return {};if(typeof value==='string'){try{const parsed=JSON.parse(value);return parsed&&typeof parsed==='object'?parsed:{raw:value};}catch{return {raw:value};}}return typeof value==='object'?value:{};};
+const text=value=>typeof value==='string'?value:value==null?'':JSON.stringify(value,null,2);
+const basename=path=>String(path||'').replace(/[\\/]+$/,'').split(/[\\/]/).pop()||String(path||'');
+const lines=value=>String(value??'').split('\n');
+const countLines=value=>{const s=String(value??'');return s?s.split('\n').length:0;};
+
+/** Unified-diff and apply_patch bodies count their own +/- lines; +++/--- headers are skipped. */
+function patchStat(body){let added=0,removed=0;for(const line of lines(body)){if(/^\+\+\+|^---/.test(line))continue;if(line.startsWith('+'))added++;else if(line.startsWith('-'))removed++;}return {added,removed};}
+
+/** Classify one merged tool item (Claude, Codex, Grok and Agy name their tools differently) into a step the transcript can summarize. */
+export function classifyStep(item,runStatus){
+ const args=parseArgs(item.input??item.arguments??item.parameters);
+ const name=String(item.name||item.tool||item.title||item.command&&'command'||item.type||'').toLowerCase();
+ const path=args.file_path||args.path||args.filePath||args.filename||args.target_file||args.file||args.notebook_path||null;
+ const command=Array.isArray(args.command)?args.command.join(' '):args.command||args.cmd||(Array.isArray(item.command)?item.command.join(' '):typeof item.command==='string'?item.command:null);
+ const output=stripAnsi(text(item.aggregatedOutput??item.output??item.results??item.result??''));
+ const failed=item.status==='failed'||item.is_error===true||(item.exitCode!=null&&item.exitCode!==0),running=item.status==='inProgress'&&!['succeeded','failed','interrupted'].includes(runStatus);
+ const base={id:item.id,name:item.name||item.tool||item.title||item.type||'tool',args,path,command,output,failed,running,error:item.error?text(item.error):'',exitCode:item.exitCode,item};
+ const edits=Array.isArray(args.edits)?args.edits:null;
+ if(item.type==='file_change'||Array.isArray(item.changes)){const changes=item.changes||[];let added=0,removed=0;for(const c of changes){const s=patchStat(c.diff||c.patch||'');added+=s.added;removed+=s.removed;}return {...base,kind:'edit',files:changes.map(c=>c.path).filter(Boolean),added,removed,changes};}
+ if(/apply_patch/.test(name)||/^\s*apply_patch\b/.test(command||'')){const body=args.patch||args.input||command||'';const files=[...String(body).matchAll(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm)].map(m=>m[1].trim());return {...base,kind:'edit',files,...patchStat(body),patch:String(body)};}
+ if(/(multi_?edit|str_replace|^edit|_edit|replace|patch)/.test(name)&&(edits||args.old_string!==undefined||args.old_str!==undefined||args.new_string!==undefined)){
+  const pairs=(edits||[args]).map(e=>({before:String(e.old_string??e.old_str??''),after:String(e.new_string??e.new_str??'')}));
+  let added=0,removed=0;for(const p of pairs){const d=diffLines(p.before,p.after);added+=d.added;removed+=d.removed;}
+  return {...base,kind:'edit',files:path?[path]:[],pairs,added,removed};
+ }
+ if(/(write|create_file|save_file|write_to_file|notebookedit)/.test(name)&&(args.content!==undefined||args.new_source!==undefined||args.text!==undefined)){const content=String(args.content??args.new_source??args.text??'');return {...base,kind:'write',files:path?[path]:[],content,added:countLines(content),removed:0};}
+ if(/(^read|_read|read_file|view_file|^view$|^cat$|open_file|notebookread)/.test(name)||(path&&!command&&/read|view|open/.test(name)))return {...base,kind:'read',files:path?[path]:[]};
+ if(item.type==='command_execution'||/(bash|shell|exec|terminal|run_command|run_shell|^run$|^cmd$|powershell|command)/.test(name)||command)return {...base,kind:'command',files:[],command:command||'',description:args.description||''};
+ if(/(grep|glob|search|^find|rg$|list_dir|list_files|^ls$|ripgrep|codebase)/.test(name)&&!/web/.test(name))return {...base,kind:'search',files:[],query:args.pattern||args.query||args.regex||args.glob||args.path||''};
+ if(/(web|fetch|browse|http|url|crawl)/.test(name)||args.url)return {...base,kind:'web',files:[],url:args.url||args.query||''};
+ if(/(agent|task|subagent|delegate|spawn|dispatch)/.test(name))return {...base,kind:'agent',files:[],description:args.description||args.prompt?.slice?.(0,120)||''};
+ return {...base,kind:'other',files:path?[path]:[]};
+}
+
+/** Line diff with an LCS table, bounded so a huge replacement never freezes the page. */
+export function diffLines(before,after){
+ const a=lines(before),b=lines(after);
+ if(a.length+b.length>MAX_DIFF_LINES){return {added:b.length,removed:a.length,rows:[...a.map(t=>({type:'del',text:t})),...b.map(t=>({type:'add',text:t}))],truncated:true};}
+ const n=a.length,m=b.length,dp=Array.from({length:n+1},()=>new Uint16Array(m+1));
+ for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)dp[i][j]=a[i]===b[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+ const rows=[];let i=0,j=0,added=0,removed=0;
+ while(i<n&&j<m){if(a[i]===b[j]){rows.push({type:'ctx',text:a[i]});i++;j++;}else if(dp[i+1][j]>=dp[i][j+1]){rows.push({type:'del',text:a[i++]});removed++;}else{rows.push({type:'add',text:b[j++]});added++;}}
+ while(i<n){rows.push({type:'del',text:a[i++]});removed++;}while(j<m){rows.push({type:'add',text:b[j++]});added++;}
+ return {added,removed,rows};
+}
+
+export const elapsedText=(from,to=Date.now())=>{const s=Math.max(0,Math.round((to-new Date(from).getTime())/1000));if(!Number.isFinite(s))return '';return s<60?`${s}s`:s<3600?`${Math.floor(s/60)}m ${s%60}s`:`${Math.floor(s/3600)}h ${Math.floor(s%3600/60)}m`;};
+const stat=(added,removed)=>[added?`+${added}`:'',removed?`−${removed}`:''].filter(Boolean).join(' ');
+
+/** One line that says what the turn did: unique files read/edited/created, commands, searches, delegations, failures, and duration. */
+export function summarizeSteps(steps,t,{duration=''}={}){
+ const uniq=kind=>new Set(steps.filter(s=>s.kind===kind).flatMap(s=>s.files.length?s.files:[s.id||Math.random()])).size;
+ const edits=steps.filter(s=>s.kind==='edit'),added=edits.reduce((n,s)=>n+(s.added||0),0),removed=edits.reduce((n,s)=>n+(s.removed||0),0);
+ const parts=[];const count=(kind,one,many)=>{const n=kind==='command'||kind==='search'||kind==='web'||kind==='agent'||kind==='other'?steps.filter(s=>s.kind===kind).length:uniq(kind);if(n)parts.push(t(n===1?one:many,{n}));return n;};
+ count('read','Read 1 file','Read {n} files');
+ if(count('edit','Edited 1 file','Edited {n} files')&&(added||removed))parts[parts.length-1]+=` ${stat(added,removed)}`;
+ count('write','Created 1 file','Created {n} files');count('command','Ran 1 command','Ran {n} commands');count('search','1 search','{n} searches');count('web','Fetched 1 page','Fetched {n} pages');count('agent','Delegated 1 task','Delegated {n} tasks');count('other','1 tool call','{n} tool calls');
+ const failed=steps.filter(s=>s.failed).length;if(failed)parts.push(t(failed===1?'1 failed':'{n} failed',{n:failed}));
+ if(duration)parts.push(duration);
+ return parts.join(' · ');
+}
+
+/** The target shown after the verb: a file name, the first command line, a pattern, a host or a description. */
+export function stepTitle(step,t){
+ if(step.kind==='read')return {verb:t('Read'),target:basename(step.path),title:step.path||''};
+ if(step.kind==='edit'){const file=step.files[0]||'';return {verb:t(step.files.length>1?'Edited {n} files':'Edited',{n:step.files.length}),target:step.files.length>1?step.files.map(basename).join(', '):basename(file),title:step.files.join('\n'),stat:stat(step.added,step.removed)};}
+ if(step.kind==='write')return {verb:t('Created'),target:basename(step.path),title:step.path||'',stat:stat(step.added,0)};
+ if(step.kind==='command')return {verb:t('Ran'),target:(step.description||String(step.command||'').split('\n')[0]).slice(0,120),title:String(step.command||'')};
+ if(step.kind==='search')return {verb:t('Searched'),target:String(step.query||'').slice(0,120),title:String(step.query||'')};
+ if(step.kind==='web'){let host=step.url;try{host=new URL(step.url).host;}catch{}return {verb:t('Fetched'),target:String(host||'').slice(0,120),title:String(step.url||'')};}
+ if(step.kind==='agent')return {verb:t('Delegated'),target:String(step.description||'').slice(0,120),title:String(step.description||'')};
+ return {verb:step.name,target:step.path?basename(step.path):'',title:step.path||''};
+}
+
+function codeBlock(body,{numbers=true}={}){
+ const pre=el('pre','nt-code');const content=String(body||'');const rows=lines(content.length>MAX_PREVIEW?content.slice(0,MAX_PREVIEW):content);
+ if(!numbers){pre.textContent=content;return pre;}
+ for(const [i,line] of rows.entries()){const row=el('span','nt-line');row.append(el('span','nt-ln',String(i+1)),el('span','nt-lt',line));pre.append(row);}
+ if(content.length>MAX_PREVIEW)pre.append(el('span','nt-line is-note','…'));return pre;
+}
+function diffBlock(diff){
+ const pre=el('pre','nt-code nt-diff');let a=0,b=0;
+ for(const row of diff.rows){const line=el('span',`nt-line is-${row.type}`);const left=row.type==='add'?'':String(++a),right=row.type==='del'?'':String(++b);line.append(el('span','nt-ln',left),el('span','nt-ln',right),el('span','nt-mark',row.type==='add'?'+':row.type==='del'?'−':' '),el('span','nt-lt',row.text));pre.append(line);}
+ if(diff.truncated)pre.append(el('span','nt-line is-note','…'));return pre;
+}
+
+/** Detail of one step, used inline under the step row and in the preview sheet. */
+export function stepDetail(step,t){
+ const box=el('div','nt-detail');
+ if(step.kind==='edit'&&step.pairs){for(const p of step.pairs)box.append(diffBlock(diffLines(p.before,p.after)));}
+ else if(step.kind==='edit'&&step.patch)box.append(codeBlock(step.patch,{numbers:false}));
+ else if(step.kind==='edit'&&step.changes){for(const c of step.changes){box.append(el('div','nt-detail-path',c.path||''));if(c.diff||c.patch)box.append(codeBlock(c.diff||c.patch,{numbers:false}));}}
+ else if(step.kind==='write')box.append(codeBlock(step.content));
+ else if(step.kind==='read')box.append(codeBlock(stripReadNumbers(step.output)));
+ else if(step.kind==='command'){const cmd=el('pre','nt-code nt-cmd');cmd.textContent=`$ ${step.command||''}`;box.append(cmd);if(step.output)box.append(codeBlock(step.output,{numbers:false}));if(step.exitCode!=null&&step.exitCode!==0)box.append(el('div','nt-detail-note',t('Exit code {exitCode}',{exitCode:step.exitCode})));}
+ else{const args=step.args&&Object.keys(step.args).length?text(step.args):'';if(args)box.append(el('div','nt-detail-label',t('Arguments')),codeBlock(args,{numbers:false}));if(step.output)box.append(el('div','nt-detail-label',t('Output')),codeBlock(step.output,{numbers:false}));}
+ if(step.error)box.append(el('div','nt-detail-error',step.error));
+ if(step.item?.outputTruncated)box.append(el('div','nt-detail-note',t('Output is truncated; the CLI keeps the full text.')));
+ return box;
+}
+/** Claude's Read output carries "   12→" prefixes; the code block numbers lines itself. */
+function stripReadNumbers(output){const rows=lines(output);if(rows.length>2&&rows.slice(0,Math.min(rows.length,20)).every(l=>!l.trim()||/^\s*\d+→/.test(l)))return rows.map(l=>l.replace(/^\s*\d+→/,'')).join('\n');return output;}
+
+/** Latest state of each file touched by the turn: an edit or write wins over a read of the same path. */
+export function fileChips(steps){
+ const byPath=new Map();
+ for(const step of steps)for(const path of step.files||[]){const prior=byPath.get(path);if(!prior||step.kind!=='read'||prior.kind==='read')byPath.set(path,step);}
+ return [...byPath].map(([path,step])=>({path,step}));
+}
+
+/** The activity block: summary line with file chips; the step list opens on click (or stays open while live). */
+export function activityBlock({steps,notes=[],t,live=false,duration='',open=false,onPreview,onToggle}){
+ const box=el('details','nt-activity');box.open=open;
+ const summary=el('summary','nt-activity-summary');
+ summary.append(el('span','nt-caret'),el('span','nt-activity-text',summarizeSteps(steps,t,{duration})||t(live?'Working…':'No tool calls')));
+ const chips=fileChips(steps);
+ if(chips.length){const row=el('span','nt-chips');for(const {path,step} of chips.slice(0,8)){const chip=el('button','nt-chip');chip.type='button';chip.title=path;chip.append(stepIcon(step.kind),el('span','',basename(path)));if(step.kind==='edit'&&(step.added||step.removed))chip.append(el('span','nt-chip-stat',stat(step.added,step.removed)));chip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();onPreview?.(step,path);});row.append(chip);}if(chips.length>8)row.append(el('span','nt-chip-more',`+${chips.length-8}`));summary.append(row);}
+ box.append(summary);
+ const list=el('div','nt-steps');
+ for(const step of steps){
+  const row=el('div',`nt-step is-${step.kind}${step.failed?' is-failed':''}${step.running?' is-running':''}`);
+  const head=el('button','nt-step-head');head.type='button';const {verb,target,title,stat:s}=stepTitle(step,t);
+  head.append(stepIcon(step.kind),el('span','nt-step-verb',verb));const tgt=el('span','nt-step-target',target);tgt.translate=false;if(title)tgt.title=title;head.append(tgt);
+  if(s)head.append(el('span','nt-step-stat',s));if(step.failed)head.append(el('span','nt-step-flag',t('Failed')));else if(step.running)head.append(el('span','nt-step-flag is-running',t('Running')));
+  row.append(head);
+  head.addEventListener('click',()=>{const openNow=row.classList.toggle('is-open');if(openNow&&!row.querySelector('.nt-detail'))row.append(stepDetail(step,t));});
+  if(step.files?.length&&onPreview){const preview=el('button','nt-step-preview');preview.type='button';preview.title=t('Preview');preview.setAttribute('aria-label',t('Preview'));preview.textContent='↗';preview.addEventListener('click',()=>onPreview(step,step.files[0]));head.append(preview);}
+  list.append(row);
+ }
+ for(const note of notes){const row=el('div',`nt-step is-${note.kind==='error'?'error':'note'}`);const head=el('div','nt-step-head is-static');head.append(stepIcon(note.kind==='error'?'error':'note'),el('span','nt-step-target',stripAnsi(note.text).replace(/\s+/g,' ').trim().slice(0,160)));row.append(head);list.append(row);}
+ box.append(list);
+ box.addEventListener('toggle',()=>onToggle?.(box.open));
+ return box;
+}
+
+/** A sheet over the transcript column that shows one file: its latest edit as a diff, or the content the CLI read or wrote. */
+export function createPreviewSheet(host,t){
+ let sheet=null;
+ const close=()=>{sheet?.remove();sheet=null;host.classList.remove('has-preview');};
+ const onKey=e=>{if(e.key==='Escape'&&sheet){close();document.removeEventListener('keydown',onKey);}};
+ return {close,open(step,path){
+  close();sheet=el('aside','nt-sheet');sheet.setAttribute('aria-label',path);
+  const head=el('header','nt-sheet-head'),name=el('div','nt-sheet-name');name.append(stepIcon(step.kind),el('strong','',basename(path)));name.translate=false;
+  const dir=String(path||'').slice(0,Math.max(0,String(path||'').length-basename(path).length));const sub=el('div','nt-sheet-path',dir);sub.translate=false;sub.title=path;
+  const kind=el('span','nt-sheet-kind',t(step.kind==='edit'?'Latest edit':step.kind==='write'?'Written content':step.kind==='read'?'Content read by the CLI':'Tool call'));
+  const copy=el('button','nt-sheet-btn');copy.type='button';copy.textContent=t('Copy path');copy.addEventListener('click',()=>void navigator.clipboard?.writeText(path).catch(()=>{}));
+  const x=el('button','nt-sheet-btn is-close');x.type='button';x.setAttribute('aria-label',t('Close'));x.textContent='×';x.addEventListener('click',close);
+  const titles=el('div','nt-sheet-titles');titles.append(name,sub);head.append(titles,kind,copy,x);
+  const body=el('div','nt-sheet-body');body.append(stepDetail(step,t));
+  sheet.append(head,body);host.append(sheet);host.classList.add('has-preview');document.addEventListener('keydown',onKey);
+ }};
+}

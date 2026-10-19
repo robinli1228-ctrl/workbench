@@ -701,6 +701,15 @@ const server = http.createServer(async (req, res) => {
         if(req.method!=='POST'||nativeMatch[2]!=='terminal')throw Error('Invalid session action');
         const b=await body(req);
         if(b.action==='release'||b.action==='stop'){const claim=db.get('terminalSessions',b.operationId);if(claim?.kind!=='native'||claim.nodeId!==nodeId)throw Error('Invalid native terminal binding');return json(res,await returnTerminal(claim,b.action));}
+        // Open on the Sessions page: the prepared link is consumed by the Worker itself; the finished claim returns through the usual terminal checks.
+        if(b.action==='start'){
+          const claim=db.get('terminalSessions',b.operationId);
+          if(claim?.kind!=='native'||claim.nodeId!==nodeId||claim.status!=='prepared')throw Error('Terminal request is already used or changed');
+          if(worker.capabilities?.nativePageOpen!==1)throw Error('Upgrade this Worker to open sessions on this page');
+          const started=await workerQuery(claim,'native_terminal_start',{id:claim.id},20000);
+          db.transaction(()=>{const current=db.get('terminalSessions',claim.id);if(current?.status==='prepared')db.put('terminalSessions',{...current,status:'active',openedOn:'page',startedAt:new Date().toISOString()});});
+          change();return json(res,{started:true,pid:started.pid});
+        }
         if(worker.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
         const historyRecord=b.sessionId?ownedNativeSession(nodeId,b.runtime,b.sessionId):null;
         if(b.sessionId&&!historyRecord)throw Error('Session is not registered with Workbench');

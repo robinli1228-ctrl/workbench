@@ -10,7 +10,7 @@ import { readFile, mkdir, realpath, readdir, stat } from 'node:fs/promises';
 import {acquireWorkerLock} from './worker-lock.mjs';
 import { resolve, dirname, join, relative, isAbsolute, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Store, terminal } from './store.mjs';
 import {validateCliCapacity,reservedTerminalSlots} from './device-capacity.mjs';
@@ -768,6 +768,22 @@ async function query(m) {
       const updated=db.put('nativeCatalogEntries',{...entry,title,renamedAt:new Date().toISOString()});
       send({type:'reply',id:m.id,result:{entryId:updated.id,sessionId:updated.sessionId||null,title:updated.title}});return;
     }
+    if(m.action==='native_terminal_start'){
+      const id=m.path?.id,s=typeof id==='string'&&/^[a-zA-Z0-9-]{8,100}$/.test(id)?db.get('terminalSessions',id):null;
+      if(s?.kind!=='native'||s.nodeId!==identity.nodeId||s.status!=='prepared')throw Error('Terminal request is already used or changed');
+      // The iTerm launcher itself, run headlessly on this device: it claims, observes and returns the session exactly like a terminal.
+      const child=spawn(process.execPath,[join(base,'src','terminal-resume.mjs'),join(data,'worker.sqlite'),s.id],{cwd:s.workspace,env:{...process.env,WB_NATIVE_HELLO:'1'},stdio:'ignore',detached:process.platform!=='win32'});
+      child.unref();
+      const claimed=await new Promise(resolve=>{
+        const onExit=code=>{clearInterval(poll);clearTimeout(limit);resolve({exited:code??1});};
+        const poll=setInterval(()=>{if(db.get('terminalSessions',s.id)?.status==='active'){clearInterval(poll);clearTimeout(limit);child.removeListener('exit',onExit);resolve({pid:child.pid});}},100);
+        const limit=setTimeout(()=>{clearInterval(poll);child.removeListener('exit',onExit);resolve({timeout:true});},10000);
+        child.once('exit',onExit);child.once('error',()=>onExit(1));
+      });
+      if(claimed.exited!==undefined)throw Error(db.get('terminalSessions',s.id)?.status==='prepared'?'The CLI did not start; check that the working folder and CLI are available on this device':'The CLI exited before it finished starting');
+      if(claimed.timeout)throw Error('The CLI did not start in time');
+      reportCapacity();send({type:'reply',id:m.id,result:{id:s.id,pid:claimed.pid}});return;
+    }
     if(['native_sessions','native_session','native_terminal_preview','native_terminal_prepare'].includes(m.action)) {
       const input=m.path||{},runtime=input.runtime;
       if(m.action!=='native_sessions'&&!runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false))throw Error('CLI is not available on this device');
@@ -1061,7 +1077,7 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativePageOpen:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
