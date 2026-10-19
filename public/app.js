@@ -1535,7 +1535,12 @@ function renderTasks() {
     const top = create('div', 'task-card-top');
     top.append(create('h3', '', task.title), statusChip(taskDisplayStatus(task, latestRun)));
     const meta = create('div', 'task-meta');
+    // Execution snapshots retain the original role name after a role is renamed or removed.
+    const roleId=latestRun?.roleId||task.roleId;
+    const roleName=latestRun?.roleSnapshot?.name||task.roleSnapshot?.name||[...(app.data.roles||[]),...(app.data.supervisorRoles||[])].find(role=>role.id===roleId&&role.projectId===task.projectId)?.name||t('Unknown role');
+    const roleLabel=create('span','task-role-name',roleName);roleLabel.translate=false;
     meta.append(
+      roleLabel,
       create('span', '', task.model || 'gpt-5.6-sol'),
       create('span', '', task.mode === 'workspace-write' ? 'Workspace write' : 'Read-only'),
       create('span', '', formatTime(task.createdAt))
