@@ -48,22 +48,34 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
   sideTabButtons.forEach((tab,i)=>{const on=SIDE_TABS[i]===name;tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
   if(name==='outputs')renderOutputs();
  }
- /** Files named in the loaded agent replies of the selected session; nothing is fetched until a card is opened. */
- let outputs={key:null,items:new Map()},outputsTimer=null;
+ /**
+  * Files named in loaded agent replies, kept per native session: the timeline also renders earlier sessions of the same
+  * group, which must not clear the selected one. Only the most recent sessions are kept. Cards read only metadata (at
+  * most 12 per render); file bytes are fetched when a card is opened.
+  */
+ const OUTPUT_SESSIONS=8;let outputs=new Map(),outputsTimer=null;
+ // A path keeps its latest mention; live replies (no timestamp yet) count as newest, unreadable times as oldest.
+ const outputRank=value=>{if(!value)return Infinity;const time=Date.parse(value);return Number.isFinite(time)?time:0;};
  function noteOutputs(session,text,at){
   const context=mediaContext(session);if(!context)return;
-  if(outputs.key!==context.key)outputs={key:context.key,items:new Map()};
-  // A path keeps its latest mention; live replies (no timestamp yet) count as newest.
-  const rank=value=>value?Date.parse(value):Infinity;let changed=false;
-  for(const {path} of mediaPathMatches(text)){const prior=outputs.items.get(path);if(prior&&rank(prior.at)>=rank(at))continue;outputs.items.set(path,{path,at:at||null});changed=true;}
-  if(changed&&sideTab==='outputs'){clearTimeout(outputsTimer);outputsTimer=setTimeout(renderOutputs,100);}
+  const paths=mediaPathMatches(text);if(!paths.length)return;
+  let items=outputs.get(context.key);
+  if(!items){
+   items=new Map();outputs.set(context.key,items);
+   // Evict the oldest other session first; the selected session's list is never the one dropped.
+   const keep=selected?mediaContext(selected)?.key:null;
+   for(const old of outputs.keys()){if(outputs.size<=OUTPUT_SESSIONS)break;if(old!==keep&&old!==context.key)outputs.delete(old);}
+  }
+  let changed=false;
+  for(const {path} of paths){const prior=items.get(path);if(prior&&outputRank(prior.at)>=outputRank(at))continue;items.set(path,{path,at:at||null});changed=true;}
+  if(changed&&sideTab==='outputs'&&selected&&mediaContext(selected)?.key===context.key){clearTimeout(outputsTimer);outputsTimer=setTimeout(renderOutputs,100);}
  }
  function renderOutputs(){
   const panel=sidePanels.outputs;panel.replaceChildren();
   if(!selected){panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
   const context=mediaContext(selected),section=el('section','native-side-card');section.append(el('h3','',t('Files in this session')));
   // Live replies have no timestamp yet and are the newest; dated history follows, newest first.
-  const items=context&&outputs.key===context.key?[...outputs.items.values()].sort((a,b)=>(b.at?Date.parse(b.at):Infinity)-(a.at?Date.parse(a.at):Infinity)):[];
+  const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
   if(!items.length)section.append(el('p','native-side-hint',t('No files have been mentioned in the loaded replies yet.')));
   else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));section.append(list);}
   section.append(el('p','native-side-hint',t('Video, audio, image, PDF and archive paths from the replies loaded on the left; loading older history adds more. Each file opens from the device that holds it.')));
@@ -146,7 +158,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  function renderTitle(){if(!active()||document.body.dataset.workspaceView==='settings')return;const title=document.querySelector('#workspace-title');title.translate=!selected;title.textContent=selected?displayTitle(selected):t('Native sessions');}
  function resetDetail(){detailVersion++;selected=null;renderTitle();detailSignature='';timeline.clear();takeover.detach();content.replaceChildren(el('div','native-empty',t('Select a native session to view its details.')));resetSide();}
  function resetSide(){
-  delete side.dataset.sessionKey;sideBadge.hidden=true;outputs={key:null,items:new Map()};
+  delete side.dataset.sessionKey;sideBadge.hidden=true;outputs.clear();
   sidePanels.session.replaceChildren(el('p','native-side-hint',t('Read-only preview. Take over at the bottom to continue here, or open iTerm.')));
   sidePanels.resources.replaceChildren(el('p','native-side-hint',t('Select a native session to view its details.')));
   selectSideTab(sideTab);

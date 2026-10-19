@@ -2846,3 +2846,5 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .native-side-panel > :not(.native-side-card) > h3 { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; }
 .native-output-list { display: grid; gap: 6px; margin: 8px 0 12px; }
 .native-output-list .media-card { width: 100%; max-width: none; }
+/* Inside an inspector panel, card headings keep their small label style instead of the panel heading style. */
+.native-side-panel .native-side-card h3 { margin: 0 0 4px; color: var(--text-muted); font-size: var(--fs-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
