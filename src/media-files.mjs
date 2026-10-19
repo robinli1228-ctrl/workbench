@@ -125,8 +125,15 @@ export async function receiveMedia({url,size,sha256,name,transferId,workspace,fe
   const handle=await open(temp,'wx',0o600),hash=createHash('sha256');let received=0,lastReport=0;
   try {
     for await(const chunk of response.body){
-      received+=chunk.length;if(received>size)throw mediaError('media_receive_failed','more bytes than expected');
-      hash.update(chunk);await handle.write(chunk);
+      if(received+chunk.length>size)throw mediaError('media_receive_failed','more bytes than expected');
+      // A successful write may accept only part of the chunk; publish progress only after all its bytes reach the file.
+      let offset=0;
+      while(offset<chunk.length){
+        const {bytesWritten}=await handle.write(chunk.subarray(offset));
+        if(bytesWritten<=0)throw mediaError('media_receive_failed','file write made no progress');
+        offset+=bytesWritten;
+      }
+      hash.update(chunk);received+=chunk.length;
       if(received-lastReport>=8*1024*1024){lastReport=received;onProgress(received);}
     }
     await handle.close();

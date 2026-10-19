@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v149-media-viewer-20261018';
+const CACHE = 'agent-workbench-static-v150-media-transfer-fixes-20261019';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

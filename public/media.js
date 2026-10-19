@@ -156,7 +156,10 @@ function transferPanel(info,context) {
   const targets=context.transfers.targets().filter(target=>target.nodeId!==info.sourceNodeId);
   for(const target of targets){const option=el('option','',`${target.name}${target.ready?'':` · ${t(target.online?'Upgrade required':'Offline')}`}`);option.value=target.nodeId;option.disabled=!target.ready;select.append(option);}
   select.value=targets.find(target=>target.ready)?.nodeId||'';
+  // Polling must replace the opening snapshot so another send gets a new ID after completion.
+  const transfers=new Map((info.transfers||[]).map(transfer=>[transfer.nodeId,transfer]));
   const show=transfer=>{
+    if(transfer){transfers.set(transfer.nodeId,transfer);if(transfer.nodeId!==select.value)return;}
     if(!transfer){note.textContent=select.value?t('Copies the file into the project folder on that device, under .workbench/tmp/media/.'):t('No other project device can receive files right now.');bar.hidden=true;action.disabled=!select.value;return;}
     const done=transfer.status==='completed';bar.hidden=done||transfer.status==='failed';bar.value=transfer.size?transfer.received/transfer.size:0;
     note.textContent=transfer.status==='hashing'?t('Checking the source file…'):transfer.status==='transferring'?t('Transferring {received} of {size}…',{received:formatBytes(transfer.received||0),size:formatBytes(transfer.size)})
@@ -164,7 +167,7 @@ function transferPanel(info,context) {
     action.disabled=!select.value||['hashing','transferring'].includes(transfer.status);action.textContent=t(transfer.status==='failed'?'Retry transfer':done?'Send again':'Send to device');
   };
   const ids=new Map();let polling=null;
-  const current=()=>(info.transfers||[]).filter(transfer=>transfer.nodeId===select.value).at(-1)||null;
+  const current=()=>transfers.get(select.value)||null;
   const poll=id=>{clearTimeout(polling);polling=setTimeout(async()=>{
     if(!panel.isConnected)return;
     try{const transfer=await context.transfers.read(id);show(transfer);if(['hashing','transferring'].includes(transfer.status))poll(id);}catch{poll(id);}
