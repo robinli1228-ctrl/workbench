@@ -1,4 +1,5 @@
 import {t} from './i18n.js';
+import {setActionIcon} from './role-icons.js';
 
 /**
  * One media card and one in-page viewer for group chat and native sessions. A file stays on the device that produced
@@ -92,9 +93,9 @@ let viewer=null,viewerVersion=0;
 export async function openMediaViewer(path,context) {
   const version=++viewerVersion;
   if(!viewer){viewer=el('dialog','message-fullscreen media-viewer');viewer.addEventListener('close',()=>{viewerVersion++;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});});document.body.append(viewer);}
-  const heading=el('div','message-fullscreen-heading'),title=el('strong','',baseName(path)),download=el('a','chat-icon-btn media-download',t('Download'));
+  const heading=el('div','message-fullscreen-heading'),title=el('strong','',baseName(path)),download=setActionIcon(el('a','chat-icon-btn media-download'),'follow',t('Download'));
   download.hidden=true;download.setAttribute('download','');
-  const close=el('button','chat-icon-btn',t('Close'));close.type='button';close.addEventListener('click',()=>viewer.close());close.autofocus=true;
+  const close=setActionIcon(el('button','chat-icon-btn'),'close',t('Close'));close.type='button';close.addEventListener('click',()=>viewer.close());close.autofocus=true;
   heading.append(title,download,close);
   const body=el('div','media-viewer-body'),stage=el('div','media-stage'),overlay=el('div','media-loading',t('Loading…')),status=el('p','workspace-note media-status',t('Reading file information…'));
   status.setAttribute('role','status');stage.append(overlay);body.append(stage,status);
