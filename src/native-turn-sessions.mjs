@@ -32,7 +32,8 @@ export class NativeCodexSession extends CodexSession {
   }
   /** The chosen model rides on every turn; a compaction control turn starts thread/compact/start instead of a prompt (it completes as an ordinary turn). */
   request(method,params) {
-    if(method==='turn/start'&&this.control==='compact')return super.request('thread/compact/start',{threadId:params.threadId}).then(()=>({turn:{id:null}}));
+    // A turn/started notification may precede the empty compaction acknowledgement.
+    if(method==='turn/start'&&this.control==='compact')return super.request('thread/compact/start',{threadId:params.threadId}).then(result=>({turn:{id:result?.turn?.id??this.turnId}}));
     if(method==='turn/start'&&this.model)params={...params,model:this.model};
     return super.request(method,params);
   }

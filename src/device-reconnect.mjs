@@ -9,7 +9,7 @@ export async function remoteReconnectProbe(nodeId) {
     let args;
     try { args=(await readFile(`/proc/${id}/cmdline`,'utf8')).split('\0').filter(Boolean); }
     catch (error) { if(error.code==='ENOENT'||error.code==='ESRCH')continue; return {idle:false,reason:'process_unreadable'}; }
-    const entry=args.find(arg=>arg.endsWith('/src/worker.mjs'));
+    const entry=args.find(arg=>arg==='src/worker.mjs'||arg.endsWith('/src/worker.mjs'));
     if(!entry)continue;
     try {
       const identity=await readFile(`/proc/${id}/stat`,'utf8');
@@ -21,10 +21,12 @@ export async function remoteReconnectProbe(nodeId) {
         if(!saved||JSON.parse(saved.data).nodeId!==nodeId)continue;
         const active=db.prepare("SELECT 1 FROM records WHERE kind='runs' AND coalesce(json_extract(data,'$.status'),'') NOT IN ('succeeded','failed','interrupted','cancelled','stopped') LIMIT 1").get();
         const terminal=db.prepare("SELECT 1 FROM records WHERE kind='terminalSessions' AND coalesce(json_extract(data,'$.status'),'') NOT IN ('released','cancelled','finished','expired') LIMIT 1").get();
+        // Synchronization writes also own the device even when no model process is running.
+        const syncing=db.prepare("SELECT 1 FROM records WHERE kind='sourceSyncReservations' OR (kind='sourceSyncCommands' AND json_extract(data,'$.status')='pending') LIMIT 1").get();
         const children=(await readFile(`/proc/${id}/task/${id}/children`,'utf8')).trim();
         const after=await readFile(`/proc/${id}/stat`,'utf8');
         const start=value=>value.slice(value.lastIndexOf(')')+2).split(' ')[19];
-        matches.push({pid:Number(id),idle:!active&&!terminal&&!children&&start(identity)===start(after)});
+        matches.push({pid:Number(id),idle:!active&&!terminal&&!syncing&&!children&&start(identity)===start(after)});
       } finally { db.close(); }
     } catch { return {idle:false,reason:'worker_unverifiable'}; }
   }

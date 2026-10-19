@@ -56,16 +56,19 @@ test('a nested background task still running after the summary turn keeps the Ru
   assert.deepEqual(statuses(), []);
 });
 
-test('when the last task ends without a summary turn, the Run ends with the reply already received', t => {
+test('when the last task ends without a summary turn, the Run keeps waiting for its owner result', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { session, statuses, finals } = residentSession();
   for (const m of [init, tasks([task]), result('launched, will summarize later'), tasks([])]) session.receive(m);
   t.mock.timers.tick(14999);
   assert.equal(session.done, false);
   t.mock.timers.tick(1);
-  assert.equal(session.done, true);
+  assert.equal(session.done, false);
+  assert.deepEqual(statuses(), []);
+  assert.deepEqual(finals(), []);
+  session.receive(result('owner summary'));
   assert.deepEqual(statuses(), ['succeeded']);
-  assert.deepEqual(finals(), ['launched, will summarize later']);
+  assert.deepEqual(finals(), ['owner summary']);
 });
 
 test('a summary turn that starts within the grace period is waited for, not cut short', t => {

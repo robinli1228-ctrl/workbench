@@ -6,7 +6,6 @@ import { executionText } from './input-language.mjs';
 import { ClaudeContextUsage } from './context-usage.mjs';
 
 const MAX_TOOL_OUTPUT = 12000;
-const SUMMARY_TURN_GRACE_MS = 15000;
 
 function extractText(content) {
   if (typeof content === 'string') return content;
@@ -94,7 +93,7 @@ export class CliPrintSession {
   /** Claude/Agy keep the process with bidirectional input; Grok keeps using single-turn resume with the specified native ID. */
   reuse(options) {
     if(!this.keepAlive || !this.done || !this.proc || this.proc.killed || this.proc.exitCode!==null || this.proc.signalCode!==null)throw new Error(tr('cliPrintSession.cliProcessCannotBeReused'));
-    Object.assign(this,options);this.done=false;this.stopping=false;this.awaitingBackground=false;clearTimeout(this.backgroundTimer);
+    Object.assign(this,options);this.done=false;this.stopping=false;this.awaitingBackground=false;
     this.answer='';this.textBuffer='';this.finalText='';this.bestAnswer='';this.runtimeError='';this.emittedFinal=false;
     this.lastThinkingAt=0;
   }
@@ -110,14 +109,16 @@ export class CliPrintSession {
     this.proc = spawn(this.bin(), this.args(prompt), { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: this.env,detached:process.platform!=='win32' });
     this.onProcess?.(this.proc);
     this.proc.once('spawn',()=>{if(this.keepAlive)this.sendTurn(prompt);else this.emit('status',{inputDeliveryState:'accepted'});});
-    this.proc.stdin.on('error',e=>{if(!this.done){this.finish('failed',tr('cliPrintSession.cliInputStreamClosed', { message: e.message }));this.shutdown();}});
+    this.proc.stdin.on('error',e=>{if(!this.done&&!this.stopping){this.finish('failed',tr('cliPrintSession.cliInputStreamClosed', { message: e.message }));this.shutdown();}});
     // Grok uses stdin EOF as a user-cancel signal while headless tools are running.
     if (this.runtime !== 'grok' && !this.keepAlive) try { this.proc.stdin.end(); } catch {}
     this.emit('status', { status: 'running', workspace: this.cwd });
     this.proc.on('error', e => {this.inputAttempted=false;this.emit('status',{inputDeliveryState:'not_delivered',queueRejected:true,queueRetryable:false,processSettled:true});this.finish('failed', e.message);});
     this.proc.on('exit', (code, signal) => {
+      clearTimeout(this.killTimer);
       if (this.done) return;
       if (this.stopping) this.finish('interrupted');
+      else if(this.awaitingBackground||this.backgroundTasks.size)this.finish('failed',this.runtimeError||tr('cliPrintSession.processExited', { p1: code ?? signal }));
       else if (code === 0 && !this.runtimeError) this.finish('succeeded');
       else this.finish('failed', this.runtimeError || tr('cliPrintSession.processExited', { p1: code ?? signal }));
     });
@@ -147,7 +148,7 @@ export class CliPrintSession {
     this.receive(m);
   }
   receive(raw) {
-    if(this.done)return;
+    if(this.done||this.stopping)return;
     if (!raw || typeof raw !== 'object') return;
     const sessionId = nativeSessionId(raw, this.runtime);
     if (sessionId && !this.nativeSessionId) {
@@ -160,6 +161,8 @@ export class CliPrintSession {
       ? { ...raw[raw.event], type: raw[raw.event].type || raw.event }
       : null;
     const m = raw.event && typeof raw.event === 'object' ? raw.event : eventPayload || raw.params?.update || raw.update || raw;
+    // Child streams still expose tool activity, but only the owner can supply the turn's answer or completion.
+    const ownerMessage=!raw.parent_tool_use_id&&!m.parent_tool_use_id;
     const type = m.type || m.event || m.sessionUpdate || '';
     const usage = m.usage || m.tokenUsage || raw.usage;
     if (usage && typeof usage === 'object') this.emit('usage', { ...usage, source: 'runtime' });
@@ -168,12 +171,9 @@ export class CliPrintSession {
       this.lastThinkingAt=Date.now();this.emit('log',{text:tr('cliPrintSession.modelThinkingNativeProgressEvent')});
     }
     // Claude reports the full list of its live background tasks (subagents, background shells) on every change.
-    if(type==='system'&&m.subtype==='background_tasks_changed'&&Array.isArray(m.tasks)) {
+    if(ownerMessage&&type==='system'&&m.subtype==='background_tasks_changed'&&Array.isArray(m.tasks)) {
       this.backgroundTasks=new Set(m.tasks.map(t=>t?.task_id).filter(Boolean));
-      if(this.awaitingBackground&&!this.backgroundTasks.size)this.awaitSummaryTurn();
     }
-    // A finished background task makes Claude start a summary turn by itself; that turn's result ends the Run.
-    if(type==='system'&&(m.subtype==='init'||m.subtype==='status'&&m.status==='requesting'))clearTimeout(this.backgroundTimer);
     if (type === 'error' || m.error) {
       // Claude may put auth errors in assistant.message objects; handoff and UI need the actual text.
       const errText = extractText(m.error?.message) || extractText(m.message) || extractText(m.error) || tr('cliPrintSession.runtimeError');
@@ -181,16 +181,16 @@ export class CliPrintSession {
       this.emit('log', { text: errText });
     }
     const delta = m.delta?.text || (m.delta?.type === 'text_delta' ? m.delta.text : '') || m.text_delta || (type === 'content_block_delta' ? extractText(m.delta) : '');
-    if (delta) this.appendText(delta);
-    else if (type === 'assistant' || type === 'agent_message_chunk' || type === 'agent_message') {
+    if (ownerMessage&&delta) this.appendText(delta);
+    else if (ownerMessage&&(type === 'assistant' || type === 'agent_message_chunk' || type === 'agent_message')) {
       const text = extractText(m.message?.content || m.content || m.message || m.text);
       if (text) this.appendSnapshot(text);
     }
-    if (!delta && type === 'message' && (m.role === 'assistant' || m.content)) {
+    if (ownerMessage&&!delta && type === 'message' && (m.role === 'assistant' || m.content)) {
       const text = extractText(m.content || m.message);
       if (text) this.appendSnapshot(text);
     }
-    if (type === 'result' || type === 'completion' || m.subtype === 'success') {
+    if (ownerMessage&&(type === 'result' || type === 'completion' || m.subtype === 'success')) {
       const text = typeof m.result === 'string' ? m.result : extractText(m.response || m.result || m.message || m.content);
       if (text) this.finalText = text;
       if (m.is_error || m.status==='ERROR') {
@@ -252,12 +252,6 @@ export class CliPrintSession {
     else this.appendText(text);
   }
   flushText() { clearTimeout(this.textTimer); this.textTimer = null; if (this.textBuffer) { this.emit('text', { text: this.textBuffer }); this.textBuffer = ''; } }
-  /** If no summary turn follows the last background task (for example it was stopped), end with the reply already received. */
-  awaitSummaryTurn() {
-    clearTimeout(this.backgroundTimer);
-    this.backgroundTimer=setTimeout(()=>{if(this.awaitingBackground&&!this.backgroundTasks.size)this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);},SUMMARY_TURN_GRACE_MS);
-    this.backgroundTimer.unref?.();
-  }
   approve() { throw new Error(tr('cliPrintSession.runtimeAutoApprovesInPrint')); }
   async stop() {
     if (this.done) return;
@@ -275,7 +269,7 @@ export class CliPrintSession {
       this.emit('message', { text: answer, phase: 'final_answer' });
       this.emittedFinal = true;
     }
-    this.done = true; this.awaitingBackground = false; clearTimeout(this.killTimer); clearTimeout(this.backgroundTimer);
+    this.done = true; this.awaitingBackground = false;
     this.emit('status', { status, ...(error ? { error } : {}) });
   }
   shutdown() {

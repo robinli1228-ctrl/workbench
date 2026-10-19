@@ -196,6 +196,7 @@ const devicesAdmin = new DeviceAdmin({ db, credentials, base, data, workerToken,
     if(Object.values(usage).some(n=>typeof n==='number'&&n>0)||(worker.warmSessions||[]).length||Number(worker.organizerBusy)>0
       ||dispatching.has(id)||db.activeRuns(id).length||native||db.chatTasks().some(t=>taskNode(t)===id)
       ||[...queries.values()].some(q=>q.nodeId===id)
+      ||db.list('sourceSyncCommands').some(c=>c.nodeId===id&&c.status==='pending')
       ||db.list('terminalSessions').some(s=>s.nodeId===id&&!['released','cancelled','finished','expired'].includes(s.status))
       ||db.list('roleSwitches').some(s=>s.nodeId===id&&!s.steps?.released))throw new Error(tr('deviceAdmin.reconnectBusy'));
   }
@@ -1403,6 +1404,7 @@ const server = http.createServer(async (req, res) => {
     files['/i18n.js']='i18n.js';
     files['/output-language.js']='output-language.js';
     files['/native-sessions.js']='native-sessions.js';
+    files['/native-transcript.js']='native-transcript.js';
     files['/media.js']='media.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
