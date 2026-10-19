@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v151-project-settings-gear-20261019';
+const CACHE = 'agent-workbench-static-v152-timer-summary-20261019';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

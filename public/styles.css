@@ -1285,7 +1285,11 @@ body[data-workspace-view="settings"] #settings-usage-panel .settings-panel-headi
 .timer-job-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ink); font-size: 16px; font-weight: 800; }
 .timer-status { padding: 4px 9px; color: #62758a; background: #edf2f8; font-size: 12px; white-space: nowrap; }
 .timer-status.is-on { color: #206346; background: #e9f6ef; }
-.timer-job-description { margin: 12px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timer-job-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; width: 100%; margin: 12px 0 8px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timer-job-description:hover { color: var(--accent); }
+.timer-job-description:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.timer-description-full { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.timer-description-dialog .dialog-heading h3 { min-width: 0; overflow-wrap: anywhere; }
 .timer-job-meta { margin: 4px 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .timer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .timer-actions button { min-height: 34px; padding: 5px 11px; }

@@ -90,6 +90,8 @@ Resolved recipient labels are prepended inline to the ordinary message body or i
 
 ### Platform configuration UI and device removal
 
+Scheduled-job cards show at most two lines of description. Clicking the summary (or using Enter/Space) opens the full original text in a read-only dialog; viewing and closing it do not edit, enable or execute the job. The existing edit dialog and action controls remain separate.
+
 `public/create-folder.js` supplies the shared inline creation control for project/binding and native-session pickers. Authenticated `POST /api/workers/:id/directories` requires `directoryCreate:1` and sends a `directory_create` query to that exact Worker. `src/folders.mjs` resolves the parent against canonical allowed roots and creates one visible child with non-recursive `mkdir`; duplicates, invalid names and outside/symlink-escape parents fail without overwriting. Root-catalog views cannot create a directory until a parent is opened. In-flight UI results are bound to their device/parent and picker generation; closing or navigating cannot apply a stale selection. No CLI is started and no project binding is saved by creating a folder.
 
 The configuration assistant presents one conversation and composer, with runtime options in a compact dialog and pending configuration proposals inline. Its fixed instructions describe configuration scope, supported action schemas, credential entry, sequential verification and partial-result recovery. Stored messages and proposals remain intact; completed suggestions are not a separate recent-history panel. The read-only catalog exposes reported CLI capacity alongside runtime readiness.
