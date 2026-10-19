@@ -2838,3 +2838,22 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .is-resume-notice .chat-message-text + .chat-message-text { margin-top: 8px; }
+
+/* Sessions mode right side: same header, panel and bottom-tab classes as the group-chat inspector. */
+.native-session-sidebar { display: flex; flex-direction: column; flex: 1; gap: 0; min-height: 0; height: 100%; padding: 0; overflow: hidden; }
+.native-session-sidebar .native-side-panel { display: grid; align-content: start; gap: 12px; }
+.native-side-header .native-side-badge { flex: none; }
+.native-side-panel > :not(.native-side-card) > h3 { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; }
+.native-output-list { display: grid; gap: 6px; margin: 8px 0 12px; }
+.native-output-list .media-card { width: 100%; max-width: none; }
+/* Inside an inspector panel, card headings keep their small label style instead of the panel heading style. */
+.native-side-panel .native-side-card h3 { margin: 0 0 4px; color: var(--text-muted); font-size: var(--fs-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+/* Session name, repository and project-output cards in the Sessions right side. */
+.native-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.native-card-head h3 { margin: 0; }
+.native-card-action { flex: none; padding: 4px 10px; font-size: 12px; }
+.native-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.native-rename-form { display: grid; gap: 8px; margin-top: 6px; }
+.native-rename-form input { width: 100%; box-sizing: border-box; }
+.native-git-detail { overflow-wrap: anywhere; }
+.native-project-output-list { display: grid; gap: 6px; margin: 8px 0 12px; }
