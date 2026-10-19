@@ -127,7 +127,7 @@ const statusLabels = {
 if (dom.apiToken) dom.apiToken.value = app.token;
 for (const [id, name, label] of [
   ['refresh-state', 'refresh', 'Refresh'],
-  ['show-project-settings', 'project', 'Project Settings'],
+  ['show-project-settings', 'gear', 'Project Settings'],
   ['show-history', 'history', 'History'],
   ['add-role-sidebar', 'plus', 'Add role'],
   ['refresh-role-status', 'refresh', 'Refresh role status and remaining quota'],
@@ -264,7 +264,7 @@ function createMobileDrawers() {
 }
 const drawers = createMobileDrawers();
 const inspector=createWorkspaceInspector({api,getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
-const nativeSessionUI=createNativeSessionUI({api,getData:()=>app.data,onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
+const nativeSessionUI=createNativeSessionUI({api,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
 initWorkspaceColumns();
 const mobilePanel = drawers.set;
 document.querySelector('#mobile-projects').innerHTML = UI_ICON.folder;
@@ -1535,7 +1535,12 @@ function renderTasks() {
     const top = create('div', 'task-card-top');
     top.append(create('h3', '', task.title), statusChip(taskDisplayStatus(task, latestRun)));
     const meta = create('div', 'task-meta');
+    // Execution snapshots retain the original role name after a role is renamed or removed.
+    const roleId=latestRun?.roleId||task.roleId;
+    const roleName=latestRun?.roleSnapshot?.name||task.roleSnapshot?.name||[...(app.data.roles||[]),...(app.data.supervisorRoles||[])].find(role=>role.id===roleId&&role.projectId===task.projectId)?.name||t('Unknown role');
+    const roleLabel=create('span','task-role-name',roleName);roleLabel.translate=false;
     meta.append(
+      roleLabel,
       create('span', '', task.model || 'gpt-5.6-sol'),
       create('span', '', task.mode === 'workspace-write' ? 'Workspace write' : 'Read-only'),
       create('span', '', formatTime(task.createdAt))
