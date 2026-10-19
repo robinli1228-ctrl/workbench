@@ -127,7 +127,10 @@ export async function captureSourceSnapshot(options) {
   for(const path of paths){if(excludedSourcePath(path)||base.excluded?.some(e=>e.reason==='nested_repository'&&(path===e.path||path.startsWith(e.path+'/')))){excluded.push({path,reason:'excluded'});continue;}
     // Git reports an untracked embedded repository as one directory ending in slash.
     if(path.endsWith('/')&&await exists(join(root,path,'.git'))){excluded.push({path,reason:'nested_repository'});continue;}
-    let captured;try{captured=await readSourceFile(root,path);}catch(e){if(e.code!=='nested_repository')throw e;excluded.push({path,reason:e.code});continue;}
+    let captured;try{captured=await readSourceFile(root,path);}catch(e){
+      // A new file over the per-file limit is left to on-demand media reads instead of failing the whole batch.
+      if(e.code==='file_too_large'&&!Object.hasOwn(base.entries,path)){excluded.push({path,reason:'oversize',size:e.limit?.actual??null});continue;}
+      if(e.code!=='nested_repository')throw e;excluded.push({path,reason:e.code});continue;}
     entries[path]=captured.entry;
     if(captured.entry&&!entryEqual(Object.hasOwn(base.entries,path)?base.entries[path]:null,captured.entry))changedBytes+=captured.entry.size;
     if(changedBytes>SOURCE_SYNC_LIMITS.batchBytes)throw syncError('batch_too_large');
@@ -163,12 +166,20 @@ export async function captureDirectorySnapshot(options) {
   }
   await walk(root);
   const captured=await captureSourceEntries(paths,async path=>{
-    const value=await readSourceFile(root,path,policy);if(!value.entry)throw syncError('source_busy',path);
+    let value;
+    try{value=await readSourceFile(root,path,policy);}
+    catch(e){
+      // A file this device never synchronized and that exceeds the per-file limit is recorded as oversize, not a batch
+      // failure; it stays viewable through on-demand media reads. A previously synchronized file still blocks (Home fences it).
+      if(e.code==='file_too_large'&&!options.baselineEntries?.[path]){excluded.push({path,reason:'oversize',size:e.limit?.actual??null});return undefined;}
+      throw e;
+    }
+    if(!value.entry)throw syncError('source_busy',path);
     if(!entryEqual(value.entry,options.baselineEntries?.[path]||null))changedBytes+=value.entry.size;
     if(changedBytes>SOURCE_SYNC_LIMITS.batchBytes)throw syncLimitError('batch_too_large','batch',SOURCE_SYNC_LIMITS.batchBytes,changedBytes,path);
     if(options.blobRoot&&!metadataOnly)await saveSourceBlob(options.blobRoot,value.bytes);
     return value.entry;
   });
-  for(let i=0;i<paths.length;i++)entries[paths[i]]=captured[i];
+  for(let i=0;i<paths.length;i++)if(captured[i]!==undefined)entries[paths[i]]=captured[i];
   return {repositoryId:options.repositoryId,generation:options.generation,scopeKind:'directory',scopePolicy:policy,capturePolicy:outputs?OUTPUT_SYNC_CAPTURE_POLICY:DIRECTORY_SYNC_CAPTURE_POLICY,...(metadataOnly?{metadataOnly:true,newlyIncluded:paths.filter(path=>excludedSourcePath(path,{...policy,contentMode:'source-only'})||!(policy.sharedDocs&&path.startsWith('.workbench/docs/'))&&isIgnored(path))}:{}),baseCommit:null,entries,digest:manifestDigest(entries,policy),excluded};
 }

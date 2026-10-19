@@ -32,6 +32,7 @@ import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
 import {recentProjectArtifacts} from './run-artifacts.mjs';
 import {ProjectFiles} from './project-files.mjs';
+import {MediaStreams} from './media-streams.mjs';
 import {CrossDeviceRead} from './cross-device-read.mjs';
 import { RoleSteering } from './role-steering.mjs';
 import { collaborationQueueView } from './coordination-wait.mjs';
@@ -175,6 +176,7 @@ const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify
 const online = id => sockets.get(id)?.readyState === 1;
 const sourceSync=new SourceSyncHome({db,data,online,socket:id=>sockets.get(id),change,rooms,query:workerQuery});
 const projectFiles=new ProjectFiles({db,online,query:workerQuery});
+const mediaStreams=new MediaStreams({db,online,query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
 const crossDeviceRead=new CrossDeviceRead({db,online,query:workerQuery});
 const setup = new ProjectSetup(db, rooms, workerQuery, online, change);
 const credentials = new CredentialStore(join(data, 'credentials'));
@@ -498,6 +500,11 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     if(pathname.startsWith('/api/worker/source-sync/')&&await sourceSync.workerHttp(req,res,pathname))return;
+    // Media bytes: the Worker uploads with a per-relay secret, the browser reads with a signed ticket; neither uses the API token.
+    const mediaUpload=pathname.match(/^\/api\/worker\/media-streams\/([a-f0-9-]{36})$/);
+    if(mediaUpload)return mediaStreams.receive(req,res,mediaUpload[1]);
+    const mediaRead=pathname.match(/^\/media\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/);
+    if(mediaRead)return mediaStreams.serve(req,res,mediaRead[1],{download:url.searchParams.get('download')==='1'});
       if (pathname === '/healthz') return json(res, { ok: true, version: '0.4.0', toolProtocol:2 });
     if (pathname.startsWith('/api/')) {
       const bearer = req.headers.authorization || '';
@@ -581,6 +588,19 @@ const server = http.createServer(async (req, res) => {
         const link = wechat.openProject(wechatProject[1]); void wechat.tick().catch(() => {}); return json(res, { id: link.id }, 201);
       }
       if(pathname.includes('native-')&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
+      const nativeMedia=pathname.match(/^\/api\/native-sessions\/([^/]+)\/media$/);
+      if(nativeMedia&&req.method==='GET'){
+        const nodeId=decodeURIComponent(nativeMedia[1]),record=ownedNativeSession(nodeId,url.searchParams.get('runtime'),url.searchParams.get('sessionId'));
+        if(!record)throw Error('Session is not registered with Workbench');
+        return json(res,await mediaStreams.describe(mediaStreams.sourceForNative(nodeId,record,url.searchParams.get('path'))));
+      }
+      const mediaTransferRoute=pathname.match(/^\/api\/projects\/([^/]+)\/media-transfers(?:\/([a-f0-9-]{36}))?$/);
+      if(mediaTransferRoute&&req.method==='POST'&&!mediaTransferRoute[2])return json(res,await mediaStreams.transfer(mediaTransferRoute[1],await body(req)),202);
+      if(mediaTransferRoute&&req.method==='GET'&&mediaTransferRoute[2]){
+        const transfer=db.get('mediaTransfers',mediaTransferRoute[2]);
+        if(transfer?.projectId!==mediaTransferRoute[1])return json(res,{error:'Transfer not found'},404);
+        const {fingerprint,...visible}=transfer;return json(res,visible);
+      }
       const nativeMatch=pathname.match(/^\/api\/native-sessions\/([^/]+)(?:\/(terminal|folders|default-folder))?$/);
       if(nativeMatch){
         const nodeId=decodeURIComponent(nativeMatch[1]),worker=db.get('workers',nodeId);
@@ -1189,6 +1209,10 @@ const server = http.createServer(async (req, res) => {
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/(local-files|local-file)$/))&&req.method==='GET'){
         return json(res,m[2]==='local-files'?await projectFiles.list(m[1]):await projectFiles.read(m[1],url.searchParams.get('scopeId'),url.searchParams.get('path'),{metadata:url.searchParams.get('metadata')==='1'}));
       }
+      if ((m = pathname.match(/^\/api\/runs\/([^/]+)\/media$/)) && req.method === 'GET') {
+        const r = db.get('runs', m[1]); if (!r) throw new Error(tr('home.runNotFound2'));
+        return json(res, await mediaStreams.describe(mediaStreams.sourceForRun(r, url.searchParams.get('path'))));
+      }
       if ((m = pathname.match(/^\/api\/runs\/([^/]+)\/(detail|events|files|file|document)$/)) && req.method === 'GET') {
         const r = db.get('runs', m[1]); if (!r) throw new Error(tr('home.runNotFound2'));
         if(m[2]==='detail')return json(res,{run:r,task:db.get('tasks',r.taskId)});
@@ -1271,6 +1295,7 @@ const server = http.createServer(async (req, res) => {
     files['/i18n.js']='i18n.js';
     files['/output-language.js']='output-language.js';
     files['/native-sessions.js']='native-sessions.js';
+    files['/media.js']='media.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';

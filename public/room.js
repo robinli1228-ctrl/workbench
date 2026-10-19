@@ -2,6 +2,7 @@ import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
+import { linkMedia } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
 import { createHistoryViewer } from './history-view.js';
@@ -812,7 +813,15 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   }
 
   /** Chat prose is simplified for display only; copying and the Original view retain the complete stored text. */
-  const renderLinkedMarkdown=(text,runId)=>previewDocumentLinks(localizeDocumentLinks(linkRunDocuments(renderMarkdown(simplifiedCliOutput(text)),runId),runId,api));
+  /** Media files named in a reply open in the shared viewer; bytes stay on the device that ran the turn until requested. */
+  function mediaTargets(){
+    const bindings=(data.workspaces||[]).filter(w=>w.projectId===projectId);
+    return (data.workers||[]).filter(w=>bindings.some(b=>b.nodeId===w.id)).map(w=>({nodeId:w.id,name:workerDisplayName(w),online:Boolean(w.online),ready:Boolean(w.online&&w.capabilities?.mediaStream===1)}));
+  }
+  const mediaContext=runId=>runId?{key:`run:${runId}`,describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`),
+    transfers:projectId?{targets:mediaTargets,start:payload=>api(`/api/projects/${encodeURIComponent(projectId)}/media-transfers`,{method:'POST',json:payload}),
+      read:id=>api(`/api/projects/${encodeURIComponent(projectId)}/media-transfers/${encodeURIComponent(id)}`)}:null}:null;
+  const renderLinkedMarkdown=(text,runId)=>previewDocumentLinks(localizeDocumentLinks(linkMedia(linkRunDocuments(renderMarkdown(simplifiedCliOutput(text)),runId),mediaContext(runId)),runId,api));
   function replyPreview(text, markdown = true, runId = null, key = '') {
     const preview = create('div', 'chat-reply-preview');
     preview.dataset.previewKey = `${projectId}:${key}`;

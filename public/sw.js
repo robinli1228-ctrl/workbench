@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v148-logo-spacing-20261018';
+const CACHE = 'agent-workbench-static-v150-media-transfer-fixes-20261019';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',
@@ -8,7 +8,7 @@ const STATIC = [
   '/native-history-timeline.js',
   '/', '/styles.css', '/app.js', '/native-sessions.js', '/list-order.js', '/select-controls.js', '/mention-input.js', '/context-usage.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png',
   '/platform-admin.js', '/configuration-information.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',
-  '/markdown.js', '/project-settings.js', '/role-icons.js', '/settings-page.js',
+  '/markdown.js', '/media.js', '/project-settings.js', '/role-icons.js', '/settings-page.js',
   '/supervisor-settings.js', '/elapsed.js', '/send-state.js', '/permission-scope.js', '/role-templates.js', '/role-switch.js', '/role-history.js', '/project-setup.js', '/history-view.js', '/scheduled-jobs.js',
   '/git-version.js', '/plan-dock.js', '/agent-codex.png', '/agent-antigravity.png',
   '/document.html', '/document.js', '/workspace-inspector.js', '/state-data.js', '/execution-progress.js', '/live-scene.js',
