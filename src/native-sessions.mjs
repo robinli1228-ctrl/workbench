@@ -41,13 +41,17 @@ function messagesFrom(rows,runtime){return rows.flatMap(row=>{
 /** Display only explicitly recorded settings from the bounded latest history, never a CLI/account default. */
 function sessionConfiguration(rows,runtime){
  const text=value=>typeof value==='string'&&value.trim()&&value.length<=160?value.trim():null;
+ // Claude records request usage on each assistant row: the last one is the session's context size when it was written.
+ let contextTokens=null,contextAt=null;
+ if(runtime==='claude')for(const row of rows.toReversed()){const u=row.message?.role==='assistant'?row.message.usage:null;if(!u||row.parent_tool_use_id||row.parentToolUseId)continue;const parts=[u.input_tokens,u.cache_creation_input_tokens??0,u.cache_read_input_tokens??0];if(parts.every(v=>Number.isSafeInteger(v)&&v>=0)){contextTokens=parts.reduce((a,b)=>a+b,0);contextAt=text(row.timestamp);break;}}
+ const withContext=value=>({...value,contextTokens,contextAt});
  for(const row of rows.toReversed()){
   const value=runtime==='codex'&&row.type==='turn_context'?row.payload:runtime==='claude'&&row.message?.role==='assistant'?row.message:runtime==='grok'&&row.type==='assistant'?row:null;
   if(!value||runtime!=='codex'&&!text(value.model))continue;
   const model=text(value.model),effort=text(value.effort??value.reasoning_effort);
-  return {model:model?.startsWith('<')?null:model,effort:effort&&/^(?:none|minimal|low|medium|high|xhigh|max|ultra|auto|default)$/.test(effort)?effort:null,observedAt:text(row.timestamp)};
+  return withContext({model:model?.startsWith('<')?null:model,effort:effort&&/^(?:none|minimal|low|medium|high|xhigh|max|ultra|auto|default)$/.test(effort)?effort:null,observedAt:text(row.timestamp)});
  }
- return {model:null,effort:null,observedAt:null};
+ return withContext({model:null,effort:null,observedAt:null});
 }
 
 const fileStamp=info=>info?[info.dev,info.ino,info.birthtimeMs,info.size,info.mtimeMs,info.ctimeMs,info.mode].join(':'):null;

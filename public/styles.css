@@ -2962,3 +2962,58 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
   .nt-sheet { width: 100%; }
   .nt-chips { margin-left: 0; }
 }
+.nt-system { display: flex; align-items: center; gap: 8px; max-width: min(860px, 100%); margin: 0 auto 14px; color: var(--muted); font-size: 12px; }
+.nt-system code { padding: 1px 7px; border-radius: 6px; background: #eef2ef; font-size: 12px; }
+.nt-system-mark { font-size: 11px; }
+
+/* ---- Sessions page right panel: connection, model/context, files; composer aligned with the inspector tab bar ---- */
+.native-session-content.panel { border: 0; border-radius: 0; box-shadow: none; }
+.native-session-footer { border-top: 0; }
+.native-takeover-form.chat-composer { border-top: 1px solid var(--line); }
+@media (min-width: 1001px) {
+  .native-takeover-form.chat-composer { min-height: 67px; padding-block: 13px; }
+  .native-takeover-form textarea { min-height: 37.6px; height: 37.6px; padding-block: 8px; }
+}
+.native-connect-head { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; font-size: 14px; }
+.native-connect-dot { width: 9px; height: 9px; border-radius: 50%; background: #b9c2bc; flex: none; }
+.native-connect-dot.is-page { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.native-connect-dot.is-starting, .native-connect-dot.is-ending, .native-connect-dot.is-returning, .native-connect-dot.is-stopping, .native-connect-dot.is-prepared { background: var(--warning); animation: nt-pulse 1.4s ease-in-out infinite; }
+.native-connect-dot.is-terminal { background: #4a7bd0; }
+.native-connect-dot.is-busy, .native-connect-dot.is-offline { background: var(--danger); }
+.native-side-badge.is-page { background: #e5f6ec; color: #23824f; }
+.native-side-badge.is-terminal { background: #e6eefb; color: #2f5fb3; }
+.native-side-badge.is-starting, .native-side-badge.is-ending, .native-side-badge.is-returning, .native-side-badge.is-stopping, .native-side-badge.is-prepared { background: #fbf1df; color: #8a5a0a; }
+.native-side-badge.is-busy, .native-side-badge.is-offline { background: #fbeaea; color: var(--danger); }
+.native-connect .native-session-actions { display: grid; gap: 6px; margin-top: 8px; }
+.native-connect .native-session-actions button { width: 100%; }
+.native-settings-grid { display: grid; gap: 8px; margin: 4px 0 8px; }
+.native-setting { display: grid; gap: 4px; }
+.native-setting-label { color: var(--muted); font-size: 12px; }
+.native-setting select { width: 100%; min-height: 34px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13px; }
+.native-context { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.native-context-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; }
+.native-context-title { color: var(--muted); }
+.native-context-amount { font-variant-numeric: tabular-nums; color: var(--ink); }
+.native-context-bar { height: 6px; margin: 6px 0 8px; border-radius: 999px; background: #e6ebe7; overflow: hidden; }
+.native-context-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--green); transition: width .3s; }
+.native-context-bar.is-mid > span { background: var(--warning); }
+.native-context-bar.is-high > span { background: var(--danger); }
+.native-context-bar.is-unknown > span { background: transparent; }
+.native-context .native-card-action { width: 100%; margin-top: 2px; }
+.native-file-list { display: grid; gap: 2px; margin: 6px 0 8px; }
+.native-file-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.native-file-row:hover { background: #eef2ef; }
+.native-file-row .nt-icon { width: 15px; height: 15px; }
+.native-file-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.native-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.native-file-dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; color: var(--muted); font-size: 11px; }
+.native-file-extra { flex: none; color: var(--green-dark); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.native-file-row.is-folder .native-file-name { font-family: inherit; font-size: 13px; }
+.native-folder-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 4px 0 6px; font-size: 12px; }
+.native-folder-crumb { padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--green-dark); font: inherit; font-size: 12px; cursor: pointer; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-folder-crumb:hover:not(:disabled) { background: var(--green-soft); }
+.native-folder-crumb.is-current, .native-folder-crumb:disabled { color: var(--ink); cursor: default; opacity: 1; font-weight: 600; }
+.native-folder-sep { color: var(--muted); }
+.nt-system-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-system.is-error code, .nt-system.is-error .nt-system-detail { color: var(--danger); }
+.nt-system .nt-pulse { margin-left: 2px; }

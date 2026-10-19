@@ -52,7 +52,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
   async function http(req,res,{pathname,url,json,body}) {
     let m=pathname.match(/^\/api\/agent\/native-turns\/([^/]+)\/([^/]+)$/);
     if(m&&req.method==='GET'){const {owner,id}=turns.attachmentFor(m[1],m[2]);return file(res,await attachments.read(owner,id),false);}
-    m=pathname.match(/^\/api\/native-sessions\/([^/]+)\/(attachments|takeover|turns)(?:\/([^/]+))?(?:\/([^/]+))?$/);
+    m=pathname.match(/^\/api\/native-sessions\/([^/]+)\/(attachments|takeover|turns|settings)(?:\/([^/]+))?(?:\/([^/]+))?$/);
     if(!m)return false;
     const nodeId=decodeURIComponent(m[1]),worker=db.get('workers',nodeId);if(!worker)throw Error('Device is unavailable');
     const [,,area,a,b]=m;
@@ -65,6 +65,8 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       db.remove('nativeTurnAttachments',id);await unlink(join(dataDir,'native-turn-attachments',id)).catch(e=>{if(e.code!=='ENOENT')throw e;});json(res,{deleted:true});return true;
     }
     if(area==='takeover'&&a==='release'&&!b&&req.method==='POST'){json(res,turns.release(nodeId,await body(req)));return true;}
+    // Model and effort for this native session; one field per request so Claude can apply it with a single slash turn.
+    if(area==='settings'&&!a&&req.method==='POST'){if(worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to change the model of a native session');json(res,turns.saveSettings(nodeId,worker,await body(req)));return true;}
     // ?clientTurnId= is a read-only receipt for one composer send in this exact session; it skips process upkeep.
     if(area==='turns'&&!a&&req.method==='GET'&&url.searchParams.has('clientTurnId')){const q=url.searchParams,clientTurnId=q.get('clientTurnId');
       if(!turnIdPattern.test(clientTurnId||''))throw Error('Invalid takeover message ID');
@@ -72,8 +74,8 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       json(res,{clientTurnId,exists:nativeTurnRows(db,{nodeId,runtime:q.get('runtime'),sessionId:q.get('sessionId'),clientTurnId,limit:1}).length>0});return true;}
     if(area==='turns'&&!a&&req.method==='GET'){const q=url.searchParams,[runtime,sessionId]=[q.get('runtime'),q.get('sessionId')];
       const open=turns.process(nodeId,runtime,sessionId);if(!open)finishTurns(nodeId,runtime,sessionId);
-      json(res,{items:turns.list(nodeId,runtime,sessionId),process:open?'open':'closed',supported:worker.capabilities?.nativeTurns===3});return true;}
-    if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');json(res,turns.create(nodeId,worker,input),201);return true;}
+      json(res,{items:turns.list(nodeId,runtime,sessionId),process:open?'open':'closed',supported:worker.capabilities?.nativeTurns===3,controls:worker.capabilities?.nativeControls===1,settings:turns.settings(nodeId,runtime,sessionId)});return true;}
+    if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');if(input.control&&worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to compact a native session');json(res,turns.create(nodeId,worker,input),201);return true;}
     if(area==='turns'&&a&&b==='stop'&&req.method==='POST'){json(res,turns.stop(nodeId,decodeURIComponent(a)));return true;}
     throw Error('Invalid session action');
   }

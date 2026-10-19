@@ -155,20 +155,27 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
  return box;
 }
 
-/** A sheet over the transcript column that shows one file: its latest edit as a diff, or the content the CLI read or wrote. */
+/** A sheet over the transcript column that shows one file: a transcript step (latest edit as a diff, content read or written) or the file as it is on the device. */
 export function createPreviewSheet(host,t){
  let sheet=null;
- const close=()=>{sheet?.remove();sheet=null;host.classList.remove('has-preview');};
- const onKey=e=>{if(e.key==='Escape'&&sheet){close();document.removeEventListener('keydown',onKey);}};
- return {close,open(step,path){
+ const onKey=e=>{if(e.key==='Escape'&&sheet)close();};
+ const close=()=>{sheet?.remove();sheet=null;host.classList.remove('has-preview');document.removeEventListener('keydown',onKey);};
+ function frame(path,{icon='read',kind='',actions=[]}){
   close();sheet=el('aside','nt-sheet');sheet.setAttribute('aria-label',path);
-  const head=el('header','nt-sheet-head'),name=el('div','nt-sheet-name');name.append(stepIcon(step.kind),el('strong','',basename(path)));name.translate=false;
+  const head=el('header','nt-sheet-head'),name=el('div','nt-sheet-name');name.append(stepIcon(icon),el('strong','',basename(path)));name.translate=false;
   const dir=String(path||'').slice(0,Math.max(0,String(path||'').length-basename(path).length));const sub=el('div','nt-sheet-path',dir);sub.translate=false;sub.title=path;
-  const kind=el('span','nt-sheet-kind',t(step.kind==='edit'?'Latest edit':step.kind==='write'?'Written content':step.kind==='read'?'Content read by the CLI':'Tool call'));
+  const titles=el('div','nt-sheet-titles');titles.append(name,sub);head.append(titles);
+  if(kind)head.append(el('span','nt-sheet-kind',kind));
+  for(const action of actions){const b=el('button','nt-sheet-btn');b.type='button';b.textContent=action.label;b.addEventListener('click',()=>action.onClick(b));head.append(b);}
   const copy=el('button','nt-sheet-btn');copy.type='button';copy.textContent=t('Copy path');copy.addEventListener('click',()=>void navigator.clipboard?.writeText(path).catch(()=>{}));
-  const x=el('button','nt-sheet-btn is-close');x.type='button';x.setAttribute('aria-label',t('Close'));x.textContent='×';x.addEventListener('click',close);
-  const titles=el('div','nt-sheet-titles');titles.append(name,sub);head.append(titles,kind,copy,x);
-  const body=el('div','nt-sheet-body');body.append(stepDetail(step,t));
-  sheet.append(head,body);host.append(sheet);host.classList.add('has-preview');document.addEventListener('keydown',onKey);
- }};
+  const x=el('button','nt-sheet-btn is-close');x.type='button';x.setAttribute('aria-label',t('Close'));x.textContent='\u00d7';x.addEventListener('click',close);
+  head.append(copy,x);
+  const body=el('div','nt-sheet-body');sheet.append(head,body);host.append(sheet);host.classList.add('has-preview');document.addEventListener('keydown',onKey);
+  return body;
+ }
+ return {close,
+  open(step,path,{actions=[]}={}){const body=frame(path,{icon:step.kind,kind:t(step.kind==='edit'?'Latest edit':step.kind==='write'?'Written content':step.kind==='read'?'Content read by the CLI':'Tool call'),actions});body.append(stepDetail(step,t));},
+  openText(path,{content=null,note='',kind='',actions=[]}={}){const body=frame(path,{icon:'read',kind:kind||t('Current file'),actions});if(typeof content==='string')body.append(codeBlock(content));if(note)body.append(el('p','nt-detail-note',note));},
+  loading(path){const body=frame(path,{icon:'read',kind:t('Current file')});body.append(el('p','nt-detail-note',t('Loading\u2026')));}
+ };
 }

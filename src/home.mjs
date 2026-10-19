@@ -626,6 +626,18 @@ const server = http.createServer(async (req, res) => {
         try{return json(res,{available:true,workspace,...await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_workspace_git',{workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},10000)});}
         catch(error){return json(res,{available:false,reason:'git_read_failed',detail:String(error.message||error).slice(0,300),workspace});}
       }
+      const nativeFile=pathname.match(/^\/api\/native-sessions\/([^/]+)\/file$/);
+      if(nativeFile&&req.method==='GET'){
+        // Read-only text preview of one file inside the session's registered working folder, on its own device.
+        const nodeId=decodeURIComponent(nativeFile[1]),runtime=url.searchParams.get('runtime'),sessionId=url.searchParams.get('sessionId'),entryId=url.searchParams.get('entryId'),path=url.searchParams.get('path')||'';
+        const entry=entryId?nativeCatalogRecords(nodeId,runtime).find(record=>record.id===entryId):null;
+        if(entryId&&(!entry||sessionId&&entry.sessionId!==sessionId))throw Error('Session identity does not match its Workbench entry');
+        const record=entry||(sessionId&&ownedNativeSession(nodeId,runtime,sessionId))||null;
+        if(!record)throw Error('Session is not registered with Workbench');
+        if(!record.workspace)throw Error('No working folder is recorded for this session yet.');
+        if(db.get('workers',nodeId)?.capabilities?.nativeFiles!==1)throw Error('Upgrade this Worker to read session files');
+        return json(res,await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_file',{workspace:record.workspace,path,runtime,sessionId:record.sessionId||null,entryId:record.id||null},15000));
+      }
       const nativeTitle=pathname.match(/^\/api\/native-sessions\/([^/]+)\/title$/);
       if(nativeTitle&&req.method==='POST'){
         // Renames only a Workbench-created session: the Worker's catalog entry is the source the list is refreshed from,
