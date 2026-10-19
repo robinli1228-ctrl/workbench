@@ -77,5 +77,8 @@ export default {
  "Attachment verification failed": "附件校验失败",
  "Invalid session action": "无效的会话操作",
  "{count} CLI notices hidden": "已隐藏 {count} 条 CLI 提示",
- "Timestamped CLI stderr lines (configuration and sandbox notices) are not shown here": "带时间戳的 CLI 标准错误日志（配置、沙箱提示）不在此展示"
+ "Timestamped CLI stderr lines (configuration and sandbox notices) are not shown here": "带时间戳的 CLI 标准错误日志（配置、沙箱提示）不在此展示",
+ "Files in this session": "本会话中的文件",
+ "No files have been mentioned in the loaded replies yet.": "已加载的回复里还没有提到文件。",
+ "Video, audio, image, PDF and archive paths from the replies loaded on the left; loading older history adds more. Each file opens from the device that holds it.": "列出左侧已加载回复里出现的视频、音频、图片、PDF 和压缩包路径；加载更早的历史会补充更多。文件从保存它的设备上打开。",
 };

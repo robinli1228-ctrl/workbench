@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v153-takeover-sidebar-20261019';
+const CACHE = 'agent-workbench-static-v154-session-side-tabs-20261019';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

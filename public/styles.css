@@ -2838,3 +2838,11 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .is-resume-notice .chat-message-text + .chat-message-text { margin-top: 8px; }
+
+/* Sessions mode right side: same header, panel and bottom-tab classes as the group-chat inspector. */
+.native-session-sidebar { display: flex; flex-direction: column; flex: 1; gap: 0; min-height: 0; height: 100%; padding: 0; overflow: hidden; }
+.native-session-sidebar .native-side-panel { display: grid; align-content: start; gap: 12px; }
+.native-side-header .native-side-badge { flex: none; }
+.native-side-panel > :not(.native-side-card) > h3 { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; }
+.native-output-list { display: grid; gap: 6px; margin: 8px 0 12px; }
+.native-output-list .media-card { width: 100%; max-width: none; }
