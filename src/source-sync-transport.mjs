@@ -16,6 +16,8 @@ const json=(res,value,status=200)=>{res.writeHead(status,{'Content-Type':'applic
 const matches=(a,b)=>typeof a==='string'&&Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 async function body(req,limit=64*1024*1024){const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>limit)throw syncError('request_too_large');chunks.push(chunk);}return JSON.parse(Buffer.concat(chunks).toString());}
 const entries=bundle=>[...Object.values(bundle.base.entries),...Object.values(bundle.manifest.entries)].filter(Boolean);
+// Cancelling or blocked batches never distribute capture content, so their late captures need no file bytes at Home.
+const retiring=batch=>['cancelling','blocked','cancelled'].includes(batch?.status);
 const retryDelay=attempt=>[5000,15000,30000,60000,300000][Math.min(Math.max(attempt-1,0),4)];
 // DOMException numeric codes describe transport failures, not permanent sync-policy failures.
 const transportFailure=error=>!error.code||typeof error.code!=='string'||['transfer_failed','ECONNRESET','ECONNREFUSED','ETIMEDOUT'].includes(error.code)||['AbortError','TimeoutError'].includes(error.name);
@@ -125,7 +127,7 @@ export class SourceSyncHome {
     if(result?.receiptId)throw syncError('receipt_missing');
     if(result?.captureId){const bundle=this.db.get('sourceSyncUploads',c.id)?.bundle;if(!bundle)throw syncError('manifest_missing');
       if(result.captureId!==c.id||c.action!=='capture')throw syncError('receipt_owner_mismatch');
-      if(!bundle.manifest.metadataOnly&&!c.result&&this.db.get('sourceSyncBatches',c.batchId)?.status!=='cancelled')for(const entry of entries(bundle))if(!await this.storage.has(c.projectId,entry))throw syncError('blob_missing');
+      if(!bundle.manifest.metadataOnly&&!c.result&&!retiring(this.db.get('sourceSyncBatches',c.batchId)))for(const entry of entries(bundle))if(!await this.storage.has(c.projectId,entry))throw syncError('blob_missing');
       result={status:'completed',...bundle};
     }
     if(!['completed','partial_conflict','cancelled','blocked'].includes(result?.status)){
@@ -193,7 +195,7 @@ export class SourceSyncHome {
       }
       this.db.put('sourceSyncUploads',{id:c.id,projectId:c.projectId,bundle,fingerprint});
       // Terminal commands only retain late evidence; they cannot consume source blobs or advance a version.
-      if(bundle.manifest.metadataOnly||c.result||batch.status==='cancelled'){json(res,{missing:[]});return true;}
+      if(bundle.manifest.metadataOnly||c.result||retiring(batch)){json(res,{missing:[]});return true;}
       const missing=[];for(const entry of new Map(entries(bundle).map(e=>[e.hash,e])).values())if(!await this.storage.has(c.projectId,entry))missing.push(entry);
       json(res,{missing});return true;
     }
