@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v158-run-detail-icons-20261019';
+const CACHE = 'agent-workbench-static-v159-interrupt-steering-20261019';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',
