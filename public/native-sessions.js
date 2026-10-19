@@ -58,7 +58,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
   const uncertain=selectedOwners.unknown.size>0||leases.some(c=>c.kind==='native'&&[...ownersFor(c.runtime||c.nativeSession?.runtime,c.sessionId||c.nativeSession?.id).unknown].some(projectId=>owners.has(projectId)));
   const managedBusy=runs.some(r=>r.nodeId===item.nodeId&&!['succeeded','failed','interrupted'].includes(r.status)&&(owners.has(r.projectId)||id&&r.nativeSession?.runtime===item.runtime&&r.nativeSession.id===id));
   let panel=side.querySelector('[data-native-controls]');if(!panel){panel=el('section','native-session-controls');panel.dataset.nativeControls='';side.append(panel);}
-  const signature=JSON.stringify([key(item),matches.map(c=>[c.id,c.status,c.processState,c.lastCheckedAt,c.processError]),other?.id,uncertain,managedBusy,worker?.online,worker?.capabilities,returningClaim,controlFeedback]);
+  const signature=JSON.stringify([key(item),matches.map(c=>[c.id,c.status,c.processState,c.lastCheckedAt,c.processError]),other?.id,uncertain,managedBusy,worker?.online,worker?.capabilities,returningClaim,controlFeedback,takeover.isOn(item),takeover.isReleasing(item),takeover.releaseDisabled(item)]);
   if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren(el('h3','',t('Terminal occupancy')));
   const nativeTurn=claim?.kind==='native-turn';
   const status=matches.length>1?'Several terminal reservations match this session; use role details to check them':nativeTurn?claim.status==='stopping'||takeover.isReleasing(item)?'Ending page takeover; waiting for the CLI to exit…':'Taken over on the Sessions page':!worker?.online?'Device offline; terminal process state unknown':claim?claim.processState==='unknown'?'Terminal process state unverified':claim.status==='stopping'?'Stopping terminal CLI…':claim.status==='active'||claim.processState==='active'?'Terminal CLI is running':claim.status==='finished'?'Waiting for verified return':claim.status==='prepared'?'Waiting to open terminal':'Terminal reserved; refresh to check the process':uncertain?'Native session device ownership is unknown; check the original role session':other?'Another terminal has taken over this group chat':managedBusy?'Managed CLI is running; takeover is unavailable':'Not taken over';
@@ -66,8 +66,8 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
   if(claim?.lastCheckedAt)panel.append(el('p','workspace-note',t('Checked at: {time}',{time:time(claim.lastCheckedAt)})));
   if(claim?.processError)panel.append(el('p','workspace-note',t(claim.processError)));
   const project=data.projects?.find(p=>p.id===(claim?.projectId||other?.projectId))||((claim||other)&&owners.size===1?data.projects?.find(p=>owners.has(p.id)):null);if(project)panel.append(el('p','workspace-note',t('Group chat paused on this device: {project}',{project:project.name})));
-  if(nativeTurn){
-   const pending=claim.status==='stopping'||takeover.isReleasing(item),actions=el('div','native-session-actions'),release=button(pending?'Ending takeover…':'End takeover',()=>void takeover.release(item),'secondary');release.disabled=pending;actions.append(release);panel.append(actions);const feedback=takeover.feedback(item);if(feedback)panel.append(el('p','global-error',feedback));
+  if(nativeTurn||takeover.isOn(item)){
+   const pending=claim?.status==='stopping'||takeover.isReleasing(item),actions=el('div','native-session-actions'),release=button(pending?'Ending takeover…':'End takeover',()=>void takeover.release(item),'secondary native-release');release.disabled=pending||takeover.releaseDisabled(item);actions.append(release);panel.append(actions);const feedback=takeover.feedback(item);if(feedback)panel.append(el('p','global-error',feedback));
   }else if(claim){
    panel.append(el('p','workspace-note',t('Exited terminals return automatically within about 15 seconds. Unopened links expire after 5 minutes.')));
    const actions=el('div','native-session-actions');
@@ -205,6 +205,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
   card('Native session',[['Session ID',id||t('Not available yet'),id||null],['Working folder',value.workspace||t('Choose a folder when opening'),value.workspace||null]]);
   const actions=el('section','native-side-card native-side-actions');actions.append(el('h3','',t('Continue')));
   actions.append(el('p','native-side-hint',t(takeover.isOn(value)||takeover.canChat(value)?'Messages sent below resume this exact native session on its device.':'Read-only preview. Take over at the bottom to continue here, or open iTerm.')));
+  if((takeover.isOn(value)||takeover.canChat(value))&&!IMAGE_CLIS.has(value.runtime))actions.append(el('p','native-side-hint',t('{tool} cannot receive images here; files are passed as paths',{tool:names[value.runtime]})));
   side.append(actions);renderSessionControls(value);
  }
  const takeover=createTakeover();
@@ -263,6 +264,8 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   const operation=(id=k())=>{if(!operations.has(id))operations.set(id,{sending:false,uploads:0,releasing:false,message:''});return operations.get(id);};
   const isReleasing=value=>operation(sessionKey(value)).releasing;
   const activeTurn=()=>turns.find(x=>['queued','starting','running','waiting_user','stopping'].includes(x.status));
+  // 按钮移到侧栏后仍使用当前会话的发送、上传及执行状态，避免误结束活动轮次。
+  const releaseDisabled=value=>{const op=operation(sessionKey(value));return Boolean(sessionKey(value)===k()&&activeTurn()||op.sending||op.uploads>0||op.releasing);};
   const turnsUrl=()=>`${endpoint(current.nodeId)}/turns`;
   // Same send lifecycle as the group chat (send-state.js); the takeover API is idempotent by clientTurnId.
   const sendState=(d,op)=>sendStateOf(d,Boolean(op?.sending));
@@ -341,7 +344,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
     feed.append(chatRow('assistant',replyText(turn),current.runtime,null,extra,state,current));
    }highlightLatestChatCard(scroll);}
   function render(){
-   if(!current)return;const value=current,taken=isOn(value);shell.replaceChildren();renderFeed();
+   if(!current)return;const value=current,taken=isOn(value);shell.replaceChildren();renderFeed();renderSessionControls(value);
    if(!taken&&!(supported&&canChat(value))){const bar=el('div','native-takeover-bar');const copy=el('div','native-takeover-copy');copy.append(el('strong','',t('Read-only preview')),el('span','',t(supported?'Take over to keep chatting in this exact native session here.':'Upgrade this Worker to take over native sessions')));const b=button('Take over session',()=>{if(!confirm(t(permissionPrompt(value),{tool:names[value.runtime]||value.runtime})))return;on.add(k());save();render();renderSide(value,value.sessionId,true);input.focus();},'primary native-takeover-button');b.disabled=!supported;bar.append(copy,b);shell.append(bar);return;}
    const id=k(),d=draft(id),op=operation(id),busy=Boolean(activeTurn());
    const form=el('form','chat-composer native-takeover-form'),barRow=el('div','chat-input-bar'),field=el('div','chat-input-field'),note=el('p','workspace-note native-takeover-note'),tray=el('div','chat-attachments native-takeover-tray');
@@ -351,10 +354,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
    sendButton.disabled=op.sending||op.releasing||busy||op.uploads>0||sendLocked(state)||Boolean(op.verifying);sendButton.textContent=t(SEND_LABELS[state]||'Send');input.disabled=op.sending||op.releasing||Boolean(d.pending);attachButton.disabled=op.sending||op.releasing||Boolean(d.pending);
    field.append(tray,attachButton,input);barRow.append(field,sendButton);
-   const release=button(op.releasing?'Ending takeover…':'End takeover',()=>void endTakeover(value),'secondary compact native-release');release.disabled=busy||op.sending||op.uploads>0||op.releasing;
-   const status=el('div','native-takeover-status');status.append(el('span',`native-takeover-dot${residentState==='open'?' is-resident':''}`),el('span','',t(op.releasing?'Ending page takeover; waiting for the CLI to exit…':busy?'This session is replying…':!taken?'Returned to platform · send a message to continue this session':residentState==='open'?'Taken over · CLI is resident; messages continue this native session':'Taken over · the next message starts the CLI')));if(taken)status.append(release);
-   if(!IMAGE_CLIS.has(value.runtime))status.append(el('span','native-takeover-limit',t('{tool} cannot receive images here; files are passed as paths',{tool:names[value.runtime]})));
-   form.append(status,note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});shell.append(form);resize();
+   form.append(note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});shell.append(form);resize();
   }
   async function endTakeover(value){const id=sessionKey(value),op=operation(id);if(op.releasing)return;op.releasing=true;op.message='';if(k()===id){render();renderSide(value,value.sessionId,true);}try{await api(`${endpoint(value.nodeId)}/takeover/release`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId}});if(k()===id)await refresh();else await onStateRefresh();}catch(error){op.releasing=false;op.message=t(error.message);if(k()===id){render();renderSide(value,value.sessionId,true);}}}
   async function removeAttachment(id,nodeId,item){const op=operation(id);op.message='';if(k()===id)render();try{await api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(item.id)}`,{method:'DELETE'});const d=draft(id);d.attachments=(d.attachments||[]).filter(a=>a.id!==item.id);revokeAttachment(nodeId,item.id);save();}catch(error){op.message=t(error.message);}finally{if(k()===id)render();}}
@@ -392,7 +392,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}
   async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;residentState=result.process||'closed';turns=result.items||[];{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
   function schedule(){clearInterval(poll);poll=null;if(current&&(activeTurn()||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
-  return {feed,attach,detach,isOn,canChat,renderFeed,returned:markReturned,isReleasing,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh,recheck};
+  return {feed,attach,detach,isOn,canChat,renderFeed,returned:markReturned,isReleasing,releaseDisabled,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh,recheck};
  }
  const dialog=el('dialog','settings-edit-dialog native-session-dialog');dialog.id='native-session-dialog';document.body.append(dialog);
  const picker=el('dialog','settings-edit-dialog native-file-picker');picker.id='native-file-picker';document.body.append(picker);let pickerVersion=0;
