@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v152-native-history-recovery-20261019';
+const CACHE = 'agent-workbench-static-v156-native-ui-consolidation-20261019';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

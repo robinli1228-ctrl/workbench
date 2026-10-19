@@ -210,6 +210,7 @@ export const UI_ICON = {
   edit: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15zM13 20h7"/></svg>`,
   desktop: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M12 16v5M8 21h8M8 10h8m-3-3 3 3-3 3"/></svg>`,
   settings: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M4 7h8m4 0h4M4 17h3m4 0h9"/><circle cx="14" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>`,
+  gear: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><circle cx="12" cy="12" r="3.5"/><path d="M19.4 13a7.8 7.8 0 0 0 .05-2l2.07-1.62-2-3.46-2.46.99a7.9 7.9 0 0 0-1.73-1L14.8 3h-5.6l-.53 2.91a7.9 7.9 0 0 0-1.73 1l-2.46-.99-2 3.46L4.55 11a7.8 7.8 0 0 0 0 2l-2.07 1.62 2 3.46 2.46-.99c.53.42 1.11.76 1.73 1L9.2 21h5.6l.53-2.91c.62-.24 1.2-.58 1.73-1l2.46.99 2-3.46L19.4 13Z"/></svg>`,
   link: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m10 13 4-4m-7 2-3 3a4 4 0 0 0 6 6l3-3m-2-10 3-3a4 4 0 0 1 6 6l-3 3"/></svg>`,
   search: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg>`,
   save: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M4 3h13l4 4v14H3V3h1ZM7 3v6h9V3M7 21v-8h10v8"/></svg>`,

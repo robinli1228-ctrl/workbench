@@ -4,6 +4,7 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Unknown role':'未知角色',
   'Session is not registered with Workbench':'此会话未登记到 Workbench，不能读取。',
   'Upgrade this Worker to read only Workbench sessions; external history scanning is disabled':'请升级此 Worker 后读取 Workbench 会话；已禁止扫描外部历史。',
   'Registered native session history is unavailable; no external histories were scanned':'已登记的原生会话历史暂不可用；未扫描外部历史。',
