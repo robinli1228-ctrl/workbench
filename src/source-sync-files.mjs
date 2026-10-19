@@ -1,7 +1,7 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {constants,lstat} from 'node:fs';
-import {mkdir,realpath,open,readFile,writeFile,readdir} from 'node:fs/promises';
+import {mkdir,realpath,open,readFile,writeFile,readdir,lstat as pathStat} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {SOURCE_SYNC_LIMITS,SOURCE_SYNC_CAPTURE_POLICY,DIRECTORY_SYNC_CAPTURE_POLICY,OUTPUT_SYNC_CAPTURE_POLICY,includesSyncOutputs,contentHash,syncError,syncLimitError,excludedSourcePath,validateSourcePath,manifestDigest,entryEqual} from './source-sync-manifest.mjs';
 
@@ -14,13 +14,12 @@ const blobSaves=new Map();
 const runtimeDirectory=async dir=>Boolean(await exists(join(dir,'home.sqlite'))||await exists(join(dir,'worker.sqlite')));
 
 /** Bound file I/O and drain in-flight captures before rejecting, so a failed snapshot leaves no background writes. */
-export async function captureSourceEntries(paths,capture,{background=false}={}) {
+export async function captureSourceEntries(paths,capture,{background=false,busy=()=>false}={}) {
   const result=new Array(paths.length);let cursor=0,failed=false,error;
-  // Reconciliation still checks every byte and path, but yields between small batches instead of saturating
-  // the filesystem pool. Explicit transfer/capture requests keep their existing parallel fast path.
+  // Busy observations remain finite (they may be prerequisites of the active task), but yield more often.
   await Promise.all(Array.from({length:Math.min(background?1:8,paths.length)},async()=>{
     while(!failed&&cursor<paths.length){const index=cursor++;try{result[index]=await capture(paths[index]);}catch(e){if(!failed){failed=true;error=e;}}
-      if(background&&!failed&&cursor<paths.length&&cursor%32===0)await new Promise(resolve=>setTimeout(resolve,8));
+      if(background&&!failed&&cursor<paths.length&&cursor%8===0){const loaded=busy();if(loaded||cursor%32===0)await new Promise(resolve=>setTimeout(resolve,loaded?25:8));}
     }
   }));
   if(failed)throw error;return result;
@@ -42,25 +41,38 @@ export async function sourceFilePath(root,path,{createParents=false,policy={}}={
 }
 
 /** Capture stable bytes from a no-follow descriptor; never infer stability from mtime alone. */
-export async function readSourceFile(root,path,policy={}) {
+export async function readSourceFile(root,path,policy={},observation=null) {
   for(let attempt=0;attempt<2;attempt++){
     const checked=await sourceFilePath(root,path,{policy});if(checked.missing)return {entry:null,bytes:null};
     let file;
     try {
+      // Observation does not read content or authorize a transfer. A fresh safe component walk plus
+      // matching no-follow leaf metadata can reuse its old hash without opening the unchanged file.
+      if(observation?.cached){const named=await pathStat(checked.path,{bigint:true}),metadata=fileMetadata(named);
+        if(named.isFile()&&named.nlink===1n&&Number(named.ino)===checked.stat.ino&&Number(named.dev)===checked.stat.dev&&metadata===observation.cached.metadata){
+          if(observation.metrics){const m=observation.metrics;m.reused=(m.reused||0)+1;m.bytesRead=m.bytesRead||0;}
+          return {entry:{...observation.cached.entry},bytes:null,metadata,modifiedAt:named.mtime.toISOString()};
+        }
+      }
       file=await open(checked.path,constants.O_RDONLY|constants.O_NOFOLLOW);
-      const before=await file.stat();if(!before.isFile()||before.nlink!==1)throw syncError('unsafe_file',path);
-      if(before.size>SOURCE_SYNC_LIMITS.fileBytes)throw syncLimitError('file_too_large','file',SOURCE_SYNC_LIMITS.fileBytes,before.size,path);
-      const bytes=Buffer.alloc(before.size);let offset=0;
+      const before=await file.stat({bigint:true});if(!before.isFile()||before.nlink!==1n)throw syncError('unsafe_file',path);
+      if(before.size>BigInt(SOURCE_SYNC_LIMITS.fileBytes))throw syncLimitError('file_too_large','file',SOURCE_SYNC_LIMITS.fileBytes,Number(before.size),path);
+      const metadata=fileMetadata(before),bytes=Buffer.alloc(Number(before.size));let offset=0;
       while(offset<bytes.length){const r=await file.read(bytes,offset,bytes.length-offset,offset);if(!r.bytesRead)break;offset+=r.bytesRead;}
-      // The final walk already checks and stats the leaf; compare that fresh identity with the open descriptor.
-      const after=await file.stat();const final=await sourceFilePath(root,path,{policy});const named=final.missing?null:final.stat;
-      if(offset===before.size&&before.size===after.size&&before.mtimeMs===after.mtimeMs&&before.ctimeMs===after.ctimeMs
-        &&named?.ino===after.ino&&named?.dev===after.dev&&named.size===after.size&&named.mtimeMs===after.mtimeMs&&named.ctimeMs===after.ctimeMs)
-        return {entry:{hash:contentHash(bytes),size:bytes.length,executable:Boolean(after.mode&0o111)},bytes,modifiedAt:after.mtime.toISOString()};
+      // Actual byte reads still check descriptor/name identity and repeat the safe component walk.
+      const after=await file.stat({bigint:true}),final=await sourceFilePath(root,path,{policy});
+      const named=final.missing?null:await pathStat(final.path,{bigint:true});
+      if(offset===Number(before.size)&&metadata===fileMetadata(after)&&named&&metadata===fileMetadata(named)){
+        if(observation?.metrics){const m=observation.metrics;m.hashed=(m.hashed||0)+1;m.bytesRead=(m.bytesRead||0)+bytes.length;}
+        return {entry:{hash:contentHash(bytes),size:bytes.length,executable:Boolean(after.mode&0o111n)},bytes,metadata,modifiedAt:after.mtime.toISOString()};
+      }
     } catch(e){if(!['ENOENT','ELOOP'].includes(e.code))throw e;}finally{await file?.close();}
   }
   throw syncError('source_busy',path);
 }
+
+/** Nanosecond fields retain each filesystem's precision; periodic full hashing remains the final backstop. */
+const fileMetadata=s=>[s.dev,s.ino,s.size,s.mode,s.nlink,s.mtimeNs,s.ctimeNs].join(':');
 
 /** Private content stores are keyed only by verified hashes and never by caller paths. */
 export async function saveSourceBlob(blobRoot,bytes) {
@@ -147,15 +159,24 @@ export async function captureSourceSnapshot(options) {
 /** Directory scopes use saved-content baselines and the same hash/transfer contract as repository scopes. */
 export async function captureDirectorySnapshot(options) {
   const root=await realpath(options.root),policy=options.scopePolicy||{},entries=Object.create(null),excluded=[],paths=[];
+  // Only background observation can reuse hashes. Transfer/blob capture always reads verified bytes.
+  const observation=options.blobRoot?null:options.observation;
+  const rootInfo=await pathStat(root,{bigint:true});
   const outputs=includesSyncOutputs(policy),metadataOnly=outputs&&options.preview===true;
   if(outputs&&await runtimeDirectory(root))throw syncError('runtime_directory');
   let visited=0,changedBytes=0,ignored=[];
   // Git ignore is an optional file-selection source, never the directory scope's version history.
   if(!outputs||metadataOnly)try{if(await realpath((await git(root,['rev-parse','--show-toplevel'])).trim())===root)ignored=(await git(root,['ls-files','-z','--others','--ignored','--exclude-standard','--directory'])).split('\0').filter(Boolean);}catch(e){if(!e.stderr?.includes('not a git repository')&&!String(e.message).includes('not a git repository')&&e.code!=='ENOENT')throw e;}
   const isIgnored=path=>ignored.some(p=>path===p||path.startsWith(p.endsWith('/')?p:p+'/'));
+  // Git's effective selection also includes info/exclude and global rules that directory watches cannot see.
+  const signature=JSON.stringify([root,String(rootInfo.dev),String(rootInfo.ino),options.repositoryId,options.generation,policy,ignored]);
+  const cached=observation?.signature===signature?observation.cache:new Map();
+  const partial=Boolean(observation&&!observation.fullHash&&observation.signature===signature&&observation.snapshot&&options.changedPaths?.length&&options.changedPaths.every(path=>cached.has(path)));
+  const nextCache=partial?new Map(cached):new Map();
   async function walk(dir,prefix=''){
     for(const item of await readdir(dir,{withFileTypes:true})){
       const path=prefix+item.name;if(++visited>SOURCE_SYNC_LIMITS.paths*2)throw syncLimitError('manifest_too_large','scan_entries',SOURCE_SYNC_LIMITS.paths*2,visited,path);
+      if(options.background&&visited%32===0)await new Promise(resolve=>setTimeout(resolve,options.busy?.()?25:8));
       const shared=policy.sharedDocs===true&&(path==='.workbench'||path==='.workbench/docs'||path.startsWith('.workbench/docs/'));
       const sharedParent=shared&&(path==='.workbench'||path==='.workbench/docs');
       if(!sharedParent&&(excludedSourcePath(path,policy)||!outputs&&!shared&&isIgnored(path))){excluded.push({path,reason:'excluded'});continue;}
@@ -168,22 +189,27 @@ export async function captureDirectorySnapshot(options) {
       paths.push(path);if(paths.length>SOURCE_SYNC_LIMITS.paths)throw syncLimitError('manifest_too_large','files',SOURCE_SYNC_LIMITS.paths,paths.length,path);
     }
   }
-  await walk(root);
+  if(partial){paths.push(...new Set(options.changedPaths));Object.assign(entries,observation.snapshot.entries);excluded.push(...observation.snapshot.excluded);}
+  else await walk(root);
   const captured=await captureSourceEntries(paths,async path=>{
     let value;
-    try{value=await readSourceFile(root,path,policy);}
+    try{value=await readSourceFile(root,path,policy,observation?{cached:observation.fullHash||partial?null:cached.get(path),metrics:observation.metrics}:null);}
     catch(e){
       // A file this device never synchronized and that exceeds the per-file limit is recorded as oversize, not a batch
       // failure; it stays viewable through on-demand media reads. A previously synchronized file still blocks (Home fences it).
       if(e.code==='file_too_large'&&!options.baselineEntries?.[path]){excluded.push({path,reason:'oversize',size:e.limit?.actual??null});return undefined;}
       throw e;
     }
-    if(!value.entry)throw syncError('source_busy',path);
+    if(!value.entry){if(partial){delete entries[path];nextCache.delete(path);return undefined;}throw syncError('source_busy',path);}
     if(!entryEqual(value.entry,options.baselineEntries?.[path]||null))changedBytes+=value.entry.size;
     if(changedBytes>SOURCE_SYNC_LIMITS.batchBytes)throw syncLimitError('batch_too_large','batch',SOURCE_SYNC_LIMITS.batchBytes,changedBytes,path);
     if(options.blobRoot&&!metadataOnly)await saveSourceBlob(options.blobRoot,value.bytes);
+    if(observation)nextCache.set(path,{metadata:value.metadata,entry:value.entry});
     return value.entry;
-  },{background:options.background===true});
+  },{background:options.background===true,busy:options.busy});
   for(let i=0;i<paths.length;i++)if(captured[i]!==undefined)entries[paths[i]]=captured[i];
-  return {repositoryId:options.repositoryId,generation:options.generation,scopeKind:'directory',scopePolicy:policy,capturePolicy:outputs?OUTPUT_SYNC_CAPTURE_POLICY:DIRECTORY_SYNC_CAPTURE_POLICY,...(metadataOnly?{metadataOnly:true,newlyIncluded:paths.filter(path=>excludedSourcePath(path,{...policy,contentMode:'source-only'})||!(policy.sharedDocs&&path.startsWith('.workbench/docs/'))&&isIgnored(path))}:{}),baseCommit:null,entries,digest:manifestDigest(entries,policy),excluded};
+  const digest=manifestDigest(entries,policy);
+  // Publish the cache only with a complete successful observation, never a failed/partial traversal.
+  if(observation){observation.cache=nextCache;observation.signature=signature;observation.snapshot={entries,excluded};}
+  return {repositoryId:options.repositoryId,generation:options.generation,scopeKind:'directory',scopePolicy:policy,capturePolicy:outputs?OUTPUT_SYNC_CAPTURE_POLICY:DIRECTORY_SYNC_CAPTURE_POLICY,...(metadataOnly?{metadataOnly:true,newlyIncluded:paths.filter(path=>excludedSourcePath(path,{...policy,contentMode:'source-only'})||!(policy.sharedDocs&&path.startsWith('.workbench/docs/'))&&isIgnored(path))}:{}),baseCommit:null,entries,digest,excluded};
 }

@@ -303,3 +303,10 @@
 
 - Independent integration review found that preview/evidence batches could remain queued forever as execution dependencies. Source-input admission now permits only version-sync/resolution batches and their actual pending/completed states, retaining compatibility with legacy records that omitted kind. Non-input and unknown states fail without creating an execution; running requests remain untouched.
 - Added ignored red/green coverage for invalid batch kinds/states and legitimate pending version dependencies. This is a publication correction, not a production-state migration or a service restart.
+
+## 2026-10-19 — Source-sync observation and receipt polling CPU
+
+- Kept pending-receipt-first polling (`e733692`) and added observer-only metadata/hash reuse: 30-second metadata reconciliation plus an independent 5-minute full-content fallback. Known file changes retain their paths; structural/unknown events traverse metadata. Transfer captures still verify bytes, and no history is removed.
+- Directory observation and watcher scans yield under task load without waiting indefinitely for a task whose prerequisite is synchronization. Active Run selection avoids loading historical Run bodies for each load hint. Reservations and apply authorization are unchanged.
+- Independent review addressed effective Git-ignore cache invalidation and stale scan failures publishing over new configurations. Verified applies invalidate only affected caches without resetting the full-check clock. Focused Mac/Linux verification covers native filesystem notifications and busy capture; real unchanged-scope digests match while metadata checks read zero content bytes. Metadata-only cache hits avoid unnecessary content descriptors while retaining fresh path safety checks.
+- Syntax checks passed. Existing suite: 129/130; the previously reproduced macOS media-transfer path-alias assertion remains outside this change. Code and verification are local/isolated only; no push, deployment, production database write or service restart was performed.

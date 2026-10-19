@@ -249,8 +249,12 @@ export class SourceSyncHome {
 export class SourceSyncClient {
   constructor({db,data,home,send,resolveBinding,activeRuns,takeoverState,paused,withFolderAccess=(message,command,fn)=>fn()}){
     Object.assign(this,{db,home,send,paused,withFolderAccess});this.blobRoot=join(data,'source-sync-blobs');this.inFlight=new Set();this.sent=new Map();
-    this.worker=new SourceSyncWorker({db,blobRoot:this.blobRoot,resolveBinding,activeRuns,takeoverState,paused});
-    this.watch=new SourceSyncWatch({db,send,resolveBinding,blocked:projectId=>Boolean(db.get('sourceSyncReservations',projectId))});
+    // Resource hints never grant apply permission. Refresh at most once per second, not once per file.
+    let loadAt=-Infinity,loaded=new Set();const terminals=new Map();
+    const observationBusy=projectId=>{const at=Date.now();if(at-loadAt>=1000){loaded=new Set((activeRuns?.()||[]).filter(r=>!['succeeded','failed','interrupted'].includes(r.status)).map(r=>r.projectId));loadAt=at;terminals.clear();}
+      if(!terminals.has(projectId))terminals.set(projectId,Boolean(takeoverState?.(projectId)));return loaded.size>0||terminals.get(projectId);};
+    this.worker=new SourceSyncWorker({db,blobRoot:this.blobRoot,resolveBinding,activeRuns,takeoverState,paused,observationBusy});
+    this.watch=new SourceSyncWatch({db,send,resolveBinding,busy:observationBusy,blocked:projectId=>Boolean(db.get('sourceSyncReservations',projectId))});
   }
   async request(message,path,method='GET',value){
     const response=await fetch(`${this.home}/api/worker/source-sync/${message.commandId}/${path}`,{method,headers:{Authorization:`Bearer ${message.secret}`,...(value&&!Buffer.isBuffer(value)?{'Content-Type':'application/json'}:{})},body:value===undefined?undefined:Buffer.isBuffer(value)?value:JSON.stringify(value),signal:AbortSignal.timeout(60000)});
