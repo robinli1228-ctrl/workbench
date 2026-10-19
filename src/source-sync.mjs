@@ -179,7 +179,8 @@ export class SourceSync {
     if(batch.status==='cancelling'){this.finish(batch);this.change();return result;}
     if(command.action==='capture'){
       const captures=this.db.listSourceSyncCommands({projectId:batch.projectId,batchId:batch.id,action:'capture'});
-      if(captures.every(c=>c.result?.status==='completed'))this.prepare(batch);
+      // A blocked batch is terminal: a late capture is recorded but never prepared or distributed.
+      if(batch.status!=='blocked'&&captures.every(c=>c.result?.status==='completed'))this.prepare(batch);
     }else this.finish(batch);
     this.change();return result;
   });}
