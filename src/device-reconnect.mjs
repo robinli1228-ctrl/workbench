@@ -22,7 +22,7 @@ export async function remoteReconnectProbe(nodeId) {
         const active=db.prepare("SELECT 1 FROM records WHERE kind='runs' AND coalesce(json_extract(data,'$.status'),'') NOT IN ('succeeded','failed','interrupted','cancelled','stopped') LIMIT 1").get();
         const terminal=db.prepare("SELECT 1 FROM records WHERE kind='terminalSessions' AND coalesce(json_extract(data,'$.status'),'') NOT IN ('released','cancelled','finished','expired') LIMIT 1").get();
         // Synchronization writes also own the device even when no model process is running.
-        const syncing=db.prepare("SELECT 1 FROM records WHERE kind='sourceSyncReservations' OR (kind='sourceSyncCommands' AND json_extract(data,'$.status')='pending') LIMIT 1").get();
+        const syncing=db.prepare("SELECT 1 FROM records WHERE kind='sourceSyncReservations' OR kind='sourceSyncOperations' OR (kind='sourceSyncCommands' AND json_extract(data,'$.status')='pending') LIMIT 1").get();
         const children=(await readFile(`/proc/${id}/task/${id}/children`,'utf8')).trim();
         const after=await readFile(`/proc/${id}/stat`,'utf8');
         const start=value=>value.slice(value.lastIndexOf(')')+2).split(' ')[19];

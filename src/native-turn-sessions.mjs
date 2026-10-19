@@ -51,7 +51,11 @@ export class NativeCliSession extends CliPrintSession {
   constructor(options){super(options);this.inputImages=options.inputImages||[];this.closing=false;}
   args(prompt){return nativeTurnArgs(this.runtime,{cwd:this.cwd,sessionId:this.resumeSessionId,prompt,keepAlive:this.keepAlive,model:this.model,effort:this.effort});}
   /** Only a completed native result may keep the CLI; broken transport shutdown must still retire it. */
-  receive(message){this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;}}
+  receive(message){
+    // Native Claude interrupts a turn without killing its resident process; only its owner's result confirms that boundary.
+    if(!this.done&&this.stopping&&!this.closing&&this.keepAlive&&this.runtime==='claude'&&message?.type==='result'&&!message.parent_tool_use_id)return this.finish('interrupted');
+    this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;}
+  }
   sendTurn(prompt) {
     const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text:prompt},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
     const message=this.runtime==='agy'?{event:'user',message:{role:'user',content}}:{type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
