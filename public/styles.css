@@ -2821,6 +2821,7 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .media-loading { position: absolute; inset: auto 12px 12px auto; padding: 6px 10px; border-radius: 6px; background: rgba(15, 23, 42, .78); color: #fff; font-size: 13px; pointer-events: none; }
 .media-unavailable { margin: 24px; color: #e2e8f0; text-align: center; }
 .media-download { margin-left: auto; }
+.media-viewer .message-fullscreen-heading > .chat-icon-btn { min-width: 32px; }
 .media-transfer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .media-transfer .workspace-note { flex-basis: 100%; margin: 0; }
 .media-progress { flex: 1 1 160px; }

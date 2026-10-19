@@ -928,7 +928,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       line.translate = false;
       const header=create('div','chat-message-header');header.append(create('div','chat-name',role.name||t('Role')));
       const bubble=setChatCardState(create('div','chat-bubble'),'waiting'),footer=create('div','chat-card-footer'),actions=create('div','chat-card-actions');
-      line.className='chat-message-text';actions.append(iconAction('log','Log',()=>openTask(task.id,run.id)));footer.append(create('span','chat-card-kind',t('Waiting')),actions);bubble.append(line,footer);col.append(header,bubble);
+      line.className='chat-message-text';actions.append(iconAction('live','Log',()=>openTask(task.id,run.id)));footer.append(create('span','chat-card-kind',t('Waiting')),actions);bubble.append(line,footer);col.append(header,bubble);
       row.append(col);
       return row;
     }
@@ -996,7 +996,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         catch (e) { setError(e.message); b.disabled = false; }
       }));
     }
-    if (run) actions.push(iconAction('log', 'Log', () => openTask(task.id,run.id)));
+    if (run) actions.push(iconAction('live', 'Log', () => openTask(task.id,run.id)));
     // Status and actions sit inside the card, the same footer as finished messages.
     const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', label);
     if (running) { const elapsed = elapsedEl(create, run.startedAt); if (elapsed) status.append(elapsed); }
@@ -1073,7 +1073,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if(!m.runId||discussion||handoff)actions.push(iconAction('original','Original',()=>void historyViewer.open(m.projectId,'message',m.id,m.conversationId||m.projectId).catch(e=>setError(e.message))));
     if (m.runId) {
       const run = data.runs?.find(r => r.id === m.runId);
-      if (run) actions.push(iconAction('log', 'Log', () => openTask(run.taskId,run.id)));
+      if (run) actions.push(iconAction('live', 'Log', () => openTask(run.taskId,run.id)));
     }
     actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, m.senderName, agent || Boolean(handoff), m.attachments, null, m.runId));
     actions.push(...discussionActions);
@@ -1096,7 +1096,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if(at){const time=create('time','',formatTime(at));time.dateTime=at;header.append(time);}
     const bubble=setChatCardState(create('div','chat-bubble'),progress.state),footer=create('div','chat-card-footer'),actions=create('div','chat-card-actions');
     bubble.append(line);if(line.title)bubble.append(create('div','chat-message-text',line.title));
-    if(task)actions.append(iconAction('log','Log',()=>openTask(task.id,request.currentRunId)));
+    if(task)actions.append(iconAction('live','Log',()=>openTask(task.id,request.currentRunId)));
     footer.append(create('span','chat-card-kind',t(progress.label)),actions);bubble.append(footer);col.append(header,bubble);
     row.append(avatarFor(role,role.name),col);return row;
   }
