@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v151-local-consolidation-20261019';
+const CACHE = 'agent-workbench-static-v152-created-session-default-20261019';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',
