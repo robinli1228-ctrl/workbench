@@ -52,7 +52,8 @@ export class MediaStreams {
     if(!record?.workspace)throw failure('invalid_media_path');
     if(typeof path!=='string'||!path||path.length>4096||path.includes('\0'))throw failure('invalid_media_path');
     if(isAbsolute(path)&&!beneath(resolve(record.workspace),resolve(path)))throw failure('invalid_media_path');
-    return {projectId:null,nodeId,root:resolve(record.workspace),path};
+    return {projectId:record.roleBinding?.projectId||null,nodeId,root:resolve(record.workspace),path,
+      native:{runtime:record.runtime,sessionId:record.sessionId,entryId:record.entryId||record.id}};
   }
 
   usable(nodeId) {
@@ -78,9 +79,10 @@ export class MediaStreams {
       return {...described,copyOf:{nodeId:source.nodeId,transferId:copy.id}};
     }
     let info;
-    try{info=await this.query({nodeId:source.nodeId},'media_stat',{root:source.root,file:source.path},10000);}
+    try{info=await this.query({nodeId:source.nodeId,projectId:source.projectId},'media_stat',{...source.native,root:source.root,file:source.path},10000);}
     catch(error){const code=codeOf(error);if(['media_missing','media_not_file','invalid_media_path'].includes(code))return {available:false,reason:code,name,sourceNodeId:source.nodeId};throw error;}
-    const payload={v:1,n:source.nodeId,r:source.root,p:info.relativePath,s:info.size,m:info.mtimeMs,i:info.ino,d:info.dev,t:info.mime,k:info.kind,nm:info.name,pr:source.projectId||null,rq:source.path,x:this.clock()+MEDIA_TICKET_MS};
+    // Signed identity is a lookup key, not a directory grant; Home resolves the current binding for every query.
+    const payload={v:1,n:source.nodeId,r:source.root,p:info.relativePath,s:info.size,m:info.mtimeMs,i:info.ino,d:info.dev,t:info.mime,k:info.kind,nm:info.name,pr:source.projectId||null,ns:source.native||null,rq:source.path,x:this.clock()+MEDIA_TICKET_MS};
     const ticket=this.sign(payload),worker=this.db.get('workers',source.nodeId);
     const transfers=source.projectId?this.db.listProject('mediaTransfers',source.projectId).filter(t=>t.source?.nodeId===source.nodeId&&t.source.root===source.root&&t.source.path===info.relativePath)
       .map(t=>({id:t.id,nodeId:t.nodeId,status:t.status,received:t.received||0,size:t.size,path:t.path||null,error:t.error||null})):[];
@@ -136,7 +138,7 @@ export class MediaStreams {
     entry.timer=setTimeout(()=>this.fail(id,'media_timeout'),ARRIVAL_MS);
     res.on('close',()=>{entry.closed=true;if(!entry.started)this.fail(id,null);});
     try{
-      await this.query({nodeId:t.n},'media_stream',{id,secret,path:`/api/worker/media-streams/${id}`,root:t.r,file:t.p,version:{size:t.s,mtimeMs:t.m,ino:t.i,dev:t.d},start,end},ARRIVAL_MS);
+      await this.query({nodeId:t.n,projectId:t.pr},'media_stream',{...t.ns,id,secret,path:`/api/worker/media-streams/${id}`,root:t.r,file:t.p,version:{size:t.s,mtimeMs:t.m,ino:t.i,dev:t.d},start,end},ARRIVAL_MS);
     }catch(error){this.fail(id,codeOf(error));}
     await done;
   }
@@ -186,11 +188,11 @@ export class MediaStreams {
     const run=(async()=>{
       try {
         const version={size:t.s,mtimeMs:t.m,ino:t.i,dev:t.d};
-        const hashed=await this.query({nodeId:t.n},'media_hash',{root:t.r,file:t.p,version},60000+Math.ceil(t.s/(20*1024*1024))*1000);
+        const hashed=await this.query({nodeId:t.n,projectId:t.pr},'media_hash',{...t.ns,root:t.r,file:t.p,version},60000+Math.ceil(t.s/(20*1024*1024))*1000);
         this.update(record.id,{status:'transferring',sha256:hashed.sha256});
         const relayTicket=this.sign({...t,x:this.clock()+MEDIA_TICKET_MS});
         this.progress.set(relayTicket,{id:record.id,last:0});
-        const result=await this.query({nodeId},'media_receive',{path:`/media/${relayTicket}?download=1`,size:t.s,sha256:hashed.sha256,name:t.nm,transferId:record.id,workspace:binding.localRoot},
+        const result=await this.query({nodeId,projectId},'media_receive',{path:`/media/${relayTicket}?download=1`,size:t.s,sha256:hashed.sha256,name:t.nm,transferId:record.id,workspace:binding.localRoot},
           300000+Math.ceil(t.s/(512*1024))*1000);
         if(result?.sha256!==hashed.sha256||result.size!==t.s||typeof result.path!=='string')throw failure('media_receive_failed','Target confirmation does not match');
         const copyPath=relative(resolve(binding.localRoot),resolve(result.path));

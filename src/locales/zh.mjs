@@ -1679,6 +1679,7 @@ Worker 自动补交接。普通任务结束前用 wb report 提交真实业务�
   'workerCoordinator.sourceProcessStillRunningCannot': '来源进程仍在运行，不能续接',
   // src/worker.mjs
   'worker.dataDirectoryAlreadyHasWorker': '此数据目录已有 Worker，请使用独立 WORKER_DATA_DIR',
+  'worker.lockIdentityUnknown': '无法核实 Worker 锁的持有者，已保留原锁和数据；请检查进程身份及读取权限后重试。',
   'worker.discussionPreviewNotEnabledNo': '讨论预览未启用：没有匹配当前二进制、版本和模型的验证配置',
   'worker.projectDirectoryMustBeAbsolute': '项目目录必须是绝对路径',
   'worker.projectPathNotInsideWorker': '项目路径不在 Worker 许可根目录内',

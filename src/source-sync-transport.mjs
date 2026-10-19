@@ -9,6 +9,7 @@ import {runtimeIssue} from './runtime-probe.mjs';
 import {validateSourceCapture,syncError,syncLimitError,contentHash,entryEqual,SOURCE_SYNC_LIMITS} from './source-sync-manifest.mjs';
 import {sourceScopeBinding} from './source-sync-scopes.mjs';
 import {SourceSyncWatch} from './source-sync-watch.mjs';
+import {folderAccessFor} from './folder-access.mjs';
 import {saveSourceBlob,readSourceBlob} from './source-sync-files.mjs';
 
 const json=(res,value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
@@ -52,7 +53,7 @@ export class SourceSyncHome {
       if(!this.db.get('projects',c.projectId)||(c.sourceRunId?(source?.projectId!==c.projectId||source.nodeId!==c.nodeId||expectedRoot!==c.root):binding?.localRoot!==c.root)){this.sync.acceptReceipt(c.nodeId,{commandId:c.id,result:{status:'blocked',reason:'binding_changed'}});continue;}
       this.db.put('sourceSyncCommands',{...c,lastSentAt:new Date().toISOString()});
       if(['cancelling','blocked'].includes(this.db.get('sourceSyncBatches',c.batchId)?.status)){socket.send(JSON.stringify({type:'source_sync_cancel',commandId:c.id}));continue;}
-      socket.send(JSON.stringify({type:'source_sync_command',commandId:c.id,batchId:c.batchId,projectId:c.projectId,secret:c.secret}));
+      socket.send(JSON.stringify({type:'source_sync_command',commandId:c.id,batchId:c.batchId,projectId:c.projectId,folderAccess:folderAccessFor(this.db,c.nodeId,`project:${c.projectId}`),secret:c.secret}));
     }
   }finally{this.ticking=false;}}
   /** Persist each observation once and coalesce later saves; file notifications never invoke a model. */
@@ -65,7 +66,7 @@ export class SourceSyncHome {
         const id=`${worker.id}:${c.projectId}:${b.repositoryId}`,old=this.db.get('sourceSyncWatchStates',id);
         if(old?.error!=='worker_unsupported'||old.generation!==c.generation)this.db.put('sourceSyncWatchStates',{id,projectId:c.projectId,repositoryId:b.repositoryId,nodeId:worker.id,generation:c.generation,status:'blocked',error:'worker_unsupported'});
       }
-      const scopes=supported.flatMap(c=>c.bindings.filter(b=>b.nodeId===worker.id&&sourceScopeBinding(this.db,c.projectId,b.repositoryId,b.nodeId)?.localRoot===b.root).map(b=>({...b,projectId:c.projectId,generation:c.generation})));
+      const scopes=supported.flatMap(c=>c.bindings.filter(b=>b.nodeId===worker.id&&sourceScopeBinding(this.db,c.projectId,b.repositoryId,b.nodeId)?.localRoot===b.root).map(b=>({...b,projectId:c.projectId,generation:c.generation,folderAccess:folderAccessFor(this.db,worker.id,`project:${c.projectId}`)})));
       const version=contentHash(JSON.stringify(scopes));
       if(socket.sourceWatchAck!==version&&(!socket.sourceWatchSent||Date.now()-socket.sourceWatchSent>5000)){socket.sourceWatchSent=Date.now();socket.send(JSON.stringify({type:'source_sync_watch_config',version,scopes}));}
     }
@@ -246,8 +247,8 @@ export class SourceSyncHome {
 
 /** Network replay carries metadata receipts, not full manifests or source bytes on the event outbox. */
 export class SourceSyncClient {
-  constructor({db,data,home,send,resolveBinding,activeRuns,takeoverState,paused}){
-    Object.assign(this,{db,home,send,paused});this.blobRoot=join(data,'source-sync-blobs');this.inFlight=new Set();this.sent=new Map();
+  constructor({db,data,home,send,resolveBinding,activeRuns,takeoverState,paused,withFolderAccess=(message,command,fn)=>fn()}){
+    Object.assign(this,{db,home,send,paused,withFolderAccess});this.blobRoot=join(data,'source-sync-blobs');this.inFlight=new Set();this.sent=new Map();
     this.worker=new SourceSyncWorker({db,blobRoot:this.blobRoot,resolveBinding,activeRuns,takeoverState,paused});
     this.watch=new SourceSyncWatch({db,send,resolveBinding,blocked:projectId=>Boolean(db.get('sourceSyncReservations',projectId))});
   }
@@ -275,7 +276,7 @@ export class SourceSyncClient {
         let present=false;try{present=(await readSourceBlob(this.blobRoot,entry.hash)).length===entry.size;}catch{}
         if(!present){const r=await this.request(message,`blobs/${entry.hash}`),bytes=Buffer.from(await r.arrayBuffer());if(bytes.length!==entry.size||contentHash(bytes)!==entry.hash)throw syncError('blob_corrupt');await saveSourceBlob(this.blobRoot,bytes);}
       }
-      const result=await this.worker.execute(command);
+      const result=await this.withFolderAccess(message,command,()=>this.worker.execute(command));
       this.watch.received(command,result);
       let alreadyUploaded=false;
       if(saved)try{const proof=await (await this.request(message,'receipt')).json();alreadyUploaded=proof.receiptHash===contentHash(JSON.stringify(result));}catch{ /* Old Homes can still accept the original upload path. */ }

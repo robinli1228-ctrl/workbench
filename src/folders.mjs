@@ -60,8 +60,9 @@ export async function browseFolders(roots, path, offset = 0, options = { include
     if (!canonicalRoots.some(r => inside(r, current))) throw new Error(tr('folders.directoryOutsideRangeNodeAllows'));
     selectedPath = selected;
   }
+  const allDirectories=options?.allDirectories===true;
   const allowed = (await readdir(current, { withFileTypes: true }))
-    .filter(e => !e.name.startsWith('.') && e.name !== 'node_modules' && (e.isDirectory() || includeFiles && e.isFile()))
+    .filter(e => (allDirectories||!e.name.startsWith('.') && e.name !== 'node_modules') && (e.isDirectory() || includeFiles && e.isFile()))
     .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
   const page = allowed.slice(offset, offset + 200);
   const folders = page.filter(e => e.isDirectory()).map(e => ({ name: e.name, path: join(current, e.name) }));

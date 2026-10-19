@@ -1679,6 +1679,7 @@ Original approval expires at: {expiresAt}; expired old replies will not grant au
   'workerCoordinator.sourceProcessStillRunningCannot': 'Source process is still running; cannot continue',
   // src/worker.mjs
   'worker.dataDirectoryAlreadyHasWorker': 'This data directory already has a Worker; use a separate WORKER_DATA_DIR',
+  'worker.lockIdentityUnknown': 'Cannot verify the Worker lock owner. Existing lock and data were preserved; inspect process identity and permissions before retrying.',
   'worker.discussionPreviewNotEnabledNo': 'Discussion preview is not enabled: no verified configuration matches the current binary, version, and model',
   'worker.projectDirectoryMustBeAbsolute': 'Project directory must be an absolute path',
   'worker.projectPathNotInsideWorker': 'Project path is not inside the Worker\'s allowed root directories',

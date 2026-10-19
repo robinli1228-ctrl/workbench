@@ -43,7 +43,7 @@ export class SourceSyncWatch {
       this.checked.set(id,t);this.hints.delete(id);
       try{
         const binding=await this.resolveBinding(scope),old=this.db.get('sourceSyncWatchStates',id);
-        const manifest=await captureDirectorySnapshot({...scope,root:binding.root,baselineEntries:old?.entries||{}});
+        const manifest=await captureDirectorySnapshot({...scope,root:binding.root,baselineEntries:old?.entries||{},background:true});
         if(this.closed)break;
         // Configuration changed during the asynchronous scan: discard the old generation's observation.
         if(!this.db.get('sourceSyncWatchConfig','main')?.scopes.some(s=>key(s)===id&&JSON.stringify(s)===JSON.stringify(scope)))continue;

@@ -5,6 +5,7 @@ import { Attachments } from './attachments.mjs';
 import { NativeTurnsHome, nativeTurnRows, turnIdPattern } from './native-turns.mjs';
 import { assertNativeSessionIdle } from './native-sessions.mjs';
 import { nativeTerminalProject, projectTerminalLock } from './terminal-resume.mjs';
+import {folderAccessFor,nativeFolderAccess} from './folder-access.mjs';
 
 /**
  * Home's only takeover entry. home.mjs forwards HTTP requests, two Worker message types and disconnects here.
@@ -34,7 +35,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       assertNativeSessionIdle(db,{nodeId,runtime,sessionId,projectId,claimId:leaseId});
       if(!existing)db.put('terminalSessions',{id:leaseId,kind:'native-turn',nodeId,runtime,sessionId,projectId,nativeSession:{runtime,id:sessionId},status:'preparing',createdAt:new Date().toISOString()});
       const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
-      return {leaseId,projectId,managedProjectIds:owner?[owner]:[],bindings,record};
+      return {leaseId,projectId,managedProjectIds:owner?[owner]:[],bindings,record,folderAccess:nativeFolderAccess(db,nodeId,runtime,sessionId)||folderAccessFor(db,nodeId,owner?`project:${owner}`:null)};
     },
     stopping(id){const s=db.get('terminalSessions',id);if(s&&held(id))db.put('terminalSessions',{...s,status:'stopping'});},
     update(nodeId,m){const s=db.get('terminalSessions',m.leaseId);if(!s||s.nodeId!==nodeId||s.runtime!==m.runtime||s.sessionId!==m.sessionId||!held(s.id))return;

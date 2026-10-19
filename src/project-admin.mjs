@@ -19,7 +19,7 @@ export class ProjectAdmin {
     if (!worker || worker.capabilities?.projectSpace !== 1) throw new Error(tr('projectAdmin.upgradeDeviceWorkerBeforePreparing'));
     const existing = this.db.get('workspaces', `${projectId}:${nodeId}`);
     // Existing directories are not moved; all newly participating devices use the stable project folder name.
-    const checked = existing ? await this.query({ nodeId }, 'workspace_check', existing.localRoot)
+    const checked = existing ? await this.query({ nodeId,projectId }, 'workspace_check', existing.localRoot)
       : await this.query({ nodeId }, 'project_directory', { projectId, folder: folderName(project.folderName), workspaceRoot: worker.workspaceRoot || worker.allowedRoots?.[0] });
     const result = this.db.bindWorkspace(projectId, nodeId, { ...existing, ...checked });
     this.change(); return result;
@@ -52,7 +52,7 @@ export class ProjectAdmin {
       const existingBaseline = this.db.list('repositoryWorkspaces').find(binding => binding.repositoryId === repo.id && binding.baselineBranch);
       let expectedCommit = null;
       if(existingBaseline) {
-        const snapshot=await this.query({nodeId:existingBaseline.nodeId},'execution_snapshot',
+        const snapshot=await this.query({nodeId:existingBaseline.nodeId,projectId},'execution_snapshot',
           {repositories:[{id:repo.id,key:repo.key,localRoot:existingBaseline.localRoot}]},30000);
         if(snapshot[0]?.dirty || !snapshot[0]?.commit)throw new Error(tr('projectAdmin.existingProjectBaselineUncommittedUnreadable'));
         expectedCommit=snapshot[0].commit;

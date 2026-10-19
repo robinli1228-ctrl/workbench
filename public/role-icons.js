@@ -1,5 +1,7 @@
 import { t, getLanguage } from './i18n.js';
 import {executionProgress} from './execution-progress.js';
+import {usableBucket,remainingPercent,parseQuotaResetDate,quotaTone} from './quota-state.js';
+export {quotaForRole} from './quota-state.js';
 /** Product marks and CLI icons are all SVG so they stay crisp at small sizes. */
 /** Project marks differ in both shape and color, so they are recognizable in the collapsed sidebar without text or color alone. */
 export const PROJECT_ICONS = [
@@ -282,42 +284,6 @@ export function deviceIconEl(worker) {
   return node;
 }
 
-function usableBucket(bucket) {
-  return bucket && (bucket.remainingPercent != null || bucket.usedPercent != null);
-}
-
-function remainingPercent(bucket) {
-  if (bucket.remainingPercent != null) return Math.max(0, Math.min(100, Number(bucket.remainingPercent)));
-  return Math.max(0, Math.min(100, 100 - Number(bucket.usedPercent)));
-}
-
-const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
-
-function parseQuotaResetDate(raw, now = Date.now()) {
-  const text = String(raw || '').trim();
-  if (/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
-    const date = new Date(text);
-    return Number.isFinite(date.getTime()) ? date : null;
-  }
-  const match = text.match(/^([A-Za-z]{3})\s+(\d{1,2})(?:\s+at\s+|,\s*)(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)$/i);
-  if (!match || MONTHS[match[1].toLowerCase()] === undefined || +match[3] < 1 || +match[3] > 12 || +(match[4] || 0) > 59) return null;
-  const month = MONTHS[match[1].toLowerCase()] + 1, day = +match[2];
-  const hour = +match[3] % 12 + (match[5].toLowerCase() === 'pm' ? 12 : 0), minute = +(match[4] || 0);
-  try {
-    const formatter = new Intl.DateTimeFormat('en-US', {timeZone:match[6], year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric', second:'numeric', hourCycle:'h23'});
-    const parts = time => Object.fromEntries(formatter.formatToParts(time).filter(p => p.type !== 'literal').map(p => [p.type, Number(p.value)]));
-    const year = parts(now).year, candidates = [];
-    // Resolve the vendor's wall clock in its own zone, including DST; nearest year handles December/January.
-    for (const y of [year - 1, year, year + 1]) {
-      const wall = Date.UTC(y, month - 1, day, hour, minute); let time = wall;
-      for (let i = 0; i < 3; i++) { const p = parts(time); time += wall - Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second); }
-      const p = parts(time);
-      if (p.year === y && p.month === month && p.day === day && p.hour === hour && p.minute === minute) candidates.push(time);
-    }
-    candidates.sort((a,b) => Math.abs(a-now) - Math.abs(b-now));
-    return candidates.length ? new Date(candidates[0]) : null;
-  } catch { return null; }
-}
 
 /** Weekly windows use d/h; short windows use h/m. Unknown reset times stay unknown. */
 export function formatQuotaCountdown(raw, weekly = false, now = Date.now()) {
@@ -334,35 +300,6 @@ export function formatQuotaReset(raw) {
   const clock = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   if (getLanguage() === 'zh') return `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`;
   return `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][date.getMonth()]} ${date.getDate()} ${clock}`;
-}
-
-/** Remaining >=50% green; 20-50% (50-80% used) orange; <20% (>80% used) red. On the last day of the weekly quota with >30% remaining, use a green smiley. */
-function quotaTone(pct, { weekly = false, resetsAt } = {}) {
-  if (weekly && pct > 30) {
-    const reset = parseQuotaResetDate(resetsAt);
-    if (reset && reset.getTime() - Date.now() <= 86400000 && reset.getTime() >= Date.now() - 3600000) return 'smile';
-  }
-  if (pct >= 50) return 'ok';
-  if (pct >= 20) return 'mid';
-  return 'low';
-}
-
-function quotaFromRuntime(runtime) {
-  const quota = runtime?.quota;
-  if (!quota || typeof quota !== 'object') return null;
-  if (!usableBucket(quota.fiveHour) && !usableBucket(quota.weekly) && quota.remainingPercent == null) return null;
-  return quota;
-}
-
-/** Quota strictly belongs to the role's own CLI; for Agy, it is further chosen by the shared quota group the model belongs to. */
-export function quotaForRole(roleRuntime, _worker, modelId = '') {
-  const quota = roleRuntime?.quota;
-  if (roleRuntime?.type === 'agy' && quota?.groups) {
-    const key = /claude|gpt|oss/i.test(modelId) ? 'claudeGpt' : 'gemini';
-    const group = quota.groups[key];
-    return group ? { ...group, credits: quota.credits || null } : null;
-  }
-  return quotaFromRuntime(roleRuntime);
 }
 
 let quotaTooltipId = 0;

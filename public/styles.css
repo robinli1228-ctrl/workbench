@@ -427,6 +427,11 @@ body[data-navigation-mode="sessions"] #node-sidebar > :not(#native-session-sideb
 .native-side-badge.is-live { background: #e5f6ec; color: #23824f; }
 .native-side-card { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .native-side-card h3 { margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+[data-native-agent-details] .native-session-meta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); align-items: center; gap: 12px 10px; margin-top: 12px; }
+[data-native-agent-details] .native-session-meta :is(dt, dd) { margin: 0; min-width: 0; }
+[data-native-agent-details] .native-session-meta dd { justify-content: flex-end; text-align: right; }
+[data-native-agent-details] .native-agent-line { min-width: 0; }
+[data-native-agent-details] .native-agent-line > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .native-session-meta { margin: 0; }
 .native-session-meta dt { color: var(--muted); margin-top: 12px; font-size: 12px; }
 .native-session-meta dd { display: flex; align-items: flex-start; gap: 6px; margin: 4px 0 0; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; color: var(--ink); }
@@ -2821,3 +2826,17 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .media-transfer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .media-transfer .workspace-note { flex-basis: 100%; margin: 0; }
 .media-progress { flex: 1 1 160px; }
+/* 96% transparent accents tint the card only; text, actions and history remain fully opaque. */
+.chat-row > .chat-col > .chat-bubble.is-latest-card {
+  background: linear-gradient(rgb(8 102 255 / 4%), rgb(8 102 255 / 4%)), #fff;
+}
+.chat-row > .chat-col > .chat-bubble.is-waiting-card, .message-queue-item, .message-queue-item:hover {
+  background: linear-gradient(rgb(234 139 0 / 4%), rgb(234 139 0 / 4%)), #fff;
+}
+.chat-row > .chat-col > .chat-bubble.is-error-card, .chat-bubble.is-error-card, .message-queue-item.is-error-card {
+  background: linear-gradient(rgb(220 38 38 / 4%), rgb(220 38 38 / 4%)), #fff;
+}
+.is-resume-notice .chat-message-text, .is-handoff-wait .chat-message-text {
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.is-resume-notice .chat-message-text + .chat-message-text { margin-top: 8px; }
