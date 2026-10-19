@@ -433,7 +433,7 @@ export class RoleCalls {
   }
 
   /** Cancelling the chain first blocks new dispatches, then returns the truly active runs so Home can send stop commands. */
-  cancel(requestId) {
+  cancel(requestId,{preserveRunningChildren=false}={}) {
     return this.db.transaction(()=>{
     let root = this.db.get('coordinationRequests', requestId);
     if (!root) throw new Error(tr('roleCalls.callNotFound'));
@@ -445,6 +445,20 @@ export class RoleCalls {
     const ids = new Set([root.id]);
     const all = this.db.list('coordinationRequests').filter(r => r.projectId === root.projectId);
     for (let i = 0; i < all.length; i++) for (const r of all) if (ids.has(r.parentRequestId) || ids.has(r.continuationOf)) ids.add(r.id);
+    // A human steering one role does not authorize interrupting an admitted peer Run, even before launch acknowledgement.
+    // Preserve that peer's continuation ancestry and descendants so its late result remains attributable.
+    if(preserveRunningChildren) {
+      const active=this.db.list('runs').filter(r=>!terminal.has(r.status)),preserved=new Set();
+      for(const r of all.filter(r=>ids.has(r.id)&&r.targetRoleId!==root.targetRoleId)) {
+        if(!active.some(run=>run.id===r.currentRunId||run.requestId===r.id||r.taskId&&(run.taskId===r.taskId||run.businessTaskId===r.taskId)))continue;
+        let owner=r;
+        while(owner&&owner.targetRoleId!==root.targetRoleId&&!preserved.has(owner.id)) {
+          preserved.add(owner.id);owner=all.find(next=>next.id===owner.continuationOf);
+        }
+      }
+      for(let i=0;i<all.length;i++)for(const r of all)if(preserved.has(r.parentRequestId)||preserved.has(r.continuationOf))preserved.add(r.id);
+      for(const id of preserved)ids.delete(id);
+    }
     const runs = [], cancelledNow = [];
     this.db.transaction(() => {
       for (const r of all.filter(r => ids.has(r.id))) {
