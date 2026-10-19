@@ -610,6 +610,35 @@ const server = http.createServer(async (req, res) => {
         const link = wechat.openProject(wechatProject[1]); void wechat.tick().catch(() => {}); return json(res, { id: link.id }, 201);
       }
       if(pathname.includes('native-')&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
+      const nativeGit=pathname.match(/^\/api\/native-sessions\/([^/]+)\/git$/);
+      if(nativeGit&&req.method==='GET'){
+        // Read-only Git facts for the session's own registered working folder; the browser never supplies a path.
+        const nodeId=decodeURIComponent(nativeGit[1]),runtime=url.searchParams.get('runtime'),sessionId=url.searchParams.get('sessionId'),entryId=url.searchParams.get('entryId');
+        const record=(sessionId&&ownedNativeSession(nodeId,runtime,sessionId))||(entryId&&nativeCatalogRecords(nodeId,runtime).find(entry=>entry.id===entryId))||null;
+        if(!record)throw Error('Session is not registered with Workbench');
+        const workspace=record.workspace||null,worker=db.get('workers',nodeId);
+        if(!workspace)return json(res,{available:false,reason:'no_workspace'});
+        if(!worker||!online(nodeId))return json(res,{available:false,reason:'source_offline',workspace});
+        if(worker.capabilities?.workspaceGit!==1)return json(res,{available:false,reason:'worker_upgrade',workspace});
+        try{return json(res,{available:true,workspace,...await workerQuery({nodeId},'workspace_git',{workspace},10000)});}
+        catch(error){return json(res,{available:false,reason:'git_read_failed',detail:String(error.message||error).slice(0,300),workspace});}
+      }
+      const nativeTitle=pathname.match(/^\/api\/native-sessions\/([^/]+)\/title$/);
+      if(nativeTitle&&req.method==='POST'){
+        // Renames only a Workbench-created session: the Worker's catalog entry is the source the list is refreshed from,
+        // so it is updated first and Home's copy follows. Native ID, workspace, status and takeover records are untouched.
+        const nodeId=decodeURIComponent(nativeTitle[1]),b=await body(req),title=typeof b.title==='string'?b.title.trim():'';
+        if(!title||title.length>120)throw Error('Session title is required and must be at most 120 characters');
+        const entry=db.get('nativeCatalogEntries',typeof b.entryId==='string'?b.entryId:'');
+        if(!entry||entry.nodeId!==nodeId||entry.runtime!==b.runtime||(entry.sessionId||null)!==(b.sessionId||null))throw Error('Only sessions created in Workbench can be renamed here');
+        const worker=db.get('workers',nodeId);
+        if(!worker||!online(nodeId))throw Error('Device is offline; reconnect it to rename this session');
+        if(worker.capabilities?.nativeSessionTitle!==1)throw Error('Upgrade this Worker to rename sessions');
+        const result=await workerQuery({nodeId},'native_session_title',{entryId:entry.id,runtime:entry.runtime,sessionId:entry.sessionId||null,title},10000);
+        if(result?.entryId!==entry.id||result.title!==title)throw Error('The device did not confirm the new session name');
+        const current=db.get('nativeCatalogEntries',entry.id),updated=db.put('nativeCatalogEntries',{...current,title,renamedAt:new Date().toISOString()});
+        change();return json(res,nativeCatalogItem(updated));
+      }
       const nativeMedia=pathname.match(/^\/api\/native-sessions\/([^/]+)\/media$/);
       if(nativeMedia&&req.method==='GET'){
         const nodeId=decodeURIComponent(nativeMedia[1]),record=ownedNativeSession(nodeId,url.searchParams.get('runtime'),url.searchParams.get('sessionId'));

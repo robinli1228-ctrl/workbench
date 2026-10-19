@@ -22,7 +22,7 @@ const button=(text,fn,cls='secondary')=>{const n=el('button',cls,t(text));n.type
 const closeButton=fn=>{const n=button('',fn,'icon-button native-close');setActionIcon(n,'close','Close');n.dataset.close='';return n;};
 
 /** The session view reads native history and prepares terminal links. Only after an explicit takeover does it submit turns, resuming the same native ID. */
-export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStateRefresh=async()=>{}}){
+export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange,onPreview,onStateRefresh=async()=>{}}){
  const mode=document.querySelector('#navigation-mode'),list=el('nav','project-list native-session-list'),content=el('section','native-session-content panel'),side=el('section','native-session-sidebar');
  list.id='native-session-list';content.id='native-session-content';side.id='native-session-sidebar';
  document.querySelector('#project-list').after(list);document.querySelector('main.workspace').append(content);document.querySelector('#node-sidebar').append(side);
@@ -54,6 +54,8 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
   * most 12 per render); file bytes are fetched when a card is opened.
   */
  const OUTPUT_SESSIONS=8;let outputs=new Map(),outputsTimer=null;
+ // Declared before resetSide() runs at setup: repository cache and the in-progress rename.
+ const gitCache=new Map();let gitKey=null,renaming=null;
  // A path keeps its latest mention; live replies (no timestamp yet) count as newest, unreadable times as oldest.
  const outputRank=value=>{if(!value)return Infinity;const time=Date.parse(value);return Number.isFinite(time)?time:0;};
  function noteOutputs(session,text,at){
@@ -70,6 +72,37 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
   for(const {path} of paths){const prior=items.get(path);if(prior&&outputRank(prior.at)>=outputRank(at))continue;items.set(path,{path,at:at||null});changed=true;}
   if(changed&&sideTab==='outputs'&&selected&&mediaContext(selected)?.key===context.key){clearTimeout(outputsTimer);outputsTimer=setTimeout(renderOutputs,100);}
  }
+ /**
+  * Project outputs come only from a trusted link: the group-chat role binding of a managed session, or exactly one
+  * project whose role session on this device recorded this native ID. Standalone sessions are never guessed or scanned.
+  */
+ function sessionProject(item){
+  const data=getData();if(!item)return null;
+  if(item.roleBinding?.projectId)return data.projects?.find(p=>p.id===item.roleBinding.projectId)||null;
+  const id=nativeId(item);if(!id)return null;
+  const known=new Set((data.roleSessions||[]).filter(s=>s.runtime===item.runtime&&s.nativeSessionId===id&&s.nodeId===item.nodeId).map(s=>s.projectId));
+  return known.size===1?data.projects?.find(p=>p.id===[...known][0])||null:null;
+ }
+ const projectOutputs=new Map();
+ async function loadProjectOutputs(projectId,force=false){
+  const cached=projectOutputs.get(projectId);if(cached?.loading||!force&&cached?.at&&Date.now()-cached.at<30000)return;
+  projectOutputs.set(projectId,{...cached,loading:true});if(sideTab==='outputs')renderOutputs();
+  try{const result=await api(`/api/projects/${encodeURIComponent(projectId)}/artifacts`);projectOutputs.set(projectId,{items:result.items||[],partial:Boolean(result.partial),at:Date.now()});}
+  catch(error){projectOutputs.set(projectId,{items:[],error:error.message,at:Date.now()});}
+  if(sideTab==='outputs')renderOutputs();
+ }
+ function projectOutputsCard(){
+  const section=el('section','native-side-card native-project-outputs'),project=sessionProject(selected),head=el('div','native-card-head');head.append(el('h3','',t('Project outputs')));section.append(head);
+  if(!project||!artifactRow){section.append(el('p','native-side-hint',t('This session is not linked to a project, so only the files mentioned in its loaded replies are listed above.')));return section;}
+  const cached=projectOutputs.get(project.id),refresh=button('Refresh',()=>void loadProjectOutputs(project.id,true),'secondary native-card-action');refresh.disabled=Boolean(cached?.loading);head.append(refresh);
+  const source=el('p','native-side-hint',t('From project “{project}”, the same list as its group chat Recent Outputs; files open through the project’s file access.',{project:project.name}));source.translate=false;section.append(source);
+  if(!cached?.at)section.append(el('p','native-side-hint',t('Reading project outputs…')));
+  else if(cached.error)section.append(el('p','native-side-hint',t('Project outputs unavailable: {message}',{message:cached.error})));
+  else if(!cached.items.length)section.append(el('p','native-side-hint',t('No recognizable project outputs yet.')));
+  else{const list=el('div','native-project-output-list');for(const file of cached.items.slice(0,30))list.append(artifactRow(file));section.append(list);if(cached.partial||cached.items.length>30)section.append(el('p','native-side-hint',t('Showing part of the project outputs; the group chat lists the rest.')));}
+  if(!cached?.at||Date.now()-cached.at>=30000)void loadProjectOutputs(project.id);
+  return section;
+ }
  function renderOutputs(){
   const panel=sidePanels.outputs;panel.replaceChildren();
   if(!selected){panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
@@ -79,7 +112,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
   if(!items.length)section.append(el('p','native-side-hint',t('No files have been mentioned in the loaded replies yet.')));
   else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));section.append(list);}
   section.append(el('p','native-side-hint',t('Video, audio, image, PDF and archive paths from the replies loaded on the left; loading older history adds more. Each file opens from the device that holds it.')));
-  panel.append(section);
+  panel.append(section,projectOutputsCard());
  }
  resetSide();
  const filters=el('div','native-session-filters'),device=el('select'),tool=el('select');device.setAttribute('aria-label',t('Session device'));tool.setAttribute('aria-label',t('Agent tool'));filters.append(device,tool);list.before(filters);
@@ -158,7 +191,7 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  function renderTitle(){if(!active()||document.body.dataset.workspaceView==='settings')return;const title=document.querySelector('#workspace-title');title.translate=!selected;title.textContent=selected?displayTitle(selected):t('Native sessions');}
  function resetDetail(){detailVersion++;selected=null;renderTitle();detailSignature='';timeline.clear();takeover.detach();content.replaceChildren(el('div','native-empty',t('Select a native session to view its details.')));resetSide();}
  function resetSide(){
-  delete side.dataset.sessionKey;sideBadge.hidden=true;outputs.clear();
+  delete side.dataset.sessionKey;sideBadge.hidden=true;outputs.clear();gitKey=null;renaming=null;
   sidePanels.session.replaceChildren(el('p','native-side-hint',t('Read-only preview. Take over at the bottom to continue here, or open iTerm.')));
   sidePanels.resources.replaceChildren(el('p','native-side-hint',t('Select a native session to view its details.')));
   selectSideTab(sideTab);
@@ -256,21 +289,109 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
   if(runtime?.checkedAt&&Number.isFinite(Date.parse(runtime.checkedAt)))section.append(el('p','native-side-hint',t('Last checked: {time}',{time:time(runtime.checkedAt)})));
   if(prior)prior.replaceWith(section);else sidePanels.resources.append(section);
  }
+ /** Read-only Git facts of the session's registered working folder, from its own device; cached per session. */
+ const GIT_REASONS={no_workspace:'No working folder is recorded for this session yet.',source_offline:'Device offline; Git status is unavailable.',worker_upgrade:'Upgrade this Worker to read Git status.',not_git:'The working folder is not inside a Git repository.',git_unavailable:'Git is not available for this folder on the device.',git_read_failed:'Could not read Git status.'};
+ async function loadGit(value,force=false){
+  const sessionKey=key(value),cached=gitCache.get(sessionKey);if(cached?.loading||!force&&cached)return;
+  gitCache.set(sessionKey,{loading:true});renderGit(value);
+  const id=nativeId(value),query=new URLSearchParams({runtime:value.runtime,...(id?{sessionId:id}:{}),...(value.entryId?{entryId:value.entryId}:{})});
+  let state;try{state=await api(`${endpoint(value.nodeId)}/git?${query}`);}catch(error){state={available:false,reason:'git_read_failed',detail:error.message};}
+  gitCache.set(sessionKey,{state,at:new Date().toISOString()});
+  if(selected&&key(selected)===sessionKey)renderGit(selected);
+ }
+ function renderGit(value){
+  const prior=sidePanels.session.querySelector('[data-native-git]');if(!prior||side.dataset.sessionKey!==key(value))return;
+  const cached=gitCache.get(key(value)),section=el('section','native-side-card native-git-card');section.dataset.nativeGit='';
+  const head=el('div','native-card-head'),refresh=button('Refresh',()=>void loadGit(value,true),'secondary native-card-action');refresh.disabled=!cached||Boolean(cached.loading);
+  head.append(el('h3','',t('Repository (Git)')),refresh);section.append(head);
+  if(!cached||cached.loading)section.append(el('p','native-side-hint',t('Reading Git status…')));
+  else{
+   const state=cached.state;
+   // A working folder path alone is never shown as Git state: without a repository answer the card says why.
+   if(!state.available||!state.git){section.append(el('p','native-side-hint',t(GIT_REASONS[state.reason]||'Git status is unknown.')));if(state.detail)section.append(el('p','native-side-hint native-git-detail',state.detail));}
+   else{
+    const c=state.changes||{},parts=[['staged','{count} staged'],['modified','{count} modified'],['untracked','{count} untracked'],['conflicted','{count} conflicted']].filter(([k])=>c[k]>0).map(([k,label])=>t(label,{count:c[k]}));
+    const changes=c.unknown?t('Unknown ({reason})',{reason:c.reason||'git'}):c.total===0?t('Clean'):parts.join(' · ')+(c.truncated?` · ${t('partial count')}`:'');
+    section.append(metaList([
+     ['Git root',state.root,state.root],
+     ['Branch',state.branch||t('Detached HEAD')],
+     ['Commit',state.commit?`${state.commit.slice(0,12)}${state.subject?` · ${state.subject}`:''}`:t('No commits yet'),state.commit||null],
+     ['Upstream',state.upstream?`${state.upstream} · ${t('{ahead} ahead, {behind} behind',{ahead:state.ahead??'?',behind:state.behind??'?'})}`:t('No upstream configured')],
+     ['Changes',changes]]));
+    section.append(el('p','native-side-hint',t('Read on the device without fetching; compared with local refs only.')));
+   }
+   section.append(el('p','native-side-hint',t('Checked at: {time}',{time:time(cached.at)})));
+  }
+  prior.replaceWith(section);
+ }
+ /** Renaming changes only the display name of a Workbench-created session; native ID, history, drafts and takeover stay. */
+ function renameBlock(value){
+  const worker=getData().workers?.find(w=>w.id===value.nodeId);
+  if(!value.entryId)return value.roleBinding?'Named after its group chat project and role.':'Only sessions created in Workbench can be renamed.';
+  if(!worker?.online)return 'Device offline; reconnect it to rename this session.';
+  if(worker.capabilities?.nativeSessionTitle!==1)return 'Upgrade this Worker to rename sessions.';
+  return null;
+ }
+ function renderNameCard(value){
+  const panel=sidePanels.session,prior=panel.querySelector('[data-native-name]');
+  if(renaming&&renaming.key!==key(value)&&!renaming.saving)renaming=null;
+  const section=el('section','native-side-card native-session-name');section.dataset.nativeName='';section.append(el('h3','',t('Session name')));
+  const blocked=renameBlock(value);
+  if(renaming?.key===key(value)){
+   const form=el('form','native-rename-form'),input=el('input');input.type='text';input.maxLength=120;input.value=renaming.draft;input.setAttribute('aria-label',t('Session name'));input.disabled=renaming.saving;
+   input.addEventListener('input',()=>{if(renaming)renaming.draft=input.value;});
+   input.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();cancelRename(value);}});
+   const save=el('button','primary',t(renaming.saving?'Saving…':'Save'));save.type='submit';save.disabled=renaming.saving;
+   const cancel=button('Cancel',()=>cancelRename(value));cancel.disabled=renaming.saving;
+   const actions=el('div','native-session-actions');actions.append(save,cancel);form.append(input,actions);
+   if(renaming.error)form.append(el('p','global-error',renaming.error));
+   form.addEventListener('submit',event=>{event.preventDefault();void saveRename(value);});
+   section.append(form);if(!renaming.saving)queueMicrotask(()=>{if(input.isConnected&&document.activeElement!==input)input.focus();});
+  }else{
+   const line=el('div','native-card-head'),name=el('span','native-meta-value native-session-title',value.title||t('Untitled session'));name.translate=false;line.append(name);
+   if(!blocked)line.append(button('Rename',()=>{renaming={key:key(value),draft:value.title||'',saving:false,error:null};renderNameCard(value);},'secondary native-card-action'));
+   section.append(line);if(blocked)section.append(el('p','native-side-hint',t(blocked)));
+  }
+  if(prior)prior.replaceWith(section);
+  else{const anchor=panel.querySelector('[data-native-controls]');if(anchor)anchor.after(section);else panel.append(section);}
+ }
+ function cancelRename(value){renaming=null;renderNameCard(value);}
+ async function saveRename(value){
+  if(!renaming)return;
+  const title=renaming.draft.trim();
+  if(!title||title.length>120){renaming.error=t('Session title is required and must be at most 120 characters');renderNameCard(value);return;}
+  if(title===(value.title||'')){cancelRename(value);return;}
+  renaming.saving=true;renaming.error=null;renderNameCard(value);
+  try{
+   const updated=await api(`${endpoint(value.nodeId)}/title`,{method:'POST',json:{runtime:value.runtime,entryId:value.entryId,sessionId:value.sessionId||null,title}});
+   renaming=null;
+   for(const item of items)if(key(item)===key(value))item.title=updated.title;
+   if(selected&&key(selected)===key(value))selected={...selected,title:updated.title};
+   renderTitle();renderList();renderNameCard(selected&&key(selected)===key(value)?selected:{...value,title:updated.title});
+   void load({quiet:true});
+  }catch(error){if(renaming){renaming.saving=false;renaming.error=error.message;}renderNameCard(value);}
+ }
+ /** Label/value rows with optional copy buttons, shared by the session, repository and runtime cards. */
+ function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}
+ function metaCard(target,heading,rows){const section=el('section','native-side-card');section.append(el('h3','',t(heading)),metaList(rows));target.append(section);return section;}
  function renderSide(value,id,readable){
   side.dataset.sessionKey=key(value);
   const live=takeover.isOn(value);sideBadge.hidden=false;sideBadge.className=`native-side-badge ${live?'is-live':''}`;sideBadge.textContent=t(live?'Taken over':takeover.canChat(value)?'Platform chat':'Read-only');
   const {session,resources}=sidePanels;session.replaceChildren();resources.replaceChildren();agentDetailsSignature='';
-  const card=(target,heading,rows)=>{const section=el('section','native-side-card');section.append(el('h3','',t(heading)));const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}section.append(list);target.append(section);return section;};
   // Session: how to continue first, then the takeover and terminal controls, then this session's identity.
   const actions=el('section','native-side-card native-side-actions');actions.append(el('h3','',t('Continue')));
   actions.append(el('p','native-side-hint',t(takeover.isOn(value)||takeover.canChat(value)?'Messages sent below resume this exact native session on its device.':'Read-only preview. Take over at the bottom to continue here, or open iTerm.')));
   if((takeover.isOn(value)||takeover.canChat(value))&&!IMAGE_CLIS.has(value.runtime))actions.append(el('p','native-side-hint',t('{tool} cannot receive images here; files are passed as paths',{tool:names[value.runtime]})));
   const controls=el('section','native-session-controls');controls.dataset.nativeControls='';
   session.append(actions,controls);
-  card(session,'Native session',[['Session ID',id||t('Not available yet'),id||null],['Working folder',value.workspace||t('Choose a folder when opening'),value.workspace||null]]);
+  renderNameCard(value);
+  metaCard(session,'Native session',[['Session ID',id||t('Not available yet'),id||null],['Working folder',value.workspace||t('Choose a folder when opening'),value.workspace||null]]);
+  // Repository facts are read once per selected session (or on Refresh), never polled.
+  const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';session.append(repository);
+  if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
   // Resources: the device and CLI account this session runs on.
   const agentLine=el('span','native-agent-line');agentLine.append(agentIconEl(value.runtime),el('span','',names[value.runtime]||value.runtime));
-  card(resources,'Runtime',[['Device',workerName(value.nodeId)],['Agent tool',names[value.runtime]]]).querySelector('dd:nth-of-type(2) .native-meta-value')?.replaceChildren(agentLine);
+  metaCard(resources,'Runtime',[['Device',workerName(value.nodeId)],['Agent tool',names[value.runtime]]]).querySelector('dd:nth-of-type(2) .native-meta-value')?.replaceChildren(agentLine);
   renderAgentDetails(value);
   renderSessionControls(value);
   selectSideTab(sideTab);

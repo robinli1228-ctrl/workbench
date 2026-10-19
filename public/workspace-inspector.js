@@ -53,6 +53,19 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
       if(!result.items.length)localList.append(el('p','workspace-note',t('No local project files available.')));
     }catch(error){if(version===generation)localNote.textContent=t('Local files unavailable: {message}',{message:error.message});}finally{if(version===generation){resourcesBusy=false;resourcesLoadedAt=Date.now();}}
   }
+  /** One project-output row; the Sessions panel reuses it so both views open files through the same detail dialog. */
+  function artifactRow(file){
+    const button=el('button','artifact-row');button.type='button';
+    const type=el('span','artifact-filetype',file.type.slice(0,6));type.dataset.kind=/MD|TXT|DOCX|PDF/.test(file.type)?'document':'code';
+    const body=el('span','artifact-row-body');body.append(el('strong','',file.name),el('small','',`${t(file.sourceKind==='write'?'File write record':'Mentioned in reply')}${file.runtime?` · ${file.runtime}`:''}${file.recordedAt?` · ${date(file.recordedAt)}`:''}`));
+    if(file.modifiedAt)body.append(el('small','',t('Local modified: {time}',{time:date(file.modifiedAt)})));
+    if(file.path){const path=el('small','artifact-local-path',file.path);path.setAttribute('translate','no');body.append(path);}
+    body.append(el('small',file.error||file.syncState==='conflict'?'artifact-warning':'',fileState(file)));
+    if(file.error)body.append(el('small','artifact-warning',file.error));
+    button.title=`${file.path||''}\n${file.source}${file.roleName?` · ${file.roleName}`:''}`;
+    button.append(type,body);button.addEventListener('click',()=>void detail(file));
+    return button;
+  }
   async function load(force=false){
     if(selected!=='artifacts'||!projectId||busy||(!force&&Date.now()-loadedAt<30000))return;
     const version=generation,id=projectId;busy=true;refresh.disabled=true;note.textContent='Checking recent outputs and device files…';
@@ -61,17 +74,7 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
       if(version!==generation)return;
       list.replaceChildren();loadedAt=Date.now();
       note.textContent=t(result.partial?'Showing partial outputs from recent runs · see the conversation log for earlier records':'Write records and reply references are shown separately; contents come from the bound Mac.');
-      for(const file of result.items){
-        const button=el('button','artifact-row');button.type='button';
-        const type=el('span','artifact-filetype',file.type.slice(0,6));type.dataset.kind=/MD|TXT|DOCX|PDF/.test(file.type)?'document':'code';
-        const body=el('span','artifact-row-body');body.append(el('strong','',file.name),el('small','',`${t(file.sourceKind==='write'?'File write record':'Mentioned in reply')}${file.runtime?` · ${file.runtime}`:''}${file.recordedAt?` · ${date(file.recordedAt)}`:''}`));
-        if(file.modifiedAt)body.append(el('small','',t('Local modified: {time}',{time:date(file.modifiedAt)})));
-        if(file.path){const path=el('small','artifact-local-path',file.path);path.setAttribute('translate','no');body.append(path);}
-        body.append(el('small',file.error||file.syncState==='conflict'?'artifact-warning':'',fileState(file)));
-        if(file.error)body.append(el('small','artifact-warning',file.error));
-        button.title=`${file.path||''}\n${file.source}${file.roleName?` · ${file.roleName}`:''}`;
-        button.append(type,body);button.addEventListener('click',()=>void detail(file));list.append(button);
-      }
+      for(const file of result.items)list.append(artifactRow(file));
       if(!result.items.length)list.append(el('div','inspector-empty','No recognizable outputs yet. File write records and file links in replies will appear here.'));
     }catch(error){if(version===generation){note.textContent=t('Read failed: {message}', { message: error.message });loadedAt=Date.now();}}
     finally{if(version===generation){busy=false;refresh.disabled=false;}}
@@ -87,7 +90,7 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
   }
   tabs.forEach((tab,i)=>{tab.addEventListener('click',()=>select(names[i]));tab.addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?names.length-1:(i+(event.key==='ArrowRight'?1:-1)+names.length)%names.length;select(names[next]);tabs[next].focus();}});});
   refresh.addEventListener('click',()=>void load(true));
-  return {render(){
+  return {artifactRow,render(){
     sourceSync.render();
     const next=getProject()?.id||null;
     if(next!==projectId){projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;resourcesLoadedAt=0;resourcesBusy=false;localList.replaceChildren();localNote.textContent='';busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
