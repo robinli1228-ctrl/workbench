@@ -227,6 +227,8 @@ Review regressions cover policy-2 conflict preservation before migration, explic
 
 Idle conflict polling selects only Runs with conflict links through a sparse index, instead of loading all historical Run bodies. File capture still performs fresh pre-read and post-read path checks and hashes actual bytes. Ordinary missing markers do not create rejected filesystem promises, and the final verified leaf stat is reused for descriptor identity comparison. No path-safety cache, mtime-only hash cache, scan-frequency reduction or history deletion is introduced by these CPU optimizations.
 
+Background watcher reconciliation serializes file checks and yields briefly every 32 files to reduce CPU bursts and leave room for interactive work. It retains the same notification/reconciliation schedule, fresh checks, hashes, failure draining and receipt semantics. Large scans take longer; explicit transfer/capture operations retain the existing parallel path. This is load pacing, not a claim that all filesystem work or total CPU cost disappears.
+
 ## 14. Opt-in source and outputs policy
 
 Status: implemented locally; isolated Home/Worker/browser verification only. Not deployed or automatically enabled. Earlier physical-device acceptance in section 13 does not validate this increment on a remote server.

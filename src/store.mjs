@@ -31,6 +31,7 @@ const chatTask = "json_extract(data,'$.origin')='chat' AND json_extract(data,'$.
 const schedulableRequest = "json_extract(data,'$.status') IN ('queued','waiting_call','waiting_delivery')";
 const pendingCallResult = "json_extract(data,'$.status') IN ('running','queued')";
 const unresolvedRecovery = "COALESCE(json_extract(data,'$.state'),'')!='resolved'";
+const pendingCommand = "COALESCE(json_extract(data,'$.acked'),0) IN (0,'')";
 
 /** SQLite is the persistent record kept separately by Home and each Worker; files are not shared across machines. */
 export class Store {
@@ -54,6 +55,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_pending_call_results ON records(id) WHERE kind='coordinationRequests' AND ${pendingCallResult};
       CREATE INDEX IF NOT EXISTS records_conflict_runs ON records(json_extract(data,'$.sourceConflictId')) WHERE kind='runs' AND json_extract(data,'$.sourceConflictId') IS NOT NULL;
       CREATE INDEX IF NOT EXISTS records_unresolved_recoveries ON records(id) WHERE kind='cliRecoveries' AND ${unresolvedRecovery};
+      CREATE INDEX IF NOT EXISTS records_pending_commands ON records(id) WHERE kind='commands' AND ${pendingCommand};
       CREATE INDEX IF NOT EXISTS records_native_driver_read ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId'),json_extract(data,'$.nativeSession.id')) WHERE kind='runs';`);
   }
   get(kind, id) { const r = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id); return r ? JSON.parse(r.data) : null; }
@@ -63,6 +65,10 @@ export class Store {
     const info=statfsSync(dirname(this.file));return info.bavail*info.bsize;
   }
   list(kind) { return this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind).map(r => JSON.parse(r.data)); }
+  /** Acknowledged history never participates in the one-second resend scan; no result or command is deleted. */
+  pendingCommands() {
+    return this.db.prepare(`SELECT data FROM records INDEXED BY records_pending_commands WHERE kind='commands' AND ${pendingCommand} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
+  }
   /** Read one role/session with a hard row budget; omitted history is unknown, never proof of idle. */
   readNativeDriverRecords(binding,{limit=100}={}){
     if(!binding?.projectId||!binding.roleId||!binding.taskId||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('invalid_read_request');

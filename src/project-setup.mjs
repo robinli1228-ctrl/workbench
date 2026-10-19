@@ -155,7 +155,7 @@ export class ProjectSetup {
           if (result.status !== 'ready') throw new Error(result.results.find(r => r.error)?.error || tr('projectSetup.repositoryNotReadyYet'));
         } else {
           const binding = await this.projectsAdmin.prepare(projectId, a.nodeId);
-          await this.query({ nodeId: a.nodeId }, 'workspace_check', binding.localRoot);
+          await this.query({ nodeId: a.nodeId,projectId }, 'workspace_check', binding.localRoot);
           const old = this.db.list('roles').find(r => r.projectId === projectId && r.name === a.name && !r.archivedAt);
           if (old?.systemSupervisor) throw new Error(tr('projectSetup.supervisorCannotBeModifiedThrough'));
           result = this.rooms.saveRole(projectId, { ...a, id: old?.id, revision: old?.revision });

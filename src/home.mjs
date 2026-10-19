@@ -37,7 +37,7 @@ import {CrossDeviceRead} from './cross-device-read.mjs';
 import { RoleSteering } from './role-steering.mjs';
 import { collaborationQueueView } from './coordination-wait.mjs';
 import { WorkspaceStateFeed } from './workspace-state.mjs';
-import { messageProgress, reconcileCallResults } from './message-progress.mjs';
+import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
 import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updatePausedSetting, updateConversationOrganizer,legacyExecutionPrompt,executionRules } from './platform-prompts.mjs';
@@ -45,6 +45,7 @@ import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
 import { folderName } from './project-space.mjs';
+import {folderAccessFor,nativeFolderAccess,FolderPreparations} from './folder-access.mjs';
 import { CredentialStore, Hosting } from './hosting.mjs';
 import { ProjectAdmin } from './project-admin.mjs';
 import { DeviceAdmin } from './device-admin.mjs';
@@ -129,7 +130,7 @@ async function reviewDocumentBaselines(projectId,input) {
   const snapshots=await Promise.all(nodes.map(async nodeId=>{
     const root=db.get('workspaces',`${projectId}:${nodeId}`)?.localRoot;
     if(!root)return [];
-    try{const result=await workerQuery({nodeId},'collaboration_documents',{root,action:'snapshot'},15000);return result.files.map(file=>({...file,nodeId}));}
+    try{const result=await workerQuery({nodeId,projectId},'collaboration_documents',{root,action:'snapshot'},15000);return result.files.map(file=>({...file,nodeId}));}
     catch{return [];}// Unavailable baselines deny unknown documents later; they never grant access to new opinions.
   }));
   return snapshots.flat();
@@ -142,9 +143,9 @@ const proactiveFollowup=new ProactiveFollowup(db,rooms);
 const timerAgent = new TimerAgentActions(db,scheduledJobs);
 const executionPlans = new ExecutionPlans(db,calls,workerQuery,{
   request:(run,items)=>deliveries.request(run,{requestId:'planned-handoff',commit:items[0].commit,items,summary:tr('home.supervisorStageDeliveryContinueWith')}),
-  receive:async(nodeId,repositories,records)=>{
+  receive:async(nodeId,repositories,records,projectId)=>{
     const prepared=[];for(const r of repositories)prepared.push({...r,credential:await hosting.auth(r.accountId,r.repoUrl)});
-    return workerQuery({nodeId},'execution_receive',{repositories:prepared,deliveries:records},90000);
+    return workerQuery({nodeId,projectId},'execution_receive',{repositories:prepared,deliveries:records},90000);
   }
 });
 const deliveries = new Deliveries(db);
@@ -309,7 +310,7 @@ async function dispatch(nodeId) {
     db.put('commands',recorded);
     const {launchInput,...wireCommand}=recorded;
     send(sockets.get(nodeId), { type: 'command', command: wireCommand, run, task, request,
-      gitCredentials,
+      gitCredentials,folderAccess:folderAccessFor(db,nodeId,`project:${run.projectId}`),
       delivery: (c.deliveryId || run.deliveryId) ? db.get('deliveries', c.deliveryId || run.deliveryId) : null,
       project: { ...project, root: run.projectRoot ?? project.root }, paused: settings.paused, platformPrompt, language });
   }
@@ -323,11 +324,12 @@ function softwareInventory() {
     ...db.list('devices').filter(d=>!known.has(d.nodeId)).map(d=>({id:d.nodeId,name:d.name||d.nodeId,kind:'cloud',online:false,softwareVersion:null}))];
 }
 function snapshot() {
+  const runs=db.list('runs'),tasks=db.list('tasks'),requests=db.list('coordinationRequests'),progressView=messageProgressView({runs,tasks,requests});
   const launchCommands=db.list('commands').filter(c=>c.type==='launch'),launches=new Map(launchCommands.map(c=>[c.runId,c]));
   const continuationLaunches=new Map(launchCommands.toReversed().map(c=>[c.runId,c]));
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1,projectTeamCopy:1,queueOrder:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks: db.list('tasks'), runs: db.list('runs'),
+  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1,projectTeamCopy:1,queueOrder:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs,
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -346,7 +348,7 @@ function snapshot() {
     // Sidebar decoration only needs active native identities, never complete tool logs.
     nativeTurnExecutions:db.db.prepare("SELECT id,json_extract(data,'$.nodeId') AS nodeId,json_extract(data,'$.runtime') AS runtime,json_extract(data,'$.sessionId') AS sessionId,json_extract(data,'$.status') AS status FROM records INDEXED BY native_turn_active WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('starting','running','stopping')").all(),
     scheduledJobs: db.list('scheduledJobs'),scheduledOccurrences:db.list('scheduledOccurrences').slice(-200),runReports:db.list('runReports'),runAlerts:db.list('runAlerts').filter(a=>a.status==='open'),
-    requests: db.list('coordinationRequests').map(request => {const {fingerprint,targetSnapshot,...r}=request;return {...r,messageProgress:messageProgress(db,request,online,launches.get(request.currentRunId)||null,continuationLaunches)};}),
+    requests: requests.map(request => {const {fingerprint,targetSnapshot,...r}=request;return {...r,messageProgress:messageProgress(progressView,request,online,launches.get(request.currentRunId)||null,continuationLaunches)};}),
     deliveries: db.list('deliveries').map(({ fingerprint, ...r }) => r),
     workers: db.list('workers').map(w => ({ ...w, runtimes: visibleRuntimes(w.runtimes,db.get('workerConfigs',w.id)?.hiddenRuntimes), online: online(w.id) })) };
 }
@@ -387,7 +389,7 @@ function scheduleChatTurn() {
   for(const task of db.chatTasks(['ready']))prepareChatContext(task);
   const scheduled = rooms.schedule(id => online(id) && sockets.get(id).workerReady);
   for (const nodeId of scheduled.nodes) dispatch(nodeId);
-  for(const nodeId of new Set(db.list('commands').filter(c=>!c.acked&&(!c.lastSentAt||Date.now()-Date.parse(c.lastSentAt)>=5000)).map(c=>c.nodeId)))void dispatch(nodeId);
+  for(const nodeId of new Set(db.pendingCommands().filter(c=>(!c.lastSentAt||Date.now()-Date.parse(c.lastSentAt)>=5000)).map(c=>c.nodeId)))void dispatch(nodeId);
   if (scheduled.changed) change();
   // Queued work claims capacity first; background organization does not take up the queued waiting stage of business roles.
   void conversationContext.drainOne({
@@ -411,8 +413,27 @@ function workerQuery(run, action, path, timeout = 10000) {
   return new Promise((resolveQuery, reject) => {
     const timer = setTimeout(() => { queries.delete(id); reject(new Error(tr('home.nodeQueryTimedOut'))); }, timeout);
     queries.set(id, { nodeId: run.nodeId,readProtocol:['source_inspect','source_read','read_query'].includes(action),resolve: value => { clearTimeout(timer); resolveQuery(value); }, reject: e => { clearTimeout(timer); reject(e); } });
-    send(sockets.get(run.nodeId), { type: 'query', id, runId: run.id, action, path, language: getLanguage() });
+    const projectId=['source_read','source_inspect','read_query'].includes(action)?path?.source?.projectId||run.projectId:run.projectId||path?.projectId;
+    const folderAccess=(action.startsWith('native_')||action.startsWith('media_')&&path?.runtime)?nativeFolderAccess(db,run.nodeId,path?.runtime,path?.sessionId,path?.entryId)||folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:path?.managedProjectIds?.length===1?`project:${path.managedProjectIds[0]}`:null):folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:null);
+    send(sockets.get(run.nodeId), { type: 'query', id, runId: run.id, projectId,folderAccess,action, path, language: getLanguage() });
   });
+}
+/** Human creation only: preparation is not authorization; activate in the binding transaction. */
+async function prepareFolderBinding(nodeId,scope,path,operationId){
+ const worker=db.get('workers',nodeId);
+ if(resolveNodeKind(worker?.nodeKind,worker?.platform)!=='local'||worker?.capabilities?.localFolderSelection!==1)throw Error('Upgrade the local Worker to select this folder');
+ const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(b=>b.nodeId===nodeId).map(b=>({projectId:b.projectId,localRoot:b.localRoot}));
+ return workerQuery({nodeId},'folder_grant_prepare',{scope,path,operationId,bindings});
+}
+function activateFolderBinding(grant){if(grant)db.put('folderGrants',{id:`${grant.nodeId}:${grant.scope}`,nodeId:grant.nodeId,scope:grant.scope,grant,status:'active'});}
+const folderPreparations=new FolderPreparations({db,prepare:input=>prepareFolderBinding(input.nodeId,input.scope,input.path,input.operationId),cancel:input=>workerQuery({nodeId:input.nodeId},'folder_grant_cancel',input)});
+/** Default/remote creation keeps its original path; only explicit local preparations need compensation. */
+const withFolderPreparation=(input,apply)=>input?folderPreparations.run(input,apply):apply(null);
+/** Stop issuing authorization immediately; Worker cleanup affects only this receipt, not any files. */
+async function cancelFolderBinding(row){
+ if(!row)return;
+ if(db.get('folderGrants',row.id)?.grant?.id===row.grant.id)db.put('folderGrants',{...row,status:'revoked'});
+ if(online(row.nodeId))try{await workerQuery({nodeId:row.nodeId},'folder_grant_cancel',{id:row.grant.id,scope:row.scope});}catch{/* Home has revoked it; subsequent requests carry no authorization. */}
 }
 const terminalRefreshes=new Map();
 /** Standalone native terminals reserve a device slot without inventing a collaboration project. */
@@ -450,7 +471,7 @@ function refreshProjectTerminals(projectId,{automatic=false}={}) {
 /** Reconcile without a browser: process proofs survive disconnects and wake only the original queue after release. */
 function reconcileTerminals(nodeId) {
   const projects=new Set(db.list('terminalSessions').filter(s=>!['released','cancelled'].includes(s.status)&&(!nodeId||s.nodeId===nodeId)).map(s=>s.projectId));
-  return Promise.all([...projects].filter(terminalScopeExists).map(id=>refreshProjectTerminals(id,{automatic:true}))).catch(error=>console.error('Terminal reconciliation failed:',error.message));
+  return Promise.all([...projects].filter(terminalScopeExists).map(id=>refreshProjectTerminals(id,{automatic:true}))).then(()=>folderPreparations.cleanup(nodeId)).catch(error=>console.error('Terminal reconciliation failed:',error.message));
 }
 const nativeCatalogRecords=(nodeId,runtime)=>db.list('nativeCatalogEntries').filter(entry=>entry.nodeId===nodeId&&entry.runtime===runtime);
 const nativeCatalogItem=entry=>({id:entry.id,entryId:entry.id,nodeId:entry.nodeId,runtime:entry.runtime,sessionId:entry.sessionId||null,title:entry.title,createdAt:entry.createdAt,modifiedAt:entry.modifiedAt||entry.createdAt,workspace:entry.workspace||null,origin:'dialog',status:entry.status||'awaiting_native_id',hasHistory:entry.hasHistory===true,previewAvailable:entry.previewAvailable===true,canReopen:entry.status==='draft',canResume:entry.hasHistory===true&&!['active','prepared'].includes(entry.status),exactLastScan:entry.exactLastScan||null});
@@ -491,6 +512,7 @@ async function returnTerminal(claim,action) {
     if(result?.released!==true||result.id!==claim.id)throw new Error(tr('terminalControl.stopPending'));
   }else result=await workerQuery(claim,'terminal_release',{id:claim.id});
   db.transaction(()=>{const current=db.get('terminalSessions',claim.id);if(current&&current.projectId===claim.projectId&&current.nodeId===claim.nodeId)db.put('terminalSessions',{...current,status:'released',processState:'released',releasedAt:new Date().toISOString()});if(result.catalogEntry&&result.catalogEntry.id===claim.catalogEntryId){const cached=db.get('nativeCatalogEntries',result.catalogEntry.id);if(cached?.nodeId===claim.nodeId)db.put('nativeCatalogEntries',{...cached,...result.catalogEntry,nodeId:claim.nodeId});}});
+  if(claim.catalogEntryId&&db.get('nativeCatalogEntries',claim.catalogEntryId)?.status==='draft')await cancelFolderBinding(db.get('folderGrants',`${claim.nodeId}:native:${claim.catalogEntryId}`));
   change();scheduleChat();return {released:true,forced:result.forced===true};
 }
 const server = http.createServer(async (req, res) => {
@@ -592,7 +614,7 @@ const server = http.createServer(async (req, res) => {
       if(nativeMedia&&req.method==='GET'){
         const nodeId=decodeURIComponent(nativeMedia[1]),record=ownedNativeSession(nodeId,url.searchParams.get('runtime'),url.searchParams.get('sessionId'));
         if(!record)throw Error('Session is not registered with Workbench');
-        return json(res,await mediaStreams.describe(mediaStreams.sourceForNative(nodeId,record,url.searchParams.get('path'))));
+        return json(res,await mediaStreams.describe(mediaStreams.sourceForNative(nodeId,{...record,runtime:url.searchParams.get('runtime')},url.searchParams.get('path'))));
       }
       const mediaTransferRoute=pathname.match(/^\/api\/projects\/([^/]+)\/media-transfers(?:\/([a-f0-9-]{36}))?$/);
       if(mediaTransferRoute&&req.method==='POST'&&!mediaTransferRoute[2])return json(res,await mediaStreams.transfer(mediaTransferRoute[1],await body(req)),202);
@@ -658,12 +680,13 @@ const server = http.createServer(async (req, res) => {
         if(fresh&&entry&&(entry.nodeId!==nodeId||entry.runtime!==b.runtime||entry.title!==b.title.trim()||entry.status!=='draft'&&!(prior?.catalogEntryId===entry.id&&prior.status==='prepared')))throw Error('Native catalog entry cannot be reused for a different or active session');
         const freshSessionId=fresh&&['claude','grok'].includes(b.runtime)?entry?.sessionId||randomUUID():null;
         const fingerprint=JSON.stringify({nodeId,runtime:b.runtime,sessionId:b.sessionId||null,freshSessionId,entryId:catalogEntryId,workspace:b.workspace||null,title:fresh?b.title.trim():null,allowAll:b.allowAll});
-        if(prior){if(prior.nativeFingerprint!==fingerprint||prior.status!=='prepared')throw Error('Terminal request is already used or changed');return json(res,terminalLaunchView(prior));}
+        if(prior){if(prior.nativeFingerprint!==fingerprint||prior.status!=='prepared')throw Object.assign(Error('Terminal request is already used or changed'),{folderPreparationReleased:db.get('folderPreparations',`${nodeId}:${b.operationId}`)?.status==='cancelled'});return json(res,terminalLaunchView(prior));}
         if(db.get('settings','main')?.paused)throw Error('Remote execution is paused');
         const device=db.list('devices').find(d=>d.nodeId===nodeId);
         if(worker.nodeKind==='cloud'&&!device)throw Error('Register SSH access for this server first');
         const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
-        const input={runtime:b.runtime,sessionId:b.sessionId||null,record:historyRecord,freshSessionId,entryId:catalogEntryId,title:fresh?b.title.trim():null,workspace:b.workspace,allowAll:b.allowAll,bindings,managedProjectIds:nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId})};
+        return await withFolderPreparation(fresh&&worker.capabilities?.localFolderSelection===1&&b.workspace?{nodeId,scope:`native:${catalogEntryId}`,path:b.workspace,operationId:b.operationId}:null,async folderCandidate=>{
+        const input={runtime:b.runtime,sessionId:b.sessionId||null,record:historyRecord,freshSessionId,entryId:catalogEntryId,title:fresh?b.title.trim():null,workspace:folderCandidate?.root||b.workspace,folderCandidate,allowAll:b.allowAll,bindings,managedProjectIds:nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId})};
         const preview=await workerQuery({nodeId},'native_terminal_preview',input,30000);
         input.managedProjectIds=nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId});
         const owner=nativeTerminalProject(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId,folderProjectIds:preview.projectId?[preview.projectId]:[]}),projectId=owner||`native-tui:${b.operationId}`;
@@ -672,14 +695,15 @@ const server = http.createServer(async (req, res) => {
         if(db.get('settings','main')?.paused||projectTerminalLock(db,projectId,nodeId)||sourceSync.busy(projectId,nodeId)||db.list('runs').some(r=>r.nodeId===nodeId&&(r.status==='reconciling'||r.projectId===projectId&&!terminal.has(r.status))))throw Error('The related group chat is busy; finish its current work first');
         if(db.get('terminalSessions',b.operationId))throw Error('Terminal request is being prepared');
         const createdAt=entry?.createdAt||new Date().toISOString(),claim={id:b.operationId,kind:'native',catalogEntryId,projectId,nodeId,runtime:b.runtime,sessionId:b.sessionId||null,nativeFingerprint:fingerprint,status:'preparing',createdAt:new Date().toISOString()};
-        db.transaction(()=>{if(fresh)db.put('nativeCatalogEntries',{...entry,id:catalogEntryId,nodeId,runtime:b.runtime,sessionId:freshSessionId,title:b.title.trim(),workspace:preview.workspace,origin:'dialog',status:'preparing',hasHistory:false,previewAvailable:false,createdAt,modifiedAt:new Date().toISOString()});db.put('terminalSessions',claim);});change();
+        db.transaction(()=>{if(fresh)db.put('nativeCatalogEntries',{...entry,id:catalogEntryId,nodeId,runtime:b.runtime,sessionId:freshSessionId,title:b.title.trim(),workspace:preview.workspace,origin:'dialog',status:'preparing',hasHistory:false,previewAvailable:false,createdAt,modifiedAt:new Date().toISOString()});activateFolderBinding(folderCandidate);db.put('terminalSessions',claim);});change();
         try{
           const info=await workerQuery(claim,'native_terminal_prepare',{...input,workspace:preview.workspace,id:claim.id,projectId,nodeId},30000);
           const identityFile=b.useLocalSshKey===true&&process.platform==='darwin'&&device?(await credentials.get(device.id))?.keyPath:null;
           const value=terminalLaunchView({...claim,...info,status:'prepared',command:terminalCommand(info,device||null,identityFile)});
           if(db.get('terminalSessions',claim.id)?.status!=='preparing')throw Error('Terminal preparation expired');
           db.transaction(()=>{db.put('terminalSessions',value);if(fresh){const current=db.get('nativeCatalogEntries',catalogEntryId);db.put('nativeCatalogEntries',{...current,sessionId:info.sessionId||current.sessionId,status:'prepared',workspace:info.workspace,modifiedAt:new Date().toISOString()});}});change();return json(res,value,201);
-        }catch(error){let status='blocked';try{await workerQuery(claim,'terminal_release',{id:claim.id});status='released';}catch{}const current=db.get('terminalSessions',claim.id);db.transaction(()=>{if(!['released','cancelled'].includes(current?.status))db.put('terminalSessions',{...claim,status,error:error.message});if(fresh){const catalog=db.get('nativeCatalogEntries',catalogEntryId);if(catalog)db.put('nativeCatalogEntries',{...catalog,status:'draft',modifiedAt:new Date().toISOString()});}});change();throw error;}
+        }catch(error){let status='blocked';try{await workerQuery(claim,'terminal_release',{id:claim.id});status='released';}catch{}const current=db.get('terminalSessions',claim.id);db.transaction(()=>{if(!['released','cancelled'].includes(current?.status))db.put('terminalSessions',{...claim,status,error:error.message});if(fresh&&status==='released'){const catalog=db.get('nativeCatalogEntries',catalogEntryId);if(catalog)db.put('nativeCatalogEntries',{...catalog,status:'draft',modifiedAt:new Date().toISOString()});}});change();throw error;}
+        });
       }
       if (pathname === '/api/token-usage' && req.method === 'GET') {
         const nodeIds=(url.searchParams.get('nodeIds')||'').split(',').filter(Boolean);
@@ -889,7 +913,9 @@ const server = http.createServer(async (req, res) => {
         const id = b.requestId || randomUUID();
         if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error(tr('home.invalidCreateRequestId'));
         const folder = folderName(b.folderName || `project-${id.slice(0,8)}`);
-        const creationSignature=JSON.stringify([b.name.trim(),b.description||'',folder,supervisor.nodeId,supervisor.runtime,supervisor.model,supervisor.effort||'']);
+        if(b.localRoot!==undefined&&typeof b.localRoot!=='string')throw Error('Select an absolute folder path');
+        const localRoot=b.localRoot?.trim()||'';
+        const creationSignature=JSON.stringify([b.name.trim(),b.description||'',folder,supervisor.nodeId,supervisor.runtime,supervisor.model,supervisor.effort||'',supervisor.permissionScope||null,...(localRoot?[localRoot]:[])]);
         const previousProject=db.get('projects',id);
         if (previousProject) {
           if(previousProject.creationSignature && previousProject.creationSignature!==creationSignature) throw new Error(tr('home.createRequestHasAlreadyCompleted'));
@@ -898,17 +924,20 @@ const server = http.createServer(async (req, res) => {
         if (db.list('projects').some(p => p.folderName === folder)) throw new Error(tr('home.projectFolderNameAlreadyIn'));
         const worker = db.get('workers',supervisor.nodeId);
         if (worker.capabilities?.projectSpace !== 1) throw new Error(tr('home.upgradeWorkerOnSupervisorDevice'));
-        const checked = await workerQuery({ nodeId: supervisor.nodeId }, 'project_directory', { projectId: id, folder, workspaceRoot:worker.workspaceRoot || worker.allowedRoots?.[0] });
+        return await withFolderPreparation(localRoot?{nodeId:supervisor.nodeId,scope:`project:${id}`,path:localRoot,operationId:id}:null,async selectedGrant=>{
+        const checked = selectedGrant?{localRoot:selectedGrant.root,git:null,managed:false,folderName:folder}:await workerQuery({ nodeId: supervisor.nodeId }, 'project_directory', { projectId: id, folder, workspaceRoot:worker.workspaceRoot || worker.allowedRoots?.[0] });
         // The node may disconnect during the check; the project, Supervisor, and initialization message must be persisted together.
         validateLocalSupervisor(db.get('workers', supervisor.nodeId), supervisor, online(supervisor.nodeId));
         const r = db.transaction(() => {
+          const repeated=db.get('projects',id);if(repeated){if(repeated.creationSignature!==creationSignature)throw Error(tr('home.createRequestHasAlreadyCompleted'));return repeated;}
           const p = db.createProject({ ...b, id, root: '', repoUrl: '' });
           db.bindWorkspace(p.id, supervisor.nodeId, checked);
-          coordinator.saveSupervisor(p.id, supervisor.nodeId, { ...supervisor, enabled: true });
+          activateFolderBinding(selectedGrant);
+          const supervisorConfig=coordinator.saveSupervisor(p.id, supervisor.nodeId, { ...supervisor, enabled: true });
           const roleId = `supervisor-${p.id}`;
           db.put('roles', { id: roleId, projectId: p.id, name: tr('home.supervisor'), systemSupervisor: true,
             nodeId: supervisor.nodeId, runtime: supervisor.runtime, model: supervisor.model, effort: supervisor.effort || null,
-            mode: 'workspace-write', autoApprove: true, enabled: true, configured: true,
+            mode: 'workspace-write', autoApprove: true, enabled: true, configured: true,permissionScope:supervisorConfig.permissionScope,
             instructions: setupRules(), revision: 1 });
           const project = db.put('projects', { ...p, folderName:folder, creationSignature, projectScope:true, supervisorNodeId: supervisor.nodeId, supervisorRoleId: roleId, setupStatus: 'ready' });
           db.put('roomMessages', { id: `welcome-${id}`, projectId: id, sender: 'system', senderName: tr('home.projectAssistant'), taskIds: [],
@@ -917,6 +946,7 @@ const server = http.createServer(async (req, res) => {
           return project;
         });
         change(); return json(res, r, 201);
+        });
       }
       if (pathname === '/api/tasks' && req.method === 'POST') { const r = db.createTask(await body(req)); change(); return json(res, r, 201); }
       let m;
@@ -992,20 +1022,21 @@ const server = http.createServer(async (req, res) => {
         if(!project||!binding?.localRoot)throw new Error(tr('folders.projectBindingRequired'));
         if(!worker||resolveNodeKind(worker.nodeKind,worker.platform)!=='local')throw new Error(tr('folders.localDeviceRequired'));
         if(worker.capabilities?.openProjectFolder!==1)throw new Error(tr('folders.upgradeLocalWorker'));
-        return json(res,await workerQuery({nodeId:worker.id},'open_project_folder',binding.localRoot,15000));
+        return json(res,await workerQuery({nodeId:worker.id,projectId:project.id},'open_project_folder',binding.localRoot,15000));
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)$/)) && req.method === 'POST') {
         const r = db.updateProject(m[1], await body(req)); change(); return json(res, r);
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)$/)) && req.method === 'DELETE') {
-        const r = db.deleteProject(m[1]); change(); return json(res, r);
+        const grants=db.list('folderGrants').filter(g=>g.scope===`project:${m[1]}`);
+        const r = db.deleteProject(m[1]);for(const grant of grants)await cancelFolderBinding(grant);change(); return json(res, r);
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/git-check$/)) && req.method === 'POST') {
         const p = db.get('projects', m[1]), b = await body(req);
         if (!p?.repoUrl) throw new Error(tr('home.saveGiteeRepositoryUrlFirst'));
         const binding = db.get('workspaces', `${p.id}:${b.nodeId}`);
         if (!binding || !db.get('workers', b.nodeId)?.capabilities?.projectBrowser) throw new Error(tr('home.selectNodeHasBoundDirectory'));
-        const result = await workerQuery({ nodeId: b.nodeId }, 'git_check', { repoUrl: p.repoUrl, localRoot: binding.localRoot }, 15000);
+        const result = await workerQuery({ nodeId: b.nodeId,projectId:p.id }, 'git_check', { repoUrl: p.repoUrl, localRoot: binding.localRoot }, 15000);
         if (db.get('projects', p.id).repoUrl !== p.repoUrl || db.get('workspaces', binding.id)?.localRoot !== binding.localRoot) throw new Error(tr('home.configurationChangedDuringCheckCheck'));
         db.put('gitChecks', { ...result, id: `${p.id}:${b.nodeId}`, projectId: p.id, nodeId: b.nodeId }); change(); return json(res, result);
       }
@@ -1065,7 +1096,7 @@ const server = http.createServer(async (req, res) => {
           if (!db.get('workers', b.nodeId)?.capabilities?.runtimeDiscovery) throw new Error(tr('home.upgradeWorkerOnDevice2'));
           const binding = roleWorkspace(db, m[1], b.nodeId, b.repositoryId); if (!binding) throw new Error(tr('home.configureRepositoryDirectoryForSelected'));
           if (!runtimeReportFresh(db.get('workers', b.nodeId), b.runtime)) await workerQuery({ nodeId: b.nodeId }, 'runtimes', null, 25000);
-          await workerQuery({ nodeId: b.nodeId }, 'workspace_check', binding.localRoot);
+          await workerQuery({ nodeId: b.nodeId,projectId:m[1] }, 'workspace_check', binding.localRoot);
           if (roleWorkspace(db, m[1], b.nodeId, b.repositoryId)?.localRoot !== binding.localRoot) throw new Error(tr('home.projectDirectoryHasChangedSave'));
           if (!online(b.nodeId)) throw new Error(tr('home.deviceHasGoneOfflineTry'));
         }
@@ -1102,8 +1133,12 @@ const server = http.createServer(async (req, res) => {
         projectsAdmin.check(m[1]);
         if (!db.get('workers', m[2])?.capabilities?.workspaceBindings) throw new Error(tr('home.upgradeWorkerBeforeConfiguringWorkspace'));
         const b = await body(req);
-        const checked = await workerQuery({ nodeId: m[2] }, 'workspace_check', b.localRoot);
-        const r = db.bindWorkspace(m[1], m[2], checked); change(); return json(res, r);
+        const oldGrant=db.get('folderGrants',`${m[2]}:project:${m[1]}`),worker=db.get('workers',m[2]);
+        return await withFolderPreparation(worker.capabilities?.localFolderSelection===1?{nodeId:m[2],scope:`project:${m[1]}`,path:b.localRoot,operationId:b.requestId||randomUUID()}:null,async grant=>{
+        const checked = grant?{localRoot:grant.root,git:null}:await workerQuery({ nodeId: m[2],projectId:m[1] }, 'workspace_check', b.localRoot);
+        const r = db.transaction(()=>{projectsAdmin.check(m[1]);const binding=db.bindWorkspace(m[1],m[2],checked);activateFolderBinding(grant);return binding;});
+        if(oldGrant?.grant?.id!==grant?.id)await cancelFolderBinding(oldGrant);change(); return json(res, r);
+        });
       }
       if ((m = pathname.match(/^\/api\/tasks\/([^/]+)\/accept$/)) && req.method === 'POST') {
         const r = db.acceptTask(m[1], (await body(req)).runId); change(); return json(res, r);
@@ -1280,6 +1315,8 @@ const server = http.createServer(async (req, res) => {
     Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
     files['/workspace-inspector.js']='workspace-inspector.js';
     files['/source-sync.js']='source-sync.js';
+    files['/quota-state.js']='quota-state.js';
+    files['/chat-card-state.js']='chat-card-state.js';
     files['/state-data.js']='state-data.js';
     files['/group-conversations.js']='group-conversations.js';
     files['/project-team-copy.js']='project-team-copy.js';
@@ -1308,7 +1345,7 @@ const server = http.createServer(async (req, res) => {
     const file = files[pathname]; if (!file) return json(res, { error: tr('home.pageNotFound') }, 404);
     const bytes = await readFile(join(base, 'public', file));
     await sendBufferedResponse(req,res,bytes,{ 'Content-Type': { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' }[extname(file)], 'Cache-Control': 'no-cache' });
-  } catch (e) { if (!res.headersSent) json(res, { error: e.message,...(e.code?{code:e.code}:{}),...(e.limit?{limit:e.limit}:{}) }, 400); else res.end(); }
+  } catch (e) { if (!res.headersSent) json(res, { error: e.message,...(e.folderPreparationReleased===true?{folderPreparationReleased:true}:{}),...(e.code?{code:e.code}:{}),...(e.limit?{limit:e.limit}:{}) }, 400); else res.end(); }
 });
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 server.on('upgrade', (req, socket, head) => {
@@ -1332,7 +1369,7 @@ wss.on('connection', ws => {
         sockets.set(nodeId, ws); clearTimeout(registerTimer);
         const config=db.get('workerConfigs',nodeId),limits=registrationCapacity(m.node,config);
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId, lastSeen: new Date().toISOString() });
-        send(ws, { type: 'registered', paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:m.node.capabilities?.readSourceBindings===1?1:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
+        send(ws, { type: 'registered', folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:m.node.capabilities?.readSourceBindings===1?1:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
       }
       if (!nodeId || sockets.get(nodeId) !== ws) throw new Error(tr('home.nodeNotRegisteredYet'));
       if(['source_sync_receipt','source_sync_command_ack','source_sync_watch_ack','source_sync_watch_status','source_sync_dirty'].includes(m.type)){

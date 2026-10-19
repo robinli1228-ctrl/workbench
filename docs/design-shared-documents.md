@@ -27,6 +27,8 @@ Keep preview limits distinct from transfer eligibility: a resource can synchroni
 
 Recognize Markdown-linked paths, inline-code paths and ordinary explicit file paths in replies. Resolve them through the originating project's scope/path mapping to the Mac file. Leave code blocks and unrelated URLs unchanged. Authorization follows the project/scope, not an arbitrary path emitted by a model.
 
+An absolute citation may name another registered device of the same project, even when the quoting Run executed on the Mac. Resolve such references only when their current registered scopes identify one scope/path pair; relative paths stay Run-local and ambiguous, escaped or isolated paths do not gain access. Private `.workbench` files outside `docs/` keep their original citation text with an unavailable-preview explanation rather than issuing repeated rejected reads. Files and stored messages are unchanged.
+
 A server-only file shows Waiting for local synchronization until the Mac confirms the expected saved hash. Enable its local entry only after that receipt. Do not construct a local-looking path and imply the file already exists.
 
 An existing Mac file remains viewable while remote changes are pending or conflicting, with its local version and pending/conflict state shown. Do not label remote bytes as Mac content. If the Mac is offline, show Local device offline; retain state metadata without substituting a Home-private content copy.

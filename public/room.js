@@ -5,6 +5,7 @@ import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markd
 import { linkMedia } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
+import {setChatCardState,highlightLatestChatCard} from './chat-card-state.js';
 import { createHistoryViewer } from './history-view.js';
 import {createRoleSwitchUI} from './role-switch.js';
 import {createRoleHistoryTabs} from './role-history.js';
@@ -245,6 +246,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
         const run=runs.get(task.currentRunId),stopped=(task.steering?.waitForRunIds||[]).map(id=>runs.get(id));
         const error=task.steering?(task.error||run?.error||stopped.find(r=>r?.status==='reconciling')?.error):steeringErrors.get(task.id);
         const busy=(Boolean(task.steering)||steeringPending.has(task.id))&&!error;
+        row.classList.toggle('is-error-card',Boolean(error));
         const steer=create('button',`icon-button message-queue-steer${busy?' is-active':''}${error?' is-error':''}`);steer.type='button';
         steer.setAttribute('aria-busy',String(busy));steer.setAttribute('aria-label',error?t('Steering needs attention'):t(busy?'Steering':'Steer now'));
         steer.innerHTML=busy?'<svg class="message-queue-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>':error?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></svg>':'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
@@ -727,7 +729,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const total=Math.floor(elapsedMs/1000),hours=Math.floor(total/3600),minutes=Math.floor(total%3600/60),seconds=total%60;
       duration=`${hours?hours+'h':''}${hours||minutes?minutes+'m':''}${seconds}s`;
     }
-    return {kind,status:progress?t(progress.label):'Completed',duration};
+    return {kind,status:progress?t(progress.label):'Completed',duration,state:progress?.state||'completed'};
   }
 
   /** Copy the original message text without the rendered action buttons, time or quote summary. */
@@ -924,8 +926,9 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const label = waiting.names.length ? t('Waiting for {names} to reply', { names: waiting.names.map(name => `@${name}`).join(t(', ')) }) : t('Waiting for other roles to reply');
       const line = create('div', 'chat-name handoff-wait-line', `@${role.name || t('Role')} · ${label}`);
       line.translate = false;
-      col.append(line);
-      col.append(chatMeta('', [iconAction('log', 'Log', () => openTask(task.id, run.id))]));
+      const header=create('div','chat-message-header');header.append(create('div','chat-name',role.name||t('Role')));
+      const bubble=setChatCardState(create('div','chat-bubble'),'waiting'),footer=create('div','chat-card-footer'),actions=create('div','chat-card-actions');
+      line.className='chat-message-text';actions.append(iconAction('log','Log',()=>openTask(task.id,run.id)));footer.append(create('span','chat-card-kind',t('Waiting')),actions);bubble.append(line,footer);col.append(header,bubble);
       row.append(col);
       return row;
     }
@@ -943,7 +946,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (sentAt) time.dateTime = sentAt;
     header.append(nameLine, time);
     col.append(header);
-    const bubble = create('div', 'chat-bubble is-live-card');
+    const bubble = setChatCardState(create('div', 'chat-bubble is-live-card'),progress.state);
     // Home resolves the immediate call before pagination; older Homes can still resolve visible call cards locally.
     const request=data.requests?.find(r=>r.id===(run?.requestId||task.requestId));
     const quotes=histories.get(scopeId)?.liveReplySources;
@@ -965,6 +968,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     const preview = run && !run.explicitPublish ? liveText(run.id) : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id,`run:${run?.id || task.id}`));
+    else if(progress.state==='error')bubble.append(create('div','chat-message-text',progress.reason||run?.error||task.error||t(progress.detail)));
     else {
       const typing = create('div', 'chat-typing');
       typing.append(create('span'), create('span'), create('span'));
@@ -976,7 +980,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     col.append(bubble);
     const alert=run&&data.runAlerts?.find(a=>a.id===run.id);
-    if(alert)col.append(create('p','run-alert',alert.reason));
+    if(alert)bubble.append(create('p','run-alert',alert.reason));
     const approvals = run ? renderApprovalsInline(run) : null;
     if (approvals) col.append(approvals);
     const actions = [];
@@ -1073,12 +1077,28 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, m.senderName, agent || Boolean(handoff), m.attachments, null, m.runId));
     actions.push(...discussionActions);
-    const cardMeta=messageCardMeta(m),footer=create('div','chat-card-footer');
+    const cardMeta=messageCardMeta(m),footer=create('div','chat-card-footer');setChatCardState(bubble,cardMeta.state);
     footer.append(create('span','chat-card-kind',t('{kind} · {status}',{kind:t(cardMeta.kind),status:t(cardMeta.status)})+(cardMeta.duration?` · ${cardMeta.duration}`:'')));
     const actionBar=create('div','chat-card-actions');actionBar.append(...actions);footer.append(actionBar);bubble.append(footer);
     col.append(bubble);
     row.append(col);
     return row;
+  }
+
+  /** Continuation notices are historical events, not a persistent footer or a new message on every refresh. */
+  function renderResumeNotice(request, at) {
+    const task=data.tasks?.find(t=>t.id===request.taskId);
+    const role=task?.roleSnapshot||data.roles?.find(r=>r.id===request.targetRoleId)||{};
+    const progress=executionProgress({task,request}),row=create('article','chat-row agent is-resume-notice'),col=create('div','chat-col');
+    const header=create('div','chat-message-header'),line=create('div','chat-message-text',t(progress.detail));
+    line.setAttribute('role','status');line.title=progress.reason||request.error||request.resumeError?.message||'';
+    header.append(create('div','chat-name',role.name||t('Role')));
+    if(at){const time=create('time','',formatTime(at));time.dateTime=at;header.append(time);}
+    const bubble=setChatCardState(create('div','chat-bubble'),progress.state),footer=create('div','chat-card-footer'),actions=create('div','chat-card-actions');
+    bubble.append(line);if(line.title)bubble.append(create('div','chat-message-text',line.title));
+    if(task)actions.append(iconAction('log','Log',()=>openTask(task.id,request.currentRunId)));
+    footer.append(create('span','chat-card-kind',t(progress.label)),actions);bubble.append(footer);col.append(header,bubble);
+    row.append(avatarFor(role,role.name),col);return row;
   }
 
   function renderMessages() {
@@ -1095,7 +1115,18 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         ? 'This is the project chat. New messages without @ go to the supervisor; replies target their sender; multiple @ mentions dispatch to each role; @everyone only sends a notification and does not start an Agent.'
         : 'This is the project chat. Without @ it is only logged; @someone dispatches to them; @everyone only sends a notification and does not start an Agent.'
       : 'Loading chat…'));
+    // Use the saved error time, never refresh time. Older notices follow the same history window as messages.
+    const eventTime=value=>Date.parse(value)||0;
+    const notices=(data.requests||[]).filter(r=>r.projectId===projectId&&(r.conversationId||r.projectId)===conversationId&&!r.continuationRequestId&&
+      (r.status==='waiting_call'&&r.resumeError?.kind==='transient'||r.status==='failed'&&r.failureKind==='resume_failed')&&
+      data.tasks?.find(task=>task.id===r.taskId)?.status!=='cancelled')
+      .map(request=>({request,at:request.resumeError?.at||request.updatedAt||request.createdAt}))
+      .filter(item=>!history?.hasMore||messages.length&&eventTime(item.at)>=eventTime(messages[0].createdAt))
+      .sort((a,b)=>eventTime(a.at)-eventTime(b.at)||a.request.id.localeCompare(b.request.id));
+    let noticeIndex=0;
+    const appendNoticesBefore=time=>{while(noticeIndex<notices.length&&eventTime(notices[noticeIndex].at)<=time){const item=notices[noticeIndex++];feed.append(renderResumeNotice(item.request,item.at));}};
     for (const m of messages) {
+      appendNoticesBefore(eventTime(m.createdAt));
       feed.append(renderMessageRow(m, messages));
       for (const id of m.taskIds || []) {
         const task = data.tasks?.find(t => t.id === id);
@@ -1104,6 +1135,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         if (live) feed.append(live);
       }
     }
+    appendNoticesBefore(Infinity);
     for(const task of unlinkedLiveTasks(messages,data.tasks || [],data.runs || [],projectId)) {
       const live=renderLiveBubble(task,messages);
       if(live)feed.append(live);
@@ -1111,21 +1143,13 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     for(const run of (data.runs||[]).filter(r=>r.projectId===projectId&&r.discussionDeliveryId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status))) {
       const live=renderLiveBubble({id:run.taskId,currentRunId:run.id,roleSnapshot:run.roleSnapshot},messages);if(live)feed.append(live);
     }
-    // A finished handoff has no live reply card; show continuation failures/retries separately from its historical result.
-    for(const request of (data.requests||[]).filter(r=>r.projectId===projectId&&(r.conversationId||r.projectId)===conversationId&&!r.continuationRequestId&&
-      (r.status==='waiting_call'&&r.resumeError?.kind==='transient'||r.status==='failed'&&r.failureKind==='resume_failed'))) {
-      const task=data.tasks?.find(t=>t.id===request.taskId);if(task?.status==='cancelled')continue;
-      const role=task?.roleSnapshot||data.roles?.find(r=>r.id===request.targetRoleId)||{};
-      const progress=executionProgress({task,request}),row=create('article','chat-row agent is-resume-notice'),col=create('div','chat-col');
-      const line=create('div','chat-name handoff-wait-line',`${role.name||t('Role')} · ${t(progress.detail)}`);line.setAttribute('role','status');line.title=progress.reason||request.error||request.resumeError?.message||'';
-      col.append(line);if(task)col.append(chatMeta('',[iconAction('log','Log',()=>openTask(task.id,request.currentRunId))]));row.append(avatarFor(role,role.name),col);feed.append(row);
-    }
     const queueStrip=renderSessionQueue(data.sessionQueues?.[projectId],{create,api,refreshState,projectId,roleName:id=>(data.roles||[]).find(r=>r.id===id)?.name||id});
     if(queueStrip)feed.append(queueStrip);
     feed.querySelectorAll('.chat-reply-preview').forEach(node => {
       const position = previewScroll.get(node.dataset.previewKey);
       if (position) { node.scrollTop = position.top; node.scrollLeft = position.left; }
     });
+    highlightLatestChatCard(feed);
     scroller.scrollTop = atBottom ? scroller.scrollHeight : scrollTop;
     updateLiveFullscreen();
   }

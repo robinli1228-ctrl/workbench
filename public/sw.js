@@ -1,7 +1,9 @@
-const CACHE = 'agent-workbench-static-v150-media-transfer-fixes-20261019';
+const CACHE = 'agent-workbench-static-v151-local-consolidation-20261019';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',
+  '/quota-state.js',
+  '/chat-card-state.js',
   '/project-team-copy.js',
   '/create-folder.js',
   '/native-session-groups.js',

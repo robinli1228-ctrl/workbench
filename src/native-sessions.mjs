@@ -38,6 +38,18 @@ function messagesFrom(rows,runtime){return rows.flatMap(row=>{
  const text=bodyText(m.content);return text?[{role:m.role,text:text.slice(0,12000),timestamp:row.timestamp||null}]:[];
 });}
 
+/** Display only explicitly recorded settings from the bounded latest history, never a CLI/account default. */
+function sessionConfiguration(rows,runtime){
+ const text=value=>typeof value==='string'&&value.trim()&&value.length<=160?value.trim():null;
+ for(const row of rows.toReversed()){
+  const value=runtime==='codex'&&row.type==='turn_context'?row.payload:runtime==='claude'&&row.message?.role==='assistant'?row.message:runtime==='grok'&&row.type==='assistant'?row:null;
+  if(!value||runtime!=='codex'&&!text(value.model))continue;
+  const model=text(value.model),effort=text(value.effort??value.reasoning_effort);
+  return {model:model?.startsWith('<')?null:model,effort:effort&&/^(?:none|minimal|low|medium|high|xhigh|max|ultra|auto|default)$/.test(effort)?effort:null,observedAt:text(row.timestamp)};
+ }
+ return {model:null,effort:null,observedAt:null};
+}
+
 const fileStamp=info=>info?[info.dev,info.ino,info.birthtimeMs,info.size,info.mtimeMs,info.ctimeMs,info.mode].join(':'):null;
 function remember(cache,key,value,limit){cache.delete(key);cache.set(key,value);if(cache.size>limit)cache.delete(cache.keys().next().value);}
 
@@ -179,13 +191,14 @@ async function historyPage(file,runtime,id,cursor,snapshot){
    if(lf<0&&start>0)break; // Retry this incomplete leading line from its end on the next page.
    const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map(m=>({...m,id:`${id}:${start+lineStart}`,offset:start+lineStart}));
    const weight=Buffer.byteLength(JSON.stringify(found));
-   if(found.length&&(messages.length>=40||bytes+weight>262144))break;
+   if(found.length&&(messages.length>=15||bytes+weight>262144))break;
    messages.unshift(...found);bytes+=weight;next=start+lineStart;pos=Math.max(0,lf);
   }
   if(next===end&&end>0)throw Error('A native history record is too large to preview; the original history is unchanged.');
   const after=await stat(file.path);if(after.dev!==info.dev||after.ino!==info.ino||after.size<size)throw Error('Native history changed; reopen the session to read it again.');
   const encode=offset=>Buffer.from(JSON.stringify({v:1,key,size,end:offset,tail})).toString('base64url');
-  return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0};
+  return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,
+   ...(!cursor?{sessionConfiguration:sessionConfiguration(jsonLines(buffer.subarray(start?(buffer.indexOf(10)<0?buffer.length:buffer.indexOf(10)+1):0).toString('utf8')),runtime)}:{})};
  }finally{await h.close();}
 }
 
@@ -195,8 +208,8 @@ export async function readNativeSession(runtime,id,{env=process.env,record=null,
  const file=await registeredFile(runtime,id,env,record);if(!file)throw Error('Registered native session history is unavailable; no external histories were scanned');
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
  if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot)};
- const window=await readWindow(file.path,file.root,true,524288),messages=messagesFrom(jsonLines(window.text),runtime);
- return {...info,messages:messages.slice(-80),partial:window.partial||messages.length>80};
+ const window=await readWindow(file.path,file.root,true,524288),rows=jsonLines(window.text),messages=messagesFrom(rows,runtime);
+ return {...info,messages:messages.slice(-80),sessionConfiguration:sessionConfiguration(rows,runtime),partial:window.partial||messages.length>80};
 }
 
 /** Native defaults stay intact unless the user explicitly opts into unrestricted execution. */

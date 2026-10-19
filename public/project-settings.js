@@ -22,6 +22,10 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   const saveSettingsFolder = document.querySelector('#save-settings-folder');
   let workerId, current = null, callback, serial = 0, settingsId, savedUrl = '', busy = false, allowedRoots = [], filterText = '';
   const newFolder = createFolderControl({api,onCreated: result => load(result.path)});
+  const directPath=create('input'),openPath=create('button','secondary','Open');directPath.placeholder=t('Absolute folder path');directPath.setAttribute('aria-label',t('Absolute folder path'));openPath.type='button';
+  let pathInputVersion=0;directPath.addEventListener('input',()=>pathInputVersion++);
+  const pathRow=create('div','native-workspace-row');pathRow.append(directPath,openPath);list.before(pathRow);
+  openPath.addEventListener('click',()=>void load(directPath.value.trim()));directPath.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();void load(directPath.value.trim());}});
   document.querySelector('.folder-browser-actions').prepend(newFolder.button);
   list.before(newFolder.panel);
   const followupForm=document.querySelector('#proactive-followup-form'),followupFeedback=document.querySelector('#followup-feedback'),followupStatus=document.querySelector('#followup-status'),viewFollowup=document.querySelector('#view-followup');
@@ -93,7 +97,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
         const rest = path.slice(root.length).split('/').filter(Boolean);
         let acc = root;
         for (const seg of rest) {
-          acc = `${acc}/${seg}`;
+          acc = `${acc.replace(/\/$/,'')}/${seg}`;
           parts.push({ label: seg, path: acc });
         }
       }
@@ -133,7 +137,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   }
 
   async function load(path = '', offset = 0) {
-    const version = ++serial;
+    const version = ++serial,inputVersion=pathInputVersion;
     newFolder.update();
     choose.disabled = true; up.disabled = true; more.disabled = true; error.hidden = true;
     if (!offset) {
@@ -153,6 +157,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
       newFolder.update({nodeId:workerId,path:result.path,enabled:getData().workers.find(w=>w.id===workerId)?.capabilities?.directoryCreate===1});
       pathLabel.hidden = true;
       pathLabel.textContent = result.path || '';
+      if(inputVersion===pathInputVersion)directPath.value=result.path||'';
       renderCrumbs();
       renderList();
       up.disabled = !result.path;
@@ -174,7 +179,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     const worker = getData().workers.find(w => w.id === nodeId);
     if (!worker?.online || !worker.capabilities?.projectBrowser) return setError('Please select an online, upgraded node');
     workerId = nodeId; callback = apply; current = null;
-    allowedRoots = Array.isArray(worker.allowedRoots) ? worker.allowedRoots.slice() : [];
+    allowedRoots = worker.nodeKind==='local'&&worker.capabilities?.localFolderSelection===1?['/']:Array.isArray(worker.allowedRoots) ? worker.allowedRoots.slice() : [];
     document.querySelector('#folder-title').textContent = t('Select folder · {v}', { v: workerDisplayName(worker) });
     filterText = ''; filterInput.value = '';
     picker.showModal();
@@ -365,6 +370,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   });
 
   return {
+    openFolder,
     refreshNodes,
     prepareSettings,
     openBinding(nodeId) { openFolder(nodeId, bindingForm.elements.localRoot.value, path => { bindingForm.elements.localRoot.value = path; }); }

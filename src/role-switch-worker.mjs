@@ -46,13 +46,14 @@ export class RoleSwitchWorker {
   /** Hash only file bytes/metadata; credentials and repository content never appear in the receipt. */
   async snapshot(workspace) {
     const root=await realpath(workspace.root);
-    if(!this.roots.some(allowed=>inside(allowed,root)))throw new Error('Workspace outside Worker roots.');
+    const roots=typeof this.roots==='function'?await this.roots():this.roots;
+    if(!roots.some(allowed=>inside(allowed,root)))throw new Error('Workspace outside Worker roots.');
     const paths=[root,...workspace.repositories.map(r=>r.localRoot)];
     if(paths.some(p=>!p))throw new Error('Repository workspace binding is incomplete.');
     const directories=[];
     for(const path of [...new Set(paths)]) {
       const actual=await realpath(path);
-      if(!this.roots.some(allowed=>inside(allowed,actual)))throw new Error('Repository outside Worker roots.');
+      if(!roots.some(allowed=>inside(allowed,actual)))throw new Error('Repository outside Worker roots.');
       let head=null,status='',files=[];
       try {
         const top=await realpath((await git(actual,['rev-parse','--show-toplevel'])).trim());

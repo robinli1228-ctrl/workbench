@@ -7,7 +7,7 @@ import {inspectArtifactFiles} from './run-artifacts.mjs';
 import { writeTurnContext, turnToolCommand } from './turn-context.mjs';
 import { hostname, platform, homedir } from 'node:os';
 import { readFile, mkdir, realpath, readdir, stat } from 'node:fs/promises';
-import { openSync, writeFileSync, readFileSync, unlinkSync, closeSync } from 'node:fs';
+import {acquireWorkerLock} from './worker-lock.mjs';
 import { resolve, dirname, join, relative, isAbsolute, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
@@ -23,6 +23,7 @@ import { CodexSession } from './codex.mjs';
 import { CliPrintSession } from './cli-print-session.mjs';
 import { supportedPermissionScopes, workerPermissionScopes, PERMISSION_CONTRACT_VERSION } from './role-permissions.mjs';
 import { browseFolders, createFolder, prepareNativeSessionFolder } from './folders.mjs';
+import {FolderAccess} from './folder-access.mjs';
 import {createWorkerNativeTurns} from './native-turns-worker.mjs';
 import {listNativeSessions,readNativeSession,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import { giteeRepository } from './repository.mjs';
@@ -71,23 +72,14 @@ const softwareVersion=await readSoftwareVersion(base);
 const data = resolve(process.env.WORKER_DATA_DIR || join(base, '.data/worker'));
 initLanguage(data); // saved language (data/language.json, written when Home announces its language); WB_LANGUAGE is only the first-run default
 await mkdir(data, { recursive: true, mode: 0o700 });
-// Only one Worker may use a data directory at a time; a second process must not rewrite run records first.
-const lockFile = join(data, 'worker.lock');
-try {
-  const pid = Number(readFileSync(lockFile, 'utf8'));
-  if (Number.isInteger(pid) && pid > 0) {
-    let alive = true; try { process.kill(pid, 0); } catch (e) { alive = e.code !== 'ESRCH'; }
-    if (alive) throw new Error(tr('worker.dataDirectoryAlreadyHasWorker'));
-  }
-  unlinkSync(lockFile);
-} catch (e) { if (e.code !== 'ENOENT') throw e; }
-const lock = openSync(lockFile, 'wx', 0o600); writeFileSync(lock, String(process.pid)); closeSync(lock);
-process.on('exit', () => { try { if (Number(readFileSync(lockFile, 'utf8')) === process.pid) unlinkSync(lockFile); } catch {} });
+// Acquire ownership before opening business state; the lock module releases only this process's receipt on exit.
+acquireWorkerLock(data);
 const db = new Store(join(data, 'worker.sqlite'));
 const identity = db.get('identity', 'node') || db.put('identity', { id: 'node', nodeId: process.env.NODE_ID || randomUUID() });
 // External session queue: turn facts per role session and short-lived reservations; nothing here writes to a CLI.
 const turnStates = new TurnStates({ nodeId: identity.nodeId }), queueSlots = new QueueSlots();
 const roots = await Promise.all((process.env.WORKER_ROOTS || base).split(delimiter).map(p => realpath(p)));
+const folderAccess=new FolderAccess({db,roots,nodeId:identity.nodeId,local:resolveNodeKind(process.env.NODE_KIND,platform())==='local'});
 let defaultRoot = db.get('settings','workspace')?.localRoot || process.env.WORKSPACE_ROOT || roots[0];
 const homeUrl = process.env.HOME_URL || 'ws://127.0.0.1:4317/worker';
 const token = process.env.WORKER_TOKEN || (await readFile(join(base, '.data/home/worker-token'), 'utf8')).trim();
@@ -152,23 +144,24 @@ async function applyCapacity(value) {
   capacity=validateCliCapacity(value);db.put('settings',{id:'cli-capacity',capacity});warmSessions.max=capacity;
   await warmSessions.trim(occupiedSlots());reportCapacity();return {capacity};
 }
-const roleSwitchWorker=new RoleSwitchWorker({db,warmSessions,activeSessions:sessions,roots,runtimes:()=>runtimes,readHistory:async id=>{
+const roleSwitchWorker=new RoleSwitchWorker({db,warmSessions,activeSessions:sessions,roots:()=>folderAccess.allowedRoots(),runtimes:()=>runtimes,readHistory:async id=>{
   if(!/^[a-zA-Z0-9_-]{1,100}$/.test(id))throw new Error('Invalid CLI switch history ID.');
   const response=await fetch(homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,'')+`/api/agent/cli-switches/${id}/history`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(30000)});
   if(!response.ok)throw new Error('Unable to retrieve CLI switch history.');return response.text();
 }});
 const inside = (root, path) => { const rel = relative(root, path); return !rel || (!rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && rel !== '..' && !isAbsolute(rel)); };
 const sourceSync=new SourceSyncClient({db,data,home:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),send,
+  withFolderAccess:(message,command,fn)=>folderAccess.run(message.folderAccess?{...message.folderAccess,scope:`project:${command.projectId}`}:null,fn),
   paused:()=>paused||quitting,
   activeRuns:()=>[...db.list('runs'),...db.list('sourceSyncOperations')],
   takeoverState:projectId=>Boolean(projectTerminalLock(db,projectId,identity.nodeId)),
-  resolveBinding:async command=>{
+  resolveBinding:command=>folderAccess.run(command.folderAccess?{...command.folderAccess,scope:`project:${command.projectId}`}:folderAccess.context.getStore(),async()=>{
     if(command.nodeId!==identity.nodeId)throw syncError('receipt_owner_mismatch');
     const root=await projectRoot(command.root);
     if(command.sourceRunId){const source=db.get('runs',command.sourceRunId),repo=source?.repositories?.find(r=>r.id===command.repositoryId);
       if(source?.projectId!==command.projectId||!repo||await projectRoot(repo.localRoot)!==root)throw syncError('binding_changed');}
     return recordSourceBinding(db,command,root);
-  }});
+  })});
 
 /** The local outbox is written to disk first and deleted only after Home confirms, so "sent" is never treated as "received". */
 function queueState(q, excludeRunId) {
@@ -194,13 +187,18 @@ function emit(runId, type, payload) {
 }
 /** Paths and symlinks are resolved on the execution node; the allowed root directories are checked at registration and on every launch. */
 async function projectRoot(path) {
-  if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) throw new Error(tr('worker.projectDirectoryMustBeAbsolute'));
-  const root = await realpath(path);
-  if (!roots.some(r => inside(r, root))) throw new Error(tr('worker.projectPathNotInsideWorker'));
-  if (!(await stat(root)).isDirectory()) throw new Error(tr('worker.projectPathMustBeDirectory'));
-  return root;
+  return folderAccess.resolve(path);
 }
-/** The writable space must be under a configured root directory; Git uses an independent worktree at a fixed baseline. */
+/** Match the request's project/native registration, never infer its identity from a requested path. */
+function folderEnvelope(m){
+ const envelope=m.folderAccess;if(!envelope)return null;
+ const input=m.path||m,projectId=m.run?.projectId||m.projectId||input.projectId||(input.managedProjectIds?.length===1?input.managedProjectIds[0]:null);
+ const entry=input.entryId?db.get('nativeCatalogEntries',input.entryId):db.list('nativeCatalogEntries').find(e=>e.runtime===input.runtime&&e.sessionId===input.sessionId);
+ const nativeScope=input.entryId?`native:${input.entryId}`:entry?`native:${entry.id}`:null;
+ const scope=envelope.scope.startsWith('native:')?nativeScope:projectId?`project:${projectId}`:null;
+ return scope?{...envelope,scope}:null;
+}
+/** Writable space must stay under configured or identity-scoped roots; Git uses a worktree at a fixed baseline. */
 async function workspace(project, run) {
   const root = await projectRoot(run.projectRoot ?? project.root);
   if (run.execution?.isolated) return prepareExecutionWorkspace(root,run,run.repositories||[]);
@@ -591,6 +589,20 @@ async function query(m) {
   const guarded=['source_inspect','source_read','read_query','project_file','file','document','collaboration_documents'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
+    if(m.action==='folder_grant_prepare'){
+      if(paused)throw Error('Remote execution is paused');
+      const candidate=await realpath(m.path?.path);
+      assertNativeSessionIdle(db,{nodeId:identity.nodeId,workspace:candidate,projectId:m.path.scope?.startsWith('project:')?m.path.scope.slice(8):null});
+      reply(await folderAccess.prepare(m.path));return;
+    }
+    if(m.action==='folder_grant_cancel'){
+      if(m.path.preparedOnly&&m.path.scope?.startsWith('native:')){
+        if(m.path.id!==`${identity.nodeId}:${m.path.operationId}`||!/^[a-zA-Z0-9-]{8,100}$/.test(m.path.operationId||''))throw Error('Invalid folder preparation cleanup');
+        // This checks actual process identities and leaves a tombstone against a late terminal preparation.
+        releaseTerminalSession(db,m.path.operationId);
+      }
+      reply(folderAccess.cancel(m.path));return;
+    }
     if(['source_inspect','source_read','read_query'].includes(m.action)){
       const source=m.path?.source;
       if(!source)throw readError('invalid_read_request');
@@ -756,7 +768,9 @@ async function query(m) {
       nativeTuiArgs(runtime,{id:input.sessionId,freshId,allowAll:input.allowAll??false});
       const history=input.sessionId?await readNativeSession(runtime,input.sessionId,{record}):null;
       if(history?.workspace&&input.workspace&&await realpath(input.workspace)!==await realpath(history.workspace))throw Error('Resume must use the original working folder');
-      const workspace=await projectRoot(history?.workspace||input.workspace);
+      const workspace=m.action==='native_terminal_preview'&&input.folderCandidate?.scope===`native:${input.entryId}`
+        ?await folderAccess.run({scope:input.folderCandidate.scope,active:true,previewOnly:true,grant:input.folderCandidate},()=>projectRoot(input.workspace))
+        :await projectRoot(history?.workspace||input.workspace);
       const projectIds=new Set();
       for(const binding of input.bindings||[]){const root=await realpath(binding.localRoot).catch(()=>null);if(root&&(inside(root,workspace)||inside(workspace,root)))projectIds.add(binding.projectId);}
       const owner=nativeTerminalProject(db,{nodeId:identity.nodeId,runtime,sessionId:input.sessionId,folderProjectIds:[...projectIds],managedProjectIds:input.managedProjectIds||[]});
@@ -914,7 +928,7 @@ async function query(m) {
       if (previous) throw new Error(tr('worker.operationHasAlreadyStartedIts'));
       db.put('setupOperations', { id: key, signature, status: 'running' });
       try {
-        const source = await setupRepository(roots, m.path);
+        const source = await setupRepository(await folderAccess.allowedRoots(), m.path);
         const result = m.path.projectId
           ? await prepareProjectBaseline({projectId:m.path.projectId,projectRoot:await projectRoot(m.path.projectRoot),
             sourceRoot:source.localRoot,key:m.path.key,baseBranch:m.path.baseBranch,baseCommit:m.path.baseCommit,
@@ -928,11 +942,11 @@ async function query(m) {
     if (m.action === 'runtimes') { send({ type: 'reply', id: m.id, result: { runtimes: await refreshRuntimes() } }); return; }
     if (m.action === 'token_usage') { send({type:'reply',id:m.id,result:await collectCcusageReport({base,since:m.path?.since||null,until:m.path?.until||null,timezone:m.path?.timezone||SYSTEM_TIME_ZONE})}); return; }
     if (m.action === 'directories') {
-      send({ type: 'reply', id: m.id, result: await browseFolders(roots, m.path?.path, m.path?.offset ?? 0,
-        { includeFiles: m.path?.includeFiles === true }) }); return;
+      send({ type: 'reply', id: m.id, result: await browseFolders(folderAccess.browseRoots(), m.path?.path, m.path?.offset ?? 0,
+        { includeFiles: m.path?.includeFiles === true,allDirectories:folderAccess.local }) }); return;
     }
     if (m.action === 'directory_create') {
-      send({ type: 'reply', id: m.id, result: await createFolder(roots, m.path?.path, m.path?.name) }); return;
+      send({ type: 'reply', id: m.id, result: await createFolder(folderAccess.browseRoots(), m.path?.path, m.path?.name) }); return;
     }
     if (m.action === 'native_default_folder') {
       send({type:'reply',id:m.id,result:await prepareNativeSessionFolder(roots,defaultRoot,m.path?.bindings)});return;
@@ -1035,7 +1049,7 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -1050,6 +1064,7 @@ function connect() {
       if(m.type==='source_sync_cancel'){sourceSync.cancel(m.commandId);return;}
       if(m.type==='source_sync_receipt_ack'){sourceSync.acknowledge(m.commandId,m);return;}
       if (m.type === 'registered') {
+        folderAccess.reconcile(Array.isArray(m.folderGrantIds)?m.folderGrantIds:[]);
         cliRecoveryEnabled=m.cliRecovery===1;
         readToolsEnabled=m.readTools===1;
         paused = m.paused;
@@ -1068,15 +1083,15 @@ function connect() {
       if (m.type === 'language') { try { setLanguage(m.language); } catch { /* ignore unsupported values */ } }
       if (m.type === 'ack') {db.remove('outbox', m.id);eventSent.delete(m.id);flushOutbox();}
       // Each command/query runs under the language Home put on the message, so prompts and errors built on this Worker match it.
-      if (m.type === 'command') void runWithLanguage(m.language, () => command(m)).catch(e => console.error(tr('worker.commandRejected'), e.message));
+      if (m.type === 'command') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>command(m))).catch(e => console.error(tr('worker.commandRejected'), e.message));
       if (m.type === 'queue_reserve') {
         turnStates.prune();
         const result=queueSlots.reserve(m.key,queueState(m));
         send({type:'queue_reservation',id:m.id,projectId:m.projectId,roleId:m.roleId,key:m.key,...result});return;
       }
       if (m.type === 'queue_cancel') {queueSlots.cancel(m.key,{id:m.reservationId});return;}
-      if (m.type === 'query') void runWithLanguage(m.language, () => query(m));
-      if (m.type === 'native_turn') void runWithLanguage(m.language, () => nativeTurns.start(m));
+      if (m.type === 'query') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>query(m)));
+      if (m.type === 'native_turn') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>nativeTurns.start(m)));
       if (m.type === 'native_turn_stop') void nativeTurns.stop(m.id);
       if (m.type === 'native_takeover_release') void nativeTurns.releaseLease(m.runtime,m.sessionId,m.leaseId).catch(e=>console.error('Native takeover release:',e.message));
       if (m.type === 'error') console.error(tr('worker.rejectedByHome'), m.error);

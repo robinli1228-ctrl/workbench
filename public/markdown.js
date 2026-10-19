@@ -89,8 +89,9 @@ export function renderMarkdown(source) {
 }
 
 /** Same-origin document URLs retain the authorized Run identity for the in-page reader and direct-link fallback. */
+const privateWorkbenchPath=path=>typeof path==='string'&&/^(?:\/(?!\/)|\.\.?\/|\.workbench\/)/.test(path)&&/(?:^|\/)\.workbench\/(?!docs(?:\/|$))/.test(path);
 export function runDocumentHref(href,runId){
-  if(!runId||typeof href!=='string'||!/^(?:\/(?!\/)|\.\.?\/|\.workbench\/docs\/)/.test(href)||!/\.(?:md|markdown|txt)$/i.test(href))return null;
+  if(!runId||typeof href!=='string'||privateWorkbenchPath(href)||!/^(?:\/(?!\/)|\.\.?\/|\.workbench\/docs\/)/.test(href)||!/\.(?:md|markdown|txt)$/i.test(href))return null;
   return `/document.html?${new URLSearchParams({runId,path:href})}`;
 }
 
@@ -112,6 +113,11 @@ export function linkRunDocuments(root,runId){
   }
   for(const link of root.querySelectorAll('a[href]')){
     const original=link.getAttribute('href'),href=runDocumentHref(original,runId);
+    if(privateWorkbenchPath(original)&&/\.(?:md|markdown|txt)$/i.test(original)){
+      // Keep the historical citation, but do not turn private temporary evidence into a broken preview request.
+      link.removeAttribute('href');link.removeAttribute('target');link.removeAttribute('rel');link.setAttribute('aria-disabled','true');
+      link.title=t('Private Workbench file; publish it under shared documents before linking.');continue;
+    }
     if(!href)continue;
     link.setAttribute('href',href);
     link.removeAttribute('target');

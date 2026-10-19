@@ -149,7 +149,7 @@ export class ExecutionPlans {
               if(!conflicting.length)for(const {run:r,member} of stageRuns) {
                 const changed=r.repositoryVersions.filter(v=>v.commit!==plan.baselines.find(b=>b.id===v.id)?.commit);
                 if(changed.some(v=>!member.writeRepositories.includes(v.key)))throw new Error(tr('executionPlans.runModifiedRepositoryNotDeclared'));
-                if(changed.length)await this.checked(plan,this.query({nodeId:r.nodeId},'execution_baseline_advance',
+                if(changed.length)await this.checked(plan,this.query({nodeId:r.nodeId,projectId:plan.projectId},'execution_baseline_advance',
                   {repositories:this.repositories(plan,r.nodeId),versions:changed},30000));
               }
               stage.outputs=runs.map(r=>({runId:r.id,nodeId:r.nodeId,versions:r.repositoryVersions}));
@@ -173,7 +173,7 @@ export class ExecutionPlans {
             }else if(plan.stages[stage.index-1]?.outputs?.some(o=>o.versions?.some(v=>v.dirty&&v.sourceInputVerified)))throw syncError('source_input_required');
             if(!plan.prepared) {
                 const snapshots=[];
-                for(const nodeId of nodes) snapshots.push(await this.checked(plan,this.query({nodeId},'execution_snapshot',{repositories:this.repositories(plan,nodeId)},30000)));
+                for(const nodeId of nodes) snapshots.push(await this.checked(plan,this.query({nodeId,projectId:plan.projectId},'execution_snapshot',{repositories:this.repositories(plan,nodeId)},30000)));
                 if(snapshots.some(a=>!Array.isArray(a))) throw new Error(tr('executionPlans.invalidSnapshotResponse'));
                 const fallback=snapshots.some(a=>!a.length || a.some(v=>v.dirty || v.nonGit));
                 if(fallback && nodes.length!==1) throw new Error(tr('executionPlans.crossDeviceProjectContainsUncommitted'));
@@ -189,7 +189,7 @@ export class ExecutionPlans {
               let waiting=false;
               for(const nodeId of new Set(stage.members.map(m=>m.nodeId))) {
                 const repositories=this.repositories(plan,nodeId);
-                try {await this.checked(plan,this.query({nodeId},'execution_versions',{repositories,versions},30000));}
+                try {await this.checked(plan,this.query({nodeId,projectId:plan.projectId},'execution_versions',{repositories,versions},30000));}
                 catch(error) {
                   const sources=(plan.stages[stage.index-1]?.outputs||[]).filter(o=>o.nodeId!==nodeId);
                   if(!sources.length||!/is missing version|\u7f3a\u5c11\u7248\u672c/.test(String(error.message))||!this.deliveryTools.request)throw error;
@@ -202,8 +202,8 @@ export class ExecutionPlans {
                   }
                   plan.deliveryIds=[...new Set([...(plan.deliveryIds||[]),...deliveries.map(d=>d.id)])];
                   if(deliveries.every(d=>d.status==='ready')) {
-                    await this.checked(plan,this.deliveryTools.receive(nodeId,repositories,deliveries));
-                    await this.checked(plan,this.query({nodeId},'execution_versions',{repositories,versions},30000));
+                    await this.checked(plan,this.deliveryTools.receive(nodeId,repositories,deliveries,plan.projectId));
+                    await this.checked(plan,this.query({nodeId,projectId:plan.projectId},'execution_versions',{repositories,versions},30000));
                   } else {
                     waiting=true;plan.waitingReason=tr('executionPlans.waitingForGitDeliveryConfirmation');
                     if(deliveries.some(d=>['blocked','cancelled'].includes(d.status))) plan.waitingReason=tr('executionPlans.gitDeliveryBlockedCheckDelivery');
@@ -220,7 +220,7 @@ export class ExecutionPlans {
           if(latest.status!=='running' || this.db.get('coordinationRequests',plan.parentRequestId)?.steeringTaskId || this.db.get('coordinationRequests',plan.parentRequestId)?.status==='cancelled' || this.db.get('settings','main')?.paused) continue;
           const parallel=stage.mode==='parallel' && plan.isolated;
           if(stage.exclusive && plan.isolated && stage.members.some(m=>this.db.get('coordinationRequests',m.requestId)?.status==='waiting_dependencies')) {
-            const actual=await this.checked(plan,this.query({nodeId:stage.members[0].nodeId},'execution_snapshot',{repositories:this.repositories(plan,stage.members[0].nodeId)},30000));
+            const actual=await this.checked(plan,this.query({nodeId:stage.members[0].nodeId,projectId:plan.projectId},'execution_snapshot',{repositories:this.repositories(plan,stage.members[0].nodeId)},30000));
             if(actual.some(v=>v.dirty || v.commit!==plan.baselines.find(b=>b.id===v.id)?.commit)) throw new Error(tr('executionPlans.projectDirectoryForExclusiveOperation'));
           }
             const previous=collect?[]:plan.stages.slice(0,stage.index).flatMap(s=>s.members.map(m=>this.db.get('coordinationRequests',m.requestId)));

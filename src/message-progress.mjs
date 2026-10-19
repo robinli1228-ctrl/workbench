@@ -3,6 +3,12 @@ import { tr } from './i18n.mjs';
 import {currentContinuation} from './coordination-wait.mjs';
 import {executionProgress} from '../public/execution-progress.js';
 
+/** Reuse only this synchronous response's records, including full reply evidence; never cache across requests. */
+export function messageProgressView({runs,tasks,requests}) {
+  const records=new Map([['runs',runs],['tasks',tasks],['coordinationRequests',requests]].map(([kind,rows])=>[kind,new Map(rows.map(row=>[row.id,row]))]));
+  return {get:(kind,id)=>records.get(kind)?.get(id)||null};
+}
+
 /** Message progress is derived from existing request, command, and run evidence; no separate, possibly contradictory state table is created. */
 export function messageProgress(db,request,online,launch,launches) {
   const registeredAt=request.createdAt,current=currentContinuation(db,request.id);

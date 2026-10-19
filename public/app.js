@@ -156,7 +156,7 @@ for(const [selector,icon,label] of [
 const projectsUI = projectSettings({ api, getData: () => app.data, getProject: getCurrentProject, getConversationId:()=>app.selectedConversationId, refreshState, create, setError, openSettings, closeSettings,openTask });
 const supervisorsUI = supervisorSettings({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create,openTask });
 const roleTemplates = roleTemplatesUI({ api, getData: () => app.data, refreshState, create });
-const setupUI = projectSetupUI({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create, setError });
+const setupUI = projectSetupUI({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create, setError,openFolder:projectsUI.openFolder });
 const platformUI = platformAdminUI({api,getData:()=>app.data,refreshState,create});
 const spacesUI = projectSpaceUI({api,getData:()=>app.data,getProject:getCurrentProject,refreshState,create});
 const tokenUI = tokenUsageUI({api,getData:()=>app.data,create});
@@ -376,6 +376,7 @@ async function api(path, options = {}) {
     const message = typeof body === 'object' && body?.error ? body.error : String(body || `HTTP ${response.status}`);
     const error = new Error(message);
     error.status = response.status;
+    error.folderPreparationReleased = body?.folderPreparationReleased === true;
     throw error;
   }
   return body;
@@ -2312,6 +2313,7 @@ dom.projectForm.addEventListener('submit', async (event) => {
     await refreshState();
     if(repositoryError){openSettings('project');setError(t('Project created, but the repository is not finished: {repositoryError}', { repositoryError }));}
   } catch (error) {
+    if(error.folderPreparationReleased)pendingProjectRequest=null;
     setError(error.message);
   } finally {
     button.disabled = false;

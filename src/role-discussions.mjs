@@ -14,6 +14,7 @@ import {followupFor} from './proactive-followup.mjs';
 import {reservePropagation} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import { permissionScopeIssue } from './role-permissions.mjs';
+import {roleTokenBalance} from '../public/quota-state.js';
 
 const now=()=>new Date().toISOString();
 const closed=new Set(['succeeded','failed','interrupted','stopping','reconciling']);
@@ -300,7 +301,7 @@ export class RoleDiscussions {
       id:m.id,name:m.name,nodeId:m.nodeId,enabled:m.enabled,configured:m.configured,archived:m.archived,online:m.online,
       ...(m.id!==team.selfRoleId?{responsibility:m.responsibility,responsibilityMissing:m.responsibilityMissing}:{}),
       availability:m.archived?'archived':!m.enabled?'disabled':!m.configured?'unconfigured':m.online===false?'offline':m.activeRunIds.length?'running':m.tasks.length?'queued':m.online===null?'unknown':'idle',
-      communication:m.communication
+      communication:m.communication,['token \u662f\u4f59\u989d']:roleTokenBalance(m,this.db.get('workers',m.nodeId))
     }))};
     const runs=this.db.list('runs').filter(r=>r.projectId===ctx.run.projectId&&!terminal.has(r.status));
     const tasks=this.db.list('tasks').filter(t=>t.projectId===ctx.run.projectId);
@@ -320,7 +321,7 @@ export class RoleDiscussions {
           activeRuns,tasks:activeTasks,taskIds:activeTasks.map(t=>t.id),
           recentMessages:messages.filter(m=>m.roleId===r.id).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,3)
             .map(m=>({id:m.id,runId:m.runId,createdAt:m.createdAt,excerpt:String(m.text||'').slice(0,400),truncated:String(m.text||'').length>400})),
-          communication:member?.communication||{consultationSupported:false,discussionSupported:false,discussionUnavailableReason:'archived',deliveryMode:'queued_next_turn'}};
+          communication:member?.communication||{consultationSupported:false,discussionSupported:false,discussionUnavailableReason:'archived',deliveryMode:'queued_next_turn'},['token \u662f\u4f59\u989d']:roleTokenBalance(r,this.db.get('workers',r.nodeId))};
       })};
   }
 

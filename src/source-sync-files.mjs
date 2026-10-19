@@ -14,10 +14,14 @@ const blobSaves=new Map();
 const runtimeDirectory=async dir=>Boolean(await exists(join(dir,'home.sqlite'))||await exists(join(dir,'worker.sqlite')));
 
 /** Bound file I/O and drain in-flight captures before rejecting, so a failed snapshot leaves no background writes. */
-export async function captureSourceEntries(paths,capture) {
+export async function captureSourceEntries(paths,capture,{background=false}={}) {
   const result=new Array(paths.length);let cursor=0,failed=false,error;
-  await Promise.all(Array.from({length:Math.min(8,paths.length)},async()=>{
-    while(!failed&&cursor<paths.length){const index=cursor++;try{result[index]=await capture(paths[index]);}catch(e){if(!failed){failed=true;error=e;}}}
+  // Reconciliation still checks every byte and path, but yields between small batches instead of saturating
+  // the filesystem pool. Explicit transfer/capture requests keep their existing parallel fast path.
+  await Promise.all(Array.from({length:Math.min(background?1:8,paths.length)},async()=>{
+    while(!failed&&cursor<paths.length){const index=cursor++;try{result[index]=await capture(paths[index]);}catch(e){if(!failed){failed=true;error=e;}}
+      if(background&&!failed&&cursor<paths.length&&cursor%32===0)await new Promise(resolve=>setTimeout(resolve,8));
+    }
   }));
   if(failed)throw error;return result;
 }
@@ -179,7 +183,7 @@ export async function captureDirectorySnapshot(options) {
     if(changedBytes>SOURCE_SYNC_LIMITS.batchBytes)throw syncLimitError('batch_too_large','batch',SOURCE_SYNC_LIMITS.batchBytes,changedBytes,path);
     if(options.blobRoot&&!metadataOnly)await saveSourceBlob(options.blobRoot,value.bytes);
     return value.entry;
-  });
+  },{background:options.background===true});
   for(let i=0;i<paths.length;i++)if(captured[i]!==undefined)entries[paths[i]]=captured[i];
   return {repositoryId:options.repositoryId,generation:options.generation,scopeKind:'directory',scopePolicy:policy,capturePolicy:outputs?OUTPUT_SYNC_CAPTURE_POLICY:DIRECTORY_SYNC_CAPTURE_POLICY,...(metadataOnly?{metadataOnly:true,newlyIncluded:paths.filter(path=>excludedSourcePath(path,{...policy,contentMode:'source-only'})||!(policy.sharedDocs&&path.startsWith('.workbench/docs/'))&&isIgnored(path))}:{}),baseCommit:null,entries,digest:manifestDigest(entries,policy),excluded};
 }

@@ -1,5 +1,6 @@
 import { t, getLanguage } from './i18n.js';
 import {renderModelUsageNotice} from './model-usage.js';
+import {renderPermissionScope,permissionScopeValue} from './permission-scope.js';
 /** Keep the user's current selection; with no draft use platform defaults, and only then auto-select a sole option. */
 export function preferredSelectValue(values, current, preferred) {
   if (values.some(value => value.id === current)) return current;
@@ -9,8 +10,17 @@ export function preferredSelectValue(values, current, preferred) {
 }
 
 /** The create form accepts only Workers explicitly registered as local; the config card always shows the actual execution target. */
-export function projectSetupUI({ api, getData, getProject, refreshState, create, setError }) {
+export function projectSetupUI({ api, getData, getProject, refreshState, create, setError,openFolder }) {
   const form = document.querySelector('#project-form');
+  const folderLabel=create('label','full-width','Existing project folder (optional)'),folderRow=create('div','native-workspace-row'),localRoot=create('input'),pickFolder=create('button','secondary','Select folder');
+  localRoot.name='localRoot';localRoot.placeholder='Leave blank to create the default project folder';pickFolder.type='button';folderRow.append(localRoot,pickFolder);folderLabel.append(folderRow);form.elements.folderName.closest('label').after(folderLabel);
+  const folderNote=create('p','workspace-note full-width','Only the selected folder is bound; existing files are kept. Browsing does not grant CLI permissions.');folderLabel.after(folderNote);
+  const permissionLabel=create('label','','Permission scope'),permissionSelect=create('select'),permissionNote=create('p','workspace-note full-width');permissionSelect.name='supervisorPermissionScope';permissionSelect.required=true;permissionLabel.append(permissionSelect);form.elements.supervisorEffort.closest('label').after(permissionLabel,permissionNote);
+  let folderVersion=0;
+  pickFolder.addEventListener('click',()=>{const nodeId=form.elements.supervisorNodeId.value,ticket=++folderVersion;openFolder?.(nodeId,localRoot.value,path=>{if(ticket!==folderVersion||form.elements.supervisorNodeId.value!==nodeId)return;localRoot.value=path;localRoot.dispatchEvent(new Event('input',{bubbles:true}));});});
+  form.elements.supervisorNodeId.addEventListener('change',()=>{folderVersion++;localRoot.value='';permissionSelect.value='';delete permissionSelect.dataset.touched;});
+  localRoot.addEventListener('input',()=>folderVersion++);
+  permissionSelect.addEventListener('change',()=>{permissionSelect.dataset.touched='1';choices();});
   const cards = document.querySelector('#setup-proposals');
   const repositories = document.querySelector('#project-repositories');
   const busy = new Set();
@@ -32,6 +42,10 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     const runtimes = (worker?.runtimes || []).filter(r => r.supported && r.available && r.authReady === true);
     select('supervisorRuntime', runtimes.map(r => ({ id: r.type, name: r.label || r.type })), 'Select a signed-in CLI', settings.defaultSupervisorRuntime);
     const runtime = runtimes.find(r => r.type === form.elements.supervisorRuntime.value);
+    const local=worker?.nodeKind==='local'&&worker.capabilities?.localFolderSelection===1;
+    localRoot.disabled=pickFolder.disabled=!local;
+    folderNote.textContent=local?'Only the selected folder is bound; existing files are kept. Browsing does not grant CLI permissions.':'Upgrade the local Worker to select this folder';
+    renderPermissionScope(permissionSelect,permissionNote,{worker,runtime:runtime?.type,isNew:true});
     select('supervisorModel', runtime?.models || [], 'Select supervisor model', settings.defaultSupervisorModel);
     const model = runtime?.models?.find(m => m.id === form.elements.supervisorModel.value);
     renderModelUsageNotice(form.querySelector('[data-model-usage-note]'),runtime?.type,model||{id:form.elements.supervisorModel.value});
@@ -100,5 +114,5 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
       cards.append(card);
     }
   }
-  return { refresh: render, selection: () => ({ nodeId: form.elements.supervisorNodeId.value, runtime: form.elements.supervisorRuntime.value, model: form.elements.supervisorModel.value, effort: form.elements.supervisorEffort.value || null }) };
+  return { refresh: render, selection: () => ({ nodeId: form.elements.supervisorNodeId.value, runtime: form.elements.supervisorRuntime.value, model: form.elements.supervisorModel.value, effort: form.elements.supervisorEffort.value || null,permissionScope:permissionScopeValue(permissionSelect) }) };
 }

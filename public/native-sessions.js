@@ -1,10 +1,12 @@
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
-import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON} from './role-icons.js';
+import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON,quotaForRole,roleNameQuota} from './role-icons.js';
 import {createListOrder} from './list-order.js';
 import {groupNativeSessions,readNativeSessionPages} from './native-session-groups.js';
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
+import {setChatCardState,highlightLatestChatCard} from './chat-card-state.js';
+import {executionProgressLabels} from './execution-progress.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
 import {linkMedia} from './media.js';
@@ -75,7 +77,8 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
     returningClaim=claim.id;controlFeedback=null;renderSessionControls(selected);
     try{
      const path=claim.kind==='native'?`${endpoint(claim.nodeId)}/terminal`:claim.kind==='new'?`/api/projects/${encodeURIComponent(claim.projectId)}/roles/${encodeURIComponent(claim.roleId)}/terminal`:`/api/runs/${encodeURIComponent(claim.runId)}/terminal`;
-     await api(path,{method:'POST',json:claim.kind==='native'?{action,operationId:claim.id}:{action,id:claim.id}});
+     const result=await api(path,{method:'POST',json:claim.kind==='native'?{action,operationId:claim.id}:{action,id:claim.id}});
+     if(result?.released===true)takeover.returned(item);
      await onStateRefresh();void load({quiet:true});
     }catch(error){controlFeedback={key:key(item),text:error.message};}
     finally{returningClaim=null;renderSessionControls(selected);}
@@ -146,38 +149,62 @@ export function createNativeSessionUI({api,getData,onModeChange,onPreview,onStat
  /** History scrolls above a persistent footer, so quiet refreshes never discard a takeover draft. */
  const scroll=el('div','native-session-scroll');
  const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(cursor?{cursor}:{}),...(snapshot?{snapshot}:{})})}`);
- const timeline=createNativeHistoryTimeline({scroll,readPage,t,onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text,row=chatRow(m.role,text,item.runtime,m.timestamp,null,item);row.dataset.role=m.role;if(m.role==='user')row.dataset.text=text.trim();return row;}});
+ const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed(),onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text,row=chatRow(m.role,text,item.runtime,m.timestamp,null,'completed',item);row.dataset.role=m.role;if(m.role==='user')row.dataset.text=text.trim();return row;}});
  async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;renderTitle();renderList();if(!quiet){onPreview?.();takeover.detach();const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);detailSignature='';}
   try{const id=nativeId(item),readable=id&&item.hasHistory!==false,value=readable?{...item,...await readPage(item,null,quiet?item.historySnapshot:null),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:item;if(ticket!==detailVersion||!active()||key(selected)!==key(item))return;selected=value;const signature=JSON.stringify(value);if(quiet&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
    const history=timeline.update({...value,...(!value.messages?.length&&!value.notice?{notice:value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'}:{})});
    const historyAt=Date.now();if(!scroll.contains(timeline.root))scroll.replaceChildren(timeline.root,takeover.feed);if(!content.contains(scroll))content.replaceChildren(scroll);
    takeover.attach(value,{readable,historyAt,history});
-   renderSide(value,id,readable);
-   if(quiet&&!atBottom)scroll.scrollTop=top;else scroll.scrollTop=scroll.scrollHeight;timeline.syncScroll();
-  }catch(e){if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[],notice:e.message});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
+   renderSide(value,id,readable);highlightLatestChatCard(scroll);
+   if(quiet&&!atBottom)scroll.scrollTop=top;else scroll.scrollTop=scroll.scrollHeight;
+  }catch(e){if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
  }
  /** Same row/bubble structure as the group chat, so both views share one visual language. */
  /** Paths in native replies resolve only inside that registered session's working directory, on its own device. */
  const mediaContext=session=>{const sessionId=session&&(nativeId(session)||session.sessionId);if(!session?.nodeId||!sessionId)return null;
   return {key:`native:${session.nodeId}:${session.runtime}:${sessionId}`,describe:path=>api(`${endpoint(session.nodeId)}/media?${new URLSearchParams({runtime:session.runtime,sessionId,path})}`)};};
- function chatRow(role,text,runtime,at,extra,session){const agent=role!=='user',row=el('article',`chat-row ${agent?'agent':'human'} native-chat-row`);if(agent){const avatar=el('span','chat-avatar');avatar.append(agentIconEl(runtime));row.append(avatar);}
+ function chatRow(role,text,runtime,at,extra,state='completed',session){const agent=role!=='user',row=el('article',`chat-row ${agent?'agent':'human'} native-chat-row`);if(agent){const avatar=el('span','chat-avatar');avatar.append(agentIconEl(runtime));row.append(avatar);}
   const col=el('div','chat-col'),header=el('div','chat-message-header'),name=el('div','chat-name',agent?names[runtime]||t('Assistant'):t('Me'));name.translate=false;name.title=name.textContent;header.append(name);col.append(header);
   // Same card anatomy as the group chat: send time on the name line, a status line with its actions at the bottom.
   if(at){const stamp=el('time','',time(at));stamp.dateTime=at;header.append(stamp);}
-  const bubble=el('div','chat-bubble'),body=simplifiedCliOutput(text||'');
+  const bubble=setChatCardState(el('div','chat-bubble'),state),body=simplifiedCliOutput(text||'');
   if(agent){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));bubble.append(md);}else bubble.append(el('div','chat-message-text',body));if(extra)bubble.append(extra);
   const footer=el('div','chat-card-footer'),actions=el('div','chat-card-actions'),copy=el('button','chat-icon-btn');copy.type='button';copy.setAttribute('aria-label',t('Copy'));setActionIcon(copy,'copy',t('Copy'));
   copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));actions.append(copy);
-  footer.append(el('span','chat-card-kind',`${t(agent?'Reply':'Message')} · ${t('Completed')}`),actions);bubble.append(footer);col.append(bubble);row.append(col);return row;}
+  footer.append(el('span','chat-card-kind',`${t(agent?'Reply':'Message')} · ${t(executionProgressLabels[state]||'Completed')}`),actions);bubble.append(footer);col.append(bubble);row.append(col);return row;}
+ let agentDetailsSignature='';
+ /** Reuse reported CLI quota and this session's recorded settings; refreshing the card never probes a model. */
+ function renderAgentDetails(value){
+  if(side.dataset.sessionKey!==key(value))return;
+  const worker=getData().workers?.find(w=>w.id===value.nodeId),runtime=worker?.runtimes?.find(r=>r.type===value.runtime),configuration=value.sessionConfiguration||{};
+  const quota=value.runtime==='agy'&&!configuration.model?null:quotaForRole(runtime,worker,configuration.model||'');
+  const signature=JSON.stringify([key(value),configuration,quota,runtime?.quotaStatus,runtime?.quotaStale,runtime?.checkedAt,worker?.online]),prior=side.querySelector('[data-native-agent-details]');
+  if(prior&&signature===agentDetailsSignature)return;agentDetailsSignature=signature;
+  const section=el('section','native-side-card');section.dataset.nativeAgentDetails='';section.append(el('h3','',t('Agent model and quota')));
+  const list=el('dl','native-session-meta'),field=(label,content)=>{const data=el('dd','');data.append(content);list.append(el('dt','',t(label)),data);};
+  const model=el('span','native-agent-line');model.append(agentIconEl(value.runtime),el('span','',configuration.model||t('Unknown')));field('Model',model);
+  const efforts={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra high',max:'Max',ultra:'Ultra',auto:'Automatic',default:'CLI default'};
+  field('Reasoning effort',el('span','',t(efforts[configuration.effort]||'Unknown')));
+  for(const [label,key]of [['5-hour quota remaining','fiveHour'],['Weekly quota remaining','weekly']]){
+   const bucket=quota?.[key],value=bucket?.remainingPercent??bucket?.usedPercent,known=value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value));
+   field(label,known?roleNameQuota({[key]:bucket}):el('span','',t('Unknown')));
+  }
+  section.append(list,el('p','native-side-hint',t('Model and effort come from the latest readable session record. Missing values stay unknown.')),el('p','native-side-hint',t('Quota is shared by this CLI account on this device.')));
+  if(!worker?.online||runtime?.quotaStale||runtime?.quotaStatus!=='ok')section.append(el('p','native-side-hint',t(!worker?.online?'Device offline; quota is the last recorded value.':'Latest quota is unavailable; showing recorded values when present.')));
+  if(runtime?.checkedAt&&Number.isFinite(Date.parse(runtime.checkedAt)))section.append(el('p','native-side-hint',t('Last checked: {time}',{time:time(runtime.checkedAt)})));
+  if(prior)prior.replaceWith(section);else side.querySelector('.native-side-card')?.after(section);
+ }
  function renderSide(value,id,readable){
-  side.replaceChildren();const head=el('div','native-side-head'),title=el('h2','native-side-title',t('Session details')),badge=el('span',`native-side-badge ${takeover.isOn(value)?'is-live':''}`,t(takeover.isOn(value)?'Taken over':'Read-only'));head.append(title,badge);side.append(head);
+  side.dataset.sessionKey=key(value);
+  side.replaceChildren();const head=el('div','native-side-head'),title=el('h2','native-side-title',t('Session details')),badge=el('span',`native-side-badge ${takeover.isOn(value)?'is-live':''}`,t(takeover.isOn(value)?'Taken over':takeover.canChat(value)?'Platform chat':'Read-only'));head.append(title,badge);side.append(head);
   const card=(heading,rows)=>{const section=el('section','native-side-card');section.append(el('h3','',t(heading)));const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}section.append(list);side.append(section);};
   const agentLine=el('span','native-agent-line');agentLine.append(agentIconEl(value.runtime),el('span','',names[value.runtime]||value.runtime));
   card('Runtime',[['Device',workerName(value.nodeId)],['Agent tool',names[value.runtime]]]);
   side.querySelector('.native-side-card:last-of-type dd:nth-of-type(2) .native-meta-value')?.replaceChildren(agentLine);
+  renderAgentDetails(value);
   card('Native session',[['Session ID',id||t('Not available yet'),id||null],['Working folder',value.workspace||t('Choose a folder when opening'),value.workspace||null]]);
   const actions=el('section','native-side-card native-side-actions');actions.append(el('h3','',t('Continue')));
-  actions.append(el('p','native-side-hint',t(takeover.isOn(value)?'Messages sent below resume this exact native session on its device.':'Read-only preview. Take over at the bottom to continue here, or open iTerm.')));
+  actions.append(el('p','native-side-hint',t(takeover.isOn(value)||takeover.canChat(value)?'Messages sent below resume this exact native session on its device.':'Read-only preview. Take over at the bottom to continue here, or open iTerm.')));
   side.append(actions);renderSessionControls(value);
  }
  const takeover=createTakeover();
@@ -223,12 +250,16 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
  function createTakeover(){
   const stored=(name,fallback)=>{try{return JSON.parse(sessionStorage.getItem(name)||JSON.stringify(fallback));}catch{return fallback;}};
   const consentKey='agent-workbench.native-takeover-v3-consent',on=new Set(stored(consentKey,[])),drafts=stored('agent-workbench.native-takeover-drafts',{}),operations=new Map();
-  const save=()=>{try{sessionStorage.setItem(consentKey,JSON.stringify([...on]));sessionStorage.setItem('agent-workbench.native-takeover-drafts',JSON.stringify(drafts));}catch{}};
+  const returnedKey='agent-workbench.native-returned-chat',returned=new Set(stored(returnedKey,[]));
+  const save=()=>{try{sessionStorage.setItem(consentKey,JSON.stringify([...on]));sessionStorage.setItem(returnedKey,JSON.stringify([...returned]));sessionStorage.setItem('agent-workbench.native-takeover-drafts',JSON.stringify(drafts));}catch{}};
   const feed=el('div','native-takeover-feed'),shell=el('div','chat-composer-shell native-session-footer'),urls=new Map(),openProcesses=new Set();
   let current=null,turns=[],poll=null,historyAt=0,historyEl=null,supported=true,fetchTicket=0,residentState='closed';
   const sessionKey=value=>value?`${value.nodeId}/${value.runtime}/${value.sessionId}`:'';
   const k=()=>sessionKey(current);
   const isOn=value=>on.has(sessionKey(value));
+  // 归还只开启输入界面，不授予工具执行权限；仍由发送时确认和后端占用检查决定能否执行。
+  const canChat=value=>returned.has(sessionKey(value))&&getData().workers?.find(w=>w.id===value?.nodeId)?.capabilities?.nativeTurns===3;
+  function markReturned(value){const id=sessionKey(value);if(!value?.sessionId)return;returned.add(id);save();if(current&&k()===id){render();renderSide(current,current.sessionId,true);}}
   const operation=(id=k())=>{if(!operations.has(id))operations.set(id,{sending:false,uploads:0,releasing:false,message:''});return operations.get(id);};
   const isReleasing=value=>operation(sessionKey(value)).releasing;
   const activeTurn=()=>turns.find(x=>['queued','starting','running','waiting_user','stopping'].includes(x.status));
@@ -287,7 +318,9 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   /** Turns already in native history keep their process next to the matching reply; others render as their own rows. */
   function renderFeed(){feed.replaceChildren();for(const old of historyEl?.querySelectorAll('.native-turn-anchored')||[])old.remove();
    const rows=[...(historyEl?.querySelectorAll('.native-chat-row')||[])],used=new Set();
+   for(const row of rows){const bubble=row.querySelector('.chat-bubble');if(bubble)setChatCardState(bubble,'completed');const status=row.querySelector('.chat-card-kind');if(status)status.textContent=`${t(row.dataset.role==='user'?'Message':'Reply')} · ${t('Completed')}`;}
    for(const turn of turns){
+    const state=turn.status==='failed'?'error':turn.status==='interrupted'?'stopped':turn.status==='queued'?'queued':turn.status==='waiting_user'||turn.phase==='waiting'?'waiting':['starting','running','stopping'].includes(turn.status)?'running':'completed';
     const live=['queued','starting','running','waiting_user','stopping'].includes(turn.status);
     if(!live&&turn.endedAt&&turn.prompt.trim()){
      const prompt=turn.prompt.trim(),index=rows.findIndex((row,i)=>!used.has(i)&&row.dataset.role==='user'&&row.dataset.text===prompt);
@@ -296,7 +329,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
       const extra=el('div','native-turn-anchored');
       if(hasProcess(turn)){const block=processBlock(turn,{open:openProcesses.has(turn.id)});block.addEventListener('toggle',()=>block.open?openProcesses.add(turn.id):openProcesses.delete(turn.id));extra.append(block);}
       if(turn.status!=='succeeded')extra.append(el('span','native-turn-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` \u00b7 ${t(turn.error)}`:''}`));
-      if(extra.childElementCount)anchor.after(extra);continue;}
+      if(extra.childElementCount){if(anchor.dataset.role==='user'&&state==='error'){const errorRow=chatRow('assistant','',current.runtime,turn.endedAt,extra,state);errorRow.classList.add('native-turn-anchored');anchor.after(errorRow);}else{const bubble=anchor.querySelector('.chat-bubble');bubble?.insertBefore(extra,bubble.querySelector('.chat-card-footer'));if(bubble){setChatCardState(bubble,state);const status=bubble.querySelector('.chat-card-kind');if(status)status.textContent=`${t(anchor.dataset.role==='user'?'Message':'Reply')} · ${t(executionProgressLabels[state]||'Completed')}`;}}}continue;}
     }
     let files=null;if(turn.attachments?.length){files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));}
     feed.append(chatRow('user',turn.prompt,current.runtime,turn.createdAt,files));
@@ -305,21 +338,21 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
     else if(turn.status!=='succeeded')meta.append(el('span','native-turn-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` · ${t(turn.error)}`:''}`));
     const extra=el('div','native-turn-extra');const block=processBlock(turn,{open:live||openProcesses.has(turn.id)});block.addEventListener('toggle',()=>{if(!live)block.open?openProcesses.add(turn.id):openProcesses.delete(turn.id);});
     if(live||hasProcess(turn))extra.append(block);if(meta.childElementCount)extra.append(meta);
-    feed.append(chatRow('assistant',replyText(turn),current.runtime,null,extra,current));
-   }}
+    feed.append(chatRow('assistant',replyText(turn),current.runtime,null,extra,state,current));
+   }highlightLatestChatCard(scroll);}
   function render(){
    if(!current)return;const value=current,taken=isOn(value);shell.replaceChildren();renderFeed();
-   if(!taken){const bar=el('div','native-takeover-bar');const copy=el('div','native-takeover-copy');copy.append(el('strong','',t('Read-only preview')),el('span','',t(supported?'Take over to keep chatting in this exact native session here.':'Upgrade this Worker to take over native sessions')));const b=button('Take over session',()=>{if(!confirm(t(permissionPrompt(value),{tool:names[value.runtime]||value.runtime})))return;on.add(k());save();render();renderSide(value,value.sessionId,true);input.focus();},'primary native-takeover-button');b.disabled=!supported;bar.append(copy,b);shell.append(bar);return;}
+   if(!taken&&!(supported&&canChat(value))){const bar=el('div','native-takeover-bar');const copy=el('div','native-takeover-copy');copy.append(el('strong','',t('Read-only preview')),el('span','',t(supported?'Take over to keep chatting in this exact native session here.':'Upgrade this Worker to take over native sessions')));const b=button('Take over session',()=>{if(!confirm(t(permissionPrompt(value),{tool:names[value.runtime]||value.runtime})))return;on.add(k());save();render();renderSide(value,value.sessionId,true);input.focus();},'primary native-takeover-button');b.disabled=!supported;bar.append(copy,b);shell.append(bar);return;}
    const id=k(),d=draft(id),op=operation(id),busy=Boolean(activeTurn());
    const form=el('form','chat-composer native-takeover-form'),barRow=el('div','chat-input-bar'),field=el('div','chat-input-field'),note=el('p','workspace-note native-takeover-note'),tray=el('div','chat-attachments native-takeover-tray');
    input.placeholder=t('Message {tool}; replies continue this native session',{tool:names[value.runtime]||value.runtime});if(input.value!==d.text)input.value=d.text||'';
-   note.textContent=op.message||'';note.hidden=!note.textContent;const state=sendState(d,op);
+   note.textContent=op.message||'';note.hidden=!note.textContent;note.classList.toggle('chat-bubble',Boolean(op.message));note.classList.toggle('is-error-card',Boolean(op.message));const state=sendState(d,op);
    for(const item of d.attachments||[])tray.append(attachmentCard(item,()=>{if(!d.pending)void removeAttachment(id,value.nodeId,item);}));
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
    sendButton.disabled=op.sending||op.releasing||busy||op.uploads>0||sendLocked(state)||Boolean(op.verifying);sendButton.textContent=t(SEND_LABELS[state]||'Send');input.disabled=op.sending||op.releasing||Boolean(d.pending);attachButton.disabled=op.sending||op.releasing||Boolean(d.pending);
    field.append(tray,attachButton,input);barRow.append(field,sendButton);
    const release=button(op.releasing?'Ending takeover…':'End takeover',()=>void endTakeover(value),'secondary compact native-release');release.disabled=busy||op.sending||op.uploads>0||op.releasing;
-   const status=el('div','native-takeover-status');status.append(el('span',`native-takeover-dot${residentState==='open'?' is-resident':''}`),el('span','',t(op.releasing?'Ending page takeover; waiting for the CLI to exit…':busy?'This session is replying…':residentState==='open'?'Taken over · CLI is resident; messages continue this native session':'Taken over · the next message starts the CLI')),release);
+   const status=el('div','native-takeover-status');status.append(el('span',`native-takeover-dot${residentState==='open'?' is-resident':''}`),el('span','',t(op.releasing?'Ending page takeover; waiting for the CLI to exit…':busy?'This session is replying…':!taken?'Returned to platform · send a message to continue this session':residentState==='open'?'Taken over · CLI is resident; messages continue this native session':'Taken over · the next message starts the CLI')));if(taken)status.append(release);
    if(!IMAGE_CLIS.has(value.runtime))status.append(el('span','native-takeover-limit',t('{tool} cannot receive images here; files are passed as paths',{tool:names[value.runtime]})));
    form.append(status,note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});shell.append(form);resize();
   }
@@ -340,7 +373,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   input.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();void upload(files);}});
   shell.addEventListener('dragover',e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();shell.classList.add('is-dragging');}});
   shell.addEventListener('dragleave',()=>shell.classList.remove('is-dragging'));
-  shell.addEventListener('drop',e=>{shell.classList.remove('is-dragging');if(e.dataTransfer?.files.length&&current&&isOn(current)){e.preventDefault();void upload(e.dataTransfer.files);}});
+  shell.addEventListener('drop',e=>{shell.classList.remove('is-dragging');if(e.dataTransfer?.files.length&&current&&(isOn(current)||canChat(current))){e.preventDefault();void upload(e.dataTransfer.files);}});
   const resize=()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(40,input.scrollHeight))}px`;};
   input.addEventListener('input',()=>{draft().text=input.value;save();resize();});
   input.addEventListener('keydown',e=>{if(window.matchMedia('(max-width: 1000px)').matches)return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!sendButton.disabled){e.preventDefault();input.form?.requestSubmit();}});
@@ -348,6 +381,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
    // An in-flight or unknown send is only looked up again (click, double click, Enter); it is never resent with a new ID.
    if(d.pending&&d.sendState!=='failed'){void verifyTurn(id);return;}
    if(!d.pending&&!input.value.trim()&&!d.attachments?.length)return;op.message='';
+   if(!isOn(value)){if(!confirm(t(permissionPrompt(value),{tool:names[value.runtime]||value.runtime})))return;on.add(id);save();}
    if(!d.pending){const payload={text:input.value,attachmentIds:(d.attachments||[]).map(a=>a.id)};
     // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
     d.pending={clientTurnId:sameSend(d.rejected?.payload,payload)?d.rejected.clientTurnId:crypto.randomUUID(),...payload};}
@@ -356,9 +390,9 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
    catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;}op.message=t(error.message);}
    finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[id]?.pending&&drafts[id].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}
-  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;residentState=result.process||'closed';turns=result.items||[];{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&residentState==='closed'){op.releasing=false;on.delete(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
+  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;residentState=result.process||'closed';turns=result.items||[];{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
   function schedule(){clearInterval(poll);poll=null;if(current&&(activeTurn()||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
-  return {feed,attach,detach,isOn,isReleasing,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh,recheck};
+  return {feed,attach,detach,isOn,canChat,renderFeed,returned:markReturned,isReleasing,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh,recheck};
  }
  const dialog=el('dialog','settings-edit-dialog native-session-dialog');dialog.id='native-session-dialog';document.body.append(dialog);
  const picker=el('dialog','settings-edit-dialog native-file-picker');picker.id='native-file-picker';document.body.append(picker);let pickerVersion=0;
@@ -371,15 +405,16 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   const select=item=>{chosen=item;selection.textContent=item?.path||'';use.disabled=!item||Boolean(locked&&item.workspace!==locked);message.textContent=t(locked&&item?.workspace!==locked?'An existing session keeps its original working folder.':item?.type==='file'?'Only the containing folder is used; the file is not read.':'Select an item, then choose Use.');for(const row of rows.querySelectorAll('[data-path]'))row.setAttribute('aria-pressed',String(row.dataset.path===item?.path));};
   const up=button('Parent folder',()=>browse(parent)),roots=button('Allowed folders',()=>browse(null)),more=button('Load more',()=>browse(current,nextOffset,true));toolbar.append(up,roots);more.hidden=true;
   const newFolder=createFolderControl({api,onCreated:result=>browse(result.path)});toolbar.append(newFolder.button);
-  async function browse(target,offset=0,append=false){const ticket=++pickerVersion;newFolder.update();use.disabled=true;more.disabled=true;message.textContent=t('Loading…');if(!append)rows.replaceChildren();
+  const pathRow=el('div','native-workspace-row'),directPath=el('input');let pathInputVersion=0;directPath.addEventListener('input',()=>pathInputVersion++);directPath.placeholder=t('Absolute folder path');directPath.setAttribute('aria-label',t('Absolute folder path'));const openPath=button('Open',()=>browse(directPath.value.trim()));pathRow.append(directPath,openPath);directPath.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();void browse(directPath.value.trim());}});
+  async function browse(target,offset=0,append=false){const ticket=++pickerVersion,inputVersion=pathInputVersion;newFolder.update();use.disabled=true;more.disabled=true;message.textContent=t('Loading…');if(!append)rows.replaceChildren();
    try{const result=await api(`${endpoint(nodeId)}/folders?${new URLSearchParams({...target?{path:target}:{},offset:String(offset)})}`);if(ticket!==pickerVersion||!picker.open)return;current=result.path;parent=result.parent;up.disabled=!parent;location.textContent=current||t('Allowed folders');nextOffset=result.nextOffset||0;more.hidden=!result.hasMore;
     for(const item of result.entries||(result.folders||[]).map(f=>({...f,type:'folder',workspace:f.path}))){const row=el('div','native-picker-row'),pick=button('',()=>select(item),'native-picker-item');pick.dataset.path=item.path;pick.setAttribute('aria-label',t('Select {name}',{name:item.name}));const icon=el('span','native-picker-glyph');icon.setAttribute('aria-hidden','true');icon.innerHTML=item.type==='folder'?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h7l2 3h9v11H3Z"/></svg>':'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 3h8l4 4v14H6Z"/><path d="M14 3v5h4M9 12h6m-6 4h6"/></svg>';const name=el('span','',item.name);name.translate=false;pick.append(icon,name);pick.title=item.path;row.append(pick);
      if(item.type==='folder'){pick.addEventListener('dblclick',()=>browse(item.path));const enter=button('›',()=>browse(item.path),'icon-button native-picker-enter');enter.setAttribute('aria-label',t('Open folder {name}',{name:item.name}));row.append(enter);}rows.append(row);
-    }select(append&&chosen?chosen:current?{path:current,workspace:current,type:'folder'}:null);
+    }if(inputVersion===pathInputVersion)directPath.value=current||'';select(append&&chosen?chosen:current?{path:current,workspace:current,type:'folder'}:null);
     newFolder.update({nodeId,path:current,enabled:getData().workers?.find(w=>w.id===nodeId)?.capabilities?.directoryCreate===1});
    }catch(error){if(ticket===pickerVersion){chosen=null;message.textContent=t(error.message);use.disabled=true;}}finally{if(ticket===pickerVersion)more.disabled=false;}
   }
-  actions.append(button('Cancel',()=>picker.close()),use);picker.append(heading,toolbar,newFolder.panel,location,rows,more,selection,message,actions);
+  actions.append(button('Cancel',()=>picker.close()),use);picker.append(heading,toolbar,newFolder.panel,pathRow,location,rows,more,selection,message,actions);
   const closeWithParent=()=>picker.close();dialog.addEventListener('close',closeWithParent);picker.addEventListener('close',()=>{pickerVersion++;dialog.removeEventListener('close',closeWithParent);},{once:true});picker.showModal();void browse(path||null);
  }
  function openForm(session=null,defaults={}){populate();dialog.replaceChildren();const heading=el('div','dialog-heading');heading.append(el('h2','',t(session?.canReopen?'Open unstarted session':session?'Continue native session':'New native session')),closeButton(()=>dialog.close()));dialog.append(heading);
@@ -412,7 +447,7 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
   dialog.addEventListener('close',()=>{void discard().then(()=>load({quiet:true}));},{once:true});
   form.addEventListener('submit',async e=>{e.preventDefault();if(!title.value.trim()){title.focus();feedback.textContent=t('Enter a session title.');return;}submit.disabled=true;for(const input of[d,r,folder,all,title,browseButton])input.disabled=true;feedback.textContent=t('Preparing…');launch.replaceChildren();
    const input={runtime:r.value,sessionId:session&&!session.canReopen?nativeId(session):null,...(session?.entryId?{entryId:session.entryId}:{}),title:title.value.trim(),workspace:folder.value.trim(),allowAll:all.checked,useLocalSshKey:true},signature=JSON.stringify([d.value,input]);if(signature!==lastInput){operationId=crypto.randomUUID();lastInput=signature;}
-   try{const result=await api(`/api/native-sessions/${encodeURIComponent(d.value)}/terminal`,{method:'POST',json:{...input,operationId}});prepared={nodeId:d.value,operationId};opened=false;if(!dialog.open||!dialog.contains(form)){await releaseUnused();return;}feedback.textContent=t('Ready. Open iTerm to start or resume the native CLI.');const a=el('a','primary',t('Open iTerm'));a.href=result.url;a.addEventListener('click',()=>{opened=true;});launch.append(a,button('Copy terminal command',async()=>{await navigator.clipboard.writeText(result.command);opened=true;feedback.textContent=t('Copied');}));void load({quiet:true});}catch(error){feedback.textContent=t(error.message);}finally{submit.disabled=false;d.disabled=r.disabled=Boolean(session);folder.disabled=all.disabled=title.disabled=browseButton.disabled=false;}
+   try{const result=await api(`/api/native-sessions/${encodeURIComponent(d.value)}/terminal`,{method:'POST',json:{...input,operationId}});prepared={nodeId:d.value,operationId};opened=false;if(!dialog.open||!dialog.contains(form)){await releaseUnused();return;}feedback.textContent=t('Ready. Open iTerm to start or resume the native CLI.');const a=el('a','primary',t('Open iTerm'));a.href=result.url;a.addEventListener('click',()=>{opened=true;});launch.append(a,button('Copy terminal command',async()=>{await navigator.clipboard.writeText(result.command);opened=true;feedback.textContent=t('Copied');}));void load({quiet:true});}catch(error){if(error.folderPreparationReleased){operationId=null;lastInput='';}feedback.textContent=t(error.message);}finally{submit.disabled=false;d.disabled=r.disabled=Boolean(session);folder.disabled=all.disabled=title.disabled=browseButton.disabled=false;}
   });dialog.showModal();void fillDefaultFolder();
  }
  /** Segmented buttons share one mode transition; selecting the active side does not reload history. */
@@ -426,5 +461,5 @@ const valueText=value=>typeof value==='string'?value:value==null?'':JSON.stringi
  // Only the visible Sessions page polls; returning from iTerm also refreshes immediately.
  setInterval(()=>{if(Date.now()-lastRefresh>=30000)refresh();},30000);
  list.hidden=filters.hidden=note.hidden=content.hidden=side.hidden=true;
- return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=!visible;content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){renderTitle();renderList();document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected)renderSessionControls(selected);if(changed)refresh();takeover.recheck();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
+ return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=!visible;content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){renderTitle();renderList();document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected){renderSessionControls(selected);renderAgentDetails(selected);}if(changed)refresh();takeover.recheck();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
 }

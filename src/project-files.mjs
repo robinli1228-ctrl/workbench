@@ -54,7 +54,16 @@ export class ProjectFiles {
       const rel=relative(binding.root,absolute);if(!rel||isAbsolute(rel)||rel==='..'||rel.startsWith('../'))continue;
       try{validateSourcePath(rel,binding.scopePolicy);return {scopeId:binding.repositoryId,path:rel};}catch{}
     }
-    return null;
+    // A reply can quote another device's shared path. Translate only current bindings of this project,
+    // never relative Run paths, isolated outputs, or an ambiguous same-spelled scope on another device.
+    if(!isAbsolute(path)||path.split('/').some(part=>part==='..'||part==='.')||run.execution?.isolated&&run.workspace&&beneath(resolve(run.workspace),absolute)!==null)return null;
+    const nodes=new Set([...this.db.list('workspaces'),...this.db.list('repositoryWorkspaces')].filter(b=>b.projectId===run.projectId&&b.nodeId!==run.nodeId).map(b=>b.nodeId)),references=new Map();
+    for(const nodeId of nodes)for(const binding of this.readBindings(run.projectId,nodeId)){
+      if(sourceScopeBinding(this.db,run.projectId,binding.repositoryId,nodeId)?.localRoot!==binding.root)continue;
+      const rel=beneath(binding.root,absolute);if(!rel)continue;
+      try{validateSourcePath(rel,binding.scopePolicy);const ref={scopeId:binding.repositoryId,path:rel};references.set(JSON.stringify(ref),ref);}catch{}
+    }
+    return references.size===1?[...references.values()][0]:null;
   }
   state(projectId,binding,path,entry){
     if(this.db.listProject('sourceSyncConflicts',projectId).some(c=>c.repositoryId===binding.repositoryId&&c.path===path&&!['resolved','cancelled'].includes(c.status)))return 'conflict';

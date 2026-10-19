@@ -33,7 +33,7 @@ export class ProjectGitVersions {
         const payload=[];
         for (const {repository,binding} of list) payload.push({ id:repository.id,key:repository.key,repoUrl:repository.repoUrl,
           localRoot:binding.localRoot,credential:await this.hosting.auth(repository.accountId,repository.repoUrl) });
-        const results=await this.query({nodeId},'project_git_versions',{repositories:payload},90000);
+        const results=await this.query({nodeId,projectId},'project_git_versions',{repositories:payload},90000);
         for(const result of results) items.push({...result,nodeId});
       } catch(error) {
         const checkedAt=new Date().toISOString();
