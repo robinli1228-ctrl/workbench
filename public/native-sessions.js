@@ -80,7 +80,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const data=getData();if(!item)return null;
   if(item.roleBinding?.projectId)return data.projects?.find(p=>p.id===item.roleBinding.projectId)||null;
   const id=nativeId(item);if(!id)return null;
-  const known=new Set((data.roleSessions||[]).filter(s=>s.runtime===item.runtime&&s.nativeSessionId===id&&s.nodeId===item.nodeId).map(s=>s.projectId));
+  const known=new Set((data.roleSessions||[]).filter(s=>!s.historyClearedAt&&s.runtime===item.runtime&&s.nativeSessionId===id&&s.nodeId===item.nodeId).map(s=>s.projectId));
   return known.size===1?data.projects?.find(p=>p.id===[...known][0])||null:null;
  }
  const projectOutputs=new Map();
@@ -357,19 +357,20 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  }
  function cancelRename(value){renaming=null;renderNameCard(value);}
  async function saveRename(value){
-  if(!renaming)return;
-  const title=renaming.draft.trim();
-  if(!title||title.length>120){renaming.error=t('Session title is required and must be at most 120 characters');renderNameCard(value);return;}
+  const edit=renaming;if(!edit||edit.key!==key(value)||edit.saving)return;
+  const title=edit.draft.trim();
+  if(!title||title.length>120){edit.error=t('Session title is required and must be at most 120 characters');renderNameCard(value);return;}
   if(title===(value.title||'')){cancelRename(value);return;}
-  renaming.saving=true;renaming.error=null;renderNameCard(value);
+  edit.saving=true;edit.error=null;renderNameCard(value);
   try{
    const updated=await api(`${endpoint(value.nodeId)}/title`,{method:'POST',json:{runtime:value.runtime,entryId:value.entryId,sessionId:value.sessionId||null,title}});
-   renaming=null;
+   // The response belongs to this edit, not whichever session or draft the user has since opened.
+   if(renaming===edit)renaming=null;
    for(const item of items)if(key(item)===key(value))item.title=updated.title;
    if(selected&&key(selected)===key(value))selected={...selected,title:updated.title};
-   renderTitle();renderList();renderNameCard(selected&&key(selected)===key(value)?selected:{...value,title:updated.title});
+   renderTitle();renderList();if(selected&&key(selected)===edit.key)renderNameCard(selected);
    void load({quiet:true});
-  }catch(error){if(renaming){renaming.saving=false;renaming.error=error.message;}renderNameCard(value);}
+  }catch(error){if(renaming===edit){edit.saving=false;edit.error=error.message;if(selected&&key(selected)===edit.key)renderNameCard(selected);}}
  }
  /** Label/value rows with optional copy buttons, shared by the session, repository and runtime cards. */
  function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}

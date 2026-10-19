@@ -614,13 +614,16 @@ const server = http.createServer(async (req, res) => {
       if(nativeGit&&req.method==='GET'){
         // Read-only Git facts for the session's own registered working folder; the browser never supplies a path.
         const nodeId=decodeURIComponent(nativeGit[1]),runtime=url.searchParams.get('runtime'),sessionId=url.searchParams.get('sessionId'),entryId=url.searchParams.get('entryId');
-        const record=(sessionId&&ownedNativeSession(nodeId,runtime,sessionId))||(entryId&&nativeCatalogRecords(nodeId,runtime).find(entry=>entry.id===entryId))||null;
+        const entry=entryId?nativeCatalogRecords(nodeId,runtime).find(record=>record.id===entryId):null;
+        if(entryId&&(!entry||sessionId&&entry.sessionId!==sessionId))throw Error('Session identity does not match its Workbench entry');
+        const record=entry||(sessionId&&ownedNativeSession(nodeId,runtime,sessionId))||null;
         if(!record)throw Error('Session is not registered with Workbench');
         const workspace=record.workspace||null,worker=db.get('workers',nodeId);
         if(!workspace)return json(res,{available:false,reason:'no_workspace'});
         if(!worker||!online(nodeId))return json(res,{available:false,reason:'source_offline',workspace});
         if(worker.capabilities?.workspaceGit!==1)return json(res,{available:false,reason:'worker_upgrade',workspace});
-        try{return json(res,{available:true,workspace,...await workerQuery({nodeId},'workspace_git',{workspace},10000)});}
+        // Use the registered native/project identity to carry its existing scoped folder grant; never infer one from cwd.
+        try{return json(res,{available:true,workspace,...await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_workspace_git',{workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},10000)});}
         catch(error){return json(res,{available:false,reason:'git_read_failed',detail:String(error.message||error).slice(0,300),workspace});}
       }
       const nativeTitle=pathname.match(/^\/api\/native-sessions\/([^/]+)\/title$/);

@@ -758,7 +758,7 @@ async function query(m) {
       return;
     }
     // Session sidebar facts: offline Git state of an allowed working folder, and the name of a Workbench-created session.
-    if(m.action==='workspace_git'){send({type:'reply',id:m.id,result:await inspectWorkspaceGit(await projectRoot(m.path?.workspace))});return;}
+    if(m.action==='native_workspace_git'){send({type:'reply',id:m.id,result:await inspectWorkspaceGit(await projectRoot(m.path?.workspace),{authorizeRoot:projectRoot})});return;}
     if(m.action==='native_session_title'){
       const input=m.path||{},title=typeof input.title==='string'?input.title.trim():'';
       if(!title||title.length>120)throw new Error('Session title is required and must be at most 120 characters');

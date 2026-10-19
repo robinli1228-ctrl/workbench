@@ -11,9 +11,10 @@ const CONFLICTS=new Set(['DD','AU','UD','UA','DU','AA','UU']);
  * repository root, branch, HEAD commit, the configured upstream with ahead/behind from local refs, and a change summary.
  * Never fetches, never contacts a remote, and GIT_OPTIONAL_LOCKS=0 keeps `git status` from rewriting the index.
  */
-export async function inspectWorkspaceGit(dir,{timeout=3000,exec=run,clock=()=>new Date()}={}) {
-  const env={...process.env,GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',LC_ALL:'C'};
-  const git=async(args,options={})=>(await exec('git',['-C',dir,...args],{timeout,maxBuffer:64*1024,env,...options})).stdout;
+export async function inspectWorkspaceGit(dir,{timeout=3000,exec=run,clock=()=>new Date(),authorizeRoot=async()=>{}}={}) {
+  // Repository fsmonitor hooks and promisor-object fetches are not part of a read-only sidebar observation.
+  const env={...process.env,GIT_OPTIONAL_LOCKS:'0',GIT_NO_LAZY_FETCH:'1',GIT_TERMINAL_PROMPT:'0',LC_ALL:'C'};
+  const git=async(args,options={})=>(await exec('git',['-c','core.fsmonitor=false','-C',dir,...args],{timeout,maxBuffer:64*1024,env,...options})).stdout;
   const checkedAt=clock().toISOString();
   let root;
   try{root=(await git(['rev-parse','--show-toplevel'])).trim();}
@@ -22,6 +23,8 @@ export async function inspectWorkspaceGit(dir,{timeout=3000,exec=run,clock=()=>n
     if(error.code==='ENOENT')return {git:false,reason:'git_unavailable',checkedAt};
     return {git:false,reason:/not a git repository/i.test(String(error.stderr||error.message))?'not_git':'git_unavailable',detail:String(error.stderr||error.message).trim().slice(0,300),checkedAt};
   }
+  // Git can discover a parent repository outside a grant for a child directory. Do not read its facts without authority.
+  await authorizeRoot(root);
   const optional=async args=>{try{return (await git(args)).trim();}catch{return null;}};
   const commit=await optional(['rev-parse','HEAD']);
   const branch=await optional(['symbolic-ref','--quiet','--short','HEAD']);
