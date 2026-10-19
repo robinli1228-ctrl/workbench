@@ -153,7 +153,7 @@ const inside = (root, path) => { const rel = relative(root, path); return !rel |
 const sourceSync=new SourceSyncClient({db,data,home:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),send,
   withFolderAccess:(message,command,fn)=>folderAccess.run(message.folderAccess?{...message.folderAccess,scope:`project:${command.projectId}`}:null,fn),
   paused:()=>paused||quitting,
-  activeRuns:()=>[...db.list('runs'),...db.list('sourceSyncOperations')],
+  activeRuns:()=>[...db.activeRuns(),...db.list('sourceSyncOperations')],
   takeoverState:projectId=>Boolean(projectTerminalLock(db,projectId,identity.nodeId)),
   resolveBinding:command=>folderAccess.run(command.folderAccess?{...command.folderAccess,scope:`project:${command.projectId}`}:folderAccess.context.getStore(),async()=>{
     if(command.nodeId!==identity.nodeId)throw syncError('receipt_owner_mismatch');

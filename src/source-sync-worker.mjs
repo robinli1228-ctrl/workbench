@@ -105,8 +105,8 @@ export async function applySourceChanges({command,root,changes,db,blobRoot,cance
 
 /** Local reservations fence managed launches, even if Home reconnects with stale scheduling state. */
 export class SourceSyncWorker {
-  constructor({db,resolveBinding,blobRoot,activeRuns=()=>[],takeoverState=()=>false,paused=()=>false}) {
-    Object.assign(this,{db,resolveBinding,blobRoot,activeRuns,takeoverState,paused});this.running=new Set();
+  constructor({db,resolveBinding,blobRoot,activeRuns=()=>[],takeoverState=()=>false,paused=()=>false,observationBusy=()=>false}) {
+    Object.assign(this,{db,resolveBinding,blobRoot,activeRuns,takeoverState,paused,observationBusy});this.running=new Set();
   }
   canStart(projectId) {return !this.db.get('sourceSyncReservations',projectId);}
   async execute(command) {
@@ -132,7 +132,7 @@ export class SourceSyncWorker {
       else if(command.action==='capture'){
         const options={root:binding.root,repositoryId:command.repositoryId,generation:command.generation,blobRoot:this.blobRoot,preview:command.preview,expectedHead:command.baseCommit,scopePolicy:command.scopePolicy||{},baselineEntries:command.baselineEntries};
         if(command.scopeKind==='directory'){
-          const manifest=await captureDirectorySnapshot(options),base={...manifest,entries:{},digest:manifestDigest({},options.scopePolicy),excluded:[]};result={status:'completed',base,manifest};
+          const manifest=await captureDirectorySnapshot({...options,background:true,busy:()=>this.observationBusy(command.projectId)}),base={...manifest,entries:{},digest:manifestDigest({},options.scopePolicy),excluded:[]};result={status:'completed',base,manifest};
         }else{const base=await captureGitBase(options),manifest=await captureSourceSnapshot({...options,base});result={status:'completed',base,manifest};}
       }else if(command.action==='apply')result=await applySourceChanges({command,root:binding.root,changes:command.changes,db:this.db,blobRoot:this.blobRoot,
         cancelled:()=>this.paused()||this.db.get('sourceSyncCancellations',command.id)});
