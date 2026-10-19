@@ -226,7 +226,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       }
       const guard=protectedRole(task),scopeOf=x=>(x.conversationId||x.projectId)===(task.conversationId||task.projectId)&&x.roleId===task.roleId;
       const yieldBusy=tasks.some(x=>x.id!==task.id&&x.collaborationYield&&scopeOf(x))||waits.some(w=>w.yielded&&scopeOf(w));
-      if((human||guard?.stalled)&&data.capabilities?.collaborationWait&&(guard||task.collaborationYield)) {
+      if(!human&&guard?.stalled&&data.capabilities?.collaborationWait&&(guard||task.collaborationYield)) {
         // Handle this first keeps the waiting collaboration; it never stops or cancels anything.
         // Same icon style as steer and cancel on this row; the label lives in the tooltip and aria-label.
         const first=create('button',`icon-button message-queue-first${task.collaborationYield?' is-active':''}`);first.type='button';first.innerHTML=UI_ICON.priority;
@@ -250,14 +250,14 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
         const steer=create('button',`icon-button message-queue-steer${busy?' is-active':''}${error?' is-error':''}`);steer.type='button';
         steer.setAttribute('aria-busy',String(busy));steer.setAttribute('aria-label',error?t('Steering needs attention'):t(busy?'Steering':'Steer now'));
         steer.innerHTML=busy?'<svg class="message-queue-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>':error?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></svg>':'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
-        steer.title=error?t('Steering needs attention: {reason}',{reason:error}):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):t('Interrupt this role now and run this message first; actions already performed are not rolled back');
-        steer.disabled=Boolean(task.steering)||pending.has(task.id)||data.settings?.paused||!data.capabilities?.roleSteering;
-        if(!data.capabilities?.roleSteering)steer.title='Steer now becomes available after the service is upgraded';
+        steer.title=error?t('Steering needs attention: {reason}',{reason:error}):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):t('Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept');
+        steer.disabled=Boolean(task.steering)||pending.has(task.id)||data.settings?.paused||!(data.capabilities?.roleSteering>=2);
+        if(!(data.capabilities?.roleSteering>=2))steer.title='Steer now becomes available after the service is upgraded';
         steer.onclick=async()=>{
           pending.add(task.id);steeringPending.add(task.id);steeringErrors.delete(task.id);setError('');view.update(lastData,currentProject);
           if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
           try {
-            const receipt=await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'replace',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});
+            const receipt=await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'replace',confirmReplaceWait:true,commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});
             // A successful stop request stays busy even if the following workspace refresh fails.
             const current=lastData.tasks?.find(t=>t.id===task.id);if(current)current.steering=receipt;
             await refreshState({quiet:true});
@@ -928,7 +928,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       line.translate = false;
       const header=create('div','chat-message-header');header.append(create('div','chat-name',role.name||t('Role')));
       const bubble=setChatCardState(create('div','chat-bubble'),'waiting'),footer=create('div','chat-card-footer'),actions=create('div','chat-card-actions');
-      line.className='chat-message-text';actions.append(iconAction('log','Log',()=>openTask(task.id,run.id)));footer.append(create('span','chat-card-kind',t('Waiting')),actions);bubble.append(line,footer);col.append(header,bubble);
+      line.className='chat-message-text';actions.append(iconAction('live','Log',()=>openTask(task.id,run.id)));footer.append(create('span','chat-card-kind',t('Waiting')),actions);bubble.append(line,footer);col.append(header,bubble);
       row.append(col);
       return row;
     }
@@ -996,7 +996,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         catch (e) { setError(e.message); b.disabled = false; }
       }));
     }
-    if (run) actions.push(iconAction('log', 'Log', () => openTask(task.id,run.id)));
+    if (run) actions.push(iconAction('live', 'Log', () => openTask(task.id,run.id)));
     // Status and actions sit inside the card, the same footer as finished messages.
     const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', label);
     if (running) { const elapsed = elapsedEl(create, run.startedAt); if (elapsed) status.append(elapsed); }
@@ -1073,7 +1073,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if(!m.runId||discussion||handoff)actions.push(iconAction('original','Original',()=>void historyViewer.open(m.projectId,'message',m.id,m.conversationId||m.projectId).catch(e=>setError(e.message))));
     if (m.runId) {
       const run = data.runs?.find(r => r.id === m.runId);
-      if (run) actions.push(iconAction('log', 'Log', () => openTask(run.taskId,run.id)));
+      if (run) actions.push(iconAction('live', 'Log', () => openTask(run.taskId,run.id)));
     }
     actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, m.senderName, agent || Boolean(handoff), m.attachments, null, m.runId));
     actions.push(...discussionActions);
@@ -1096,7 +1096,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if(at){const time=create('time','',formatTime(at));time.dateTime=at;header.append(time);}
     const bubble=setChatCardState(create('div','chat-bubble'),progress.state),footer=create('div','chat-card-footer'),actions=create('div','chat-card-actions');
     bubble.append(line);if(line.title)bubble.append(create('div','chat-message-text',line.title));
-    if(task)actions.append(iconAction('log','Log',()=>openTask(task.id,request.currentRunId)));
+    if(task)actions.append(iconAction('live','Log',()=>openTask(task.id,request.currentRunId)));
     footer.append(create('span','chat-card-kind',t(progress.label)),actions);bubble.append(footer);col.append(header,bubble);
     row.append(avatarFor(role,role.name),col);return row;
   }
