@@ -58,6 +58,17 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
   const list = create('div', 'timer-job-list'); list.id = 'timer-job-list';
   container.replaceChildren(toolbar, summary, feedback, list);
 
+  // 查看说明与编辑分离，打开详情不会修改任务或触发调度。
+  const descriptionDialog = create('dialog', 'settings-edit-dialog timer-description-dialog');
+  descriptionDialog.id = 'timer-description-dialog';
+  descriptionDialog.setAttribute('aria-labelledby', 'timer-description-title');
+  const descriptionHeading = create('div', 'dialog-heading');
+  const descriptionTitle = create('h3'); descriptionTitle.id = 'timer-description-title'; descriptionTitle.translate = false;
+  const descriptionBody = create('p', 'timer-description-full'); descriptionBody.translate = false;
+  descriptionHeading.append(descriptionTitle, closeIcon(button('', () => descriptionDialog.close(), 'icon-button'), t('Close')));
+  descriptionDialog.append(descriptionHeading, descriptionBody);
+  dialog.after(descriptionDialog);
+
   const heading = create('div', 'dialog-heading');
   const dialogTitle = create('h3', '', 'Add scheduled job');
   heading.append(dialogTitle, closeIcon(button('', () => dialog.close(), 'icon-button'), t('Close')));
@@ -167,7 +178,17 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
       const head = create('div', 'timer-job-head');
       head.append(create('div', '', `${job.name} · ${job.jobType === 'monitor' ? t('Progress check') : t('Scheduled dispatch')}`),
         create('span', job.enabled ? 'timer-status is-on' : 'timer-status', job.enabled ? 'Enabled' : 'Paused'));
-      card.append(head, create('p', 'timer-job-description', job.description),
+      const descriptionPreview = button('', () => {
+        descriptionTitle.textContent = job.name;
+        descriptionBody.textContent = job.description || '';
+        descriptionDialog.showModal();
+      }, 'timer-job-description');
+      descriptionPreview.textContent = job.description || '';
+      descriptionPreview.translate = false;
+      descriptionPreview.setAttribute('aria-haspopup', 'dialog');
+      descriptionPreview.setAttribute('aria-controls', descriptionDialog.id);
+      descriptionPreview.hidden = !job.description;
+      card.append(head, descriptionPreview,
         create('p', 'timer-job-meta', t('{v} · Next {v2} · Last {v3}', { v: projectName(job.projectId), v2: format(job.nextRunAt), v3: format(job.lastCheckAt || job.lastRunAt) })));
       if (job.jobType === 'monitor') card.append(create('p', 'timer-job-meta', t('Last check: {v}', { v: job.lastCheckResult === 'deferred' ? t('new anomaly; supervisor will be notified when idle') : job.lastCheckResult === 'alerted' ? t('new anomaly found') : job.lastCheckAt ? t('no new anomalies') : t('not checked yet') })));
       const controls = create('div', 'timer-actions');

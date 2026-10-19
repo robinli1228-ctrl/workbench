@@ -405,9 +405,6 @@ body[data-navigation-mode="sessions"] #node-sidebar > :not(#native-session-sideb
 .native-takeover-button { flex: none; padding: 9px 18px; border-radius: 8px; }
 .native-takeover-form.chat-composer { border-top: 0; background: transparent; }
 .native-takeover-form .chat-input-field { grid-template-columns: minmax(0, 1fr); }
-.native-takeover-status { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; color: var(--muted); font-size: 12px; }
-.native-takeover-status .native-release { margin-left: auto; padding: 4px 10px; min-height: 28px; font-size: 12px; border-radius: 7px; }
-.native-takeover-dot { width: 7px; height: 7px; border-radius: 50%; background: #2fb36b; box-shadow: 0 0 0 3px rgb(47 179 107 / 15%); }
 .native-takeover-note { margin: 0 0 8px; font-size: 12px; }
 .native-turn-state { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .native-turn-state button { padding: 3px 10px; min-height: 26px; font-size: 12px; }
@@ -1285,7 +1282,11 @@ body[data-workspace-view="settings"] #settings-usage-panel .settings-panel-headi
 .timer-job-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ink); font-size: 16px; font-weight: 800; }
 .timer-status { padding: 4px 9px; color: #62758a; background: #edf2f8; font-size: 12px; white-space: nowrap; }
 .timer-status.is-on { color: #206346; background: #e9f6ef; }
-.timer-job-description { margin: 12px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timer-job-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; width: 100%; margin: 12px 0 8px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timer-job-description:hover { color: var(--accent); }
+.timer-job-description:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.timer-description-full { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.timer-description-dialog .dialog-heading h3 { min-width: 0; overflow-wrap: anywhere; }
 .timer-job-meta { margin: 4px 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .timer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .timer-actions button { min-height: 34px; padding: 5px 11px; }
@@ -2086,9 +2087,6 @@ body select:not([multiple]):disabled { background-color:#f5f6fa; color:#929bac; 
 .native-attach svg { width: 19px; height: 19px; }
 .native-takeover-form textarea { grid-column: 2; }
 .native-session-footer.is-dragging .chat-input-field { outline: 2px dashed #3f73a8; background: #edf4fb; }
-.native-takeover-dot.is-resident { background: #4f5bce; box-shadow: 0 0 0 3px rgb(79 91 206 / 15%); }
-.native-takeover-limit { flex-basis: 100%; font-size: 11px; color: var(--muted); }
-.native-takeover-status { flex-wrap: wrap; }
 .native-turn-files { margin-top: 8px; }
 .native-turn-extra:empty { display: none; }
 .native-turn-process { margin: 8px 0 0; border: 1px solid var(--line); border-radius: 10px; background: #fafbfd; font-size: 12px; }
