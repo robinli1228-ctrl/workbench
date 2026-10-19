@@ -19,6 +19,11 @@ const MAX_TEXT=60000,MAX_PROMPT=12000,MAX_EVENTS=400,MAX_EVENT_TEXT=8000;
 const MAX_EVENT_BYTES=128*1024,MAX_ITEM_BYTES=24*1024;
 const now=()=>new Date().toISOString();
 const sessionKey=(nodeId,runtime,sessionId)=>`${nodeId}/${runtime}/${sessionId}`;
+/** Control turns: a compaction request, or the slash command that changes a resident Claude's model or effort in place. */
+const CONTROLS=new Set(['compact','model','effort']);
+const EFFORTS=new Set(['none','minimal','low','medium','high','xhigh','max','ultra','auto','default']);
+const modelPattern=/^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,79}$/;
+export function nativeSettingsKey(nodeId,runtime,sessionId){return `settings:${sessionKey(nodeId,runtime,sessionId)}`;}
 const clip=value=>typeof value==='string'&&value.length>MAX_EVENT_TEXT?`${value.slice(0,MAX_EVENT_TEXT)}…`:value;
 /** Tool snapshots are bounded field by field; the page renders them with the group-chat live-scene projection. */
 function boundedItem(item){if(!item||typeof item!=='object')return item;const next={};for(const[rawKey,value]of Object.entries(item).slice(0,16)){const key=rawKey.slice(0,80);let bounded=value;if(typeof value==='string')bounded=clip(value);else if(value&&typeof value==='object'){const json=JSON.stringify(value);bounded=json.length>MAX_EVENT_TEXT?clip(json):value;}if(Buffer.byteLength(JSON.stringify({...next,[key]:bounded}))>MAX_ITEM_BYTES){next.outputTruncated=true;continue;}next[key]=bounded;}return next;}
@@ -45,6 +50,8 @@ export function applyNativeTurnEvent(turn,event){
  if(event.kind==='text'&&typeof event.text==='string'){next.live=((next.live||'')+event.text).slice(-MAX_TEXT);push('text',{text:event.text});next.phase='replying';}
  if(event.kind==='message'&&typeof event.text==='string'){next.parts=[...(next.parts||[]),event.text.slice(-MAX_TEXT)].slice(-20);while(next.parts.length>1&&next.parts.join('\n\n').length>MAX_TEXT)next.parts.shift();next.live='';push('message',{text:clip(event.text),phase:event.phase||null});next.phase='replying';}
  if(['text','message'].includes(event.kind))next.text=[...(next.parts||[]),next.live].filter(Boolean).join('\n\n').slice(-MAX_TEXT);
+ // The latest context snapshot of the native session is kept on the turn, not in its event list.
+ if(event.kind==='context_usage'&&event.sample&&typeof event.sample==='object')next.contextUsage={...event.sample};
  if(event.kind==='tool'&&event.item){push('tool',{text:clip(String(event.text||'')),item:boundedItem(event.item)});next.phase=['completed','failed'].includes(event.item.status)?'working':'tool';next.toolName=String(event.item.name||event.item.command||event.item.tool||event.item.title||event.item.type||event.text||'').slice(0,200);}
  if(event.kind==='log'&&typeof event.text==='string'){push('log',{text:clip(event.text)});if(event.thinking)next.phase='thinking';}
  if(event.kind==='status'){
@@ -61,9 +68,9 @@ export function applyNativeTurnEvent(turn,event){
 }
 
 export function nativeTurnView(turn){
- const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident}=turn;
+ const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage}=turn;
  return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
-  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident)};
+  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null};
 }
 
 /** Home side: validation, idempotent creation, occupancy checks, attachment binding and event intake. */
@@ -76,15 +83,45 @@ export class NativeTurnsHome{
  list(nodeId,runtime,sessionId){let bytes=0;return nativeTurnRows(this.db,{nodeId,runtime,sessionId}).map(t=>{let view=nativeTurnView(t);bytes+=Buffer.byteLength(JSON.stringify(view));if(bytes>2*1024*1024)view={...view,events:[],text:view.text.slice(-4000),truncated:true};return view;}).reverse();}
  active(nodeId,runtime,sessionId){return nativeTurnRows(this.db,{nodeId,runtime,sessionId,active:true,limit:1})[0];}
  process(nodeId,runtime,sessionId){const p=this.db.get('nativeTakeovers',sessionKey(nodeId,runtime,sessionId));return this.leases&&p?.leaseId?this.leases.held(p.leaseId):p?.status==='open';}
+ /** Model and effort chosen on the Sessions page for this native session; they ride on every turn message. */
+ settings(nodeId,runtime,sessionId){const s=this.db.get('nativeSessionSettings',nativeSettingsKey(nodeId,runtime,sessionId));return {model:s?.model||null,effort:s?.effort||null,updatedAt:s?.updatedAt||null};}
+ /**
+  * One field per call. Claude applies a change in place through a /model or /effort turn; Codex and Grok take it on the next
+  * turn; a resident Agy must restart, so its takeover is released and the next message starts it with the new flags.
+  */
+ saveSettings(nodeId,worker,body){
+  const {runtime,sessionId}=body||{};
+  if(!NATIVE_TURN_RUNTIMES.includes(runtime))throw Error('Unsupported CLI');
+  if(!idPattern.test(sessionId||''))throw Error('Invalid native session ID');
+  const field='model' in body?'model':'effort' in body?'effort':null;if(!field)throw Error('Nothing to change');
+  const value=body[field]===null||body[field]===''?null:String(body[field]);
+  if(value!==null&&(field==='model'?!modelPattern.test(value):!EFFORTS.has(value)))throw Error(field==='model'?'Invalid model':'Invalid reasoning effort');
+  const runtimeInfo=(worker?.runtimes||[]).find(r=>r.type===runtime),models=runtimeInfo?.models||[];
+  if(value!==null&&field==='model'&&models.length&&!models.some(m=>m.id===value))throw Error('Model is not available on this device');
+  // A stale browser must not restart a busy resident CLI or save a setting that admission rejects.
+  if(this.active(nodeId,runtime,sessionId))throw Error('This session is still replying; wait or stop it first');
+  return this.db.transaction(()=>{
+  const key=nativeSettingsKey(nodeId,runtime,sessionId),current=this.db.get('nativeSessionSettings',key)||{};
+  const saved=this.db.put('nativeSessionSettings',{...current,id:key,nodeId,runtime,sessionId,[field]:value,updatedAt:now()});
+  let applied='next_turn';
+  if(this.process(nodeId,runtime,sessionId)){
+   if(runtime==='claude'&&value!==null){this.create(nodeId,worker,{runtime,sessionId,clientTurnId:randomUUID(),text:`/${field} ${value}`,control:field});applied='in_place';}
+   else if(runtime==='agy'){this.release(nodeId,{runtime,sessionId});applied='restart';}
+  }
+  this.change();return {model:saved.model||null,effort:saved.effort||null,updatedAt:saved.updatedAt,applied};
+  });
+ }
  create(nodeId,worker,body){
-  const {runtime,sessionId,clientTurnId,text='',attachmentIds=[]}=body||{};
+  const {runtime,sessionId,clientTurnId,attachmentIds=[]}=body||{};let {text='',control=null}=body||{};
   if(!NATIVE_TURN_RUNTIMES.includes(runtime))throw Error('Unsupported CLI');
   if(!idPattern.test(sessionId||''))throw Error('Invalid native session ID');
   if(!turnIdPattern.test(clientTurnId||''))throw Error('Invalid takeover message ID');
-  if(typeof text!=='string'||(!text.trim()&&!attachmentIds?.length))throw Error('Enter a message');
+  if(control!==null&&!CONTROLS.has(control))throw Error('Unsupported control');
+  if(control==='compact'){if(!['claude','codex'].includes(runtime))throw Error('This CLI cannot compact its context here');text=runtime==='claude'?'/compact':'';if(attachmentIds?.length)throw Error('A compaction carries no attachments');}
+  else if(typeof text!=='string'||(!text.trim()&&!attachmentIds?.length))throw Error('Enter a message');
   if(text.length>MAX_PROMPT)throw Error('Message is too long for a takeover turn');
   const prior=nativeTurnRows(this.db,{clientTurnId,limit:1})[0];
-  if(prior){if(prior.nodeId!==nodeId||prior.runtime!==runtime||prior.sessionId!==sessionId||prior.prompt!==text||JSON.stringify((prior.attachments||[]).map(a=>a.id))!==JSON.stringify(attachmentIds||[]))throw Error('Takeover message ID was already used');return nativeTurnView(prior);}
+  if(prior){if(prior.nodeId!==nodeId||prior.runtime!==runtime||prior.sessionId!==sessionId||prior.prompt!==text||(prior.control||null)!==control||JSON.stringify((prior.attachments||[]).map(a=>a.id))!==JSON.stringify(attachmentIds||[]))throw Error('Takeover message ID was already used');return nativeTurnView(prior);}
   const items=attachmentIds?.length?this.attachments.resolve(NativeTurnsHome.owner(nodeId),attachmentIds):[];
   if(items.some(item=>item.mime.startsWith('image/'))&&!NATIVE_IMAGE_RUNTIMES.has(runtime))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');
   if(worker?.capabilities?.nativeTurns!==3)throw Error('Upgrade this Worker to take over native sessions');
@@ -93,10 +130,11 @@ export class NativeTurnsHome{
   const previous=this.db.get('nativeTakeovers',sessionKey(nodeId,runtime,sessionId));
   const lease=this.leases?.reserve({nodeId,runtime,sessionId,previous});
   if(!this.leases)this.assertIdle({runtime,sessionId});
-  const turn={id:randomUUID(),clientTurnId,nodeId,runtime,sessionId,prompt:text,text:'',events:[],attachments:items,status:'queued',phase:'queued',createdAt:now(),updatedAt:now()};
+  const turn={id:randomUUID(),clientTurnId,nodeId,runtime,sessionId,prompt:text,text:'',events:[],attachments:items,status:'queued',phase:'queued',createdAt:now(),updatedAt:now(),...(control?{control}:{})};
   this.db.put('nativeTurns',turn);
   this.db.put('nativeTakeovers',{id:sessionKey(nodeId,runtime,sessionId),nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
-  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:text,attachments:items,...(lease||{})});
+  const settings=this.settings(nodeId,runtime,sessionId);
+  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:text,attachments:items,...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(control?{control}:{}),...(lease||{})});
   this.change();return nativeTurnView(turn);
  }
  /** Workers download only the attachments bound to an unfinished turn. */
@@ -190,8 +228,10 @@ export class NativeTurnRunner{
     else if(type==='message'&&typeof p.text==='string')this.event(m.id,{kind:'message',text:p.text,phase:p.phase||null});
     else if(type==='text'&&typeof p.text==='string')this.event(m.id,{kind:'text',text:p.text});
     else if(type==='log'&&typeof p.text==='string')this.event(m.id,{kind:'log',text:p.text.slice(0,4000),thinking:/think|\u601d\u8003/i.test(p.text)});
+    else if(type==='context_usage'&&p&&typeof p==='object')this.event(m.id,{kind:'context_usage',sample:p});
    };
-   const resident=NATIVE_RESIDENT_RUNTIMES.has(m.runtime),inputs={attachments:files,inputImages:images};
+   // Model/effort from the Sessions page: flags at spawn for Claude/Agy (Claude later changes them in place), per turn for Codex and Grok.
+   const resident=NATIVE_RESIDENT_RUNTIMES.has(m.runtime),inputs={attachments:files,inputImages:images,model:typeof m.model==='string'&&m.model?m.model:null,effort:typeof m.effort==='string'&&m.effort?m.effort:null,control:m.control||null};
    if(existing&&alive(existing.session)){clearTimeout(existing.timer);existing.busy=m.id;state.session=existing.session;state.resident=true;existing.session.reuse({emit,...inputs});}
    else{
     if(existing){await this.close(key,'exited');throw Error('The previous CLI exited; retry after its lease is returned');}

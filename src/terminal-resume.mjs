@@ -4,6 +4,7 @@ import { constants, readFileSync } from 'node:fs';
 import { join, resolve, delimiter, relative, isAbsolute, basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { Store } from './store.mjs';
 import { tr } from './i18n.mjs';
 import {syncError} from './source-sync-manifest.mjs';
@@ -18,6 +19,7 @@ export const TERMINAL_PREPARATION_TTL_MS = 5 * 60 * 1000;
 export function nativeSessionId(raw, runtime) {
   const id = runtime === 'agy'
     ? raw.conversationId || raw.conversation_id || raw.session_id || raw.sessionId
+    : runtime === 'codex' ? raw.thread_id || raw.session_id || raw.sessionId
     : raw.session_id || raw.sessionId;
   return typeof id === 'string' && sessionPattern.test(id) ? id : null;
 }
@@ -34,6 +36,15 @@ export function resumeArgs(runtime, id) {
   const option = { codex:'resume', claude:'--resume', grok:'--resume', agy:'--conversation' }[runtime];
   if (!option) throw new Error(tr('terminalResume.cliDoesNotSupportResume'));
   return [option, id];
+}
+
+/** Headless first turn of a session opened on the Sessions page: the TUI's session and permission flags plus the CLI's print mode with JSON output, so the new native ID can be read from stdout. */
+export function nativeHelloArgs(runtime, tuiArgs, prompt = 'Hi') {
+  if (runtime === 'codex') return ['exec', '--json', '--skip-git-repo-check', ...tuiArgs, prompt];
+  if (runtime === 'claude') return ['-p', prompt, '--output-format', 'stream-json', '--verbose', ...tuiArgs];
+  if (runtime === 'grok') return [...tuiArgs, '--output-format', 'streaming-messages-json', '-p', prompt];
+  if (runtime === 'agy') return [...tuiArgs, '--output-format', 'stream-json', '--print', prompt];
+  throw new Error(tr('terminalResume.cliDoesNotSupportResume'));
 }
 
 /** Start an interactive CLI with the saved role settings; never continue, fork or reference an old native ID. */
@@ -340,18 +351,26 @@ async function runTerminal(dbPath,id) {
     (await import('./native-sessions.mjs')).assertNativeSessionIdle(db,{nodeId:before.nodeId,runtime:before.nativeSession.runtime,sessionId:before.nativeSession.id,workspace:before.workspace,projectId:before.projectId,claimId:id});
   }
   const session=claimTerminalSession(db,id,process.pid);
-  const args=session.kind==='native'?(await import('./native-sessions.mjs')).nativeTuiArgs(session.nativeSession.runtime,{id:session.nativeSession.id,...session.nativeOptions}):session.kind==='new'?freshTerminalArgs({...session.roleSettings,runtime:session.nativeSession.runtime,workspace:session.workspace}):[...resumeArgs(session.nativeSession.runtime,session.nativeSession.id),...(scopedTerminalArgs(session.nativeSession.runtime,session.permissionScope,session.toolRoots)||[])];
+  // WB_NATIVE_HELLO: the Worker runs this launcher itself for a session opened on the Sessions page; the CLI answers "Hi" headlessly instead of opening a TUI.
+  const hello=process.env.WB_NATIVE_HELLO==='1'&&session.kind==='native';
+  let args=session.kind==='native'?(await import('./native-sessions.mjs')).nativeTuiArgs(session.nativeSession.runtime,{id:session.nativeSession.id,...session.nativeOptions}):session.kind==='new'?freshTerminalArgs({...session.roleSettings,runtime:session.nativeSession.runtime,workspace:session.workspace}):[...resumeArgs(session.nativeSession.runtime,session.nativeSession.id),...(scopedTerminalArgs(session.nativeSession.runtime,session.permissionScope,session.toolRoots)||[])];
   console.log(session.kind==='new'||session.kind==='native'&&!session.nativeSession.id?tr('roleTerminal.startingNew',{workspace:session.workspace}):tr('terminalResume.resumingOriginalSessionDirectoryPlatform', { id: session.nativeSession.id, workspace: session.workspace }));
   const env={...session.privateEnv};
   for(const key of ['TERM','COLORTERM','TERM_PROGRAM','TERM_PROGRAM_VERSION'])if(process.env[key])env[key]=process.env[key];
-  const child=spawn(session.nativeSession.binary,args,{cwd:session.workspace,env,stdio:'inherit'});
+  if(hello)args=nativeHelloArgs(session.nativeSession.runtime,args);
+  const child=spawn(session.nativeSession.binary,args,{cwd:session.workspace,env,stdio:hello?['ignore','pipe','pipe']:'inherit'});
+  let reportedId=null,stderr='';
+  if(hello){
+    child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-2000);});
+    createInterface({input:child.stdout}).on('line',line=>{if(reportedId)return;try{reportedId=nativeSessionId(JSON.parse(line),session.nativeSession.runtime);}catch{}});
+  }
   // Ctrl-C is handed to the CLI; the wrapper process stays until the child process actually exits.
   const onSignal=()=>{};process.on('SIGINT',onSignal);process.on('SIGTERM',()=>child.kill('SIGTERM'));
   let observation=null;
   db.transaction(()=>{const current=db.get('terminalSessions',id);if(closed.has(current.status)){child.kill('SIGTERM');return;}const childIdentity=processKey(terminalProcessIdentity(child.pid));db.put('terminalSessions',{...current,childPid:child.pid,childIdentity});if(current.kind==='native'&&current.catalogEntryId&&!current.nativeSession.id)observation=startNativeSessionObservation(current.nativeSession,childIdentity);});
   const code=await new Promise(resolve=>{child.once('error',e=>{console.error(e.message);resolve(1);});child.once('exit',code=>resolve(code??1));});
   const observed=observation?await observation.finish():[],finishedAt=new Date().toISOString();
-  db.transaction(()=>{const current=db.get('terminalSessions',id);if(!closed.has(current.status))db.put('terminalSessions',{...current,status:'finished',finishedAt});if(current.catalogEntryId){const resumed=Boolean(current.nativeSession.id),sessionId=current.nativeSession.id||current.nativeOptions?.freshId||observed[0]||null;updateNativeCatalog(db,current,{sessionId,status:resumed?'ready':sessionId?'awaiting_history':'awaiting_native_id',finishedAt,exactLastScan:finishedAt});}});
+  db.transaction(()=>{const current=db.get('terminalSessions',id);if(!closed.has(current.status))db.put('terminalSessions',{...current,status:'finished',finishedAt});if(hello)db.put('terminalSessions',{...db.get('terminalSessions',id),hello:true,exitCode:code,...(code?{helloError:stderr.trim().slice(-500)}:{})});if(current.catalogEntryId){const resumed=Boolean(current.nativeSession.id),sessionId=current.nativeSession.id||current.nativeOptions?.freshId||observed[0]||reportedId||null;updateNativeCatalog(db,current,{sessionId,status:resumed?'ready':sessionId?'awaiting_history':'awaiting_native_id',finishedAt,exactLastScan:finishedAt});}});
   process.removeListener('SIGINT',onSignal);db.db.close();process.exitCode=code;
 }
 
