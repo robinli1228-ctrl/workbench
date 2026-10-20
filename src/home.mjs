@@ -758,7 +758,7 @@ const server = http.createServer(async (req, res) => {
         if(worker.nodeKind==='cloud'&&!device)throw Error('Register SSH access for this server first');
         const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
         return await withFolderPreparation(fresh&&worker.capabilities?.localFolderSelection===1&&b.workspace?{nodeId,scope:`native:${catalogEntryId}`,path:b.workspace,operationId:b.operationId}:null,async folderCandidate=>{
-        const gitCredential=b.sessionId?await nativeTurns.gitCredentialFor(nodeId,b.runtime,b.sessionId).catch(()=>null):null;
+        const gitCredential=b.sessionId?await nativeTurns.gitCredentialFor(nodeId,b.runtime,b.sessionId):null;
         const input={runtime:b.runtime,sessionId:b.sessionId||null,record:historyRecord,freshSessionId,entryId:catalogEntryId,title:fresh?b.title.trim():null,workspace:folderCandidate?.root||b.workspace,folderCandidate,allowAll:b.allowAll,bindings,managedProjectIds:nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId}),...(gitCredential?{gitCredential}:{})};
         const preview=await workerQuery({nodeId},'native_terminal_preview',input,30000);
         input.managedProjectIds=nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId});
