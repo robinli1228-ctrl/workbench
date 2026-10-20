@@ -556,6 +556,9 @@ const server = http.createServer(async (req, res) => {
       } else if (apiToken && !userOk) return json(res, { error: tr('home.accessTokenRequired') }, 401);
       if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) return json(res, { error: tr('home.crossSiteRequestRejected') }, 403);
       if(pathname==='/api/platform/version'&&req.method==='GET')return json(res,{instances:softwareInventory()});
+      // The complete setup guide from docs/, for reading on the page or copying to an AI assistant; no state involved.
+      if(pathname==='/api/platform/setup-guide'&&req.method==='GET'){const language=url.searchParams.get('lang')==='zh'?'zh':'en',file=new URL(`../docs/${language==='zh'?'SETUP-GUIDE.zh-CN.md':'SETUP-GUIDE.md'}`,import.meta.url);
+        return json(res,{language,version:softwareVersion?.version||null,markdown:await readFile(file,'utf8')});}
       if(pathname==='/api/platform/updates'&&req.method==='GET'){
         const instances=softwareInventory(),result=await softwareUpdates.check(instances.map(item=>item.softwareVersion));
         const {versions,...summary}=result;

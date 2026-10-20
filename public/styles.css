@@ -3214,3 +3214,14 @@ select:disabled { opacity: .6; }
 .nt-step .nt-icon { width: 13px; height: 13px; color: #9aa3ad; }
 .nt-step .nt-detail { margin: 2px 6px 6px 26px; }
 .nt-working { font-size: 12px; color: #6b7280; }
+
+/* Setup guide block on the Configuration Information page. */
+.setup-guide-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.setup-guide-head h4 { margin: 0; }
+.setup-guide-actions { display: flex; gap: 8px; }
+.setup-guide-body { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); max-height: 70vh; overflow: auto; font-size: 14px; line-height: 1.65; }
+.setup-guide-body table { border-collapse: collapse; margin: 8px 0 14px; font-size: 13px; }
+.setup-guide-body th, .setup-guide-body td { padding: 5px 10px; border: 1px solid var(--line); vertical-align: top; }
+.setup-guide-body pre { padding: 10px 12px; border-radius: 8px; background: #f6f8f7; overflow: auto; font-size: 12.5px; }
+.setup-guide-body h2 { margin-top: 22px; font-size: 16px; }
+.setup-guide-body h3 { margin-top: 16px; font-size: 14px; }

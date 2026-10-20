@@ -308,6 +308,12 @@
 
             <section class="settings-panel" data-settings-panel="information" hidden>
               <div class="settings-panel-heading"><h3>Configuration Information</h3><p>Software versions and update notes only. This page does not call an AI, install updates or restart services.</p></div>
+              <div class="settings-block setup-guide" id="setup-guide">
+                <div class="setup-guide-head"><h4>Setup guide</h4><div class="setup-guide-actions"><button class="secondary" id="copy-setup-guide" type="button">Copy for an AI assistant</button><button class="secondary" id="toggle-setup-guide" type="button" aria-expanded="false" aria-controls="setup-guide-body">Show guide</button></div></div>
+                <p class="workspace-note">The complete installation and configuration guide: architecture, prerequisites, environment variables, multi-device setup, services, upgrade and troubleshooting. Copy it and hand it to an AI assistant to walk through the setup with you.</p>
+                <p id="setup-guide-feedback" class="workspace-note" role="status" hidden></p>
+                <div id="setup-guide-body" class="setup-guide-body markdown-body" hidden></div>
+              </div>
               <div class="software-update-actions"><button class="primary" id="check-software-updates" type="button">Check for updates</button><p class="workspace-note">Compare with GitHub main. Results are cached for one minute.</p></div>
               <p id="software-update-feedback" class="form-feedback" role="status" hidden></p>
               <div id="software-latest" class="settings-block" hidden></div>
