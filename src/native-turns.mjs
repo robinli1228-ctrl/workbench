@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {giteeRepository} from './repository.mjs';
+import {traditionalInput} from './input-language.mjs';
 
 /**
  * Takeover turns: the user continues one exact native CLI session from the Sessions page.
@@ -288,7 +289,8 @@ export class NativeTurnRunner{
     if(resident){this.resident.set(key,{session:state.session,busy:m.id,timer:null,message:m});state.resident=true;}
    }
    this.event(m.id,{kind:'status',status:'starting',resident:state.resident});
-   await state.session.start(prompt);
+   // Like group-chat runs: the CLI receives the prose in Traditional Chinese; Home keeps what the user typed, the page shows Simplified.
+   await state.session.start(m.control?prompt:traditionalInput(prompt));
    if(state.stopRequested)await state.session.stop();
   }catch(error){end('failed',error.message);}
  }
