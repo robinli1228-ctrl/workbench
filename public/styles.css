@@ -3018,3 +3018,13 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .nt-system-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nt-system.is-error code, .nt-system.is-error .nt-system-detail { color: var(--danger); }
 .nt-system .nt-pulse { margin-left: 2px; }
+/* connection card: where the session runs, as a two-way switch */
+.native-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 4px 0 10px; padding: 4px; border-radius: 12px; background: #eef2ef; }
+.native-mode { display: grid; gap: 1px; min-height: 48px; padding: 7px 10px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--muted); font: inherit; text-align: left; cursor: pointer; }
+.native-mode:hover:not(:disabled) { background: #fff; color: var(--ink); }
+.native-mode.is-on { background: #fff; border-color: var(--line); color: var(--ink); box-shadow: 0 1px 2px rgb(20 36 28 / 6%); cursor: default; opacity: 1; }
+.native-mode:disabled:not(.is-on) { opacity: .55; }
+.native-mode.is-pending { animation: nt-pulse 1.4s ease-in-out infinite; }
+.native-mode-title { font-size: 13px; font-weight: 600; }
+.native-mode-sub { font-size: 11px; }
+.native-connect .native-session-actions a.primary { display: inline-flex; justify-content: center; align-items: center; min-height: 36px; text-decoration: none; }

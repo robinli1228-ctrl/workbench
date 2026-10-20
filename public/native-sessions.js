@@ -210,45 +210,81 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   else if(item.canReopen)state='unstarted';
   else if(!id||item.hasHistory===false)state='nohistory';
   else state='idle';
-  const signature=JSON.stringify([key(item),state,detail,claim?.id,claim?.status,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
-  const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'Waiting for iTerm to open',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
+  // Coming back from iTerm without pressing anything here: once its claim is gone, chatting on this page is allowed again.
+  const prevState=connectionStates.get(key(item));connectionStates.set(key(item),state);
+  if(['terminal','prepared','returning','stopping'].includes(prevState)&&state==='idle')takeover.returned(item);
+  const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
+  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
+  const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
   sideBadge.hidden=false;sideBadge.className=`native-side-badge is-${state}`;sideBadge.textContent=t(LABEL[state]);
   if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren(el('h3','',t('Connection')));
-  const head=el('div','native-connect-head');head.append(el('span',`native-connect-dot is-${state}`),el('strong','',t(LABEL[state])));panel.append(head);
-  const hint={page:'Messages sent below continue this exact native session on its device.',ending:'Waiting for the resident CLI to exit.',starting:'The CLI is answering its first message; chat opens here in a moment.',terminal:'The CLI is open in iTerm. Return it to chat here.',prepared:'Open the prepared iTerm link, or return it to chat here.',returning:'Waiting for the CLI process to exit.',stopping:'Waiting for the CLI process to exit.',idle:'Take over to chat here, or open the session in iTerm.',unstarted:'Open it on this page or in iTerm to start.',nohistory:'This session has no readable history yet.',offline:'Reconnect the device to continue this session.'}[state];
+  // Where the session runs: a two-way switch; moving it performs the whole hand-over (end / prepare / open / return).
+  const seg=el('div','native-mode-switch');seg.setAttribute('role','group');seg.setAttribute('aria-label',t('Connection'));
+  const switchable=online&&canTakeover&&!switchingTo&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
+  const modeButton=(value,title,sub)=>{const b=el('button',`native-mode${mode===value?' is-on':''}${switchingTo===value?' is-pending':''}`);b.type='button';b.append(el('span','native-mode-title',title),el('span','native-mode-sub',t(sub)));b.disabled=!switchable||mode===value;b.setAttribute('aria-pressed',String(mode===value));b.addEventListener('click',()=>void switchMode(item,value));return b;};
+  seg.append(modeButton('page',t('This page'),'Chat here'),modeButton('terminal','iTerm','Native terminal'));panel.append(seg);
+  const head=el('div','native-connect-head');head.append(el('span',`native-connect-dot is-${state}`),el('strong','',t(switchingTo?'Switching…':LABEL[state])));panel.append(head);
+  const hint={page:'Messages sent below continue this exact native session on its device.',ending:'Waiting for the resident CLI to exit.',starting:'The CLI is answering its first message; chat opens here in a moment.',terminal:'The CLI is open in iTerm. Switch back here when it has exited, or stop it.',prepared:'iTerm asks once to confirm the command. If it did not open, use the buttons below.',returning:'Waiting for the CLI process to exit.',stopping:'Waiting for the CLI process to exit.',idle:'Choose where to continue: chat on this page, or open the session in iTerm.',unstarted:'Open it on this page or in iTerm to start.',nohistory:'This session has no readable history yet.',offline:'Reconnect the device to continue this session.'}[state];
   if(hint)panel.append(el('p','native-side-hint',t(hint)));
   if(detail)panel.append(el('p','native-side-hint',t(detail)));
   if(state==='page'&&!IMAGE_CLIS.has(item.runtime))panel.append(el('p','native-side-hint',t('{tool} cannot receive images here; files are passed as paths',{tool:names[item.runtime]})));
   if(claim?.processError)panel.append(el('p','native-side-hint',t(claim.processError)));
   const project=data.projects?.find(p=>p.id===(claim?.projectId||other?.projectId))||((claim||other)&&owners.size===1?data.projects?.find(p=>owners.has(p.id)):null);if(project)panel.append(el('p','native-side-hint',t('Group chat paused on this device: {project}',{project:project.name})));
   const actions=el('div','native-session-actions');
+  const perform=async action=>{
+   if(!claim||returningClaim)return;
+   if(action==='stop'&&!confirm(t('Stop this terminal CLI and return control to Workbench? Unfinished terminal work will be interrupted.')))return;
+   returningClaim=claim.id;controlFeedback=null;renderSessionControls(selected);
+   try{
+    const path=claim.kind==='native'?`${endpoint(claim.nodeId)}/terminal`:claim.kind==='new'?`/api/projects/${encodeURIComponent(claim.projectId)}/roles/${encodeURIComponent(claim.roleId)}/terminal`:`/api/runs/${encodeURIComponent(claim.runId)}/terminal`;
+    const result=await api(path,{method:'POST',json:claim.kind==='native'?{action,operationId:claim.id}:{action,id:claim.id}});
+    if(result?.released===true)takeover.returned(item);
+    await onStateRefresh();void load({quiet:true});
+   }catch(error){controlFeedback={key:key(item),text:error.message};}
+   finally{returningClaim=null;renderSessionControls(selected);}
+  };
   if(state==='page'||state==='ending'){
-   const pending=state==='ending',release=button(pending?'Ending takeover…':'End takeover',()=>void takeover.release(item),'secondary');release.disabled=pending||takeover.releaseDisabled(item);
-   const toTerminal=button('Move to iTerm',async()=>{await takeover.release(item);openForm(item);},'secondary');toTerminal.disabled=release.disabled;
-   actions.append(release,toTerminal);const feedback=takeover.feedback(item);if(feedback)panel.append(el('p','global-error',feedback));
-  }else if(claim&&['terminal','prepared','returning','stopping','starting'].includes(state)){
-   const perform=async action=>{
-    if(returningClaim)return;
-    if(action==='stop'&&!confirm(t('Stop this terminal CLI and return control to Workbench? Unfinished terminal work will be interrupted.')))return;
-    returningClaim=claim.id;controlFeedback=null;renderSessionControls(selected);
-    try{
-     const path=claim.kind==='native'?`${endpoint(claim.nodeId)}/terminal`:claim.kind==='new'?`/api/projects/${encodeURIComponent(claim.projectId)}/roles/${encodeURIComponent(claim.roleId)}/terminal`:`/api/runs/${encodeURIComponent(claim.runId)}/terminal`;
-     const result=await api(path,{method:'POST',json:claim.kind==='native'?{action,operationId:claim.id}:{action,id:claim.id}});
-     if(result?.released===true)takeover.returned(item);
-     await onStateRefresh();void load({quiet:true});
-    }catch(error){controlFeedback={key:key(item),text:error.message};}
-    finally{returningClaim=null;renderSessionControls(selected);}
-   };
+   const pending=state==='ending',release=button(pending?'Ending takeover…':'End takeover',()=>void takeover.release(item),'secondary');release.disabled=pending||takeover.releaseDisabled(item);actions.append(release);
+   const feedback=takeover.feedback(item);if(feedback)panel.append(el('p','global-error',feedback));
+  }else if(state==='prepared'&&claim){
+   if(claim.url){const open=el('a','primary',t('Open iTerm'));open.href=claim.url;actions.append(open);}
+   if(claim.command){const copy=button('Copy terminal command',async b=>{await navigator.clipboard?.writeText(claim.command).catch(()=>{});b.target.textContent=t('Copied');});actions.append(copy);}
+   const cancel=button('Cancel',()=>void perform('release'));cancel.disabled=Boolean(returningClaim);actions.append(cancel);
+  }else if(claim&&['terminal','returning','stopping','starting'].includes(state)){
    const release=button(state==='starting'?'Cancel start':'Return to platform',()=>void perform('release')),stop=button('Stop CLI and return',()=>void perform('stop'),'danger');
    release.disabled=Boolean(returningClaim)||!worker?.online;stop.disabled=release.disabled||worker?.capabilities?.terminalControl!==1||claim.processState==='unknown';
    if(worker?.capabilities?.terminalControl!==1)stop.title=t('Upgrade this Worker to check or stop terminal processes.');
    actions.append(release);if(state!=='starting')actions.append(stop);
-  }else if(state==='idle'){
-   const take=button('Take over on this page',()=>takeover.enable(item),'primary'),terminal=button('Open in iTerm',()=>openForm(item),'secondary');take.disabled=terminal.disabled=!canTakeover;actions.append(take,terminal);
   }else if(state==='unstarted'){const open=button('Open on this page',()=>openForm(item),'primary');open.disabled=!canTakeover;actions.append(open);}
   if(actions.childElementCount)panel.append(actions);
   if(online&&!canTakeover&&['idle','unstarted'].includes(state))panel.append(el('p','native-side-hint',t('Upgrade this Worker to safely take over native sessions')));
   if(controlFeedback?.key===key(item))panel.append(el('p','global-error',t(controlFeedback.text)));
+ }
+ const connectionStates=new Map(),switching=new Map();
+ const waitUntil=(check,ms)=>new Promise(resolve=>{const started=Date.now();const tick=()=>{if(check()||Date.now()-started>ms)return resolve(check());setTimeout(tick,300);};tick();});
+ const nativeClaimOf=item=>(getData().terminalSessions||[]).find(c=>c.kind==='native'&&c.nodeId===item.nodeId&&!['released','cancelled'].includes(c.status)&&(item.entryId&&c.catalogEntryId===item.entryId||nativeId(item)&&c.nativeSession?.runtime===item.runtime&&c.nativeSession?.id===nativeId(item)));
+ /** Prepare the iTerm link for an existing session and open it at once; the link stays on the claim for "Open iTerm" / "Copy" if iTerm did not come up. */
+ async function openInTerminal(item){
+  const result=await api(`/api/native-sessions/${encodeURIComponent(item.nodeId)}/terminal`,{method:'POST',json:{runtime:item.runtime,sessionId:nativeId(item),...(item.entryId?{entryId:item.entryId}:{}),workspace:item.workspace||'',allowAll:true,useLocalSshKey:true,operationId:crypto.randomUUID()}});
+  if(result?.url)window.location.assign(result.url);
+  return result;
+ }
+ /** Move the session between this page and iTerm, doing every step in between: end the page takeover, prepare and open iTerm; or return the terminal and reopen the composer here. */
+ async function switchMode(item,target){
+  const id=key(item);if(switching.has(id))return;
+  if(item.canReopen){openForm(item);return;}
+  switching.set(id,target);controlFeedback=null;renderSessionControls(item);
+  try{
+   if(target==='terminal'){
+    if(takeover.isOn(item)||takeover.canChat(item)){await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
+    await openInTerminal(item);
+   }else{
+    const claim=nativeClaimOf(item);
+    if(claim){const result=await api(`${endpoint(claim.nodeId)}/terminal`,{method:'POST',json:{action:'release',operationId:claim.id}});if(result?.released!==true)throw Error('The terminal CLI has not exited yet; quit it in iTerm or stop it below');}
+    takeover.returned(item);await onStateRefresh();takeover.enable(item);
+   }
+  }catch(error){controlFeedback={key:id,text:error.message};}
+  finally{switching.delete(id);await onStateRefresh().catch(()=>{});void load({quiet:true});if(selected)renderSessionControls(selected);}
  }
  function options(select,values){const old=select.value;select.replaceChildren(...values.map(([value,label])=>{const o=el('option','',label);o.value=value;return o;}));if(values.some(([v])=>v===old))select.value=old;}
  // First visit shows dialog-created sessions; options() preserves any explicit choice on later refreshes.
