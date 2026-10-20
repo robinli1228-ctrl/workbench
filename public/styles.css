@@ -3176,3 +3176,10 @@ select:disabled { opacity: .6; }
 .settings-page select, .native-session-form select, :is(#role-form, #supervisor-form) select { height: 34px; min-height: 34px; }
 .native-setting select { height: 30px; min-height: 30px; padding: 0 26px 0 8px; font-size: 12px; line-height: 28px; background-position: right 7px center; background-size: 12px 12px; }
 @media (max-width: 1000px) { select { height: 38px; min-height: 38px; font-size: 16px; line-height: 36px; } .native-setting select { height: 34px; min-height: 34px; font-size: 14px; line-height: 32px; } }
+
+/* Context: the bar with the compact icon after it. */
+.native-context-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 8px; }
+.native-context-row .native-context-bar { flex: 1; margin: 0; }
+.native-compact { width: 24px; height: 24px; min-height: 24px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); flex: none; }
+.native-compact:hover:not(:disabled) { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.native-compact:disabled { opacity: .4; }

@@ -653,9 +653,11 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   // context
   const ctx=el('div','native-context');const head=el('div','native-context-head');head.append(el('span','native-context-title',t('Context')));
   const amount=used==null?t('Not measured yet'):limit?`${tokensText(used)} / ${tokensText(limit)} · ${pct}%`:t('{tokens} tokens',{tokens:tokensText(used)});head.append(el('span','native-context-amount',amount));
-  if(['claude','codex'].includes(value.runtime)){const compactButton=button('Compact',()=>void takeover.compact(),'secondary native-card-action');compactButton.disabled=!canCompact;if(!takeover.isOn(value))compactButton.title=t('Take over the session to compact its context here');head.append(compactButton);}
   ctx.append(head);
-  const bar=el('div',`native-context-bar${pct!=null?pct>=90?' is-high':pct>=70?' is-mid':'':' is-unknown'}`);const fill=el('span','');fill.style.width=`${pct??0}%`;bar.append(fill);ctx.append(bar);
+  // The bar and, after it, the compact icon on one line.
+  const barRow=el('div','native-context-row'),bar=el('div',`native-context-bar${pct!=null?pct>=90?' is-high':pct>=70?' is-mid':'':' is-unknown'}`);const fill=el('span','');fill.style.width=`${pct??0}%`;bar.append(fill);barRow.append(bar);
+  if(['claude','codex'].includes(value.runtime)){const compactButton=el('button','icon-button native-compact');compactButton.type='button';setActionIcon(compactButton,'compact',t('Compact'));compactButton.disabled=!canCompact;if(!takeover.isOn(value))compactButton.title=t('Take over the session to compact its context here');compactButton.addEventListener('click',()=>void takeover.compact());barRow.append(compactButton);}
+  ctx.append(barRow);
   if(sample?.state==='compacted'&&sample.compacted)ctx.append(el('p','native-side-hint',t('Compacted {from} → {to}',{from:tokensText(sample.compacted.preTokens),to:tokensText(sample.compacted.postTokens)})));
   card.append(ctx);
   const feedback=takeover.feedback(value);if(feedback)card.append(el('p','global-error',feedback));
