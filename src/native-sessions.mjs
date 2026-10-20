@@ -4,17 +4,20 @@ import {homedir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {join,basename,dirname,relative,isAbsolute} from 'node:path';
-import {resumeArgs,managedRunProcessState,terminalOwnsProject} from './terminal-resume.mjs';
+import {resumeArgs,managedRunProcessState,terminalOwnsProject,nativeSessionProjectIds} from './terminal-resume.mjs';
 
 const runtimes=new Set(['codex','claude','grok','agy']);
 const idPattern=/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
 const inside=(root,path)=>{const r=relative(root,path);return !r||r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
 
-/** A terminal link cannot start a second driver for an occupied history or overlapping work folder. */
+/** A terminal link cannot start a second driver for an occupied history, a project another terminal holds, or a folder a managed run is working in.
+ * Two independent native sessions may share a folder (the default folder is shared by design); managed ownership remains exclusive. */
 export function assertNativeSessionIdle(db,{runtime,sessionId,workspace,projectId,nodeId,claimId}){
  const overlap=path=>typeof path==='string'&&typeof workspace==='string'&&(inside(path,workspace)||inside(workspace,path));
+ // Shared folders are only for independent native sessions, never a managed terminal whose project was rebound elsewhere.
+ const independent=s=>['native','native-turn'].includes(s.kind)&&s.projectId?.startsWith('native-tui:')&&!nativeSessionProjectIds(db,{nodeId:s.nodeId,runtime:s.runtime||s.nativeSession?.runtime,sessionId:s.sessionId||s.nativeSession?.id}).length;
  if(db.list('runs').some(r=>r.status==='reconciling'||(!['succeeded','failed','interrupted'].includes(r.status)||managedRunProcessState(r)!=='exited')&&(r.projectId===projectId||overlap(r.workspace)||sessionId&&r.nativeSession?.runtime===runtime&&r.nativeSession?.id===sessionId)))throw Error('This session or folder is still used by a managed CLI; finish it before opening a terminal');
- if(db.list('terminalSessions').some(s=>s.id!==claimId&&(!nodeId||s.nodeId===nodeId)&&!['released','cancelled'].includes(s.status)&&(terminalOwnsProject(db,s,projectId)||overlap(s.workspace)||sessionId&&(s.nativeSession?.runtime||s.runtime)===runtime&&(s.nativeSession?.id||s.sessionId)===sessionId)))throw Error('Session is occupied; no second CLI was started');
+ if(db.list('terminalSessions').some(s=>s.id!==claimId&&(!nodeId||s.nodeId===nodeId)&&!['released','cancelled'].includes(s.status)&&(terminalOwnsProject(db,s,projectId)||overlap(s.workspace)&&(!independent(s)||projectId&&!projectId.startsWith('native-tui:'))||sessionId&&(s.nativeSession?.runtime||s.runtime)===runtime&&(s.nativeSession?.id||s.sessionId)===sessionId)))throw Error('Session is occupied; no second CLI was started');
 }
 
 /** Exact registered histories must remain inside the configured vendor directory. */
@@ -49,7 +52,8 @@ const result=(callId,output,failed,at)=>({role:'tool_result',callId:String(callI
 function messagesFrom(rows,runtime){return rows.flatMap(row=>{
  const at=row.timestamp||null,out=[],say=(role,content)=>{const text=bodyText(content);if(text)out.push({role,text:text.slice(0,12000),timestamp:at});};
  if(runtime==='claude'){
-  const m=row.isSidechain===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
+  // Meta user rows are context Claude Code injects (image descriptions, command caveats), never something the user typed.
+  const m=row.isSidechain===true||row.isMeta===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
   say(m.role,m.content);
   for(const b of Array.isArray(m.content)?m.content:[]){if(b?.type==='tool_use')out.push(call(b.id,b.name,b.input,at));else if(b?.type==='tool_result')out.push(result(b.tool_use_id,b.content,b.is_error,at));}
  }else if(runtime==='codex'){

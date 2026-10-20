@@ -217,6 +217,12 @@ export const UI_ICON = {
   trash: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>`,
   send: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m3 3 18 9-18 9 3-9-3-9ZM6 12h15"/></svg>`,
   folder: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z"/><path d="M3 9h18"/></svg>`,
+  /* Two arrows squeezing onto a line: compact the context. */
+  compact: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M12 3v6m0 0 3-3m-3 3L9 6M12 21v-6m0 0 3 3m-3-3-3 3M5 12h14"/></svg>`,
+  /* Four tiles: the Overview tab of the session panel. */
+  overview: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><rect x="4" y="4" width="7" height="7" rx="1.8"/><rect x="13" y="4" width="7" height="7" rx="1.8"/><rect x="4" y="13" width="7" height="7" rx="1.8"/><rect x="13" y="13" width="7" height="7" rx="1.8"/></svg>`,
+  /* An open book with its right page folding over: the right-panel toggle in the topbar. */
+  panel: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M3 6a2 2 0 0 1 2-2h5.5A1.5 1.5 0 0 1 12 5.5V20a1.5 1.5 0 0 0-1.5-1.5H5a2 2 0 0 1-2-2z"/><path d="M12 5.5A1.5 1.5 0 0 1 13.5 4H19a2 2 0 0 1 2 2v10.5a2 2 0 0 1-2 2h-5.5A1.5 1.5 0 0 0 12 20"/><path d="M21 10.5c-3.6 0-6-2.4-6-6"/></svg>`,
   roles: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M21 21v-2a6 6 0 0 0-3-5.2"/></svg>`,
   git: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 7v10M18 7v2a6 6 0 0 1-6 6H6"/></svg>`,
   refresh: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M3 9a9 9 0 0 1 15-4l3 3M21 3v5h-5M21 15a9 9 0 0 1-15 4l-3-3M3 21v-5h5"/></svg>`,

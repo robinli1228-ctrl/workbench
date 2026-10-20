@@ -3088,6 +3088,110 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
   body[data-inspector="hidden"][data-project-sidebar="hidden"] .app-shell { grid-template-columns: minmax(420px, 1fr); }
 }
 #toggle-inspector[aria-pressed="true"] { color: #3483ff; }
-/* Session list rows: title, device, and the time at the right; no tool name line. */
-.native-session-time { margin-left: auto; flex: none; color: #656c7d; font-size: 11px; font-variant-numeric: tabular-nums; }
+/* Session list rows: title and device on the first line, time on the second; no tool name. */
+.native-session-time { display: block; margin-top: 4px; color: #656c7d; font-size: 11px; font-variant-numeric: tabular-nums; }
 .native-session-list .project-item.active .native-session-time { color: inherit; opacity: .85; }
+/* The textarea is a square box inside a rounded field; clip at the field so its right end follows the pill. */
+.native-takeover-form .chat-input-field { overflow: hidden; }
+.native-takeover-form textarea { background: transparent; padding-right: 14px; }
+/* Two voices: replies keep to the left with room on the right, prompts keep to the right with room on the left. */
+.nt-agent .nt-body, .nt-agent .nt-byline { max-width: 86%; }
+.nt-agent .nt-duration { max-width: 86%; }
+.nt-user .nt-body { max-width: min(640px, 78%); }
+@media (max-width: 1000px) { .nt-agent .nt-body, .nt-agent .nt-byline, .nt-agent .nt-duration { max-width: 94%; } .nt-user .nt-body { max-width: 90%; } }
+
+/* Prompt bubbles: three lines of text; time, Copy and Full screen appear on hover. Attachments are not clamped. */
+.nt-prompt-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+.nt-prompt-tools { display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-height: 22px; margin-top: 2px; opacity: 0; transition: opacity .15s; }
+.nt-user:hover .nt-prompt-tools, .nt-user:focus-within .nt-prompt-tools { opacity: 1; }
+.nt-prompt-tools .nt-prompt-time { position: static; margin-right: 4px; opacity: 1; }
+.nt-prompt-tools .icon-button { width: 24px; height: 24px; min-height: 24px; padding: 3px; border: 0; background: transparent; color: var(--muted); }
+.nt-prompt-tools .icon-button:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.nt-prompt-tools .icon-button svg { width: 15px; height: 15px; }
+/* Reply byline: the agent icon stands on its own, sized and rounded like the group-chat avatar, without a tinted frame. */
+.nt-avatar { width: 22px; height: 22px; border-radius: 6px; background: transparent; color: inherit; overflow: hidden; }
+.nt-avatar .role-icon, .nt-avatar .role-icon svg, .nt-avatar svg, .nt-avatar img { width: 22px; height: 22px; border-radius: 6px; }
+.nt-agent .nt-body, .nt-duration { padding-left: 30px; }
+@media (max-width: 1000px) { .nt-agent .nt-body, .nt-duration { padding-left: 0; } }
+
+/* Quota card: one line per window — window, percent left, time until reset. */
+.native-quota-lines { display: grid; gap: 6px; margin: 4px 0 2px; }
+.native-quota-line { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+.native-quota-window { min-width: 2.2em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.native-quota-value { font-weight: 600; color: var(--ink); }
+.native-quota-value.is-mid { color: var(--warning); }
+.native-quota-value.is-low { color: var(--danger); }
+.native-quota-value.is-unknown { font-weight: 400; color: var(--muted); }
+.native-quota-reset { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.native-quota-line .role-name-quota { display: inline-flex; flex: none; }
+.native-quota-line { align-items: center; }
+
+/* Files tab: cards never widen the panel; long paths are cut at the end and shown whole on hover (the row title). */
+.native-session-sidebar { overflow-x: hidden; }
+.native-session-sidebar .native-side-panel > * , .native-side-card { min-width: 0; max-width: 100%; }
+.native-side-card { overflow: hidden; }
+.native-file-row { max-width: 100%; overflow: hidden; }
+.native-file-dir { direction: ltr; }
+.native-output-list, .native-project-output-list, .native-file-list { min-width: 0; max-width: 100%; }
+
+/* Send (and Stop on the sessions page) is an icon button inside the input field, bottom-aligned beside the text. */
+.chat-input-field { grid-template-columns: 36px minmax(0, 1fr) 40px; }
+.chat-input-field .chat-send { grid-column: 3; align-self: end; display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; margin: 4px 4px 4px 0; padding: 0; border: 0; border-radius: 9px; box-shadow: none; }
+.chat-input-field .chat-send svg { width: 18px; height: 18px; }
+.chat-input-field .chat-send:disabled { opacity: .45; }
+.chat-input-field .chat-send.danger { background: var(--danger); color: #fff; }
+.chat-input-field #chat-attach, .native-takeover-form .native-attach { align-self: end; }
+.native-takeover-form .chat-input-field { grid-template-columns: 36px minmax(0, 1fr) 40px; align-items: end; }
+.native-takeover-form .native-attach { margin: 2px 0 2px 2px; height: 32px; min-height: 32px; width: 32px; }
+.native-takeover-form textarea { padding-right: 8px; }
+
+/* Hand-over dialog: a short step list with live marks; the connection card's action is a small icon beside the switch. */
+.native-handover-steps { margin: 10px 0 6px; padding: 0 0 0 2px; list-style: none; display: grid; gap: 8px; }
+.native-handover-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+.native-handover-steps li.is-running, .native-handover-steps li.is-done { color: var(--ink); }
+.native-handover-steps li.is-failed { color: var(--danger); }
+.native-handover-mark { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--line); border-radius: 50%; }
+.native-handover-mark svg { width: 12px; height: 12px; }
+.native-handover-steps li.is-done .native-handover-mark { border-color: var(--green); color: var(--green); }
+.native-handover-steps li.is-failed .native-handover-mark { border-color: var(--danger); color: var(--danger); }
+.native-handover-after { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0; }
+.native-handover-after .native-side-hint { flex-basis: 100%; margin: 0; }
+.native-connect-row .native-connect-action { width: 30px; height: 30px; min-height: 30px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); }
+.native-connect-row .native-connect-action:hover:not(:disabled) { color: var(--ink); }
+.native-connect-row .native-connect-action.is-danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+
+/* Connection card header: device and tool side by side, each with its icon; names clip, full text on hover. */
+.native-identity { display: flex; align-items: center; gap: 14px; min-width: 0; margin: 0 0 10px; padding: 0 0 10px; border-bottom: 1px solid var(--line); }
+.native-identity-item { display: inline-flex; align-items: center; gap: 7px; min-width: 0; color: var(--ink); font-size: 13px; font-weight: 600; }
+.native-identity-item .role-icon, .native-identity-item .role-icon svg, .native-identity-item img, .native-identity-item > svg { width: 20px; height: 20px; border-radius: 6px; flex: none; }
+.native-identity-item .native-session-device { position: relative; width: 20px; height: 20px; flex: none; overflow: visible; }
+.native-identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-identity-item:first-child { flex: 1 1 auto; }
+
+/* Selects, app-wide: 34px, a quiet chevron, no native arrow; inputs keep their height. Cards use the 30px size. */
+select { appearance: none; -webkit-appearance: none; height: 34px; min-height: 34px; padding: 0 30px 0 10px; font-size: 13px; line-height: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 9px center; background-size: 14px 14px; }
+select:disabled { opacity: .6; }
+.settings-page select, .native-session-form select, :is(#role-form, #supervisor-form) select { height: 34px; min-height: 34px; }
+.native-setting select { height: 30px; min-height: 30px; padding: 0 26px 0 8px; font-size: 12px; line-height: 28px; background-position: right 7px center; background-size: 12px 12px; }
+@media (max-width: 1000px) { select { height: 38px; min-height: 38px; font-size: 16px; line-height: 36px; } .native-setting select { height: 34px; min-height: 34px; font-size: 14px; line-height: 32px; } }
+
+/* Context: the bar with the compact icon after it. */
+.native-context-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 8px; }
+.native-context-row .native-context-bar { flex: 1; margin: 0; }
+.native-compact { width: 24px; height: 24px; min-height: 24px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); flex: none; }
+.native-compact:hover:not(:disabled) { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.native-compact:disabled { opacity: .4; }
+/* Session filters disappear when the left column is narrowed or collapsed, at any viewport width. */
+.native-session-filters.is-narrow, body[data-project-sidebar="collapsed"] .native-session-filters, body[data-project-sidebar="hidden"] .native-session-filters { display: none; }
+/* The byline time is always visible, quietly, right after the name. */
+.nt-byline time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* Reply footer: Copy (always visible, quiet) and, after it, the turn duration on the newest reply. */
+.nt-reply-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-left: 30px; color: var(--muted); font-size: 12px; }
+.nt-reply-foot .nt-copy { width: 24px; height: 24px; min-height: 24px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); opacity: .7; }
+.nt-reply-foot .nt-copy:hover { opacity: 1; color: var(--ink); background: rgb(0 0 0 / 6%); }
+.nt-reply-foot .nt-copy svg { width: 14px; height: 14px; }
+.nt-reply-foot .nt-duration { padding-left: 0; margin-top: 0; }
+@media (max-width: 1000px) { .nt-reply-foot { padding-left: 0; } }

@@ -7,9 +7,34 @@ import { tr } from './i18n.mjs';
 const inside = (root, path) => { const r = relative(root, path); return !r || (r !== '..' && !r.startsWith('../') && !isAbsolute(r)); };
 
 /** Keep standalone sessions outside managed projects; create one child and preserve existing files on reuse. */
-export async function prepareNativeSessionFolder(roots, workspaceRoot, bindings = []) {
-  const parent = await realpath(workspaceRoot), target = join(parent, 'native-sessions');
+/** A folder name typed by the user becomes one path segment: no separators, no hidden or relative names, at most 80 characters. */
+export function sessionFolderName(value) {
+  const name = String(value || '').trim().replace(/[\\/\0:*?"<>|]+/g, '-').replace(/\s+/g, ' ').slice(0, 80).replace(/^[-. ]+|[-. ]+$/g, '');
+  return name && name !== '.' && name !== '..' ? name : 'session';
+}
+
+/**
+ * Default folder for a new native session. Without a project: <device workspace root>/native-sessions, which must not touch a
+ * project folder. With a project: <project folder on this device>/native-sessions/<name>, created for this session, so the
+ * session's files live with the project (and its group chat pauses while the session holds the folder, by design).
+ */
+export async function prepareNativeSessionFolder(roots, workspaceRoot, bindings = [], { projectRoot = null, name = null } = {}) {
   const allowed = await Promise.all(roots.map(root => realpath(root)));
+  if (projectRoot) {
+    const parent = await realpath(projectRoot);
+    if (!allowed.some(root => inside(root, parent))) throw new Error(tr('folders.directoryOutsideRangeNodeAllows'));
+    // Check each parent before creating its child; recursive mkdir would follow an existing intermediate symlink before rejection.
+    let target = parent;
+    for (const segment of ['native-sessions', sessionFolderName(name)]) {
+      if (!(await lstat(target)).isDirectory() || await realpath(target) !== target) throw new Error('Session folder is not a regular directory; select another folder.');
+      target = join(target, segment);
+      try { await mkdir(target); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+    }
+    if (!(await lstat(target)).isDirectory() || await realpath(target) !== target) throw new Error('Session folder is not a regular directory; select another folder.');
+    await access(target, constants.R_OK | constants.W_OK | constants.X_OK);
+    return { path: target };
+  }
+  const parent = await realpath(workspaceRoot), target = join(parent, 'native-sessions');
   if (!allowed.some(root => inside(root, parent))) throw new Error(tr('folders.directoryOutsideRangeNodeAllows'));
   for (const binding of bindings) {
     if (!binding.localRoot) continue;

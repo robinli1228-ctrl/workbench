@@ -128,7 +128,7 @@ if (dom.apiToken) dom.apiToken.value = app.token;
 for (const [id, name, label] of [
   ['refresh-state', 'refresh', 'Refresh'],
   ['show-project-settings', 'gear', 'Project Settings'],
-  ['toggle-inspector', 'roles', 'Hide right panel'],
+  ['toggle-inspector', 'panel', 'Hide right panel'],
   ['show-history', 'history', 'History'],
   ['add-role-sidebar', 'plus', 'Add role'],
   ['refresh-role-status', 'refresh', 'Refresh role status and remaining quota'],
