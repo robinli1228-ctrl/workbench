@@ -41,7 +41,8 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
  // Skipping is a display-only choice; retain the failed section and its reason instead of deleting records.
  skip.onclick=()=>{if(!failed||busy)return;const target=failed.section,n=document.createElement('p');target.skippedError=failed.error;n.className='workspace-note chat-bubble is-error-card';n.textContent=t(failed.error);target.history.append(n);target.initialized=true;target.cursor=null;if(!sections.includes(target)){sections.push(target);placeSections();}failed=null;controls();void loadOlder();};
  // 更早记录只由按钮加载；滚动和触摸仅改变阅读位置，不触发额外历史查询。
- return {root,hasOlder:()=>Boolean(nextPage()),
+ // Page-turn visibility belongs to the selected session; another session's unread pages cannot hide its saved turns.
+ return {root,hasOlder:()=>Boolean(sections[0]?.cursor),
   reset(item,older=[]){generation++;busy=false;failed=readError=null;newerAvailable=false;chain=[item,...older];sections=[section(item)];root.replaceChildren(bar,sections[0].block);controls();},
   /** Extend the selected session's lineage without resetting messages, an in-flight page or the reader's scroll. */
   setOlder(item,older){if(!sections.length||identity(sections[0].item)!==identity(item))return;chain=[...new Map([chain[0],...older,...chain.slice(1)].map(value=>[identity(value),value])).values()];controls();},
