@@ -3167,3 +3167,12 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-identity-item .native-session-device { position: relative; width: 20px; height: 20px; flex: none; overflow: visible; }
 .native-identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .native-identity-item:first-child { flex: 1 1 auto; }
+
+/* Selects, app-wide: 34px, a quiet chevron, no native arrow; inputs keep their height. Cards use the 30px size. */
+select { appearance: none; -webkit-appearance: none; height: 34px; min-height: 34px; padding: 0 30px 0 10px; font-size: 13px; line-height: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 9px center; background-size: 14px 14px; }
+select:disabled { opacity: .6; }
+.settings-page select, .native-session-form select, :is(#role-form, #supervisor-form) select { height: 34px; min-height: 34px; }
+.native-setting select { height: 30px; min-height: 30px; padding: 0 26px 0 8px; font-size: 12px; line-height: 28px; background-position: right 7px center; background-size: 12px 12px; }
+@media (max-width: 1000px) { select { height: 38px; min-height: 38px; font-size: 16px; line-height: 36px; } .native-setting select { height: 34px; min-height: 34px; font-size: 14px; line-height: 32px; } }
