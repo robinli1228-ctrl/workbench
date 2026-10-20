@@ -35,11 +35,16 @@ export async function ensureAgentsFiles(dir) {
 const inside = (root, path) => path === root || path.startsWith(root.endsWith('/') ? root : `${root}/`);
 const AGENTS_MAX_BYTES = 600000;
 
-/** The AGENTS.md a CLI started in `dir` would load: the nearest one at or above the folder, never above the device root that holds it. */
-export async function locateAgentsFile(roots, dir) {
+/**
+ * The AGENTS.md a session uses: the nearest one at or above the folder, but never above the project root (`stopAt`); a session
+ * outside any project looks only in its own folder. Files shared above the project are not offered for editing here.
+ */
+export async function locateAgentsFile(roots, dir, { stopAt = null } = {}) {
   const start = await realpath(dir), allowed = (await Promise.all(roots.map(r => realpath(r).catch(() => null)))).filter(Boolean);
-  const top = allowed.find(r => inside(r, start));
-  if (!top) throw new Error('Folder is outside the device roots');
+  const deviceRoot = allowed.find(r => inside(r, start));
+  if (!deviceRoot) throw new Error('Folder is outside the device roots');
+  const stop = stopAt ? await realpath(stopAt) : null;
+  const top = stop && inside(deviceRoot, stop) && inside(stop, start) ? stop : start;
   let current = start;
   for (;;) {
     const candidate = join(current, 'AGENTS.md');
@@ -51,8 +56,8 @@ export async function locateAgentsFile(roots, dir) {
   return { found: false, path: join(start, 'AGENTS.md'), dir: start, top };
 }
 
-export async function readAgentsFile(roots, dir) {
-  const located = await locateAgentsFile(roots, dir);
+export async function readAgentsFile(roots, dir, options = {}) {
+  const located = await locateAgentsFile(roots, dir, options);
   if (!located.found) return located;
   if (located.size > AGENTS_MAX_BYTES) return { ...located, content: null, tooLarge: true };
   return { ...located, content: await readFile(located.path, 'utf8') };
@@ -63,9 +68,9 @@ export async function readAgentsFile(roots, dir) {
  * is an ancestor of the folder inside the same device root (the project folder), else in the folder itself. Creation goes
  * through ensureAgentsFiles, so the CLAUDE.md pointer and the local commit happen as for a new project.
  */
-export async function writeAgentsFile(roots, dir, { path = null, content, expectedModifiedAt = null, create = false, createDir = null } = {}) {
+export async function writeAgentsFile(roots, dir, { path = null, content, expectedModifiedAt = null, create = false, createDir = null, stopAt = null } = {}) {
   if (typeof content !== 'string' || Buffer.byteLength(content) > AGENTS_MAX_BYTES) throw new Error('AGENTS.md content must be text up to 600 KB');
-  const located = await locateAgentsFile(roots, dir);
+  const located = await locateAgentsFile(roots, dir, { stopAt });
   let target = located.path;
   if (located.found) {
     if (path && path !== located.path) throw new Error('Only the AGENTS.md this folder uses can be edited here');
@@ -74,7 +79,7 @@ export async function writeAgentsFile(roots, dir, { path = null, content, expect
   } else {
     if (!create) throw new Error('No AGENTS.md above this folder; create it first');
     let where = located.dir;
-    if (createDir) { const candidate = await realpath(createDir); if (inside(candidate, located.dir) && inside(located.top, candidate)) where = candidate; }
+    if (createDir) { const candidate = await realpath(createDir); if (inside(candidate, located.dir)) where = candidate; }
     await ensureAgentsFiles(where);
     target = join(where, 'AGENTS.md');
     if (content.trim()) await writeFile(target, content, 'utf8');

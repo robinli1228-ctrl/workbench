@@ -667,11 +667,12 @@ const server = http.createServer(async (req, res) => {
         if(!record)throw Error('Session is not registered with Workbench');
         if(!record.workspace)throw Error('No working folder is recorded for this session yet.');
         if(db.get('workers',nodeId)?.capabilities?.nativeAgentsMd!==1)throw Error('Upgrade this Worker to read or edit AGENTS.md');
-        const common={workspace:record.workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},scope={nodeId,projectId:record.roleBinding?.projectId};
-        if(req.method==='GET')return json(res,await workerQuery(scope,'native_agents_md',common,15000));
-        const b=await body(req),within=(root,path)=>path===root||path.startsWith(root.endsWith('/')?root:`${root}/`);
-        // A new file goes to the project folder on this device when the session lives inside one.
+        // The project folder on this device that holds the session bounds the lookup and receives a new file; outside a project only the working folder counts.
+        const within=(root,path)=>path===root||path.startsWith(root.endsWith('/')?root:`${root}/`);
         const binding=[...db.list('workspaces')].filter(w=>w.nodeId===nodeId&&w.localRoot&&within(w.localRoot,record.workspace)).sort((x,y)=>y.localRoot.length-x.localRoot.length)[0]||null;
+        const common={workspace:record.workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null,stopAt:binding?.localRoot||null},scope={nodeId,projectId:record.roleBinding?.projectId};
+        if(req.method==='GET')return json(res,await workerQuery(scope,'native_agents_md',common,15000));
+        const b=await body(req);
         return json(res,await workerQuery(scope,'native_agents_md_write',{...common,path:typeof b.path==='string'?b.path:null,content:b.content,expectedModifiedAt:typeof b.expectedModifiedAt==='string'?b.expectedModifiedAt:null,create:b.create===true,createDir:binding?.localRoot||null},20000));
       }
       const nativeTitle=pathname.match(/^\/api\/native-sessions\/([^/]+)\/title$/);
