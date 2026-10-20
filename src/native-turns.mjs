@@ -69,14 +69,14 @@ export function applyNativeTurnEvent(turn,event){
 }
 
 export function nativeTurnView(turn){
- const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage}=turn;
+ const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer}=turn;
  return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
-  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null};
+  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer)};
 }
 
 /** Home side: validation, idempotent creation, occupancy checks, attachment binding and event intake. */
 export class NativeTurnsHome{
- constructor({db,send,online,change,assertIdle,attachments=null,leases=null}){Object.assign(this,{db,send,online,change,assertIdle,attachments,leases});db.db.exec("CREATE INDEX IF NOT EXISTS native_turn_session ON records(json_extract(data,'$.nodeId'),json_extract(data,'$.runtime'),json_extract(data,'$.sessionId')) WHERE kind='nativeTurns'; CREATE INDEX IF NOT EXISTS native_turn_client ON records(json_extract(data,'$.clientTurnId')) WHERE kind='nativeTurns';");
+ constructor({db,send,online,change,assertIdle,attachments=null,leases=null,gitCredential=null}){Object.assign(this,{db,send,online,change,assertIdle,attachments,leases,gitCredential});db.db.exec("CREATE INDEX IF NOT EXISTS native_turn_session ON records(json_extract(data,'$.nodeId'),json_extract(data,'$.runtime'),json_extract(data,'$.sessionId')) WHERE kind='nativeTurns'; CREATE INDEX IF NOT EXISTS native_turn_client ON records(json_extract(data,'$.clientTurnId')) WHERE kind='nativeTurns';");
   // Sidebar reads must not parse finished turns' event bodies on every workspace refresh.
   db.db.exec("CREATE INDEX IF NOT EXISTS native_turn_active ON records(id) WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('starting','running','stopping')");
  }
@@ -84,6 +84,8 @@ export class NativeTurnsHome{
  list(nodeId,runtime,sessionId){let bytes=0;return nativeTurnRows(this.db,{nodeId,runtime,sessionId}).map(t=>{let view=nativeTurnView(t);bytes+=Buffer.byteLength(JSON.stringify(view));if(bytes>2*1024*1024)view={...view,events:[],text:view.text.slice(-4000),truncated:true};return view;}).reverse();}
  active(nodeId,runtime,sessionId){return nativeTurnRows(this.db,{nodeId,runtime,sessionId,active:true,limit:1})[0];}
  process(nodeId,runtime,sessionId){const p=this.db.get('nativeTakeovers',sessionKey(nodeId,runtime,sessionId));return this.leases&&p?.leaseId?this.leases.held(p.leaseId):p?.status==='open';}
+ /** A finished turn is not permission to reuse an exiting process; only its matching lease closure releases the queue. */
+ waitsForExit(nodeId,runtime,sessionId){const p=this.db.get('nativeTakeovers',sessionKey(nodeId,runtime,sessionId));return p?.status==='retiring'&&this.process(nodeId,runtime,sessionId);}
  /** Model and effort chosen on the Sessions page for this native session; they ride on every turn message. */
  settings(nodeId,runtime,sessionId){const s=this.db.get('nativeSessionSettings',nativeSettingsKey(nodeId,runtime,sessionId));return {model:s?.model||null,effort:s?.effort||null,hostingAccountId:s?.hostingAccountId||null,repoUrl:s?.repoUrl||null,updatedAt:s?.updatedAt||null};}
  /**
@@ -135,21 +137,64 @@ export class NativeTurnsHome{
   if(items.some(item=>item.mime.startsWith('image/'))&&!NATIVE_IMAGE_RUNTIMES.has(runtime))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');
   if(worker?.capabilities?.nativeTurns!==3)throw Error('Upgrade this Worker to take over native sessions');
   if(!this.online(nodeId))throw Error('Device offline or not connected');
-  if(this.active(nodeId,runtime,sessionId))throw Error('This session is still replying; wait or stop it first');
-  const previous=this.db.get('nativeTakeovers',sessionKey(nodeId,runtime,sessionId));
+  const turn={id:randomUUID(),clientTurnId,nodeId,runtime,sessionId,prompt:text,text:'',events:[],attachments:items,status:'waiting',phase:null,createdAt:now(),updatedAt:now(),...(control?{control}:{})};
+  // A message sent while the session is replying waits in Home's queue, like a queued group-chat message; it starts when the reply ends.
+  if(this.active(nodeId,runtime,sessionId)||this.waitsForExit(nodeId,runtime,sessionId)||this.waiting(nodeId,runtime,sessionId).length){this.db.put('nativeTurns',turn);this.change();void this.pump(nodeId,runtime,sessionId);return nativeTurnView(turn);}
+  return nativeTurnView(this.dispatch(turn,{gitCredential}));
+ }
+ /** Reserve the resident process and hand the turn to the Worker; the only place a turn leaves the queue. */
+ dispatch(turn,{gitCredential=null}={}){
+  const {nodeId,runtime,sessionId}=turn,key=sessionKey(nodeId,runtime,sessionId),previous=this.db.get('nativeTakeovers',key);
   const lease=this.leases?.reserve({nodeId,runtime,sessionId,previous});
   if(!this.leases)this.assertIdle({runtime,sessionId});
-  const turn={id:randomUUID(),clientTurnId,nodeId,runtime,sessionId,prompt:text,text:'',events:[],attachments:items,status:'queued',phase:'queued',createdAt:now(),updatedAt:now(),...(control?{control}:{})};
-  this.db.put('nativeTurns',turn);
-  this.db.put('nativeTakeovers',{id:sessionKey(nodeId,runtime,sessionId),nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
+  const started={...turn,status:'queued',phase:'queued',updatedAt:now()};
+  this.db.put('nativeTurns',started);
+  this.db.put('nativeTakeovers',{id:key,nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
   const settings=this.settings(nodeId,runtime,sessionId);
-  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:text,attachments:items,...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(control?{control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
-  this.change();return nativeTurnView(turn);
+  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:turn.prompt,attachments:turn.attachments||[],...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(turn.control?{control:turn.control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
+  this.change();return started;
+ }
+ /** Queued turns of one session: a steered message first, then in the order they were sent. */
+ waiting(nodeId,runtime,sessionId){
+  return this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.runtime')=? AND json_extract(data,'$.sessionId')=? AND json_extract(data,'$.status')='waiting' ORDER BY rowid").all(nodeId,runtime,sessionId).map(r=>JSON.parse(r.data))
+   .sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||String(a.steerAt||'').localeCompare(String(b.steerAt||'')));
+ }
+ /** When the session is idle, start the next queued turn; the Git credential is resolved only now, never stored with the queue. */
+ async pump(nodeId,runtime,sessionId){
+  while(this.online(nodeId)&&!this.active(nodeId,runtime,sessionId)&&!this.waitsForExit(nodeId,runtime,sessionId)){
+   const next=this.waiting(nodeId,runtime,sessionId)[0];if(!next)return;
+   try{
+    const credential=next.control||!this.gitCredential?null:await this.gitCredential(this.settings(nodeId,runtime,sessionId));
+    const fresh=this.db.get('nativeTurns',next.id);
+    if(!this.online(nodeId)||this.active(nodeId,runtime,sessionId)||this.waitsForExit(nodeId,runtime,sessionId))return;
+    if(!fresh||fresh.status!=='waiting'||this.waiting(nodeId,runtime,sessionId)[0]?.id!==next.id)continue;
+    this.dispatch(fresh,{gitCredential:credential});return;
+   }catch(error){
+    const fresh=this.db.get('nativeTurns',next.id);
+    // A cancelled or concurrently dispatched message must not be resurrected by a late credential error.
+    if(fresh?.status==='waiting'){this.db.put('nativeTurns',{...fresh,status:'failed',error:error.message,endedAt:now(),updatedAt:now()});this.change();}
+   }
+  }
+ }
+ /** Steer: this queued message goes first and the current reply is interrupted so it starts at once. */
+ steer(nodeId,id){
+  const turn=this.db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
+  if(turn.status!=='waiting')return nativeTurnView(turn);
+  this.db.put('nativeTurns',{...turn,steer:true,steerAt:now(),updatedAt:now()});
+  const active=this.active(turn.nodeId,turn.runtime,turn.sessionId);
+  if(active&&ACTIVE.has(active.status))this.stop(nodeId,active.id);else{this.change();void this.pump(turn.nodeId,turn.runtime,turn.sessionId);}
+  return nativeTurnView(this.db.get('nativeTurns',id));
+ }
+ cancelWaiting(nodeId,runtime,sessionId,reason){
+  let changed=false;
+  for(const t of this.waiting(nodeId,runtime,sessionId)){this.db.put('nativeTurns',{...t,status:'cancelled',error:reason||null,endedAt:now(),updatedAt:now()});changed=true;}
+  return changed;
  }
  /** Workers download only the attachments bound to an unfinished turn. */
  attachmentFor(turnId,attachmentId){const turn=this.db.get('nativeTurns',turnId);if(!turn||!(ACTIVE.has(turn.status)||turn.status==='stopping')||!turn.attachments?.some(a=>a.id===attachmentId))throw Error('Attachment does not belong to an unfinished takeover turn');return {owner:NativeTurnsHome.owner(turn.nodeId),id:attachmentId};}
  stop(nodeId,id){
   const turn=this.db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
+  if(turn.status==='waiting'){this.db.put('nativeTurns',{...turn,status:'cancelled',endedAt:now(),updatedAt:now()});this.change();return nativeTurnView(this.db.get('nativeTurns',id));}
   if(!ACTIVE.has(turn.status))return nativeTurnView(turn);
   this.db.put('nativeTurns',{...turn,status:'stopping',updatedAt:now()});this.send(nodeId,{type:'native_turn_stop',id});this.change();return nativeTurnView(this.db.get('nativeTurns',id));
  }
@@ -157,6 +202,7 @@ export class NativeTurnsHome{
  release(nodeId,{runtime,sessionId}={}){
   if(!NATIVE_TURN_RUNTIMES.includes(runtime)||!idPattern.test(sessionId||''))throw Error('Invalid native session');
   const key=sessionKey(nodeId,runtime,sessionId),current=this.db.get('nativeTakeovers',key);
+  this.cancelWaiting(nodeId,runtime,sessionId,'Takeover ended before this message was sent');
   if(this.leases){
    if(!current||!this.process(nodeId,runtime,sessionId))return {released:true};
    this.db.put('nativeTakeovers',{...current,status:'closing',updatedAt:now()});
@@ -169,16 +215,31 @@ export class NativeTurnsHome{
   this.change();return {released:true};
  }
  receive(nodeId,m){
-  if(m.type==='native_takeover_closed'){const key=sessionKey(nodeId,m.runtime,m.sessionId),current=this.db.get('nativeTakeovers',key);if(current&&(!this.leases||current.leaseId===m.leaseId)){this.leases?.closed(nodeId,m);this.db.put('nativeTakeovers',{...current,status:'closed',reason:m.reason||null,updatedAt:now()});this.change();}return true;}
+  if(m.type==='native_takeover_closed'){const key=sessionKey(nodeId,m.runtime,m.sessionId),current=this.db.get('nativeTakeovers',key);if(!current||this.leases&&current.leaseId!==m.leaseId||current.status==='closed')return true;
+   const resumeQueue=current.status==='retiring';
+   if(!resumeQueue)this.cancelWaiting(nodeId,m.runtime,m.sessionId,'Takeover ended before this message was sent');
+   this.leases?.closed(nodeId,m);this.db.put('nativeTakeovers',{...current,status:'closed',reason:m.reason||null,updatedAt:now()});this.change();if(resumeQueue)void this.pump(nodeId,m.runtime,m.sessionId);return true;}
   if(m.type==='native_takeover_lease'){this.leases?.update(nodeId,m);this.change();return true;}
   const turn=this.db.get('nativeTurns',m.id);if(!turn||turn.nodeId!==nodeId)return false;
-  const next=applyNativeTurnEvent(turn,m.event);if(next!==turn)this.db.put('nativeTurns',next);if(next.status!==turn.status)this.change();return true;
+  const next=applyNativeTurnEvent(turn,m.event);if(next!==turn)this.db.put('nativeTurns',next);
+  if(next.status!==turn.status){if(!ACTIVE.has(next.status)&&next.status!=='stopping'){
+   const key=sessionKey(nodeId,turn.runtime,turn.sessionId),current=this.db.get('nativeTakeovers',key);
+   if(this.leases&&m.event.resident===false&&current?.status==='open'&&this.process(nodeId,turn.runtime,turn.sessionId)){
+    // Successful per-turn exits and explicitly requested interrupts may continue; a broken process does not authorize a restart.
+    const resumeQueue=next.status==='succeeded'||turn.status==='stopping';
+    this.db.put('nativeTakeovers',{...current,status:resumeQueue?'retiring':'closing',updatedAt:now()});
+    if(!resumeQueue)this.cancelWaiting(nodeId,turn.runtime,turn.sessionId,'Takeover ended before this message was sent');
+   }
+   void this.pump(nodeId,turn.runtime,turn.sessionId);
+  }this.change();}
+  return true;
  }
  /** After a Home restart no Worker connection carries an unfinished turn any more. */
- recover(){for(const t of nativeTurnRows(this.db,{active:true,limit:-1}))this.db.put('nativeTurns',{...t,status:this.leases?'stopping':'interrupted',phase:null,error:'Home restarted; awaiting process verification',...(!this.leases?{endedAt:now()}:{})});for(const p of this.db.list('nativeTakeovers'))if(p.status==='open')this.db.put('nativeTakeovers',{...p,status:this.leases?'closing':'closed',reason:'home_restart'});}
+ recover(){for(const t of this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.status')='waiting'").all().map(r=>JSON.parse(r.data)))this.db.put('nativeTurns',{...t,status:'cancelled',error:'Home restarted before this message was sent',endedAt:now(),updatedAt:now()});for(const t of nativeTurnRows(this.db,{active:true,limit:-1}))this.db.put('nativeTurns',{...t,status:this.leases?'stopping':'interrupted',phase:null,error:'Home restarted; awaiting process verification',...(!this.leases?{endedAt:now()}:{})});for(const p of this.db.list('nativeTakeovers'))if(p.status==='open')this.db.put('nativeTakeovers',{...p,status:this.leases?'closing':'closed',reason:'home_restart'});}
  /** A lost Worker connection ends its turns and resident processes: the Worker closes them on disconnect. */
  disconnected(nodeId){
-  let changed=false;for(const t of nativeTurnRows(this.db,{nodeId,active:true,limit:-1})){this.db.put('nativeTurns',{...t,status:this.leases?'stopping':'interrupted',phase:null,error:'Device disconnected; awaiting process verification',...(!this.leases?{endedAt:now()}:{})});changed=true;}
+  let changed=false;for(const t of this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.status')='waiting'").all(nodeId).map(r=>JSON.parse(r.data))){this.db.put('nativeTurns',{...t,status:'cancelled',error:'Device disconnected before this message was sent',endedAt:now(),updatedAt:now()});changed=true;}
+  for(const t of nativeTurnRows(this.db,{nodeId,active:true,limit:-1})){this.db.put('nativeTurns',{...t,status:this.leases?'stopping':'interrupted',phase:null,error:'Device disconnected; awaiting process verification',...(!this.leases?{endedAt:now()}:{})});changed=true;}
   for(const p of this.db.list('nativeTakeovers'))if(p.nodeId===nodeId&&p.status==='open'){this.db.put('nativeTakeovers',{...p,status:this.leases?'closing':'closed',reason:'disconnected'});changed=true;}
   if(changed)this.change();
  }
@@ -209,7 +270,7 @@ export class NativeTurnRunner{
    const entry=this.resident.get(key);
    if(entry&&entry.session===state.session){if(alive(entry.session)&&status!=='mismatch'&&(!this.leases||entry.session.done)){entry.busy=null;this.idle(key);}else this.close(key,status==='mismatch'?'mismatch':'exited');}
    else if(!state.resident){if(this.leases){if(state.acquired)void this.leases.retire(m,state.session).catch(()=>{});else this.leases.rejected?.(m);}else state.session?.shutdown?.();}
-   this.event(m.id,{kind:'status',status:status==='mismatch'?'failed':status,...(error?{error}:{}),resident:this.resident.has(key)});};
+   this.event(m.id,{kind:'status',status:status==='mismatch'?'failed':status,...(error?{error}:{}),resident:Boolean(entry&&entry.session===state.session&&!entry.closing&&alive(entry.session)&&(!this.leases||entry.session.done))});};
   state.finish=end;
   try{
    if(!NATIVE_TURN_RUNTIMES.includes(m.runtime)||!idPattern.test(m.sessionId||''))throw Error('Invalid native session');

@@ -42,8 +42,24 @@ export async function sourceFilePath(root,path,{createParents=false,policy={}}={
 
 /** Capture stable bytes from a no-follow descriptor; never infer stability from mtime alone. */
 export async function readSourceFile(root,path,policy={},observation=null) {
+  // A background observation whose directory walk just listed this path (no symlinks, no nested repositories on the
+  // way) needs one no-follow lstat to see that nothing changed; the per-component walk is repeated only for files
+  // that did change and for every byte read. Transfers never take this path.
+  if(observation?.walked&&observation.cached){
+    validateSourcePath(path,policy);
+    const named=await pathStat(join(root,path),{bigint:true}).catch(e=>{if(['ENOENT','ENOTDIR'].includes(e.code))return null;throw e;});
+    if(!named)return {entry:null,bytes:null};
+    const metadata=fileMetadata(named);
+    if(named.isFile()&&named.nlink===1n&&metadata===observation.cached.metadata){
+      if(observation.metrics){const m=observation.metrics;m.reused=(m.reused||0)+1;m.bytesRead=m.bytesRead||0;}
+      return {entry:{...observation.cached.entry},bytes:null,metadata,modifiedAt:named.mtime.toISOString()};
+    }
+  }
   for(let attempt=0;attempt<2;attempt++){
-    const checked=await sourceFilePath(root,path,{policy});if(checked.missing)return {entry:null,bytes:null};
+    // A walked observation already rejected links and nested repositories on the way down; the component walk after
+    // the read still has to agree with the bytes, so only the walk before the read is saved.
+    const checked=observation?.walked&&!observation.cached?{path:join(root,validateSourcePath(path,policy)),missing:false}:await sourceFilePath(root,path,{policy});
+    if(checked.missing)return {entry:null,bytes:null};
     let file;
     try {
       // Observation does not read content or authorize a transfer. A fresh safe component walk plus
@@ -173,7 +189,10 @@ export async function captureDirectorySnapshot(options) {
   const cached=observation?.signature===signature?observation.cache:new Map();
   const partial=Boolean(observation&&!observation.fullHash&&observation.signature===signature&&observation.snapshot&&options.changedPaths?.length&&options.changedPaths.every(path=>cached.has(path)));
   const nextCache=partial?new Map(cached):new Map();
+  const directories=partial?new Map(observation.directories):new Map();
   async function walk(dir,prefix=''){
+    // Empty directories need watchers too; retain identity during this walk so replacements cannot reuse an old inode's watcher.
+    if(observation){const info=dir===root?rootInfo:await pathStat(dir,{bigint:true});if(!info.isDirectory())throw syncError('unsafe_file',prefix);directories.set(dir,`${info.dev}:${info.ino}`);}
     for(const item of await readdir(dir,{withFileTypes:true})){
       const path=prefix+item.name;if(++visited>SOURCE_SYNC_LIMITS.paths*2)throw syncLimitError('manifest_too_large','scan_entries',SOURCE_SYNC_LIMITS.paths*2,visited,path);
       if(options.background&&visited%32===0)await new Promise(resolve=>setTimeout(resolve,options.busy?.()?25:8));
@@ -193,7 +212,7 @@ export async function captureDirectorySnapshot(options) {
   else await walk(root);
   const captured=await captureSourceEntries(paths,async path=>{
     let value;
-    try{value=await readSourceFile(root,path,policy,observation?{cached:observation.fullHash||partial?null:cached.get(path),metrics:observation.metrics}:null);}
+    try{value=await readSourceFile(root,path,policy,observation?{cached:observation.fullHash||partial?null:cached.get(path),metrics:observation.metrics,walked:!partial}:null);}
     catch(e){
       // A file this device never synchronized and that exceeds the per-file limit is recorded as oversize, not a batch
       // failure; it stays viewable through on-demand media reads. A previously synchronized file still blocks (Home fences it).
@@ -210,6 +229,6 @@ export async function captureDirectorySnapshot(options) {
   for(let i=0;i<paths.length;i++)if(captured[i]!==undefined)entries[paths[i]]=captured[i];
   const digest=manifestDigest(entries,policy);
   // Publish the cache only with a complete successful observation, never a failed/partial traversal.
-  if(observation){observation.cache=nextCache;observation.signature=signature;observation.snapshot={entries,excluded};}
+  if(observation){observation.cache=nextCache;observation.signature=signature;observation.snapshot={entries,excluded};observation.directories=directories;}
   return {repositoryId:options.repositoryId,generation:options.generation,scopeKind:'directory',scopePolicy:policy,capturePolicy:outputs?OUTPUT_SYNC_CAPTURE_POLICY:DIRECTORY_SYNC_CAPTURE_POLICY,...(metadataOnly?{metadataOnly:true,newlyIncluded:paths.filter(path=>excludedSourcePath(path,{...policy,contentMode:'source-only'})||!(policy.sharedDocs&&path.startsWith('.workbench/docs/'))&&isIgnored(path))}:{}),baseCommit:null,entries,digest,excluded};
 }

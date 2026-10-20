@@ -26,7 +26,7 @@ import { tokenUsageUI } from './token-usage.js';
 import { createScheduledJobsUI } from './scheduled-jobs.js';
 import { formatGitVersionStatus, formatProjectGitSummary } from './git-version.js';
 import { partitionRunLog, displayRunInput, contextUsageLabel, mergeRunEvents, shouldShowFinalResult, toolStatusLabel, stripAnsi, taskRunDisplayStatus } from './run-log-data.js';
-import { planDismissKey, planDockState, planMemberLabel, planStageActivity } from './plan-dock.js';
+import { planDismissKey, planDockState, planMemberLabel, planStageActivity, planActivity } from './plan-dock.js';
 import {createWorkspaceInspector,initWorkspaceColumns} from './workspace-inspector.js';
 import {applyStateUpdate} from './state-data.js';
 import { TOKEN_KEY, readApiToken, saveApiToken } from './browser-token.js';
@@ -128,6 +128,7 @@ if (dom.apiToken) dom.apiToken.value = app.token;
 for (const [id, name, label] of [
   ['refresh-state', 'refresh', 'Refresh'],
   ['show-project-settings', 'gear', 'Project Settings'],
+  ['toggle-inspector', 'roles', 'Hide right panel'],
   ['show-history', 'history', 'History'],
   ['add-role-sidebar', 'plus', 'Add role'],
   ['refresh-role-status', 'refresh', 'Refresh role status and remaining quota'],
@@ -631,12 +632,7 @@ function renderExecutionPlans() {
   panel.dataset.projectId=app.selectedProjectId;
   const details=document.createElement('details');details.open=open;
   const summary=document.createElement('summary');
-  const activity=plan=>{
-    if(plan.status==='blocked')return {label:'Waiting',reason:plan.error||plan.waitingReason||'Waiting to advance'};
-    if(plan.status==='cancelled')return {label:'Stopped',reason:plan.error||''};
-    const stage=plan.status==='running'?plan.stages?.find(s=>s.status==='running'):{members:(plan.stages||[]).flatMap(s=>s.members||[]),status:plan.status};
-    return planStageActivity(stage,app.data.requests||[],app.data.runs||[],app.data.tasks||[]);
-  };
+  const activity=plan=>planActivity(plan,app.data.requests||[],app.data.runs||[],app.data.tasks||[]);
   const title=document.createElement('strong');title.textContent=t('Supervisor plan · {currentStage}', { currentStage: t(state.currentStage) });
   const progress=document.createElement('span');progress.className='execution-progress';progress.textContent=`${state.completed}/${state.total}`;
   const badge=document.createElement('span');badge.className='execution-status';badge.textContent=t(activity(state.current).label);
@@ -2167,6 +2163,20 @@ document.querySelector('#toggle-project-sidebar-collapse')?.addEventListener('cl
 document.querySelector('#toggle-project-sidebar')?.addEventListener('click', () => {
   const cur = document.body.dataset.projectSidebar || 'expanded';
   setProjectSidebarMode(cur === 'hidden' ? 'expanded' : 'hidden');
+});
+/* The right panel (role settings in group chats, session details on the sessions page) hides and returns with one button beside the settings gear; the choice lives in this tab. */
+const INSPECTOR_KEY = 'agent-workbench.inspector';
+function setInspectorMode(mode) {
+  const next = mode === 'hidden' ? 'hidden' : 'shown';
+  document.body.dataset.inspector = next;
+  try { sessionStorage.setItem(INSPECTOR_KEY, next); } catch { /* storage is optional */ }
+  const toggle = document.querySelector('#toggle-inspector');
+  if (toggle) { const label = t(next === 'hidden' ? 'Show right panel' : 'Hide right panel'); toggle.setAttribute('aria-pressed', String(next === 'hidden')); toggle.title = label; toggle.setAttribute('aria-label', label); }
+}
+setInspectorMode(sessionStorage.getItem(INSPECTOR_KEY) || 'shown');
+document.querySelector('#toggle-inspector')?.addEventListener('click', () => {
+  if (drawers.isMobile()) { document.querySelector('#mobile-roles')?.click(); return; }
+  setInspectorMode(document.body.dataset.inspector === 'hidden' ? 'shown' : 'hidden');
 });
 
 document.querySelector('#show-project-form').addEventListener('click', () => nativeSessionUI.active()?nativeSessionUI.openNew():showProjectForm(true));

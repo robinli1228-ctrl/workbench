@@ -6,16 +6,25 @@ import {excludedSourcePath,entryEqual,manifestDigest,syncError} from './source-s
 
 const key=c=>`${c.projectId}:${c.repositoryId}:${c.generation}`;
 
+/** Directory events drive observation. The periodic sweeps are only a backstop for lost events, so a scope whose
+ * watchers are all installed sweeps rarely; a degraded scope (watcher limit or errors) keeps the close cadence. */
+export const OBSERVATION_INTERVALS=Object.freeze({
+  watching:Object.freeze({metadata:5*60000,fullHash:60*60000}),
+  degraded:Object.freeze({metadata:30000,fullHash:5*60000}),
+});
+
 /** Background observation persists notices; the existing SourceSync queue transfers files without a browser. */
 export class SourceSyncWatch {
-  constructor({db,send,resolveBinding,blocked=()=>false,busy=()=>false,clock=Date.now}){
-    Object.assign(this,{db,send,resolveBinding,blocked,busy,clock});this.watches=new Map();this.hints=new Map();this.checked=new Map();this.fullChecked=new Map();this.observations=new Map();this.epochs=new Map();this.retryAt=new Map();this.sent=new Map();this.running=false;this.closed=false;
+  constructor({db,send,resolveBinding,blocked=()=>false,busy=()=>false,clock=Date.now,intervals=OBSERVATION_INTERVALS,maxWatches=4096}){
+    Object.assign(this,{db,send,resolveBinding,blocked,busy,clock,intervals,maxWatches});this.watches=new Map();this.hints=new Map();this.checked=new Map();this.fullChecked=new Map();this.observations=new Map();this.epochs=new Map();this.retryAt=new Map();this.sent=new Map();this.degraded=new Map();this.running=false;this.closed=false;
   }
+  /** Until the first complete installation proves every directory is watched, treat the scope as unwatched. */
+  cadence(id){return this.intervals[this.degraded.get(id)===false?'watching':'degraded'];}
   async configure(config){
     if(!config||typeof config.version!=='string'||!Array.isArray(config.scopes)||config.scopes.length>480)throw syncError('invalid_watch_config');
     for(const scope of config.scopes){if(scope.scopeKind!=='directory')throw syncError('invalid_watch_config');await this.resolveBinding(scope);}
     const previous=this.db.get('sourceSyncWatchConfig','main')?.scopes||[];
-    for(const scope of previous)if(!config.scopes.some(s=>key(s)===key(scope)&&JSON.stringify(s)===JSON.stringify(scope))){const id=key(scope);this.invalidate(id);for(const w of this.watches.get(id)?.values()||[])w.close();this.watches.delete(id);this.hints.delete(id);this.checked.delete(id);this.retryAt.delete(id);}
+    for(const scope of previous)if(!config.scopes.some(s=>key(s)===key(scope)&&JSON.stringify(s)===JSON.stringify(scope))){const id=key(scope);this.invalidate(id);for(const w of this.watches.get(id)?.values()||[])w.close();this.watches.delete(id);this.hints.delete(id);this.checked.delete(id);this.retryAt.delete(id);this.degraded.delete(id);}
     this.db.put('sourceSyncWatchConfig',{...config,id:'main'});
     const current=new Set(config.scopes.map(key));for(const [id,group] of this.watches)if(!current.has(id)){for(const w of group.values())w.close();this.watches.delete(id);}
     for(const record of this.db.list('sourceSyncWatchNotices'))if(!current.has(record.id))this.db.remove('sourceSyncWatchNotices',record.id);
@@ -25,18 +34,18 @@ export class SourceSyncWatch {
   hint(id,path=null){const t=this.clock(),prior=this.hints.get(id),paths=prior?.paths||new Set();if(path)paths.add(path);this.hints.set(id,{first:prior?.first??t,last:t,paths,unknown:Boolean(prior?.unknown||!path)});}
   /** Cache lifetime is process/config/listener-bound, not a durable authority on file content. */
   invalidate(id){this.observations.delete(id);this.fullChecked.delete(id);this.epochs.set(id,(this.epochs.get(id)||0)+1);}
-  /** Watch eligible parents only, without recursively subscribing to dependencies or private worktrees. */
-  install(scope,entries){
-    const id=key(scope),dirs=new Set([scope.root]);
+  /** Reuse the completed walk's eligible directories, including empty ones; excluded trees never enter the watch set. */
+  install(scope,entries,directories=new Map()){
+    const id=key(scope),dirs=new Set([scope.root,...directories.keys()]);
     for(const path of Object.keys(entries)){let dir=dirname(join(scope.root,path));while(dir!==scope.root&&dir.startsWith(scope.root+'/')){dirs.add(dir);dir=dirname(dir);}}
     let group=this.watches.get(id);if(!group){group=new Map();this.watches.set(id,group);}
-    for(const [dir,w] of group)if(!dirs.has(dir)){w.close();group.delete(dir);}
+    for(const [dir,w] of group)if(!dirs.has(dir)||w.directoryIdentity!==directories.get(dir)){w.close();group.delete(dir);}
     let degraded=false;
-    for(const dir of dirs){if(group.has(dir))continue;if(group.size>=4096){degraded=true;break;}
+    for(const dir of dirs){if(group.has(dir))continue;if(group.size>=this.maxWatches){degraded=true;break;}
       try{const w=watch(dir,{persistent:false},(event,file)=>{const path=file?relative(scope.root,join(dir,String(file))):'';
         if(path.split('/').at(-1)==='.gitignore'){this.invalidate(id);this.hint(id);}
         else if(!path||path==='.workbench'||path==='.workbench/docs'||!excludedSourcePath(path,scope.scopePolicy))this.hint(id,event==='change'&&path?path:null);
-      });w.on('error',()=>{w.close();group.delete(dir);this.invalidate(id);this.hint(id);});group.set(dir,w);}catch{degraded=true;}
+      });w.directoryIdentity=directories.get(dir);w.on('error',()=>{w.close();if(group.get(dir)!==w)return;group.delete(dir);this.degraded.set(id,true);this.invalidate(id);this.hint(id);});group.set(dir,w);}catch{degraded=true;}
     }
     return degraded;
   }
@@ -44,7 +53,7 @@ export class SourceSyncWatch {
     if(this.running||this.closed)return;this.running=true;
     try{for(const scope of this.db.get('sourceSyncWatchConfig','main')?.scopes||[]){
       const id=key(scope),t=this.clock(),last=this.checked.get(id),hint=this.hints.get(id);
-      const full=this.fullChecked.get(id),fullHash=force||full===undefined||t-full>=300000,metadataDue=last===undefined||t-last>=30000;
+      const cadence=this.cadence(id),full=this.fullChecked.get(id),fullHash=force||full===undefined||t-full>=cadence.fullHash,metadataDue=last===undefined||t-last>=cadence.metadata;
       if(!force&&t<(this.retryAt.get(id)||0))continue;
       if(!fullHash&&!metadataDue&&(!hint||t-hint.last<500&&t-hint.first<2000))continue;
       if(this.blocked(scope.projectId))continue;
@@ -60,7 +69,7 @@ export class SourceSyncWatch {
         if(!current())continue;
         this.observations.set(id,observation);this.retryAt.delete(id);
         if(fullHash){this.fullChecked.set(id,this.clock());this.checked.set(id,this.clock());}else if(metadataDue)this.checked.set(id,this.clock());
-        const degraded=this.install({...scope,root:binding.root},manifest.entries),state={id,projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,entries:manifest.entries,digest:manifest.digest,checkedAt:new Date().toISOString(),status:degraded?'reconciling':'watching'};
+        const degraded=this.install({...scope,root:binding.root},manifest.entries,observation.directories);this.degraded.set(id,degraded);const state={id,projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,entries:manifest.entries,digest:manifest.digest,checkedAt:new Date().toISOString(),status:degraded?'reconciling':'watching'};
         this.db.transaction(()=>{
           this.db.put('sourceSyncWatchStates',state);
           if(old?.digest!==manifest.digest)this.db.put('sourceSyncWatchNotices',{id,noticeId:randomUUID(),projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,digest:manifest.digest,observedAt:state.checkedAt});

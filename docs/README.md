@@ -15,6 +15,7 @@
 | [design-role-permissions](design-role-permissions.md) | Three per-role CLI permission scopes, one-time approval, legacy preservation and real execution acceptance | Written specification awaiting user review; not implemented |
 | [design-local-folder-selection](design-local-folder-selection.md) | Browse accessible local folders while granting only the selected project/session directory | Locally implemented and verified; review fixes tested; not deployed |
 | [plan-local-folder-selection](plan-local-folder-selection.md) | Scoped authorization, creation forms and isolated acceptance | Executed inline; failed preparation cleanup and retry verified locally |
+| [plan-collaboration-wait-yield](plan-collaboration-wait-yield.md) | Historical proposal for non-destructive manual yield | Archived; not implementation authority. Explicit Steer interrupts; ordinary messages queue. |
 | [plan-role-responsibility](plan-role-responsibility.md) | Ordered implementation tasks and negative tests for excluding self responsibility from execution | Executed inline; design records actual verification coverage |
 | [design-minimal-injection](design-minimal-injection.md) | Four-adapter minimal input, trusted discovery and reliable continuation | Selectively deployed; adapter-specific acceptance limits are recorded |
 | [plan-minimal-injection](plan-minimal-injection.md) | Unified implementation and verification of minimal execution context | Implemented; source synchronization excluded |

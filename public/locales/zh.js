@@ -800,6 +800,8 @@ export default {
   'Loading…': '正在加载…',
   'Full text copied, {totalLength} characters': '已复制全文，共 {totalLength} 字符',
   // plan-dock.js
+  'Plan error': '计划异常',
+  'Aborted': '已中止',
   'Not executed': '未执行',
   'Execution failed': '执行失败',
   'Done': '完成',
@@ -1724,4 +1726,6 @@ export default {
   "Copied and verified: {path}": "已复制并校验：{path}",
   "Transfer failed: {error}": "传输失败：{error}",
   "Send again": "再传一次",
+  "Hide right panel": "隐藏右栏",
+  "Show right panel": "显示右栏",
 };
