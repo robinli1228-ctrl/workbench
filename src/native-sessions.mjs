@@ -32,8 +32,10 @@ async function readWindow(file,root,tail=false,limit=131072){
 }
 const jsonLines=text=>text.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}});
 const bodyText=content=>typeof content==='string'?content:Array.isArray(content)?content.map(c=>typeof c?.text==='string'?c.text:'').filter(Boolean).join('\n'):'';
+// Claude Code 2.1.303 also records api-request-blob rows carrying the same message bodies; only the conversation rows count.
+const claudeMessage=row=>['user','assistant'].includes(row.type)?row.message:null;
 function messagesFrom(rows,runtime){return rows.flatMap(row=>{
- const m=runtime==='codex'&&row.type==='response_item'?row.payload:runtime==='claude'?row.message:runtime==='grok'?{role:row.type,content:row.content}:null;
+ const m=runtime==='codex'&&row.type==='response_item'?row.payload:runtime==='claude'?claudeMessage(row):runtime==='grok'?{role:row.type,content:row.content}:null;
  if(!m||!['user','assistant'].includes(m.role))return [];
  const text=bodyText(m.content);return text?[{role:m.role,text:text.slice(0,12000),timestamp:row.timestamp||null}]:[];
 });}
@@ -43,10 +45,10 @@ function sessionConfiguration(rows,runtime){
  const text=value=>typeof value==='string'&&value.trim()&&value.length<=160?value.trim():null;
  // Claude records request usage on each assistant row: the last one is the session's context size when it was written.
  let contextTokens=null,contextAt=null;
- if(runtime==='claude')for(const row of rows.toReversed()){const u=row.message?.role==='assistant'?row.message.usage:null;if(!u||row.parent_tool_use_id||row.parentToolUseId)continue;const parts=[u.input_tokens,u.cache_creation_input_tokens??0,u.cache_read_input_tokens??0];if(parts.every(v=>Number.isSafeInteger(v)&&v>=0)){contextTokens=parts.reduce((a,b)=>a+b,0);contextAt=text(row.timestamp);break;}}
+ if(runtime==='claude')for(const row of rows.toReversed()){const u=claudeMessage(row)?.role==='assistant'?row.message.usage:null;if(!u||row.parent_tool_use_id||row.parentToolUseId)continue;const parts=[u.input_tokens,u.cache_creation_input_tokens??0,u.cache_read_input_tokens??0];if(parts.every(v=>Number.isSafeInteger(v)&&v>=0)){contextTokens=parts.reduce((a,b)=>a+b,0);contextAt=text(row.timestamp);break;}}
  const withContext=value=>({...value,contextTokens,contextAt});
  for(const row of rows.toReversed()){
-  const value=runtime==='codex'&&row.type==='turn_context'?row.payload:runtime==='claude'&&row.message?.role==='assistant'?row.message:runtime==='grok'&&row.type==='assistant'?row:null;
+  const value=runtime==='codex'&&row.type==='turn_context'?row.payload:runtime==='claude'&&claudeMessage(row)?.role==='assistant'?row.message:runtime==='grok'&&row.type==='assistant'?row:null;
   if(!value||runtime!=='codex'&&!text(value.model))continue;
   const model=text(value.model),effort=text(value.effort??value.reasoning_effort);
   return withContext({model:model?.startsWith('<')?null:model,effort:effort&&/^(?:none|minimal|low|medium|high|xhigh|max|ultra|auto|default)$/.test(effort)?effort:null,observedAt:text(row.timestamp)});
