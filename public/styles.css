@@ -3017,3 +3017,12 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .nt-system-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nt-system.is-error code, .nt-system.is-error .nt-system-detail { color: var(--danger); }
 .nt-system .nt-pulse { margin-left: 2px; }
+
+/* ---- Conversation bubbles: the person on the right in a bubble, the model on the left as prose; duration under the newest reply ---- */
+.nt-user { display: flex; justify-content: flex-end; }
+.nt-user .nt-body { display: block; width: auto; max-width: min(680px, 82%); padding: 10px 14px; border: 1px solid #cfe3d6; border-radius: 16px 16px 4px 16px; background: var(--green-soft); }
+.nt-prompt-mark { display: none; }
+.nt-prompt-time { display: block; margin-top: 4px; text-align: right; }
+.nt-user .nt-body > .chat-attachments { margin-top: 8px; justify-content: flex-end; }
+.nt-duration { padding-left: 28px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+@media (max-width: 1000px) { .nt-user .nt-body { max-width: 92%; } .nt-duration { padding-left: 0; } }

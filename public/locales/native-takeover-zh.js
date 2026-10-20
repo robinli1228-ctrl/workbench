@@ -223,4 +223,5 @@ export default {
  "Nothing to change": "没有要更改的内容",
  "A compaction carries no attachments": "压缩不能附带附件",
  "File is outside the session working folder": "文件不在会话工作目录内",
+ "Took {duration}": "用时 {duration}",
 };
