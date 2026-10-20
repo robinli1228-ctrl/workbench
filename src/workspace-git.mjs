@@ -30,6 +30,7 @@ export async function inspectWorkspaceGit(dir,{timeout=3000,exec=run,clock=()=>n
   const branch=await optional(['symbolic-ref','--quiet','--short','HEAD']);
   const subject=commit?await optional(['log','-1','--format=%s']):null;
   const upstream=commit?await optional(['rev-parse','--abbrev-ref','--symbolic-full-name','@{upstream}']):null;
+  const remoteName=upstream?.split('/')[0]||'origin',remoteUrl=await optional(['remote','get-url',remoteName]);
   let ahead=null,behind=null;
   if(upstream){const counts=await optional(['rev-list','--left-right','--count','@{upstream}...HEAD']);const m=/^(\d+)\s+(\d+)$/.exec(counts||'');if(m){behind=Number(m[1]);ahead=Number(m[2]);}}
   let changes;
@@ -39,7 +40,7 @@ export async function inspectWorkspaceGit(dir,{timeout=3000,exec=run,clock=()=>n
   }catch(error){
     changes=error.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER'?{...summarize(String(error.stdout||'')),truncated:true}:{unknown:true,reason:error.killed?'git_timeout':'git_status_failed'};
   }
-  return {git:true,root,branch,detached:!branch,commit,subject:subject?subject.slice(0,200):null,upstream,ahead,behind,changes,checkedAt};
+  return {git:true,root,branch,detached:!branch,commit,subject:subject?subject.slice(0,200):null,upstream,remote:remoteName,remoteUrl:remoteUrl?remoteUrl.replace(/\/\/[^/@]+@/,'//').slice(0,300):null,ahead,behind,changes,checkedAt};
 }
 
 /** Count porcelain v1 -z entries; a rename or copy entry carries its source path as the next field. */

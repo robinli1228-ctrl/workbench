@@ -165,6 +165,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   panel.append(changed,folderCard(selected),mentioned,projectOutputsCard());
  }
  resetSide();
+ // Session settings live behind a gear at the right end of the top bar, where the connection note sits in other modes.
+ const gear=el('button','icon-button native-session-gear');gear.id='native-session-settings';gear.type='button';gear.disabled=true;setActionIcon(gear,'gear',t('Session settings'));
+ gear.addEventListener('click',()=>{if(selected)openSessionSettings(selected);});document.querySelector('#connection-note')?.before(gear);
  const filters=el('div','native-session-filters'),device=el('select'),tool=el('select');device.setAttribute('aria-label',t('Session device'));tool.setAttribute('aria-label',t('Agent tool'));filters.append(device,tool);list.before(filters);
  const note=el('p','workspace-note');list.before(note);note.classList.add('native-session-note');
  let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue='groups',lastRefresh=0,listSignature='',detailSignature='';
@@ -298,7 +301,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function populate(){const signature=JSON.stringify((getData().workers||[]).map(w=>[w.id,w.name,w.online,w.nodeKind,w.runtimes?.map(r=>[r.type,r.available,r.supported])]));if(signature===lastCatalog)return false;lastCatalog=signature;options(device,[['created',t('Created sessions')],['all',t('All sessions')],['group',t('Group chats')],['local',t('Local machine')],['cloud',t('Servers')],['other',t('Other devices')]]);options(tool,[['all',t('All Agents')],...Object.entries(names)]);return true;}
  function workers(){return(getData().workers||[]).filter(w=>['all','created','group'].includes(device.value)||(device.value==='other'?!['local','cloud'].includes(w.nodeKind):w.nodeKind===device.value));}
  /** Keep the selected name in the shared header, including after state refreshes and selection resets. */
- function renderTitle(){if(!active()||document.body.dataset.workspaceView==='settings')return;const title=document.querySelector('#workspace-title');title.translate=!selected;title.textContent=selected?displayTitle(selected):t('Native sessions');}
+ function renderTitle(){if(!active()||document.body.dataset.workspaceView==='settings')return;const title=document.querySelector('#workspace-title');title.translate=!selected;title.textContent=selected?displayTitle(selected):t('Native sessions');gear.disabled=!selected;}
  function resetDetail(){detailVersion++;selected=null;renderTitle();detailSignature='';timeline.clear();takeover.detach();content.replaceChildren(el('div','native-empty',t('Select a native session to view its details.')));resetSide();}
  function resetSide(){
   delete side.dataset.sessionKey;sideBadge.hidden=true;outputs.clear();gitKey=null;renaming=null;
@@ -441,48 +444,41 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(worker.capabilities?.nativeSessionTitle!==1)return 'Upgrade this Worker to rename sessions.';
   return null;
  }
- function renderNameCard(value){
-  const panel=sidePanels.session,prior=panel.querySelector('[data-native-name]');
-  if(renaming&&renaming.key!==key(value)&&!renaming.saving)renaming=null;
-  const section=el('section','native-side-card native-session-name');section.dataset.nativeName='';section.append(el('h3','',t('Session name')));
-  const blocked=renameBlock(value);
-  if(renaming?.key===key(value)){
-   const form=el('form','native-rename-form'),input=el('input');input.type='text';input.maxLength=120;input.value=renaming.draft;input.setAttribute('aria-label',t('Session name'));input.disabled=renaming.saving;
-   input.addEventListener('input',()=>{if(renaming)renaming.draft=input.value;});
-   input.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();cancelRename(value);}});
-   const save=el('button','primary',t(renaming.saving?'Saving…':'Save'));save.type='submit';save.disabled=renaming.saving;
-   const cancel=button('Cancel',()=>cancelRename(value));cancel.disabled=renaming.saving;
-   const actions=el('div','native-session-actions');actions.append(save,cancel);form.append(input,actions);
-   if(renaming.error)form.append(el('p','global-error',renaming.error));
-   form.addEventListener('submit',event=>{event.preventDefault();void saveRename(value);});
-   section.append(form);if(!renaming.saving)queueMicrotask(()=>{if(input.isConnected&&document.activeElement!==input)input.focus();});
-  }else{
-   const line=el('div','native-card-head'),name=el('span','native-meta-value native-session-title',value.title||t('Untitled session'));name.translate=false;line.append(name);
-   if(!blocked)line.append(button('Rename',()=>{renaming={key:key(value),draft:value.title||'',saving:false,error:null};renderNameCard(value);},'secondary native-card-action'));
-   section.append(line);if(blocked)section.append(el('p','native-side-hint',t(blocked)));
-  }
-  if(prior)prior.replaceWith(section);
-  else{const anchor=panel.querySelector('[data-native-controls]');if(anchor)anchor.after(section);else panel.append(section);}
+ /** Rename a Workbench-created session; the list, header and selected item follow at once. */
+ async function renameSession(value,raw){
+  const title=String(raw||'').trim();if(!title||title.length>120)throw Error('Session title is required and must be at most 120 characters');
+  if(title===(value.title||''))return title;
+  const updated=await api(`${endpoint(value.nodeId)}/title`,{method:'POST',json:{runtime:value.runtime,entryId:value.entryId,sessionId:value.sessionId||null,title}});
+  for(const item of items)if(key(item)===key(value))item.title=updated.title;
+  if(selected&&key(selected)===key(value))selected={...selected,title:updated.title};
+  renderTitle();renderList();void load({quiet:true});return updated.title;
  }
- function cancelRename(value){renaming=null;renderNameCard(value);}
- async function saveRename(value){
-  const edit=renaming;if(!edit||edit.key!==key(value)||edit.saving)return;
-  const title=edit.draft.trim();
-  if(!title||title.length>120){edit.error=t('Session title is required and must be at most 120 characters');renderNameCard(value);return;}
-  if(title===(value.title||'')){cancelRename(value);return;}
-  edit.saving=true;edit.error=null;renderNameCard(value);
-  try{
-   const updated=await api(`${endpoint(value.nodeId)}/title`,{method:'POST',json:{runtime:value.runtime,entryId:value.entryId,sessionId:value.sessionId||null,title}});
-   // The response belongs to this edit, not whichever session or draft the user has since opened.
-   if(renaming===edit)renaming=null;
-   for(const item of items)if(key(item)===key(value))item.title=updated.title;
-   if(selected&&key(selected)===key(value))selected={...selected,title:updated.title};
-   renderTitle();renderList();if(selected&&key(selected)===edit.key)renderNameCard(selected);
-   void load({quiet:true});
-  }catch(error){if(renaming===edit){edit.saving=false;edit.error=error.message;if(selected&&key(selected)===edit.key)renderNameCard(selected);}}
+ /** Session settings behind the gear in the top bar: name, folder and repository facts, and the Git account used for pushes. */
+ function openSessionSettings(value){
+  dialog.replaceChildren();const heading=el('div','dialog-heading');heading.append(el('h2','',t('Session settings')),closeButton(()=>dialog.close()));dialog.append(heading);
+  const body=el('div','native-settings-dialog');
+  const nameCard=el('section','native-settings-section');nameCard.append(el('h3','',t('Name')));
+  const blocked=renameBlock(value),nameForm=el('form','native-rename-form'),nameInput=el('input'),nameSave=el('button','primary',t('Save')),nameNote=el('p','native-side-hint',blocked?t(blocked):'');
+  nameInput.type='text';nameInput.maxLength=120;nameInput.value=value.title||'';nameInput.setAttribute('aria-label',t('Session name'));nameInput.disabled=Boolean(blocked);nameSave.type='submit';nameSave.disabled=Boolean(blocked);
+  nameForm.append(nameInput,nameSave);nameForm.addEventListener('submit',async e=>{e.preventDefault();nameSave.disabled=true;nameNote.className='native-side-hint';nameNote.textContent=t('Saving…');try{await renameSession(value,nameInput.value);nameNote.textContent=t('Saved');}catch(error){nameNote.className='global-error';nameNote.textContent=t(error.message);}finally{nameSave.disabled=false;}});
+  nameCard.append(nameForm,nameNote);
+  const repo=el('section','native-settings-section');repo.append(el('h3','',t('Working folder and repository')));const git=gitCache.get(key(value))?.state;
+  const rows=el('dl','native-session-meta'),add=(label,text)=>{if(!text)return;rows.append(el('dt','',t(label)));const dd=el('dd','');const v=el('span','native-meta-value',text);v.translate=false;dd.append(v);rows.append(dd);};
+  add('Working folder',value.workspace);add('Git root',git?.root);add('Branch',git?.branch||(git?.detached?t('Detached HEAD'):null));add('Remote',git?.remoteUrl);
+  repo.append(rows);if(!git)repo.append(el('p','native-side-hint',t('Reading Git status…')));else if(!git.git)repo.append(el('p','native-side-hint',t('The working folder is not inside a Git repository.')));
+  const acct=el('section','native-settings-section');acct.append(el('h3','',t('Git account for pushes')));
+  const provider=git?.remoteUrl?(/github\.com/i.test(git.remoteUrl)?'github':/gitee\.com/i.test(git.remoteUrl)?'gitee':null):null;
+  const accounts=(getData().hostingAccounts||[]).filter(a=>!provider||a.provider===provider),settings=takeover.settings();
+  const sel=el('select'),none=el('option','',t('Use the device’s own Git credentials'));none.value='';sel.append(none);
+  for(const a of accounts){const o=el('option','',`${a.provider==='github'?'GitHub':'Gitee'} · ${a.login}${a.label?` · ${a.label}`:''}`);o.value=a.id;sel.append(o);}
+  sel.value=settings.hostingAccountId&&accounts.some(a=>a.id===settings.hostingAccountId)?settings.hostingAccountId:'';
+  const canBind=Boolean(git?.remoteUrl&&provider&&takeover.controls()&&nativeId(value));sel.disabled=!canBind;sel.setAttribute('aria-label',t('Git account for pushes'));
+  const acctNote=el('p','native-side-hint',t(!git?.remoteUrl?'Bind an account once the repository remote is known.':!provider?'Only GitHub and Gitee remotes can use a Workbench account.':!takeover.controls()?'Upgrade this Worker to bind a Git account to a session.':'Applies to the next message on this page and to the next iTerm launch; only this repository’s remote receives the token.'));
+  sel.addEventListener('change',async()=>{sel.disabled=true;acctNote.className='native-side-hint';acctNote.textContent=t('Saving…');const r=await takeover.saveSetting('hostingAccountId',sel.value,{repoUrl:git?.remoteUrl||null});if(r)acctNote.textContent=t('Saved');else{acctNote.className='global-error';acctNote.textContent=takeover.feedback(value)||t('Could not save');}sel.disabled=false;});
+  const manage=button('Manage accounts…',()=>{dialog.close();document.querySelector('#show-app-settings')?.click();},'secondary');
+  acct.append(sel,acctNote,manage);
+  body.append(nameCard,repo,acct);dialog.append(body);dialog.showModal();
  }
- /** Label/value rows with optional copy buttons, shared by the session, repository and runtime cards. */
- function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}
  function metaCard(target,heading,rows){const section=el('section','native-side-card');section.append(el('h3','',t(heading)),metaList(rows));target.append(section);return section;}
  function renderSide(value,id,readable){
   side.dataset.sessionKey=key(value);
@@ -492,7 +488,6 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const controls=el('section','native-side-card native-connect');controls.dataset.nativeControls='';
   const settingsCard=el('section','native-side-card native-settings-card');settingsCard.dataset.nativeSettings='';
   session.append(controls,settingsCard);
-  renderNameCard(value);
   const identity=metaCard(session,'Native session',[['Session ID',id||t('Not available yet'),id||null],['Working folder',value.workspace||t('Choose a folder when opening'),value.workspace||null]]);
   // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
   if(id&&value.workspace){const row=el('div','native-command-row');const copy=button('Copy iTerm command',async e=>{const b=e.target;b.disabled=true;try{await copyTerminalCommand(value);b.textContent=t('Copied');setTimeout(()=>{b.textContent=t('Copy iTerm command');b.disabled=false;},1800);}catch(error){b.disabled=false;controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'secondary native-card-action');
@@ -731,7 +726,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   function files(){const seen=new Map();for(const turn of [...turns].reverse()){if(turn.control)continue;for(const chip of fileChips(stepsOf(turn).steps)){const prior=seen.get(chip.path);if(!prior||prior.step.kind==='read'&&chip.step.kind!=='read')seen.set(chip.path,chip);}}return [...seen.values()];}
   /** Latest context snapshot of the current session from its page turns. */
   function contextSample(){for(const turn of [...turns].reverse())if(turn.contextUsage)return turn.contextUsage;return null;}
-  async function saveSetting(field,value){if(!current)return null;const id=k(),op=operation(id);op.message='';try{const result=await api(`${endpoint(current.nodeId)}/settings`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,[field]:value||null}});settings={model:result.model||null,effort:result.effort||null};await refresh();return result;}catch(error){op.message=t(error.message);render();renderSide(current,current.sessionId,true);return null;}}
+  async function saveSetting(field,value,extra={}){if(!current)return null;const id=k(),op=operation(id);op.message='';try{const result=await api(`${endpoint(current.nodeId)}/settings`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,[field]:value||null,...extra}});settings={...settings,model:result.model||null,effort:result.effort||null,hostingAccountId:result.hostingAccountId||null,repoUrl:result.repoUrl||null};await refresh();return result;}catch(error){op.message=t(error.message);render();renderSide(current,current.sessionId,true);return null;}}
   async function compact(){if(!current||activeTurn())return;const id=k(),op=operation(id);op.message='';try{const turn=await api(`${turnsUrl()}`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,allowAll:true,clientTurnId:crypto.randomUUID(),control:'compact'}});turns=[...turns.filter(x=>x.id!==turn.id),turn];render();schedule();}catch(error){op.message=t(error.message);render();}}
   return {feed,attach,detach,isOn,enable,adopt:value=>{if(!value?.sessionId)return;on.add(sessionKey(value));save();},canChat,renderFeed,returned:markReturned,isReleasing,releaseDisabled,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh,recheck,
    files,contextSample,settings:()=>settings,controls:()=>controls,busy:()=>Boolean(activeTurn()),saveSetting,compact,turns:()=>turns};

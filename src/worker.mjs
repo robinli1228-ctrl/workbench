@@ -819,6 +819,9 @@ async function query(m) {
       if(m.action==='native_terminal_preview'){send({type:'reply',id:m.id,result:{workspace,projectId:owner,runtime,sessionId:input.sessionId||null}});return;}
       if(typeof input.id!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(input.id)||!input.projectId||input.nodeId!==identity.nodeId||projectId!==input.projectId)throw Error('Terminal binding changed; refresh and try again');
       const nativeSession={...await nativeEnvironment(runtime),id:input.sessionId||null};
+      // The terminal inherits the session's private gitconfig (a bound hosting account, or just the user's own includes).
+      const credential=input.gitCredential?.token?input.gitCredential:null;
+      const terminalEnv=await runtimeGitEnvironment({directory:join(data,'git-auth'),key:`native-${input.sessionId||freshId||input.entryId||input.id}`,repositories:credential?[{id:'session',repoUrl:credential.repoUrl}]:[],credentials:credential?{session:credential}:{}});
       assertIdle();
       if(db.get('terminalSessions',input.id)||projectTerminalLock(db,projectId,identity.nodeId)||db.get('sourceSyncReservations',projectId))throw Error('Session is occupied; no second CLI was started');
       if(occupiedSlots()>=capacity)throw Error('Device CLI capacity is full');
@@ -828,7 +831,7 @@ async function query(m) {
         if(priorEntry&&(priorEntry.runtime!==runtime||priorEntry.workspace!==workspace||priorEntry.status!=='draft'))throw Error('Native catalog entry cannot be reused for a different or active session');
       }
       if(input.sessionId&&priorEntry&&(priorEntry.runtime!==runtime||priorEntry.sessionId!==input.sessionId))throw Error('Native catalog entry does not match this history');
-      db.transaction(()=>{if(!input.sessionId)db.put('nativeCatalogEntries',{...priorEntry,id:catalogEntryId,runtime,title:input.title.trim(),workspace,origin:'dialog',status:'prepared',sessionId:freshId,createdAt:priorEntry?.createdAt||now,modifiedAt:now,exactLastScan:priorEntry?.exactLastScan||null});db.put('terminalSessions',{id:input.id,kind:'native',catalogEntryId,projectId,nodeId:identity.nodeId,status:'prepared',workspace,nativeSession,nativeOptions:{allowAll:input.allowAll===true,freshId},privateEnv:resumeEnvironment(process.env),createdAt:now});});
+      db.transaction(()=>{if(!input.sessionId)db.put('nativeCatalogEntries',{...priorEntry,id:catalogEntryId,runtime,title:input.title.trim(),workspace,origin:'dialog',status:'prepared',sessionId:freshId,createdAt:priorEntry?.createdAt||now,modifiedAt:now,exactLastScan:priorEntry?.exactLastScan||null});db.put('terminalSessions',{id:input.id,kind:'native',catalogEntryId,projectId,nodeId:identity.nodeId,status:'prepared',workspace,nativeSession,nativeOptions:{allowAll:input.allowAll===true,freshId},privateEnv:resumeEnvironment(terminalEnv),createdAt:now});});
       reportCapacity();send({type:'reply',id:m.id,result:{id:input.id,entryId:catalogEntryId,kind:'native',workspace,user:nativeSession.user,runtime,sessionId:nativeSession.id||freshId,launcher:[process.execPath,join(base,'src','terminal-resume.mjs'),join(data,'worker.sqlite'),input.id]}});return;
     }
     if(m.action==='terminal_check') {
