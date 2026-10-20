@@ -3088,8 +3088,8 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
   body[data-inspector="hidden"][data-project-sidebar="hidden"] .app-shell { grid-template-columns: minmax(420px, 1fr); }
 }
 #toggle-inspector[aria-pressed="true"] { color: #3483ff; }
-/* Session list rows: title, device, and the time at the right; no tool name line. */
-.native-session-time { margin-left: auto; flex: none; color: #656c7d; font-size: 11px; font-variant-numeric: tabular-nums; }
+/* Session list rows: title and device on the first line, time on the second; no tool name. */
+.native-session-time { display: block; margin-top: 4px; color: #656c7d; font-size: 11px; font-variant-numeric: tabular-nums; }
 .native-session-list .project-item.active .native-session-time { color: inherit; opacity: .85; }
 /* The textarea is a square box inside a rounded field; clip at the field so its right end follows the pill. */
 .native-takeover-form .chat-input-field { overflow: hidden; }

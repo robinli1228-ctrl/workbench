@@ -354,7 +354,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    const copy=el('span','project-item-copy'),heading=el('span','native-session-title'),title=el('strong','',displayTitle(item));title.translate=false;heading.append(title);
    const worker=byId.get(item.nodeId);
    if(worker){const deviceIcon=machineIconEl(worker,cloudNumbers.get(item.nodeId));deviceIcon.classList.add('native-session-device');heading.append(deviceIcon);}
-   const when=el('span','native-session-time',time(item.createdAt||item.modifiedAt));when.translate=false;heading.append(when);copy.append(heading);b.append(agentIconEl(item.runtime),copy);b.addEventListener('click',()=>read(item));if(!latest)delete b.dataset.orderId;return b;
+   const when=el('small','native-session-time',time(item.createdAt||item.modifiedAt));when.translate=false;copy.append(heading,when);b.append(agentIconEl(item.runtime),copy);b.addEventListener('click',()=>read(item));if(!latest)delete b.dataset.orderId;return b;
   };
   for(const group of ordered){
    const entry=row(group.latest,true);
