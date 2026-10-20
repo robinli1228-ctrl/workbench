@@ -11,7 +11,7 @@ import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,f
 import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {stripAnsi} from './run-log-data.js';
-import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips} from './native-transcript.js';
+import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -361,13 +361,31 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const scroll=el('div','native-session-scroll');
  const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(cursor?{cursor}:{}),...(snapshot?{snapshot}:{})})}`);
  let lastPromptAt=null;
- const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed(),onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text;
+ function renderHistoryRow(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text;
    // Injected context leaves nothing to show; a slash command shows as one quiet system line.
    if(m.role==='user'&&!text){const command=commandOf(m.text);if(!command)return document.createComment('injected');const row=el('div','nt-system native-chat-row');row.dataset.role='system';row.dataset.text=command.replace(/^\//,'').trim();row.append(el('span','nt-system-mark','\u2318'),el('code','',command));return row;}
    const row=chatRow(m.role,text,item.runtime,m.timestamp,null,'completed',item);row.dataset.role=m.role;
    if(m.role==='user'){row.dataset.text=text.trim();lastPromptAt=m.timestamp||null;}
    else if(lastPromptAt&&m.timestamp){const ms=Date.parse(m.timestamp)-Date.parse(lastPromptAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(lastPromptAt,Date.parse(m.timestamp));}
-   return row;}});
+   return row;}
+ /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
+ function renderHistory(rows,item){
+  const nodes=[],isPrompt=row=>Boolean(cleanUserText(row.text)||commandOf(row.text));
+  for(const turn of historyTurns(rows,{isPrompt})){
+   if(turn.prompt)nodes.push(renderHistoryRow(turn.prompt,item));
+   if(!turn.parts.length)continue;
+   const frag=document.createDocumentFragment();let group=[],process=false;
+   const flush=()=>{if(!group.length)return;process=true;frag.append(activityBlock({steps:group.map(tool=>classifyStep({type:'tool_use',id:tool.id,name:tool.name,input:tool.input,output:tool.output,is_error:tool.failed,status:'completed'},'succeeded')),notes:[],t,onPreview:(step,path)=>preview.open(step,path)}));group=[];};
+   for(const part of turn.parts){if(part.kind==='tool'){group.push(part);continue;}flush();const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));frag.append(md);}
+   flush();
+   const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
+   row.dataset.role='assistant';if(process)row.dataset.process='1';
+   if(turn.prompt?.timestamp&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(turn.prompt.timestamp);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(turn.prompt.timestamp,Date.parse(turn.endedAt));}
+   nodes.push(row);
+  }
+  return nodes;
+ }
+ const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed(),onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage:renderHistoryRow,renderMessages:renderHistory});
  async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;renderTitle();renderList();if(!quiet){onPreview?.();preview.close();takeover.detach();const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);detailSignature='';}
   try{const id=nativeId(item),readable=id&&item.hasHistory!==false,value=readable?{...item,...await readPage(item,null,quiet?item.historySnapshot:null),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:item;if(ticket!==detailVersion||!active()||key(selected)!==key(item))return;selected=value;timeline.readSucceeded();const signature=JSON.stringify(value);if(quiet&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
    const history=timeline.update({...value,...(!value.messages?.length&&!value.notice?{notice:value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'}:{})});
@@ -685,7 +703,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
      if(index>=0){used.add(index);let anchor=rows[index];for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++)anchor=rows[i];
       if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));rows[index].querySelector('.nt-body')?.append(files);}
       const extra=el('div','native-turn-anchored nt-extra');
-      if(hasProcess(turn))extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
+      if(hasProcess(turn)&&anchor.dataset.process!=='1')extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
       if(turn.status!=='succeeded')extra.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` \u00b7 ${t(turn.error)}`:''}`));
       if(extra.childElementCount){if(anchor.dataset.role==='user'&&state==='error'){const errorRow=chatRow('assistant','',current.runtime,turn.endedAt,extra,state);errorRow.classList.add('native-turn-anchored');anchor.after(errorRow);}else{const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}}if(anchor.dataset.role!=='user'&&turn.endedAt)anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());continue;}
     }

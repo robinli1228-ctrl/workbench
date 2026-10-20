@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const { classifyStep, diffLines, summarizeSteps, fileChips, stepTitle, elapsedText } = await import(pathToFileURL(join(root, 'public', 'native-transcript.js')).href);
+const { classifyStep, diffLines, summarizeSteps, fileChips, stepTitle, elapsedText, historyTurns } = await import(pathToFileURL(join(root, 'public', 'native-transcript.js')).href);
 const t = (text, params) => params ? text.replace(/\{(\w+)\}/g, (m, k) => params[k] ?? m) : text;
 
 test('Claude, Codex, Grok and Agy tool items classify into read/edit/write/command/search steps with file paths', () => {
@@ -43,4 +43,29 @@ test('line diffs are exact for small inputs and bounded for huge ones', () => {
   const big = diffLines('x\n'.repeat(3000), 'y\n'.repeat(3000));
   assert.equal(big.truncated, true);
   assert.equal(elapsedText(Date.now() - 95000), '1m 35s');
+});
+
+test('history rows group into turns: results join their calls, injected user rows neither start nor split a turn', () => {
+  const rows = [
+    { role: 'user', text: 'fix it', timestamp: '2026-10-20T10:00:00Z' },
+    { role: 'assistant', text: 'Looking.', timestamp: '2026-10-20T10:00:05Z' },
+    { role: 'tool_call', callId: 't1', name: 'Read', input: { file_path: '/a.mjs' }, timestamp: '2026-10-20T10:00:06Z' },
+    { role: 'user', text: '<system-reminder>x</system-reminder>', timestamp: '2026-10-20T10:00:07Z' },
+    { role: 'tool_result', callId: 't1', output: 'ok', failed: false, timestamp: '2026-10-20T10:00:07Z' },
+    { role: 'tool_call', callId: 't2', name: 'Bash', input: { command: 'npm test' }, timestamp: '2026-10-20T10:00:08Z' },
+    { role: 'tool_result', callId: 't2', output: 'boom', failed: true, timestamp: '2026-10-20T10:00:09Z' },
+    { role: 'assistant', text: 'Done.', timestamp: '2026-10-20T10:00:10Z' },
+    { role: 'user', text: 'thanks', timestamp: '2026-10-20T10:01:00Z' },
+    { role: 'tool_result', callId: 'orphan', output: 'late', timestamp: '2026-10-20T10:01:01Z' },
+  ];
+  const turns = historyTurns(rows, { isPrompt: row => !row.text.startsWith('<') });
+  assert.equal(turns.length, 2);
+  assert.deepEqual(turns[0].parts.map(p => p.kind), ['text', 'tool', 'tool', 'text']);
+  assert.deepEqual(turns[0].parts[1], { kind: 'tool', id: 't1', name: 'Read', input: { file_path: '/a.mjs' }, output: 'ok', failed: false, done: true, timestamp: '2026-10-20T10:00:06Z' });
+  assert.equal(turns[0].parts[2].failed, true);
+  assert.equal(turns[0].endedAt, '2026-10-20T10:00:10Z');
+  assert.equal(turns[1].prompt.text, 'thanks'); assert.deepEqual(turns[1].parts, []);
+  // A page that starts mid-turn still shows its tool activity under one reply row.
+  assert.equal(historyTurns(rows.slice(2, 4))[0].prompt, null);
+  assert.equal(classifyStep({ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'npm test' }, output: 'boom', is_error: true, status: 'completed' }, 'succeeded').kind, 'command');
 });

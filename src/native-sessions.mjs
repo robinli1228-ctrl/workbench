@@ -34,11 +34,36 @@ const jsonLines=text=>text.split('\n').flatMap(line=>{try{return [JSON.parse(lin
 const bodyText=content=>typeof content==='string'?content:Array.isArray(content)?content.map(c=>typeof c?.text==='string'?c.text:'').filter(Boolean).join('\n'):'';
 // Claude Code 2.1.303 also records api-request-blob rows carrying the same message bodies; only the conversation rows count.
 const claudeMessage=row=>['user','assistant'].includes(row.type)?row.message:null;
+const clip=(value,limit)=>{const s=typeof value==='string'?value:value==null?'':JSON.stringify(value);return s.length>limit?`${s.slice(0,limit)}…`:s;};
+const toolText=content=>typeof content==='string'?content:Array.isArray(content)?content.map(c=>typeof c?.text==='string'?c.text:typeof c?.output==='string'?c.output:'').filter(Boolean).join('\n'):content==null?'':JSON.stringify(content);
+/** Tool inputs keep their shape (paths, commands, edits) with long fields cut, so the page can classify the step without the whole payload. */
+const clipInput=value=>{
+ if(value&&typeof value==='object'&&!Array.isArray(value)){const out={};for(const [k,v] of Object.entries(value))out[k]=typeof v==='string'?clip(v,4000):v;return JSON.stringify(out).length>16000?{raw:clip(JSON.stringify(out),4000)}:out;}
+ return value==null?null:clip(value,4000);
+};
+// Codex custom "exec" calls carry a script; show the command it runs when it can be read, the script otherwise.
+const codexInput=p=>{if(p.type==='local_shell_call')return {command:p.action?.command};if(p.type==='function_call')return p.arguments;const code=typeof p.input==='string'?p.input:'';const cmd=code.match(/exec_command\(\{\s*cmd\s*:\s*(["'`])([\s\S]*?)\1/);return cmd?{command:cmd[2]}:p.input;};
+const call=(callId,name,input,at)=>({role:'tool_call',callId:String(callId||''),name:String(name||'tool'),input:clipInput(input),timestamp:at});
+const result=(callId,output,failed,at)=>({role:'tool_result',callId:String(callId||''),output:clip(toolText(output),4000),failed:failed===true,timestamp:at});
+/** Conversation rows plus the tool calls and results between them; the page pairs them and shows each turn like a page turn. */
 function messagesFrom(rows,runtime){return rows.flatMap(row=>{
- const m=runtime==='codex'&&row.type==='response_item'?row.payload:runtime==='claude'?claudeMessage(row):runtime==='grok'?{role:row.type,content:row.content}:null;
- if(!m||!['user','assistant'].includes(m.role))return [];
- const text=bodyText(m.content);return text?[{role:m.role,text:text.slice(0,12000),timestamp:row.timestamp||null}]:[];
+ const at=row.timestamp||null,out=[],say=(role,content)=>{const text=bodyText(content);if(text)out.push({role,text:text.slice(0,12000),timestamp:at});};
+ if(runtime==='claude'){
+  const m=row.isSidechain===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
+  say(m.role,m.content);
+  for(const b of Array.isArray(m.content)?m.content:[]){if(b?.type==='tool_use')out.push(call(b.id,b.name,b.input,at));else if(b?.type==='tool_result')out.push(result(b.tool_use_id,b.content,b.is_error,at));}
+ }else if(runtime==='codex'){
+  if(row.type!=='response_item')return [];const p=row.payload||{};
+  if(p.type==='message'){if(['user','assistant'].includes(p.role))say(p.role,p.content);}
+  else if(['function_call','custom_tool_call','local_shell_call'].includes(p.type))out.push(call(p.call_id||p.id,p.name||(p.type==='local_shell_call'?'shell':p.type),codexInput(p),at));
+  else if(['function_call_output','custom_tool_call_output','local_shell_call_output'].includes(p.type))out.push(result(p.call_id,p.output,false,at));
+ }else if(runtime==='grok'){
+  if(row.type==='tool_result')out.push(result(row.tool_call_id,row.content,false,at));
+  else if(['user','assistant'].includes(row.type)){say(row.type,row.content);for(const c of Array.isArray(row.tool_calls)?row.tool_calls:[])out.push(call(c.id,c.name||c.function?.name,c.arguments??c.function?.arguments,at));}
+ }
+ return out;
 });}
+export const historyMessages=messagesFrom;
 
 /** Display only explicitly recorded settings from the bounded latest history, never a CLI/account default. */
 function sessionConfiguration(rows,runtime){
@@ -189,7 +214,7 @@ async function historyPage(file,runtime,id,cursor,snapshot){
   // Quiet refresh must verify the previous snapshot, even when its last page had no older cursor.
   if(snapshot){size=info.size;end=size;tail=await tailAt(size);}
   const start=Math.max(0,end-1048576),buffer=Buffer.alloc(end-start);await h.read(buffer,0,buffer.length,start);
-  let pos=buffer.length,next=end,bytes=0;const messages=[];
+  let pos=buffer.length,next=end,bytes=0,prompts=0;const messages=[];
   while(pos>0){
    let lineEnd=pos;while(lineEnd>0&&[10,13].includes(buffer[lineEnd-1]))lineEnd--;
    if(!lineEnd){next=start;break;}
@@ -197,8 +222,9 @@ async function historyPage(file,runtime,id,cursor,snapshot){
    if(lf<0&&start>0)break; // Retry this incomplete leading line from its end on the next page.
    const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map(m=>({...m,id:`${id}:${start+lineStart}`,offset:start+lineStart}));
    const weight=Buffer.byteLength(JSON.stringify(found));
-   if(found.length&&(messages.length>=15||bytes+weight>262144))break;
-   messages.unshift(...found);bytes+=weight;next=start+lineStart;pos=Math.max(0,lf);
+   // Pages are sized by prompts, not by tool rows, so a turn with many tool calls still reads as one page.
+   if(found.length&&(prompts>=15||bytes+weight>262144))break;
+   messages.unshift(...found);bytes+=weight;prompts+=found.filter(m=>m.role==='user').length;next=start+lineStart;pos=Math.max(0,lf);
   }
   if(next===end&&end>0)throw Error('A native history record is too large to preview; the original history is unchanged.');
   const after=await stat(file.path);if(after.dev!==info.dev||after.ino!==info.ino||after.size<size)throw Error('Native history changed; reopen the session to read it again.');
@@ -215,7 +241,8 @@ export async function readNativeSession(runtime,id,{env=process.env,record=null,
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
  if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot)};
  const window=await readWindow(file.path,file.root,true,524288),rows=jsonLines(window.text),messages=messagesFrom(rows,runtime);
- return {...info,messages:messages.slice(-80),sessionConfiguration:sessionConfiguration(rows,runtime),partial:window.partial||messages.length>80};
+ const texts=messages.filter(m=>m.role==='user'||m.role==='assistant'),from=texts.length>80?messages.indexOf(texts.at(-80)):0;
+ return {...info,messages:messages.slice(from),sessionConfiguration:sessionConfiguration(rows,runtime),partial:window.partial||texts.length>80};
 }
 
 /** Native defaults stay intact unless the user explicitly opts into unrestricted execution. */
