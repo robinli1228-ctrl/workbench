@@ -3306,3 +3306,8 @@ button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 1
   .native-session-scroll { padding: 16px; }
   button.primary, button.secondary, button.danger { min-height: 40px; }
 }
+/* Rows inserted into the history (anchored turn replies, placed turns) align exactly like history rows: same width, same centring. */
+.native-history > .native-turn-anchored:not(.nt-row) { margin: -6px 0 14px 44px; max-width: min(820px, 88%); }
+.native-history > .nt-row.native-turn-anchored { display: block; margin: 0 auto 20px; max-width: min(860px, 100%); justify-items: initial; gap: 0; }
+.native-history > .nt-user.native-turn-anchored { display: flex; }
+.native-takeover-feed { padding: 0; }
