@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {giteeRepository} from './repository.mjs';
 
 /**
  * Takeover turns: the user continues one exact native CLI session from the Sessions page.
@@ -84,7 +85,7 @@ export class NativeTurnsHome{
  active(nodeId,runtime,sessionId){return nativeTurnRows(this.db,{nodeId,runtime,sessionId,active:true,limit:1})[0];}
  process(nodeId,runtime,sessionId){const p=this.db.get('nativeTakeovers',sessionKey(nodeId,runtime,sessionId));return this.leases&&p?.leaseId?this.leases.held(p.leaseId):p?.status==='open';}
  /** Model and effort chosen on the Sessions page for this native session; they ride on every turn message. */
- settings(nodeId,runtime,sessionId){const s=this.db.get('nativeSessionSettings',nativeSettingsKey(nodeId,runtime,sessionId));return {model:s?.model||null,effort:s?.effort||null,updatedAt:s?.updatedAt||null};}
+ settings(nodeId,runtime,sessionId){const s=this.db.get('nativeSessionSettings',nativeSettingsKey(nodeId,runtime,sessionId));return {model:s?.model||null,effort:s?.effort||null,hostingAccountId:s?.hostingAccountId||null,repoUrl:s?.repoUrl||null,updatedAt:s?.updatedAt||null};}
  /**
   * One field per call. Claude applies a change in place through a /model or /effort turn; Codex and Grok take it on the next
   * turn; a resident Agy must restart, so its takeover is released and the next message starts it with the new flags.
@@ -93,8 +94,16 @@ export class NativeTurnsHome{
   const {runtime,sessionId}=body||{};
   if(!NATIVE_TURN_RUNTIMES.includes(runtime))throw Error('Unsupported CLI');
   if(!idPattern.test(sessionId||''))throw Error('Invalid native session ID');
-  const field='model' in body?'model':'effort' in body?'effort':null;if(!field)throw Error('Nothing to change');
+  const field='model' in body?'model':'effort' in body?'effort':'hostingAccountId' in body?'hostingAccountId':null;if(!field)throw Error('Nothing to change');
   const value=body[field]===null||body[field]===''?null:String(body[field]);
+  if(field==='hostingAccountId'){
+   // The account must exist and match the repository's host; the URL is remembered so a turn can resolve the credential.
+   const repoUrl=typeof body.repoUrl==='string'&&body.repoUrl.trim()?body.repoUrl.trim().slice(0,300):null;
+   if(value!==null){const account=this.db.get('hostingAccounts',value);if(!account)throw Error('Hosting account not found');if(!repoUrl)throw Error('The repository remote URL is unknown; refresh the Git card first');const remote=giteeRepository(repoUrl);if(!remote||remote.provider!==account.provider)throw Error('The account provider does not match the repository host');}
+   const key=nativeSettingsKey(nodeId,runtime,sessionId),current=this.db.get('nativeSessionSettings',key)||{};
+   const saved=this.db.put('nativeSessionSettings',{...current,id:key,nodeId,runtime,sessionId,hostingAccountId:value,repoUrl:value?repoUrl:current.repoUrl||repoUrl,updatedAt:now()});
+   this.change();return {...this.settings(nodeId,runtime,sessionId),applied:'next_turn',updatedAt:saved.updatedAt};
+  }
   if(value!==null&&(field==='model'?!modelPattern.test(value):!EFFORTS.has(value)))throw Error(field==='model'?'Invalid model':'Invalid reasoning effort');
   const runtimeInfo=(worker?.runtimes||[]).find(r=>r.type===runtime),models=runtimeInfo?.models||[];
   if(value!==null&&field==='model'&&models.length&&!models.some(m=>m.id===value))throw Error('Model is not available on this device');
@@ -111,7 +120,7 @@ export class NativeTurnsHome{
   this.change();return {model:saved.model||null,effort:saved.effort||null,updatedAt:saved.updatedAt,applied};
   });
  }
- create(nodeId,worker,body){
+ create(nodeId,worker,body,{gitCredential=null}={}){
   const {runtime,sessionId,clientTurnId,attachmentIds=[]}=body||{};let {text='',control=null}=body||{};
   if(!NATIVE_TURN_RUNTIMES.includes(runtime))throw Error('Unsupported CLI');
   if(!idPattern.test(sessionId||''))throw Error('Invalid native session ID');
@@ -134,7 +143,7 @@ export class NativeTurnsHome{
   this.db.put('nativeTurns',turn);
   this.db.put('nativeTakeovers',{id:sessionKey(nodeId,runtime,sessionId),nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
   const settings=this.settings(nodeId,runtime,sessionId);
-  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:text,attachments:items,...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(control?{control}:{}),...(lease||{})});
+  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:text,attachments:items,...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(control?{control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
   this.change();return nativeTurnView(turn);
  }
  /** Workers download only the attachments bound to an unfinished turn. */
@@ -213,7 +222,7 @@ export class NativeTurnRunner{
    if(state.stopRequested)return end('interrupted');
    this.leases?.validate(m);
    this.event(m.id,{kind:'status',status:'starting'});
-   const {files=[],images=[]}=await this.prepareInputs(m,workspace);
+   const {files=[],images=[],env=null}=await this.prepareInputs(m,workspace);
    if(state.stopRequested)return end('interrupted');
    if(images.length&&!NATIVE_IMAGE_RUNTIMES.has(m.runtime))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');
    const others=files.filter(f=>!(m.runtime==='codex'&&f.mime?.startsWith('image/'))&&!(m.runtime==='claude'&&f.mime?.startsWith('image/')));
@@ -231,7 +240,7 @@ export class NativeTurnRunner{
     else if(type==='context_usage'&&p&&typeof p==='object')this.event(m.id,{kind:'context_usage',sample:p});
    };
    // Model/effort from the Sessions page: flags at spawn for Claude/Agy (Claude later changes them in place), per turn for Codex and Grok.
-   const resident=NATIVE_RESIDENT_RUNTIMES.has(m.runtime),inputs={attachments:files,inputImages:images,model:typeof m.model==='string'&&m.model?m.model:null,effort:typeof m.effort==='string'&&m.effort?m.effort:null,control:m.control||null};
+   const resident=NATIVE_RESIDENT_RUNTIMES.has(m.runtime),inputs={attachments:files,inputImages:images,model:typeof m.model==='string'&&m.model?m.model:null,effort:typeof m.effort==='string'&&m.effort?m.effort:null,control:m.control||null,...(env?{env}:{})};
    if(existing&&alive(existing.session)){clearTimeout(existing.timer);existing.busy=m.id;state.session=existing.session;state.resident=true;existing.session.reuse({emit,...inputs});}
    else{
     if(existing){await this.close(key,'exited');throw Error('The previous CLI exited; retry after its lease is returned');}

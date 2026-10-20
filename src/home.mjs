@@ -161,7 +161,9 @@ for (const run of db.list('runs').filter(r => !terminal.has(r.status))) db.put('
 const sockets = new Map();
 const reconnectingNodes = new Set();
 /** Sessions-page takeover hook (src/native-turns-home.mjs). */
-const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>{if(!reconnectingNodes.has(nodeId))send(sockets.get(nodeId),{...payload,language:getLanguage()});},online:id=>sockets.get(id)?.readyState===1&&!reconnectingNodes.has(id),change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession});
+const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>{if(!reconnectingNodes.has(nodeId))send(sockets.get(nodeId),{...payload,language:getLanguage()});},online:id=>sockets.get(id)?.readyState===1&&!reconnectingNodes.has(id),change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession,
+  // A session-bound hosting account becomes the Basic-auth header for that repository only; nothing is resolved without an explicit binding.
+  gitCredential:async settings=>{if(!settings?.hostingAccountId||!settings.repoUrl)return null;const auth=await hosting.auth(settings.hostingAccountId,settings.repoUrl);return auth?{...auth,repoUrl:settings.repoUrl}:null;}});
 const viewers = new Set();
 const queries = new Map();
 const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
@@ -756,7 +758,8 @@ const server = http.createServer(async (req, res) => {
         if(worker.nodeKind==='cloud'&&!device)throw Error('Register SSH access for this server first');
         const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
         return await withFolderPreparation(fresh&&worker.capabilities?.localFolderSelection===1&&b.workspace?{nodeId,scope:`native:${catalogEntryId}`,path:b.workspace,operationId:b.operationId}:null,async folderCandidate=>{
-        const input={runtime:b.runtime,sessionId:b.sessionId||null,record:historyRecord,freshSessionId,entryId:catalogEntryId,title:fresh?b.title.trim():null,workspace:folderCandidate?.root||b.workspace,folderCandidate,allowAll:b.allowAll,bindings,managedProjectIds:nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId})};
+        const gitCredential=b.sessionId?await nativeTurns.gitCredentialFor(nodeId,b.runtime,b.sessionId).catch(()=>null):null;
+        const input={runtime:b.runtime,sessionId:b.sessionId||null,record:historyRecord,freshSessionId,entryId:catalogEntryId,title:fresh?b.title.trim():null,workspace:folderCandidate?.root||b.workspace,folderCandidate,allowAll:b.allowAll,bindings,managedProjectIds:nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId}),...(gitCredential?{gitCredential}:{})};
         const preview=await workerQuery({nodeId},'native_terminal_preview',input,30000);
         input.managedProjectIds=nativeSessionProjectIds(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId});
         const owner=nativeTerminalProject(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId,folderProjectIds:preview.projectId?[preview.projectId]:[]}),projectId=owner||`native-tui:${b.operationId}`;

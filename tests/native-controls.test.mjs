@@ -73,3 +73,18 @@ test('context snapshots are kept on the turn and a Claude compaction records pre
   const sample = tracker.receive({ type: 'system', subtype: 'compact_boundary', compact_metadata: { pre_tokens: 20071, post_tokens: 2001 } }, SID);
   assert.equal(sample.state, 'compacted'); assert.equal(sample.usedTokens, 2001); assert.deepEqual(sample.compacted, { preTokens: 20071, postTokens: 2001 });
 });
+
+test('a hosting account binds to a session only with a matching repository host, and rides on turns as a credential', async () => {
+  const { db, sent, turns, worker } = home();
+  db.put('hostingAccounts', { id: 'acct-gh', provider: 'github', login: 'robin' });
+  db.put('hostingAccounts', { id: 'acct-gitee', provider: 'gitee', login: 'robin' });
+  const url = 'https://github.com/robinli1228-ctrl/workbench.git';
+  assert.throws(() => turns.saveSettings('n1', worker, { runtime: 'claude', sessionId: SID, hostingAccountId: 'acct-gitee', repoUrl: url }), /does not match/);
+  assert.throws(() => turns.saveSettings('n1', worker, { runtime: 'claude', sessionId: SID, hostingAccountId: 'acct-gh' }), /remote URL is unknown/);
+  const saved = turns.saveSettings('n1', worker, { runtime: 'claude', sessionId: SID, hostingAccountId: 'acct-gh', repoUrl: url });
+  assert.equal(saved.hostingAccountId, 'acct-gh'); assert.equal(saved.repoUrl, url);
+  turns.create('n1', worker, { runtime: 'claude', sessionId: SID, clientTurnId: 'client-turn-9', text: 'push it' }, { gitCredential: { provider: 'github', login: 'x-access-token', token: 't', repoUrl: url } });
+  assert.deepEqual(sent.at(-1).gitCredential, { provider: 'github', login: 'x-access-token', token: 't', repoUrl: url });
+  const cleared = turns.saveSettings('n1', worker, { runtime: 'claude', sessionId: SID, hostingAccountId: null });
+  assert.equal(cleared.hostingAccountId, null); assert.equal(cleared.repoUrl, url);
+});
