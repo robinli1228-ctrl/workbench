@@ -537,15 +537,16 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));main.append(md);}
    if(body&&session)noteOutputs(session,body,at);}
   else{
-   // The prompt shows three lines; the hover row carries the time, Copy, and Full screen when more is hidden.
-   const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(textEl);
+   // Attachments sit on top of the bubble, the text below; time, Copy and Full screen (when text is hidden) sit under the bubble, outside it.
+   const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(el('div','nt-prompt-files'),textEl);
    if(at){const stamp=el('time','nt-prompt-time',time(at));stamp.dateTime=at;tools.append(stamp);}
    const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
    const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
-   tools.append(expand,copy);main.append(tools);
+   tools.append(expand,copy);row.dataset.tools='1';row._tools=tools;
    requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
   }
-  if(extra)main.append(extra);row.append(main);
+  if(extra){if(agent)main.append(extra);else main.querySelector('.nt-prompt-files').append(extra);}
+  row.append(main);if(row._tools){row.append(row._tools);delete row._tools;}
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
   if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);row.append(foot);}
   return row;}
@@ -820,8 +821,10 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     open.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));
     card.append(open,closeIcon(button('',remove,'attachment-remove'),t('Remove attachment')));return card;
    }
-   if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});card.append(img);}else card.append(el('span','native-file-icon','\u{1F4C4}'));
-   if(remove||!item.mime?.startsWith('image/')){const info=el('span','native-file-info');info.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));card.append(info);}
+   // A sent attachment opens in the preview on click (image full size, file details).
+   const open=el('button','attachment-open');open.type='button';open.title=item.name;open.addEventListener('click',()=>previewAttachment(item));card.append(open);
+   if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);}else open.append(el('span','native-file-icon','\u{1F4C4}'));
+   if(remove||!item.mime?.startsWith('image/')){const info=el('span','native-file-info');info.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));open.append(info);}
    if(remove){const x=closeIcon(button('',remove,'attachment-remove'),t('Remove attachment'));card.append(x);}return card;}
   function detach(){current=null;turns=[];historyEl=null;feed.replaceChildren();shell.remove();clearInterval(poll);poll=null;revokeUrls();}
   function attach(value,{readable,historyAt:at,history}){const same=current&&k()===`${value.nodeId}/${value.runtime}/${value.sessionId}`;current=value;historyAt=at;historyEl=history;if(!same){turns=[];feed.replaceChildren();}
@@ -835,6 +838,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const rows=[...(historyEl?.querySelectorAll('.native-chat-row')||[])],used=new Set();
    // A finished page turn that no history row matched (older page, or the CLI never recorded it) is placed by time among the loaded rows,
    // never under the newest history. One that belongs to a history page not loaded yet is left to that page.
+   const attachFiles=(row,files)=>(row.querySelector('.nt-prompt-files')||row.querySelector('.nt-body'))?.append(files);
    const rowAt=row=>Date.parse(row.dataset.at||''),dated=rows.filter(row=>Number.isFinite(rowAt(row)));
    const place=(nodes,createdAt)=>{const at=Date.parse(createdAt||'');if(!Number.isFinite(at)||!dated.length){feed.append(...nodes);return;}
     if(at<rowAt(dated[0])&&timeline.hasOlder())return;
@@ -856,7 +860,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(!live&&turn.endedAt&&turn.prompt.trim()){
      const prompt=promptKey(turn.prompt),index=rows.findIndex((row,i)=>!used.has(i)&&row.dataset.role==='user'&&row.dataset.text===prompt);
      if(index>=0){used.add(index);let anchor=rows[index];for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++)anchor=rows[i];
-      if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));rows[index].querySelector('.nt-body')?.append(files);}
+      if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));attachFiles(rows[index],files);}
       // No reply row follows the prompt in the loaded history (not written yet, or the next row is another prompt): the turn's own
       // reply row goes right after the prompt. The prompt bubble never hosts a reply's activity.
       if(anchor.dataset.role==='user'){const content=el('div','nt-turn');content.append(turnContent(turn,current,{open:openProcesses.has(turn.id)}));
@@ -871,7 +875,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     // A running turn whose prompt already reached the history anchors on that row: the history row stays, the feed adds only the live reply,
     // and the history's partial reply rows for this turn are hidden while the live one shows.
     const liveIndex=live?rows.findIndex((row,i)=>!used.has(i)&&row.dataset.role==='user'&&row.dataset.text===promptKey(turn.prompt)):-1;
-    if(liveIndex>=0){used.add(liveIndex);const files=makeFiles();if(files){files.classList.add('native-turn-anchored');rows[liveIndex].querySelector('.nt-body')?.append(files);}
+    if(liveIndex>=0){used.add(liveIndex);const files=makeFiles();if(files){files.classList.add('native-turn-anchored');attachFiles(rows[liveIndex],files);}
      for(let i=liveIndex+1;i<rows.length&&rows[i].dataset.role!=='user';i++)rows[i].hidden=true;}
     const userRow=liveIndex>=0?null:chatRow('user',turn.prompt,current.runtime,turn.createdAt,makeFiles());if(userRow){userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);}
     const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));

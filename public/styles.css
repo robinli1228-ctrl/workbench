@@ -3228,3 +3228,12 @@ select:disabled { opacity: .6; }
 /* Platform pause notice in the connection card. */
 .native-paused { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 0; padding: 8px 10px; border: 1px solid #f1d9d9; border-radius: 8px; background: #fdf3f3; color: var(--danger); font-size: 12px; }
 .native-paused .native-card-action { flex: none; }
+
+/* Prompt row: bubble (files above text) with the tool line right under it, outside the bubble. */
+.nt-user { flex-direction: column; align-items: flex-end; }
+.nt-prompt-files { display: block; }
+.nt-prompt-files:empty { display: none; }
+.nt-prompt-files .chat-attachments, .nt-prompt-files .native-turn-files { margin: 0 0 8px; justify-content: flex-start; }
+.nt-user .nt-prompt-tools { width: auto; max-width: min(640px, 78%); margin-top: 3px; padding-right: 2px; }
+.native-turn-files .attachment-open { display: block; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.native-turn-files .attachment-file-card .attachment-open { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px; text-align: left; cursor: pointer; }
