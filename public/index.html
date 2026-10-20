@@ -26,8 +26,8 @@
 
         <div class="sidebar-heading">
           <div id="navigation-mode" class="navigation-mode" role="group" aria-label="Navigation mode">
-            <button type="button" data-mode="groups" aria-pressed="true">Group chats</button>
-            <button type="button" data-mode="sessions" aria-pressed="false">Sessions</button>
+            <button type="button" data-mode="sessions" aria-pressed="true">Sessions</button>
+            <button type="button" data-mode="groups" aria-pressed="false">Group chats</button>
           </div>
           <button class="icon-button inverse new-conversation-button" id="show-project-form" type="button" aria-label="New project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h1v3l4-3h8a2 2 0 0 0 2-2v-5"/><path d="M19 2v6m-3-3h6"/></svg></button>
         </div>
@@ -308,6 +308,12 @@
 
             <section class="settings-panel" data-settings-panel="information" hidden>
               <div class="settings-panel-heading"><h3>Configuration Information</h3><p>Software versions and update notes only. This page does not call an AI, install updates or restart services.</p></div>
+              <div class="settings-block setup-guide" id="setup-guide">
+                <div class="setup-guide-head"><h4>Setup guide</h4><div class="setup-guide-actions"><button class="secondary" id="copy-setup-guide" type="button">Copy for an AI assistant</button><button class="secondary" id="toggle-setup-guide" type="button" aria-expanded="false" aria-controls="setup-guide-body">Show guide</button></div></div>
+                <p class="workspace-note">The complete installation and configuration guide: architecture, prerequisites, environment variables, multi-device setup, services, upgrade and troubleshooting. Copy it and hand it to an AI assistant to walk through the setup with you.</p>
+                <p id="setup-guide-feedback" class="workspace-note" role="status" hidden></p>
+                <div id="setup-guide-body" class="setup-guide-body markdown-body" hidden></div>
+              </div>
               <div class="software-update-actions"><button class="primary" id="check-software-updates" type="button">Check for updates</button><p class="workspace-note">Compare with GitHub main. Results are cached for one minute.</p></div>
               <p id="software-update-feedback" class="form-feedback" role="status" hidden></p>
               <div id="software-latest" class="settings-block" hidden></div>
