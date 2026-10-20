@@ -30,7 +30,7 @@ export function executionProgress({run,task,request,online=true}={}) {
   if(run?.status==='succeeded'||request?.status==='succeeded') {
     // Compact workspace snapshots deliberately omit reply bodies; only Home's full projection can prove an empty reply.
     // Home's SQL page summaries carry hasReply in place of the bodies.
-    const replied=[run?.result,request.result,request.reportSummary,run?.report?.summary].some(text=>typeof text==='string'&&text.trim())||run?.hasReply===true||request.hasReply===true;
+    const replied=[run?.result,request?.result,request?.reportSummary,run?.report?.summary].some(text=>typeof text==='string'&&text.trim())||run?.hasReply===true||request?.hasReply===true;
     if(request?.kind==='consult'&&(request.messageProgress?.stage==='no_response'||(!run?.summaryOnly&&!replied)))return result('error','no_response','Run ended without a reply');
     return result('completed','result_saved');
   }

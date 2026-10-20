@@ -68,6 +68,8 @@ Minimal input still includes the short maintained stage boundaries and required-
 
 ## Key features
 
+Workspace page refreshes read project-scoped SQLite summaries instead of materializing every historical execution body in JavaScript. Reply-presence evidence preserves the full-record progress rules, including whitespace-only responses. Global active execution marks remain visible in the sidebar; full state, history, detail and report endpoints retain their original bodies. This read-path optimization adds no cross-request cache, changes no synchronization intervals, and does not rewrite historical records or scheduling state.
+
 Sessions interleave prose and tool activity in recorded order, group consecutive messages, and show the latest reply duration. The Connection card switches between page chat and iTerm only when the page is idle; terminal preparation keeps normal permission defaults. Session settings include the name, repository facts and an explicit repository-scoped Git account binding. SSH and extensionless HTTPS remotes use a private per-process URL mapping without changing the repository's remote. Group replies retain their trigger-time position, while receipt-based catch-up delivers late results even after the latest history page has moved past them.
 
 Native-session settings reject changes while the session is replying, without changing saved settings or stopping its CLI. Codex compaction retains its native turn identity for interruption. Background print-mode work stays in progress until the owner returns its final result; child-agent output and elapsed time alone cannot complete it. New-session permission bypass remains an explicit opt-in.

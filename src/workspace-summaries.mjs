@@ -1,8 +1,10 @@
 import {PAGE_SUMMARY_PATHS} from './workspace-state.mjs';
 
 const paths=fields=>fields.map(field=>`'$.${field}'`).join(',');
-// Progress needs to know that a reply body exists, not the body itself.
-const replied=fields=>`json(CASE WHEN ${fields.map(field=>`trim(coalesce(json_extract(data,'$.${field}'),''))!=''`).join(' OR ')} THEN 'true' ELSE 'false' END)`;
+// Match JavaScript String.trim exactly: SQLite's default trim only removes ASCII spaces.
+// Non-text legacy values are not replies, just as in the existing full-record projection.
+const whitespace='char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279)';
+const replied=fields=>`json(CASE WHEN ${fields.map(field=>`(json_type(data,'$.${field}')='text' AND trim(json_extract(data,'$.${field}'),${whitespace})!='')`).join(' OR ')} THEN 'true' ELSE 'false' END)`;
 
 /** One project's page summaries, read straight from SQLite: omitted bodies never become JS strings, and the
  * (kind, projectId) index returns rowid order without a sort. Full records stay where they are for the detail reads. */
