@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { NativeTurnRunner } from './native-turns.mjs';
 import { createNativeSession } from './native-turn-sessions.mjs';
 import { readNativeSession, registeredNativeSession, assertNativeSessionIdle } from './native-sessions.mjs';
+import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { nativeTerminalProject, projectTerminalLock, terminalProcessIdentity, processIdentityKey, checkTerminalSession, stopTerminalSession } from './terminal-resume.mjs';
 
 const LIMIT=20*1024*1024,COUNT=6,uuid=/^[a-f0-9-]{36}$/;
@@ -84,7 +85,10 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
     prepareInputs:async m=>{
       const files=await receiveTurnFiles({items:m.attachments||[],turnId:m.id,root:join(data,'native-turn-files'),home:homeHttp,token});
       const images=m.runtime==='claude'?await Promise.all(files.filter(f=>f.mime.startsWith('image/')).map(async f=>({mime:f.mime,data:(await readFile(f.path)).toString('base64')}))):[];
-      return {files,images};
+      // One private gitconfig per session, rewritten every turn: a resident CLI picks up a newly bound account without restarting.
+      const credential=m.gitCredential?.token?m.gitCredential:null;
+      const env=await runtimeGitEnvironment({directory:join(data,'git-auth'),key:nativeGitConfigKey(m.runtime,m.sessionId),repositories:credential?[{id:'session',repoUrl:credential.repoUrl}]:[],credentials:credential?{session:credential}:{}});
+      return {files,images,env};
     },
     resolveSession:async(runtime,sessionId,{message:m})=>{
       const history=await readNativeSession(runtime,sessionId,{record:m.record||registeredNativeSession(db,runtime,sessionId)});if(!history.workspace)return {workspace:null};

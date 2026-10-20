@@ -3018,3 +3018,40 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .nt-system-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nt-system.is-error code, .nt-system.is-error .nt-system-detail { color: var(--danger); }
 .nt-system .nt-pulse { margin-left: 2px; }
+
+/* ---- Conversation bubbles: the person on the right in a bubble, the model on the left as prose; duration under the newest reply ---- */
+.nt-user { display: flex; justify-content: flex-end; }
+.nt-user .nt-body { display: block; width: auto; max-width: min(680px, 82%); padding: 10px 14px; border: 1px solid #cfe3d6; border-radius: 16px 16px 4px 16px; background: var(--green-soft); }
+.nt-prompt-mark { display: none; }
+.nt-prompt-time { display: block; margin-top: 4px; text-align: right; }
+.nt-user .nt-body > .chat-attachments { margin-top: 8px; justify-content: flex-end; }
+.nt-duration { padding-left: 28px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+@media (max-width: 1000px) { .nt-user .nt-body { max-width: 92%; } .nt-duration { padding-left: 0; } }
+/* consecutive messages from the same side: byline once, then stacked closely; a page turn interleaves prose and activity lines */
+.nt-row.is-continued { margin-top: -12px; }
+.nt-agent.is-continued .nt-byline { display: none; }
+.nt-user.is-continued .nt-prompt-time { display: none; }
+.nt-turn > .markdown-body + .nt-activity, .nt-turn > .nt-activity + .markdown-body, .nt-turn > .markdown-body + .markdown-body { margin-top: 10px; }
+.nt-turn > .nt-activity { margin-bottom: 0; }
+/* connection card: where the session runs, as a two-way switch */
+.native-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 4px 0 10px; padding: 4px; border-radius: 12px; background: #eef2ef; }
+.native-mode { display: grid; gap: 1px; min-height: 48px; padding: 7px 10px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--muted); font: inherit; text-align: left; cursor: pointer; }
+.native-mode:hover:not(:disabled) { background: #fff; color: var(--ink); }
+.native-mode.is-on { background: #fff; border-color: var(--line); color: var(--ink); box-shadow: 0 1px 2px rgb(20 36 28 / 6%); cursor: default; opacity: 1; }
+.native-mode:disabled:not(.is-on) { opacity: .55; }
+.native-mode.is-pending { animation: nt-pulse 1.4s ease-in-out infinite; }
+.native-mode-title { font-size: 13px; font-weight: 600; }
+.native-mode-sub { font-size: 11px; }
+.native-connect .native-session-actions a.primary { display: inline-flex; justify-content: center; align-items: center; min-height: 36px; text-decoration: none; }
+.native-command-row { display: grid; gap: 6px; margin-top: 12px; }
+.native-command-row .native-side-hint { margin: 0; }
+/* session settings gear in the top bar (sessions mode only); the connection note yields its place */
+.native-session-gear { display: none; }
+body[data-navigation-mode="sessions"] .native-session-gear { display: grid; place-items: center; }
+body[data-navigation-mode="sessions"] #connection-note { display: none !important; }
+.native-settings-dialog { display: grid; gap: 18px; min-width: min(520px, 92vw); }
+.native-settings-section h3 { margin: 0 0 8px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.native-settings-section .native-rename-form { display: flex; gap: 8px; }
+.native-settings-section .native-rename-form input { flex: 1; min-width: 0; }
+.native-settings-section select { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13px; margin-bottom: 6px; }
+.native-settings-section .secondary { margin-top: 4px; }

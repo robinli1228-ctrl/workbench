@@ -1123,26 +1123,19 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       .map(request=>({request,at:request.resumeError?.at||request.updatedAt||request.createdAt}))
       .filter(item=>!history?.hasMore||messages.length&&eventTime(item.at)>=eventTime(messages[0].createdAt))
       .sort((a,b)=>eventTime(a.at)-eventTime(b.at)||a.request.id.localeCompare(b.request.id));
-    let noticeIndex=0;
-    const appendNoticesBefore=time=>{while(noticeIndex<notices.length&&eventTime(notices[noticeIndex].at)<=time){const item=notices[noticeIndex++];feed.append(renderResumeNotice(item.request,item.at));}};
-    for (const m of messages) {
-      appendNoticesBefore(eventTime(m.createdAt));
-      feed.append(renderMessageRow(m, messages));
-      for (const id of m.taskIds || []) {
-        const task = data.tasks?.find(t => t.id === id);
-        if (!task) continue;
-        const live = renderLiveBubble(task, messages);
-        if (live) feed.append(live);
-      }
-    }
-    appendNoticesBefore(Infinity);
-    for(const task of unlinkedLiveTasks(messages,data.tasks || [],data.runs || [],projectId)) {
-      const live=renderLiveBubble(task,messages);
-      if(live)feed.append(live);
-    }
-    for(const run of (data.runs||[]).filter(r=>r.projectId===projectId&&r.discussionDeliveryId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status))) {
-      const live=renderLiveBubble({id:run.taskId,currentRunId:run.id,roleSnapshot:run.roleSnapshot},messages);if(live)feed.append(live);
-    }
+    // One timeline, one key: trigger time. Messages carry the server's order; a running role's card sits where its run was
+    // triggered (the same place its reply will take), so nothing moves once placed. Queued work is not in the timeline.
+    const entries=[],orderOf=m=>String(m.orderAt||m.createdAt||'');
+    messages.forEach((m,i)=>entries.push({at:orderOf(m),rank:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)}));
+    for(const item of notices)entries.push({at:String(item.request.createdAt||item.at||''),rank:1,seq:0,node:()=>renderResumeNotice(item.request,item.at)});
+    const liveTasks=new Map();
+    for(const m of messages)for(const id of m.taskIds||[]){const task=data.tasks?.find(t=>t.id===id);if(task)liveTasks.set(task.id,task);}
+    for(const task of unlinkedLiveTasks(messages,data.tasks || [],data.runs || [],projectId))liveTasks.set(task.id,task);
+    for(const task of liveTasks.values()){const run=data.runs?.find(r=>r.id===task.currentRunId);entries.push({at:String(run?.createdAt||task.createdAt||''),rank:2,seq:0,node:()=>renderLiveBubble(task,messages)});}
+    for(const run of (data.runs||[]).filter(r=>r.projectId===projectId&&r.discussionDeliveryId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)))
+      entries.push({at:String(run.createdAt||''),rank:2,seq:0,node:()=>renderLiveBubble({id:run.taskId,currentRunId:run.id,roleSnapshot:run.roleSnapshot},messages)});
+    entries.sort((a,b)=>a.at.localeCompare(b.at)||a.rank-b.rank||a.seq-b.seq);
+    for(const entry of entries){const node=entry.node();if(node)feed.append(node);}
     const queueStrip=renderSessionQueue(data.sessionQueues?.[projectId],{create,api,refreshState,projectId,roleName:id=>(data.roles||[]).find(r=>r.id===id)?.name||id});
     if(queueStrip)feed.append(queueStrip);
     feed.querySelectorAll('.chat-reply-preview').forEach(node => {
@@ -1180,12 +1173,13 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (pendingReads.has(key)) return;
     pendingReads.add(key);
     try {
-      const result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}`);
+      const receiptQuery=Number.isSafeInteger(previous?.receiptCursor)?`&afterReceipt=${previous.receiptCursor}`:'';
+      const result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}${receiptQuery}`);
       const current = histories.get(id);
       if ((current?.revision ?? -1) > revision) return;
       const recentIds = new Set(result.messages.map(m => m.id));
       histories.set(id, { ...result, messages: [...(current?.messages || []).filter(m => !recentIds.has(m.id)), ...result.messages],
-        hasMore: current ? current.hasMore : result.hasMore, nextBefore: current?.nextBefore || result.nextBefore, revision });
+        hasMore: current ? current.hasMore : result.hasMore, nextBefore: current?.nextBefore || result.nextBefore, revision:result.hasMoreUpdates?null:revision });
       if (id === scopeId) renderMessages();
     } catch (e) { if (id === scopeId) setError(t('Failed to load chat: {message}', { message: e.message })); }
     finally { pendingReads.delete(key); }

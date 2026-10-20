@@ -12,7 +12,7 @@ import {folderAccessFor,nativeFolderAccess} from './folder-access.mjs';
  * Takeover files reuse the Attachments storage/validation code but live in their own directory and record kind,
  * while project/native ownership and capacity use the existing shared terminal leases.
  */
-export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>false,sessionRecord}) {
+export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>false,sessionRecord,gitCredential=async()=>null}) {
   const ownDb=Object.create(db,{
     get:{value:(kind,id)=>kind==='projects'&&String(id).startsWith('native:')?{id}:db.get(kind==='attachments'?'nativeTurnAttachments':kind,id)},
     put:{value:(kind,value)=>db.put(kind==='attachments'?'nativeTurnAttachments':kind,value)}
@@ -75,11 +75,12 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     if(area==='turns'&&!a&&req.method==='GET'){const q=url.searchParams,[runtime,sessionId]=[q.get('runtime'),q.get('sessionId')];
       const open=turns.process(nodeId,runtime,sessionId);if(!open)finishTurns(nodeId,runtime,sessionId);
       json(res,{items:turns.list(nodeId,runtime,sessionId),process:open?'open':'closed',supported:worker.capabilities?.nativeTurns===3,controls:worker.capabilities?.nativeControls===1,settings:turns.settings(nodeId,runtime,sessionId)});return true;}
-    if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');if(input.control&&worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to compact a native session');json(res,turns.create(nodeId,worker,input),201);return true;}
+    if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');if(input.control&&worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to compact a native session');
+      const credential=input.control?null:await gitCredential(turns.settings(nodeId,input.runtime,input.sessionId));json(res,turns.create(nodeId,worker,input,{gitCredential:credential}),201);return true;}
     if(area==='turns'&&a&&b==='stop'&&req.method==='POST'){json(res,turns.stop(nodeId,decodeURIComponent(a)));return true;}
     throw Error('Invalid session action');
   }
-  return {turns,http,
+  return {turns,http,gitCredentialFor:(nodeId,runtime,sessionId)=>gitCredential(turns.settings(nodeId,runtime,sessionId)),
     message:(nodeId,m)=>['native_turn_event','native_takeover_closed','native_takeover_lease'].includes(m.type)?(turns.receive(nodeId,m),true):false,
     disconnected:nodeId=>turns.disconnected(nodeId)};
 }

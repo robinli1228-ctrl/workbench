@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { giteeRepository } from './repository.mjs';
 import { tr } from './i18n.mjs';
 
@@ -98,6 +98,9 @@ export function gitCredentialEnv(url, credential) {
     GIT_CONFIG_KEY_1: 'credential.helper', GIT_CONFIG_VALUE_1: '' };
 }
 
+/** Page and terminal share one bounded key per runtime/session, never another CLI's coincident session ID. */
+export function nativeGitConfigKey(runtime,sessionId){return 'native-'+createHash('sha256').update(JSON.stringify([runtime,sessionId])).digest('hex');}
+
 /** The CLI inherits only the private config file path; credentials never enter launch arguments, run logs, or native session configuration. */
 export async function runtimeGitEnvironment({directory,key,repositories=[],credentials={},env=process.env}) {
   if(!/^[a-zA-Z0-9_-]{1,100}$/.test(key||''))throw new Error(tr('hosting.invalidGitAuthConfigurationId'));
@@ -111,6 +114,10 @@ export async function runtimeGitEnvironment({directory,key,repositories=[],crede
     const login=credential.provider==='github'?'x-access-token':credential.login;
     if(typeof login!=='string'||/[\r\n]/.test(login))throw new Error(tr('hosting.invalidGitAccount'));
     const header=`Authorization: Basic ${Buffer.from(`${login}:${credential.token}`).toString('base64')}`;
+    // Session repositories may retain SSH or extensionless HTTPS remotes. Rewrite only this explicitly
+    // bound URL inside the private child config; do not change origin or install a host-wide token.
+    const canonical=remote.webUrl+'.git';
+    if(repo.repoUrl!==canonical)content+=`[url ${JSON.stringify(canonical)}]\n\tinsteadOf = ${JSON.stringify(repo.repoUrl)}\n`;
     content+=`[http ${JSON.stringify(remote.webUrl+'.git')}]\n\textraHeader =\n\textraHeader = ${JSON.stringify(header)}\n\tfollowRedirects = false\n`;
   }
   await mkdir(directory,{recursive:true,mode:0o700});
