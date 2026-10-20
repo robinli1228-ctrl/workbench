@@ -243,10 +243,12 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const note=el('p','workspace-note');list.before(note);note.classList.add('native-session-note');
  // A narrowed left column (dragged below ~230px, or collapsed) drops the device/tool filters; the list keeps the width.
  const sidebar=document.querySelector('#project-sidebar');if(sidebar&&'ResizeObserver' in window)new ResizeObserver(entries=>{const width=entries[0]?.contentRect?.width||sidebar.clientWidth;filters.classList.toggle('is-narrow',width<230);}).observe(sidebar);
- let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue='groups',lastRefresh=0,listSignature='',detailSignature='';
+ let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue=(()=>{try{const saved=sessionStorage.getItem('agent-workbench.navigation-mode');return saved==='groups'||saved==='sessions'?saved:'sessions';}catch{return 'sessions';}})(),lastRefresh=0,listSignature='',detailSignature='';
  const active=()=>modeValue==='sessions';
  const endpoint=nodeId=>`/api/native-sessions/${encodeURIComponent(nodeId)}`;
  const key=item=>item?`${item.nodeId}/${item.runtime}/${item.entryId||item.id}`:'';
+ // Which side the left column shows; a reload keeps it (per tab), a new tab starts on Sessions.
+ const MODE_KEY='agent-workbench.navigation-mode';
  const listOrder=createListOrder({container:list,scope:'native-sessions',onEnd:()=>{listSignature='';renderList();},onError:message=>{note.textContent=message;}});
  const nativeId=item=>item.entryId?item.sessionId:item.sessionId||item.id;
  const workerName=id=>getData().workers?.find(w=>w.id===id)?.name||id;
@@ -1048,7 +1050,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  }
  /** Segmented buttons share one mode transition; selecting the active side does not reload history. */
  const switches=[...mode.querySelectorAll('button[data-mode]')];
- function selectMode(value){if(!['groups','sessions'].includes(value)||value===modeValue)return;modeValue=value;for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===value));document.body.dataset.navigationMode=value;if(active())populate();else{version++;detailVersion++;loading=pendingRefresh=false;takeover.detach();dialog.close();}onModeChange();if(active())void load();}
+ function selectMode(value){if(!['groups','sessions'].includes(value)||value===modeValue)return;modeValue=value;try{sessionStorage.setItem(MODE_KEY,value);}catch{}for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===value));document.body.dataset.navigationMode=value;if(active())populate();else{version++;detailVersion++;loading=pendingRefresh=false;takeover.detach();dialog.close();}onModeChange();if(active())void load();}
+ for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===modeValue));document.body.dataset.navigationMode=modeValue;
  for(const control of switches)control.addEventListener('click',()=>selectMode(control.dataset.mode));
  mode.addEventListener('keydown',event=>{const index=event.key==='ArrowLeft'||event.key==='Home'?0:event.key==='ArrowRight'||event.key==='End'?1:null;if(index===null)return;event.preventDefault();switches[index].focus();selectMode(switches[index].dataset.mode);});
  device.addEventListener('change',()=>load());tool.addEventListener('change',()=>load());
