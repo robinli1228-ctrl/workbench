@@ -3237,3 +3237,37 @@ select:disabled { opacity: .6; }
 .nt-user .nt-prompt-tools { width: auto; max-width: min(640px, 78%); margin-top: 3px; padding-right: 2px; }
 .native-turn-files .attachment-open { display: block; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
 .native-turn-files .attachment-file-card .attachment-open { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px; text-align: left; cursor: pointer; }
+
+/* ---- Polish batch: one dock height, uniform icons, quieter cards ---- */
+/* 1. The composer dock and the right panel's tab bar share one height, so their top hairlines meet. */
+@media (min-width: 1001px) {
+  #chat-form, .native-takeover-form.chat-composer { display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; min-height: 68px; padding-block: 14px; }
+  .inspector-tabs { height: 68px; min-height: 68px; box-sizing: border-box; }
+}
+/* 2. Quota lines: both marks the same 22px disc, the figure centred, no decorations. */
+.native-quota-line .role-quota-mark, .native-quota-line .role-quota-mark.is-five-hour, .native-quota-line .role-quota-mark.is-weekly { width: 22px; height: 22px; clip-path: none; border-radius: 50%; font-size: 9px; font-weight: 700; }
+.native-quota-line .role-quota-mark::before, .native-quota-line .role-quota-mark::after { content: none; }
+.native-quota-line .role-name-quota { gap: 0; margin: 0; }
+.native-quota-window { font-size: 13px; }
+.native-quota-reset { font-size: 12px; }
+/* 3. Side-panel cards: compact media cards, artifact rows and card actions. */
+.native-side-panel .media-card { width: 100%; max-width: 100%; margin: 0; padding: 4px 8px 4px 4px; gap: 8px; border-radius: 8px; }
+.native-side-panel .media-card-icon { width: 30px; height: 24px; border-radius: 5px; font-size: 10px; }
+.native-side-panel .media-card-name { font-size: 12.5px; font-weight: 500; }
+.native-side-panel .media-card-meta { font-size: 11px; }
+.native-output-list, .native-project-output-list { display: grid; gap: 4px; margin: 6px 0 4px; }
+.native-side-panel .artifact-row { padding: 6px 8px; gap: 8px; border-radius: 8px; }
+.native-side-panel .artifact-filetype { width: 30px; height: 24px; min-width: 30px; border-radius: 5px; font-size: 9px; }
+.native-side-panel .artifact-row-body { gap: 2px; }
+.native-side-panel .artifact-row-body strong { font-size: 12.5px; font-weight: 500; }
+.native-side-panel .artifact-row-body small { font-size: 10.5px; line-height: 1.4; }
+.native-side-panel .artifact-row-body .artifact-local-path { display: none; }
+.native-card-head .native-card-action { min-height: 26px; padding: 2px 10px; border-radius: 7px; font-size: 12px; font-weight: 500; }
+.native-side-card > .native-side-hint:last-child { margin-bottom: 0; }
+/* 4. Top-bar and panel icon buttons: one 18px glyph size and weight. */
+.topbar-actions .icon-button, .native-session-gear { width: 31px; height: 31px; }
+.topbar-actions .icon-button svg, .native-session-gear svg { width: 18px; height: 18px; stroke-width: 1.8; }
+.inspector-tabs button svg { width: 19px; height: 19px; }
+/* 5. Composer attachment tray: one row of small tiles, so the text keeps its room. */
+:is(#chat-attachments, .native-takeover-tray) { max-height: 80px; }
+.native-takeover-tray .attachment-open > img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; }
