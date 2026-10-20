@@ -23,8 +23,13 @@ export async function prepareNativeSessionFolder(roots, workspaceRoot, bindings 
   if (projectRoot) {
     const parent = await realpath(projectRoot);
     if (!allowed.some(root => inside(root, parent))) throw new Error(tr('folders.directoryOutsideRangeNodeAllows'));
-    const target = join(parent, 'native-sessions', sessionFolderName(name));
-    await mkdir(target, { recursive: true });
+    // Check each parent before creating its child; recursive mkdir would follow an existing intermediate symlink before rejection.
+    let target = parent;
+    for (const segment of ['native-sessions', sessionFolderName(name)]) {
+      if (!(await lstat(target)).isDirectory() || await realpath(target) !== target) throw new Error('Session folder is not a regular directory; select another folder.');
+      target = join(target, segment);
+      try { await mkdir(target); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+    }
     if (!(await lstat(target)).isDirectory() || await realpath(target) !== target) throw new Error('Session folder is not a regular directory; select another folder.');
     await access(target, constants.R_OK | constants.W_OK | constants.X_OK);
     return { path: target };
