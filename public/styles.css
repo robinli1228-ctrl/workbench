@@ -3357,3 +3357,8 @@ button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 1
 :is(#chat-attachments, .native-takeover-tray):has(> .attachment-card:not(.attachment-file-card)) { max-height: 98px; }
 :is(#chat-attachments, .native-takeover-tray) > .attachment-card > :is(.attachment-remove, .chat-icon-btn) { width: 22px; height: 22px; min-width: 22px; min-height: 22px; }
 :is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) > .attachment-remove { width: 22px; height: 22px; }
+/* The generic dialog selector carries an ID inside :is(); keep the new-session form's 38px controls authoritative. */
+#native-session-dialog .native-session-form input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not(.wb-select-search),
+#native-session-dialog .native-session-form select,
+#native-session-dialog .native-workspace-row button { height: 38px; min-height: 38px; }
+#native-session-dialog .native-session-form select { padding-block: 8px; }
