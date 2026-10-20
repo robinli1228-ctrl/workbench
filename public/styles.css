@@ -3271,3 +3271,38 @@ select:disabled { opacity: .6; }
 /* 5. Composer attachment tray: one row of small tiles, so the text keeps its room. */
 :is(#chat-attachments, .native-takeover-tray) { max-height: 80px; }
 .native-takeover-tray .attachment-open > img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; }
+/* ---- Consistency layer (front end only): one glyph size per control class, one button scale, one dialog heading, one card rhythm ---- */
+/* Icon buttons: 31px box, 18px glyph; small inline actions 14px. */
+.icon-button { width: 31px; height: 31px; border-radius: 8px; }
+.icon-button svg { width: 18px; height: 18px; }
+.chat-icon-btn svg { width: 14px; height: 14px; }
+.chat-card-actions .chat-icon-btn { width: 28px; height: 28px; }
+.sidebar-footer .icon-button svg, .topbar-actions .icon-button svg, .native-session-gear svg { width: 18px; height: 18px; }
+/* Buttons: 34px in cards and bars, 36px in dialog action rows; same radius and type. */
+button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 14px; border-radius: 8px; font-size: 13px; line-height: 1.2; }
+.native-session-actions button, .native-picker-actions button, dialog .settings-actions button, .dialog-actions button { min-height: 36px; padding: 0 16px; border-radius: 8px; font-size: 13px; }
+.native-card-head .native-card-action, .native-connect-row .native-card-action { min-height: 26px; padding: 2px 10px; border-radius: 7px; font-size: 12px; }
+.native-connect-row .native-connect-action, .native-connect-row a.native-card-action { min-height: 30px; }
+/* Dialog headings: 20px title, 18px below. */
+.dialog-heading { margin-bottom: 18px; }
+.dialog-heading h2, .native-session-dialog .dialog-heading h2, .native-file-picker .dialog-heading h2, .terminal-dialog .dialog-heading h2, .remote-desktop-dialog .dialog-heading h2 { font-size: 20px; line-height: 1.25; }
+.panel-heading { margin-bottom: 18px; }
+/* Cards: 12px radius, 14px padding, 12px between cards, headings 11px caps with 6px below. */
+.native-side-card, .settings-block.software-version-card { border-radius: 12px; padding: 14px; }
+.native-session-sidebar .native-side-panel { gap: 12px; }
+.native-side-card h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: .05em; }
+.native-card-head { margin-bottom: 4px; }
+.native-card-head h3 { margin: 0; }
+/* Notes and hints: 12px / 1.6, muted. */
+.native-side-hint, .workspace-note:not(.chat-bubble) { font-size: 12px; line-height: 1.6; }
+/* Transcript rhythm: 20px between rows, 14px around boxes. */
+.nt-row { margin-bottom: 20px; }
+.native-session-scroll { padding: 24px 32px 16px; }
+/* Lists in the side panel share one row height and radius. */
+.native-file-row { min-height: 30px; border-radius: 7px; }
+.native-file-list { gap: 2px; }
+.message-queue-item { min-height: 36px; }
+@media (max-width: 1000px) {
+  .native-session-scroll { padding: 16px; }
+  button.primary, button.secondary, button.danger { min-height: 40px; }
+}
