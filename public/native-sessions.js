@@ -257,12 +257,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const copyCommand=sidePanels.resources.querySelector('.native-command-row button');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
   const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
-  sideBadge.hidden=false;sideBadge.className=`native-side-badge is-${state}`;sideBadge.textContent=t(LABEL[state]);
-  if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren(el('h3','',t('Connection')));
-  // One row: where the session runs (a two-way switch that performs the whole hand-over) and the one action the state allows.
-  const row=el('div','native-connect-row'),seg=el('div','native-mode-switch');seg.setAttribute('role','group');seg.setAttribute('aria-label',t('Connection'));
+  sideBadge.hidden=true;
+  if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren();
+  // One row: the two-way switch and, as an icon, the one action the state allows. Moving the switch opens the hand-over dialog.
+  const row=el('div','native-connect-row'),seg=el('div','native-mode-switch');seg.setAttribute('role','group');seg.setAttribute('aria-label',t('Where the session runs'));
   const switchable=online&&canTakeover&&!switchingTo&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
-  const modeButton=(value,title)=>{const b=el('button',`native-mode${mode===value?' is-on':''}${switchingTo===value?' is-pending':''}`);b.type='button';b.append(el('span','native-mode-title',title));b.disabled=!switchable||mode===value;b.setAttribute('aria-pressed',String(mode===value));b.addEventListener('click',()=>void switchMode(item,value));return b;};
+  const move=value=>{if(value==='terminal'||mode==='terminal')openHandover(item,value,{claim,worker});else void switchMode(item,value);};
+  const modeButton=(value,title)=>{const b=el('button',`native-mode${mode===value?' is-on':''}${switchingTo===value?' is-pending':''}`);b.type='button';b.append(el('span','native-mode-title',title));b.disabled=!switchable||mode===value;b.setAttribute('aria-pressed',String(mode===value));b.addEventListener('click',()=>move(value));return b;};
   seg.append(modeButton('page',t('This page')),modeButton('terminal','iTerm'));row.append(seg);
   const perform=async action=>{
    if(!claim||returningClaim)return;
@@ -276,15 +277,14 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    }catch(error){controlFeedback={key:key(item),text:error.message};}
    finally{returningClaim=null;renderSessionControls(selected);}
   };
-  const small=(label,fn,cls='secondary')=>button(label,fn,`${cls} native-card-action`);
-  if(state==='page'){const end=small('End takeover',()=>void takeover.release(item));end.disabled=takeover.releaseDisabled(item);row.append(end);}
-  else if(state==='ending'){const end=small('Ending…',()=>{});end.disabled=true;row.append(end);}
-  else if(state==='prepared'&&claim){if(claim.url){const open=el('a','primary native-card-action',t('Open iTerm'));open.href=claim.url;row.append(open);}const cancel=small('Cancel',()=>void perform('release'));cancel.disabled=Boolean(returningClaim);row.append(cancel);}
-  else if(claim&&state==='starting'){const cancel=small('Cancel start',()=>void perform('release'));cancel.disabled=Boolean(returningClaim)||!online;row.append(cancel);}
-  else if(claim&&['terminal','returning','stopping'].includes(state)){const stop=small('Stop CLI',()=>void perform('stop'),'danger');stop.disabled=Boolean(returningClaim)||!online||worker?.capabilities?.terminalControl!==1||claim.processState==='unknown';if(worker?.capabilities?.terminalControl!==1)stop.title=t('Upgrade this Worker to check or stop terminal processes.');row.append(stop);}
-  else if(state==='unstarted'){const open=small('Open on this page',()=>openForm(item),'primary');open.disabled=!canTakeover;row.append(open);}
+  const iconButton=(name,label,fn,cls='')=>{const b=el('button',`icon-button native-connect-action ${cls}`.trim());b.type='button';setActionIcon(b,name,t(label));b.addEventListener('click',fn);return b;};
+  if(state==='page'){const end=iconButton('close','End takeover',()=>void takeover.release(item));end.disabled=takeover.releaseDisabled(item);row.append(end);}
+  else if(state==='ending'){const end=iconButton('close','Ending…',()=>{});end.disabled=true;row.append(end);}
+  else if(state==='prepared'&&claim){if(claim.url){const open=el('a','primary native-card-action',t('Open iTerm'));open.href=claim.url;row.append(open);}const cancel=iconButton('close','Cancel',()=>void perform('release'));cancel.disabled=Boolean(returningClaim);row.append(cancel);}
+  else if(claim&&state==='starting'){const cancel=iconButton('close','Cancel start',()=>void perform('release'));cancel.disabled=Boolean(returningClaim)||!online;row.append(cancel);}
+  else if(claim&&['terminal','returning','stopping'].includes(state)){const stop=iconButton('stop','Stop CLI',()=>void perform('stop'),'is-danger');stop.disabled=Boolean(returningClaim)||!online||worker?.capabilities?.terminalControl!==1||claim.processState==='unknown';if(worker?.capabilities?.terminalControl!==1)stop.title=t('Upgrade this Worker to check or stop terminal processes.');row.append(stop);}
+  else if(state==='unstarted'){const open=button('Open on this page',()=>openForm(item),'primary native-card-action');open.disabled=!canTakeover;row.append(open);}
   panel.append(row);
-  const head=el('div','native-connect-head');head.append(el('span',`native-connect-dot is-${state}`),el('span','',t(switchingTo?'Switching…':LABEL[state])));panel.append(head);
   const project=state==='busy'?data.projects?.find(p=>p.id===(claim?.projectId||other?.projectId))||((claim||other)&&owners.size===1?data.projects?.find(p=>owners.has(p.id)):null):null;
   if(detail)panel.append(el('p','native-side-hint',project?`${t(detail)} · ${project.name}`:t(detail)));
   if(claim?.processError)panel.append(el('p','native-side-hint',t(claim.processError)));
@@ -308,6 +308,51 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(takeover.isOn(item)||takeover.canChat(item)){if(!confirm(t('End the page takeover and prepare a terminal link for this session?')))throw Error(t('Cancelled'));await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
   const result=await prepareTerminal(item);if(!result?.command)throw Error('No terminal command was prepared');
   await navigator.clipboard.writeText(result.command);await onStateRefresh();void load({quiet:true});return result.command;
+ }
+ /**
+  * Hand-over dialog: confirm first, then every step with its progress. To iTerm: end the page takeover, prepare the link,
+  * open iTerm (link and command stay available). To this page: stop the terminal CLI, return the session, open the composer.
+  */
+ let handoverDialog=null;
+ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ async function settleUntil(check,ms){const started=Date.now();while(Date.now()-started<ms){await onStateRefresh().catch(()=>{});if(check())return true;await sleep(1000);}return check();}
+ function openHandover(item,target,{claim=null,worker=null}={}){
+  if(!handoverDialog){handoverDialog=el('dialog','settings-edit-dialog native-session-dialog native-handover');document.body.append(handoverDialog);}
+  const toTerminal=target==='terminal',chatting=takeover.isOn(item)||takeover.canChat(item),running=Boolean(claim)&&claim.processState!=='released'&&!['released','cancelled','finished'].includes(claim.status);
+  const canStop=worker?.capabilities?.terminalControl===1&&claim?.processState!=='unknown';
+  const plan=toTerminal?[...(chatting?[['release','End page takeover']]:[]),['prepare','Prepare the iTerm link'],['open','Open iTerm']]
+   :[...(running?[[canStop?'stop':'quit',canStop?'Stop the terminal CLI':'Wait for the terminal CLI to exit']]:[]),['return','Return the session to Workbench'],['enable','Open the composer here']];
+  const heading=el('div','dialog-heading');heading.append(el('h2','',t(toTerminal?'Open in iTerm':'Take over on this page')));
+  const intro=el('p','native-side-hint',t(toTerminal?(chatting?'The page takeover ends and the session continues in iTerm.':'The session opens in iTerm.'):(running?'The CLI running in iTerm will be interrupted; unfinished terminal work is lost.':'The session returns to this page.')));
+  const list=el('ol','native-handover-steps'),rows=new Map();
+  for(const [id,label] of plan){const li=el('li','');li.dataset.step=id;li.append(el('span','native-handover-mark'),el('span','',t(label)));rows.set(id,li);list.append(li);}
+  const message=el('p','global-error');message.hidden=true;const after=el('div','native-handover-after');after.hidden=true;
+  const actions=el('div','native-session-actions'),cancel=button('Cancel',()=>handoverDialog.close(),'secondary'),confirm=button('Confirm',()=>void run(),'primary');
+  actions.append(cancel,confirm);
+  handoverDialog.replaceChildren(heading,intro,list,message,after,actions);handoverDialog.showModal();
+  const mark=(id,state)=>{const li=rows.get(id);if(!li)return;li.className=`is-${state}`;const m=li.querySelector('.native-handover-mark');m.replaceChildren();if(state==='running')m.append(el('span','nt-pulse'));else if(state==='done')m.innerHTML=UI_ICON.check;else if(state==='failed')m.innerHTML=UI_ICON.close;};
+  async function run(){
+   confirm.disabled=cancel.disabled=true;message.hidden=true;const id=key(item);switching.set(id,target);controlFeedback=null;renderSessionControls(item);
+   let current=null;
+   try{
+    for(const [step] of plan){current=step;mark(step,'running');
+     if(step==='release'){if(takeover.releaseDisabled(item))throw Error('Wait for the current reply, send or upload to finish');await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
+     else if(step==='prepare'){const result=await prepareTerminal(item);if(!result?.url&&!result?.command)throw Error('No terminal command was prepared');after.replaceChildren();
+      if(result.url){const open=el('a','secondary',t('Open iTerm'));open.href=result.url;after.append(open);}
+      if(result.command){const copy=button('Copy terminal command',async b=>{await navigator.clipboard?.writeText(result.command).catch(()=>{});b.target.textContent=t('Copied');});after.append(copy);}
+      after.prepend(el('span','native-side-hint',t('If iTerm did not open, use the link or copy the command.')));after.hidden=false;handoverDialog.dataset.url=result.url||'';}
+     else if(step==='open'){const url=handoverDialog.dataset.url;if(url)window.location.assign(url);}
+     else if(step==='stop'||step==='quit'){
+      if(step==='stop')await api(`${endpoint(claim.nodeId)}/terminal`,{method:'POST',json:{action:'stop',operationId:claim.id}});
+      const gone=()=>{const c=nativeClaimOf(item);return !c||['released','cancelled','finished'].includes(c.status)||c.processState==='released';};
+      if(!await settleUntil(gone,step==='stop'?60000:120000))throw Error(step==='stop'?'The terminal CLI has not stopped yet; quit it in iTerm and try again':'The terminal CLI is still running; quit it in iTerm and try again');}
+     else if(step==='return'){const c=nativeClaimOf(item);if(c){const result=await api(`${endpoint(c.nodeId)}/terminal`,{method:'POST',json:{action:'release',operationId:c.id}});if(result?.released!==true)throw Error('The terminal CLI has not exited yet; quit it in iTerm and try again');}takeover.returned(item);await onStateRefresh();}
+     else if(step==='enable'){takeover.enable(item);}
+     mark(step,'done');}
+    confirm.hidden=true;cancel.disabled=false;cancel.textContent=t('Done');
+   }catch(error){if(current)mark(current,'failed');message.textContent=t(error.message);message.hidden=false;confirm.hidden=true;cancel.disabled=false;cancel.textContent=t('Close');}
+   finally{switching.delete(id);await onStateRefresh().catch(()=>{});void load({quiet:true});if(selected)renderSessionControls(selected);}
+  }
  }
  /** Move the session between this page and iTerm, doing every step in between: end the page takeover, prepare and open iTerm; or return the terminal and reopen the composer here. */
  async function switchMode(item,target){
@@ -561,7 +606,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function metaCard(target,heading,rows){const section=el('section','native-side-card');section.append(el('h3','',t(heading)),metaList(rows));target.append(section);return section;}
  function renderSide(value,id,readable){
   side.dataset.sessionKey=key(value);
-  const live=takeover.isOn(value);sideBadge.hidden=false;sideBadge.className=`native-side-badge ${live?'is-live':''}`;sideBadge.textContent=t(live?'Taken over':takeover.canChat(value)?'Platform chat':'Read-only');
+  sideBadge.hidden=true;
   const {overview,resources}=sidePanels;overview.replaceChildren();resources.replaceChildren();agentDetailsSignature='';
   // Overview: where the session runs, model and context, quota. Resources: identity, repository, device.
   const controls=el('section','native-side-card native-connect');controls.dataset.nativeControls='';

@@ -3144,3 +3144,18 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-takeover-form .chat-input-field { grid-template-columns: 36px minmax(0, 1fr) 40px; align-items: end; }
 .native-takeover-form .native-attach { margin: 2px 0 2px 2px; height: 32px; min-height: 32px; width: 32px; }
 .native-takeover-form textarea { padding-right: 8px; }
+
+/* Hand-over dialog: a short step list with live marks; the connection card's action is a small icon beside the switch. */
+.native-handover-steps { margin: 10px 0 6px; padding: 0 0 0 2px; list-style: none; display: grid; gap: 8px; }
+.native-handover-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+.native-handover-steps li.is-running, .native-handover-steps li.is-done { color: var(--ink); }
+.native-handover-steps li.is-failed { color: var(--danger); }
+.native-handover-mark { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--line); border-radius: 50%; }
+.native-handover-mark svg { width: 12px; height: 12px; }
+.native-handover-steps li.is-done .native-handover-mark { border-color: var(--green); color: var(--green); }
+.native-handover-steps li.is-failed .native-handover-mark { border-color: var(--danger); color: var(--danger); }
+.native-handover-after { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0; }
+.native-handover-after .native-side-hint { flex-basis: 100%; margin: 0; }
+.native-connect-row .native-connect-action { width: 30px; height: 30px; min-height: 30px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); }
+.native-connect-row .native-connect-action:hover:not(:disabled) { color: var(--ink); }
+.native-connect-row .native-connect-action.is-danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
