@@ -255,10 +255,16 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(['terminal','prepared','returning','stopping'].includes(prevState)&&state==='idle')takeover.returned(item);
   const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
   const copyCommand=sidePanels.resources.querySelector('.native-command-row button');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
-  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
+  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
   sideBadge.hidden=true;
   if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren();
+  // Who and where, in one strip: the device with its machine icon, the CLI with its agent icon.
+  const roster=data.workers||[],cloudNumber=new Map(roster.filter(w=>workerKind(w)==='cloud').map((w,index)=>[w.id,index+1])).get(item.nodeId);
+  const identity=el('div','native-identity'),deviceChip=el('span','native-identity-item'),toolChip=el('span','native-identity-item');
+  if(worker)deviceChip.append(machineIconEl(worker,cloudNumber));const deviceName=el('span','native-identity-name',workerName(item.nodeId));deviceName.translate=false;deviceChip.append(deviceName);deviceChip.title=`${t('Device')} · ${workerName(item.nodeId)}`;
+  toolChip.append(agentIconEl(item.runtime),el('span','native-identity-name',names[item.runtime]||item.runtime));toolChip.title=`${t('Agent tool')} · ${names[item.runtime]||item.runtime}`;
+  identity.append(deviceChip,toolChip);panel.append(identity);
   // One row: the two-way switch and, as an icon, the one action the state allows. Moving the switch opens the hand-over dialog.
   const row=el('div','native-connect-row'),seg=el('div','native-mode-switch');seg.setAttribute('role','group');seg.setAttribute('aria-label',t('Where the session runs'));
   const switchable=online&&canTakeover&&!switchingTo&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
@@ -621,9 +627,6 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';resources.append(repository);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
   // Resources: the device and CLI account this session runs on.
-  const agentLine=el('span','native-agent-line');agentLine.append(agentIconEl(value.runtime),el('span','',names[value.runtime]||value.runtime));
-  // Device and tool belong to the first screen, right under the connection switch.
-  const runtimeCard=metaCard(overview,'Runtime',[['Device',workerName(value.nodeId)],['Agent tool',names[value.runtime]]]);runtimeCard.querySelector('dd:nth-of-type(2) .native-meta-value')?.replaceChildren(agentLine);settingsCard.before(runtimeCard);
   renderAgentDetails(value);
   renderSessionControls(value);
   renderSessionSettings(value);
