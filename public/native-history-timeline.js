@@ -1,6 +1,6 @@
 import {highlightLatestChatCard} from './chat-card-state.js';
 /** A read-only timeline: older pages never replace the selected native session or its controls. */
-export function createNativeHistoryTimeline({scroll,readPage,renderMessage,label,t,onLatest,onHistoryChange=()=>{}}){
+export function createNativeHistoryTimeline({scroll,readPage,renderMessage,renderMessages=(rows,item)=>rows.map(m=>renderMessage(m,item)),label,t,onLatest,onHistoryChange=()=>{}}){
  const root=document.createElement('div'),bar=document.createElement('div'),more=document.createElement('button'),note=document.createElement('p'),latest=document.createElement('button'),skip=document.createElement('button');
  root.className='native-history-timeline';bar.className='native-history-loader';more.type=latest.type='button';more.className=latest.className='secondary';note.className='workspace-note';note.setAttribute('role','status');latest.textContent=t('Refresh latest history');latest.hidden=true;latest.onclick=onLatest;bar.append(more,note,latest);
  skip.type='button';skip.className='secondary';skip.textContent=t('Continue to earlier session');skip.hidden=true;bar.append(skip);
@@ -21,7 +21,7 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,label
   if(!older&&prior.length&&page.historyPage===1&&rows.length&&rows[0].offset>prior.reduce((max,m)=>Math.max(max,m.offset),0)){newerAvailable=true;return;}
   if(page.historyPage!==1)target.messages.clear();
   rows.forEach((m,i)=>target.messages.set(m.id||String(i),m));
-  const ordered=[...target.messages.values()].sort((a,b)=>(a.offset??0)-(b.offset??0));target.history.replaceChildren(...ordered.map(m=>renderMessage(m,target.item)));
+  const ordered=[...target.messages.values()].sort((a,b)=>(a.offset??0)-(b.offset??0));target.history.replaceChildren(...renderMessages(ordered,target.item));
   if(page.notice||target.skippedError){const n=document.createElement('p');n.className=target.skippedError?'workspace-note chat-bubble is-error-card':'workspace-note';n.textContent=t(page.notice||target.skippedError);target.history.append(n);}
   if(!target.initialized||older){target.cursor=page.nextCursor||null;target.initialized=true;}highlightLatestChatCard(scroll);
  }

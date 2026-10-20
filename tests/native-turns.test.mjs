@@ -34,7 +34,8 @@ test('a takeover send is idempotent by client ID and forwards only the exact nat
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0], { nodeId: 'n1', type: 'native_turn', id: first.id, runtime: 'codex', sessionId: SID, prompt: 'continue please', attachments: [] });
   assert.throws(() => turns.create('n1', worker, { ...body, text: 'changed' }), /already used/);
-  assert.throws(() => turns.create('n1', worker, { ...body, clientTurnId: 'client-000002' }), /still replying/);
+  const queued = turns.create('n1', worker, { ...body, clientTurnId: 'client-000002' });
+  assert.equal(queued.status, 'waiting'); assert.equal(sent.length, 1, 'a message sent while replying waits in Home, nothing reaches the Worker yet');
 });
 
 test('takeover is refused for invalid input, old Workers and sessions owned by a terminal or managed run', t => {
