@@ -587,7 +587,7 @@ async function query(m) {
   if(m.action==='cli_capacity') {
     try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
   }
-  const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare'].includes(m.action);
+  const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write'].includes(m.action);
   const guarded=['source_inspect','source_read','read_query','project_file','file','document','collaboration_documents'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
@@ -770,8 +770,8 @@ async function query(m) {
       const bytes=await readFile(real),content=bytes.toString('utf8'),binary=bytes.includes(0)||!Buffer.from(content).equals(bytes);
       send({type:'reply',id:m.id,result:{...common,preview:binary?'binary':'text',content:binary?null:content}});return;
     }
-    if(m.action==='native_agents_md'){send({type:'reply',id:m.id,result:await readAgentsFile(roots,await projectRoot(m.path?.workspace),{stopAt:m.path?.stopAt?await projectRoot(m.path.stopAt):null})});return;}
-    if(m.action==='native_agents_md_write'){const input=m.path||{};send({type:'reply',id:m.id,result:await writeAgentsFile(roots,await projectRoot(input.workspace),{path:input.path||null,content:input.content,expectedModifiedAt:input.expectedModifiedAt||null,create:input.create===true,createDir:input.createDir?await projectRoot(input.createDir):null,stopAt:input.stopAt?await projectRoot(input.stopAt):null})});return;}
+    if(m.action==='native_agents_md'){send({type:'reply',id:m.id,result:await readAgentsFile(await folderAccess.allowedRoots(),await projectRoot(m.path?.workspace),{stopAt:m.path?.stopAt?await projectRoot(m.path.stopAt):null})});return;}
+    if(m.action==='native_agents_md_write'){const input=m.path||{};send({type:'reply',id:m.id,result:await writeAgentsFile(await folderAccess.allowedRoots(),await projectRoot(input.workspace),{path:input.path||null,content:input.content,expectedModifiedAt:input.expectedModifiedAt||null,create:input.create===true,createDir:input.createDir?await projectRoot(input.createDir):null,stopAt:input.stopAt?await projectRoot(input.stopAt):null})});return;}
     if(m.action==='native_workspace_git'){send({type:'reply',id:m.id,result:await inspectWorkspaceGit(await projectRoot(m.path?.workspace),{authorizeRoot:projectRoot})});return;}
     if(m.action==='native_session_title'){
       const input=m.path||{},title=typeof input.title==='string'?input.title.trim():'';

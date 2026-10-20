@@ -157,8 +157,10 @@ Type=simple
 User=xxxxx
 Group=xxxxx
 WorkingDirectory=/opt/agent-workbench
-EnvironmentFile=/etc/agent-workbench-worker.env     # WORKER_TOKEN and other secrets, mode 0600
-Environment=PATH=/home/xxxxx/.local/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin   # must contain node and the CLIs
+# WORKER_TOKEN and other secrets, mode 0600
+EnvironmentFile=/etc/agent-workbench-worker.env
+# Must contain node and the CLIs
+Environment=PATH=/home/xxxxx/.local/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/home/xxxxx
 Environment=HOME_URL=ws://127.0.0.1:14320/worker
 Environment=WORKER_DATA_DIR=/opt/agent-workbench/.data/worker
@@ -205,9 +207,9 @@ journalctl -u agent-workbench-worker -f          # logs
 | `<project>/.workbench/` | Hand-offs, temporary attachments, shared documents |
 | `<project>/native-sessions/<title>/` | Working folders of project-linked native sessions |
 
-- None of these belong in the repository.
+- Keep Home/Worker runtime state, secrets and generated worktree checkouts out of Git. `AGENTS.md` and `CLAUDE.md` are project rules files; when Workbench creates them at a Git repository root, it commits them locally. Version other project documents and outputs according to the project's rules.
 - Home listens on loopback by default; exposing it requires `API_TOKEN` and an HTTPS proxy.
-- The Worker reads and writes only below `WORKER_ROOTS`; file previews, folder browsing and AGENTS.md editing on the page obey the same limit.
+- Execution is limited to configured `WORKER_ROOTS` or directories explicitly granted to the current project or session. Human folder browsing on the local machine may extend beyond those execution roots; browsing does not grant an Agent access to the whole disk.
 - While a group-chat role runs in a folder, no native CLI may be opened in that folder tree; two native sessions may share a folder at the user's discretion.
 
 ## 10. Upgrades and rollback

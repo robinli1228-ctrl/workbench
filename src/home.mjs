@@ -436,7 +436,7 @@ function workerQuery(run, action, path, timeout = 10000) {
     const timer = setTimeout(() => { queries.delete(id); reject(new Error(tr('home.nodeQueryTimedOut'))); }, timeout);
     queries.set(id, { nodeId: run.nodeId,readProtocol:['source_inspect','source_read','read_query'].includes(action),resolve: value => { clearTimeout(timer); resolveQuery(value); }, reject: e => { clearTimeout(timer); reject(e); } });
     const projectId=['source_read','source_inspect','read_query'].includes(action)?path?.source?.projectId||run.projectId:run.projectId||path?.projectId;
-    const folderAccess=(action.startsWith('native_')||action.startsWith('media_')&&path?.runtime)?nativeFolderAccess(db,run.nodeId,path?.runtime,path?.sessionId,path?.entryId)||folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:path?.managedProjectIds?.length===1?`project:${path.managedProjectIds[0]}`:null):folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:null);
+    const folderAccess=projectId&&['native_agents_md','native_agents_md_write'].includes(action)?folderAccessFor(db,run.nodeId,`project:${projectId}`):(action.startsWith('native_')||action.startsWith('media_')&&path?.runtime)?nativeFolderAccess(db,run.nodeId,path?.runtime,path?.sessionId,path?.entryId)||folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:path?.managedProjectIds?.length===1?`project:${path.managedProjectIds[0]}`:null):folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:null);
     send(sockets.get(run.nodeId), { type: 'query', id, runId: run.id, projectId,folderAccess,action, path, language: getLanguage() });
   });
 }
@@ -677,7 +677,8 @@ const server = http.createServer(async (req, res) => {
         // The project folder on this device that holds the session bounds the lookup and receives a new file; outside a project only the working folder counts.
         const within=(root,path)=>path===root||path.startsWith(root.endsWith('/')?root:`${root}/`);
         const binding=[...db.list('workspaces')].filter(w=>w.nodeId===nodeId&&w.localRoot&&within(w.localRoot,record.workspace)).sort((x,y)=>y.localRoot.length-x.localRoot.length)[0]||null;
-        const common={workspace:record.workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null,stopAt:binding?.localRoot||null},scope={nodeId,projectId:record.roleBinding?.projectId};
+        const projectId=record.roleBinding?.projectId||binding?.projectId||null;
+        const common={workspace:record.workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null,stopAt:binding?.localRoot||null,projectId},scope={nodeId,projectId};
         if(req.method==='GET')return json(res,await workerQuery(scope,'native_agents_md',common,15000));
         const b=await body(req);
         return json(res,await workerQuery(scope,'native_agents_md_write',{...common,path:typeof b.path==='string'?b.path:null,content:b.content,expectedModifiedAt:typeof b.expectedModifiedAt==='string'?b.expectedModifiedAt:null,create:b.create===true,createDir:binding?.localRoot||null},20000));

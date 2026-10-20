@@ -159,8 +159,10 @@ Type=simple
 User=xxxxx
 Group=xxxxx
 WorkingDirectory=/opt/agent-workbench
-EnvironmentFile=/etc/agent-workbench-worker.env     # 放 WORKER_TOKEN 等敏感值，权限 0600
-Environment=PATH=/home/xxxxx/.local/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin   # 必须包含 node 和各 CLI
+# 放 WORKER_TOKEN 等敏感值，权限 0600
+EnvironmentFile=/etc/agent-workbench-worker.env
+# 必须包含 node 和各 CLI
+Environment=PATH=/home/xxxxx/.local/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/home/xxxxx
 Environment=HOME_URL=ws://127.0.0.1:14320/worker
 Environment=WORKER_DATA_DIR=/opt/agent-workbench/.data/worker
@@ -207,9 +209,9 @@ journalctl -u agent-workbench-worker -f          # 看日志
 | `<项目目录>/.workbench/` | 交接记录、临时附件、共享文档 |
 | `<项目目录>/native-sessions/<标题>/` | 关联项目的原生会话工作目录 |
 
-- 以上路径都不应提交到仓库。
+- Home/Worker 运行数据、凭据和生成的 worktree 检出目录不应提交。`AGENTS.md` 和 `CLAUDE.md` 是项目规则文件；Workbench 在 Git 仓库根新建它们时，会在本地提交。其他项目文档和产物按项目规则纳入版本管理。
 - Home 默认只听回环；对外必须 `API_TOKEN` + HTTPS 代理。
-- Worker 只在 `WORKER_ROOTS` 之内读写文件；页面里的文件预览、目录浏览、AGENTS.md 编辑都受此限制。
+- 执行范围限于配置的 `WORKER_ROOTS`，或明确授予当前项目、会话的目录。本机的人类目录浏览可以超出执行授权范围，但浏览不会赋予 Agent 整盘权限。
 - 群聊角色在某个目录执行时，不允许在同一目录树再开原生 CLI（避免两个 Agent 改同一棵树）；两个原生会话之间可以共用目录，由使用者自行把握。
 
 ## 10. 升级与回滚
