@@ -724,7 +724,6 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  // Sessions opened on this page with "Allow all": once the headless first turn has produced history, chat here without a separate takeover confirmation.
  const pageOpened=new Set();
  const IMAGE_CLIS=new Set(['codex','claude']),openProcesses=new Set();
- const permissionPrompt=value=>value.runtime==='codex'?'Take over with automatic tool approval? Codex can change files inside this session workspace.':'Take over with permission prompts bypassed? {tool} can make changes without asking again.';
  /** Codex records an attached image as markup with a Worker-local path; show a short placeholder instead. */
 /** CLI titles can start with injected context markup (e.g. <environment_context>); show readable text or the short ID. */
 const displayTitle=item=>{const text=String(item.title||'').replace(/<([a-z_-]+)\b[^>]*>[\s\S]*?(<\/\1>|$)/gi,' ').replace(/\s+/g,' ').trim();return text||`${String(item.id||'').slice(0,8)}\u2026`;};
@@ -975,7 +974,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    // An in-flight or unknown send is only looked up again (click, double click, Enter); it is never resent with a new ID.
    if(d.pending&&d.sendState!=='failed'){void verifyTurn(id);return;}
    if(!d.pending&&!input.value.trim()&&!d.attachments?.length)return;op.message='';
-   if(!isOn(value)){if(!confirm(t(permissionPrompt(value),{tool:names[value.runtime]||value.runtime})))return;on.add(id);save();}
+   if(!isOn(value)){on.add(id);save();}
    if(!d.pending){const payload={text:input.value,attachmentIds:(d.attachments||[]).map(a=>a.id)};
     // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
     d.pending={clientTurnId:sameSend(d.rejected?.payload,payload)?d.rejected.clientTurnId:crypto.randomUUID(),...payload};}
@@ -987,7 +986,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;controls=result.controls===true;settings=result.settings||{model:null,effort:null};residentState=result.process||'closed';turns=result.items||[];{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
   function schedule(){clearInterval(poll);poll=null;if(current&&(activeTurn()||turns.some(x=>x.status==='waiting')||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
   /** Start chatting here: the one confirmation of bypassed permissions, then the composer. */
-  function enable(value,{focus=true}={}){if(!value?.sessionId)return false;const id=sessionKey(value);if(!on.has(id)){if(!confirm(t(permissionPrompt(value),{tool:names[value.runtime]||value.runtime})))return false;on.add(id);save();}if(current&&k()===id){render();renderSide(value,value.sessionId,true);if(focus)input.focus();}return true;}
+  function enable(value,{focus=true}={}){if(!value?.sessionId)return false;const id=sessionKey(value);if(!on.has(id)){on.add(id);save();}if(current&&k()===id){render();renderSide(value,value.sessionId,true);if(focus)input.focus();}return true;}
   /** Files touched by this session's page turns, newest turn first; an edit or write wins over a read of the same path. */
   function files(){const seen=new Map();for(const turn of [...turns].reverse()){if(turn.control)continue;for(const chip of fileChips(stepsOf(turn).steps)){const prior=seen.get(chip.path);if(!prior||prior.step.kind==='read'&&chip.step.kind!=='read')seen.set(chip.path,chip);}}return [...seen.values()];}
   /** Latest context snapshot of the current session from its page turns. */
