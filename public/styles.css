@@ -3352,3 +3352,8 @@ button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 1
 :is(#chat-attachments, .native-takeover-tray) .attachment-open small { font-size: 10px; }
 :is(#chat-attachments, .native-takeover-tray) .attachment-remove { width: 22px; height: 22px; min-height: 22px; padding: 4px; }
 .native-takeover-tray .attachment-open > img { width: 34px; height: 34px; }
+/* Keep image-only previews and hover removal; their old 120px tile also shrinks by 30%, without clipping the tray. */
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) { flex-basis: 84px; width: 84px; min-width: 84px; max-width: 84px; height: 84px; }
+:is(#chat-attachments, .native-takeover-tray):has(> .attachment-card:not(.attachment-file-card)) { max-height: 98px; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card > :is(.attachment-remove, .chat-icon-btn) { width: 22px; height: 22px; min-width: 22px; min-height: 22px; }
+:is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) > .attachment-remove { width: 22px; height: 22px; }
