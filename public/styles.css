@@ -3202,3 +3202,15 @@ select:disabled { opacity: .6; }
 .native-agents-preview:hover { border-color: #b9c7bf; }
 .native-agents-dialog { width: min(900px, 96vw); }
 .native-agents-editor { width: 100%; min-height: 50vh; padding: 10px 12px; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; tab-size: 2; }
+/* Transcript density: a little more air between prose and a box; inside a box, smaller type, tighter rows, lighter ink. */
+.nt-turn > .markdown-body + .nt-activity, .nt-turn > .nt-activity + .markdown-body, .nt-turn > .nt-activity + .nt-activity { margin-top: 14px; }
+.nt-agent .nt-body > .nt-extra + .markdown-body { margin-top: 14px; }
+.nt-activity { border-color: #e4e9e6; background: #fbfcfb; color: #6b7280; font-size: 12px; }
+.nt-activity-summary { gap: 6px; padding: 6px 10px; color: #7b8590; font-size: 12px; }
+.nt-steps { padding: 2px 4px 4px; border-top-color: #e9ede b; border-top-color: #e9edeb; }
+.nt-step-head { min-height: 24px; padding: 2px 6px; gap: 7px; color: #4b5563; font-size: 12px; line-height: 1.45; }
+.nt-step-verb { color: #8a939d; }
+.nt-step.is-note .nt-step-target, .nt-step.is-note .nt-step-verb { color: #9aa3ad; font-size: 11.5px; }
+.nt-step .nt-icon { width: 13px; height: 13px; color: #9aa3ad; }
+.nt-step .nt-detail { margin: 2px 6px 6px 26px; }
+.nt-working { font-size: 12px; color: #6b7280; }
