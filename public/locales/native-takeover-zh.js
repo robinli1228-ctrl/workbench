@@ -287,4 +287,7 @@ export default {
  "The terminal CLI is still running; quit it in iTerm and try again": "终端里的 CLI 仍在运行；请在 iTerm 中退出后重试",
  "The terminal CLI has not exited yet; quit it in iTerm and try again": "终端里的 CLI 还没退出；请在 iTerm 中退出后重试",
  "Confirm": "确认",
+ "No project (device folder)": "不关联项目（设备默认目录）",
+ "Bind the project folder on this device first": "请先在该设备上绑定项目目录",
+ "Session folder is not a regular directory; select another folder.": "会话目录不是普通目录，请另选目录。",
 };

@@ -944,11 +944,19 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const closeWithParent=()=>picker.close();dialog.addEventListener('close',closeWithParent);picker.addEventListener('close',()=>{pickerVersion++;dialog.removeEventListener('close',closeWithParent);},{once:true});picker.showModal();void browse(path||null);
  }
  function openForm(session=null,defaults={}){populate();dialog.replaceChildren();const heading=el('div','dialog-heading');heading.append(el('h2','',t(session?.canReopen?'Open unstarted session':session?'Continue native session':'New native session')),closeButton(()=>dialog.close()));dialog.append(heading);
-  const form=el('form','native-session-form'),d=el('select'),r=el('select'),folder=el('input'),all=el('input'),title=el('input');d.required=r.required=folder.required=title.required=true;title.type='text';title.maxLength=120;title.placeholder=t('Give this session a title');title.value=session?.title||'';title.readOnly=Boolean(session);folder.type='text';folder.value=session?.workspace||'';folder.placeholder=t('Select a working folder');all.type='checkbox';all.id='native-allow-all';all.checked=false;
+  const form=el('form','native-session-form'),d=el('select'),r=el('select'),project=el('select'),folder=el('input'),all=el('input'),title=el('input');d.required=r.required=folder.required=title.required=true;title.type='text';title.maxLength=120;title.placeholder=t('Give this session a title');title.value=session?.title||'';title.readOnly=Boolean(session);folder.type='text';folder.value=session?.workspace||'';folder.placeholder=t('Select a working folder');all.type='checkbox';all.id='native-allow-all';all.checked=false;
   const field=(label,input,full=false)=>{const l=el('label',`native-field${full?' native-full':''}`,t(label));input.setAttribute('aria-label',t(label));l.append(input);form.append(l);return l;};
   options(d,(getData().workers||[]).map(w=>[w.id,`${w.name||w.id}${w.online?'':` · ${t('Offline')}`}`]));if(session?.nodeId)d.value=session.nodeId;else if(defaults.nodeId)d.value=defaults.nodeId;else if(workers()[0])d.value=workers()[0].id;
   const updateTools=()=>{options(r,(getData().workers?.find(w=>w.id===d.value)?.runtimes||[]).filter(x=>x.available&&x.supported!==false&&names[x.type]).map(x=>[x.type,names[x.type]]));};updateTools();if(session?.runtime)r.value=session.runtime;else if(defaults.runtime)r.value=defaults.runtime;else if(tool.value!=='all'&&[...r.options].some(o=>o.value===tool.value))r.value=tool.value;d.disabled=r.disabled=Boolean(session);if(session?.workspace)folder.readOnly=true;
-  field('Session title',title,true);field('Device',d);field('Agent tool',r);const folderField=field('Working folder',folder,true),pathRow=el('div','native-workspace-row');
+  field('Session title',title,true);field('Device',d);field('Agent tool',r);
+  // Projects bound on the chosen device; picking one keeps the session's files with the project in native-sessions/<title>.
+  const slug=value=>{const name=String(value||'').trim().replace(/[\\/\0:*?"<>|]+/g,'-').replace(/\s+/g,' ').slice(0,80).replace(/^[-. ]+|[-. ]+$/g,'');return name&&name!=='.'&&name!=='..'?name:'session';};
+  const boundProjects=()=>{const data=getData(),bound=new Map((data.workspaces||[]).filter(w=>w.nodeId===d.value&&w.localRoot).map(w=>[w.projectId,w.localRoot]));return (data.projects||[]).filter(p=>bound.has(p.id)).map(p=>({id:p.id,name:p.name,root:bound.get(p.id)}));};
+  const updateProjects=()=>{const list=boundProjects();options(project,[['',t('No project (device folder)')],...list.map(p=>[p.id,p.name])]);if(!project.value&&defaults.projectId&&list.some(p=>p.id===defaults.projectId))project.value=defaults.projectId;else if(!project.value&&list.length===1)project.value=list[0].id;};
+  const projectRootOf=()=>boundProjects().find(p=>p.id===project.value)?.root||null;
+  const previewProjectFolder=()=>{const root=projectRootOf();if(!root)return;folder.value=`${root.replace(/\/+$/,'')}/native-sessions/${slug(title.value)}`;folder.dataset.auto='1';};
+  if(!session){updateProjects();field('Project',project,true);project.disabled=!boundProjects().length;}
+  const folderField=field('Working folder',folder,true),pathRow=el('div','native-workspace-row');
   const feedback=el('p','native-form-feedback native-full'),launch=el('div','native-launch-result native-full');feedback.setAttribute('role','status');
   const browseButton=button('Select file or folder',()=>openFilePicker({nodeId:d.value,path:folder.value,locked:session?.workspace||null,onUse:path=>{folder.value=path;folder.dispatchEvent(new Event('change',{bubbles:true}));}}));setActionIcon(browseButton,'folder');pathRow.append(folder,browseButton);folderField.append(pathRow);
   if(session?.workspace)form.append(el('p','workspace-note native-full',t('An existing session keeps its original working folder.')));
@@ -965,20 +973,25 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    try{const result=await api(`${endpoint(nodeId)}/default-folder`,{method:'POST',json:{}});if(ticket!==defaultFolderVersion||!dialog.open||!dialog.contains(form)||d.value!==nodeId||folder.value)return;folder.value=result.path;feedback.textContent='';}
    catch(error){if(ticket===defaultFolderVersion&&dialog.open&&dialog.contains(form)&&d.value===nodeId&&!folder.value)feedback.textContent=t(error.message);}
   }
-  folder.addEventListener('input',()=>{defaultFolderVersion++;feedback.textContent='';});
+  folder.addEventListener('input',()=>{defaultFolderVersion++;delete folder.dataset.auto;feedback.textContent='';});
   folder.addEventListener('change',()=>{defaultFolderVersion++;feedback.textContent='';});
-  d.addEventListener('change',()=>{updateTools();folder.value='';launch.replaceChildren();void fillDefaultFolder();});
+  const chooseFolder=()=>{defaultFolderVersion++;launch.replaceChildren();if(projectRootOf()){previewProjectFolder();feedback.textContent='';}else{folder.value='';delete folder.dataset.auto;void fillDefaultFolder();}};
+  d.addEventListener('change',()=>{updateTools();updateProjects();project.disabled=!boundProjects().length;chooseFolder();});
+  project.addEventListener('change',chooseFolder);
+  title.addEventListener('input',()=>{if(folder.dataset.auto==='1'&&projectRootOf())previewProjectFolder();});
   let operationId=null,lastInput='',prepared=null,opened=false;
   const releaseUnused=async()=>{if(!prepared||opened)return;const previous=prepared;prepared=null;operationId=null;lastInput='';await api(`/api/native-sessions/${encodeURIComponent(previous.nodeId)}/terminal`,{method:'POST',json:{action:'release',operationId:previous.operationId}});};
   const discard=()=>{launch.replaceChildren();submit.disabled=true;return releaseUnused().catch(error=>{feedback.textContent=t(error.message);}).finally(()=>{submit.disabled=false;});};
   for(const input of[d,r,folder,all,title])input.addEventListener('change',discard);
   dialog.addEventListener('close',()=>{void discard().then(()=>load({quiet:true}));},{once:true});
   form.addEventListener('submit',async e=>{e.preventDefault();if(!title.value.trim()){title.focus();feedback.textContent=t('Enter a session title.');return;}const onPage=pageOpen&&e.submitter!==viaTerminal;submit.disabled=true;if(viaTerminal)viaTerminal.disabled=true;for(const input of[d,r,folder,all,title,browseButton])input.disabled=true;feedback.textContent=t('Preparing…');launch.replaceChildren();
+   // The project session folder is created only now, so an abandoned dialog leaves nothing behind.
+   if(!session&&folder.dataset.auto==='1'&&projectRootOf()){try{const made=await api(`${endpoint(d.value)}/default-folder`,{method:'POST',json:{projectId:project.value,name:slug(title.value)}});folder.value=made.path;}catch(error){feedback.textContent=t(error.message);submit.disabled=false;if(viaTerminal)viaTerminal.disabled=false;for(const input of[d,r,folder,all,title,browseButton])input.disabled=false;return;}}
    const input={runtime:r.value,sessionId:session&&!session.canReopen?nativeId(session):null,...(session?.entryId?{entryId:session.entryId}:{}),title:title.value.trim(),workspace:folder.value.trim(),allowAll:all.checked,useLocalSshKey:true},signature=JSON.stringify([d.value,input]);if(signature!==lastInput){operationId=crypto.randomUUID();lastInput=signature;}
    try{const result=await api(`/api/native-sessions/${encodeURIComponent(d.value)}/terminal`,{method:'POST',json:{...input,operationId}});prepared={nodeId:d.value,operationId};opened=false;if(!dialog.open||!dialog.contains(form)){await releaseUnused();return;}
     if(onPage){feedback.textContent=t('Starting the session…');await api(`/api/native-sessions/${encodeURIComponent(d.value)}/terminal`,{method:'POST',json:{action:'start',operationId}});opened=true;const created={nodeId:d.value,runtime:r.value,entryId:result.entryId||result.catalogEntryId};if(all.checked)pageOpened.add(key(created));dialog.close();await load();const item=items.find(x=>key(x)===key(created));if(item)void read(item);return;}
     feedback.textContent=t('Ready. Open iTerm to start or resume the native CLI.');const a=el('a','primary',t('Open iTerm'));a.href=result.url;a.addEventListener('click',()=>{opened=true;});launch.append(a,button('Copy terminal command',async()=>{await navigator.clipboard.writeText(result.command);opened=true;feedback.textContent=t('Copied');}));void load({quiet:true});}catch(error){if(error.folderPreparationReleased){operationId=null;lastInput='';}feedback.textContent=t(error.message);}finally{submit.disabled=false;if(viaTerminal)viaTerminal.disabled=false;d.disabled=r.disabled=Boolean(session);folder.disabled=all.disabled=title.disabled=browseButton.disabled=false;}
-  });dialog.showModal();void fillDefaultFolder();
+  });dialog.showModal();if(!session&&projectRootOf())previewProjectFolder();else void fillDefaultFolder();
  }
  /** Segmented buttons share one mode transition; selecting the active side does not reload history. */
  const switches=[...mode.querySelectorAll('button[data-mode]')];
