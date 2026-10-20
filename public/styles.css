@@ -3108,3 +3108,8 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .nt-prompt-tools .icon-button { width: 24px; height: 24px; min-height: 24px; padding: 3px; border: 0; background: transparent; color: var(--muted); }
 .nt-prompt-tools .icon-button:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
 .nt-prompt-tools .icon-button svg { width: 15px; height: 15px; }
+/* Reply byline: the agent icon stands on its own, sized and rounded like the group-chat avatar, without a tinted frame. */
+.nt-avatar { width: 22px; height: 22px; border-radius: 6px; background: transparent; color: inherit; overflow: hidden; }
+.nt-avatar .role-icon, .nt-avatar .role-icon svg, .nt-avatar svg, .nt-avatar img { width: 22px; height: 22px; border-radius: 6px; }
+.nt-agent .nt-body, .nt-duration { padding-left: 30px; }
+@media (max-width: 1000px) { .nt-agent .nt-body, .nt-duration { padding-left: 0; } }
