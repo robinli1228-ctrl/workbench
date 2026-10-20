@@ -3,8 +3,27 @@ import {conversationIdOf,groupConversationIdOfSession} from './group-conversatio
 
 const omit=(value,keys)=>Object.fromEntries(Object.entries(value||{}).filter(([key])=>!keys.includes(key)));
 const short=value=>typeof value==='string'&&value.length>400?`${value.slice(0,400)}…`:value;
-const role=value=>value?omit(value,['prompt','instructions','systemPrompt']):value;
+const ROLE_BODY=['prompt','instructions','systemPrompt'];
+/** Bodies the page never shows. The SQL page summaries remove the same paths, so a summary projects exactly like a full record. */
+export const PAGE_BODY_FIELDS=Object.freeze({
+  runs:['result','contextPacket','inputTask','teamContext','resumeNativeSession','runtimeInstructions','executionConfiguration'],
+  tasks:['prompt','inputTask','contextPacket','teamContext'],
+  requests:['summary','result','resumeSummary','reportSummary','execution'],
+  runReports:['summary']});
+const nested=prefix=>ROLE_BODY.map(field=>`${prefix}.${field}`);
+export const PAGE_SUMMARY_PATHS=Object.freeze({
+  runs:[...PAGE_BODY_FIELDS.runs,...nested('roleSnapshot'),...nested('originalRoleSnapshot'),...nested('executionBinding.role'),'report.summary'],
+  tasks:[...PAGE_BODY_FIELDS.tasks,...nested('roleSnapshot'),...nested('executionBinding.role')],
+  requests:[...PAGE_BODY_FIELDS.requests,'fingerprint',...nested('executionBinding.role')],
+  runReports:[...PAGE_BODY_FIELDS.runReports]});
+const role=value=>value?omit(value,ROLE_BODY):value;
 const binding=value=>value?{...value,role:role(value.role)}:value;
+
+/** The project a workspace read resolves to, with the same fallback the projection applies, so a scoped read and its projection agree. */
+export function workspaceScope(db,requestedProjectId) {
+  const projects=db.list('projects').filter(p=>!p.systemConfig),selected=projects.find(p=>p.id===requestedProjectId);
+  return {projectId:selected?.id||projects[0]?.id||null};
+}
 
 /** Projects only the metadata the UI needs; task requirements, context, and result bodies always stay in the original records and the detail endpoints. */
 export function workspaceState(snapshot,requestedProjectId,requestedConversationId) {
@@ -33,13 +52,14 @@ export function workspaceState(snapshot,requestedProjectId,requestedConversation
       sessionId:r.nativeSession?.id||r.resumeNativeSessionId||byId.get(r.roleSessionId)?.nativeSessionId||null})),
     ...(snapshot.nativeTurnExecutions||[]).filter(executing).map(turn=>({id:`native:${turn.id}`,
       projectIds:[...new Set(sessions.filter(s=>s.nodeId===turn.nodeId&&s.runtime===turn.runtime&&s.nativeSessionId===turn.sessionId).map(s=>s.projectId))],conversationIds:[...(owners.get(identity(turn.nodeId,turn.runtime,turn.sessionId))||[])],nodeId:turn.nodeId,runtime:turn.runtime,sessionId:turn.sessionId}))
-  ];
+  ].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0); // marks are a set; a fixed order keeps scoped and full reads byte-identical
   delete state.nativeTurnExecutions;
   const runs=snapshot.runs.filter(belongs),runIds=new Set(runs.map(r=>r.id));
-  state.runs=runs.map(r=>({...omit(r,['result','contextPacket','inputTask','teamContext','resumeNativeSession','runtimeInstructions','executionConfiguration']),
+  // hasReply is Home's own progress evidence from a SQL summary; the page gets the computed stage instead.
+  state.runs=runs.map(r=>({...omit(r,[...PAGE_BODY_FIELDS.runs,'hasReply']),
     roleSnapshot:role(r.roleSnapshot),originalRoleSnapshot:role(r.originalRoleSnapshot),executionBinding:binding(r.executionBinding),error:short(r.error),report:r.report?omit(r.report,['summary']):r.report,summaryOnly:true}));
-  state.tasks=snapshot.tasks.filter(belongs).map(t=>({...omit(t,['prompt','inputTask','contextPacket','teamContext']),roleSnapshot:role(t.roleSnapshot),executionBinding:binding(t.executionBinding),error:short(t.error),summaryOnly:true}));
-  state.requests=(snapshot.requests||[]).filter(belongs).map(r=>({...omit(r,['summary','result','resumeSummary','reportSummary','execution']),executionBinding:binding(r.executionBinding),error:short(r.error)}));
+  state.tasks=snapshot.tasks.filter(belongs).map(t=>({...omit(t,PAGE_BODY_FIELDS.tasks),roleSnapshot:role(t.roleSnapshot),executionBinding:binding(t.executionBinding),error:short(t.error),summaryOnly:true}));
+  state.requests=(snapshot.requests||[]).filter(belongs).map(r=>({...omit(r,[...PAGE_BODY_FIELDS.requests,'hasReply']),executionBinding:binding(r.executionBinding),error:short(r.error)}));
   for(const key of ['discussionThreads','discussionDeliveries','roleSessions','roleSwitches','runAlerts','cliRecoveries'])state[key]=(snapshot[key]||[]).filter(r=>r.projectId===projectId);
   state.runReports=(snapshot.runReports||[]).filter(r=>runIds.has(r.id)).map(r=>omit(r,['summary']));
   state.approvals=(snapshot.approvals||[]).filter(r=>runIds.has(r.runId));

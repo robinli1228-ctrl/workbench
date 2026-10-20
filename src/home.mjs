@@ -36,7 +36,8 @@ import {MediaStreams} from './media-streams.mjs';
 import {CrossDeviceRead} from './cross-device-read.mjs';
 import { RoleSteering } from './role-steering.mjs';
 import { collaborationQueueView } from './coordination-wait.mjs';
-import { WorkspaceStateFeed } from './workspace-state.mjs';
+import { WorkspaceStateFeed, workspaceScope } from './workspace-state.mjs';
+import { pageSummaries } from './workspace-summaries.mjs';
 import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
@@ -342,13 +343,15 @@ function softwareInventory() {
     ...workers.map(w=>({id:w.id,name:w.name||w.id,kind:w.nodeKind||resolveNodeKind(null,w.platform),online:online(w.id),lastSeen:w.lastSeen,softwareVersion:w.softwareVersion||null})),
     ...db.list('devices').filter(d=>!known.has(d.nodeId)).map(d=>({id:d.nodeId,name:d.name||d.nodeId,kind:'cloud',online:false,softwareVersion:null}))];
 }
-function snapshot() {
-  const runs=db.list('runs'),tasks=db.list('tasks'),requests=db.list('coordinationRequests'),progressView=messageProgressView({runs,tasks,requests});
-  const launchCommands=db.list('commands').filter(c=>c.type==='launch'),launches=new Map(launchCommands.map(c=>[c.runId,c]));
+function snapshot(scope=null) {
+  // A workspace read takes one project's page summaries straight from SQLite; the unscoped form still returns full records.
+  const page=scope?.projectId?pageSummaries(db,scope.projectId):null;
+  const runs=page?page.runs:db.list('runs'),tasks=page?page.tasks:db.list('tasks'),requests=page?page.requests:db.list('coordinationRequests'),progressView=messageProgressView({runs,tasks,requests});
+  const launchCommands=page?page.launches:db.list('commands').filter(c=>c.type==='launch'),launches=new Map(launchCommands.map(c=>[c.runId,c]));
   const continuationLaunches=new Map(launchCommands.toReversed().map(c=>[c.runId,c]));
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs,
+  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -366,7 +369,7 @@ function snapshot() {
     roleSessions:db.list('roleSessions').filter(session=>!session.historyClearedAt).map(({nativeSession,...session})=>session),
     // Sidebar decoration only needs active native identities, never complete tool logs.
     nativeTurnExecutions:db.db.prepare("SELECT id,json_extract(data,'$.nodeId') AS nodeId,json_extract(data,'$.runtime') AS runtime,json_extract(data,'$.sessionId') AS sessionId,json_extract(data,'$.status') AS status FROM records INDEXED BY native_turn_active WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('starting','running','stopping')").all(),
-    scheduledJobs: db.list('scheduledJobs'),scheduledOccurrences:db.list('scheduledOccurrences').slice(-200),runReports:db.list('runReports'),runAlerts:db.list('runAlerts').filter(a=>a.status==='open'),
+    scheduledJobs: db.list('scheduledJobs'),scheduledOccurrences:db.list('scheduledOccurrences').slice(-200),runReports:page?page.runReports:db.list('runReports'),runAlerts:db.list('runAlerts').filter(a=>a.status==='open'),
     requests: requests.map(request => {const {fingerprint,targetSnapshot,...r}=request;return {...r,messageProgress:messageProgress(progressView,request,online,launches.get(request.currentRunId)||null,continuationLaunches)};}),
     deliveries: db.list('deliveries').map(({ fingerprint, ...r }) => r),
     workers: db.list('workers').map(w => ({ ...w, runtimes: visibleRuntimes(w.runtimes,db.get('workerConfigs',w.id)?.hiddenRuntimes), online: online(w.id) })) };
@@ -612,8 +615,9 @@ const server = http.createServer(async (req, res) => {
         return res.end(bytes);
       }
       if (pathname === '/api/state' && req.method === 'GET') {
-        const state=snapshot();
-        const view=url.searchParams.get('view')==='workspace'?workspaceFeed.read(state,url.searchParams.get('projectId'),url.searchParams.get('cursor'),url.searchParams.get('conversationId')):state;
+        const workspace=url.searchParams.get('view')==='workspace';
+        const state=snapshot(workspace?workspaceScope(db,url.searchParams.get('projectId')):null);
+        const view=workspace?workspaceFeed.read(state,url.searchParams.get('projectId'),url.searchParams.get('cursor'),url.searchParams.get('conversationId')):state;
         return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(view)),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
       }
       if (pathname === '/api/wechat' && req.method === 'GET') return json(res, wechat.status());

@@ -29,7 +29,9 @@ export function executionProgress({run,task,request,online=true}={}) {
   if(task?.status==='ready')return result(online?'queued':'waiting',online?'queued':'waiting_device',online?'Waiting to be scheduled':'Waiting for the device to connect',task.waitingReason||'');
   if(run?.status==='succeeded'||request?.status==='succeeded') {
     // Compact workspace snapshots deliberately omit reply bodies; only Home's full projection can prove an empty reply.
-    if(request?.kind==='consult'&&(request.messageProgress?.stage==='no_response'||(!run?.summaryOnly&&![run?.result,request.result,request.reportSummary,run?.report?.summary].some(text=>typeof text==='string'&&text.trim()))))return result('error','no_response','Run ended without a reply');
+    // Home's SQL page summaries carry hasReply in place of the bodies.
+    const replied=[run?.result,request?.result,request?.reportSummary,run?.report?.summary].some(text=>typeof text==='string'&&text.trim())||run?.hasReply===true||request?.hasReply===true;
+    if(request?.kind==='consult'&&(request.messageProgress?.stage==='no_response'||(!run?.summaryOnly&&!replied)))return result('error','no_response','Run ended without a reply');
     return result('completed','result_saved');
   }
   if(!online)return result('waiting','waiting_device','Waiting for the device to connect');
