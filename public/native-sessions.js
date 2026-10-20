@@ -198,7 +198,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
   if(!items.length)mentioned.append(el('p','native-side-hint',t('Nothing yet')));
   else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));mentioned.append(list);}
-  panel.append(...[producedCard(selected),changed,mentioned,projectOutputsCard(),folderCard(selected)].filter(Boolean));
+  // Files named in replies first, then what this session touched, then the folder's outputs, project outputs and the folder itself.
+  panel.append(...[mentioned,changed,producedCard(selected),projectOutputsCard(),folderCard(selected)].filter(Boolean));
  }
  resetSide();
  // Session settings live behind a gear at the right end of the top bar, where the connection note sits in other modes.

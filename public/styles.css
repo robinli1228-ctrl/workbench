@@ -3125,3 +3125,11 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-quota-reset { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .native-quota-line .role-name-quota { display: inline-flex; flex: none; }
 .native-quota-line { align-items: center; }
+
+/* Files tab: cards never widen the panel; long paths are cut at the end and shown whole on hover (the row title). */
+.native-session-sidebar { overflow-x: hidden; }
+.native-session-sidebar .native-side-panel > * , .native-side-card { min-width: 0; max-width: 100%; }
+.native-side-card { overflow: hidden; }
+.native-file-row { max-width: 100%; overflow: hidden; }
+.native-file-dir { direction: ltr; }
+.native-output-list, .native-project-output-list, .native-file-list { min-width: 0; max-width: 100%; }
