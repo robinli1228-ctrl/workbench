@@ -3123,3 +3123,5 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-quota-value.is-low { color: var(--danger); }
 .native-quota-value.is-unknown { font-weight: 400; color: var(--muted); }
 .native-quota-reset { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.native-quota-line .role-name-quota { display: inline-flex; flex: none; }
+.native-quota-line { align-items: center; }

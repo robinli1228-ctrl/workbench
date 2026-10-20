@@ -467,9 +467,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const until=raw=>{const date=parseQuotaResetDate(raw);if(!date)return '';const minutes=Math.floor((date.getTime()-Date.now())/60000);if(minutes<=0)return t('resetting');const d=Math.floor(minutes/1440),h=Math.floor(minutes%1440/60),m=minutes%60;return d>0?`${d}d ${h}h`:h>0?`${h}h ${m}m`:`${m}m`;};
   const list=el('div','native-quota-lines');
   for(const [label,key] of [['5h','fiveHour'],['7d','weekly']]){
-   const bucket=quota?.[key],line=el('div','native-quota-line');line.append(el('span','native-quota-window',label));
-   if(!usableBucket(bucket))line.append(el('span','native-quota-value is-unknown',t('Unknown')));
-   else{const pct=Math.round(remainingPercent(bucket)),rest=until(bucket.resetsAt);line.append(el('span',`native-quota-value is-${quotaTone(pct,{weekly:key==='weekly',resetsAt:bucket.resetsAt})}`,t('{pct}% left',{pct})));if(rest)line.append(el('span','native-quota-reset',rest));}
+   const bucket=quota?.[key],line=el('div','native-quota-line');
+   // The usual quota mark stays (same icon as the role cards); the line adds the window, the percent and the time until reset.
+   if(!usableBucket(bucket)){line.append(el('span','native-quota-window',label),el('span','native-quota-value is-unknown',t('Unknown')));}
+   else{const pct=Math.round(remainingPercent(bucket)),rest=until(bucket.resetsAt);line.append(roleNameQuota({[key]:bucket}),el('span','native-quota-window',label),el('span',`native-quota-value is-${quotaTone(pct,{weekly:key==='weekly',resetsAt:bucket.resetsAt})}`,t('{pct}% left',{pct})));if(rest)line.append(el('span','native-quota-reset',rest));}
    list.append(line);
   }
   section.append(list);
