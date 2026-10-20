@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v166-session-resources-desktop-20261020';
+const CACHE = 'agent-workbench-static-v167-cpu-ui-consolidation-20261021';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

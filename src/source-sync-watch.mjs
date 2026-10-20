@@ -5,6 +5,7 @@ import {captureDirectorySnapshot} from './source-sync-files.mjs';
 import {excludedSourcePath,entryEqual,manifestDigest,syncError} from './source-sync-manifest.mjs';
 
 const key=c=>`${c.projectId}:${c.repositoryId}:${c.generation}`;
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 /** Directory events drive observation. The periodic sweeps are only a backstop for lost events, so a scope whose
  * watchers are all installed sweeps rarely; a degraded scope (watcher limit or errors) keeps the close cadence. */
@@ -15,8 +16,8 @@ export const OBSERVATION_INTERVALS=Object.freeze({
 
 /** Background observation persists notices; the existing SourceSync queue transfers files without a browser. */
 export class SourceSyncWatch {
-  constructor({db,send,resolveBinding,blocked=()=>false,busy=()=>false,clock=Date.now,intervals=OBSERVATION_INTERVALS,maxWatches=4096}){
-    Object.assign(this,{db,send,resolveBinding,blocked,busy,clock,intervals,maxWatches});this.watches=new Map();this.hints=new Map();this.checked=new Map();this.fullChecked=new Map();this.observations=new Map();this.epochs=new Map();this.retryAt=new Map();this.sent=new Map();this.degraded=new Map();this.running=false;this.closed=false;
+  constructor({db,send,resolveBinding,blocked=()=>false,busy=()=>false,clock=Date.now,intervals=OBSERVATION_INTERVALS,maxWatches=4096,pause:wait=pause,scopePause={idle:250,busy:1000,max:5000}}){
+    Object.assign(this,{db,send,resolveBinding,blocked,busy,clock,intervals,maxWatches,pause:wait,scopePause});this.watches=new Map();this.hints=new Map();this.checked=new Map();this.fullChecked=new Map();this.observations=new Map();this.epochs=new Map();this.retryAt=new Map();this.sent=new Map();this.degraded=new Map();this.running=false;this.closed=false;
   }
   /** Until the first complete installation proves every directory is watched, treat the scope as unwatched. */
   cadence(id){return this.intervals[this.degraded.get(id)===false?'watching':'degraded'];}
@@ -51,18 +52,26 @@ export class SourceSyncWatch {
   }
   async tick(force=false){
     if(this.running||this.closed)return;this.running=true;
+    let periodicScans=0,pauseSpent=0;
     try{for(const scope of this.db.get('sourceSyncWatchConfig','main')?.scopes||[]){
       const id=key(scope),t=this.clock(),last=this.checked.get(id),hint=this.hints.get(id);
       const cadence=this.cadence(id),full=this.fullChecked.get(id),fullHash=force||full===undefined||t-full>=cadence.fullHash,metadataDue=last===undefined||t-last>=cadence.metadata;
       if(!force&&t<(this.retryAt.get(id)||0))continue;
       if(!fullHash&&!metadataDue&&(!hint||t-hint.last<500&&t-hint.first<2000))continue;
       if(this.blocked(scope.projectId))continue;
-      const epoch=this.epochs.get(id)||0;this.hints.delete(id);
+      const epoch=this.epochs.get(id)||0;
+      const cancelled=()=>this.closed||(this.epochs.get(id)||0)!==epoch;
       const current=()=>!this.closed&&(this.epochs.get(id)||0)===epoch&&this.db.get('sourceSyncWatchConfig','main')?.scopes.some(s=>key(s)===id&&JSON.stringify(s)===JSON.stringify(scope));
+      const periodic=!force&&last!==undefined&&!hint&&(fullHash||metadataDue);
+      if(periodic&&periodicScans&&pauseSpent<this.scopePause.max){const requested=this.busy(scope.projectId)?this.scopePause.busy:this.scopePause.idle,wait=Math.min(requested,this.scopePause.max-pauseSpent);if(wait>0){await this.pause(wait);pauseSpent+=wait;}if(!current())continue;}
+      // Events that arrive during the bounded inter-scope pause are covered by the scan about to start. Later events
+      // remain in the map and trigger another observation, so the pacing gap cannot lose a change.
+      this.hints.delete(id);
       try{
         const binding=await this.resolveBinding(scope),old=this.db.get('sourceSyncWatchStates',id);
         const observation={...this.observations.get(id),fullHash,metrics:{}};
         const manifest=await captureDirectorySnapshot({...scope,root:binding.root,baselineEntries:old?.entries||{},background:true,busy:()=>this.busy(scope.projectId),observation,
+          cancelled,
           ...(!fullHash&&!metadataDue&&!hint?.unknown?{changedPaths:[...hint.paths]}:{})});
         if(this.closed)break;
         // Configuration changed during the asynchronous scan: discard the old generation's observation.
@@ -75,6 +84,7 @@ export class SourceSyncWatch {
           if(old?.digest!==manifest.digest)this.db.put('sourceSyncWatchNotices',{id,noticeId:randomUUID(),projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,digest:manifest.digest,observedAt:state.checkedAt});
         });
         this.send({type:'source_sync_watch_status',...state,entries:undefined});
+        if(periodic)periodicScans++;
       }catch(e){if(!current())continue;this.retryAt.set(id,this.clock()+30000);this.invalidate(id);const state={id,projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,status:'blocked',error:e.code||'scan_failed',...(e.limit?{limit:e.limit}:{}),checkedAt:new Date().toISOString()};this.db.put('sourceSyncWatchStates',{...this.db.get('sourceSyncWatchStates',id),...state});this.send({type:'source_sync_watch_status',...state});}
     }this.flush();}finally{this.running=false;}
   }

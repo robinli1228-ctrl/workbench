@@ -5,10 +5,16 @@ const paths=fields=>fields.map(field=>`'$.${field}'`).join(',');
 // Non-text legacy values are not replies, just as in the existing full-record projection.
 const whitespace='char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279)';
 const replied=fields=>`json(CASE WHEN ${fields.map(field=>`(json_type(data,'$.${field}')='text' AND trim(json_extract(data,'$.${field}'),${whitespace})!='')`).join(' OR ')} THEN 'true' ELSE 'false' END)`;
+const caches=new WeakMap();
+const summaryKinds=['runs','tasks','coordinationRequests','runReports','commands'];
 
 /** One project's page summaries, read straight from SQLite: omitted bodies never become JS strings, and the
  * (kind, projectId) index returns rowid order without a sort. Full records stay where they are for the detail reads. */
 export function pageSummaries(db,projectId) {
+  const revision=db.readRevision?.(summaryKinds),cache=caches.get(db)||new Map();
+  caches.set(db,cache);
+  const prior=cache.get(projectId);
+  if(revision!=null&&prior?.revision===revision){cache.delete(projectId);cache.set(projectId,prior);return prior.page;}
   const rows=(kind,select)=>db.db.prepare(summaryQuery(select)).all(kind,projectId).map(r=>JSON.parse(r.data));
   const runs=rows('runs',`json_set(json_remove(data,${paths(PAGE_SUMMARY_PATHS.runs)}),'$.hasReply',${replied(['result','report.summary'])})`);
   const tasks=rows('tasks',`json_remove(data,${paths(PAGE_SUMMARY_PATHS.tasks)})`);
@@ -19,7 +25,10 @@ export function pageSummaries(db,projectId) {
     AND json_extract(data,'$.runId') IN (SELECT id FROM records WHERE kind='runs' AND json_extract(data,'$.projectId')=?) ORDER BY rowid`).all(projectId).map(r=>JSON.parse(r.data));
   // Sidebar execution marks for the other projects come from the active-run index, never from their histories.
   const otherActiveRuns=db.activeRuns().filter(r=>r.projectId!==projectId);
-  return {runs,tasks,requests,runReports,launches,otherActiveRuns};
+  const page={runs,tasks,requests,runReports,launches,otherActiveRuns};
+  // Summary objects are private immutable inputs to the page projection, bounded to four recently viewed projects.
+  if(revision!=null){cache.delete(projectId);cache.set(projectId,{revision,page});while(cache.size>4)cache.delete(cache.keys().next().value);}
+  return page;
 }
 
 export const summaryQuery=select=>`SELECT ${select} AS data FROM records WHERE kind=? AND json_extract(data,'$.projectId')=? ORDER BY rowid`;
