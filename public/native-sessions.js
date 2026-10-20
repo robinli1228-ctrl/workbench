@@ -333,11 +333,12 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const mediaContext=session=>{const sessionId=session&&(nativeId(session)||session.sessionId);if(!session?.nodeId||!sessionId)return null;
   return {key:`native:${session.nodeId}:${session.runtime}:${sessionId}`,describe:path=>api(`${endpoint(session.nodeId)}/media?${new URLSearchParams({runtime:session.runtime,sessionId,path})}`)};};
  /** Transcript rows: assistant replies are plain prose with a small byline; prompts are a quiet block with a prompt mark. No card states or footers. */
- function chatRow(role,text,runtime,at,extra,state='completed',session){const agent=role!=='user',row=el('article',`nt-row ${agent?'nt-agent':'nt-user'} native-chat-row${state==='error'?' is-error':''}`);
+ function chatRow(role,text,runtime,at,extra,state='completed',session,{content=null}={}){const agent=role!=='user',row=el('article',`nt-row ${agent?'nt-agent':'nt-user'} native-chat-row${state==='error'?' is-error':''}`);
   const body=simplifiedCliOutput(text||''),main=el('div','nt-body');
   if(agent){const by=el('div','nt-byline');const avatar=el('span','nt-avatar');avatar.append(agentIconEl(runtime));const name=el('span','nt-name',names[runtime]||t('Assistant'));name.translate=false;by.append(avatar,name);if(at){const stamp=el('time','',time(at));stamp.dateTime=at;by.append(stamp);}
    const copy=el('button','nt-copy');copy.type='button';copy.setAttribute('aria-label',t('Copy'));setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));by.append(copy);row.append(by);
-   if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));main.append(md);if(session)noteOutputs(session,body,at);}}
+   if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));main.append(md);}
+   if(body&&session)noteOutputs(session,body,at);}
   else{main.append(el('div','nt-prompt-text',body));if(at){const stamp=el('time','nt-prompt-time',time(at));stamp.dateTime=at;main.append(stamp);}}
   if(extra)main.append(extra);row.append(main);return row;}
  let agentDetailsSignature='';
@@ -526,6 +527,19 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const {steps,notes}=stepsOf(turn);
   return activityBlock({steps,notes,t,live,open,onPreview:(step,path)=>preview.open(step,path),onToggle:isOpen=>{if(!live)isOpen?openProcesses.add(turn.id):openProcesses.delete(turn.id);}});
  }
+ /** A page turn in the order it happened: prose, one activity line per run of tool calls, prose again; the final reply is the last prose. */
+ function turnContent(turn,session,{live=false,open=false}={}){
+  const frag=document.createDocumentFragment(),rows=processRows(turn),final=finalReply(turn),all=final?[...rows,final]:rows;
+  let group=[];
+  const flush=()=>{if(!group.length)return;const steps=group.filter(r=>r.kind==='tool').map(r=>classifyStep(r.item,turn.status)),notes=group.filter(r=>r.kind==='log'||r.kind==='error');
+   if(steps.length||notes.length)frag.append(activityBlock({steps,notes,t,live,open,onPreview:(step,path)=>preview.open(step,path),onToggle:isOpen=>{if(!live)isOpen?openProcesses.add(turn.id):openProcesses.delete(turn.id);}}));group=[];};
+  for(const row of all){
+   if(row.kind==='tool'||row.kind==='log'||row.kind==='error'){group.push(row);continue;}
+   flush();const text=simplifiedCliOutput(stripAnsi(row.text||''));if(!text.trim())continue;
+   const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));frag.append(md);
+  }
+  flush();return frag;
+ }
  /** The single working line of a live turn: pulse, elapsed time, what the CLI is doing right now, Stop. */
  function workingLine(turn,onStop){
   const line=el('div','nt-working');const pulse=el('span','nt-pulse');pulse.setAttribute('aria-hidden','true');
@@ -628,14 +642,14 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     }
     let files=null;if(turn.attachments?.length){files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));}
     feed.append(chatRow('user',turn.prompt,current.runtime,turn.createdAt,files));
-    const extra=el('div','nt-extra');
-    if(live||hasProcess(turn))extra.append(activityFor(turn,{live,open:live||openProcesses.has(turn.id)}));
-    if(live)extra.append(workingLine(turn,()=>stop(turn)));
-    else if(turn.status!=='succeeded')extra.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` · ${t(turn.error)}`:''}`));
-    const reply=chatRow('assistant',replyText(turn),current.runtime,null,extra,state,current);if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());feed.append(reply);
+    const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));
+    if(live)content.append(workingLine(turn,()=>stop(turn)));
+    else if(turn.status!=='succeeded')content.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` · ${t(turn.error)}`:''}`));
+    const reply=chatRow('assistant',replyText(turn),current.runtime,null,null,state,current,{content});if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());feed.append(reply);
    }markLatestDuration();}
   /** Under the newest reply only: how long the model took for that turn. */
-  function markLatestDuration(){for(const old of scroll.querySelectorAll('.nt-duration'))old.remove();const agents=[...scroll.querySelectorAll('.nt-agent')],last=agents.at(-1);if(!last||!last.dataset.duration||last.querySelector('.nt-working'))return;last.append(el('div','nt-duration',t('Took {duration}',{duration:last.dataset.duration})));}
+  function groupRows(){let prev=null;for(const node of scroll.querySelectorAll('.native-chat-row, .native-history-separator, .native-history-loader')){const role=node.classList.contains('nt-agent')?'agent':node.classList.contains('nt-user')?'user':null;node.classList.toggle('is-continued',Boolean(role)&&prev===role);prev=role;}}
+  function markLatestDuration(){groupRows();for(const old of scroll.querySelectorAll('.nt-duration'))old.remove();const agents=[...scroll.querySelectorAll('.nt-agent')],last=agents.at(-1);if(!last||!last.dataset.duration||last.querySelector('.nt-working'))return;last.append(el('div','nt-duration',t('Took {duration}',{duration:last.dataset.duration})));}
   function render(){
    if(!current)return;const value=current,taken=isOn(value);shell.replaceChildren();renderFeed();renderSessionControls(value);
    if(!taken&&!(supported&&canChat(value))){const bar=el('div','native-takeover-bar');const copy=el('div','native-takeover-copy');copy.append(el('strong','',t('Read-only preview')),el('span','',t(supported?'Take over to keep chatting in this exact native session here.':'Upgrade this Worker to take over native sessions')));const b=button('Take over session',()=>enable(value),'primary native-takeover-button');b.disabled=!supported;bar.append(copy,b);shell.append(bar);return;}

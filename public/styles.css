@@ -3026,3 +3026,9 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .nt-user .nt-body > .chat-attachments { margin-top: 8px; justify-content: flex-end; }
 .nt-duration { padding-left: 28px; margin-top: 6px; color: var(--muted); font-size: 12px; }
 @media (max-width: 1000px) { .nt-user .nt-body { max-width: 92%; } .nt-duration { padding-left: 0; } }
+/* consecutive messages from the same side: byline once, then stacked closely; a page turn interleaves prose and activity lines */
+.nt-row.is-continued { margin-top: -12px; }
+.nt-agent.is-continued .nt-byline { display: none; }
+.nt-user.is-continued .nt-prompt-time { display: none; }
+.nt-turn > .markdown-body + .nt-activity, .nt-turn > .nt-activity + .markdown-body, .nt-turn > .markdown-body + .markdown-body { margin-top: 10px; }
+.nt-turn > .nt-activity { margin-bottom: 0; }
