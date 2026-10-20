@@ -3237,3 +3237,107 @@ select:disabled { opacity: .6; }
 .nt-user .nt-prompt-tools { width: auto; max-width: min(640px, 78%); margin-top: 3px; padding-right: 2px; }
 .native-turn-files .attachment-open { display: block; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
 .native-turn-files .attachment-file-card .attachment-open { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px; text-align: left; cursor: pointer; }
+
+/* ---- Polish batch: one dock height, uniform icons, quieter cards ---- */
+/* 1. The composer dock and the right panel's tab bar share one height, so their top hairlines meet. */
+@media (min-width: 1001px) {
+  #chat-form, .native-takeover-form.chat-composer { display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; min-height: 68px; padding-block: 14px; }
+  .inspector-tabs { height: 68px; min-height: 68px; box-sizing: border-box; }
+}
+/* 2. Quota lines: both marks the same 22px disc, the figure centred, no decorations. */
+.native-quota-line .role-quota-mark, .native-quota-line .role-quota-mark.is-five-hour, .native-quota-line .role-quota-mark.is-weekly { width: 22px; height: 22px; clip-path: none; border-radius: 50%; font-size: 9px; font-weight: 700; }
+.native-quota-line .role-quota-mark::before, .native-quota-line .role-quota-mark::after { content: none; }
+.native-quota-line .role-name-quota { gap: 0; margin: 0; }
+.native-quota-window { font-size: 13px; }
+.native-quota-reset { font-size: 12px; }
+/* 3. Side-panel cards: compact media cards, artifact rows and card actions. */
+.native-side-panel .media-card { width: 100%; max-width: 100%; margin: 0; padding: 4px 8px 4px 4px; gap: 8px; border-radius: 8px; }
+.native-side-panel .media-card-icon { width: 30px; height: 24px; border-radius: 5px; font-size: 10px; }
+.native-side-panel .media-card-name { font-size: 12.5px; font-weight: 500; }
+.native-side-panel .media-card-meta { font-size: 11px; }
+.native-output-list, .native-project-output-list { display: grid; gap: 4px; margin: 6px 0 4px; }
+.native-side-panel .artifact-row { padding: 6px 8px; gap: 8px; border-radius: 8px; }
+.native-side-panel .artifact-filetype { width: 30px; height: 24px; min-width: 30px; border-radius: 5px; font-size: 9px; }
+.native-side-panel .artifact-row-body { gap: 2px; }
+.native-side-panel .artifact-row-body strong { font-size: 12.5px; font-weight: 500; }
+.native-side-panel .artifact-row-body small { font-size: 10.5px; line-height: 1.4; }
+.native-side-panel .artifact-row-body .artifact-local-path { display: none; }
+.native-card-head .native-card-action { min-height: 26px; padding: 2px 10px; border-radius: 7px; font-size: 12px; font-weight: 500; }
+.native-side-card > .native-side-hint:last-child { margin-bottom: 0; }
+/* 4. Top-bar and panel icon buttons: one 18px glyph size and weight. */
+.topbar-actions .icon-button, .native-session-gear { width: 31px; height: 31px; }
+.topbar-actions .icon-button svg, .native-session-gear svg { width: 18px; height: 18px; stroke-width: 1.8; }
+.inspector-tabs button svg { width: 19px; height: 19px; }
+/* 5. Composer attachment tray: one row of small tiles, so the text keeps its room. */
+:is(#chat-attachments, .native-takeover-tray) { max-height: 80px; }
+.native-takeover-tray .attachment-open > img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; }
+/* ---- Consistency layer (front end only): one glyph size per control class, one button scale, one dialog heading, one card rhythm ---- */
+/* Icon buttons: 31px box, 18px glyph; small inline actions 14px. */
+.icon-button { width: 31px; height: 31px; border-radius: 8px; }
+.icon-button svg { width: 18px; height: 18px; }
+.chat-icon-btn svg { width: 14px; height: 14px; }
+.chat-card-actions .chat-icon-btn { width: 28px; height: 28px; }
+.sidebar-footer .icon-button svg, .topbar-actions .icon-button svg, .native-session-gear svg { width: 18px; height: 18px; }
+/* Buttons: 34px in cards and bars, 36px in dialog action rows; same radius and type. */
+button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 14px; border-radius: 8px; font-size: 13px; line-height: 1.2; }
+.native-session-actions button, .native-picker-actions button, dialog .settings-actions button, .dialog-actions button { min-height: 36px; padding: 0 16px; border-radius: 8px; font-size: 13px; }
+.native-card-head .native-card-action, .native-connect-row .native-card-action { min-height: 26px; padding: 2px 10px; border-radius: 7px; font-size: 12px; }
+.native-connect-row .native-connect-action, .native-connect-row a.native-card-action { min-height: 30px; }
+/* Dialog headings: 20px title, 18px below. */
+.dialog-heading { margin-bottom: 18px; }
+.dialog-heading h2, .native-session-dialog .dialog-heading h2, .native-file-picker .dialog-heading h2, .terminal-dialog .dialog-heading h2, .remote-desktop-dialog .dialog-heading h2 { font-size: 20px; line-height: 1.25; }
+.panel-heading { margin-bottom: 18px; }
+/* Cards: 12px radius, 14px padding, 12px between cards, headings 11px caps with 6px below. */
+.native-side-card, .settings-block.software-version-card { border-radius: 12px; padding: 14px; }
+.native-session-sidebar .native-side-panel { gap: 12px; }
+.native-side-card h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: .05em; }
+.native-card-head { margin-bottom: 4px; }
+.native-card-head h3 { margin: 0; }
+/* Notes and hints: 12px / 1.6, muted. */
+.native-side-hint, .workspace-note:not(.chat-bubble) { font-size: 12px; line-height: 1.6; }
+/* Transcript rhythm: 20px between rows, 14px around boxes. */
+.nt-row { margin-bottom: 20px; }
+.native-session-scroll { padding: 24px 32px 16px; }
+/* Lists in the side panel share one row height and radius. */
+.native-file-row { min-height: 30px; border-radius: 7px; }
+.native-file-list { gap: 2px; }
+.message-queue-item { min-height: 36px; }
+@media (max-width: 1000px) {
+  .native-session-scroll { padding: 16px; }
+  button.primary, button.secondary, button.danger { min-height: 40px; }
+}
+/* Rows inserted into the history (anchored turn replies, placed turns) align exactly like history rows: same width, same centring. */
+.native-history > .native-turn-anchored:not(.nt-row) { margin: -6px 0 14px 44px; max-width: min(820px, 88%); }
+.native-history > .nt-row.native-turn-anchored { display: block; margin: 0 auto 20px; max-width: min(860px, 100%); justify-items: initial; gap: 0; }
+.native-history > .nt-user.native-turn-anchored { display: flex; }
+.native-takeover-feed { padding: 0; }
+/* ---- Legacy rules that still reach the new transcript structure ---- */
+/* The reply footer's Copy inherited margin-left:auto from the old byline button and drifted to the far right. */
+.nt-reply-foot .nt-copy { margin-left: 0; }
+/* Slash-command rows placed into the history are rows too: no 44px indent, same centring as other rows. */
+.native-history > .native-turn-anchored:not(.nt-row):not(.nt-system) { margin: -6px 0 14px 44px; max-width: min(820px, 88%); }
+.native-history > .nt-system.native-turn-anchored { display: flex; margin: 0 auto 14px; max-width: min(860px, 100%); }
+/* The prompt time sits in the tool line under the bubble: inline, no top margin, same baseline as the icons. */
+.nt-prompt-tools .nt-prompt-time { display: inline-block; margin: 0 4px 0 0; line-height: 1; text-align: left; }
+/* History separators used an undefined variable and drew no line. */
+.native-history-separator::before, .native-history-separator::after { background: var(--line); }
+/* The sessions composer text starts at the same distance from the attach icon as in the group chat. */
+.native-takeover-form textarea { padding-left: 8px; }
+/* ---- Forms and control rows: one control height per context ---- */
+/* New-session dialog: inputs, selects and the folder button share 38px; labels one weight. */
+.native-session-form input:not([type="checkbox"]), .native-session-form select, .native-workspace-row button { height: 38px; min-height: 38px; }
+.native-workspace-row button svg { width: 18px; height: 18px; }
+.native-session-form .native-field { gap: 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.native-session-form .native-permissions { margin: 0; }
+/* Connection row: the switch (3px frame + 30px segments) and the action icon are both 36px tall. */
+.native-connect-row .native-mode-switch { padding: 3px; border-radius: 11px; }
+.native-connect-row .native-mode { min-height: 30px; border-radius: 8px; }
+.native-connect-row .native-connect-action, .native-connect-row a.native-card-action { width: 36px; height: 36px; min-height: 36px; border-radius: 10px; }
+.native-connect-row a.native-card-action { width: auto; padding: 0 12px; }
+/* Meta lists: no extra gap under the card heading. */
+.native-session-meta dt:first-of-type { margin-top: 2px; }
+/* Hand-over dialog: the Open iTerm link looks like the buttons beside it. */
+.native-handover-after a.secondary { display: inline-flex; align-items: center; min-height: 34px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; text-decoration: none; }
+/* Card heads: heading and action on one baseline, same gap below as a plain heading. */
+.native-card-head { min-height: 26px; margin: 0 0 6px; }
+.native-card-head h3 { margin: 0; }
