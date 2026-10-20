@@ -128,6 +128,7 @@ if (dom.apiToken) dom.apiToken.value = app.token;
 for (const [id, name, label] of [
   ['refresh-state', 'refresh', 'Refresh'],
   ['show-project-settings', 'gear', 'Project Settings'],
+  ['toggle-inspector', 'roles', 'Hide right panel'],
   ['show-history', 'history', 'History'],
   ['add-role-sidebar', 'plus', 'Add role'],
   ['refresh-role-status', 'refresh', 'Refresh role status and remaining quota'],
@@ -2167,6 +2168,20 @@ document.querySelector('#toggle-project-sidebar-collapse')?.addEventListener('cl
 document.querySelector('#toggle-project-sidebar')?.addEventListener('click', () => {
   const cur = document.body.dataset.projectSidebar || 'expanded';
   setProjectSidebarMode(cur === 'hidden' ? 'expanded' : 'hidden');
+});
+/* The right panel (role settings in group chats, session details on the sessions page) hides and returns with one button beside the settings gear; the choice lives in this tab. */
+const INSPECTOR_KEY = 'agent-workbench.inspector';
+function setInspectorMode(mode) {
+  const next = mode === 'hidden' ? 'hidden' : 'shown';
+  document.body.dataset.inspector = next;
+  try { sessionStorage.setItem(INSPECTOR_KEY, next); } catch { /* storage is optional */ }
+  const toggle = document.querySelector('#toggle-inspector');
+  if (toggle) { const label = t(next === 'hidden' ? 'Show right panel' : 'Hide right panel'); toggle.setAttribute('aria-pressed', String(next === 'hidden')); toggle.title = label; toggle.setAttribute('aria-label', label); }
+}
+setInspectorMode(sessionStorage.getItem(INSPECTOR_KEY) || 'shown');
+document.querySelector('#toggle-inspector')?.addEventListener('click', () => {
+  if (drawers.isMobile()) { document.querySelector('#mobile-roles')?.click(); return; }
+  setInspectorMode(document.body.dataset.inspector === 'hidden' ? 'shown' : 'hidden');
 });
 
 document.querySelector('#show-project-form').addEventListener('click', () => nativeSessionUI.active()?nativeSessionUI.openNew():showProjectForm(true));

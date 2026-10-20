@@ -1724,4 +1724,6 @@ export default {
   "Copied and verified: {path}": "已复制并校验：{path}",
   "Transfer failed: {error}": "传输失败：{error}",
   "Send again": "再传一次",
+  "Hide right panel": "隐藏右栏",
+  "Show right panel": "显示右栏",
 };

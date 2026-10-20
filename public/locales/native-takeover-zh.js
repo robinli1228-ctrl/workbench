@@ -263,4 +263,5 @@ export default {
  "Compact": "压缩",
  "Effort": "思考深度",
  "The terminal CLI has not exited yet; quit it in iTerm or press Stop CLI": "终端里的 CLI 还没有退出；请在 iTerm 中退出，或点「停止 CLI」",
+ "Overview": "概述",
 };
