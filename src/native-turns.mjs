@@ -98,6 +98,9 @@ export class NativeTurnsHome{
   if(value!==null&&(field==='model'?!modelPattern.test(value):!EFFORTS.has(value)))throw Error(field==='model'?'Invalid model':'Invalid reasoning effort');
   const runtimeInfo=(worker?.runtimes||[]).find(r=>r.type===runtime),models=runtimeInfo?.models||[];
   if(value!==null&&field==='model'&&models.length&&!models.some(m=>m.id===value))throw Error('Model is not available on this device');
+  // A stale browser must not restart a busy resident CLI or save a setting that admission rejects.
+  if(this.active(nodeId,runtime,sessionId))throw Error('This session is still replying; wait or stop it first');
+  return this.db.transaction(()=>{
   const key=nativeSettingsKey(nodeId,runtime,sessionId),current=this.db.get('nativeSessionSettings',key)||{};
   const saved=this.db.put('nativeSessionSettings',{...current,id:key,nodeId,runtime,sessionId,[field]:value,updatedAt:now()});
   let applied='next_turn';
@@ -106,6 +109,7 @@ export class NativeTurnsHome{
    else if(runtime==='agy'){this.release(nodeId,{runtime,sessionId});applied='restart';}
   }
   this.change();return {model:saved.model||null,effort:saved.effort||null,updatedAt:saved.updatedAt,applied};
+  });
  }
  create(nodeId,worker,body){
   const {runtime,sessionId,clientTurnId,attachmentIds=[]}=body||{};let {text='',control=null}=body||{};
@@ -117,7 +121,7 @@ export class NativeTurnsHome{
   else if(typeof text!=='string'||(!text.trim()&&!attachmentIds?.length))throw Error('Enter a message');
   if(text.length>MAX_PROMPT)throw Error('Message is too long for a takeover turn');
   const prior=nativeTurnRows(this.db,{clientTurnId,limit:1})[0];
-  if(prior){if(prior.nodeId!==nodeId||prior.runtime!==runtime||prior.sessionId!==sessionId||prior.prompt!==text||JSON.stringify((prior.attachments||[]).map(a=>a.id))!==JSON.stringify(attachmentIds||[]))throw Error('Takeover message ID was already used');return nativeTurnView(prior);}
+  if(prior){if(prior.nodeId!==nodeId||prior.runtime!==runtime||prior.sessionId!==sessionId||prior.prompt!==text||(prior.control||null)!==control||JSON.stringify((prior.attachments||[]).map(a=>a.id))!==JSON.stringify(attachmentIds||[]))throw Error('Takeover message ID was already used');return nativeTurnView(prior);}
   const items=attachmentIds?.length?this.attachments.resolve(NativeTurnsHome.owner(nodeId),attachmentIds):[];
   if(items.some(item=>item.mime.startsWith('image/'))&&!NATIVE_IMAGE_RUNTIMES.has(runtime))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');
   if(worker?.capabilities?.nativeTurns!==3)throw Error('Upgrade this Worker to take over native sessions');

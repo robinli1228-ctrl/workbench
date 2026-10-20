@@ -108,6 +108,23 @@ export function platformAdminUI({api,getData,refreshState,create}) {
       if(registered.result?.autostart===false)detail.append(create('p','workspace-note','Worker is running in the background; after the device restarts, click Connect to start it again.'));
       const actions=create('div','device-actions');
       for(const [method,label] of [['check','Check connection'],['connect','Install / connect Worker']]){const button=create('button','secondary',label);button.type='button';button.disabled=registered.status==='installing';button.addEventListener('click',()=>void action(button,feedback,()=>api(`/api/devices/${registered.id}/${method}`,{method:'POST',json:{}})));actions.append(button);}
+      let managedTunnel=false;try{managedTunnel=['127.0.0.1','localhost'].includes(new URL(registered.homeUrl).hostname);}catch{}
+      if(managedTunnel){
+        const reconnect=create('button','secondary device-reconnect-button',t('Reconnect Home'));reconnect.type='button';reconnect.disabled=registered.status==='installing';
+        reconnect.title=t('Rebuild only this device’s SSH tunnel. Services, files and history are kept.');
+        reconnect.addEventListener('click',async()=>{
+          if(reconnect.disabled||!confirm(t('Reconnect this device to Home? This briefly interrupts its tunnel. Active or unverifiable work prevents reconnection; no services are restarted.')))return;
+          reconnect.disabled=true;reconnect.setAttribute('aria-busy','true');text(feedback,t('Checking whether the device is idle…'));
+          const path=`/api/devices/${encodeURIComponent(registered.id)}/reconnect`;
+          const phases={checking:'Checking whether the device is idle…',reconnecting:'Rebuilding the SSH tunnel…',waiting:'Waiting for a new Worker heartbeat…',recovered:'Connection restored. Worker heartbeat confirmed; no services were restarted.'};
+          let polling=false,finished=false;
+          const timer=setInterval(async()=>{if(polling||finished||!reconnect.isConnected)return;polling=true;try{const status=await api(path);if(!finished&&phases[status.phase])text(feedback,t(phases[status.phase]));}catch{}finally{polling=false;}},1500);
+          try{const result=await api(path,{method:'POST',json:{}});finished=true;text(feedback,result.phase==='recovered'?t(phases.recovered):t('Connection recovery is not confirmed.'));await refreshState({quiet:true});}
+          catch(error){finished=true;text(feedback,error.message);}
+          finally{finished=true;clearInterval(timer);reconnect.disabled=false;reconnect.removeAttribute('aria-busy');}
+        });
+        actions.append(reconnect);
+      }
       detail.append(actions);
     }
     detail.append(feedback);

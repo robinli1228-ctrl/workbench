@@ -4,6 +4,14 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Reconnect Home':'重连 Home',
+  'Rebuild only this device’s SSH tunnel. Services, files and history are kept.':'只重建该设备的 SSH 隧道，保留服务、文件和历史。',
+  'Reconnect this device to Home? This briefly interrupts its tunnel. Active or unverifiable work prevents reconnection; no services are restarted.':'确认重连该设备到 Home？隧道将短暂中断。有活动任务或无法核验时会拒绝操作，不重启任何服务。',
+  'Checking whether the device is idle…':'正在检查设备是否空闲…',
+  'Rebuilding the SSH tunnel…':'正在重建 SSH 隧道…',
+  'Waiting for a new Worker heartbeat…':'正在等待 Worker 新心跳…',
+  'Connection restored. Worker heartbeat confirmed; no services were restarted.':'连接已恢复，已确认 Worker 新心跳，未重启任何服务。',
+  'Connection recovery is not confirmed.':'尚未确认连接恢复。',
   'Unknown role':'未知角色',
   'Session is not registered with Workbench':'此会话未登记到 Workbench，不能读取。',
   'Upgrade this Worker to read only Workbench sessions; external history scanning is disabled':'请升级此 Worker 后读取 Workbench 会话；已禁止扫描外部历史。',
@@ -1010,6 +1018,7 @@ export default {
   'Steering needs attention: {reason}': '引导需要处理：{reason}',
   'Interrupting and starting this message': '正在打断当前执行并启动这条引导',
   'Interrupt this role now and run this message first; actions already performed are not rolled back': '立即打断该角色并优先执行这条引导；已执行操作不会回滚',
+  'Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept': '立即打断该角色，在原会话中处理这条引导；旧任务不自动续跑，已有修改保留',
   'Steer now': '立即引导',
   "{h}h {m}m": "{h}小时{m}分",
   "{m}m {s}s": "{m}分{s}秒",

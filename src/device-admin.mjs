@@ -7,6 +7,7 @@ import { desktopTunnelSpec, normalizeDesktopConfig, probeExistingDesktopTunnel }
 import { tr } from './i18n.mjs';
 import { switchSettled } from './role-switch-policy.mjs';
 import {createBuildManifest} from './software-version.mjs';
+import {remoteReconnectProbe} from './device-reconnect.mjs';
 
 /** Probes only the local loopback listener and never touches the public desktop port. */
 function localPortOpen(port) {
@@ -22,7 +23,7 @@ function localPortOpen(port) {
 
 /** Fixed commands run over SSH; the password is passed through the askpass environment and never enters arguments or public records. */
 export class DeviceAdmin {
-  constructor({ db, credentials, base, data, workerToken, change, homePort, online = () => false, spawnProcess = spawn, tunnelRestartMs = 5000, hostPlatform = process.platform, probePort = localPortOpen, probeExistingTunnel = probeExistingDesktopTunnel }) {
+  constructor({ db, credentials, base, data, workerToken, change, homePort, online = () => false, spawnProcess = spawn, tunnelRestartMs = 5000, hostPlatform = process.platform, probePort = localPortOpen, probeExistingTunnel = probeExistingDesktopTunnel, reconnect = null }) {
     Object.assign(this, { db, credentials, base, data, workerToken, change, online, spawnProcess, tunnelRestartMs, hostPlatform, probePort, probeExistingTunnel });
     this.homePort = Number(homePort || process.env.PORT || 4317);
     this.running = new Set();
@@ -30,6 +31,8 @@ export class DeviceAdmin {
     this.tunnelTimers = new Map();
     this.desktopTunnels = new Map();
     this.stoppingTunnels = false;
+    this.reconnectContext = reconnect;
+    this.reconnections = new Map();
   }
 
   /** A loopback Home address means the Worker relies on reverse SSH forwarding; other directly reachable addresses are not taken over. */
@@ -140,6 +143,53 @@ export class DeviceAdmin {
     if (!this.stoppingTunnels) void this.ensureTunnel(id);
   }
 
+  reconnectStatus(id) {
+    if(!this.db.get('devices',id))throw new Error(tr('deviceAdmin.deviceNotFound'));
+    return this.reconnections.get(id)||{phase:'idle'};
+  }
+
+  /** Human recovery owns only Home's reverse tunnel. Admission stays fenced until a new Worker heartbeat or a bounded failure. */
+  async reconnect(id) {
+    const d=this.db.get('devices',id),context=this.reconnectContext;
+    if(!d)throw new Error(tr('deviceAdmin.deviceNotFound'));
+    if(!context||this.stoppingTunnels)throw new Error(tr('deviceAdmin.reconnectUnsupported'));
+    if(this.running.has(id))throw new Error(tr('deviceAdmin.reconnectBusy'));
+    const fingerprint=JSON.stringify([d.nodeId,d.host,d.port,d.user,d.homeUrl]);
+    const update=(phase,error)=>{const value={phase,updatedAt:new Date().toISOString(),...(error?{error}:{})};this.reconnections.set(id,value);this.change();return value;};
+    const unchanged=()=>{const v=this.db.get('devices',id);if(!v||fingerprint!==JSON.stringify([v.nodeId,v.host,v.port,v.user,v.homeUrl])||this.stoppingTunnels)throw new Error(tr('deviceAdmin.reconnectChanged'));};
+    this.running.add(id);context.hold(d.nodeId,true);update('checking');
+    try {
+      context.assertIdle(d.nodeId);
+      const secret=await this.credentials.get(id);
+      if(!this.tunnelSpec(d,secret))throw new Error(tr('deviceAdmin.reconnectUnsupported'));
+      const result=await this.ssh(d,`console.log(JSON.stringify(await (${remoteReconnectProbe.toString()})(${JSON.stringify(d.nodeId)})));`,15000);
+      if(result?.idle!==true||result.nodeId!==d.nodeId)throw new Error(tr('deviceAdmin.reconnectUnverified'));
+      unchanged();context.assertIdle(d.nodeId);
+      const previous=context.connection(d.nodeId),started=Date.now(),child=this.tunnels.get(id);
+      update('reconnecting');
+      const scheduled=this.tunnelTimers.get(id);if(scheduled)clearTimeout(scheduled);this.tunnelTimers.delete(id);
+      if(child&&child.exitCode===null&&child.signalCode===null) {
+        // Remove ownership before signalling so the normal reconnect timer cannot race this explicit operation.
+        this.tunnels.delete(id);
+        try { await new Promise((resolve,reject)=>{
+          const done=()=>{clearTimeout(timer);resolve();};
+          const timer=setTimeout(()=>{child.removeListener('close',done);reject(new Error(tr('deviceAdmin.reconnectExitTimeout')));},5000);
+          child.once('close',done);
+          if(!child.kill('SIGTERM')){clearTimeout(timer);child.removeListener('close',done);reject(new Error(tr('deviceAdmin.reconnectExitTimeout')));}
+        }); } catch(error) {if(child.exitCode===null&&child.signalCode===null)this.tunnels.set(id,child);throw error;}
+      } else this.tunnels.delete(id);
+      unchanged();await this.ensureTunnel(id);update('waiting');
+      const deadline=Date.now()+(context.timeoutMs??45000);
+      while(Date.now()<deadline) {
+        unchanged();const next=context.connection(d.nodeId);
+        if(next&&next.id!==previous?.id&&next.heartbeatAt>started)return update('recovered');
+        await new Promise(resolve=>setTimeout(resolve,context.pollMs??250));
+      }
+      throw new Error(tr('deviceAdmin.reconnectHeartbeatTimeout'));
+    } catch(error) {update('failed',error.message);throw error;}
+    finally {this.running.delete(id);context.hold(d.nodeId,false);this.change();}
+  }
+
   stopTunnels() {
     this.stoppingTunnels = true;
     for (const timer of this.tunnelTimers.values()) clearTimeout(timer);
@@ -229,6 +279,7 @@ socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('err
     return this.launchDesktop(id);
   }
   async save(input) {
+    if(input.id&&this.running.has(input.id))throw new Error(tr('deviceAdmin.reconnectBusy'));
     const old = input.id ? this.db.get('devices', input.id) : null;
     if (input.id && !old) throw new Error(tr('deviceAdmin.deviceNotFound3'));
     if (!/^[a-zA-Z0-9._:-]+$/.test(input.host || '') || input.host.startsWith('-')) throw new Error(tr('deviceAdmin.invalidServerAddress'));

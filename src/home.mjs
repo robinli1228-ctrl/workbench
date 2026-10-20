@@ -159,8 +159,9 @@ db.transaction(()=>{
 });
 for (const run of db.list('runs').filter(r => !terminal.has(r.status))) db.put('runs', { ...run, status: run.status === 'stopping' ? 'stopping' : 'reconciling' });
 const sockets = new Map();
+const reconnectingNodes = new Set();
 /** Sessions-page takeover hook (src/native-turns-home.mjs). */
-const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>send(sockets.get(nodeId),{...payload,language:getLanguage()}),online:id=>sockets.get(id)?.readyState===1,change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession});
+const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>{if(!reconnectingNodes.has(nodeId))send(sockets.get(nodeId),{...payload,language:getLanguage()});},online:id=>sockets.get(id)?.readyState===1&&!reconnectingNodes.has(id),change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession});
 const viewers = new Set();
 const queries = new Map();
 const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
@@ -174,8 +175,8 @@ let changeTimer;
 const change = () => { clearTimeout(changeTimer);changeTimer=null;for (const r of viewers) r.write('event: change\ndata: {}\n\n'); };
 const outputChanged=()=>{if(!changeTimer){changeTimer=setTimeout(change,100);changeTimer.unref();}};
 const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify(payload)); };
-const online = id => sockets.get(id)?.readyState === 1;
-const sourceSync=new SourceSyncHome({db,data,online,socket:id=>sockets.get(id),change,rooms,query:workerQuery});
+const online = id => sockets.get(id)?.readyState === 1&&!reconnectingNodes.has(id);
+const sourceSync=new SourceSyncHome({db,data,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery});
 const projectFiles=new ProjectFiles({db,online,query:workerQuery});
 const mediaStreams=new MediaStreams({db,online,query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
 const crossDeviceRead=new CrossDeviceRead({db,online,query:workerQuery});
@@ -184,7 +185,22 @@ const credentials = new CredentialStore(join(data, 'credentials'));
 const hosting = new Hosting(db, credentials);
 const projectsAdmin = new ProjectAdmin(db, workerQuery, hosting, change);
 const projectGitVersions = new ProjectGitVersions({db,query:workerQuery,hosting,online,change});
-const devicesAdmin = new DeviceAdmin({ db, credentials, base, data, workerToken, change, online, homePort: port });
+const devicesAdmin = new DeviceAdmin({ db, credentials, base, data, workerToken, change, online, homePort: port, reconnect:{
+  hold:(id,held)=>held?reconnectingNodes.add(id):reconnectingNodes.delete(id),
+  connection:id=>{const socket=sockets.get(id);return socket?.readyState===1?{id:socket,heartbeatAt:socket.lastHeartbeatAt||0}:null;},
+  assertIdle:id=>{
+    const worker=db.get('workers',id),usage=worker?.cliUsage;
+    if(!usage||['active','retained','organizer','terminal'].some(key=>!Number.isFinite(usage[key])))throw new Error(tr('deviceAdmin.reconnectUnverified'));
+    const taskNode=t=>t.executionBinding?.role?.nodeId||t.roleSnapshot?.nodeId||db.get('roles',t.assignedRoleId||t.roleId)?.nodeId;
+    const native=db.db.prepare("SELECT 1 FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND coalesce(json_extract(data,'$.status'),'') NOT IN ('succeeded','failed','interrupted','cancelled','stopped') LIMIT 1").get(id);
+    if(Object.values(usage).some(n=>typeof n==='number'&&n>0)||(worker.warmSessions||[]).length||Number(worker.organizerBusy)>0
+      ||dispatching.has(id)||db.activeRuns(id).length||native||db.chatTasks().some(t=>taskNode(t)===id)
+      ||[...queries.values()].some(q=>q.nodeId===id)
+      ||db.list('sourceSyncCommands').some(c=>c.nodeId===id&&c.status==='pending')
+      ||db.list('terminalSessions').some(s=>s.nodeId===id&&!['released','cancelled','finished','expired'].includes(s.status))
+      ||db.list('roleSwitches').some(s=>s.nodeId===id&&!s.steps?.released))throw new Error(tr('deviceAdmin.reconnectBusy'));
+  }
+} });
 void devicesAdmin.startTunnels();
 process.once('exit', () => devicesAdmin.stopTunnels());
 setup.projectsAdmin = projectsAdmin;
@@ -329,7 +345,7 @@ function snapshot() {
   const continuationLaunches=new Map(launchCommands.toReversed().map(c=>[c.runId,c]));
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:1,groupConversations:1,projectTeamCopy:1,queueOrder:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs,
+  return { version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs,
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -792,6 +808,9 @@ const server = http.createServer(async (req, res) => {
         return json(res, await devicesAdmin[action](desktopAction[1]));
       }
       const deviceAction = pathname.match(/^\/api\/devices\/([^/]+)\/(check|connect)$/);
+      const reconnectAction = pathname.match(/^\/api\/devices\/([^/]+)\/reconnect$/);
+      if(reconnectAction&&req.method==='GET')return json(res,devicesAdmin.reconnectStatus(reconnectAction[1]));
+      if(reconnectAction&&req.method==='POST')return json(res,await devicesAdmin.reconnect(reconnectAction[1]));
       if (deviceAction && req.method === 'POST') {
         if (db.get('settings','main')?.paused) throw new Error(tr('home.remoteExecutionPaused2'));
         const result = await (deviceAction[2] === 'check' ? devicesAdmin.check(deviceAction[1]) : devicesAdmin.provision(deviceAction[1]));
@@ -1385,6 +1404,7 @@ const server = http.createServer(async (req, res) => {
     files['/i18n.js']='i18n.js';
     files['/output-language.js']='output-language.js';
     files['/native-sessions.js']='native-sessions.js';
+    files['/native-transcript.js']='native-transcript.js';
     files['/media.js']='media.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
@@ -1418,7 +1438,7 @@ wss.on('connection', ws => {
         if (nodeId || typeof m.node?.id !== 'string') throw new Error(tr('home.invalidNodeRegistration'));
         nodeId = m.node.id;
         if (db.get('removedDevices',nodeId)) { ws.close(1008, 'Device registration was deleted'); nodeId = null; return; }
-        if (online(nodeId)) { ws.close(1008, tr('home.workerAlreadyConnected')); nodeId = null; return; }
+        if (sockets.get(nodeId)?.readyState===1) { ws.close(1008, tr('home.workerAlreadyConnected')); nodeId = null; return; }
         sockets.set(nodeId, ws); clearTimeout(registerTimer);
         const config=db.get('workerConfigs',nodeId),limits=registrationCapacity(m.node,config);
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId, lastSeen: new Date().toISOString() });
@@ -1430,7 +1450,7 @@ wss.on('connection', ws => {
       }
       if (m.type === 'ready') { ws.workerReady = true; void reconcileTerminals(nodeId); dispatch(nodeId); scheduleChat(); collectUsage(nodeId); }
       if (m.type === 'queue_reservation') { if(queuePump.onReservation(nodeId,m)){change();dispatch(nodeId);} return; }
-      if (m.type === 'heartbeat') db.put('workers', { ...db.get('workers', nodeId), lastSeen: new Date().toISOString() });
+      if (m.type === 'heartbeat') {ws.lastHeartbeatAt=Date.now();db.put('workers', { ...db.get('workers', nodeId), lastSeen: new Date().toISOString() });}
       if(m.type==='launch_deferred') {
         const c=db.get('commands',m.id);
         if(c?.nodeId===nodeId&&c.type==='launch'&&c.runId===m.runId&&!c.acked)db.put('commands',{...c,capacityDeferred:true});
