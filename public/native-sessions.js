@@ -823,13 +823,18 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
       if(turn.status!=='succeeded')extra.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` \u00b7 ${t(turn.error)}`:''}`));
       if(extra.childElementCount){if(anchor.dataset.role==='user'&&state==='error'){const errorRow=chatRow('assistant','',current.runtime,turn.endedAt,extra,state);errorRow.classList.add('native-turn-anchored');anchor.after(errorRow);}else{const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}}if(anchor.dataset.role!=='user'&&turn.endedAt)anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());continue;}
     }
-    let files=null;if(turn.attachments?.length){files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));}
-    const userRow=chatRow('user',turn.prompt,current.runtime,turn.createdAt,files);userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);
+    const makeFiles=()=>{if(!turn.attachments?.length)return null;const files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));return files;};
+    // A running turn whose prompt already reached the history anchors on that row: the history row stays, the feed adds only the live reply,
+    // and the history's partial reply rows for this turn are hidden while the live one shows.
+    const liveIndex=live?rows.findIndex((row,i)=>!used.has(i)&&row.dataset.role==='user'&&row.dataset.text===promptKey(turn.prompt)):-1;
+    if(liveIndex>=0){used.add(liveIndex);const files=makeFiles();if(files){files.classList.add('native-turn-anchored');rows[liveIndex].querySelector('.nt-body')?.append(files);}
+     for(let i=liveIndex+1;i<rows.length&&rows[i].dataset.role!=='user';i++)rows[i].hidden=true;}
+    const userRow=liveIndex>=0?null:chatRow('user',turn.prompt,current.runtime,turn.createdAt,makeFiles());if(userRow){userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);}
     const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));
     if(live)content.append(workingLine(turn));
     else if(turn.status!=='succeeded')content.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` · ${t(turn.error)}`:''}`));
     const reply=chatRow('assistant',replyText(turn),current.runtime,live?null:turn.endedAt,null,state,current,{content});reply.dataset.role='assistant';if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
-    if(live)feed.append(userRow,reply);else place([userRow,reply],turn.createdAt);
+    if(live)feed.append(...(userRow?[userRow,reply]:[reply]));else place([userRow,reply],turn.createdAt);
    }markLatestDuration();}
   /** Under the newest reply only: how long the model took for that turn. */
   function groupRows(){let prev=null;for(const node of scroll.querySelectorAll('.native-chat-row, .native-history-separator, .native-history-loader')){const role=node.classList.contains('nt-agent')?'agent':node.classList.contains('nt-user')?'user':null;node.classList.toggle('is-continued',Boolean(role)&&prev===role);prev=role;}}
