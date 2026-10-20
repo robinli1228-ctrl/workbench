@@ -263,11 +263,18 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const connectionStates=new Map(),switching=new Map();
  const waitUntil=(check,ms)=>new Promise(resolve=>{const started=Date.now();const tick=()=>{if(check()||Date.now()-started>ms)return resolve(check());setTimeout(tick,300);};tick();});
  const nativeClaimOf=item=>(getData().terminalSessions||[]).find(c=>c.kind==='native'&&c.nodeId===item.nodeId&&!['released','cancelled'].includes(c.status)&&(item.entryId&&c.catalogEntryId===item.entryId||nativeId(item)&&c.nativeSession?.runtime===item.runtime&&c.nativeSession?.id===nativeId(item)));
- /** Prepare the iTerm link for an existing session and open it at once; the link stays on the claim for "Open iTerm" / "Copy" if iTerm did not come up. */
- async function openInTerminal(item){
-  const result=await api(`/api/native-sessions/${encodeURIComponent(item.nodeId)}/terminal`,{method:'POST',json:{runtime:item.runtime,sessionId:nativeId(item),...(item.entryId?{entryId:item.entryId}:{}),workspace:item.workspace||'',allowAll:true,useLocalSshKey:true,operationId:crypto.randomUUID()}});
-  if(result?.url)window.location.assign(result.url);
-  return result;
+ /** Prepare the one-time terminal link for an existing session (reusing a link that is already prepared). */
+ async function prepareTerminal(item){
+  const existing=nativeClaimOf(item);if(existing?.status==='prepared'&&existing.command)return existing;
+  return api(`/api/native-sessions/${encodeURIComponent(item.nodeId)}/terminal`,{method:'POST',json:{runtime:item.runtime,sessionId:nativeId(item),...(item.entryId?{entryId:item.entryId}:{}),workspace:item.workspace||'',allowAll:true,useLocalSshKey:true,operationId:crypto.randomUUID()}});
+ }
+ /** Open iTerm at once; the link stays on the claim for "Open iTerm" / "Copy" if iTerm did not come up. */
+ async function openInTerminal(item){const result=await prepareTerminal(item);if(result?.url)window.location.assign(result.url);return result;}
+ /** Copy the ready-to-run command (ssh + launcher for a remote device). A page takeover must end first, since the link claims the session. */
+ async function copyTerminalCommand(item){
+  if(takeover.isOn(item)||takeover.canChat(item)){if(!confirm(t('End the page takeover and prepare a terminal link for this session?')))throw Error(t('Cancelled'));await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
+  const result=await prepareTerminal(item);if(!result?.command)throw Error('No terminal command was prepared');
+  await navigator.clipboard.writeText(result.command);await onStateRefresh();void load({quiet:true});return result.command;
  }
  /** Move the session between this page and iTerm, doing every step in between: end the page takeover, prepare and open iTerm; or return the terminal and reopen the composer here. */
  async function switchMode(item,target){
@@ -486,7 +493,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const settingsCard=el('section','native-side-card native-settings-card');settingsCard.dataset.nativeSettings='';
   session.append(controls,settingsCard);
   renderNameCard(value);
-  metaCard(session,'Native session',[['Session ID',id||t('Not available yet'),id||null],['Working folder',value.workspace||t('Choose a folder when opening'),value.workspace||null]]);
+  const identity=metaCard(session,'Native session',[['Session ID',id||t('Not available yet'),id||null],['Working folder',value.workspace||t('Choose a folder when opening'),value.workspace||null]]);
+  // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
+  if(id&&value.workspace){const row=el('div','native-command-row');const copy=button('Copy iTerm command',async e=>{const b=e.target;b.disabled=true;try{await copyTerminalCommand(value);b.textContent=t('Copied');setTimeout(()=>{b.textContent=t('Copy iTerm command');b.disabled=false;},1800);}catch(error){b.disabled=false;controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'secondary native-card-action');
+   row.append(copy,el('span','native-side-hint',t('Prepares a one-time link for this session; paste the command into any terminal. Cancel it from the Connection card if unused.')));identity.append(row);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
   const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';session.append(repository);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);

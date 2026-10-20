@@ -3028,3 +3028,5 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .native-mode-title { font-size: 13px; font-weight: 600; }
 .native-mode-sub { font-size: 11px; }
 .native-connect .native-session-actions a.primary { display: inline-flex; justify-content: center; align-items: center; min-height: 36px; text-decoration: none; }
+.native-command-row { display: grid; gap: 6px; margin-top: 12px; }
+.native-command-row .native-side-hint { margin: 0; }
