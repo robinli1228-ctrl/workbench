@@ -391,7 +391,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    // Injected context leaves nothing to show; a slash command shows as one quiet system line.
    if(m.role==='user'&&!text){const command=commandOf(m.text);if(!command)return document.createComment('injected');const row=el('div','nt-system native-chat-row');row.dataset.role='system';row.dataset.text=command.replace(/^\//,'').trim();if(m.timestamp)row.dataset.at=m.timestamp;row.append(el('span','nt-system-mark','\u2318'),el('code','',command));return row;}
    const row=chatRow(m.role,text,item.runtime,m.timestamp,null,'completed',item);row.dataset.role=m.role;
-   if(m.role==='user'){row.dataset.text=text.trim();lastPromptAt=m.timestamp||null;}
+   if(m.role==='user'){row.dataset.text=promptKey(text);lastPromptAt=m.timestamp||null;}
    else if(lastPromptAt&&m.timestamp){const ms=Date.parse(m.timestamp)-Date.parse(lastPromptAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(lastPromptAt,Date.parse(m.timestamp));}
    return row;}
  /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
@@ -598,7 +598,9 @@ const sizeText=n=>!Number.isFinite(n)?'':n<1024?`${n} B`:n<1048576?`${(n/1024).t
 const cliNoise=text=>/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/m.test(stripAnsi(String(text||'')));
 /** CLIs write injected context (system reminders, environment blocks, slash-command receipts) into history as "user" messages; only the words the person typed are a prompt. */
 const INJECTED=/<(system-reminder|user_info|environment_context|local-command-stdout|local-command-caveat|command-message|command-args|skill_metadata|available_skills)\b[^>]*>[\s\S]*?(<\/\1>|$)/gi;
-const cleanUserText=text=>String(text||'').replace(/<image\b[^>]*>[\s\S]*?<\/image>/gi,'').replace(INJECTED,'').replace(/<command-name>[\s\S]*?<\/command-name>/gi,'').replace(/^\s*<user_query>\s*([\s\S]*?)\s*<\/user_query>\s*$/i,'$1').replace(/\n*Attached files for this message \(local paths\):[\s\S]*$/,'').trim();
+const cleanUserText=text=>String(text||'').replace(/<image\b[^>]*>[\s\S]*?<\/image>/gi,'').replace(/\[Image: source:[^\]]*\]/g,'').replace(INJECTED,'').replace(/<command-name>[\s\S]*?<\/command-name>/gi,'').replace(/^\s*<user_query>\s*([\s\S]*?)\s*<\/user_query>\s*$/i,'$1').replace(/\n*Attached files for this message \(local paths\):[\s\S]*$/,'').trim();
+/** Prompt identity for anchoring page turns onto history rows; whitespace differences never make a second bubble. */
+const promptKey=text=>String(text||'').replace(/\s+/g,' ').trim();
 const commandOf=text=>String(text||'').match(/<command-name>\s*([^<]+?)\s*<\/command-name>/i)?.[1]||'';
 /** A turn shows its process only when it holds more than the final reply: tools, runtime notes or intermediate messages. */
 const norm=text=>stripAnsi(String(text||'')).replace(/\s+/g,' ').trim();
@@ -732,7 +734,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const state=turn.status==='failed'?'error':turn.status==='interrupted'?'stopped':turn.status==='queued'?'queued':turn.status==='waiting_user'||turn.phase==='waiting'?'waiting':['starting','running','stopping'].includes(turn.status)?'running':'completed';
     const live=['queued','starting','running','waiting_user','stopping'].includes(turn.status);
     if(!live&&turn.endedAt&&turn.prompt.trim()){
-     const prompt=turn.prompt.trim(),index=rows.findIndex((row,i)=>!used.has(i)&&row.dataset.role==='user'&&row.dataset.text===prompt);
+     const prompt=promptKey(turn.prompt),index=rows.findIndex((row,i)=>!used.has(i)&&row.dataset.role==='user'&&row.dataset.text===prompt);
      if(index>=0){used.add(index);let anchor=rows[index];for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++)anchor=rows[i];
       if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));rows[index].querySelector('.nt-body')?.append(files);}
       const extra=el('div','native-turn-anchored nt-extra');
@@ -741,7 +743,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
       if(extra.childElementCount){if(anchor.dataset.role==='user'&&state==='error'){const errorRow=chatRow('assistant','',current.runtime,turn.endedAt,extra,state);errorRow.classList.add('native-turn-anchored');anchor.after(errorRow);}else{const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}}if(anchor.dataset.role!=='user'&&turn.endedAt)anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());continue;}
     }
     let files=null;if(turn.attachments?.length){files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));}
-    const userRow=chatRow('user',turn.prompt,current.runtime,turn.createdAt,files);userRow.dataset.role='user';userRow.dataset.text=turn.prompt.trim();
+    const userRow=chatRow('user',turn.prompt,current.runtime,turn.createdAt,files);userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);
     const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));
     if(live)content.append(workingLine(turn));
     else if(turn.status!=='succeeded')content.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` · ${t(turn.error)}`:''}`));
