@@ -3311,3 +3311,15 @@ button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 1
 .native-history > .nt-row.native-turn-anchored { display: block; margin: 0 auto 20px; max-width: min(860px, 100%); justify-items: initial; gap: 0; }
 .native-history > .nt-user.native-turn-anchored { display: flex; }
 .native-takeover-feed { padding: 0; }
+/* ---- Legacy rules that still reach the new transcript structure ---- */
+/* The reply footer's Copy inherited margin-left:auto from the old byline button and drifted to the far right. */
+.nt-reply-foot .nt-copy { margin-left: 0; }
+/* Slash-command rows placed into the history are rows too: no 44px indent, same centring as other rows. */
+.native-history > .native-turn-anchored:not(.nt-row):not(.nt-system) { margin: -6px 0 14px 44px; max-width: min(820px, 88%); }
+.native-history > .nt-system.native-turn-anchored { display: flex; margin: 0 auto 14px; max-width: min(860px, 100%); }
+/* The prompt time sits in the tool line under the bubble: inline, no top margin, same baseline as the icons. */
+.nt-prompt-tools .nt-prompt-time { display: inline-block; margin: 0 4px 0 0; line-height: 1; text-align: left; }
+/* History separators used an undefined variable and drew no line. */
+.native-history-separator::before, .native-history-separator::after { background: var(--line); }
+/* The sessions composer text starts at the same distance from the attach icon as in the group chat. */
+.native-takeover-form textarea { padding-left: 8px; }
