@@ -2,6 +2,7 @@ import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON,quotaForRole,roleNameQuota} from './role-icons.js';
+import {usableBucket,remainingPercent,parseQuotaResetDate,quotaTone} from './quota-state.js';
 import {createListOrder} from './list-order.js';
 import {groupNativeSessions,readNativeSessionPages} from './native-session-groups.js';
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
@@ -462,10 +463,14 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const signature=JSON.stringify([key(value),configuration,quota,runtime?.quotaStatus,runtime?.quotaStale,runtime?.checkedAt,worker?.online]),prior=side.querySelector('[data-native-agent-details]');
   if(prior&&signature===agentDetailsSignature)return;agentDetailsSignature=signature;
   const section=el('section','native-side-card');section.dataset.nativeAgentDetails='';section.append(el('h3','',t('Quota')));
-  const list=el('dl','native-session-meta'),field=(label,content)=>{const data=el('dd','');data.append(content);list.append(el('dt','',t(label)),data);};
-  for(const [label,key]of [['5-hour quota remaining','fiveHour'],['Weekly quota remaining','weekly']]){
-   const bucket=quota?.[key],value=bucket?.remainingPercent??bucket?.usedPercent,known=value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value));
-   field(label,known?roleNameQuota({[key]:bucket}):el('span','',t('Unknown')));
+  // Two lines: window, percent left and the time until it resets (3d 4h / 2h 10m).
+  const until=raw=>{const date=parseQuotaResetDate(raw);if(!date)return '';const minutes=Math.floor((date.getTime()-Date.now())/60000);if(minutes<=0)return t('resetting');const d=Math.floor(minutes/1440),h=Math.floor(minutes%1440/60),m=minutes%60;return d>0?`${d}d ${h}h`:h>0?`${h}h ${m}m`:`${m}m`;};
+  const list=el('div','native-quota-lines');
+  for(const [label,key] of [['5h','fiveHour'],['7d','weekly']]){
+   const bucket=quota?.[key],line=el('div','native-quota-line');line.append(el('span','native-quota-window',label));
+   if(!usableBucket(bucket))line.append(el('span','native-quota-value is-unknown',t('Unknown')));
+   else{const pct=Math.round(remainingPercent(bucket)),rest=until(bucket.resetsAt);line.append(el('span',`native-quota-value is-${quotaTone(pct,{weekly:key==='weekly',resetsAt:bucket.resetsAt})}`,t('{pct}% left',{pct})));if(rest)line.append(el('span','native-quota-reset',rest));}
+   list.append(line);
   }
   section.append(list);
   if(!worker?.online||runtime?.quotaStale||runtime?.quotaStatus!=='ok')section.append(el('p','native-side-hint',t(!worker?.online?'Device offline; quota is the last recorded value.':'Latest quota is unavailable; showing recorded values when present.')));

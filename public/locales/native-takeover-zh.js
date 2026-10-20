@@ -269,4 +269,6 @@ export default {
  "Interrupting and starting this message": "正在中断并发送这条消息",
  "Cancel queued message": "取消这条排队消息",
  "Full message": "完整消息",
+ "{pct}% left": "剩余 {pct}%",
+ "resetting": "即将重置",
 };

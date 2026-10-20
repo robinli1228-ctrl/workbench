@@ -3113,3 +3113,13 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .nt-avatar .role-icon, .nt-avatar .role-icon svg, .nt-avatar svg, .nt-avatar img { width: 22px; height: 22px; border-radius: 6px; }
 .nt-agent .nt-body, .nt-duration { padding-left: 30px; }
 @media (max-width: 1000px) { .nt-agent .nt-body, .nt-duration { padding-left: 0; } }
+
+/* Quota card: one line per window — window, percent left, time until reset. */
+.native-quota-lines { display: grid; gap: 6px; margin: 4px 0 2px; }
+.native-quota-line { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+.native-quota-window { min-width: 2.2em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.native-quota-value { font-weight: 600; color: var(--ink); }
+.native-quota-value.is-mid { color: var(--warning); }
+.native-quota-value.is-low { color: var(--danger); }
+.native-quota-value.is-unknown { font-weight: 400; color: var(--muted); }
+.native-quota-reset { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
