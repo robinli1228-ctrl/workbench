@@ -3185,3 +3185,5 @@ select:disabled { opacity: .6; }
 .native-compact:disabled { opacity: .4; }
 /* Session filters disappear when the left column is narrowed or collapsed, at any viewport width. */
 .native-session-filters.is-narrow, body[data-project-sidebar="collapsed"] .native-session-filters, body[data-project-sidebar="hidden"] .native-session-filters { display: none; }
+/* The byline time is always visible, quietly, right after the name. */
+.nt-byline time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }

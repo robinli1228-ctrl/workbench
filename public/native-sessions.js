@@ -833,7 +833,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));
     if(live)content.append(workingLine(turn));
     else if(turn.status!=='succeeded')content.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` · ${t(turn.error)}`:''}`));
-    const reply=chatRow('assistant',replyText(turn),current.runtime,live?null:turn.endedAt,null,state,current,{content});reply.dataset.role='assistant';if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
+    const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content});reply.dataset.role='assistant';if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
     if(live)feed.append(...(userRow?[userRow,reply]:[reply]));else place([userRow,reply],turn.createdAt);
    }markLatestDuration();}
   /** Under the newest reply only: how long the model took for that turn. */
@@ -847,7 +847,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const queuePending=new Set();
   function renderQueue(){const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||String(a.createdAt).localeCompare(String(b.createdAt)));queue.hidden=!waiting.length;queueList.replaceChildren();if(!waiting.length)return;
    queueSummary.replaceChildren(el('span','message-queue-title',t('Queue · {v}',{v:waiting.length})));
-   waiting.forEach((turn,i)=>{const row=el('div','message-queue-item'),info=el('div','message-queue-info'),title=el('strong','',`${i+1}. ${turn.prompt}`);title.title=turn.prompt;title.translate=false;info.append(title);row.append(info);
+   waiting.forEach((turn,i)=>{const row=el('div','message-queue-item'),info=el('div','message-queue-info'),title=el('strong','',`${i+1}. ${turn.prompt}`);title.title=turn.prompt;title.translate=false;info.append(title);if(turn.createdAt){const when=el('span','',`${t('Queued')} · ${time(turn.createdAt)}`);when.translate=false;info.append(when);}row.append(info);
     const busy=queuePending.has(turn.id)||turn.steer,steer=el('button',`icon-button message-queue-steer${busy?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(turn.steer?'Interrupting and starting this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
     steer.onclick=async()=>{queuePending.add(turn.id);renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
     const cancel=closeIcon(el('button','icon-button'));cancel.type='button';cancel.title=t('Cancel queued message');cancel.setAttribute('aria-label',cancel.title);cancel.disabled=queuePending.has(turn.id);
