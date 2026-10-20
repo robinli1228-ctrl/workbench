@@ -3225,3 +3225,6 @@ select:disabled { opacity: .6; }
 .setup-guide-body pre { padding: 10px 12px; border-radius: 8px; background: #f6f8f7; overflow: auto; font-size: 12.5px; }
 .setup-guide-body h2 { margin-top: 22px; font-size: 16px; }
 .setup-guide-body h3 { margin-top: 16px; font-size: 14px; }
+/* Platform pause notice in the connection card. */
+.native-paused { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 0; padding: 8px 10px; border: 1px solid #f1d9d9; border-radius: 8px; background: #fdf3f3; color: var(--danger); font-size: 12px; }
+.native-paused .native-card-action { flex: none; }

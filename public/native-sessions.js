@@ -291,7 +291,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(['terminal','prepared','returning','stopping'].includes(prevState)&&state==='idle')takeover.returned(item);
   const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
   const copyCommand=sidePanels.resources.querySelector('.native-command-row button');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
-  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
+  const paused=Boolean(data.settings?.paused);
+  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,paused,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
   sideBadge.hidden=true;
   if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren();
@@ -303,7 +304,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   identity.append(deviceChip,toolChip);panel.append(identity);
   // One row: the two-way switch and, as an icon, the one action the state allows. Moving the switch opens the hand-over dialog.
   const row=el('div','native-connect-row'),seg=el('div','native-mode-switch');seg.setAttribute('role','group');seg.setAttribute('aria-label',t('Where the session runs'));
-  const switchable=online&&canTakeover&&!switchingTo&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
+  const switchable=!paused&&online&&canTakeover&&!switchingTo&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
   const move=value=>{if(value==='terminal'||mode==='terminal')openHandover(item,value,{claim,worker});else void switchMode(item,value);};
   const modeButton=(value,title)=>{const b=el('button',`native-mode${mode===value?' is-on':''}${switchingTo===value?' is-pending':''}`);b.type='button';b.append(el('span','native-mode-title',title));b.disabled=!switchable||mode===value;b.setAttribute('aria-pressed',String(mode===value));b.addEventListener('click',()=>move(value));return b;};
   seg.append(modeButton('page',t('This page')),modeButton('terminal','iTerm'));row.append(seg);
@@ -327,6 +328,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   else if(claim&&['terminal','returning','stopping'].includes(state)){const stop=iconButton('stop','Stop CLI',()=>void perform('stop'),'is-danger');stop.disabled=Boolean(returningClaim)||!online||worker?.capabilities?.terminalControl!==1||claim.processState==='unknown';if(worker?.capabilities?.terminalControl!==1)stop.title=t('Upgrade this Worker to check or stop terminal processes.');row.append(stop);}
   else if(state==='unstarted'){const open=button('Open on this page',()=>openForm(item),'primary native-card-action');open.disabled=!canTakeover;row.append(open);}
   panel.append(row);
+  // The platform-wide pause (top bar / basic settings) blocks every start and send; say so here and offer the resume, instead of a bare error after a failed send.
+  if(paused){const note=el('div','native-paused'),resume=button('Resume remote',async b=>{b.target.disabled=true;try{await api('/api/settings',{method:'POST',json:{paused:false}});await onStateRefresh();}catch(error){controlFeedback={key:key(item),text:error.message};}finally{if(selected)renderSessionControls(selected);}},'secondary native-card-action');
+   note.append(el('span','',t('Remote execution is paused for the whole platform; nothing can start or be sent until it is resumed.')),resume);panel.append(note);}
   const project=state==='busy'?data.projects?.find(p=>p.id===(claim?.projectId||other?.projectId))||((claim||other)&&owners.size===1?data.projects?.find(p=>owners.has(p.id)):null):null;
   if(detail)panel.append(el('p','native-side-hint',project?`${t(detail)} · ${project.name}`:t(detail)));
   if(claim?.processError)panel.append(el('p','native-side-hint',t(claim.processError)));
@@ -895,10 +899,10 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     row.append(steer,cancel);queueList.append(row);});}
   /** Stop only while a reply runs and nothing is typed; with text or files the button sends, and Home queues the message. */
   function syncSendButton(){if(!current)return;const d=draft(),op=operation(),state=sendState(d,op),live=activeTurn(),stopping=live?.status==='stopping',typing=Boolean(input.value.trim())||Boolean(d.attachments?.length)||Boolean(d.pending);
-   const stopMode=Boolean(live)&&!typing;
+   const stopMode=Boolean(live)&&!typing,paused=Boolean(getData().settings?.paused);
    if(stopMode){sendButton.disabled=stopping||op.releasing;setSend('stop',stopping?'Stopping…':'Stop');}
-   else{sendButton.disabled=op.sending||op.releasing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);setSend('send',SEND_LABELS[state]||'Send');}
-   input.placeholder=live?t('Reply in progress; Enter queues your message, Stop interrupts'):t('Message {tool}; replies continue this native session',{tool:names[current.runtime]||current.runtime});}
+   else{sendButton.disabled=paused||op.sending||op.releasing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);setSend('send',paused?'Remote execution is paused':SEND_LABELS[state]||'Send');}
+   input.placeholder=paused?t('Remote execution is paused; resume it in the connection card or the top bar'):live?t('Reply in progress; Enter queues your message, Stop interrupts'):t('Message {tool}; replies continue this native session',{tool:names[current.runtime]||current.runtime});}
   let refocus=false;
   function render(){
    if(!current)return;const value=current,taken=isOn(value);renderFeed();renderSessionControls(value);
