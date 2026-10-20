@@ -111,6 +111,10 @@ export async function runtimeGitEnvironment({directory,key,repositories=[],crede
     const login=credential.provider==='github'?'x-access-token':credential.login;
     if(typeof login!=='string'||/[\r\n]/.test(login))throw new Error(tr('hosting.invalidGitAccount'));
     const header=`Authorization: Basic ${Buffer.from(`${login}:${credential.token}`).toString('base64')}`;
+    // Session repositories may retain SSH or extensionless HTTPS remotes. Rewrite only this explicitly
+    // bound URL inside the private child config; do not change origin or install a host-wide token.
+    const canonical=remote.webUrl+'.git';
+    if(repo.repoUrl!==canonical)content+=`[url ${JSON.stringify(canonical)}]\n\tinsteadOf = ${JSON.stringify(repo.repoUrl)}\n`;
     content+=`[http ${JSON.stringify(remote.webUrl+'.git')}]\n\textraHeader =\n\textraHeader = ${JSON.stringify(header)}\n\tfollowRedirects = false\n`;
   }
   await mkdir(directory,{recursive:true,mode:0o700});

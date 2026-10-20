@@ -1181,7 +1181,7 @@ const server = http.createServer(async (req, res) => {
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/messages$/))) {
         // ?id= is a read-only receipt for one composer send (same route, authentication and project scope as the list).
         if (req.method === 'GET' && url.searchParams.has('id')) return json(res, rooms.messageReceipt(m[1], url.searchParams.get('id'), url.searchParams.get('conversationId') ?? undefined));
-        if (req.method === 'GET') return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(rooms.messages(m[1],url.searchParams.get('before'),url.searchParams.get('conversationId')??undefined))),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
+        if (req.method === 'GET') return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(rooms.messages(m[1],url.searchParams.get('before'),url.searchParams.get('conversationId')??undefined,url.searchParams.get('afterReceipt')))),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
         if (req.method === 'POST') {
           const input = await body(req);
           const r = db.transaction(() => { const message = rooms.post(m[1], input); wechat.webReply(message); return message; });

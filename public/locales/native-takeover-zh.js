@@ -51,6 +51,7 @@ export default {
  "Message is too long for a takeover turn": "消息过长，请改用 iTerm 或缩短内容",
  "Takeover message ID was already used": "接管消息 ID 已被使用",
  "This session is still replying; wait or stop it first": "会话还在回复，请等待或先停止",
+ "Wait for the current reply, send or upload to finish": "请等待当前回复、发送或上传完成",
  "Takeover turn not found": "找不到这条接管消息",
  "Device disconnected; the turn was stopped": "设备已断开，本轮已停止",
  "Home restarted; the turn was stopped": "Home 已重启，本轮已停止",

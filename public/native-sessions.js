@@ -217,13 +217,14 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const prevState=connectionStates.get(key(item));connectionStates.set(key(item),state);
   if(['terminal','prepared','returning','stopping'].includes(prevState)&&state==='idle')takeover.returned(item);
   const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
+  const copyCommand=sidePanels.session.querySelector('.native-command-row button');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
   const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
   sideBadge.hidden=false;sideBadge.className=`native-side-badge is-${state}`;sideBadge.textContent=t(LABEL[state]);
   if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren(el('h3','',t('Connection')));
   // Where the session runs: a two-way switch; moving it performs the whole hand-over (end / prepare / open / return).
   const seg=el('div','native-mode-switch');seg.setAttribute('role','group');seg.setAttribute('aria-label',t('Connection'));
-  const switchable=online&&canTakeover&&!switchingTo&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
+  const switchable=online&&canTakeover&&!switchingTo&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
   const modeButton=(value,title,sub)=>{const b=el('button',`native-mode${mode===value?' is-on':''}${switchingTo===value?' is-pending':''}`);b.type='button';b.append(el('span','native-mode-title',title),el('span','native-mode-sub',t(sub)));b.disabled=!switchable||mode===value;b.setAttribute('aria-pressed',String(mode===value));b.addEventListener('click',()=>void switchMode(item,value));return b;};
   seg.append(modeButton('page',t('This page'),'Chat here'),modeButton('terminal','iTerm','Native terminal'));panel.append(seg);
   const head=el('div','native-connect-head');head.append(el('span',`native-connect-dot is-${state}`),el('strong','',t(switchingTo?'Switching…':LABEL[state])));panel.append(head);
@@ -269,12 +270,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  /** Prepare the one-time terminal link for an existing session (reusing a link that is already prepared). */
  async function prepareTerminal(item){
   const existing=nativeClaimOf(item);if(existing?.status==='prepared'&&existing.command)return existing;
-  return api(`/api/native-sessions/${encodeURIComponent(item.nodeId)}/terminal`,{method:'POST',json:{runtime:item.runtime,sessionId:nativeId(item),...(item.entryId?{entryId:item.entryId}:{}),workspace:item.workspace||'',allowAll:true,useLocalSshKey:true,operationId:crypto.randomUUID()}});
+  return api(`/api/native-sessions/${encodeURIComponent(item.nodeId)}/terminal`,{method:'POST',json:{runtime:item.runtime,sessionId:nativeId(item),...(item.entryId?{entryId:item.entryId}:{}),workspace:item.workspace||'',allowAll:false,useLocalSshKey:true,operationId:crypto.randomUUID()}});
  }
  /** Open iTerm at once; the link stays on the claim for "Open iTerm" / "Copy" if iTerm did not come up. */
  async function openInTerminal(item){const result=await prepareTerminal(item);if(result?.url)window.location.assign(result.url);return result;}
  /** Copy the ready-to-run command (ssh + launcher for a remote device). A page takeover must end first, since the link claims the session. */
  async function copyTerminalCommand(item){
+  if(takeover.releaseDisabled(item))throw Error('Wait for the current reply, send or upload to finish');
   if(takeover.isOn(item)||takeover.canChat(item)){if(!confirm(t('End the page takeover and prepare a terminal link for this session?')))throw Error(t('Cancelled'));await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
   const result=await prepareTerminal(item);if(!result?.command)throw Error('No terminal command was prepared');
   await navigator.clipboard.writeText(result.command);await onStateRefresh();void load({quiet:true});return result.command;
@@ -285,6 +287,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(item.canReopen){openForm(item);return;}
   switching.set(id,target);controlFeedback=null;renderSessionControls(item);
   try{
+   if(takeover.releaseDisabled(item))throw Error('Wait for the current reply, send or upload to finish');
    if(target==='terminal'){
     if(takeover.isOn(item)||takeover.canChat(item)){await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
     await openInTerminal(item);
@@ -472,7 +475,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   add('Working folder',value.workspace);add('Git root',git?.root);add('Branch',git?.branch||(git?.detached?t('Detached HEAD'):null));add('Remote',git?.remoteUrl);
   repo.append(rows);if(!git)repo.append(el('p','native-side-hint',t('Reading Git status…')));else if(!git.git)repo.append(el('p','native-side-hint',t('The working folder is not inside a Git repository.')));
   const acct=el('section','native-settings-section');acct.append(el('h3','',t('Git account for pushes')));
-  const provider=git?.remoteUrl?(/github\.com/i.test(git.remoteUrl)?'github':/gitee\.com/i.test(git.remoteUrl)?'gitee':null):null;
+  // Match the host of supported HTTPS/SCP remotes, never a hostname suffix or a repository path.
+  const remote=String(git?.remoteUrl||'').trim().match(/^(?:https:\/\/([^/]+)\/|git@([^:]+):)/i),host=(remote?.[1]||remote?.[2]||'').toLowerCase();
+  const provider=host==='github.com'?'github':host==='gitee.com'?'gitee':null;
   const accounts=(getData().hostingAccounts||[]).filter(a=>!provider||a.provider===provider),settings=takeover.settings();
   const sel=el('select'),none=el('option','',t('Use the device’s own Git credentials'));none.value='';sel.append(none);
   for(const a of accounts){const o=el('option','',`${a.provider==='github'?'GitHub':'Gitee'} · ${a.login}${a.label?` · ${a.label}`:''}`);o.value=a.id;sel.append(o);}
@@ -484,6 +489,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   acct.append(sel,acctNote,manage);
   body.append(nameCard,repo,acct);dialog.append(body);dialog.showModal();
  }
+ /** Label/value rows with optional copy buttons, shared by the session, repository and runtime cards. */
+ function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}
  function metaCard(target,heading,rows){const section=el('section','native-side-card');section.append(el('h3','',t(heading)),metaList(rows));target.append(section);return section;}
  function renderSide(value,id,readable){
   side.dataset.sessionKey=key(value);
@@ -495,7 +502,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   session.append(controls,settingsCard);
   const identity=metaCard(session,'Native session',[['Session ID',id||t('Not available yet'),id||null],['Working folder',value.workspace||t('Choose a folder when opening'),value.workspace||null]]);
   // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
-  if(id&&value.workspace){const row=el('div','native-command-row');const copy=button('Copy iTerm command',async e=>{const b=e.target;b.disabled=true;try{await copyTerminalCommand(value);b.textContent=t('Copied');setTimeout(()=>{b.textContent=t('Copy iTerm command');b.disabled=false;},1800);}catch(error){b.disabled=false;controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'secondary native-card-action');
+  if(id&&value.workspace){const row=el('div','native-command-row');const copy=button('Copy iTerm command',async e=>{const b=e.target;b.disabled=true;b.dataset.pending='true';try{await copyTerminalCommand(value);b.textContent=t('Copied');setTimeout(()=>{b.textContent=t('Copy iTerm command');delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}catch(error){delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'secondary native-card-action');
+   copy.disabled=takeover.releaseDisabled(value);
    row.append(copy,el('span','native-side-hint',t('Prepares a one-time link for this session; paste the command into any terminal. Cancel it from the Connection card if unused.')));identity.append(row);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
   const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';session.append(repository);
@@ -556,8 +564,8 @@ const norm=text=>stripAnsi(String(text||'')).replace(/\s+/g,' ').trim();
 const allRows=turn=>liveSceneRows(turn.events||[],{status:turn.status}).rows.filter(r=>!(r.kind==='log'&&cliNoise(r.text)));
 /** The reply bubble shows the final message; the process keeps intermediate messages once each (streamed text that equals a message is dropped). */
 const finalReply=turn=>{const rows=allRows(turn),last=[...rows].reverse().find(r=>r.kind==='message'||r.kind==='text');return last||null;};
-const processRows=turn=>{const rows=allRows(turn),messages=new Set(rows.filter(r=>r.kind==='message').map(r=>norm(r.text))),final=finalReply(turn),seen=new Set();
- return rows.filter(r=>{if(r===final)return false;if(r.kind!=='message'&&r.kind!=='text')return true;const n=norm(r.text);if(!n||(r.kind==='text'&&messages.has(n))||seen.has(n)||(final&&n===norm(final.text)))return false;seen.add(n);return true;});};
+const processRows=(turn,{includeFinal=false}={})=>{const rows=allRows(turn),messages=new Set(rows.filter(r=>r.kind==='message').map(r=>norm(r.text))),final=finalReply(turn),seen=new Set();
+ return rows.filter(r=>{if(r.kind!=='message'&&r.kind!=='text')return true;const n=norm(r.text);if(!n||(r.kind==='text'&&messages.has(n))||seen.has(n)||(!includeFinal&&final&&n===norm(final.text)))return false;seen.add(n);return true;});};
 const replyText=turn=>{const f=finalReply(turn);return f?f.text:turn.text||'';};
 const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind==='tool'||r.kind==='log'||r.kind==='error')||rows.some(r=>r.kind==='message'||r.kind==='text');};
  /** The group-chat live-scene projection orders text, messages, logs and merged tool states for one turn. */
@@ -568,9 +576,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const {steps,notes}=stepsOf(turn);
   return activityBlock({steps,notes,t,live,open,onPreview:(step,path)=>preview.open(step,path),onToggle:isOpen=>{if(!live)isOpen?openProcesses.add(turn.id):openProcesses.delete(turn.id);}});
  }
- /** A page turn in the order it happened: prose, one activity line per run of tool calls, prose again; the final reply is the last prose. */
+ /** Keep prose and tools at their recorded positions, including the latest commentary while a tool is still running. */
  function turnContent(turn,session,{live=false,open=false}={}){
-  const frag=document.createDocumentFragment(),rows=processRows(turn),final=finalReply(turn),all=final?[...rows,final]:rows;
+  const frag=document.createDocumentFragment(),all=processRows(turn,{includeFinal:true});
   let group=[];
   const flush=()=>{if(!group.length)return;const steps=group.filter(r=>r.kind==='tool').map(r=>classifyStep(r.item,turn.status)),notes=group.filter(r=>r.kind==='log'||r.kind==='error');
    if(steps.length||notes.length)frag.append(activityBlock({steps,notes,t,live,open,onPreview:(step,path)=>preview.open(step,path),onToggle:isOpen=>{if(!live)isOpen?openProcesses.add(turn.id):openProcesses.delete(turn.id);}}));group=[];};

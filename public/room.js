@@ -1173,12 +1173,13 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (pendingReads.has(key)) return;
     pendingReads.add(key);
     try {
-      const result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}`);
+      const receiptQuery=Number.isSafeInteger(previous?.receiptCursor)?`&afterReceipt=${previous.receiptCursor}`:'';
+      const result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}${receiptQuery}`);
       const current = histories.get(id);
       if ((current?.revision ?? -1) > revision) return;
       const recentIds = new Set(result.messages.map(m => m.id));
       histories.set(id, { ...result, messages: [...(current?.messages || []).filter(m => !recentIds.has(m.id)), ...result.messages],
-        hasMore: current ? current.hasMore : result.hasMore, nextBefore: current?.nextBefore || result.nextBefore, revision });
+        hasMore: current ? current.hasMore : result.hasMore, nextBefore: current?.nextBefore || result.nextBefore, revision:result.hasMoreUpdates?null:revision });
       if (id === scopeId) renderMessages();
     } catch (e) { if (id === scopeId) setError(t('Failed to load chat: {message}', { message: e.message })); }
     finally { pendingReads.delete(key); }

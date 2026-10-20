@@ -316,7 +316,7 @@ export class Rooms {
     return record.requestId?null:get('roomMessages',record.sourceMessageId);
   }
 
-  messages(projectId, before, conversationId) {
+  messages(projectId, before, conversationId, afterReceipt) {
     conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound3'));
     // Chat order is trigger time: a run's reply sits where the run was triggered (its live card's place); everything else at its own creation.
@@ -327,7 +327,17 @@ export class Rooms {
       .sort((a,b)=>String(a.orderAt).localeCompare(String(b.orderAt))||a.orderSeq-b.orderSeq);
     const end = before ? all.findIndex(m => m.id === before) : all.length;
     if (end < 0) throw new Error(tr('rooms.historyCursorNotFound'));
-    const start = Math.max(0, end - 60), messages = all.slice(start, end).map(message => {
+    // Display order can place a newly received result before the latest page. Catch up by receipt separately,
+    // in bounded batches, so a long-running turn never disappears when it finishes behind newer messages.
+    const catchingUp=!before&&afterReceipt!==undefined&&afterReceipt!==null;
+    const cursor=catchingUp?Number(afterReceipt):0;
+    if(catchingUp&&(!Number.isSafeInteger(cursor)||cursor<0))throw Error('Invalid message receipt cursor');
+    const updates=catchingUp?all.filter(m=>m.orderSeq>cursor).sort((a,b)=>a.orderSeq-b.orderSeq):[];
+    const hasMoreUpdates=updates.length>60,updatePage=updates.slice(0,60);
+    const receiptCursor=hasMoreUpdates?updatePage.at(-1).orderSeq:Math.max(cursor,0,...all.map(m=>m.orderSeq));
+    const start = Math.max(0, end - 60), selected=new Map(all.slice(start,end).map(m=>[m.id,m]));
+    for(const message of updatePage)selected.set(message.id,message);
+    const messages = [...selected.values()].sort((a,b)=>String(a.orderAt).localeCompare(String(b.orderAt))||a.orderSeq-b.orderSeq).map(message => {
       const dialogue = this.messageDialogue(message);
       const run=message.sender==='agent'&&message.runId?this.db.get('runs',message.runId):null;
       // Correct legacy ancestral quotes in the read view only; explicit message replies and stored history remain intact.
@@ -347,7 +357,7 @@ export class Rooms {
         liveReplySources[task.id]=source?this.quoteSummary(source):null;
       }
     }
-    return { messages, liveReplySources, hasMore: start > 0, nextBefore: messages[0]?.id || null };
+    return { messages, liveReplySources, hasMore: start > 0, nextBefore: all[start]?.id || null,receiptCursor,hasMoreUpdates };
   }
 
   /** Quote metadata carries no private prompt or file contents; the original stays behind the history endpoint. */
