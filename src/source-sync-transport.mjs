@@ -296,12 +296,7 @@ export class SourceSyncClient {
       if(!['completed','partial_conflict','cancelled'].includes(result.status))this.send({type:'source_sync_receipt',commandId:command.id,result});
     }catch(error){
       const transport=this.db.get('sourceSyncTransport',message.commandId),attempts=(transport?.recoveryAttempts||0)+1;
-      if(transport&&error.limit&&!transportFailure(error)){
-        // Capture success is evidence, not successful transfer. Retain it and acknowledge the terminal quota result separately.
-        const result={status:'blocked',reason:error.code,limit:error.limit};
-        this.db.transaction(()=>{this.db.put('sourceSyncTransport',{...transport,ready:true,terminalResult:result,nextReceiptAt:0});this.db.put('sourceSyncReceipts',{...this.db.get('sourceSyncReceipts',message.commandId),id:message.commandId,projectId:transport.projectId,result,createdAt:new Date().toISOString()});});
-        this.send({type:'source_sync_receipt',commandId:message.commandId,result,receiptHash:contentHash(JSON.stringify(result))});return;
-      }
+      if(this.retainQuotaResult(transport,message.commandId,error))return;
       if(transport)this.db.put('sourceSyncTransport',{...transport,recoveryAttempts:attempts,nextRecoveryAt:Date.now()+retryDelay(attempts),recoveryError:transportFailure(error)?'transfer_failed':error.code});
       this.send({type:'source_sync_receipt',commandId:message.commandId,result:{status:transportFailure(error)?'reconciling':'blocked',reason:transportFailure(error)?'transfer_failed':error.code,...(error.limit?{limit:error.limit}:{})}});
     }finally{this.inFlight.delete(message.commandId);}
@@ -323,7 +318,27 @@ export class SourceSyncClient {
       if(transport?.message){void this.execute(transport.message);return;}
       this.send({type:'source_sync_receipt',commandId:id,result:{status:'reconciling',reason:'recovery_required'}});return;
     }
+    // Home may never have stored this capture's manifest; offer the saved one again before the receipt, never a recapture.
+    if(record?.result?.base&&!transport?.terminalResult&&transport?.message){void this.replayCapture(id,record.result,transport.message);return;}
     this.send(receiptEnvelope(id,transport?.terminalResult||record?.result||{status:'cancelled',files:[]}));
+  }
+  async replayCapture(id,result,message){
+    if(this.inFlight.has(id))return;
+    this.inFlight.add(id);
+    try{
+      await this.request(message,'capture','PUT',{base:result.base,manifest:result.manifest});
+      this.send(receiptEnvelope(id,result));
+    }catch(error){
+      // Only a quota rejection becomes terminal; anything else keeps the saved capture receipt for the next reminder.
+      this.retainQuotaResult(this.db.get('sourceSyncTransport',id),id,error);
+    }finally{this.inFlight.delete(id);}
+  }
+  /** Capture success is evidence, not successful transfer. Retain it and acknowledge the terminal quota result separately. */
+  retainQuotaResult(transport,commandId,error){
+    if(!transport||!error.limit||transportFailure(error))return false;
+    const result={status:'blocked',reason:error.code,limit:error.limit};
+    this.db.transaction(()=>{this.db.put('sourceSyncTransport',{...transport,ready:true,terminalResult:result,nextReceiptAt:0});this.db.put('sourceSyncReceipts',{...this.db.get('sourceSyncReceipts',commandId),id:commandId,projectId:transport.projectId,result,createdAt:new Date().toISOString()});});
+    this.send({type:'source_sync_receipt',commandId,result,receiptHash:contentHash(JSON.stringify(result))});return true;
   }
   flush(){
     const at=Date.now(),exclude=[...this.inFlight];
