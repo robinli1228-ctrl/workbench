@@ -3323,3 +3323,21 @@ button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 1
 .native-history-separator::before, .native-history-separator::after { background: var(--line); }
 /* The sessions composer text starts at the same distance from the attach icon as in the group chat. */
 .native-takeover-form textarea { padding-left: 8px; }
+/* ---- Forms and control rows: one control height per context ---- */
+/* New-session dialog: inputs, selects and the folder button share 38px; labels one weight. */
+.native-session-form input:not([type="checkbox"]), .native-session-form select, .native-workspace-row button { height: 38px; min-height: 38px; }
+.native-workspace-row button svg { width: 18px; height: 18px; }
+.native-session-form .native-field { gap: 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.native-session-form .native-permissions { margin: 0; }
+/* Connection row: the switch (3px frame + 30px segments) and the action icon are both 36px tall. */
+.native-connect-row .native-mode-switch { padding: 3px; border-radius: 11px; }
+.native-connect-row .native-mode { min-height: 30px; border-radius: 8px; }
+.native-connect-row .native-connect-action, .native-connect-row a.native-card-action { width: 36px; height: 36px; min-height: 36px; border-radius: 10px; }
+.native-connect-row a.native-card-action { width: auto; padding: 0 12px; }
+/* Meta lists: no extra gap under the card heading. */
+.native-session-meta dt:first-of-type { margin-top: 2px; }
+/* Hand-over dialog: the Open iTerm link looks like the buttons beside it. */
+.native-handover-after a.secondary { display: inline-flex; align-items: center; min-height: 34px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; text-decoration: none; }
+/* Card heads: heading and action on one baseline, same gap below as a plain heading. */
+.native-card-head { min-height: 26px; margin: 0 0 6px; }
+.native-card-head h3 { margin: 0; }
