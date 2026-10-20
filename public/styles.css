@@ -3207,7 +3207,7 @@ select:disabled { opacity: .6; }
 .nt-agent .nt-body > .nt-extra + .markdown-body { margin-top: 14px; }
 .nt-activity { border-color: #e4e9e6; background: #fbfcfb; color: #6b7280; font-size: 12px; }
 .nt-activity-summary { gap: 6px; padding: 6px 10px; color: #7b8590; font-size: 12px; }
-.nt-steps { padding: 2px 4px 4px; border-top-color: #e9ede b; border-top-color: #e9edeb; }
+.nt-steps { padding: 2px 4px 4px; border-top-color: #e9edeb; }
 .nt-step-head { min-height: 24px; padding: 2px 6px; gap: 7px; color: #4b5563; font-size: 12px; line-height: 1.45; }
 .nt-step-verb { color: #8a939d; }
 .nt-step.is-note .nt-step-target, .nt-step.is-note .nt-step-verb { color: #9aa3ad; font-size: 11.5px; }
