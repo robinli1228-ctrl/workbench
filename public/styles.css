@@ -3061,7 +3061,7 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-takeover-form .chat-input-bar, .native-takeover-form .chat-input-field { align-items: center; }
 .native-takeover-form textarea { min-height: 36px; height: 36px; padding-block: 8px; line-height: 20px; }
 .native-takeover-form .native-attach { width: 34px; height: 36px; min-height: 36px; margin: 0 0 0 1px; }
-.native-takeover-form .chat-input-bar > button.primary { min-height: var(--nt-h); height: var(--nt-h); padding: 0 16px; }
+.native-takeover-form .chat-input-bar > button { min-height: var(--nt-h); height: var(--nt-h); padding: 0 16px; }
 /* Session side panel: compact controls, little prose, long values on one line with the full text on hover. */
 .native-session-meta dd .native-meta-value { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .native-connect-row { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; }
