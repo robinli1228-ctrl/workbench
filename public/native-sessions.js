@@ -28,7 +28,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  document.querySelector('#project-list').after(list);document.querySelector('main.workspace').append(content);document.querySelector('#node-sidebar').append(side);
  /** The right side mirrors the group-chat inspector: one header, three panels and the same bottom tab bar and classes. */
  const SIDE_TABS=['overview','outputs','resources'],SIDE_TITLES={overview:'Overview',outputs:'Files',resources:'Resources'};
- const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,resources:UI_ICON.project};
+ const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,resources:UI_ICON.desktop};
  let sideTab='overview';
  const sideHeader=el('header','inspector-header native-side-header'),sideTitle=el('h2',''),sideBadge=el('span','native-side-badge');sideBadge.hidden=true;sideHeader.append(sideTitle,sideBadge);
  const sidePanels=Object.fromEntries(SIDE_TABS.map(name=>{const panel=el('section','inspector-panel native-side-panel');panel.id=`native-side-${name}`;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',`native-side-tab-${name}`);return [name,panel];}));
@@ -159,24 +159,24 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   return row;
  }
  async function loadFolder(session,path,offset=0){
-  const id=key(session),st=folderState.get(id);if(!st||st.path!==path)return;st.loading=true;st.error=null;if(sideTab==='outputs')renderOutputs();
+  const id=key(session),st=folderState.get(id);if(!st||st.path!==path)return;st.loading=true;st.error=null;renderFolder();
   try{const result=await api(`${endpoint(session.nodeId)}/folders?${new URLSearchParams({path,offset:String(offset)})}`);if(folderState.get(id)!==st||st.path!==path)return;
    const entries=(result.entries||[]).filter(e=>e.type==='folder'||e.type==='file');st.entries=offset?[...(st.entries||[]),...entries]:entries;st.hasMore=Boolean(result.hasMore);st.nextOffset=result.nextOffset||0;st.parent=result.parent||null;}
   catch(error){st.error=error.message;}
-  finally{st.loading=false;if(sideTab==='outputs'&&selected&&key(selected)===id)renderOutputs();}
+  finally{st.loading=false;if(selected&&key(selected)===id)renderFolder();}
  }
  function folderCard(session){
   const card=el('section','native-side-card native-folder-card'),root=session.workspace;card.append(el('h3','',t('Working folder')));
   if(!root){card.append(el('p','native-side-hint',t('Choose a folder when opening')));return card;}
   const id=key(session);let st=folderState.get(id);if(!st||st.root!==root){st={root,path:root,entries:null,loading:false,error:null,hasMore:false,nextOffset:0};folderState.set(id,st);}
   const crumbs=el('div','native-folder-crumbs'),rel=st.path.startsWith(root)?st.path.slice(root.length).split('/').filter(Boolean):[];
-  const crumb=(label,path,last)=>{const b=el('button',`native-folder-crumb${last?' is-current':''}`,label);b.type='button';b.title=path;b.translate=false;b.disabled=last;b.addEventListener('click',()=>{st.path=path;st.entries=null;renderOutputs();});return b;};
+  const crumb=(label,path,last)=>{const b=el('button',`native-folder-crumb${last?' is-current':''}`,label);b.type='button';b.title=path;b.translate=false;b.disabled=last;b.addEventListener('click',()=>{st.path=path;st.entries=null;renderFolder();});return b;};
   crumbs.append(crumb(fileName(root)||root,root,!rel.length));let acc=root;rel.forEach((part,i)=>{acc=`${acc}/${part}`;crumbs.append(el('span','native-folder-sep','/'),crumb(part,acc,i===rel.length-1));});card.append(crumbs);
   if(!st.entries&&!st.loading&&!st.error)void loadFolder(session,st.path);
   if(st.error)card.append(el('p','native-side-hint',t(st.error)));
   const list=el('div','native-file-list');
   for(const entry of st.entries||[]){
-   if(entry.type==='folder'){const row=el('button','native-file-row is-folder');row.type='button';row.title=entry.path;row.translate=false;row.append(stepIcon('other'));const text=el('span','native-file-text');text.append(el('span','native-file-name',`${entry.name}/`));row.append(text);row.addEventListener('click',()=>{st.path=entry.path;st.entries=null;renderOutputs();});list.append(row);}
+   if(entry.type==='folder'){const row=el('button','native-file-row is-folder');row.type='button';row.title=entry.path;row.translate=false;row.append(stepIcon('other'));const text=el('span','native-file-text');text.append(el('span','native-file-name',`${entry.name}/`));row.append(text);row.addEventListener('click',()=>{st.path=entry.path;st.entries=null;renderFolder();});list.append(row);}
    else list.append(fileRow(session,entry.path,null));
   }
   if(st.entries&&!st.entries.length)list.append(el('p','native-side-hint',t('Empty folder')));
@@ -185,6 +185,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   else if(st.hasMore)card.append(button('Load more',()=>void loadFolder(session,st.path,st.nextOffset),'secondary native-card-action'));
   return card;
  }
+ /** The working folder browser sits on the Resources tab; navigating it redraws only that card. */
+ function renderFolder(){const prior=sidePanels.resources.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
  function renderOutputs(){
   const panel=sidePanels.outputs;panel.replaceChildren();
   if(!selected){panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
@@ -199,7 +201,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(!items.length)mentioned.append(el('p','native-side-hint',t('Nothing yet')));
   else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));mentioned.append(list);}
   // Files named in replies first, then what this session touched, then the folder's outputs, project outputs and the folder itself.
-  panel.append(...[mentioned,changed,producedCard(selected),projectOutputsCard(),folderCard(selected)].filter(Boolean));
+  panel.append(...[mentioned,changed,producedCard(selected),projectOutputsCard()].filter(Boolean));
  }
  resetSide();
  // Session settings live behind a gear at the right end of the top bar, where the connection note sits in other modes.
@@ -618,13 +620,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const controls=el('section','native-side-card native-connect');controls.dataset.nativeControls='';
   const settingsCard=el('section','native-side-card native-settings-card');settingsCard.dataset.nativeSettings='';
   overview.append(controls,settingsCard);
-  const identity=metaCard(resources,'Native session',[['Session ID',id||t('Not available yet'),id||null],['Working folder',value.workspace||t('Choose a folder when opening'),value.workspace||null]]);
+  const identity=metaCard(resources,'Native session',[['Session ID',id||t('Not available yet'),id||null]]);
   // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
   if(id&&value.workspace){const row=el('div','native-command-row');const copy=button('Copy iTerm command',async e=>{const b=e.target;b.disabled=true;b.dataset.pending='true';try{await copyTerminalCommand(value);b.textContent=t('Copied');setTimeout(()=>{b.textContent=t('Copy iTerm command');delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}catch(error){delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'secondary native-card-action');
    copy.disabled=takeover.releaseDisabled(value);
    row.append(copy);identity.append(row);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
-  const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';resources.append(repository);
+  const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';resources.append(repository,folderCard(value),identity);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
   // Resources: the device and CLI account this session runs on.
   renderAgentDetails(value);
