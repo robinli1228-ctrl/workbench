@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { giteeRepository } from './repository.mjs';
 import { tr } from './i18n.mjs';
 
@@ -97,6 +97,9 @@ export function gitCredentialEnv(url, credential) {
   return { ...env, GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: `http.${remote.webUrl}.git.extraHeader`, GIT_CONFIG_VALUE_0: `Authorization: Basic ${auth}`,
     GIT_CONFIG_KEY_1: 'credential.helper', GIT_CONFIG_VALUE_1: '' };
 }
+
+/** Page and terminal share one bounded key per runtime/session, never another CLI's coincident session ID. */
+export function nativeGitConfigKey(runtime,sessionId){return 'native-'+createHash('sha256').update(JSON.stringify([runtime,sessionId])).digest('hex');}
 
 /** The CLI inherits only the private config file path; credentials never enter launch arguments, run logs, or native session configuration. */
 export async function runtimeGitEnvironment({directory,key,repositories=[],credentials={},env=process.env}) {

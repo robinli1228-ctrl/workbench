@@ -54,7 +54,7 @@ import { createRunInput, instructionDelivery,executionInstructionComponents,exec
 import { inspectGitRepositoryVersion } from './git-version.mjs';
 import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseline.mjs';
 import { runOrganizer } from './conversation-organizer.mjs';
-import { runtimeGitEnvironment } from './hosting.mjs';
+import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
 import { executionText, traditionalInput } from './input-language.mjs';
 import {SourceSyncClient} from './source-sync-transport.mjs';
@@ -821,7 +821,7 @@ async function query(m) {
       const nativeSession={...await nativeEnvironment(runtime),id:input.sessionId||null};
       // The terminal inherits the session's private gitconfig (a bound hosting account, or just the user's own includes).
       const credential=input.gitCredential?.token?input.gitCredential:null;
-      const terminalEnv=await runtimeGitEnvironment({directory:join(data,'git-auth'),key:`native-${input.sessionId||freshId||input.entryId||input.id}`,repositories:credential?[{id:'session',repoUrl:credential.repoUrl}]:[],credentials:credential?{session:credential}:{}});
+      const terminalEnv=await runtimeGitEnvironment({directory:join(data,'git-auth'),key:nativeGitConfigKey(runtime,input.sessionId||freshId||input.entryId||input.id),repositories:credential?[{id:'session',repoUrl:credential.repoUrl}]:[],credentials:credential?{session:credential}:{}});
       assertIdle();
       if(db.get('terminalSessions',input.id)||projectTerminalLock(db,projectId,identity.nodeId)||db.get('sourceSyncReservations',projectId))throw Error('Session is occupied; no second CLI was started');
       if(occupiedSlots()>=capacity)throw Error('Device CLI capacity is full');
