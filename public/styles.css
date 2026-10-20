@@ -3094,3 +3094,8 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 /* The textarea is a square box inside a rounded field; clip at the field so its right end follows the pill. */
 .native-takeover-form .chat-input-field { overflow: hidden; }
 .native-takeover-form textarea { background: transparent; padding-right: 14px; }
+/* Two voices: replies keep to the left with room on the right, prompts keep to the right with room on the left. */
+.nt-agent .nt-body, .nt-agent .nt-byline { max-width: 86%; }
+.nt-agent .nt-duration { max-width: 86%; }
+.nt-user .nt-body { max-width: min(640px, 78%); }
+@media (max-width: 1000px) { .nt-agent .nt-body, .nt-agent .nt-byline, .nt-agent .nt-duration { max-width: 94%; } .nt-user .nt-body { max-width: 90%; } }
