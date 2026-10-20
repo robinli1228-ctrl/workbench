@@ -3195,3 +3195,45 @@ select:disabled { opacity: .6; }
 .nt-reply-foot .nt-copy svg { width: 14px; height: 14px; }
 .nt-reply-foot .nt-duration { padding-left: 0; margin-top: 0; }
 @media (max-width: 1000px) { .nt-reply-foot { padding-left: 0; } }
+
+/* AGENTS.md card and editor. */
+.native-agents-path { margin: 0 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.native-agents-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fafbfa; color: var(--ink); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
+.native-agents-preview:hover { border-color: #b9c7bf; }
+.native-agents-dialog { width: min(900px, 96vw); }
+.native-agents-editor { width: 100%; min-height: 50vh; padding: 10px 12px; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; tab-size: 2; }
+/* Transcript density: a little more air between prose and a box; inside a box, smaller type, tighter rows, lighter ink. */
+.nt-turn > .markdown-body + .nt-activity, .nt-turn > .nt-activity + .markdown-body, .nt-turn > .nt-activity + .nt-activity { margin-top: 14px; }
+.nt-agent .nt-body > .nt-extra + .markdown-body { margin-top: 14px; }
+.nt-activity { border-color: #e4e9e6; background: #fbfcfb; color: #6b7280; font-size: 12px; }
+.nt-activity-summary { gap: 6px; padding: 6px 10px; color: #7b8590; font-size: 12px; }
+.nt-steps { padding: 2px 4px 4px; border-top-color: #e9edeb; }
+.nt-step-head { min-height: 24px; padding: 2px 6px; gap: 7px; color: #4b5563; font-size: 12px; line-height: 1.45; }
+.nt-step-verb { color: #8a939d; }
+.nt-step.is-note .nt-step-target, .nt-step.is-note .nt-step-verb { color: #9aa3ad; font-size: 11.5px; }
+.nt-step .nt-icon { width: 13px; height: 13px; color: #9aa3ad; }
+.nt-step .nt-detail { margin: 2px 6px 6px 26px; }
+.nt-working { font-size: 12px; color: #6b7280; }
+
+/* Setup guide block on the Configuration Information page. */
+.setup-guide-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.setup-guide-head h4 { margin: 0; }
+.setup-guide-actions { display: flex; gap: 8px; }
+.setup-guide-body { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); max-height: 70vh; overflow: auto; font-size: 14px; line-height: 1.65; }
+.setup-guide-body table { border-collapse: collapse; margin: 8px 0 14px; font-size: 13px; }
+.setup-guide-body th, .setup-guide-body td { padding: 5px 10px; border: 1px solid var(--line); vertical-align: top; }
+.setup-guide-body pre { padding: 10px 12px; border-radius: 8px; background: #f6f8f7; overflow: auto; font-size: 12.5px; }
+.setup-guide-body h2 { margin-top: 22px; font-size: 16px; }
+.setup-guide-body h3 { margin-top: 16px; font-size: 14px; }
+/* Platform pause notice in the connection card. */
+.native-paused { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 0; padding: 8px 10px; border: 1px solid #f1d9d9; border-radius: 8px; background: #fdf3f3; color: var(--danger); font-size: 12px; }
+.native-paused .native-card-action { flex: none; }
+
+/* Prompt row: bubble (files above text) with the tool line right under it, outside the bubble. */
+.nt-user { flex-direction: column; align-items: flex-end; }
+.nt-prompt-files { display: block; }
+.nt-prompt-files:empty { display: none; }
+.nt-prompt-files .chat-attachments, .nt-prompt-files .native-turn-files { margin: 0 0 8px; justify-content: flex-start; }
+.nt-user .nt-prompt-tools { width: auto; max-width: min(640px, 78%); margin-top: 3px; padding-right: 2px; }
+.native-turn-files .attachment-open { display: block; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.native-turn-files .attachment-file-card .attachment-open { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px; text-align: left; cursor: pointer; }

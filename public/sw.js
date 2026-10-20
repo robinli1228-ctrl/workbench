@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v165-session-polish-folders-20261020';
+const CACHE = 'agent-workbench-static-v166-session-resources-desktop-20261020';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

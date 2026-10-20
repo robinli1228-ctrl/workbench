@@ -185,6 +185,38 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   else if(st.hasMore)card.append(button('Load more',()=>void loadFolder(session,st.path,st.nextOffset),'secondary native-card-action'));
   return card;
  }
+ /** AGENTS.md: the project memory every CLI loads from this folder (nearest one upwards). Shown on Resources, edited in a dialog. */
+ const agentsCache=new Map();
+ const agentsQuery=value=>{const id=nativeId(value);return new URLSearchParams({runtime:value.runtime,...(id?{sessionId:id}:{}),...(value.entryId?{entryId:value.entryId}:{})});};
+ async function loadAgents(value,force=false){const k=key(value),cached=agentsCache.get(k);if(!value.workspace||cached?.loading||!force&&cached)return;agentsCache.set(k,{loading:true});renderAgents(value);
+  let state;try{state=await api(`${endpoint(value.nodeId)}/agents-md?${agentsQuery(value)}`);}catch(error){state={error:error.message};}
+  agentsCache.set(k,{state,at:Date.now()});if(selected&&key(selected)===k)renderAgents(selected);}
+ function agentsCard(value){
+  const card=el('section','native-side-card native-agents-card');card.dataset.nativeAgents='';const head=el('div','native-card-head');head.append(el('h3','','AGENTS.md'));card.append(head);
+  const cached=agentsCache.get(key(value));
+  if(!value.workspace){card.append(el('p','native-side-hint',t('Choose a folder when opening')));return card;}
+  if(!cached||cached.loading){card.append(el('p','native-side-hint',t('Loading…')));return card;}
+  const st=cached.state;if(st.error){card.append(el('p','native-side-hint',t(st.error)));return card;}
+  if(!st.found){card.append(el('p','native-side-hint',t('No AGENTS.md above this folder yet.')));head.append(button('Create',()=>openAgentsEditor(value,st),'secondary native-card-action'));return card;}
+  const where=el('div','native-agents-path',st.path);where.title=st.path;where.translate=false;card.append(where);
+  const preview=el('pre','native-agents-preview',st.tooLarge?t('File is larger than 600 KB; open it on the device.'):(st.content||'').trim()||t('(empty)'));preview.translate=false;preview.title=t('Edit');card.append(preview);
+  const edit=button('Edit',()=>openAgentsEditor(value,st),'secondary native-card-action');edit.disabled=Boolean(st.tooLarge);head.append(edit);
+  if(!st.tooLarge)preview.addEventListener('click',()=>openAgentsEditor(value,st));
+  return card;
+ }
+ function renderAgents(value){const prior=sidePanels.resources.querySelector('[data-native-agents]');if(prior&&side.dataset.sessionKey===key(value))prior.replaceWith(agentsCard(value));}
+ let agentsDialog=null;
+ function openAgentsEditor(value,st){
+  if(!agentsDialog){agentsDialog=el('dialog','settings-edit-dialog native-session-dialog native-agents-dialog');document.body.append(agentsDialog);}
+  const heading=el('div','dialog-heading');heading.append(el('h2','',t(st.found?'Edit AGENTS.md':'Create AGENTS.md')),closeButton(()=>agentsDialog.close()));
+  const where=el('p','native-side-hint native-agents-path',st.found?st.path:t('A new AGENTS.md goes to the project folder on this device, or to the working folder.'));where.translate=!st.found;
+  const area=el('textarea','native-agents-editor');area.value=st.found?(st.content||''):'';area.rows=22;area.spellcheck=false;area.setAttribute('aria-label','AGENTS.md');
+  const feedback=el('p','native-form-feedback'),actions=el('div','native-session-actions'),cancel=button('Cancel',()=>agentsDialog.close(),'secondary');
+  const save=button('Save',async()=>{save.disabled=cancel.disabled=true;feedback.textContent=t('Saving…');
+   try{await api(`${endpoint(value.nodeId)}/agents-md?${agentsQuery(value)}`,{method:'PUT',json:{path:st.found?st.path:null,content:area.value,expectedModifiedAt:st.found?st.modifiedAt:null,create:!st.found}});agentsDialog.close();await loadAgents(value,true);}
+   catch(error){feedback.textContent=t(error.message);save.disabled=cancel.disabled=false;}},'primary');
+  actions.append(cancel,save);agentsDialog.replaceChildren(heading,where,area,feedback,actions);agentsDialog.showModal();area.focus();
+ }
  /** The working folder browser sits on the Resources tab; navigating it redraws only that card. */
  function renderFolder(){const prior=sidePanels.resources.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
  function renderOutputs(){
@@ -211,11 +243,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const note=el('p','workspace-note');list.before(note);note.classList.add('native-session-note');
  // A narrowed left column (dragged below ~230px, or collapsed) drops the device/tool filters; the list keeps the width.
  const sidebar=document.querySelector('#project-sidebar');if(sidebar&&'ResizeObserver' in window)new ResizeObserver(entries=>{const width=entries[0]?.contentRect?.width||sidebar.clientWidth;filters.classList.toggle('is-narrow',width<230);}).observe(sidebar);
- let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue='groups',lastRefresh=0,listSignature='',detailSignature='';
+ let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue=(()=>{try{const saved=sessionStorage.getItem('agent-workbench.navigation-mode');return saved==='groups'||saved==='sessions'?saved:'sessions';}catch{return 'sessions';}})(),lastRefresh=0,listSignature='',detailSignature='';
  const active=()=>modeValue==='sessions';
  const endpoint=nodeId=>`/api/native-sessions/${encodeURIComponent(nodeId)}`;
  const key=item=>item?`${item.nodeId}/${item.runtime}/${item.entryId||item.id}`:'';
  const SELECTION_KEY='agent-workbench.native-session'; // per tab, like agent-workbench.project for the group chat
+ // Which side the left column shows; a reload keeps it (per tab), a new tab starts on Sessions.
+ const MODE_KEY='agent-workbench.navigation-mode';
  const listOrder=createListOrder({container:list,scope:'native-sessions',onEnd:()=>{listSignature='';renderList();},onError:message=>{note.textContent=message;}});
  const nativeId=item=>item.entryId?item.sessionId:item.sessionId||item.id;
  const workerName=id=>getData().workers?.find(w=>w.id===id)?.name||id;
@@ -260,7 +294,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(['terminal','prepared','returning','stopping'].includes(prevState)&&state==='idle')takeover.returned(item);
   const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
   const copyCommand=sidePanels.resources.querySelector('.native-command-row button');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
-  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
+  const paused=Boolean(data.settings?.paused);
+  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,paused,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
   sideBadge.hidden=true;
   if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren();
@@ -272,7 +307,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   identity.append(deviceChip,toolChip);panel.append(identity);
   // One row: the two-way switch and, as an icon, the one action the state allows. Moving the switch opens the hand-over dialog.
   const row=el('div','native-connect-row'),seg=el('div','native-mode-switch');seg.setAttribute('role','group');seg.setAttribute('aria-label',t('Where the session runs'));
-  const switchable=online&&canTakeover&&!switchingTo&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
+  const switchable=!paused&&online&&canTakeover&&!switchingTo&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
   const move=value=>{if(value==='terminal'||mode==='terminal')openHandover(item,value,{claim,worker});else void switchMode(item,value);};
   const modeButton=(value,title)=>{const b=el('button',`native-mode${mode===value?' is-on':''}${switchingTo===value?' is-pending':''}`);b.type='button';b.append(el('span','native-mode-title',title));b.disabled=!switchable||mode===value;b.setAttribute('aria-pressed',String(mode===value));b.addEventListener('click',()=>move(value));return b;};
   seg.append(modeButton('page',t('This page')),modeButton('terminal','iTerm'));row.append(seg);
@@ -295,6 +330,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   else if(claim&&['terminal','returning','stopping'].includes(state)){const stop=iconButton('stop','Stop CLI',()=>void perform('stop'),'is-danger');stop.disabled=Boolean(returningClaim)||!online||worker?.capabilities?.terminalControl!==1||claim.processState==='unknown';if(worker?.capabilities?.terminalControl!==1)stop.title=t('Upgrade this Worker to check or stop terminal processes.');row.append(stop);}
   else if(state==='unstarted'){const open=button('Open on this page',()=>openForm(item),'primary native-card-action');open.disabled=!canTakeover;row.append(open);}
   panel.append(row);
+  // The platform-wide pause (top bar / basic settings) blocks every start and send; say so here and offer the resume, instead of a bare error after a failed send.
+  if(paused){const note=el('div','native-paused'),resume=button('Resume remote',async b=>{b.target.disabled=true;try{await api('/api/settings',{method:'POST',json:{paused:false}});await onStateRefresh();}catch(error){controlFeedback={key:key(item),text:error.message};}finally{if(selected)renderSessionControls(selected);}},'secondary native-card-action');
+   note.append(el('span','',t('Remote execution is paused for the whole platform; nothing can start or be sent until it is resumed.')),resume);panel.append(note);}
   const project=state==='busy'?data.projects?.find(p=>p.id===(claim?.projectId||other?.projectId))||((claim||other)&&owners.size===1?data.projects?.find(p=>owners.has(p.id)):null):null;
   if(detail)panel.append(el('p','native-side-hint',project?`${t(detail)} · ${project.name}`:t(detail)));
   if(claim?.processError)panel.append(el('p','native-side-hint',t(claim.processError)));
@@ -513,15 +551,16 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));main.append(md);}
    if(body&&session)noteOutputs(session,body,at);}
   else{
-   // The prompt shows three lines; the hover row carries the time, Copy, and Full screen when more is hidden.
-   const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(textEl);
+   // Attachments sit on top of the bubble, the text below; time, Copy and Full screen (when text is hidden) sit under the bubble, outside it.
+   const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(el('div','nt-prompt-files'),textEl);
    if(at){const stamp=el('time','nt-prompt-time',time(at));stamp.dateTime=at;tools.append(stamp);}
    const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
    const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
-   tools.append(expand,copy);main.append(tools);
+   tools.append(expand,copy);row.dataset.tools='1';row._tools=tools;
    requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
   }
-  if(extra)main.append(extra);row.append(main);
+  if(extra){if(agent)main.append(extra);else main.querySelector('.nt-prompt-files').append(extra);}
+  row.append(main);if(row._tools){row.append(row._tools);delete row._tools;}
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
   if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);row.append(foot);}
   return row;}
@@ -643,7 +682,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    copy.disabled=takeover.releaseDisabled(value);
    row.append(copy);identity.append(row);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
-  const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';resources.append(repository,folderCard(value),identity);
+  const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';const agentsPlaceholder=el('section','native-side-card');agentsPlaceholder.dataset.nativeAgents='';resources.append(repository,agentsPlaceholder,folderCard(value),identity);renderAgents(value);void loadAgents(value);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
   // Resources: the device and CLI account this session runs on.
   renderAgentDetails(value);
@@ -696,7 +735,7 @@ const cliNoise=text=>/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/
 const INJECTED=/<(system-reminder|user_info|environment_context|local-command-stdout|local-command-caveat|command-message|command-args|skill_metadata|available_skills)\b[^>]*>[\s\S]*?(<\/\1>|$)/gi;
 const cleanUserText=text=>String(text||'').replace(/<image\b[^>]*>[\s\S]*?<\/image>/gi,'').replace(/\[Image: source:[^\]]*\]/g,'').replace(INJECTED,'').replace(/<command-name>[\s\S]*?<\/command-name>/gi,'').replace(/^\s*<user_query>\s*([\s\S]*?)\s*<\/user_query>\s*$/i,'$1').replace(/\n*Attached files for this message \(local paths\):[\s\S]*$/,'').trim();
 /** Prompt identity for anchoring page turns onto history rows; whitespace differences never make a second bubble. */
-const promptKey=text=>String(text||'').replace(/\s+/g,' ').trim();
+const promptKey=text=>simplifiedCliOutput(String(text||'')).replace(/\s+/g,' ').trim();
 const commandOf=text=>String(text||'').match(/<command-name>\s*([^<]+?)\s*<\/command-name>/i)?.[1]||'';
 /** A turn shows its process only when it holds more than the final reply: tools, runtime notes or intermediate messages. */
 const norm=text=>stripAnsi(String(text||'')).replace(/\s+/g,' ').trim();
@@ -796,8 +835,10 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     open.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));
     card.append(open,closeIcon(button('',remove,'attachment-remove'),t('Remove attachment')));return card;
    }
-   if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});card.append(img);}else card.append(el('span','native-file-icon','\u{1F4C4}'));
-   if(remove||!item.mime?.startsWith('image/')){const info=el('span','native-file-info');info.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));card.append(info);}
+   // A sent attachment opens in the preview on click (image full size, file details).
+   const open=el('button','attachment-open');open.type='button';open.title=item.name;open.addEventListener('click',()=>previewAttachment(item));card.append(open);
+   if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);}else open.append(el('span','native-file-icon','\u{1F4C4}'));
+   if(remove||!item.mime?.startsWith('image/')){const info=el('span','native-file-info');info.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));open.append(info);}
    if(remove){const x=closeIcon(button('',remove,'attachment-remove'),t('Remove attachment'));card.append(x);}return card;}
   function detach(){current=null;turns=[];historyEl=null;historyAnchors.clear();feed.replaceChildren();shell.remove();clearInterval(poll);poll=null;revokeUrls();}
   function attach(value,{readable,historyAt:at,history}){const same=current&&k()===`${value.nodeId}/${value.runtime}/${value.sessionId}`;current=value;historyAt=at;historyEl=history;if(!same){turns=[];historyAnchors.clear();feed.replaceChildren();}
@@ -812,6 +853,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const rows=[...(historyEl?.querySelectorAll('.native-chat-row')||[])],used=new Set();
    // A finished page turn that no history row matched (older page, or the CLI never recorded it) is placed by time among the loaded rows,
    // never under the newest history. One that belongs to a history page not loaded yet is left to that page.
+   const attachFiles=(row,files)=>(row.querySelector('.nt-prompt-files')||row.querySelector('.nt-body'))?.append(files);
    const rowAt=row=>Date.parse(row.dataset.at||''),dated=rows.filter(row=>Number.isFinite(rowAt(row)));
    // Text alone cannot identify repeated prompts. Bind one timestamp-compatible history ID and reuse it only in this session.
    const promptIndex=(turn,role,text)=>{
@@ -842,17 +884,22 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(!live&&turn.endedAt&&turn.prompt.trim()){
      const index=promptIndex(turn,'user',promptKey(turn.prompt));
      if(index>=0){used.add(index);let anchor=rows[index];for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++)anchor=rows[i];
-      if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));rows[index].querySelector('.nt-body')?.append(files);}
+      if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));attachFiles(rows[index],files);}
+      // No reply row follows the prompt in the loaded history (not written yet, or the next row is another prompt): the turn's own
+      // reply row goes right after the prompt. The prompt bubble never hosts a reply's activity.
+      if(anchor.dataset.role==='user'){const content=el('div','nt-turn');content.append(turnContent(turn,current,{open:openProcesses.has(turn.id)}));
+       if(turn.status!=='succeeded')content.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` \u00b7 ${t(turn.error)}`:''}`));
+       const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content});reply.dataset.role='assistant';reply.classList.add('native-turn-anchored');if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());anchor.after(reply);continue;}
       const extra=el('div','native-turn-anchored nt-extra');
       if(hasProcess(turn)&&anchor.dataset.process!=='1')extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
       if(turn.status!=='succeeded')extra.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` \u00b7 ${t(turn.error)}`:''}`));
-      if(extra.childElementCount){if(anchor.dataset.role==='user'&&state==='error'){const errorRow=chatRow('assistant','',current.runtime,turn.endedAt,extra,state);errorRow.classList.add('native-turn-anchored');anchor.after(errorRow);}else{const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}}if(anchor.dataset.role!=='user'&&turn.endedAt)anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());continue;}
+      if(extra.childElementCount){const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}if(turn.endedAt)anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());continue;}
     }
     const makeFiles=()=>{if(!turn.attachments?.length)return null;const files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));return files;};
     // A running turn whose prompt already reached the history anchors on that row: the history row stays, the feed adds only the live reply,
     // and the history's partial reply rows for this turn are hidden while the live one shows.
     const liveIndex=live?promptIndex(turn,'user',promptKey(turn.prompt)):-1;
-    if(liveIndex>=0){used.add(liveIndex);const files=makeFiles();if(files){files.classList.add('native-turn-anchored');rows[liveIndex].querySelector('.nt-body')?.append(files);}
+    if(liveIndex>=0){used.add(liveIndex);const files=makeFiles();if(files){files.classList.add('native-turn-anchored');attachFiles(rows[liveIndex],files);}
      for(let i=liveIndex+1;i<rows.length&&rows[i].dataset.role!=='user';i++){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}}
     const userRow=liveIndex>=0?null:chatRow('user',turn.prompt,current.runtime,turn.createdAt,makeFiles());if(userRow){userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);}
     const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));
@@ -862,7 +909,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(live)feed.append(...(userRow?[userRow,reply]:[reply]));else place([userRow,reply],turn.createdAt);
    }markLatestDuration();}
   /** Under the newest reply only: how long the model took for that turn. */
-  function groupRows(){let prev=null;for(const node of scroll.querySelectorAll('.native-chat-row, .native-history-separator, .native-history-loader')){const role=node.classList.contains('nt-agent')?'agent':node.classList.contains('nt-user')?'user':null;node.classList.toggle('is-continued',Boolean(role)&&prev===role);prev=role;}}
+  function groupRows(){let prev=null;for(const node of scroll.querySelectorAll('.native-chat-row, .native-history-separator, .native-history-loader')){if(node.hidden){node.classList.remove('is-continued');continue;}const role=node.classList.contains('nt-agent')?'agent':node.classList.contains('nt-user')?'user':null;node.classList.toggle('is-continued',Boolean(role)&&prev===role);prev=role;}}
   function markLatestDuration(){groupRows();for(const old of scroll.querySelectorAll('.nt-duration'))old.remove();const agents=[...scroll.querySelectorAll('.nt-agent')],last=agents.at(-1);if(!last||!last.dataset.duration||last.querySelector('.nt-working'))return;const foot=last.querySelector('.nt-reply-foot');if(foot)foot.append(el('span','nt-duration',t('Took {duration}',{duration:last.dataset.duration})));}
   /** The composer is built once and kept in place: a refresh that re-created it would move the focused textarea and drop the caret (and any IME composition). */
   const form=el('form','chat-composer native-takeover-form'),barRow=el('div','chat-input-bar'),field=el('div','chat-input-field'),note=el('p','workspace-note native-takeover-note'),tray=el('div','chat-attachments native-takeover-tray');
@@ -879,10 +926,10 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     row.append(steer,cancel);queueList.append(row);});}
   /** Stop only while a reply runs and nothing is typed; with text or files the button sends, and Home queues the message. */
   function syncSendButton(){if(!current)return;const d=draft(),op=operation(),state=sendState(d,op),live=activeTurn(),stopping=live?.status==='stopping',typing=Boolean(input.value.trim())||Boolean(d.attachments?.length)||Boolean(d.pending);
-   const stopMode=Boolean(live)&&!typing;
+   const stopMode=Boolean(live)&&!typing,paused=Boolean(getData().settings?.paused);
    if(stopMode){sendButton.disabled=stopping||op.releasing;setSend('stop',stopping?'Stopping…':'Stop');}
-   else{sendButton.disabled=op.sending||op.releasing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);setSend('send',SEND_LABELS[state]||'Send');}
-   input.placeholder=live?t('Reply in progress; Enter queues your message, Stop interrupts'):t('Message {tool}; replies continue this native session',{tool:names[current.runtime]||current.runtime});}
+   else{sendButton.disabled=paused||op.sending||op.releasing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);setSend('send',paused?'Remote execution is paused':SEND_LABELS[state]||'Send');}
+   input.placeholder=paused?t('Remote execution is paused; resume it in the connection card or the top bar'):live?t('Reply in progress; Enter queues your message, Stop interrupts'):t('Message {tool}; replies continue this native session',{tool:names[current.runtime]||current.runtime});}
   let refocus=false;
   function render(){
    if(!current)return;const value=current,taken=isOn(value);renderFeed();renderSessionControls(value);
@@ -1025,7 +1072,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  }
  /** Segmented buttons share one mode transition; selecting the active side does not reload history. */
  const switches=[...mode.querySelectorAll('button[data-mode]')];
- function selectMode(value){if(!['groups','sessions'].includes(value)||value===modeValue)return;modeValue=value;for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===value));document.body.dataset.navigationMode=value;if(active())populate();else{version++;detailVersion++;loading=pendingRefresh=false;takeover.detach();dialog.close();}onModeChange();if(active())void load();}
+ function selectMode(value){if(!['groups','sessions'].includes(value)||value===modeValue)return;modeValue=value;try{sessionStorage.setItem(MODE_KEY,value);}catch{}for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===value));document.body.dataset.navigationMode=value;if(active())populate();else{version++;detailVersion++;loading=pendingRefresh=false;takeover.detach();dialog.close();}onModeChange();if(active())void load();}
+ for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===modeValue));document.body.dataset.navigationMode=modeValue;
  for(const control of switches)control.addEventListener('click',()=>selectMode(control.dataset.mode));
  mode.addEventListener('keydown',event=>{const index=event.key==='ArrowLeft'||event.key==='Home'?0:event.key==='ArrowRight'||event.key==='End'?1:null;if(index===null)return;event.preventDefault();switches[index].focus();selectMode(switches[index].dataset.mode);});
  device.addEventListener('change',()=>load());tool.addEventListener('change',()=>load());
