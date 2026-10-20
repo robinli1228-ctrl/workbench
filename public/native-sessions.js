@@ -576,7 +576,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
   // Resources: the device and CLI account this session runs on.
   const agentLine=el('span','native-agent-line');agentLine.append(agentIconEl(value.runtime),el('span','',names[value.runtime]||value.runtime));
-  metaCard(resources,'Runtime',[['Device',workerName(value.nodeId)],['Agent tool',names[value.runtime]]]).querySelector('dd:nth-of-type(2) .native-meta-value')?.replaceChildren(agentLine);
+  // Device and tool belong to the first screen, right under the connection switch.
+  const runtimeCard=metaCard(overview,'Runtime',[['Device',workerName(value.nodeId)],['Agent tool',names[value.runtime]]]);runtimeCard.querySelector('dd:nth-of-type(2) .native-meta-value')?.replaceChildren(agentLine);settingsCard.before(runtimeCard);
   renderAgentDetails(value);
   renderSessionControls(value);
   renderSessionSettings(value);
