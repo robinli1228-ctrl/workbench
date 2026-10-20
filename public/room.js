@@ -289,7 +289,9 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   const scroller = document.querySelector('#chat-scroll');
   const form = document.querySelector('#chat-form');
   const input = form.elements.text;
-  const send = form.querySelector('[type="submit"]');
+  const send = form.querySelector('[type="submit"]');send.innerHTML=UI_ICON.send;
+  // Send is an icon inside the field; its state reads through the tooltip and accessible name.
+  const sendLabel=label=>{send.title=t(label);send.setAttribute('aria-label',t(label));};
   const quoteBar = document.querySelector('#chat-quote');
   const roleDialog = document.querySelector('#role-dialog');
   const roleForm = document.querySelector('#role-form');
@@ -613,8 +615,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     input.disabled = busy || !!d.pending || !!d.queueEdit;
     send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length) || sendLocked(state) || verifying.has(scopeId);
     attachButton.disabled = busy || !!d.pending || !!d.queueEdit;
-    send.textContent = SEND_LABELS[state] || 'Send';
-    if(d.queueEdit){send.textContent=queueEditing.has(scopeId)?'Retrieving queued message…':'Retry editing queued message';send.disabled=queueEditing.has(scopeId)||!!sendingProject;}
+    sendLabel(SEND_LABELS[state] || 'Send');
+    if(d.queueEdit){sendLabel(queueEditing.has(scopeId)?'Retrieving queued message…':'Retry editing queued message');send.disabled=queueEditing.has(scopeId)||!!sendingProject;}
     attachTray.replaceChildren();
     for (const item of d.attachments || []) attachTray.append(attachmentCard(item,true));
     for (const entry of d.textFiles || []) attachTray.append(textDraftCard(entry, scopeId));

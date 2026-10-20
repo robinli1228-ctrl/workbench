@@ -3133,3 +3133,14 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-file-row { max-width: 100%; overflow: hidden; }
 .native-file-dir { direction: ltr; }
 .native-output-list, .native-project-output-list, .native-file-list { min-width: 0; max-width: 100%; }
+
+/* Send (and Stop on the sessions page) is an icon button inside the input field, bottom-aligned beside the text. */
+.chat-input-field { grid-template-columns: 36px minmax(0, 1fr) 40px; }
+.chat-input-field .chat-send { grid-column: 3; align-self: end; display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; margin: 4px 4px 4px 0; padding: 0; border: 0; border-radius: 9px; box-shadow: none; }
+.chat-input-field .chat-send svg { width: 18px; height: 18px; }
+.chat-input-field .chat-send:disabled { opacity: .45; }
+.chat-input-field .chat-send.danger { background: var(--danger); color: #fff; }
+.chat-input-field #chat-attach, .native-takeover-form .native-attach { align-self: end; }
+.native-takeover-form .chat-input-field { grid-template-columns: 36px minmax(0, 1fr) 40px; align-items: end; }
+.native-takeover-form .native-attach { margin: 2px 0 2px 2px; height: 32px; min-height: 32px; width: 32px; }
+.native-takeover-form textarea { padding-right: 8px; }

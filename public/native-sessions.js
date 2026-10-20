@@ -782,7 +782,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   function markLatestDuration(){groupRows();for(const old of scroll.querySelectorAll('.nt-duration'))old.remove();const agents=[...scroll.querySelectorAll('.nt-agent')],last=agents.at(-1);if(!last||!last.dataset.duration||last.querySelector('.nt-working'))return;last.append(el('div','nt-duration',t('Took {duration}',{duration:last.dataset.duration})));}
   /** The composer is built once and kept in place: a refresh that re-created it would move the focused textarea and drop the caret (and any IME composition). */
   const form=el('form','chat-composer native-takeover-form'),barRow=el('div','chat-input-bar'),field=el('div','chat-input-field'),note=el('p','workspace-note native-takeover-note'),tray=el('div','chat-attachments native-takeover-tray');
-  field.append(tray,attachButton,input);barRow.append(field,sendButton);form.append(note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});
+  field.append(tray,attachButton,input,sendButton);barRow.append(field);form.append(note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});
   // Queued messages sit above the composer like the group-chat queue: steer interrupts the reply and sends that one now, × withdraws it.
   const queue=el('details','message-queue native-queue'),queueSummary=el('summary',''),queueList=el('div','message-queue-list');queue.open=true;queue.append(queueSummary,queueList);queue.hidden=true;
   const queuePending=new Set();
@@ -796,9 +796,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     row.append(steer,cancel);queueList.append(row);});}
   /** Stop only while a reply runs and nothing is typed; with text or files the button sends, and Home queues the message. */
   function syncSendButton(){if(!current)return;const d=draft(),op=operation(),state=sendState(d,op),live=activeTurn(),stopping=live?.status==='stopping',typing=Boolean(input.value.trim())||Boolean(d.attachments?.length)||Boolean(d.pending);
-   const stopMode=Boolean(live)&&!typing;sendButton.className=stopMode?'danger':'primary';
-   if(stopMode){sendButton.disabled=stopping||op.releasing;sendButton.textContent=t(stopping?'Stopping…':'Stop');}
-   else{sendButton.disabled=op.sending||op.releasing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);sendButton.textContent=t(SEND_LABELS[state]||'Send');}
+   const stopMode=Boolean(live)&&!typing;
+   if(stopMode){sendButton.disabled=stopping||op.releasing;setSend('stop',stopping?'Stopping…':'Stop');}
+   else{sendButton.disabled=op.sending||op.releasing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);setSend('send',SEND_LABELS[state]||'Send');}
    input.placeholder=live?t('Reply in progress; Enter queues your message, Stop interrupts'):t('Message {tool}; replies continue this native session',{tool:names[current.runtime]||current.runtime});}
   let refocus=false;
   function render(){
@@ -819,7 +819,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   async function endTakeover(value){const id=sessionKey(value),op=operation(id);if(op.releasing)return;op.releasing=true;op.message='';if(k()===id){render();renderSide(value,value.sessionId,true);}try{await api(`${endpoint(value.nodeId)}/takeover/release`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId}});if(k()===id)await refresh();else await onStateRefresh();}catch(error){op.releasing=false;op.message=t(error.message);if(k()===id){render();renderSide(value,value.sessionId,true);}}}
   async function removeAttachment(id,nodeId,item){const op=operation(id);op.message='';if(k()===id)render();try{await api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(item.id)}`,{method:'DELETE'});const d=draft(id);d.attachments=(d.attachments||[]).filter(a=>a.id!==item.id);revokeAttachment(nodeId,item.id);save();}catch(error){op.message=t(error.message);}finally{if(k()===id)render();}}
   const input=el('textarea');input.rows=1;input.setAttribute('aria-label',t('Chat message'));
-  const sendButton=el('button','primary',t('Send'));sendButton.type='submit';
+  const sendButton=el('button','primary chat-send');sendButton.type='submit';
+  /** Send and Stop are one icon button inside the field; the label lives in the tooltip and accessible name. */
+  const setSend=(kind,label)=>{sendButton.className=`${kind==='stop'?'danger':'primary'} chat-send`;sendButton.innerHTML=UI_ICON[kind];sendButton.title=t(label);sendButton.setAttribute('aria-label',t(label));};setSend('send','Send');
   sendButton.addEventListener('click',e=>{const live=activeTurn(),d=draft();if(!live||input.value.trim()||d.attachments?.length||d.pending)return;e.preventDefault();if(live.status!=='stopping')void stop(live);});
   const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
   const attachButton=el('button','native-attach');attachButton.type='button';attachButton.title=t('Upload an image or file');attachButton.setAttribute('aria-label',t('Upload file'));attachButton.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
