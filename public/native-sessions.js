@@ -2,7 +2,7 @@ import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON,quotaForRole,roleNameQuota} from './role-icons.js';
-import {usableBucket,remainingPercent,parseQuotaResetDate,quotaTone} from './quota-state.js';
+import {usableBucket,parseQuotaResetDate} from './quota-state.js';
 import {createListOrder} from './list-order.js';
 import {groupNativeSessions,readNativeSessionPages} from './native-session-groups.js';
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
@@ -470,7 +470,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    const bucket=quota?.[key],line=el('div','native-quota-line');
    // The usual quota mark stays (same icon as the role cards); the line adds the window, the percent and the time until reset.
    if(!usableBucket(bucket)){line.append(el('span','native-quota-window',label),el('span','native-quota-value is-unknown',t('Unknown')));}
-   else{const pct=Math.round(remainingPercent(bucket)),rest=until(bucket.resetsAt);line.append(roleNameQuota({[key]:bucket}),el('span','native-quota-window',label),el('span',`native-quota-value is-${quotaTone(pct,{weekly:key==='weekly',resetsAt:bucket.resetsAt})}`,t('{pct}% left',{pct})));if(rest)line.append(el('span','native-quota-reset',rest));}
+   else{const rest=until(bucket.resetsAt);line.append(roleNameQuota({[key]:bucket}),el('span','native-quota-window',label));if(rest)line.append(el('span','native-quota-reset',rest));}
    list.append(line);
   }
   section.append(list);
