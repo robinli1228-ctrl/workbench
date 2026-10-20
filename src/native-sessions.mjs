@@ -50,7 +50,8 @@ const result=(callId,output,failed,at)=>({role:'tool_result',callId:String(callI
 function messagesFrom(rows,runtime){return rows.flatMap(row=>{
  const at=row.timestamp||null,out=[],say=(role,content)=>{const text=bodyText(content);if(text)out.push({role,text:text.slice(0,12000),timestamp:at});};
  if(runtime==='claude'){
-  const m=row.isSidechain===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
+  // Meta user rows are context Claude Code injects (image descriptions, command caveats), never something the user typed.
+  const m=row.isSidechain===true||row.isMeta===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
   say(m.role,m.content);
   for(const b of Array.isArray(m.content)?m.content:[]){if(b?.type==='tool_use')out.push(call(b.id,b.name,b.input,at));else if(b?.type==='tool_result')out.push(result(b.tool_use_id,b.content,b.is_error,at));}
  }else if(runtime==='codex'){
