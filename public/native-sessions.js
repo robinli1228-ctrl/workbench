@@ -421,6 +421,17 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(quiet&&!atBottom)scroll.scrollTop=top;else scroll.scrollTop=scroll.scrollHeight;
   }catch(e){if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
  }
+ /** Full text of one prompt in the group chat's reading layer; nothing stays on the page when it is closed. */
+ let promptDialog=null;
+ function openPromptFullscreen(text,at){
+  if(!promptDialog){promptDialog=el('dialog','message-fullscreen');promptDialog.setAttribute('aria-label',t('Full message'));document.body.append(promptDialog);}
+  const header=el('div','message-fullscreen-heading'),heading=el('strong','',at?`${t('Full message')} · ${time(at)}`:t('Full message'));
+  const copy=el('button','icon-button');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(text).catch(()=>{}));
+  const close=el('button','icon-button');close.type='button';setActionIcon(close,'close',t('Close'));close.autofocus=true;close.addEventListener('click',()=>promptDialog.close());
+  header.append(heading,copy,close);
+  const bodyEl=el('div','message-fullscreen-body'),content=el('div','message-fullscreen-content');content.append(el('div','chat-message-text',text));bodyEl.append(content);
+  promptDialog.replaceChildren(header,bodyEl);promptDialog.showModal();
+ }
  /** Same row/bubble structure as the group chat, so both views share one visual language. */
  /** Paths in native replies resolve only inside that registered session's working directory, on its own device. */
  const mediaContext=session=>{const sessionId=session&&(nativeId(session)||session.sessionId);if(!session?.nodeId||!sessionId)return null;
@@ -432,7 +443,15 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    const copy=el('button','nt-copy');copy.type='button';copy.setAttribute('aria-label',t('Copy'));setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));by.append(copy);row.append(by);
    if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));main.append(md);}
    if(body&&session)noteOutputs(session,body,at);}
-  else{main.append(el('div','nt-prompt-text',body));if(at){const stamp=el('time','nt-prompt-time',time(at));stamp.dateTime=at;main.append(stamp);}}
+  else{
+   // The prompt shows three lines; the hover row carries the time, Copy, and Full screen when more is hidden.
+   const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(textEl);
+   if(at){const stamp=el('time','nt-prompt-time',time(at));stamp.dateTime=at;tools.append(stamp);}
+   const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
+   const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
+   tools.append(expand,copy);main.append(tools);
+   requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
+  }
   if(extra)main.append(extra);row.append(main);return row;}
  let agentDetailsSignature='';
  /** Reuse reported CLI quota and this session's recorded settings; refreshing the card never probes a model. */

@@ -3099,3 +3099,12 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .nt-agent .nt-duration { max-width: 86%; }
 .nt-user .nt-body { max-width: min(640px, 78%); }
 @media (max-width: 1000px) { .nt-agent .nt-body, .nt-agent .nt-byline, .nt-agent .nt-duration { max-width: 94%; } .nt-user .nt-body { max-width: 90%; } }
+
+/* Prompt bubbles: three lines of text; time, Copy and Full screen appear on hover. Attachments are not clamped. */
+.nt-prompt-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+.nt-prompt-tools { display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-height: 22px; margin-top: 2px; opacity: 0; transition: opacity .15s; }
+.nt-user:hover .nt-prompt-tools, .nt-user:focus-within .nt-prompt-tools { opacity: 1; }
+.nt-prompt-tools .nt-prompt-time { position: static; margin-right: 4px; opacity: 1; }
+.nt-prompt-tools .icon-button { width: 24px; height: 24px; min-height: 24px; padding: 3px; border: 0; background: transparent; color: var(--muted); }
+.nt-prompt-tools .icon-button:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.nt-prompt-tools .icon-button svg { width: 15px; height: 15px; }

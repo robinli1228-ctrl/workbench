@@ -268,4 +268,5 @@ export default {
  "Interrupt the current reply and send this message now": "中断当前回复，立即发送这条消息",
  "Interrupting and starting this message": "正在中断并发送这条消息",
  "Cancel queued message": "取消这条排队消息",
+ "Full message": "完整消息",
 };
