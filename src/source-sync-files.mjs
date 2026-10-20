@@ -42,8 +42,24 @@ export async function sourceFilePath(root,path,{createParents=false,policy={}}={
 
 /** Capture stable bytes from a no-follow descriptor; never infer stability from mtime alone. */
 export async function readSourceFile(root,path,policy={},observation=null) {
+  // A background observation whose directory walk just listed this path (no symlinks, no nested repositories on the
+  // way) needs one no-follow lstat to see that nothing changed; the per-component walk is repeated only for files
+  // that did change and for every byte read. Transfers never take this path.
+  if(observation?.walked&&observation.cached){
+    validateSourcePath(path,policy);
+    const named=await pathStat(join(root,path),{bigint:true}).catch(e=>{if(['ENOENT','ENOTDIR'].includes(e.code))return null;throw e;});
+    if(!named)return {entry:null,bytes:null};
+    const metadata=fileMetadata(named);
+    if(named.isFile()&&named.nlink===1n&&metadata===observation.cached.metadata){
+      if(observation.metrics){const m=observation.metrics;m.reused=(m.reused||0)+1;m.bytesRead=m.bytesRead||0;}
+      return {entry:{...observation.cached.entry},bytes:null,metadata,modifiedAt:named.mtime.toISOString()};
+    }
+  }
   for(let attempt=0;attempt<2;attempt++){
-    const checked=await sourceFilePath(root,path,{policy});if(checked.missing)return {entry:null,bytes:null};
+    // A walked observation already rejected links and nested repositories on the way down; the component walk after
+    // the read still has to agree with the bytes, so only the walk before the read is saved.
+    const checked=observation?.walked&&!observation.cached?{path:join(root,validateSourcePath(path,policy)),missing:false}:await sourceFilePath(root,path,{policy});
+    if(checked.missing)return {entry:null,bytes:null};
     let file;
     try {
       // Observation does not read content or authorize a transfer. A fresh safe component walk plus
@@ -193,7 +209,7 @@ export async function captureDirectorySnapshot(options) {
   else await walk(root);
   const captured=await captureSourceEntries(paths,async path=>{
     let value;
-    try{value=await readSourceFile(root,path,policy,observation?{cached:observation.fullHash||partial?null:cached.get(path),metrics:observation.metrics}:null);}
+    try{value=await readSourceFile(root,path,policy,observation?{cached:observation.fullHash||partial?null:cached.get(path),metrics:observation.metrics,walked:!partial}:null);}
     catch(e){
       // A file this device never synchronized and that exceeds the per-file limit is recorded as oversize, not a batch
       // failure; it stays viewable through on-demand media reads. A previously synchronized file still blocks (Home fences it).
