@@ -244,14 +244,15 @@ async function dispatch(nodeId) {
   if(!online(nodeId)||!sockets.get(nodeId).workerReady||dispatching.has(nodeId))return;
   dispatching.add(nodeId);
   try {
-  for (const c of db.list('commands').filter(c => c.nodeId === nodeId && !c.acked)) {
+  for (const c of db.pendingCommands().filter(c => c.nodeId === nodeId)) {
     if(c.lastSentAt&&Date.now()-Date.parse(c.lastSentAt)<5000)continue;
     let run = db.get('runs', c.runId);
     if (!run) continue;
+    // Historical launch receipts cannot execute again; reject them before native ownership reads or other admission work.
+    if (c.type === 'launch' && (terminal.has(run.status) || run.status === 'stopping')) continue;
     if(c.type==='launch'&&db.get('settings','main')?.paused)continue;
     if(['launch','delivery_publish'].includes(c.type)&&sourceSync.busy(run.projectId,nodeId))continue;
     if (['launch','delivery_publish'].includes(c.type) && projectTerminalLock(db,run.projectId,nodeId)) continue;
-    if (c.type === 'launch' && (terminal.has(run.status) || run.status === 'stopping')) continue;
     if(c.type==='launch') {
       const issue=instructionProtocolIssue(run,db.get('workers',nodeId));
       if(issue||run.instructionProtocolIssue) {
