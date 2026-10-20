@@ -991,7 +991,7 @@ async function query(m) {
       send({ type: 'reply', id: m.id, result: await createFolder(folderAccess.browseRoots(), m.path?.path, m.path?.name) }); return;
     }
     if (m.action === 'native_default_folder') {
-      send({type:'reply',id:m.id,result:await prepareNativeSessionFolder(roots,defaultRoot,m.path?.bindings)});return;
+      send({type:'reply',id:m.id,result:await prepareNativeSessionFolder(roots,defaultRoot,m.path?.bindings,{projectRoot:m.path?.projectRoot||null,name:m.path?.name||null})});return;
     }
     if (m.action === 'git_check') {
       const root = await projectRoot(m.path?.localRoot);

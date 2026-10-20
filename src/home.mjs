@@ -729,7 +729,11 @@ const server = http.createServer(async (req, res) => {
         if(req.method==='POST'&&nativeMatch[2]==='default-folder'){
           if(worker.capabilities?.nativeDefaultFolder!==1)throw Error('Upgrade this Worker to prepare the default session folder.');
           const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({localRoot:w.localRoot}));
-          return json(res,await workerQuery({nodeId},'native_default_folder',{bindings},15000));
+          // With a project: its own folder on this device holds the session, under native-sessions/<name>.
+          const input=await body(req),projectId=typeof input?.projectId==='string'&&input.projectId?input.projectId:null;
+          const binding=projectId?db.get('workspaces',`${projectId}:${nodeId}`):null;
+          if(projectId&&!binding?.localRoot)throw Error('Bind the project folder on this device first');
+          return json(res,await workerQuery({nodeId},'native_default_folder',{bindings,...(binding?{projectRoot:binding.localRoot,name:typeof input.name==='string'?input.name.slice(0,120):''}:{})},15000));
         }
         if(req.method==='GET'&&nativeMatch[2]==='folders')return json(res,await workerQuery({nodeId},'directories',{
           path:url.searchParams.get('path')||null,offset:Number(url.searchParams.get('offset')||0),includeFiles:true},15000));

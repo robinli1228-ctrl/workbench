@@ -42,6 +42,7 @@ test('tool calls and results come out of a Claude history as rows the page can p
     { type: 'assistant', timestamp: at, message: { role: 'assistant', content: [{ type: 'text', text: 'Running.' }, { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'npm test', description: 'x'.repeat(5000) } }] } },
     { type: 'user', timestamp: at, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'y'.repeat(5000), is_error: false }] } },
     { type: 'user', timestamp: at, isSidechain: true, message: { role: 'user', content: 'subagent prompt' } },
+    { type: 'user', timestamp: at, isMeta: true, message: { role: 'user', content: [{ type: 'text', text: '[Image: source: /tmp/x/1.png, original 10x10]' }] } },
     { type: 'assistant', timestamp: at, message: { role: 'assistant', content: [{ type: 'text', text: 'All green.' }] } },
   ];
   const messages = historyMessages(rows, 'claude');
