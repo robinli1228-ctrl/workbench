@@ -5,9 +5,18 @@ export function planDismissKey(plan) {
   return JSON.stringify([plan.id, plan.status, plan.updatedAt || plan.createdAt || '']);
 }
 
-/** A step that never actually started is not reported as a failed run; the CLI final state and the report verdict are shown separately. */
+/** 计划保留原始失败记录，仅在明确未派发时区别显示，不能用缺失的 Run 摘要推断未执行。 */
+function planMemberProgress({request,run,task}) {
+  if(request?.status==='failed'&&request.notExecutedReason&&!request.currentRunId&&!run&&!task?.currentRunId) {
+    return {state:'not_executed',label:'Not executed',reason:request.notExecutedReason};
+  }
+  const progress=executionProgress({request,run,task});
+  return progress.state==='stopped'?{...progress,label:'Aborted'}:progress;
+}
+
+/** 计划成员区分中止、未执行与实际失败，不改变执行状态或审核结论。 */
 export function planMemberLabel(request, run, task) {
-  return executionProgress({request,run,task}).label;
+  return planMemberProgress({request,run,task}).label;
 }
 
 /** A scheduler stage can be open while every member is still queued; display execution evidence, not that lifecycle flag. */
@@ -17,13 +26,21 @@ export function planStageActivity(stage, requests=[], runs=[], tasks=[]) {
     for(let i=0;request?.continuationRequestId&&i<20;i++)request=requests.find(r=>r.id===request.continuationRequestId);
     return {request,run:runs.find(r=>r.id===request?.currentRunId),task:tasks.find(t=>t.id===request?.taskId)};
   });
-  const progress=current.map(executionProgress);
-  for(const state of ['running','waiting','queued','error','stopped','completed']) {
+  const progress=current.map(planMemberProgress);
+  for(const state of ['running','waiting','queued','error','stopped','not_executed','completed']) {
     const p=progress.find(item=>item.state===state);
     if(p)return {state:p.state,label:p.label,reason:p.reason||p.detail};
   }
   const p=executionProgress({task:{status:{succeeded:'completed',cancelled:'cancelled',failed:'blocked'}[stage?.status]||'ready'}});
   return {state:p.state,label:p.label,reason:stage?.error||''};
+}
+
+/** 阻断的计划不是会自动继续的正常等待；子步骤仍按各自证据显示。 */
+export function planActivity(plan, requests=[], runs=[], tasks=[]) {
+  if(['blocked','failed'].includes(plan.status))return {label:'Plan error',reason:plan.error||plan.waitingReason||''};
+  if(plan.status==='cancelled')return {label:'Aborted',reason:plan.error||''};
+  const stage=plan.status==='running'?plan.stages?.find(s=>s.status==='running'):{members:(plan.stages||[]).flatMap(s=>s.members||[]),status:plan.status};
+  return planStageActivity(stage,requests,runs,tasks);
 }
 
 /** Show only the latest plan round created for the project; closing does not fall back to older rounds, and progress is still derived from call state. */

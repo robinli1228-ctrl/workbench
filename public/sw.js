@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v162-session-chat-consolidation-20261020';
+const CACHE = 'agent-workbench-static-v163-plan-status-labels-20261020';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',
