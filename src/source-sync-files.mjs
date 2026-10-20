@@ -189,7 +189,10 @@ export async function captureDirectorySnapshot(options) {
   const cached=observation?.signature===signature?observation.cache:new Map();
   const partial=Boolean(observation&&!observation.fullHash&&observation.signature===signature&&observation.snapshot&&options.changedPaths?.length&&options.changedPaths.every(path=>cached.has(path)));
   const nextCache=partial?new Map(cached):new Map();
+  const directories=partial?new Map(observation.directories):new Map();
   async function walk(dir,prefix=''){
+    // Empty directories need watchers too; retain identity during this walk so replacements cannot reuse an old inode's watcher.
+    if(observation){const info=dir===root?rootInfo:await pathStat(dir,{bigint:true});if(!info.isDirectory())throw syncError('unsafe_file',prefix);directories.set(dir,`${info.dev}:${info.ino}`);}
     for(const item of await readdir(dir,{withFileTypes:true})){
       const path=prefix+item.name;if(++visited>SOURCE_SYNC_LIMITS.paths*2)throw syncLimitError('manifest_too_large','scan_entries',SOURCE_SYNC_LIMITS.paths*2,visited,path);
       if(options.background&&visited%32===0)await new Promise(resolve=>setTimeout(resolve,options.busy?.()?25:8));
@@ -226,6 +229,6 @@ export async function captureDirectorySnapshot(options) {
   for(let i=0;i<paths.length;i++)if(captured[i]!==undefined)entries[paths[i]]=captured[i];
   const digest=manifestDigest(entries,policy);
   // Publish the cache only with a complete successful observation, never a failed/partial traversal.
-  if(observation){observation.cache=nextCache;observation.signature=signature;observation.snapshot={entries,excluded};}
+  if(observation){observation.cache=nextCache;observation.signature=signature;observation.snapshot={entries,excluded};observation.directories=directories;}
   return {repositoryId:options.repositoryId,generation:options.generation,scopeKind:'directory',scopePolicy:policy,capturePolicy:outputs?OUTPUT_SYNC_CAPTURE_POLICY:DIRECTORY_SYNC_CAPTURE_POLICY,...(metadataOnly?{metadataOnly:true,newlyIncluded:paths.filter(path=>excludedSourcePath(path,{...policy,contentMode:'source-only'})||!(policy.sharedDocs&&path.startsWith('.workbench/docs/'))&&isIgnored(path))}:{}),baseCommit:null,entries,digest,excluded};
 }

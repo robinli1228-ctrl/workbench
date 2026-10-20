@@ -34,18 +34,18 @@ export class SourceSyncWatch {
   hint(id,path=null){const t=this.clock(),prior=this.hints.get(id),paths=prior?.paths||new Set();if(path)paths.add(path);this.hints.set(id,{first:prior?.first??t,last:t,paths,unknown:Boolean(prior?.unknown||!path)});}
   /** Cache lifetime is process/config/listener-bound, not a durable authority on file content. */
   invalidate(id){this.observations.delete(id);this.fullChecked.delete(id);this.epochs.set(id,(this.epochs.get(id)||0)+1);}
-  /** Watch eligible parents only, without recursively subscribing to dependencies or private worktrees. */
-  install(scope,entries){
-    const id=key(scope),dirs=new Set([scope.root]);
+  /** Reuse the completed walk's eligible directories, including empty ones; excluded trees never enter the watch set. */
+  install(scope,entries,directories=new Map()){
+    const id=key(scope),dirs=new Set([scope.root,...directories.keys()]);
     for(const path of Object.keys(entries)){let dir=dirname(join(scope.root,path));while(dir!==scope.root&&dir.startsWith(scope.root+'/')){dirs.add(dir);dir=dirname(dir);}}
     let group=this.watches.get(id);if(!group){group=new Map();this.watches.set(id,group);}
-    for(const [dir,w] of group)if(!dirs.has(dir)){w.close();group.delete(dir);}
+    for(const [dir,w] of group)if(!dirs.has(dir)||w.directoryIdentity!==directories.get(dir)){w.close();group.delete(dir);}
     let degraded=false;
     for(const dir of dirs){if(group.has(dir))continue;if(group.size>=this.maxWatches){degraded=true;break;}
       try{const w=watch(dir,{persistent:false},(event,file)=>{const path=file?relative(scope.root,join(dir,String(file))):'';
         if(path.split('/').at(-1)==='.gitignore'){this.invalidate(id);this.hint(id);}
         else if(!path||path==='.workbench'||path==='.workbench/docs'||!excludedSourcePath(path,scope.scopePolicy))this.hint(id,event==='change'&&path?path:null);
-      });w.on('error',()=>{w.close();group.delete(dir);this.degraded.set(id,true);this.invalidate(id);this.hint(id);});group.set(dir,w);}catch{degraded=true;}
+      });w.directoryIdentity=directories.get(dir);w.on('error',()=>{w.close();if(group.get(dir)!==w)return;group.delete(dir);this.degraded.set(id,true);this.invalidate(id);this.hint(id);});group.set(dir,w);}catch{degraded=true;}
     }
     return degraded;
   }
@@ -69,7 +69,7 @@ export class SourceSyncWatch {
         if(!current())continue;
         this.observations.set(id,observation);this.retryAt.delete(id);
         if(fullHash){this.fullChecked.set(id,this.clock());this.checked.set(id,this.clock());}else if(metadataDue)this.checked.set(id,this.clock());
-        const degraded=this.install({...scope,root:binding.root},manifest.entries);this.degraded.set(id,degraded);const state={id,projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,entries:manifest.entries,digest:manifest.digest,checkedAt:new Date().toISOString(),status:degraded?'reconciling':'watching'};
+        const degraded=this.install({...scope,root:binding.root},manifest.entries,observation.directories);this.degraded.set(id,degraded);const state={id,projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,entries:manifest.entries,digest:manifest.digest,checkedAt:new Date().toISOString(),status:degraded?'reconciling':'watching'};
         this.db.transaction(()=>{
           this.db.put('sourceSyncWatchStates',state);
           if(old?.digest!==manifest.digest)this.db.put('sourceSyncWatchNotices',{id,noticeId:randomUUID(),projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,digest:manifest.digest,observedAt:state.checkedAt});

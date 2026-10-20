@@ -713,13 +713,14 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const worker=getData().workers?.find(w=>w.id===value.nodeId);supported=worker?.capabilities?.nativeTurns===3;
    const eligible=readable&&value.canResume!==false&&!value.canReopen&&Boolean(value.workspace);
    if(!eligible){shell.remove();return;}
-   content.append(shell);render();void refresh();
+   if(shell.parentNode!==content)content.append(shell);render();void refresh();
   }
   /** Turns already in native history keep their process next to the matching reply; others render as their own rows. */
   function renderFeed(){feed.replaceChildren();for(const old of historyEl?.querySelectorAll('.native-turn-anchored')||[])old.remove();
    const rows=[...(historyEl?.querySelectorAll('.native-chat-row')||[])],used=new Set();
    for(const turn of turns){
-    if(turn.status==='waiting'||turn.status==='cancelled')continue;
+    if(turn.status==='waiting')continue;
+    if(turn.status==='cancelled'){const files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments||[])files.append(attachmentCard(item));feed.append(chatRow('user',turn.prompt,current.runtime,turn.createdAt,files.childElementCount?files:null),el('div','nt-system native-chat-row',`${t('Cancelled')}${turn.error?` · ${t(turn.error)}`:''}`));continue;}
     if(turn.control){
      const live=['queued','starting','running','waiting_user','stopping'].includes(turn.status),command=turn.control==='compact'&&turn.runtime==='codex'?'compact':(turn.prompt||'').replace(/^\//,'');
      const index=rows.findIndex((row,i)=>!used.has(i)&&row.dataset.role==='system'&&row.dataset.text===command);
@@ -750,7 +751,6 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   function markLatestDuration(){groupRows();for(const old of scroll.querySelectorAll('.nt-duration'))old.remove();const agents=[...scroll.querySelectorAll('.nt-agent')],last=agents.at(-1);if(!last||!last.dataset.duration||last.querySelector('.nt-working'))return;last.append(el('div','nt-duration',t('Took {duration}',{duration:last.dataset.duration})));}
   /** The composer is built once and kept in place: a refresh that re-created it would move the focused textarea and drop the caret (and any IME composition). */
   const form=el('form','chat-composer native-takeover-form'),barRow=el('div','chat-input-bar'),field=el('div','chat-input-field'),note=el('p','workspace-note native-takeover-note'),tray=el('div','chat-attachments native-takeover-tray');
-  field.append(tray,attachButton,input);barRow.append(field,sendButton);form.append(note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});
   // Queued messages sit above the composer like the group-chat queue: steer interrupts the reply and sends that one now, × withdraws it.
   const queue=el('details','message-queue native-queue'),queueSummary=el('summary',''),queueList=el('div','message-queue-list');queue.open=true;queue.append(queueSummary,queueList);queue.hidden=true;
   const queuePending=new Set();
@@ -792,6 +792,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
   const attachButton=el('button','native-attach');attachButton.type='button';attachButton.title=t('Upload an image or file');attachButton.setAttribute('aria-label',t('Upload file'));attachButton.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
   attachButton.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
+  field.append(tray,attachButton,input);barRow.append(field,sendButton);form.append(note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});
   /** Same limits as the group chat: at most 6 files per message, 20 MB each; images only for CLIs with image input. */
   async function upload(list){if(!current)return;const id=k(),nodeId=current.nodeId,runtime=current.runtime,d=draft(id),op=operation(id),files=[...list];if(op.sending||op.releasing||d.pending)return;op.message='';
    if((d.attachments?.length||0)+op.uploads+files.length>6){op.message=t('At most 6 attachments per message');render();return;}

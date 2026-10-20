@@ -31,6 +31,10 @@ A self-hosted project group chat for the AI coding CLIs and subscriptions you al
 
 Installation does not enable collaboration broadcast, file synchronization or proactive follow-up on business projects. V3 broadcast remains test-project restricted. See [V3 design and measured acceptance](docs/design/session-queue-v3-acceptance.md), [file-sync contract](docs/design-source-sync.md), [CLI recovery](docs/design-cli-session-recovery.md) and [limitations](#limitations-and-roadmap) before enabling or exposing the service.
 
+Sessions restore the last viewed registered conversation, show native history and page replies in the same turn layout, and keep the composer stable during refresh. Ordinary sends during a reply wait in a visible queue; an explicit Steer interrupts, then waits for verified process release before proceeding. The empty composer offers Stop. Cancelled messages and their reasons remain visible, and queued dispatch resolves the current Git credential without silently falling back after an error. Session overview, produced files and the collapsible right panel remain read-only views.
+
+Directory synchronization uses events first, including eligible empty directories. Fully installed watchers retain a five-minute metadata backstop and an hourly full hash; incomplete or failed watcher coverage retains the thirty-second/five-minute fallback. This changes observation cost, not transfer validation, history retention or synchronization enablement.
+
 ## Why this exists
 
 Dropdown controls share a white, fine-bordered popup with indigo selection and checkmarks across settings, roles, devices and dynamic dialogs. Models and longer lists support search; native form values, validation and change handlers remain intact, with keyboard and mobile interaction supported.

@@ -220,7 +220,7 @@ async function historyPage(file,runtime,id,cursor,snapshot){
    if(!lineEnd){next=start;break;}
    const lf=buffer.lastIndexOf(10,lineEnd-1),lineStart=lf+1;
    if(lf<0&&start>0)break; // Retry this incomplete leading line from its end on the next page.
-   const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map(m=>({...m,id:`${id}:${start+lineStart}`,offset:start+lineStart}));
+   const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map((m,index)=>({...m,id:`${id}:${start+lineStart}${index?`:${index}`:''}`,offset:start+lineStart}));
    const weight=Buffer.byteLength(JSON.stringify(found));
    // Pages are sized by prompts, not by tool rows, so a turn with many tool calls still reads as one page.
    if(found.length&&(prompts>=15||bytes+weight>262144))break;
