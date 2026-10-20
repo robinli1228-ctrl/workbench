@@ -256,4 +256,11 @@ export default {
  "Hosting account not found": "未找到托管账号",
  "The repository remote URL is unknown; refresh the Git card first": "仓库远程地址未知，请先刷新 Git 卡片",
  "The account provider does not match the repository host": "账号的平台与仓库所在平台不一致",
+ "Stop CLI": "停止 CLI",
+ "Ending…": "正在结束…",
+ "Nothing yet": "暂无",
+ "Outputs folder": "产物目录",
+ "Compact": "压缩",
+ "Effort": "思考深度",
+ "The terminal CLI has not exited yet; quit it in iTerm or press Stop CLI": "终端里的 CLI 还没有退出；请在 iTerm 中退出，或点「停止 CLI」",
 };

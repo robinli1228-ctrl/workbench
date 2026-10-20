@@ -3055,3 +3055,27 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-settings-section .native-rename-form input { flex: 1; min-width: 0; }
 .native-settings-section select { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13px; margin-bottom: 6px; }
 .native-settings-section .secondary { margin-top: 4px; }
+
+/* Session composer: the field is as tall as the attach and send buttons beside it. */
+.native-takeover-form { --nt-h: 38px; }
+.native-takeover-form .chat-input-bar, .native-takeover-form .chat-input-field { align-items: center; }
+.native-takeover-form textarea { min-height: 36px; height: 36px; padding-block: 8px; line-height: 20px; }
+.native-takeover-form .native-attach { width: 34px; height: 36px; min-height: 36px; margin: 0 0 0 1px; }
+.native-takeover-form .chat-input-bar > button.primary { min-height: var(--nt-h); height: var(--nt-h); padding: 0 16px; }
+/* Session side panel: compact controls, little prose, long values on one line with the full text on hover. */
+.native-session-meta dd .native-meta-value { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.native-connect-row { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; }
+.native-connect-row .native-mode-switch { flex: 1; margin: 0; }
+.native-mode { min-height: 30px; padding: 5px 8px; text-align: center; }
+.native-mode-title { font-size: 12px; }
+.native-connect-row .native-card-action, .native-connect-row a.native-card-action { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 10px; border-radius: 8px; text-decoration: none; }
+.native-connect-head { margin: 0 0 4px; color: var(--muted); font-size: 12px; }
+.native-settings-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
+.native-setting { gap: 2px; min-width: 0; }
+.native-setting-label { font-size: 11px; }
+.native-setting select { min-height: 28px; padding: 3px 8px; border-radius: 6px; font-size: 12px; }
+.native-context { margin-top: 8px; padding-top: 8px; }
+.native-context-head { align-items: center; }
+.native-context-head .native-card-action { margin-left: auto; min-height: 24px; padding: 0 8px; font-size: 11px; }
+.native-context .native-card-action { width: auto; margin-top: 0; }
+.native-produced-card .native-output-list { margin-bottom: 8px; }
