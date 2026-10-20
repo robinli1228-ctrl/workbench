@@ -712,6 +712,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   function renderFeed(){feed.replaceChildren();for(const old of historyEl?.querySelectorAll('.native-turn-anchored')||[])old.remove();
    const rows=[...(historyEl?.querySelectorAll('.native-chat-row')||[])],used=new Set();
    for(const turn of turns){
+    if(turn.status==='waiting'||turn.status==='cancelled')continue;
     if(turn.control){
      const live=['queued','starting','running','waiting_user','stopping'].includes(turn.status),command=turn.control==='compact'&&turn.runtime==='codex'?'compact':(turn.prompt||'').replace(/^\//,'');
      const index=rows.findIndex((row,i)=>!used.has(i)&&row.dataset.role==='system'&&row.dataset.text===command);
@@ -743,30 +744,44 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   /** The composer is built once and kept in place: a refresh that re-created it would move the focused textarea and drop the caret (and any IME composition). */
   const form=el('form','chat-composer native-takeover-form'),barRow=el('div','chat-input-bar'),field=el('div','chat-input-field'),note=el('p','workspace-note native-takeover-note'),tray=el('div','chat-attachments native-takeover-tray');
   field.append(tray,attachButton,input);barRow.append(field,sendButton);form.append(note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});
+  // Queued messages sit above the composer like the group-chat queue: steer interrupts the reply and sends that one now, × withdraws it.
+  const queue=el('details','message-queue native-queue'),queueSummary=el('summary',''),queueList=el('div','message-queue-list');queue.open=true;queue.append(queueSummary,queueList);queue.hidden=true;
+  const queuePending=new Set();
+  function renderQueue(){const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||String(a.createdAt).localeCompare(String(b.createdAt)));queue.hidden=!waiting.length;queueList.replaceChildren();if(!waiting.length)return;
+   queueSummary.replaceChildren(el('span','message-queue-title',t('Queue · {v}',{v:waiting.length})));
+   waiting.forEach((turn,i)=>{const row=el('div','message-queue-item'),info=el('div','message-queue-info'),title=el('strong','',`${i+1}. ${turn.prompt}`);title.title=turn.prompt;title.translate=false;info.append(title);row.append(info);
+    const busy=queuePending.has(turn.id)||turn.steer,steer=el('button',`icon-button message-queue-steer${busy?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(turn.steer?'Interrupting and starting this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
+    steer.onclick=async()=>{queuePending.add(turn.id);renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
+    const cancel=closeIcon(el('button','icon-button'));cancel.type='button';cancel.title=t('Cancel queued message');cancel.setAttribute('aria-label',cancel.title);cancel.disabled=queuePending.has(turn.id);
+    cancel.onclick=async()=>{queuePending.add(turn.id);renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
+    row.append(steer,cancel);queueList.append(row);});}
+  /** Stop only while a reply runs and nothing is typed; with text or files the button sends, and Home queues the message. */
+  function syncSendButton(){if(!current)return;const d=draft(),op=operation(),state=sendState(d,op),live=activeTurn(),stopping=live?.status==='stopping',typing=Boolean(input.value.trim())||Boolean(d.attachments?.length)||Boolean(d.pending);
+   const stopMode=Boolean(live)&&!typing;sendButton.className=stopMode?'danger':'primary';
+   if(stopMode){sendButton.disabled=stopping||op.releasing;sendButton.textContent=t(stopping?'Stopping…':'Stop');}
+   else{sendButton.disabled=op.sending||op.releasing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);sendButton.textContent=t(SEND_LABELS[state]||'Send');}
+   input.placeholder=live?t('Reply in progress; Enter queues your message, Stop interrupts'):t('Message {tool}; replies continue this native session',{tool:names[current.runtime]||current.runtime});}
   let refocus=false;
   function render(){
    if(!current)return;const value=current,taken=isOn(value);renderFeed();renderSessionControls(value);
    if(!taken&&!(supported&&canChat(value))){const bar=el('div','native-takeover-bar');const copy=el('div','native-takeover-copy');copy.append(el('strong','',t('Read-only preview')),el('span','',t(supported?'Take over to keep chatting in this exact native session here.':'Upgrade this Worker to take over native sessions')));const b=button('Take over session',()=>enable(value),'primary native-takeover-button');b.disabled=!supported;bar.append(copy,b);shell.replaceChildren(bar);return;}
-   const id=k(),d=draft(id),op=operation(id),busy=Boolean(activeTurn());
-   input.placeholder=t('Message {tool}; replies continue this native session',{tool:names[value.runtime]||value.runtime});if(input.value!==d.text)input.value=d.text||'';
+   const id=k(),d=draft(id),op=operation(id);
+   if(input.value!==d.text)input.value=d.text||'';
    note.textContent=op.message||'';note.hidden=!note.textContent;note.classList.toggle('chat-bubble',Boolean(op.message));note.classList.toggle('is-error-card',Boolean(op.message));const state=sendState(d,op);
    tray.replaceChildren();for(const item of d.attachments||[])tray.append(attachmentCard(item,()=>{if(!d.pending)void removeAttachment(id,value.nodeId,item);}));
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
-   // While a turn runs, Send is the Stop button; Enter still only sends, so a running turn ignores it.
-   const live=activeTurn(),stopping=live?.status==='stopping';sendButton.className=live?'danger':'primary';
-   if(live){sendButton.disabled=stopping||op.releasing;sendButton.textContent=t(stopping?'Stopping…':'Stop');}
-   else{sendButton.disabled=op.sending||op.releasing||busy||op.uploads>0||sendLocked(state)||Boolean(op.verifying);sendButton.textContent=t(SEND_LABELS[state]||'Send');}
+   syncSendButton();renderQueue();
    // Disabling the textarea while a send is in flight drops focus; give it back once typing is possible again.
    const locked=op.sending||op.releasing||Boolean(d.pending);if(locked&&!input.disabled&&[input,sendButton].includes(document.activeElement))refocus=true;
    input.disabled=locked;attachButton.disabled=locked;
-   if(!shell.contains(form))shell.replaceChildren(form);resize();
+   if(!shell.contains(form))shell.replaceChildren(queue,form);resize();
    if(refocus&&!locked){refocus=false;if(document.activeElement===document.body||document.activeElement===sendButton)input.focus({preventScroll:true});}
   }
   async function endTakeover(value){const id=sessionKey(value),op=operation(id);if(op.releasing)return;op.releasing=true;op.message='';if(k()===id){render();renderSide(value,value.sessionId,true);}try{await api(`${endpoint(value.nodeId)}/takeover/release`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId}});if(k()===id)await refresh();else await onStateRefresh();}catch(error){op.releasing=false;op.message=t(error.message);if(k()===id){render();renderSide(value,value.sessionId,true);}}}
   async function removeAttachment(id,nodeId,item){const op=operation(id);op.message='';if(k()===id)render();try{await api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(item.id)}`,{method:'DELETE'});const d=draft(id);d.attachments=(d.attachments||[]).filter(a=>a.id!==item.id);revokeAttachment(nodeId,item.id);save();}catch(error){op.message=t(error.message);}finally{if(k()===id)render();}}
   const input=el('textarea');input.rows=1;input.setAttribute('aria-label',t('Chat message'));
   const sendButton=el('button','primary',t('Send'));sendButton.type='submit';
-  sendButton.addEventListener('click',e=>{const live=activeTurn();if(!live)return;e.preventDefault();if(live.status!=='stopping')void stop(live);});
+  sendButton.addEventListener('click',e=>{const live=activeTurn(),d=draft();if(!live||input.value.trim()||d.attachments?.length||d.pending)return;e.preventDefault();if(live.status!=='stopping')void stop(live);});
   const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
   const attachButton=el('button','native-attach');attachButton.type='button';attachButton.title=t('Upload an image or file');attachButton.setAttribute('aria-label',t('Upload file'));attachButton.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
   attachButton.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
@@ -782,9 +797,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   shell.addEventListener('dragleave',()=>shell.classList.remove('is-dragging'));
   shell.addEventListener('drop',e=>{shell.classList.remove('is-dragging');if(e.dataTransfer?.files.length&&current&&(isOn(current)||canChat(current))){e.preventDefault();void upload(e.dataTransfer.files);}});
   const resize=()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;};
-  input.addEventListener('input',()=>{draft().text=input.value;save();resize();});
+  input.addEventListener('input',()=>{draft().text=input.value;save();resize();syncSendButton();});
   input.addEventListener('keydown',e=>{if(window.matchMedia('(max-width: 1000px)').matches)return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!sendButton.disabled){e.preventDefault();input.form?.requestSubmit();}});
-  async function submit(){if(!current||activeTurn())return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.uploads)return;
+  async function submit(){if(!current)return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.uploads)return;
    // An in-flight or unknown send is only looked up again (click, double click, Enter); it is never resent with a new ID.
    if(d.pending&&d.sendState!=='failed'){void verifyTurn(id);return;}
    if(!d.pending&&!input.value.trim()&&!d.attachments?.length)return;op.message='';
@@ -798,7 +813,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[id]?.pending&&drafts[id].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}
   async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;controls=result.controls===true;settings=result.settings||{model:null,effort:null};residentState=result.process||'closed';turns=result.items||[];{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
-  function schedule(){clearInterval(poll);poll=null;if(current&&(activeTurn()||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
+  function schedule(){clearInterval(poll);poll=null;if(current&&(activeTurn()||turns.some(x=>x.status==='waiting')||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
   /** Start chatting here: the one confirmation of bypassed permissions, then the composer. */
   function enable(value,{focus=true}={}){if(!value?.sessionId)return false;const id=sessionKey(value);if(!on.has(id)){if(!confirm(t(permissionPrompt(value),{tool:names[value.runtime]||value.runtime})))return false;on.add(id);save();}if(current&&k()===id){render();renderSide(value,value.sessionId,true);if(focus)input.focus();}return true;}
   /** Files touched by this session's page turns, newest turn first; an edit or write wins over a read of the same path. */

@@ -264,4 +264,8 @@ export default {
  "Effort": "思考深度",
  "The terminal CLI has not exited yet; quit it in iTerm or press Stop CLI": "终端里的 CLI 还没有退出；请在 iTerm 中退出，或点「停止 CLI」",
  "Overview": "概述",
+ "Reply in progress; Enter queues your message, Stop interrupts": "回复进行中：回车排队发送，「停止」可打断",
+ "Interrupt the current reply and send this message now": "中断当前回复，立即发送这条消息",
+ "Interrupting and starting this message": "正在中断并发送这条消息",
+ "Cancel queued message": "取消这条排队消息",
 };

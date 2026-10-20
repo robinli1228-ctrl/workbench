@@ -44,7 +44,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     },
     closed(nodeId,m){const s=db.get('terminalSessions',m.leaseId);if(s&&s.nodeId===nodeId){db.put('terminalSessions',{...s,status:'released',processState:'released',releasedAt:new Date().toISOString()});finishTurns(nodeId,m.runtime,m.sessionId);}}
   };
-  const turns=new NativeTurnsHome({db,attachments,send,online,change,leases});
+  const turns=new NativeTurnsHome({db,attachments,send,online,change,leases,gitCredential});
   turns.recover();
   const file=(res,{item,bytes},disposition=true)=>{res.writeHead(200,{'Content-Type':item.mime,'Content-Length':bytes.length,'Cache-Control':'private, no-store',
     ...(disposition?{'Content-Disposition':`${item.mime.startsWith('image/')?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(item.name)}`}:{})});res.end(bytes);return true;};
@@ -78,6 +78,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');if(input.control&&worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to compact a native session');
       const credential=input.control?null:await gitCredential(turns.settings(nodeId,input.runtime,input.sessionId));json(res,turns.create(nodeId,worker,input,{gitCredential:credential}),201);return true;}
     if(area==='turns'&&a&&b==='stop'&&req.method==='POST'){json(res,turns.stop(nodeId,decodeURIComponent(a)));return true;}
+    if(area==='turns'&&a&&b==='steer'&&req.method==='POST'){json(res,turns.steer(nodeId,decodeURIComponent(a)));return true;}
     throw Error('Invalid session action');
   }
   return {turns,http,gitCredentialFor:(nodeId,runtime,sessionId)=>gitCredential(turns.settings(nodeId,runtime,sessionId)),
