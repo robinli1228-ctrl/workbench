@@ -18,6 +18,8 @@ export const PAGE_SUMMARY_PATHS=Object.freeze({
   runReports:[...PAGE_BODY_FIELDS.runReports]});
 const role=value=>value?omit(value,ROLE_BODY):value;
 const binding=value=>value?{...value,role:role(value.role)}:value;
+// Home supplies identity only for private revision-checked summaries, never arbitrary caller-owned full snapshots.
+export const WORKSPACE_SUMMARY=Symbol('workspaceSummary');
 
 /** The project a workspace read resolves to, with the same fallback the projection applies, so a scoped read and its projection agree. */
 export function workspaceScope(db,requestedProjectId) {
@@ -26,7 +28,7 @@ export function workspaceScope(db,requestedProjectId) {
 }
 
 /** Projects only the metadata the UI needs; task requirements, context, and result bodies always stay in the original records and the detail endpoints. */
-export function workspaceState(snapshot,requestedProjectId,requestedConversationId) {
+export function workspaceState(snapshot,requestedProjectId,requestedConversationId,cachedHistory=null) {
   const selected=snapshot.projects.find(p=>p.id===requestedProjectId);
   const projectId=selected?.id||snapshot.projects[0]?.id||null;
   // A deleted project invalidates its persisted chat selection as one unit.
@@ -56,12 +58,12 @@ export function workspaceState(snapshot,requestedProjectId,requestedConversation
   delete state.nativeTurnExecutions;
   const runs=snapshot.runs.filter(belongs),runIds=new Set(runs.map(r=>r.id));
   // hasReply is Home's own progress evidence from a SQL summary; the page gets the computed stage instead.
-  state.runs=runs.map(r=>({...omit(r,[...PAGE_BODY_FIELDS.runs,'hasReply']),
+  state.runs=cachedHistory?.runs||runs.map(r=>({...omit(r,[...PAGE_BODY_FIELDS.runs,'hasReply']),
     roleSnapshot:role(r.roleSnapshot),originalRoleSnapshot:role(r.originalRoleSnapshot),executionBinding:binding(r.executionBinding),error:short(r.error),report:r.report?omit(r.report,['summary']):r.report,summaryOnly:true}));
-  state.tasks=snapshot.tasks.filter(belongs).map(t=>({...omit(t,PAGE_BODY_FIELDS.tasks),roleSnapshot:role(t.roleSnapshot),executionBinding:binding(t.executionBinding),error:short(t.error),summaryOnly:true}));
-  state.requests=(snapshot.requests||[]).filter(belongs).map(r=>({...omit(r,[...PAGE_BODY_FIELDS.requests,'hasReply']),executionBinding:binding(r.executionBinding),error:short(r.error)}));
+  state.tasks=cachedHistory?.tasks||snapshot.tasks.filter(belongs).map(t=>({...omit(t,PAGE_BODY_FIELDS.tasks),roleSnapshot:role(t.roleSnapshot),executionBinding:binding(t.executionBinding),error:short(t.error),summaryOnly:true}));
+  state.requests=cachedHistory?.requests||(snapshot.requests||[]).filter(belongs).map(r=>({...omit(r,[...PAGE_BODY_FIELDS.requests,'hasReply']),executionBinding:binding(r.executionBinding),error:short(r.error)}));
   for(const key of ['discussionThreads','discussionDeliveries','roleSessions','roleSwitches','runAlerts','cliRecoveries'])state[key]=(snapshot[key]||[]).filter(r=>r.projectId===projectId);
-  state.runReports=(snapshot.runReports||[]).filter(r=>runIds.has(r.id)).map(r=>omit(r,['summary']));
+  state.runReports=cachedHistory?.runReports||(snapshot.runReports||[]).filter(r=>runIds.has(r.id)).map(r=>omit(r,['summary']));
   state.approvals=(snapshot.approvals||[]).filter(r=>runIds.has(r.runId));
   state.executionPlans=(snapshot.executionPlans||[]).filter(belongs).map(p=>({...p,stages:(p.stages||[]).map(s=>({...s,members:(s.members||[]).map(m=>omit(m,['prompt','summary','execution']))}))}));
   state.roleSessions=sessions.filter(s=>s.projectId===projectId&&groupConversationIdOfSession(s)===conversationId);
@@ -78,19 +80,32 @@ const encode=value=>JSON.stringify(value);
 export class WorkspaceStateFeed {
   constructor({maxScopes=16,history=4}={}) {this.epoch=randomUUID();this.scopes=new Map();this.maxScopes=maxScopes;this.history=history;}
   read(snapshot,projectId,cursor,conversationId) {
-    const projection=workspaceState(snapshot,projectId,conversationId),key=JSON.stringify([projection.projectId,projection.conversationId]);
-    const serialized=encode(projection.state),state=JSON.parse(serialized);
-    const nextCursor=`${this.epoch}:${createHash('sha256').update(key).update(serialized).digest('hex')}`;
-    let history=this.scopes.get(key)||[];
+    const selected=snapshot.projects.find(p=>p.id===projectId),resolved=selected?.id||snapshot.projects[0]?.id||null;
+    const key=JSON.stringify([resolved,selected?(conversationId||resolved):resolved]),scope=this.scopes.get(key);
+    const source=snapshot[WORKSPACE_SUMMARY],reuse=source&&scope?.source===source;
+    const projection=workspaceState(snapshot,projectId,conversationId,reuse?scope.state:null);
+    const encoded={},hashes={},state={},stable=new Set(['runs','tasks','requests','runReports']);
+    for(const [name,value] of Object.entries(projection.state)){
+      encoded[name]=reuse&&stable.has(name)?scope.encoded[name]:encode(value);
+      // Reuse normalized fields too: parsing the historical JSON again defeats the SQL/projection cache.
+      if(scope&&scope.encoded[name]===encoded[name])state[name]=scope.state[name];
+      else if(encoded[name]!==undefined)state[name]=JSON.parse(encoded[name]);
+      if(encoded[name]!==undefined)hashes[name]=scope&&scope.encoded[name]===encoded[name]?scope.hashes[name]:createHash('sha256').update(encoded[name]).digest('hex');
+    }
+    let history=scope?.history||[];
+    const unchanged=scope&&Object.keys(encoded).length===Object.keys(scope.encoded).length&&Object.keys(encoded).every(name=>encoded[name]===scope.encoded[name]);
+    // Hash the field digests, so a heartbeat never reserializes or rehashes the entire historical projection.
+    const nextCursor=unchanged?scope.cursor:`${this.epoch}:${createHash('sha256').update(key).update(encode(hashes)).digest('hex')}`;
     const previous=history.find(entry=>entry.cursor===cursor);
     if(!history.some(entry=>entry.cursor===nextCursor))history=[...history,{cursor:nextCursor,state}].slice(-this.history);
-    this.scopes.delete(key);this.scopes.set(key,history);
+    this.scopes.delete(key);this.scopes.set(key,{history,source,encoded,hashes,state,cursor:nextCursor});
     while(this.scopes.size>this.maxScopes)this.scopes.delete(this.scopes.keys().next().value);
     const envelope={schema:1,projectId:projection.projectId,conversationId:projection.conversationId,cursor:nextCursor};
     if(!previous)return {...envelope,reset:true,state};
     const changes={},replace={};
     for(const [name,value] of Object.entries(state)) {
       const before=previous.state[name];
+      if(before===value)continue;
       if(encode(before)===encode(value))continue;
       if(!keyed(before)||!keyed(value)){replace[name]=value;continue;}
       const old=new Map(before.map(v=>[v.id,encode(v)])),ids=new Set(value.map(v=>v.id));

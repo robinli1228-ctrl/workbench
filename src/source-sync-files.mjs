@@ -10,18 +10,31 @@ const git=async(root,args,encoding='utf8')=>(await exec('git',args,{cwd:root,enc
 // Missing .git markers are routine during each safety walk; avoid rejected promises while keeping a fresh lstat.
 const exists=path=>new Promise((resolve,reject)=>lstat(path,(error,info)=>{if(!error)resolve(info);else if(error.code==='ENOENT')resolve(null);else reject(error);}));
 const blobSaves=new Map();
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 // Custom DATA_DIRs can live under .local; their database identifies the whole private runtime, including staging.
 const runtimeDirectory=async dir=>Boolean(await exists(join(dir,'home.sqlite'))||await exists(join(dir,'worker.sqlite')));
 
+/** Background checks release the event loop between fixed batches. Busy task load gets shorter work slices and longer,
+ * still finite rests; explicit captures do not use this path. */
+function backgroundYield({busy=()=>false,cancelled=()=>false,yieldControl}={}){
+  return (phase,count,force=false)=>{
+    const loaded=Boolean(busy());if(!force&&!loaded&&count%32!==0)return;
+    return (async()=>{if(cancelled())throw syncError('capture_cancelled');
+      if(yieldControl)await yieldControl(phase,{busy:loaded});else await pause(loaded?25:10);
+      if(cancelled())throw syncError('capture_cancelled');})();
+  };
+}
+
 /** Bound file I/O and drain in-flight captures before rejecting, so a failed snapshot leaves no background writes. */
-export async function captureSourceEntries(paths,capture,{background=false,busy=()=>false}={}) {
+export async function captureSourceEntries(paths,capture,{background=false,busy=()=>false,cancelled=()=>false,yieldControl,cooperate}={}) {
   const result=new Array(paths.length);let cursor=0,failed=false,error;
+  const yieldBackground=background?(cooperate||backgroundYield({busy,cancelled,yieldControl})):null;
   // Busy observations remain finite (they may be prerequisites of the active task), but yield more often.
   await Promise.all(Array.from({length:Math.min(background?1:8,paths.length)},async()=>{
-    while(!failed&&cursor<paths.length){const index=cursor++;try{result[index]=await capture(paths[index]);}catch(e){if(!failed){failed=true;error=e;}}
-      if(background&&!failed&&cursor<paths.length&&cursor%8===0){const loaded=busy();if(loaded||cursor%32===0)await new Promise(resolve=>setTimeout(resolve,loaded?25:8));}
+    while(!failed&&cursor<paths.length){const index=cursor++;try{result[index]=await capture(paths[index]);const wait=yieldBackground&&!failed&&cursor<paths.length&&cursor%8===0&&yieldBackground('files',cursor);if(wait)await wait;}catch(e){if(!failed){failed=true;error=e;}}
     }
   }));
+  if(background&&cancelled()&&!failed){failed=true;error=syncError('capture_cancelled');}
   if(failed)throw error;return result;
 }
 
@@ -177,6 +190,7 @@ export async function captureDirectorySnapshot(options) {
   const root=await realpath(options.root),policy=options.scopePolicy||{},entries=Object.create(null),excluded=[],paths=[];
   // Only background observation can reuse hashes. Transfer/blob capture always reads verified bytes.
   const observation=options.blobRoot?null:options.observation;
+  const cooperate=options.background?backgroundYield(options):null;
   const rootInfo=await pathStat(root,{bigint:true});
   const outputs=includesSyncOutputs(policy),metadataOnly=outputs&&options.preview===true;
   if(outputs&&await runtimeDirectory(root))throw syncError('runtime_directory');
@@ -195,7 +209,7 @@ export async function captureDirectorySnapshot(options) {
     if(observation){const info=dir===root?rootInfo:await pathStat(dir,{bigint:true});if(!info.isDirectory())throw syncError('unsafe_file',prefix);directories.set(dir,`${info.dev}:${info.ino}`);}
     for(const item of await readdir(dir,{withFileTypes:true})){
       const path=prefix+item.name;if(++visited>SOURCE_SYNC_LIMITS.paths*2)throw syncLimitError('manifest_too_large','scan_entries',SOURCE_SYNC_LIMITS.paths*2,visited,path);
-      if(options.background&&visited%32===0)await new Promise(resolve=>setTimeout(resolve,options.busy?.()?25:8));
+      if(cooperate&&visited%32===0)await cooperate('walk',visited);
       const shared=policy.sharedDocs===true&&(path==='.workbench'||path==='.workbench/docs'||path.startsWith('.workbench/docs/'));
       const sharedParent=shared&&(path==='.workbench'||path==='.workbench/docs');
       if(!sharedParent&&(excludedSourcePath(path,policy)||!outputs&&!shared&&isIgnored(path))){excluded.push({path,reason:'excluded'});continue;}
@@ -225,8 +239,9 @@ export async function captureDirectorySnapshot(options) {
     if(options.blobRoot&&!metadataOnly)await saveSourceBlob(options.blobRoot,value.bytes);
     if(observation)nextCache.set(path,{metadata:value.metadata,entry:value.entry});
     return value.entry;
-  },{background:options.background===true,busy:options.busy});
+  },{background:options.background===true,busy:options.busy,cancelled:options.cancelled,yieldControl:options.yieldControl,cooperate});
   for(let i=0;i<paths.length;i++)if(captured[i]!==undefined)entries[paths[i]]=captured[i];
+  if(cooperate)await cooperate('manifest',1,true);
   const digest=manifestDigest(entries,policy);
   // Publish the cache only with a complete successful observation, never a failed/partial traversal.
   if(observation){observation.cache=nextCache;observation.signature=signature;observation.snapshot={entries,excluded};observation.directories=directories;}

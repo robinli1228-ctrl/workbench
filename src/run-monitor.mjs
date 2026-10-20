@@ -4,8 +4,7 @@ import { tr } from './i18n.mjs';
 /** Model-free inspection only flags suspected stalls: silence is not treated as a hang, and processes are never killed or re-run automatically. */
 export function inspectRunProgress(db,online,now=Date.now()) {
   let changed=false;
-  for(const run of db.list('runs')) {
-    if(terminal.has(run.status))continue;
+  for(const run of db.activeRuns()) {
     let reason=null;
     if(!online(run.nodeId))reason=tr('runMonitor.deviceOfflineExecutionStateNeeds');
     else if(run.status==='waiting_user')continue;
@@ -15,6 +14,6 @@ export function inspectRunProgress(db,online,now=Date.now()) {
       db.put('runAlerts',{id:run.id,projectId:run.projectId,reason,createdAt:new Date(now).toISOString(),status:'open'});changed=true;
     } else if(!reason && old?.status==='open') {db.put('runAlerts',{...old,status:'resolved'});changed=true;}
   }
-  for(const alert of db.list('runAlerts').filter(a=>a.status==='open'))if(terminal.has(db.get('runs',alert.id)?.status)){db.put('runAlerts',{...alert,status:'resolved'});changed=true;}
+  for(const alert of db.openRunAlerts())if(terminal.has(db.get('runs',alert.id)?.status)){db.put('runAlerts',{...alert,status:'resolved'});changed=true;}
   return changed;
 }

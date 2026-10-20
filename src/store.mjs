@@ -59,6 +59,28 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_native_driver_read ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId'),json_extract(data,'$.nativeSession.id')) WHERE kind='runs';`);
   }
   get(kind, id) { const r = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id); return r ? JSON.parse(r.data) : null; }
+  /** UI-only invalidation. Unknown SQL and external connections invalidate every kind; scheduling always reads SQLite. */
+  readRevision(kinds) {
+    this.revisionTracking=true;
+    const changes=(this.revisionChangesStatement??=this.db.prepare('SELECT total_changes() AS n')).get().n;
+    const version=(this.revisionVersionStatement??=this.db.prepare('PRAGMA data_version')).get().data_version;
+    if(!this.recordRevisions||changes!==this.revisionChanges||version!==this.revisionVersion){
+      this.revisionEpoch=(this.revisionEpoch||0)+1;this.recordRevisions=new Map();
+    }
+    this.revisionChanges=changes;this.revisionVersion=version;
+    // Never retain a view of uncommitted data, including direct SQL transactions.
+    return this.db.isTransaction===false?`${this.revisionEpoch}:${kinds.map(kind=>this.recordRevisions.get(kind)||0).join(',')}`:null;
+  }
+  /** Account only for known writes; a later direct SQL statement remains detectable by total_changes(). */
+  recordChanged(kind) {
+    if(!this.revisionTracking)return;
+    const changes=this.revisionChangesStatement.get().n;
+    // Triggers or receipt writes can touch additional records; prefer a full invalidation over attributing them to one kind.
+    if(changes-this.revisionChanges>1){this.revisionEpoch++;this.recordRevisions.clear();}
+    this.recordRevisions.set(kind,(this.recordRevisions.get(kind)||0)+1);
+    if(this.recordRevisions.size>128){this.revisionEpoch++;this.recordRevisions.clear();}
+    this.revisionChanges=changes;
+  }
   /** Admission uses the result-store filesystem, never a remote workspace or a caller-provided path. */
   readResultFreeBytes(){
     if(this.file===':memory:')return Infinity;
@@ -89,6 +111,10 @@ export class Store {
   /** Poll only live scheduling candidates; unknown Run states still reserve capacity, and history stays intact. */
   activeRuns(nodeId) {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_active_runs WHERE kind='runs' AND ${activeRun}${nodeId===undefined?'':" AND json_extract(data,'$.nodeId')=?"} ORDER BY rowid`).all(...(nodeId===undefined?[]:[nodeId])).map(r=>JSON.parse(r.data));
+  }
+  /** Only open alerts participate in progress monitoring; closed history stays persisted. */
+  openRunAlerts() {
+    return this.db.prepare("SELECT data FROM records WHERE kind='runAlerts' AND json_extract(data,'$.status')='open' ORDER BY rowid").all().map(r=>JSON.parse(r.data));
   }
   /** Tasks whose role is waiting for a formal discussion answer; scanned in SQL, not by parsing every task. */
   tasksWaitingForDiscussion() {
@@ -147,6 +173,7 @@ export class Store {
     return this.db.prepare(`SELECT t.data FROM records r CROSS JOIN records t WHERE ${conditions.join(' AND ')} ORDER BY COALESCE(json_extract(t.data,'$.${due}'),0),t.rowid LIMIT ?`).all(at,...exclude,limit).map(r=>JSON.parse(r.data));
   }
   put(kind, value) {
+    if(this.revisionTracking)this.readRevision([]);
     if(kind==='roomMessages')return this.transaction(()=>{
       const previous=this.get(kind,value.id);
       // A message's creation time is fixed once written; rewrites (setup notices, channel relays) keep its place in the chat.
@@ -154,24 +181,25 @@ export class Store {
       if(!previous)value=tagMessage(this,value); // Session tagging from existing links; no-op while the project flag is off.
       if(!previous)this.db.prepare('INSERT OR IGNORE INTO room_message_receipts(message_id,project_id,received_at) VALUES(?,?,?)').run(value.id,value.projectId,now());
       this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').run(kind,value.id,JSON.stringify(value));
+      this.recordChanged(kind);
       if(!previous&&value.collaborationSessionId)new SessionQueue(this,{now:this.queueNow||Date.now}).register(value); // no-op unless the session opted into broadcast
       return value;
     });
-    this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').run(kind, value.id, JSON.stringify(value));return value;
+    this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').run(kind, value.id, JSON.stringify(value));this.recordChanged(kind);return value;
   }
   /** A monotonic Home receipt survives edits, imports, deletion and restarts without trusting a device timestamp. */
   /** Home receipt order per message: the tie-breaker for messages created in the same millisecond. */
   receiptSeqs(projectId){return new Map(this.db.prepare('SELECT message_id,seq FROM room_message_receipts WHERE project_id=?').all(projectId).map(r=>[r.message_id,r.seq]));}
   messageCursor(projectId,conversationId=projectId){return this.db.prepare("SELECT COALESCE(MAX(m.seq),0) AS seq FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=?").get(projectId,conversationId).seq;}
   messageArrivals(projectId,after,conversationId=projectId){return this.db.prepare("SELECT r.data,m.seq,m.received_at FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND m.seq>? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=? ORDER BY m.seq").all(projectId,after,conversationId).map(r=>({...JSON.parse(r.data),receiptSeq:r.seq,receivedAt:r.received_at}));}
-  remove(kind, id) { this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind, id); }
+  remove(kind, id) { if(this.revisionTracking)this.readRevision([]);this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind, id);this.recordChanged(kind); }
   /** A synchronous transaction makes the check and the creation a single operation, avoiding duplicate claims. */
   transaction(fn) {
     const depth=this.transactionDepth||0,savepoint=`nested_${depth}`;
     this.db.exec(depth ? `SAVEPOINT ${savepoint}` : 'BEGIN IMMEDIATE');
     this.transactionDepth=depth+1;
     try { const r=fn();this.db.exec(depth ? `RELEASE ${savepoint}` : 'COMMIT');return r; }
-    catch(e) {this.db.exec(depth ? `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}` : 'ROLLBACK');throw e;}
+    catch(e) {this.db.exec(depth ? `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}` : 'ROLLBACK');this.recordRevisions=null;throw e;}
     finally {this.transactionDepth=depth;}
   }
   createProject({ id = randomUUID(), name, root = '', description = '', repoUrl = '' }) {
