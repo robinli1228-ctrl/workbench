@@ -319,7 +319,12 @@ export class Rooms {
   messages(projectId, before, conversationId) {
     conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound3'));
-    const all = this.db.listProject('roomMessages',projectId).filter(m => conversationIdOf(m)===conversationId&&m.visibility!=='internal');
+    // Chat order is trigger time: a run's reply sits where the run was triggered (its live card's place); everything else at its own creation.
+    const receipts=this.db.receiptSeqs(projectId),runAt=new Map();
+    const orderAt=m=>{if(m.orderAt)return m.orderAt;if(m.sender==='agent'&&m.runId&&m.id===`result-${m.runId}`){if(!runAt.has(m.runId))runAt.set(m.runId,this.db.get('runs',m.runId)?.createdAt||null);return runAt.get(m.runId)||m.createdAt||'';}return m.createdAt||'';};
+    const all = this.db.listProject('roomMessages',projectId).filter(m => conversationIdOf(m)===conversationId&&m.visibility!=='internal')
+      .map((m,i)=>({...m,orderAt:orderAt(m),orderSeq:receipts.get(m.id)??i}))
+      .sort((a,b)=>String(a.orderAt).localeCompare(String(b.orderAt))||a.orderSeq-b.orderSeq);
     const end = before ? all.findIndex(m => m.id === before) : all.length;
     if (end < 0) throw new Error(tr('rooms.historyCursorNotFound'));
     const start = Math.max(0, end - 60), messages = all.slice(start, end).map(message => {
