@@ -657,6 +657,23 @@ const server = http.createServer(async (req, res) => {
         if(db.get('workers',nodeId)?.capabilities?.nativeFiles!==1)throw Error('Upgrade this Worker to read session files');
         return json(res,await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_file',{workspace:record.workspace,path,runtime,sessionId:record.sessionId||null,entryId:record.id||null},15000));
       }
+      const nativeAgents=pathname.match(/^\/api\/native-sessions\/([^/]+)\/agents-md$/);
+      if(nativeAgents&&['GET','PUT'].includes(req.method)){
+        // The AGENTS.md a CLI in this session's folder loads (nearest one upwards), read or written on its own device.
+        const nodeId=decodeURIComponent(nativeAgents[1]),runtime=url.searchParams.get('runtime'),sessionId=url.searchParams.get('sessionId'),entryId=url.searchParams.get('entryId');
+        const entry=entryId?nativeCatalogRecords(nodeId,runtime).find(record=>record.id===entryId):null;
+        if(entryId&&(!entry||sessionId&&entry.sessionId!==sessionId))throw Error('Session identity does not match its Workbench entry');
+        const record=entry||(sessionId&&ownedNativeSession(nodeId,runtime,sessionId))||null;
+        if(!record)throw Error('Session is not registered with Workbench');
+        if(!record.workspace)throw Error('No working folder is recorded for this session yet.');
+        if(db.get('workers',nodeId)?.capabilities?.nativeAgentsMd!==1)throw Error('Upgrade this Worker to read or edit AGENTS.md');
+        const common={workspace:record.workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},scope={nodeId,projectId:record.roleBinding?.projectId};
+        if(req.method==='GET')return json(res,await workerQuery(scope,'native_agents_md',common,15000));
+        const b=await body(req),within=(root,path)=>path===root||path.startsWith(root.endsWith('/')?root:`${root}/`);
+        // A new file goes to the project folder on this device when the session lives inside one.
+        const binding=[...db.list('workspaces')].filter(w=>w.nodeId===nodeId&&w.localRoot&&within(w.localRoot,record.workspace)).sort((x,y)=>y.localRoot.length-x.localRoot.length)[0]||null;
+        return json(res,await workerQuery(scope,'native_agents_md_write',{...common,path:typeof b.path==='string'?b.path:null,content:b.content,expectedModifiedAt:typeof b.expectedModifiedAt==='string'?b.expectedModifiedAt:null,create:b.create===true,createDir:binding?.localRoot||null},20000));
+      }
       const nativeTitle=pathname.match(/^\/api\/native-sessions\/([^/]+)\/title$/);
       if(nativeTitle&&req.method==='POST'){
         // Renames only a Workbench-created session: the Worker's catalog entry is the source the list is refreshed from,

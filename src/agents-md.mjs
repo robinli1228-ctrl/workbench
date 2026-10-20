@@ -1,5 +1,5 @@
-import { writeFile, realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { writeFile, realpath, readFile, stat } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tr } from './i18n.mjs';
@@ -30,4 +30,55 @@ export async function ensureAgentsFiles(dir) {
     result.commitError = String(e.stderr || e.message || e).trim().slice(0, 300);
   }
   return result;
+}
+
+const inside = (root, path) => path === root || path.startsWith(root.endsWith('/') ? root : `${root}/`);
+const AGENTS_MAX_BYTES = 600000;
+
+/** The AGENTS.md a CLI started in `dir` would load: the nearest one at or above the folder, never above the device root that holds it. */
+export async function locateAgentsFile(roots, dir) {
+  const start = await realpath(dir), allowed = (await Promise.all(roots.map(r => realpath(r).catch(() => null)))).filter(Boolean);
+  const top = allowed.find(r => inside(r, start));
+  if (!top) throw new Error('Folder is outside the device roots');
+  let current = start;
+  for (;;) {
+    const candidate = join(current, 'AGENTS.md');
+    try { const info = await stat(candidate); if (info.isFile()) return { found: true, path: candidate, dir: current, size: info.size, modifiedAt: info.mtime.toISOString() }; }
+    catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') throw e; }
+    if (current === top || dirname(current) === current) break;
+    current = dirname(current);
+  }
+  return { found: false, path: join(start, 'AGENTS.md'), dir: start, top };
+}
+
+export async function readAgentsFile(roots, dir) {
+  const located = await locateAgentsFile(roots, dir);
+  if (!located.found) return located;
+  if (located.size > AGENTS_MAX_BYTES) return { ...located, content: null, tooLarge: true };
+  return { ...located, content: await readFile(located.path, 'utf8') };
+}
+
+/**
+ * Write only the AGENTS.md this folder uses (a stale edit is refused), or create one when none exists: in `createDir` when it
+ * is an ancestor of the folder inside the same device root (the project folder), else in the folder itself. Creation goes
+ * through ensureAgentsFiles, so the CLAUDE.md pointer and the local commit happen as for a new project.
+ */
+export async function writeAgentsFile(roots, dir, { path = null, content, expectedModifiedAt = null, create = false, createDir = null } = {}) {
+  if (typeof content !== 'string' || Buffer.byteLength(content) > AGENTS_MAX_BYTES) throw new Error('AGENTS.md content must be text up to 600 KB');
+  const located = await locateAgentsFile(roots, dir);
+  let target = located.path;
+  if (located.found) {
+    if (path && path !== located.path) throw new Error('Only the AGENTS.md this folder uses can be edited here');
+    if (expectedModifiedAt && expectedModifiedAt !== located.modifiedAt) throw new Error('AGENTS.md changed on the device; reload it and try again');
+    await writeFile(located.path, content, 'utf8');
+  } else {
+    if (!create) throw new Error('No AGENTS.md above this folder; create it first');
+    let where = located.dir;
+    if (createDir) { const candidate = await realpath(createDir); if (inside(candidate, located.dir) && inside(located.top, candidate)) where = candidate; }
+    await ensureAgentsFiles(where);
+    target = join(where, 'AGENTS.md');
+    if (content.trim()) await writeFile(target, content, 'utf8');
+  }
+  const info = await stat(target);
+  return { path: target, dir: dirname(target), size: info.size, modifiedAt: info.mtime.toISOString() };
 }

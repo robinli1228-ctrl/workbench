@@ -185,6 +185,38 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   else if(st.hasMore)card.append(button('Load more',()=>void loadFolder(session,st.path,st.nextOffset),'secondary native-card-action'));
   return card;
  }
+ /** AGENTS.md: the project memory every CLI loads from this folder (nearest one upwards). Shown on Resources, edited in a dialog. */
+ const agentsCache=new Map();
+ const agentsQuery=value=>{const id=nativeId(value);return new URLSearchParams({runtime:value.runtime,...(id?{sessionId:id}:{}),...(value.entryId?{entryId:value.entryId}:{})});};
+ async function loadAgents(value,force=false){const k=key(value),cached=agentsCache.get(k);if(!value.workspace||cached?.loading||!force&&cached)return;agentsCache.set(k,{loading:true});renderAgents(value);
+  let state;try{state=await api(`${endpoint(value.nodeId)}/agents-md?${agentsQuery(value)}`);}catch(error){state={error:error.message};}
+  agentsCache.set(k,{state,at:Date.now()});if(selected&&key(selected)===k)renderAgents(selected);}
+ function agentsCard(value){
+  const card=el('section','native-side-card native-agents-card');card.dataset.nativeAgents='';const head=el('div','native-card-head');head.append(el('h3','','AGENTS.md'));card.append(head);
+  const cached=agentsCache.get(key(value));
+  if(!value.workspace){card.append(el('p','native-side-hint',t('Choose a folder when opening')));return card;}
+  if(!cached||cached.loading){card.append(el('p','native-side-hint',t('Loading…')));return card;}
+  const st=cached.state;if(st.error){card.append(el('p','native-side-hint',t(st.error)));return card;}
+  if(!st.found){card.append(el('p','native-side-hint',t('No AGENTS.md above this folder yet.')));head.append(button('Create',()=>openAgentsEditor(value,st),'secondary native-card-action'));return card;}
+  const where=el('div','native-agents-path',st.path);where.title=st.path;where.translate=false;card.append(where);
+  const preview=el('pre','native-agents-preview',st.tooLarge?t('File is larger than 600 KB; open it on the device.'):(st.content||'').trim()||t('(empty)'));preview.translate=false;preview.title=t('Edit');card.append(preview);
+  const edit=button('Edit',()=>openAgentsEditor(value,st),'secondary native-card-action');edit.disabled=Boolean(st.tooLarge);head.append(edit);
+  if(!st.tooLarge)preview.addEventListener('click',()=>openAgentsEditor(value,st));
+  return card;
+ }
+ function renderAgents(value){const prior=sidePanels.resources.querySelector('[data-native-agents]');if(prior&&side.dataset.sessionKey===key(value))prior.replaceWith(agentsCard(value));}
+ let agentsDialog=null;
+ function openAgentsEditor(value,st){
+  if(!agentsDialog){agentsDialog=el('dialog','settings-edit-dialog native-session-dialog native-agents-dialog');document.body.append(agentsDialog);}
+  const heading=el('div','dialog-heading');heading.append(el('h2','',t(st.found?'Edit AGENTS.md':'Create AGENTS.md')),closeButton(()=>agentsDialog.close()));
+  const where=el('p','native-side-hint native-agents-path',st.found?st.path:t('A new AGENTS.md goes to the project folder on this device, or to the working folder.'));where.translate=!st.found;
+  const area=el('textarea','native-agents-editor');area.value=st.found?(st.content||''):'';area.rows=22;area.spellcheck=false;area.setAttribute('aria-label','AGENTS.md');
+  const feedback=el('p','native-form-feedback'),actions=el('div','native-session-actions'),cancel=button('Cancel',()=>agentsDialog.close(),'secondary');
+  const save=button('Save',async()=>{save.disabled=cancel.disabled=true;feedback.textContent=t('Saving…');
+   try{await api(`${endpoint(value.nodeId)}/agents-md?${agentsQuery(value)}`,{method:'PUT',json:{path:st.found?st.path:null,content:area.value,expectedModifiedAt:st.found?st.modifiedAt:null,create:!st.found}});agentsDialog.close();await loadAgents(value,true);}
+   catch(error){feedback.textContent=t(error.message);save.disabled=cancel.disabled=false;}},'primary');
+  actions.append(cancel,save);agentsDialog.replaceChildren(heading,where,area,feedback,actions);agentsDialog.showModal();area.focus();
+ }
  /** The working folder browser sits on the Resources tab; navigating it redraws only that card. */
  function renderFolder(){const prior=sidePanels.resources.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
  function renderOutputs(){
@@ -631,7 +663,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    copy.disabled=takeover.releaseDisabled(value);
    row.append(copy);identity.append(row);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
-  const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';resources.append(repository,folderCard(value),identity);
+  const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';const agentsPlaceholder=el('section','native-side-card');agentsPlaceholder.dataset.nativeAgents='';resources.append(repository,agentsPlaceholder,folderCard(value),identity);renderAgents(value);void loadAgents(value);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
   // Resources: the device and CLI account this session runs on.
   renderAgentDetails(value);
