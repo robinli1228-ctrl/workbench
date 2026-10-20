@@ -149,6 +149,8 @@ export class Store {
   put(kind, value) {
     if(kind==='roomMessages')return this.transaction(()=>{
       const previous=this.get(kind,value.id);
+      // A message's creation time is fixed once written; rewrites (setup notices, channel relays) keep its place in the chat.
+      if(previous?.createdAt)value={...value,createdAt:previous.createdAt};
       if(!previous)value=tagMessage(this,value); // Session tagging from existing links; no-op while the project flag is off.
       if(!previous)this.db.prepare('INSERT OR IGNORE INTO room_message_receipts(message_id,project_id,received_at) VALUES(?,?,?)').run(value.id,value.projectId,now());
       this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').run(kind,value.id,JSON.stringify(value));
@@ -158,6 +160,8 @@ export class Store {
     this.db.prepare('INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').run(kind, value.id, JSON.stringify(value));return value;
   }
   /** A monotonic Home receipt survives edits, imports, deletion and restarts without trusting a device timestamp. */
+  /** Home receipt order per message: the tie-breaker for messages created in the same millisecond. */
+  receiptSeqs(projectId){return new Map(this.db.prepare('SELECT message_id,seq FROM room_message_receipts WHERE project_id=?').all(projectId).map(r=>[r.message_id,r.seq]));}
   messageCursor(projectId,conversationId=projectId){return this.db.prepare("SELECT COALESCE(MAX(m.seq),0) AS seq FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=?").get(projectId,conversationId).seq;}
   messageArrivals(projectId,after,conversationId=projectId){return this.db.prepare("SELECT r.data,m.seq,m.received_at FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND m.seq>? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=? ORDER BY m.seq").all(projectId,after,conversationId).map(r=>({...JSON.parse(r.data),receiptSeq:r.seq,receivedAt:r.received_at}));}
   remove(kind, id) { this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind, id); }
