@@ -26,7 +26,7 @@ import { tokenUsageUI } from './token-usage.js';
 import { createScheduledJobsUI } from './scheduled-jobs.js';
 import { formatGitVersionStatus, formatProjectGitSummary } from './git-version.js';
 import { partitionRunLog, displayRunInput, contextUsageLabel, mergeRunEvents, shouldShowFinalResult, toolStatusLabel, stripAnsi, taskRunDisplayStatus } from './run-log-data.js';
-import { planDismissKey, planDockState, planMemberLabel, planStageActivity } from './plan-dock.js';
+import { planDismissKey, planDockState, planMemberLabel, planStageActivity, planActivity } from './plan-dock.js';
 import {createWorkspaceInspector,initWorkspaceColumns} from './workspace-inspector.js';
 import {applyStateUpdate} from './state-data.js';
 import { TOKEN_KEY, readApiToken, saveApiToken } from './browser-token.js';
@@ -631,12 +631,7 @@ function renderExecutionPlans() {
   panel.dataset.projectId=app.selectedProjectId;
   const details=document.createElement('details');details.open=open;
   const summary=document.createElement('summary');
-  const activity=plan=>{
-    if(plan.status==='blocked')return {label:'Waiting',reason:plan.error||plan.waitingReason||'Waiting to advance'};
-    if(plan.status==='cancelled')return {label:'Stopped',reason:plan.error||''};
-    const stage=plan.status==='running'?plan.stages?.find(s=>s.status==='running'):{members:(plan.stages||[]).flatMap(s=>s.members||[]),status:plan.status};
-    return planStageActivity(stage,app.data.requests||[],app.data.runs||[],app.data.tasks||[]);
-  };
+  const activity=plan=>planActivity(plan,app.data.requests||[],app.data.runs||[],app.data.tasks||[]);
   const title=document.createElement('strong');title.textContent=t('Supervisor plan · {currentStage}', { currentStage: t(state.currentStage) });
   const progress=document.createElement('span');progress.className='execution-progress';progress.textContent=`${state.completed}/${state.total}`;
   const badge=document.createElement('span');badge.className='execution-status';badge.textContent=t(activity(state.current).label);
