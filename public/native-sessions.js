@@ -242,7 +242,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const filters=el('div','native-session-filters'),device=el('select'),tool=el('select');device.setAttribute('aria-label',t('Session device'));tool.setAttribute('aria-label',t('Agent tool'));filters.append(device,tool);list.before(filters);
  const note=el('p','workspace-note');list.before(note);note.classList.add('native-session-note');
  // A narrowed left column (dragged below ~230px, or collapsed) drops the device/tool filters; the list keeps the width.
- const sidebar=document.querySelector('#project-sidebar');if(sidebar&&'ResizeObserver' in window)new ResizeObserver(entries=>{const width=entries[0]?.contentRect?.width||sidebar.clientWidth;filters.classList.toggle('is-narrow',width<230);}).observe(sidebar);
+ const sidebar=document.querySelector('#project-sidebar');if(sidebar&&'ResizeObserver' in window)new ResizeObserver(()=>{filters.classList.toggle('is-narrow',sidebar.getBoundingClientRect().width<205);}).observe(sidebar);
  let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue=(()=>{try{const saved=sessionStorage.getItem('agent-workbench.navigation-mode');return saved==='groups'||saved==='sessions'?saved:'sessions';}catch{return 'sessions';}})(),lastRefresh=0,listSignature='',detailSignature='';
  const active=()=>modeValue==='sessions';
  const endpoint=nodeId=>`/api/native-sessions/${encodeURIComponent(nodeId)}`;
@@ -496,14 +496,15 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  let lastPromptAt=null;
  function renderHistoryRow(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text;
    // Injected context leaves nothing to show; a slash command shows as one quiet system line.
-   if(m.role==='user'&&!text){const command=commandOf(m.text);if(!command)return document.createComment('injected');const row=el('div','nt-system native-chat-row');row.dataset.role='system';row.dataset.text=command.replace(/^\//,'').trim();if(m.id)row.dataset.historyId=m.id;if(m.timestamp)row.dataset.at=m.timestamp;row.append(el('span','nt-system-mark','\u2318'),el('code','',command));return row;}
+   if(m.role==='user'&&!text){const task=taskNotificationOf(m.text);if(task){const row=el('div','nt-system native-chat-row');row.dataset.role='system';row.dataset.text=`task:${task}`;if(m.id)row.dataset.historyId=m.id;if(m.timestamp)row.dataset.at=m.timestamp;row.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${task.slice(0,8)}`));return row;}
+    const command=commandOf(m.text);if(!command)return document.createComment('injected');const row=el('div','nt-system native-chat-row');row.dataset.role='system';row.dataset.text=command.replace(/^\//,'').trim();if(m.id)row.dataset.historyId=m.id;if(m.timestamp)row.dataset.at=m.timestamp;row.append(el('span','nt-system-mark','\u2318'),el('code','',command));return row;}
    const row=chatRow(m.role,text,item.runtime,m.timestamp,null,'completed',item);row.dataset.role=m.role;if(m.id)row.dataset.historyId=m.id;
    if(m.role==='user'){row.dataset.text=promptKey(text);lastPromptAt=m.timestamp||null;}
    else if(lastPromptAt&&m.timestamp){const ms=Date.parse(m.timestamp)-Date.parse(lastPromptAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(lastPromptAt,Date.parse(m.timestamp));}
    return row;}
  /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
  function renderHistory(rows,item){
-  const nodes=[],isPrompt=row=>Boolean(cleanUserText(row.text)||commandOf(row.text));
+  const nodes=[],isPrompt=row=>Boolean(cleanUserText(row.text)||commandOf(row.text)||taskNotificationOf(row.text));
   for(const turn of historyTurns(rows,{isPrompt})){
    if(turn.prompt)nodes.push(renderHistoryRow(turn.prompt,item));
    if(!turn.parts.length)continue;
@@ -731,7 +732,9 @@ const sizeText=n=>!Number.isFinite(n)?'':n<1024?`${n} B`:n<1048576?`${(n/1024).t
 /** Hide CLI-internal stderr logging (timestamped WARN/ERROR lines) from the run process; real errors arrive as error events. */
 const cliNoise=text=>/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/m.test(stripAnsi(String(text||'')));
 /** CLIs write injected context (system reminders, environment blocks, slash-command receipts) into history as "user" messages; only the words the person typed are a prompt. */
-const INJECTED=/<(system-reminder|user_info|environment_context|local-command-stdout|local-command-caveat|command-message|command-args|skill_metadata|available_skills)\b[^>]*>[\s\S]*?(<\/\1>|$)/gi;
+const INJECTED=/<(system-reminder|user_info|environment_context|local-command-stdout|local-command-caveat|command-message|command-args|skill_metadata|available_skills|task-notification)\b[^>]*>[\s\S]*?(<\/\1>|$)/gi;
+/** A background task's completion notice: shown as one quiet system line, never as a prompt bubble. */
+const taskNotificationOf=text=>String(text||'').match(/<task-notification>[\s\S]*?<task-id>\s*([^<]+?)\s*<\/task-id>/i)?.[1]||'';
 const cleanUserText=text=>String(text||'').replace(/<image\b[^>]*>[\s\S]*?<\/image>/gi,'').replace(/\[Image: source:[^\]]*\]/g,'').replace(INJECTED,'').replace(/<command-name>[\s\S]*?<\/command-name>/gi,'').replace(/^\s*<user_query>\s*([\s\S]*?)\s*<\/user_query>\s*$/i,'$1').replace(/\n*Attached files for this message \(local paths\):[\s\S]*$/,'').trim();
 /** Prompt identity for anchoring page turns onto history rows; whitespace differences never make a second bubble. */
 const promptKey=text=>simplifiedCliOutput(String(text||'')).replace(/\s+/g,' ').trim();

@@ -304,4 +304,5 @@ export default {
  "Remote execution is paused": "远程执行已暂停",
  "Remote execution is paused for the whole platform; nothing can start or be sent until it is resumed.": "整个平台的远程执行已暂停，恢复前无法启动或发送任何内容。",
  "Remote execution is paused; resume it in the connection card or the top bar": "远程执行已暂停，可在接入卡片或顶栏恢复",
+ "Background task finished": "后台任务已完成",
 };
