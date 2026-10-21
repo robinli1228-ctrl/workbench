@@ -574,14 +574,15 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const signature=JSON.stringify([key(value),configuration,quota,runtime?.quotaStatus,runtime?.quotaStale,runtime?.checkedAt,worker?.online]),prior=side.querySelector('[data-native-agent-details]');
   if(prior&&signature===agentDetailsSignature)return;agentDetailsSignature=signature;
   const section=el('section','native-side-card');section.dataset.nativeAgentDetails='';section.append(el('h3','',t('Quota')));
-  // Two lines: window, percent left and the time until it resets (3d 4h / 2h 10m).
+  // Two lines: "5H token 剩余" with the usual quota mark after it, and the time until that window resets (3d 4h / 2h 10m).
   const until=raw=>{const date=parseQuotaResetDate(raw);if(!date)return '';const minutes=Math.floor((date.getTime()-Date.now())/60000);if(minutes<=0)return t('resetting');const d=Math.floor(minutes/1440),h=Math.floor(minutes%1440/60),m=minutes%60;return d>0?`${d}d ${h}h`:h>0?`${h}h ${m}m`:`${m}m`;};
   const list=el('div','native-quota-lines');
-  for(const [label,key] of [['5h','fiveHour'],['7d','weekly']]){
+  for(const [label,key] of [['5H tokens left','fiveHour'],['7D tokens left','weekly']]){
    const bucket=quota?.[key],line=el('div','native-quota-line');
    // The usual quota mark stays (same icon as the role cards); the line adds the window, the percent and the time until reset.
-   if(!usableBucket(bucket)){line.append(el('span','native-quota-window',label),el('span','native-quota-value is-unknown',t('Unknown')));}
-   else{const rest=until(bucket.resetsAt);line.append(roleNameQuota({[key]:bucket}),el('span','native-quota-window',label));if(rest)line.append(el('span','native-quota-reset',rest));}
+   const name=el('span','native-quota-label',t(label));
+   if(!usableBucket(bucket)){line.append(name,el('span','native-quota-value is-unknown',t('Unknown')));}
+   else{const rest=until(bucket.resetsAt);line.append(name,roleNameQuota({[key]:bucket}));if(rest)line.append(el('span','native-quota-reset',rest));}
    list.append(line);
   }
   section.append(list);

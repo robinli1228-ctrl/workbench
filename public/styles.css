@@ -2056,11 +2056,11 @@ body .project-sidebar .sidebar-heading { align-items:center; gap:10px; padding:0
 }
 /* Native fields retain values, validation and form bindings; only their popup is replaced. */
 body select:not([multiple]):not([size]), body select[size="1"] {
-  appearance:none; -webkit-appearance:none; min-height:42px; padding:10px 38px 10px 13px;
-  font-size:14px; font-weight:400; line-height:1.4; -webkit-tap-highlight-color:transparent;
-  border:1px solid #dce2ed; border-radius:10px; background-color:#fff; color:#273248;
+  appearance:none; -webkit-appearance:none; box-sizing:border-box; height:32px; min-height:32px; padding:0 30px 0 11px;
+  font-size:13px; font-weight:400; line-height:30px; -webkit-tap-highlight-color:transparent; text-overflow:ellipsis; white-space:nowrap;
+  border:1px solid #dce2ed; border-radius:8px; background-color:#fff; color:#273248; background-size:14px 14px; transition:border-color .15s;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235559df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat:no-repeat; background-position:right 13px center; box-shadow:none; cursor:pointer;
+  background-repeat:no-repeat; background-position:right 10px center; box-shadow:none; cursor:pointer;
 }
 body select:not([multiple]):hover:not(:disabled) { border-color:#b5bdec; }
 body select:not([multiple]):focus-visible, body select.wb-select-open { outline:2px solid #dfe3ff; outline-offset:1px; border-color:#777de8; }
@@ -3168,14 +3168,6 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .native-identity-item:first-child { flex: 1 1 auto; }
 
-/* Selects, app-wide: 34px, a quiet chevron, no native arrow; inputs keep their height. Cards use the 30px size. */
-select { appearance: none; -webkit-appearance: none; height: 34px; min-height: 34px; padding: 0 30px 0 10px; font-size: 13px; line-height: 32px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 9px center; background-size: 14px 14px; }
-select:disabled { opacity: .6; }
-.settings-page select, .native-session-form select, :is(#role-form, #supervisor-form) select { height: 34px; min-height: 34px; }
-.native-setting select { height: 30px; min-height: 30px; padding: 0 26px 0 8px; font-size: 12px; line-height: 28px; background-position: right 7px center; background-size: 12px 12px; }
-@media (max-width: 1000px) { select { height: 38px; min-height: 38px; font-size: 16px; line-height: 36px; } .native-setting select { height: 34px; min-height: 34px; font-size: 14px; line-height: 32px; } }
 
 /* Context: the bar with the compact icon after it. */
 .native-context-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 8px; }
@@ -3245,7 +3237,9 @@ select:disabled { opacity: .6; }
   .inspector-tabs { height: 68px; min-height: 68px; box-sizing: border-box; }
 }
 /* 2. Quota lines: both marks the same 22px disc, the figure centred, no decorations. */
-.native-quota-line .role-quota-mark, .native-quota-line .role-quota-mark.is-five-hour, .native-quota-line .role-quota-mark.is-weekly { width: 22px; height: 22px; clip-path: none; border-radius: 50%; font-size: 9px; font-weight: 700; }
+.native-quota-line .role-quota-mark, .native-quota-line .role-quota-mark.is-five-hour, .native-quota-line .role-quota-mark.is-weekly { width: 22px; height: 22px; font-size: 9px; font-weight: 700; }
+.native-quota-line .role-quota-mark.is-weekly { border-radius: 50%; }
+.native-quota-line .role-quota-mark.is-five-hour { border-radius: 0; clip-path: polygon(29.3% 0, 70.7% 0, 100% 29.3%, 100% 70.7%, 70.7% 100%, 29.3% 100%, 0 70.7%, 0 29.3%); }
 .native-quota-line .role-quota-mark::before, .native-quota-line .role-quota-mark::after { content: none; }
 .native-quota-line .role-name-quota { gap: 0; margin: 0; }
 .native-quota-window { font-size: 13px; }
@@ -3325,7 +3319,7 @@ button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 1
 .native-takeover-form textarea { padding-left: 8px; }
 /* ---- Forms and control rows: one control height per context ---- */
 /* New-session dialog: inputs, selects and the folder button share 38px; labels one weight. */
-.native-session-form input:not([type="checkbox"]), .native-session-form select, .native-workspace-row button { height: 38px; min-height: 38px; }
+.native-workspace-row button { height: 36px; min-height: 36px; }
 .native-workspace-row button svg { width: 18px; height: 18px; }
 .native-session-form .native-field { gap: 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
 .native-session-form .native-permissions { margin: 0; }
@@ -3352,3 +3346,31 @@ button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 1
 :is(#chat-attachments, .native-takeover-tray) .attachment-open small { font-size: 10px; }
 :is(#chat-attachments, .native-takeover-tray) .attachment-remove { width: 22px; height: 22px; min-height: 22px; padding: 4px; }
 .native-takeover-tray .attachment-open > img { width: 34px; height: 34px; }
+
+/* ---- Selects by context (the body-level base above is 32px) ---- */
+/* Dialogs, the project form and the settings page: inputs and selects share 36px. */
+body :is(dialog, #project-form-panel, #settings-page) select:not([multiple]):not([size]) { height: 36px; min-height: 36px; line-height: 34px; padding-left: 12px; }
+:is(dialog, #project-form-panel) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])):not(.wb-select-search) { height: 36px; padding-inline: 12px; border-radius: 8px; font-size: 13px; }
+#settings-page :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])):not(dialog *) { height: 36px; padding-inline: 12px; }
+/* Compact places: side-panel model/effort, the session list filters, toolbars. */
+body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([multiple]):not([size]) { height: 28px; min-height: 28px; padding: 0 24px 0 8px; font-size: 12px; line-height: 26px; border-radius: 7px; background-position: right 7px center; background-size: 12px 12px; }
+/* The popup list matches: 34px options, a 32px search field, a lighter frame. */
+.wb-select-menu[popover] { padding: 4px; border-radius: 10px; }
+.wb-select-menu[popover]:popover-open { gap: 4px; }
+.wb-select-menu .wb-select-search { min-height: 32px; padding: 6px 10px 6px 32px; font-size: 13px; border-radius: 7px; background-position: 10px center; }
+.wb-select-option { min-height: 34px; padding: 7px 10px; gap: 10px; border-radius: 7px; font-size: 13px; line-height: 1.35; }
+.wb-select-check { font-size: 14px; }
+.wb-select-group, .wb-select-empty { padding: 6px 10px; font-size: 11.5px; }
+@media (max-width: 1000px) {
+  body select:not([multiple]):not([size]) { height: 40px; min-height: 40px; line-height: 38px; font-size: 16px; }
+  body :is(dialog, #project-form-panel, #settings-page) select:not([multiple]):not([size]) { height: 40px; min-height: 40px; line-height: 38px; }
+  :is(dialog, #project-form-panel) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])):not(.wb-select-search) { height: 40px; }
+  #settings-page :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])):not(dialog *) { height: 40px; }
+  body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([multiple]):not([size]) { height: 34px; min-height: 34px; line-height: 32px; font-size: 14px; }
+  .wb-select-option { min-height: 40px; }
+}
+/* A cloud device's number sits inside its icon wherever the icon is used (it floated away in the connection card). */
+.role-machine { position: relative; }
+/* Quota lines: label, mark, time until reset; marks line up in one column. */
+.native-quota-line { gap: 8px; }
+.native-quota-label { flex: 0 0 auto; min-width: 7.2em; color: var(--muted); font-size: 12.5px; }
