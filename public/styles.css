@@ -3495,9 +3495,9 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-session-content .nt-working-time { order: 1; color: #b3b7bf; font-size: 13px; }
 @keyframes nt-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .native-session-content .nt-working-hint { animation: none; background: none; color: #9da2ab; } }
-/* Prompt: dark bubble, white text; a message that was never sent is a hollow dashed bubble. */
-.native-session-content .nt-user .nt-body { padding: 11px 18px; border: 0; border-radius: 20px; background: #17181c; color: #fff; }
-.native-session-content .nt-prompt-text { color: #fff; font-size: 14.5px; font-weight: 500; line-height: 1.65; }
+/* Prompt: the page's own light-indigo bubble, a shade deeper, in the rounded shape; a message never sent is a hollow dashed bubble. */
+.native-session-content .nt-user .nt-body { padding: 11px 18px; border: 0; border-radius: 20px; background: #e3e7fa; color: var(--ink); }
+.native-session-content .nt-prompt-text { color: #1f2433; font-size: 14.5px; font-weight: 400; line-height: 1.65; }
 .native-session-content .nt-user > .nt-prompt-files { max-width: min(640px, 78%); margin: 0 0 6px; }
 .native-session-content .nt-user > .nt-prompt-files .chat-attachments, .native-session-content .nt-user > .nt-prompt-files .native-turn-files { margin: 0; justify-content: flex-end; }
 .native-session-content .nt-user .native-turn-files .attachment-card img { border: 1px solid #e3e6ec; border-radius: 10px; }
