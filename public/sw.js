@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v167-cpu-ui-consolidation-20261021';
+const CACHE = 'agent-workbench-static-v168-media-queue-consolidation-20261021';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

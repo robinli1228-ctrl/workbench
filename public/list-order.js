@@ -19,7 +19,7 @@ export function orderedItems(items,order,key=item=>item.id) {
 }
 
 /** Long press is local presentation unless `persist` hands the new order to Home. Pending gestures defer live rerenders; release never clicks a moved card. */
-export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{},persist=null}) {
+export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{},persist=null,handle=null}) {
   let gesture=null,frame=0,suppressClickUntil=0;
   const storageKey=()=>PREFIX+(typeof scope==='function'?scope():scope);
   const read=key=>{try{return ids(JSON.parse(localStorage.getItem(key)||'[]'));}catch{return [];}};
@@ -85,7 +85,8 @@ export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{},per
     const control=event.target.closest('button,a,input,textarea,select,summary,[contenteditable="true"],[role="button"]');
     if(control&&control!==item)return;
     gesture={item,pointerId:event.pointerId,key:storageKey(),x:event.clientX,y:event.clientY,startX:event.clientX,startY:event.clientY};
-    gesture.timer=setTimeout(begin,420);
+    // A press on the item's drag handle starts at once; elsewhere on the item it takes a long press.
+    gesture.timer=setTimeout(begin,handle&&event.target.closest(handle)?0:420);
   });
   document.addEventListener('pointermove',event=>{
     const g=gesture;if(!g||event.pointerId!==g.pointerId)return;g.x=event.clientX;g.y=event.clientY;

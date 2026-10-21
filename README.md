@@ -33,6 +33,8 @@ Installation does not enable collaboration broadcast, file synchronization or pr
 
 Sessions restore the last viewed registered conversation, show native history and page replies in the same turn layout, and keep the composer stable during refresh. Ordinary sends during a reply wait in a visible queue; an explicit Steer interrupts, then waits for verified process release before proceeding. The empty composer offers Stop. Cancelled messages and their reasons remain visible, and queued dispatch resolves the current Git credential without silently falling back after an error. Session overview, produced files and the collapsible right panel remain read-only views.
 
+Editing a waiting session message returns its text and attachments only to that session's empty draft. While withdrawal is pending, only that session's input, upload and send controls are locked; other sessions remain usable and their drafts are not overwritten. Queue pause does not cancel a dispatch that already started preparing its Git credential.
+
 Directory synchronization uses events first, including eligible empty directories. Fully installed watchers retain a five-minute metadata backstop and an hourly full hash; incomplete or failed watcher coverage retains the thirty-second/five-minute fallback. This changes observation cost, not transfer validation, history retention or synchronization enablement.
 
 ## Why this exists

@@ -699,8 +699,10 @@ function renderProjects() {
     button.translate = false;
     const count = project.supervisorRoleId ? (app.data.repositories || []).filter(r => r.projectId === project.id).length : (app.data.workspaces || []).filter(w => w.projectId === project.id).length;
     const icon = projectIconEl(icons[project.id]);
-    const copy = create('span', 'project-item-copy');
-    copy.append(create('strong', '', chat.title), create('small', '', chat.isDefault?(project.supervisorRoleId ? t(count===1?'{count} code repository':'{count} code repositories', { count }) : t(count===1?'{count} node workspace':'{count} node workspaces', { count })):project.name));
+    // Same right column as the session list: nothing beside the name, the running spinner beside the second line.
+    const copy = create('span', 'project-item-copy has-status'), status = create('span', 'list-run-status');
+    status.setAttribute('aria-hidden', 'true');
+    copy.append(create('strong', '', chat.title), create('span', 'list-device-slot'), create('small', '', chat.isDefault?(project.supervisorRoleId ? t(count===1?'{count} code repository':'{count} code repositories', { count }) : t(count===1?'{count} node workspace':'{count} node workspaces', { count })):project.name), status);
     button.title = `${chat.title} · ${project.name}${running?` · ${t('In progress')}`:''}`;
     button.setAttribute('aria-label', button.title);
     if (active) button.setAttribute('aria-current', 'page');
