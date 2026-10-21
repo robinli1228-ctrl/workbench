@@ -234,6 +234,8 @@ export const UI_ICON = {
   quote: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M9 17 4 12l5-5"/><path d="M4 12h10a6 6 0 0 1 6 6"/></svg>`,
   copy: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg>`,
   check: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m5 12 4 4L19 6"/></svg>`,
+  // A speech bubble with two lines: a side question beside the session.
+  sideAsk: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L4 21l1.6-4.4A8.5 8.5 0 1 1 21 12Z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></svg>`,
   // A window with its right pane and an arrow into it: open this on the right, beside the chat.
   sideOpen: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16M6.5 9.5 9 12l-2.5 2.5"/></svg>`,
   fullscreen: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5"/></svg>`,

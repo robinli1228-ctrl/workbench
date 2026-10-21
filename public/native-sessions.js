@@ -41,8 +41,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  // Preview (desktop only) holds one message, picture, video or file opened "on the right" for reading beside the chat.
  // Resources moved out: the session ID sits under the This page / iTerm switch, the working folder in Files, the repository
  // and AGENTS.md in Session settings.
- const SIDE_TABS=['overview','outputs','preview'],SIDE_TITLES={overview:'Overview',outputs:'Files',preview:'Preview'};
- const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,preview:UI_ICON.sideOpen};
+ // Side question: a read-only chat beside the session that never reaches it (Claude and Codex only).
+ const SIDE_TABS=['overview','outputs','preview','ask'],SIDE_TITLES={overview:'Overview',outputs:'Files',preview:'Preview',ask:'Side question'};
+ const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,preview:UI_ICON.sideOpen,ask:UI_ICON.sideAsk};
  let sideTab='overview';
  const sideHeader=el('header','inspector-header native-side-header'),sideTitle=el('h2',''),sideBadge=el('span','native-side-badge');sideBadge.hidden=true;sideHeader.append(sideTitle,sideBadge);
  const sidePanels=Object.fromEntries(SIDE_TABS.map(name=>{const panel=el('section','inspector-panel native-side-panel');panel.id=`native-side-${name}`;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',`native-side-tab-${name}`);return [name,panel];}));
@@ -808,7 +809,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   renderAgentDetails(value);
   renderSessionControls(value);
   renderSessionSettings(value);
-  selectSideTab(sideTab);
+  const askable=sideAsk.available(value);sideTabButtons[SIDE_TABS.indexOf('ask')].hidden=!askable;if(askable)sideAsk.attach(value);else sideAsk.detach();
+  selectSideTab(sideTab==='ask'&&!askable?'overview':sideTab);
  }
  const tokensText=n=>n==null?'':n>=1e6?`${(n/1e6).toFixed(n>=1e7?0:1)}M`:n>=1e3?`${(n/1e3).toFixed(n>=1e5?0:1)}k`:String(n);
  const EFFORT_LABELS={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra high',max:'Max',ultra:'Ultra',auto:'Automatic',default:'CLI default'};
@@ -841,7 +843,101 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   card.append(ctx);
   const feedback=takeover.feedback(value);if(feedback)card.append(el('p','global-error',feedback));
  }
+ /**
+  * Side question tab. A blank chat on open; each question runs read-only on a temporary copy of the session (Claude: its
+  * last 10 turns) and never reaches it. Nothing is kept: the trash icon clears it, and so do switching sessions, a new
+  * prompt in the main session, an hour without use and two hours of age. Switching to another right-side tab keeps it.
+  */
+ function createSideAsk(){
+  const root=el('div','native-side-ask'),head=el('div','side-preview-head native-ask-head'),titles=el('div','side-preview-titles'),title=el('strong','side-preview-title'),sub=el('div','side-preview-sub',t('Answers stay here only; nothing is kept after you clear it'));
+  const clear=iconButton('trash','Clear this side question',()=>void reset({tell:true}));titles.append(title,sub);head.append(titles,clear);
+  const body=el('div','side-preview-body native-ask-body'),note=el('p','workspace-note native-ask-note');note.hidden=true;
+  const form=el('form','chat-composer native-takeover-form native-ask-form'),bar=el('div','chat-input-bar'),field=el('div','chat-input-field'),tray=el('div','chat-attachments native-takeover-tray');tray.hidden=true;
+  const attach=el('button','native-attach');attach.type='button';attach.title=t('Upload an image or file');attach.setAttribute('aria-label',t('Upload file'));attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
+  const model=el('select','native-ask-model');model.setAttribute('aria-label',t('Model for side questions'));
+  const input=el('textarea');input.rows=1;input.placeholder=t('Ask a quick question that does not interrupt the main session…');input.setAttribute('aria-label',t('Side question'));
+  const send=el('button','primary chat-send');send.type='submit';setActionIcon(send,'send',t('Send'));
+  const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
+  field.append(tray,attach,model,input,send);bar.append(field);form.append(bar);root.append(head,body,note,form);
+  let session=null,sideId=null,view=null,pending=false,poll=null,signature='',files=[],uploads=0,notice='';
+  const sessionKey=value=>value?key(value):'';
+  const live=q=>['queued','starting','running','waiting_user','stopping'].includes(q?.status);
+  const NOTES={main_prompt:'The main session has a new prompt; side questions start over.',main_session_moved:'The main session has a new prompt; side questions start over.',idle:'Closed after an hour without use.',expired:'Closed two hours after it began.',replaced:'Closed because another side question started.',device_disconnected:'The device disconnected; the side question was closed.',restart:'The device restarted; the side question was closed.'};
+  function available(value){const worker=getData().workers?.find(w=>w.id===value?.nodeId);return Boolean(value&&['claude','codex'].includes(value.runtime)&&worker?.capabilities?.nativeSideAsk===1&&nativeId(value)&&value.workspace);}
+  function fillModels(){
+   const worker=getData().workers?.find(w=>w.id===session?.nodeId),runtime=worker?.runtimes?.find(r=>r.type===session?.runtime),main=takeover.settings().model||session?.sessionConfiguration?.model||'';
+   const keep=model.value;model.replaceChildren();const follow=el('option','',main?t('Follow the session · {model}',{model:main}):t('Follow the session'));follow.value='';model.append(follow);
+   for(const m of runtime?.models||[]){if(m.id===main)continue;const o=el('option','',m.name||m.id);o.value=m.id;model.append(o);}
+   model.value=[...model.options].some(o=>o.value===keep)?keep:'';
+  }
+  function setNote(text){note.hidden=!text;note.textContent=text?t(text):'';}
+  function render(){
+   if(!session)return;
+   title.textContent=`${names[session.runtime]||session.runtime}${session.runtime==='claude'?` · ${t('last {count} turns',{count:view?.turns??10})}`:''}`;
+   const questions=view?.questions||[];const sig=JSON.stringify([sessionKey(session),questions.map(q=>[q.id,q.status,q.text.length,q.events.length,q.error,q.endedAt]),notice,pending,uploads,files.map(f=>f.id)]);
+   const busy=pending||questions.some(live);send.disabled=busy||uploads>0||(!input.value.trim()&&!files.length);attach.disabled=busy;clear.disabled=!sideId&&!questions.length;
+   tray.replaceChildren();for(const f of files){const chip=el('div','attachment-card attachment-file-card');chip.title=f.name;const open=el('span','attachment-open');open.append(el('span','attachment-name',f.name),el('small','',formatBytes(f.size)));chip.append(open,closeIcon(button('',()=>{files=files.filter(x=>x.id!==f.id);render();},'attachment-remove'),t('Remove attachment')));tray.append(chip);}
+   if(uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
+   if(sig===signature)return;signature=sig;
+   body.replaceChildren();
+   if(notice)body.append(el('p','workspace-note native-ask-restarted',t(notice)));
+   if(!questions.length){const empty=el('div','side-preview-empty');const icon=el('span','side-preview-empty-icon');icon.innerHTML=UI_ICON.sideAsk;empty.append(icon,el('p','',t(session.runtime==='claude'?'Ask a quick question that does not interrupt the main session. The answer sees its last 10 turns, stays here only, and is gone once you clear it or the main session moves on.':'Ask a quick question that does not interrupt the main session. The answer stays here only, and is gone once you clear it or the main session moves on.')));body.append(empty);return;}
+   for(const q of questions){
+    const files=q.attachments?.length?el('div','chat-attachments native-turn-files'):null;if(files)for(const a of q.attachments)files.append(el('span','attachment-name native-ask-file',a.name));
+    const user=chatRow('user',q.prompt,session.runtime,q.createdAt,files);
+    const content=el('div','nt-turn');content.append(turnContent(q,session,{live:live(q),open:live(q)}));
+    if(live(q))content.append(workingLine(q));else if(q.status!=='succeeded')content.append(el('div','nt-error',`${t(q.status==='interrupted'?'Interrupted':'Failed')}${q.error?` · ${t(q.error)}`:''}`));
+    const reply=chatRow('assistant',replyText(q),session.runtime,q.endedAt||q.createdAt,null,live(q)?'running':q.status==='succeeded'?'completed':'error',session,{content});
+    if(q.endedAt)reply.querySelector('.nt-reply-foot')?.append(el('span','nt-duration',t('Took {duration}',{duration:elapsedText(q.createdAt,new Date(q.endedAt).getTime())})));
+    body.append(user,reply);
+   }
+   const usage=[...questions].reverse().find(q=>q.contextUsage?.usedTokens)?.contextUsage?.usedTokens;
+   body.append(el('p','workspace-note native-ask-usage',[usage?t('Context about {tokens} tokens',{tokens:usage>=1000?`${Math.round(usage/1000)}k`:usage}):'',t('{count} side questions',{count:questions.length})].filter(Boolean).join(' · ')));
+   body.scrollTop=body.scrollHeight;
+  }
+  function stopPoll(){clearInterval(poll);poll=null;}
+  function startPoll(){if(poll)return;poll=setInterval(()=>void refresh(),1000);}
+  async function refresh(){
+   if(!session||!sideId)return stopPoll();const asked=sideId,owner=sessionKey(session);
+   try{const next=await api(`${endpoint(session.nodeId)}/side/${encodeURIComponent(asked)}`);if(sideId!==asked||sessionKey(session)!==owner)return;
+    if(next.closed){sideId=null;view=null;notice=NOTES[next.reason]||'';stopPoll();render();return;}
+    view=next;notice=next.restarted?'The main session has a new prompt; side questions start over.':notice;if(!next.questions.some(live))stopPoll();render();}
+   catch(error){setNote(error.message);}
+  }
+  async function reset({tell=false,reason=''}={}){
+   stopPoll();const old=sideId,owner=session;sideId=null;view=null;files=[];notice=reason?NOTES[reason]||'':'';signature='';setNote('');
+   if(tell&&old&&owner)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(old)}`,{method:'DELETE'}).catch(()=>{});
+   render();
+  }
+  async function ask(){
+   if(!session||pending)return;const prompt=input.value;if(!prompt.trim()&&!files.length)return;
+   pending=true;setNote('');render();
+   try{const next=await api(`${endpoint(session.nodeId)}/side`,{method:'POST',json:{sideId,runtime:session.runtime,sessionId:nativeId(session),prompt,model:model.value||null,attachmentIds:files.map(f=>f.id)}});
+    if(next.id!==sideId&&sideId&&view?.questions?.length)notice='The main session has a new prompt; side questions start over.';
+    sideId=next.id;view=next;input.value='';files=[];startPoll();}
+   catch(error){setNote(error.message);}
+   finally{pending=false;render();}
+  }
+  async function upload(list){
+   if(!session)return;for(const file of [...list]){if(files.length+uploads>=6){setNote('At most 6 attachments per message');break;}uploads++;render();
+    try{const item=await api(`${endpoint(session.nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});files.push({id:item.id,name:item.name,mime:item.mime,size:item.size});}
+    catch(error){setNote(error.message);}finally{uploads--;render();}}
+  }
+  form.addEventListener('submit',e=>{e.preventDefault();void ask();});
+  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;render();});
+  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!send.disabled){e.preventDefault();void ask();}});
+  input.addEventListener('paste',e=>{const list=[...(e.clipboardData?.files||[])];if(list.length){e.preventDefault();void upload(list);}});
+  attach.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
+  return {root,available,
+   /** A different session starts a blank side question (the old one is closed); the same session keeps it. */
+   attach(value){if(sessionKey(value)!==sessionKey(session)){const previous=session;void reset({tell:Boolean(previous)});session=value;}else session=value;fillModels();render();},
+   detach(){void reset({tell:true});session=null;},
+   /** The main session got a new prompt from this page: the side question starts over. */
+   mainPrompted(value){if(session&&sessionKey(value)===sessionKey(session)&&(sideId||view?.questions?.length))void reset({reason:'main_prompt'});}
+  };
+ }
  const takeover=createTakeover();
+ const sideAsk=createSideAsk();sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);
  // Sessions opened on this page with "Allow all": once the headless first turn has produced history, chat here without a separate takeover confirmation.
  const pageOpened=new Set();
  const IMAGE_CLIS=new Set(['codex','claude']),openProcesses=new Set();
@@ -1209,7 +1305,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
     d.pending={clientTurnId:sameSend(d.rejected?.payload,payload)?d.rejected.clientTurnId:crypto.randomUUID(),...payload};}
    delete d.rejected;d.sendState='sending';const sent=d.pending;save();op.sending=true;render();
-   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});drafts[id]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
+   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});if(!d.pending?.control)sideAsk.mainPrompted(value);drafts[id]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
    catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;}op.message=t(error.message);}
    finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[id]?.pending&&drafts[id].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}

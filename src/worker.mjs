@@ -24,7 +24,8 @@ import { CliPrintSession } from './cli-print-session.mjs';
 import { supportedPermissionScopes, workerPermissionScopes, PERMISSION_CONTRACT_VERSION } from './role-permissions.mjs';
 import { browseFolders, createFolder, prepareNativeSessionFolder } from './folders.mjs';
 import {FolderAccess} from './folder-access.mjs';
-import {createWorkerNativeTurns} from './native-turns-worker.mjs';
+import {createWorkerNativeTurns,receiveTurnFiles} from './native-turns-worker.mjs';
+import {SideAsks} from './native-side-ask.mjs';
 import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {listNativeSessions,readNativeSession,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
@@ -138,7 +139,9 @@ const recoveryBinding=m=>({taskId:m.run.taskId||m.task.id,projectId:m.run.projec
 async function checkNativeDriver(m){const binding=recoveryBinding(m);if(!binding.nativeSessionId&&!binding.priorRunId)return;if(!cliRecoveryEnabled){const owned=sessions.get(binding.runId),pid=(owned?.preparing?owned.session:owned)?.proc?.pid;if(cliRecovery.records(binding).some(r=>r.pid!==pid&&!warmSessions.owns(r.pid)&&managedRunProcessState(r)!=='exited'))throw Error(tr('worker.nativeSessionStillHasProcess'));return;}const result=await cliRecovery.check(binding);if(result.state!=='ready'){const error=Error(result.reason||tr('cliRecovery.waiting'));error.code='CLI_RECOVERY_WAIT';error.recovery=result;throw error;}}
 /** Slot reservations count before asynchronous preparation; retained processes are reclaimed, never active work. */
 let nativeTurns=null;
-function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalSlots(db,identity.nodeId);}
+/** Side questions (src/native-side-ask.mjs): read-only, one temporary session each, removed on close, expiry or restart. */
+let sideAsks=null;
+function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalSlots(db,identity.nodeId)+(sideAsks?.size||0);}
 /** Session-page takeover hook (src/native-turns-worker.mjs); idle unless a native session is taken over. */
 nativeTurns=createWorkerNativeTurns({db,send:m=>send(m),data,homeHttp:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,projectRoot:path=>projectRoot(path),
   isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots())});
@@ -1145,7 +1148,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -1191,6 +1194,8 @@ function connect() {
       if (m.type === 'query') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>query(m)));
       if (m.type === 'native_turn') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>nativeTurns.start(m)));
       if (m.type === 'native_turn_stop') void nativeTurns.stop(m.id);
+      if (m.type === 'side_ask') void runWithLanguage(m.language, () => sideAsks.ask(m));
+      if (m.type === 'side_ask_close') void sideAsks.close(m.sideId,'cleared');
       if (m.type === 'native_turn_answer') nativeTurns.answer(m.id,m);
       if (m.type === 'native_takeover_release') void nativeTurns.releaseLease(m.runtime,m.sessionId,m.leaseId).catch(e=>console.error('Native takeover release:',e.message));
       if (m.type === 'error') console.error(tr('worker.rejectedByHome'), m.error);
@@ -1208,6 +1213,17 @@ function connect() {
   });
 }
 const outboxTimer=setInterval(flushOutbox,1000);outboxTimer.unref();
+sideAsks=new SideAsks({db,send,data,env:process.env,
+  canStart:m=>{
+    if(paused||quitting)throw new Error('Remote execution is paused');
+    if(!runtimes.some(r=>r.type===m.runtime&&r.available&&r.supported!==false))throw new Error('CLI is not available on this device');
+    if(occupiedSlots()>=capacity)throw new Error('Device CLI capacity is full; try the side question again shortly');
+  },
+  receiveFiles:async m=>{if(!m.attachments?.length)return [];const root=join(data,'side-ask-files');m.questionDir=join(root,m.questionId);
+    return receiveTurnFiles({items:m.attachments,turnId:m.questionId,root,home:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,route:`/api/agent/side-asks/${m.sideId}`});}});
+// Anything left from before this start is removed; then quiet or old side questions close every five minutes.
+void sideAsks.sweep({all:true}).catch(e=>console.error('Side questions:',e.message));
+const sideAskTimer=setInterval(()=>void sideAsks.sweep().catch(e=>console.error('Side questions:',e.message)),5*60000);sideAskTimer.unref();
 /**
  * Data retention (src/data-retention.mjs): Home sets the policy; a pass runs a minute after the first registration and
  * daily after that, deleting in small batches. VACUUM waits for an idle moment (no CLI, no takeover turn, no sync in flight).

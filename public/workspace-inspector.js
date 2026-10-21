@@ -119,7 +119,7 @@ export function initWorkspaceColumns(){
   const media=matchMedia('(min-width: 1001px)'),key='agent-workbench.column-widths';
   let sizes={left:260,right:320,preview:480};try{const saved=JSON.parse(localStorage.getItem(key));if(Number.isFinite(saved?.left)&&Number.isFinite(saved?.right))sizes={left:saved.left,right:saved.right,preview:Number.isFinite(saved.preview)?saved.preview:480};}catch{}
   // The Sessions page's Preview tab is for reading beside the chat: it opens wider and keeps its own width.
-  const wide=()=>document.body.dataset.navigationMode==='sessions'&&document.body.dataset.sessionSideTab==='preview';
+  const wide=()=>document.body.dataset.navigationMode==='sessions'&&['preview','ask'].includes(document.body.dataset.sessionSideTab);
   const slot=side=>side==='right'&&wide()?'preview':side;
   function apply(){
     if(!media.matches)return;
