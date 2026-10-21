@@ -383,4 +383,5 @@ export default {
  "Branched from another session": "从另一个会话分出",
  "Open the original": "打开原会话",
  "Model is thinking": "模型正在思考",
+ "The pasted text could not become an attachment ({message}); it is back in the input box": "粘贴的文本没能转成附件（{message}），已放回输入框",
 };

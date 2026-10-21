@@ -154,6 +154,17 @@ export function openImageLightbox({name,size=null,at=null,url}){
   }).catch(error=>{if(v.version!==viewerVersion)return;v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:error.message});});
 }
 
+/** A text attachment (pasted text, Markdown, plain text) in the same viewer: the text as written, download, copy the text, close. */
+export function openTextLightbox({name,size=null,at=null,url}){
+  const v=lightbox({name,size,at});v.stage.classList.add('is-text');
+  void Promise.resolve(url).then(async src=>{
+    const response=await fetch(src);if(!response.ok)throw Error(`HTTP ${response.status}`);
+    const text=await response.text();if(v.version!==viewerVersion)return;
+    v.overlay.hidden=true;const body=el('pre','media-text',text);body.translate=false;v.stage.prepend(body);
+    v.download.href=src;v.download.setAttribute('download',name);v.download.hidden=false;copyAction(v.copy,{text});
+  }).catch(error=>{if(v.version!==viewerVersion)return;v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:error.message});});
+}
+
 /** The viewer streams through the ticket URL: playback starts with the first ranges, seeking fetches only what is needed. */
 export async function openMediaViewer(path,context,{at=null}={}) {
   const v=lightbox({name:baseName(path),at}),{version,download,stage,overlay,status,title,bytes}=v;

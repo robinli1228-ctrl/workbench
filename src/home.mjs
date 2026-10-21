@@ -1473,6 +1473,7 @@ const server = http.createServer(async (req, res) => {
     files['/native-sessions.js']='native-sessions.js';
     files['/native-transcript.js']='native-transcript.js';
     files['/media.js']='media.js';
+    files['/pasted-text.js']='pasted-text.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';

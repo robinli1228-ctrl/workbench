@@ -3613,3 +3613,6 @@ dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); 
 .nt-step-count { flex: none; margin-left: 2px; color: #a3a8b1; font-size: .92em; font-variant-numeric: tabular-nums; }
 .native-session-content .nt-step.is-thinking .nt-step-target { color: var(--nt-quiet, #8b909a); font-family: inherit; }
 .nt-step.is-thinking .nt-icon { color: #a78bfa; }
+/* Text attachments (pasted text) open in the media viewer as the text itself, wrapped and scrollable. */
+dialog.media-lightbox .media-stage.is-text { display: block; min-height: 120px; overflow: auto; border: 1px solid var(--line); background: #f8f9fb; }
+dialog.media-lightbox .media-text { margin: 0; padding: 14px 16px; color: var(--ink); font-size: 13.5px; line-height: 1.7; font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }

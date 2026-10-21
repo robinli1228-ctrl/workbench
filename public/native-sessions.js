@@ -8,7 +8,8 @@ import {groupNativeSessions,readNativeSessionPages} from './native-session-group
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
-import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,formatBytes} from './media.js';
+import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,openTextLightbox,formatBytes} from './media.js';
+import {pastesAsFile,pastedTextName,isTextName} from './pasted-text.js';
 import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {stripAnsi} from './run-log-data.js';
@@ -925,6 +926,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   function previewAttachment(item,from=null){if(!current)return;
    // Pictures open in the shared viewer (download, copy, close; name, size and the message time); other files keep the details dialog.
    if(item.mime?.startsWith('image/')){openImageLightbox({name:item.name,size:item.size,at:from?.closest('[data-at]')?.dataset.at||null,url:fileUrl(current.nodeId,item)});return;}
+   // Pasted text and other text files show their text in the same viewer.
+   if(isTextName(item.name)){openTextLightbox({name:item.name,size:item.size,at:from?.closest('[data-at]')?.dataset.at||null,url:fileUrl(current.nodeId,item)});return;}
    if(!previewDialog){previewDialog=el('dialog','attachment-dialog');document.body.append(previewDialog);}
    const close=closeIcon(el('button','icon-button'),t('Close'));close.type='button';close.onclick=()=>previewDialog.close();
    previewDialog.setAttribute('aria-label',item.name);previewDialog.replaceChildren(close);
@@ -1158,13 +1161,21 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   attachButton.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
   field.append(tray,attachButton,input,sendButton);barRow.append(field);form.append(note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});
   /** Same limits as the group chat: at most 6 files per message, 20 MB each; images only for CLIs with image input. */
-  async function upload(list){if(!current)return;const id=k(),nodeId=current.nodeId,runtime=current.runtime,d=draft(id),op=operation(id),files=[...list];if(op.sending||op.releasing||d.pending)return;op.message='';
+  async function upload(list,{onFailed=null}={}){if(!current)return;const id=k(),nodeId=current.nodeId,runtime=current.runtime,d=draft(id),op=operation(id),files=[...list];if(op.sending||op.releasing||d.pending)return;op.message='';
    if((d.attachments?.length||0)+op.uploads+files.length>6){op.message=t('At most 6 attachments per message');render();return;}
    if(files.some(f=>!f.size||f.size>20*1024*1024)){op.message=t('Attachments cannot be empty; each file is limited to 20 MB');render();return;}
    if(!IMAGE_CLIS.has(runtime)&&files.some(f=>f.type.startsWith('image/'))){op.message=t('{tool} cannot receive images here; files are passed as paths',{tool:names[runtime]});render();return;}
    op.uploads+=files.length;render();
-   for(const file of files){let uploaded=null;try{uploaded=await api(`${endpoint(nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});if(!IMAGE_CLIS.has(runtime)&&uploaded.mime.startsWith('image/'))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');(d.attachments||=[]).push({id:uploaded.id,name:uploaded.name,mime:uploaded.mime,size:uploaded.size});save();}catch(error){if(uploaded)void api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(uploaded.id)}`,{method:'DELETE'}).catch(()=>{});op.message=t(error.message);}finally{op.uploads--;if(k()===id)render();}}}
-  input.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();void upload(files);}});
+   for(const file of files){let uploaded=null;try{uploaded=await api(`${endpoint(nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});if(!IMAGE_CLIS.has(runtime)&&uploaded.mime.startsWith('image/'))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');(d.attachments||=[]).push({id:uploaded.id,name:uploaded.name,mime:uploaded.mime,size:uploaded.size});save();}catch(error){if(uploaded)void api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(uploaded.id)}`,{method:'DELETE'}).catch(()=>{});op.message=t(error.message);onFailed?.(error);}finally{op.uploads--;if(k()===id)render();}}}
+  /** Pasted text over 200 characters goes in as a text attachment so the box stays short; a failed upload puts the text back where it was pasted. */
+  function pasteAsFile(text){if(!current||!pastesAsFile(text))return false;const id=k(),d=draft(id),op=operation(id);if(op.sending||op.releasing||d.pending)return false;
+   if((d.attachments?.length||0)+op.uploads>=6){op.message=t('Attachments are full; the long text stays in the input box. Remove an attachment first');render();return false;}
+   const file=new File([text],pastedTextName(text),{type:'text/markdown'});if(file.size>20*1024*1024){op.message=t('Text exceeds the 20 MB per-attachment limit; the original is kept, please split it before sending');render();return false;}
+   const start=input.selectionStart??input.value.length,end=input.selectionEnd??start,before=input.value.slice(0,start),after=input.value.slice(end);
+   input.value=before+after;input.setSelectionRange(start,start);d.text=input.value;save();resize();
+   void upload([file],{onFailed:error=>{const now=draft(id);now.text=now.text===before+after?before+text+after:`${now.text?`${now.text}\n`:''}${text}`;save();if(k()===id){input.value=now.text;resize();}op.message=t('The pasted text could not become an attachment ({message}); it is back in the input box',{message:t(error.message)});}});
+   return true;}
+  input.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();void upload(files);return;}if(pasteAsFile(e.clipboardData?.getData('text/plain')||''))e.preventDefault();});
   shell.addEventListener('dragover',e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();shell.classList.add('is-dragging');}});
   shell.addEventListener('dragleave',()=>shell.classList.remove('is-dragging'));
   shell.addEventListener('drop',e=>{shell.classList.remove('is-dragging');if(e.dataTransfer?.files.length&&current&&(isOn(current)||canChat(current))){e.preventDefault();void upload(e.dataTransfer.files);}});
