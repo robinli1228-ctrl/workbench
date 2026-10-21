@@ -1,4 +1,4 @@
-import {t} from './i18n.js';
+import {t,dateLocale} from './i18n.js';
 import {setActionIcon} from './role-icons.js';
 
 /**
@@ -86,7 +86,7 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
     if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info);
   };
   if(describe)void describeQueued(context,path).then(show).catch(()=>{});
-  card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void openMediaViewer(path,context).then(show).catch(()=>{});});
+  card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void openMediaViewer(path,context,{at:messageTime(card)}).then(show).catch(()=>{});});
   return card;
 }
 
@@ -108,30 +108,66 @@ function attachPreview(card,info) {
   else load();
 }
 
+/** The time of the message a card sits in: a Sessions row carries data-at, a group-chat row its <time datetime>. */
+function messageTime(node){return node.closest('[data-at]')?.dataset.at||node.closest('.chat-row')?.querySelector('time[datetime]')?.getAttribute('datetime')||null;}
+const stamp=value=>{const date=new Date(value||'');return Number.isNaN(date.getTime())?'':date.toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});};
+/** Copy puts the picture itself on the clipboard (as PNG); anything else, or a browser without image clipboard, copies the text. */
+async function toPng(blob){if(blob.type==='image/png')return blob;const bitmap=await createImageBitmap(blob),canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;canvas.getContext('2d').drawImage(bitmap,0,0);return new Promise((resolve,reject)=>canvas.toBlob(png=>png?resolve(png):reject(Error('PNG')),'image/png'));}
+function copyAction(button,{url,kind,text}){
+  button.hidden=false;
+  const done=()=>{setActionIcon(button,'check',t('Copied'));setTimeout(()=>setActionIcon(button,'copy',t('Copy')),1500);};
+  button.onclick=async()=>{
+    try{if(kind==='image'&&url&&window.ClipboardItem&&navigator.clipboard?.write){await navigator.clipboard.write([new ClipboardItem({'image/png':fetch(url).then(r=>r.blob()).then(toPng)})]);done();return;}}catch{}
+    try{await navigator.clipboard.writeText(text);done();}catch{}
+  };
+}
+
 let viewer=null,viewerVersion=0;
-/** The viewer streams through the ticket URL: playback starts with the first ranges, seeking fetches only what is needed. */
-export async function openMediaViewer(path,context) {
+/**
+ * One viewer for every image and video in the chats (media named in replies and attachments people send): download, copy and
+ * close at the top right; the picture on a plain stage; its name and size bottom left, the message time bottom right.
+ */
+function lightbox({name,size=null,at=null}){
   const version=++viewerVersion;
-  if(!viewer){viewer=el('dialog','message-fullscreen media-viewer');viewer.addEventListener('close',()=>{viewerVersion++;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});});document.body.append(viewer);}
-  const heading=el('div','message-fullscreen-heading'),title=el('strong','',baseName(path)),download=setActionIcon(el('a','chat-icon-btn media-download'),'follow',t('Download'));
-  download.hidden=true;download.setAttribute('download','');
+  if(!viewer){viewer=el('dialog','media-viewer media-lightbox');viewer.addEventListener('close',()=>{viewerVersion++;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});});document.body.append(viewer);}
+  const actions=el('div','media-lightbox-actions'),download=setActionIcon(el('a','chat-icon-btn media-download'),'follow',t('Download'));download.hidden=true;download.setAttribute('download','');
+  const copy=setActionIcon(el('button','chat-icon-btn media-copy'),'copy',t('Copy'));copy.type='button';copy.hidden=true;
   const close=setActionIcon(el('button','chat-icon-btn'),'close',t('Close'));close.type='button';close.addEventListener('click',()=>viewer.close());close.autofocus=true;
-  heading.append(title,download,close);
-  const body=el('div','media-viewer-body'),stage=el('div','media-stage'),overlay=el('div','media-loading',t('Loading…')),status=el('p','workspace-note media-status',t('Reading file information…'));
-  status.setAttribute('role','status');stage.append(overlay);body.append(stage,status);
-  viewer.setAttribute('aria-label',baseName(path));viewer.replaceChildren(heading,body);
+  actions.append(download,copy,close);
+  const stage=el('div','media-stage'),overlay=el('div','media-loading',t('Loading…')),status=el('p','workspace-note media-status');status.setAttribute('role','status');status.hidden=true;stage.append(overlay);
+  const foot=el('div','media-lightbox-foot'),label=el('div','media-lightbox-label'),title=el('strong','media-lightbox-name',name),bytes=el('span','media-lightbox-size',size==null?'':formatBytes(size)),when=el('time','media-lightbox-time');
+  const setTime=value=>{when.textContent=stamp(value);if(when.textContent)when.dateTime=value;};setTime(at);
+  label.append(title,bytes);foot.append(label,when);
+  viewer.setAttribute('aria-label',name);viewer.replaceChildren(actions,stage,status,foot);
   if(!viewer.open)viewer.showModal();
+  return {version,download,copy,stage,overlay,status,title,bytes,when,setTime};
+}
+
+/** A picture people sent (an attachment): the same viewer as media in replies. `url` may be a promise of an object URL. */
+export function openImageLightbox({name,size=null,at=null,url}){
+  const v=lightbox({name,size,at});
+  void Promise.resolve(url).then(src=>{
+    if(v.version!==viewerVersion)return;
+    const image=el('img','media-image');image.alt=name;image.decoding='async';
+    image.addEventListener('load',()=>{v.overlay.hidden=true;});image.addEventListener('error',()=>{v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:name});});
+    image.src=src;v.stage.prepend(image);v.download.href=src;v.download.setAttribute('download',name);v.download.hidden=false;copyAction(v.copy,{url:src,kind:'image',text:name});
+  }).catch(error=>{if(v.version!==viewerVersion)return;v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:error.message});});
+}
+
+/** The viewer streams through the ticket URL: playback starts with the first ranges, seeking fetches only what is needed. */
+export async function openMediaViewer(path,context,{at=null}={}) {
+  const v=lightbox({name:baseName(path),at}),{version,download,stage,overlay,status,title,bytes}=v;
   let info;
   try{info=await describeQueued(context,path,{fresh:true});}
-  catch(error){if(version===viewerVersion){overlay.hidden=true;status.textContent=t('Unable to open: {message}',{message:error.message});}throw error;}
+  catch(error){if(version===viewerVersion){overlay.hidden=true;status.hidden=false;status.textContent=t('Unable to open: {message}',{message:error.message});}throw error;}
   if(version!==viewerVersion)return info;
   title.textContent=info.name||baseName(path);
-  if(!info.available){overlay.hidden=true;status.textContent=t(REASONS[info.reason]||'Unavailable');stage.append(el('p','media-unavailable',info.reason==='source_offline'?t('The device that holds this file is offline, and there is no complete local copy to play.'):t(REASONS[info.reason]||'Unavailable')));return info;}
+  if(!info.available){overlay.hidden=true;status.hidden=false;status.textContent=t(REASONS[info.reason]||'Unavailable');stage.append(el('p','media-unavailable',info.reason==='source_offline'?t('The device that holds this file is offline, and there is no complete local copy to play.'):t(REASONS[info.reason]||'Unavailable')));return info;}
+  bytes.textContent=formatBytes(info.size);if(!at)v.setTime(info.modifiedAt);
   download.href=info.downloadUrl;download.hidden=false;download.title=t('Download to this computer · {size}',{size:formatBytes(info.size)});
-  const source=info.copyOf?t('Playing the local copy on {device}; the source device is offline.',{device:info.sourceName}):t('From {device}',{device:info.sourceName});
-  const summary=[source,formatBytes(info.size)].join(' · ');status.textContent=summary;
+  copyAction(v.copy,{url:info.url,kind:info.kind,text:info.copyOf?info.name:path});
+  const summary=[info.copyOf?t('Playing the local copy on {device}; the source device is offline.',{device:info.sourceName}):t('From {device}',{device:info.sourceName}),formatBytes(info.size)].join(' · ');
   renderStage(stage,overlay,status,info,summary,path,context,version);
-  if(context.transfers)body.append(transferPanel(info,context));
   return info;
 }
 
@@ -146,7 +182,7 @@ function renderStage(stage,overlay,status,info,summary,path,context,version) {
       const fresh=await describeQueued(context,path,{fresh:true}).catch(()=>null);
       if(fresh?.available){media.dataset.renewed='1';info.url=fresh.url;media.src=fresh.url;overlay.hidden=false;return;}
     }
-    status.textContent=t({format:'This browser cannot play this format. Download it to open locally.',file_changed:'The file changed since this message; reopen it to see the current version.',source_offline:'Source device offline',media_busy:'The source device is busy; try again shortly.',worker_upgrade:'Device needs a Worker upgrade',network:'Network error while loading.'}[reason]||'Unable to load: {reason}',{reason});
+    status.hidden=false;status.textContent=t({format:'This browser cannot play this format. Download it to open locally.',file_changed:'The file changed since this message; reopen it to see the current version.',source_offline:'Source device offline',media_busy:'The source device is busy; try again shortly.',worker_upgrade:'Device needs a Worker upgrade',network:'Network error while loading.'}[reason]||'Unable to load: {reason}',{reason});
   };
   if(info.kind==='video'||info.kind==='audio'){
     const media=el(info.kind);media.controls=true;media.preload='metadata';media.setAttribute('playsinline','');
@@ -168,41 +204,4 @@ function renderStage(stage,overlay,status,info,summary,path,context,version) {
   }
   overlay.hidden=true;
   stage.append(el('p','media-unavailable',t('This file type cannot be previewed in the page. Download streams it to this computer as it arrives ({size}).',{size:formatBytes(info.size)})));
-}
-
-/** Send a copy to another device of the project; the target verifies size and SHA-256 before the file appears. */
-function transferPanel(info,context) {
-  const panel=el('div','media-transfer'),select=el('select'),action=el('button','primary-btn',t('Send to device')),note=el('p','workspace-note'),bar=el('progress','media-progress');
-  select.setAttribute('aria-label',t('Target device'));action.type='button';bar.max=1;bar.value=0;bar.hidden=true;note.setAttribute('role','status');
-  const targets=context.transfers.targets().filter(target=>target.nodeId!==info.sourceNodeId);
-  for(const target of targets){const option=el('option','',`${target.name}${target.ready?'':` · ${t(target.online?'Upgrade required':'Offline')}`}`);option.value=target.nodeId;option.disabled=!target.ready;select.append(option);}
-  select.value=targets.find(target=>target.ready)?.nodeId||'';
-  // Polling must replace the opening snapshot so another send gets a new ID after completion.
-  const transfers=new Map((info.transfers||[]).map(transfer=>[transfer.nodeId,transfer]));
-  const show=transfer=>{
-    if(transfer){transfers.set(transfer.nodeId,transfer);if(transfer.nodeId!==select.value)return;}
-    if(!transfer){note.textContent=select.value?t('Copies the file into the project folder on that device, under .workbench/tmp/media/.'):t('No other project device can receive files right now.');bar.hidden=true;action.disabled=!select.value;return;}
-    const done=transfer.status==='completed';bar.hidden=done||transfer.status==='failed';bar.value=transfer.size?transfer.received/transfer.size:0;
-    note.textContent=transfer.status==='hashing'?t('Checking the source file…'):transfer.status==='transferring'?t('Transferring {received} of {size}…',{received:formatBytes(transfer.received||0),size:formatBytes(transfer.size)})
-      :done?t('Copied and verified: {path}',{path:transfer.path}):t('Transfer failed: {error}',{error:transfer.error||''});
-    action.disabled=!select.value||['hashing','transferring'].includes(transfer.status);action.textContent=t(transfer.status==='failed'?'Retry transfer':done?'Send again':'Send to device');
-  };
-  const ids=new Map();let polling=null;
-  const current=()=>transfers.get(select.value)||null;
-  const poll=id=>{clearTimeout(polling);polling=setTimeout(async()=>{
-    if(!panel.isConnected)return;
-    try{const transfer=await context.transfers.read(id);show(transfer);if(['hashing','transferring'].includes(transfer.status))poll(id);}catch{poll(id);}
-  },1500);};
-  action.addEventListener('click',async()=>{
-    const nodeId=select.value;if(!nodeId)return;
-    const prior=current();let id=ids.get(nodeId)||(prior&&prior.status==='failed'?prior.id:null);
-    if(!id||prior?.status==='completed'&&prior.id===id){id=crypto.randomUUID();}
-    ids.set(nodeId,id);action.disabled=true;
-    try{const transfer=await context.transfers.start({clientTransferId:id,ticket:info.ticket,nodeId});show(transfer);poll(id);}
-    catch(error){note.textContent=t('Transfer failed: {error}',{error:error.message});action.disabled=false;}
-  });
-  select.addEventListener('change',()=>show(current()));
-  panel.append(select,action,bar,note);show(current());
-  const running=current();if(running&&['hashing','transferring'].includes(running.status))poll(running.id);
-  return panel;
 }

@@ -3535,3 +3535,32 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-queue summary .message-queue-paused { margin-left: 2px; padding: 1px 8px; border-radius: 999px; background: #fff4e5; color: #b45309; font-size: 11.5px; font-weight: 600; }
 .native-queue .message-queue-item.list-order-placeholder { background: rgb(37 99 235 / 12%); }
 .message-queue-item.list-order-ghost .message-queue-time { opacity: 0; }
+
+/* ---- One viewer for every picture and video in the chats: download, copy and close at the top right; a plain light stage
+   (no black bars); name and size bottom left, the message time bottom right. ---- */
+dialog.media-lightbox { width: min(1100px, calc(100vw - 48px)); max-width: none; max-height: calc(var(--app-height, 100dvh) - 48px); padding: 0; overflow: hidden; }
+dialog.media-lightbox[open] { display: flex; flex-direction: column; }
+.media-lightbox-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 10px 12px 0; }
+.media-lightbox-actions .chat-icon-btn { display: grid; place-items: center; width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 6px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
+.media-lightbox-actions .chat-icon-btn:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.media-lightbox-actions .chat-icon-btn svg { width: 18px; height: 18px; }
+.media-lightbox-actions .media-download { margin-left: 0; }
+dialog.media-lightbox .media-stage { flex: 1; min-height: 200px; margin: 6px 16px 0; border-radius: 10px; background: transparent; }
+dialog.media-lightbox .media-stage img, dialog.media-lightbox .media-stage video { max-width: 100%; max-height: calc(var(--app-height, 100dvh) - 190px); border-radius: 8px; object-fit: contain; }
+dialog.media-lightbox .media-loading { inset: 50% auto auto 50%; transform: translate(-50%, -50%); background: rgb(15 23 42 / 62%); }
+dialog.media-lightbox .media-unavailable { color: var(--muted); }
+dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); font-size: 12.5px; }
+.media-lightbox-foot { display: flex; align-items: center; gap: 16px; padding: 12px 18px 14px; }
+.media-lightbox-label { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin-right: auto; }
+.media-lightbox-name { overflow: hidden; color: var(--ink); font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.media-lightbox-size, .media-lightbox-time { flex: none; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+/* Pictures and videos named in messages show as the same thumbnail as a picture someone sent (96×72, cropped to fill, 10px
+   corners); the name is in the tooltip and at the bottom of the viewer. Other files keep their card. */
+.media-card.has-preview { display: inline-block; width: auto; max-width: none; margin: 2px 6px 2px 0; padding: 0; border: 0; border-radius: 10px; background: none; vertical-align: top; }
+.media-card.has-preview:hover { background: none; }
+.media-card.has-preview .media-card-text { display: none; }
+.media-card.has-preview .media-card-preview { width: 96px; height: 72px; aspect-ratio: auto; border: 1px solid #e3e6ec; border-radius: 10px; background: #f3f5f8; }
+.media-card.has-preview .media-card-preview > img, .media-card.has-preview .media-card-preview[data-kind="image"] > img, .media-card.has-preview .media-card-preview > video { object-fit: cover; }
+.media-card.has-preview .media-card-play { width: 26px; height: 26px; font-size: 10px; }
+.media-card.has-preview:hover .media-card-preview { filter: brightness(.96); }

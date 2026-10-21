@@ -8,7 +8,7 @@ import {groupNativeSessions,readNativeSessionPages} from './native-session-group
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
-import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,formatBytes} from './media.js';
+import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,formatBytes} from './media.js';
 import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {stripAnsi} from './run-log-data.js';
@@ -848,7 +848,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const revokeUrls=()=>{for(const id of [...urls.keys()]){const split=id.indexOf(':');revokeAttachment(id.slice(0,split),id.slice(split+1));}};
   let previewDialog=null;
   /** The full original (images) or its name and size (other files); the draft thumbnail is only a crop. */
-  function previewAttachment(item){if(!current)return;
+  function previewAttachment(item,from=null){if(!current)return;
+   // Pictures open in the shared viewer (download, copy, close; name, size and the message time); other files keep the details dialog.
+   if(item.mime?.startsWith('image/')){openImageLightbox({name:item.name,size:item.size,at:from?.closest('[data-at]')?.dataset.at||null,url:fileUrl(current.nodeId,item)});return;}
    if(!previewDialog){previewDialog=el('dialog','attachment-dialog');document.body.append(previewDialog);}
    const close=closeIcon(el('button','icon-button'),t('Close'));close.type='button';close.onclick=()=>previewDialog.close();
    previewDialog.setAttribute('aria-label',item.name);previewDialog.replaceChildren(close);
@@ -864,7 +866,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     card.append(open,closeIcon(button('',remove,'attachment-remove'),t('Remove attachment')));return card;
    }
    // A sent attachment opens in the preview on click (image full size, file details).
-   const open=el('button','attachment-open');open.type='button';open.title=item.name;open.addEventListener('click',()=>previewAttachment(item));card.append(open);
+   const open=el('button','attachment-open');open.type='button';open.title=item.name;open.addEventListener('click',()=>previewAttachment(item,open));card.append(open);
    if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);}else open.append(el('span','native-file-icon','\u{1F4C4}'));
    if(remove||!item.mime?.startsWith('image/')){const info=el('span','native-file-info');info.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));open.append(info);}
    if(remove){const x=closeIcon(button('',remove,'attachment-remove'),t('Remove attachment'));card.append(x);}return card;}
