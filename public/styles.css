@@ -3597,3 +3597,11 @@ dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); 
 .native-queue .message-queue-item > .icon-button, .native-queue .message-queue-item > .message-queue-grip, .native-queue .message-queue-time { flex: none; }
 /* The pause/resume button sits in the same column as the rows' delete buttons (list padding + row padding). */
 .native-queue summary { padding-right: 16px; }
+
+/* Session settings → branch and delete. */
+.native-branch-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 8px; }
+.native-branch-section .native-side-hint { margin: 4px 0 0; overflow-wrap: anywhere; }
+.native-branch-ack { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 4px; color: var(--ink); font-size: 13px; }
+.native-branch-ack input { margin-top: 3px; }
+.native-branch-result { display: grid; gap: 6px; justify-items: start; }
+.native-handover .native-meta-value { overflow-wrap: anywhere; color: var(--ink); font-size: 13px; }

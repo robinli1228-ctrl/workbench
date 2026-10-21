@@ -688,7 +688,69 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   sel.addEventListener('change',async()=>{sel.disabled=true;acctNote.className='native-side-hint';acctNote.textContent=t('Saving…');const r=await takeover.saveSetting('hostingAccountId',sel.value,{repoUrl:git?.remoteUrl||null});if(r)acctNote.textContent=t('Saved');else{acctNote.className='global-error';acctNote.textContent=takeover.feedback(value)||t('Could not save');}sel.disabled=false;});
   const manage=button('Manage accounts…',()=>{dialog.close();document.querySelector('#show-app-settings')?.click();},'secondary');
   acct.append(sel,acctNote,manage);
-  body.append(nameCard,repo,acct);dialog.append(body);dialog.showModal();
+  // Branch and delete: branch copies the folder next to it and forks the session (Claude, Codex); delete removes a folder
+  // Workbench made for this session. The device answers first whether delete is allowed, and why not.
+  const fork=el('section','native-settings-section native-branch-section');fork.append(el('h3','',t('Branch and delete')));
+  const forkWorker=getData().workers?.find(w=>w.id===value.nodeId),supported=forkWorker?.capabilities?.nativeBranch===1;
+  const branchReason=!supported?'Upgrade this Worker to branch or delete sessions':!['claude','codex'].includes(value.runtime)?'Grok and Agy sessions cannot be branched yet':!nativeId(value)?'This session has no history yet':takeover.busy()?'Wait for the current reply to finish':'';
+  const forkActions=el('div','native-branch-actions'),branchButton=button('Branch',()=>{dialog.close();openBranchDialog(value);},'secondary'),deleteButton=button('Delete folder',()=>{dialog.close();openDeleteDialog(value,deleteState);},'danger');
+  branchButton.disabled=Boolean(branchReason);deleteButton.disabled=true;
+  const branchNote=el('p','native-side-hint',t(branchReason||'Copies the folder next to it and opens a new session that continues this conversation; the two do not touch each other’s files.'));
+  const deleteNote=el('p','native-side-hint',t('Checking…'));let deleteState=null;
+  forkActions.append(branchButton,deleteButton);fork.append(forkActions,branchNote,deleteNote);
+  if(supported)void api(`${endpoint(value.nodeId)}/delete?${new URLSearchParams({runtime:value.runtime,...(nativeId(value)?{sessionId:nativeId(value)}:{}),...(value.entryId?{entryId:value.entryId}:{})})}`)
+   .then(state=>{deleteState=state;deleteButton.disabled=!state?.ok;deleteNote.textContent=state?.ok?(state.missing?t('The folder is already gone; delete removes the session from this list.'):`${t('Deletes this folder and removes the session from this list:')} ${state.path}`):t(state?.reason||'This folder cannot be deleted here');})
+   .catch(error=>{deleteNote.className='global-error';deleteNote.textContent=t(error.message);});
+  else deleteNote.textContent=t('Upgrade this Worker to branch or delete sessions');
+  body.append(nameCard,repo,acct,fork);dialog.append(body);dialog.showModal();
+ }
+ let forkDialog=null;
+ /** One confirm-then-progress dialog for branch and delete, in the same step style as the handover dialog. */
+ function forkFlow({title,intro,steps,confirmLabel,danger=false,ack=null,run}){
+  if(!forkDialog){forkDialog=el('dialog','settings-edit-dialog native-session-dialog native-handover');document.body.append(forkDialog);}
+  const heading=el('div','dialog-heading');heading.append(el('h2','',t(title)));
+  const list=el('ol','native-handover-steps'),rows=new Map();
+  for(const [id,label] of steps){const li=el('li','');li.append(el('span','native-handover-mark'),el('span','',t(label)));rows.set(id,li);list.append(li);}
+  const message=el('p','global-error');message.hidden=true;const after=el('div','native-handover-after');after.hidden=true;
+  const actions=el('div','native-session-actions'),cancel=button('Cancel',()=>forkDialog.close(),'secondary'),confirm=button(confirmLabel,()=>void go(),danger?'danger':'primary');
+  let check=null;
+  if(ack){check=el('input');check.type='checkbox';const label=el('label','native-branch-ack');label.append(check,el('span','',t(ack)));confirm.disabled=true;check.addEventListener('change',()=>{confirm.disabled=!check.checked;});forkDialog.replaceChildren(heading,...intro,list,label,message,after,actions);}
+  else forkDialog.replaceChildren(heading,...intro,list,message,after,actions);
+  actions.append(cancel,confirm);forkDialog.showModal();
+  const mark=(id,state)=>{const li=rows.get(id);if(!li)return;li.className=`is-${state}`;const m=li.querySelector('.native-handover-mark');m.replaceChildren();if(state==='running')m.append(el('span','nt-pulse'));else if(state==='done')m.innerHTML=UI_ICON.check;else if(state==='failed')m.innerHTML=UI_ICON.close;};
+  async function go(){
+   confirm.disabled=cancel.disabled=true;if(check)check.disabled=true;message.hidden=true;
+   try{await run({mark,after});cancel.textContent=t('Close');cancel.disabled=false;confirm.hidden=true;}
+   catch(error){for(const li of rows.values())if(li.className==='is-running'){li.className='is-failed';li.querySelector('.native-handover-mark').innerHTML=UI_ICON.close;}
+    message.textContent=t(error.message);message.hidden=false;cancel.disabled=false;cancel.textContent=t('Close');}
+  }
+ }
+ function openBranchDialog(value){
+  const intro=[el('p','native-side-hint',t('The working folder is copied next to it, then a new session continues this conversation in the copy. The CLI runs one short turn to start the branch.')),
+   el('p','native-meta-value',value.workspace||'')];
+  forkFlow({title:'Branch this session',intro,confirmLabel:'Branch',steps:[['copy','Copy the folder'],['fork','Start the branch session']],run:async({mark,after})=>{
+   mark('copy','running');
+   const progress=setTimeout(()=>{mark('copy','done');mark('fork','running');},4000);
+   let result;
+   try{result=await api(`${endpoint(value.nodeId)}/branch`,{method:'POST',json:{runtime:value.runtime,sessionId:nativeId(value),...(value.entryId?{entryId:value.entryId}:{})}});}
+   finally{clearTimeout(progress);}
+   mark('copy','done');mark('fork','done');
+   const facts=el('div','native-branch-result');
+   facts.append(el('p','native-meta-value',result.workspace));if(result.gitBranch)facts.append(el('p','native-side-hint',`${t('Git branch')}: ${result.gitBranch}`));
+   const open=button('Open the branch',async()=>{forkDialog.close();await load({quiet:true});const next=items.find(item=>item.nodeId===value.nodeId&&item.entryId===result.entryId);if(next)void read(next);},'primary');
+   facts.append(open);after.replaceChildren(facts);after.hidden=false;void load({quiet:true});
+  }});
+ }
+ function openDeleteDialog(value,state){
+  const intro=[el('p','native-side-hint',t(state?.missing?'The folder is already gone. The session is removed from this list; the CLI’s own history is kept.':'This deletes the folder and everything in it, and removes the session from this list. The CLI’s own history is kept. This cannot be undone.')),
+   el('p','native-meta-value',state?.path||value.workspace||'')];
+  forkFlow({title:'Delete the session folder',intro,danger:true,confirmLabel:'Delete',ack:state?.missing?null:'I understand every file in this folder will be deleted',steps:[['delete',state?.missing?'Remove the session':'Delete the folder']],run:async({mark})=>{
+   mark('delete','running');
+   await api(`${endpoint(value.nodeId)}/delete`,{method:'POST',json:{runtime:value.runtime,...(nativeId(value)?{sessionId:nativeId(value)}:{}),...(value.entryId?{entryId:value.entryId}:{})}});
+   mark('delete','done');
+   if(selected&&key(selected)===key(value)){try{sessionStorage.removeItem(SELECTION_KEY);}catch{}resetDetail();}
+   void load({quiet:true});
+  }});
  }
  /** Label/value rows with optional copy buttons, shared by the session, repository and runtime cards. */
  function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;if(typeof text==='string')valueText.title=text;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}

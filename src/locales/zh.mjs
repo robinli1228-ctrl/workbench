@@ -483,6 +483,8 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'history.invalidTimeScope': '{label} 不是有效时间',
   'history.timeScopeReversed': 'since 不能晚于 until',
   'wbTools.historySearchUsage': '用法：wb history search [关键词] [--role 角色]... [--file 路径] [--since 时间] [--until 时间] [--limit 数字] [--cursor 编号]。时间可写 30m、2h、3d、1w、today、yesterday、2026-10-20 或完整时间；以 -- 开头的关键词放在 -- 之后。',
+  'nativeBranch.titleSuffix': '分支',
+  'nativeBranch.notice': '这是从原会话分出的分支。项目文件夹已复制到 {target}，之后只在这个文件夹里工作，不要再修改原文件夹 {source}。请只回复：分支已就绪。',
   'history.offsetMustBeNonNegative': 'offset 必须是非负整数',
   'history.invalidCursor': 'cursor 无效',
   'history.projectNotFound': '项目不存在',
