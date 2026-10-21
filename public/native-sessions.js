@@ -567,22 +567,23 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   return {key:`native:${session.nodeId}:${session.runtime}:${sessionId}`,describe:path=>api(`${endpoint(session.nodeId)}/media?${new URLSearchParams({runtime:session.runtime,sessionId,path})}`)};};
  /** Transcript rows: assistant replies are plain prose with a small byline; prompts are a quiet block with a prompt mark. No card states or footers. */
  function chatRow(role,text,runtime,at,extra,state='completed',session,{content=null}={}){const agent=role!=='user',row=el('article',`nt-row ${agent?'nt-agent':'nt-user'} native-chat-row${state==='error'?' is-error':''}`);if(at)row.dataset.at=at;
-  const body=simplifiedCliOutput(text||''),main=el('div','nt-body');
+  const body=simplifiedCliOutput(text||''),main=el('div','nt-body');let files=null;
   if(agent){const by=el('div','nt-byline');const avatar=el('span','nt-avatar');avatar.append(agentIconEl(runtime));const name=el('span','nt-name',names[runtime]||t('Assistant'));name.translate=false;by.append(avatar,name);if(at){const stamp=el('time','',clock(at));stamp.dateTime=at;stamp.title=time(at);by.append(stamp);}
    row.append(by);
    if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));main.append(md);}
    if(body&&session)noteOutputs(session,body,at);}
   else{
-   // Attachments sit on top of the bubble, the text below; time, Copy and Full screen (when text is hidden) sit under the bubble, outside it.
-   const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(el('div','nt-prompt-files'),textEl);
+   // Attachments sit above the bubble, outside it; the bubble holds only the text (none when the prompt is attachments alone).
+   // Time, Copy and Full screen (when text is hidden) sit under the bubble, outside it.
+   files=el('div','nt-prompt-files');const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(textEl);main.hidden=!body.trim();
    if(at){const stamp=el('time','nt-prompt-time',clock(at));stamp.dateTime=at;stamp.title=time(at);tools.append(stamp);}
    const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
    const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
    tools.append(expand,copy);row.dataset.tools='1';row._tools=tools;
    requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
   }
-  if(extra){if(agent)main.append(extra);else main.querySelector('.nt-prompt-files').append(extra);}
-  row.append(main);if(row._tools){row.append(row._tools);delete row._tools;}
+  if(extra){if(agent)main.append(extra);else files.append(extra);}
+  if(files)row.append(files);row.append(main);if(row._tools){row.append(row._tools);delete row._tools;}
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
   if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);row.append(foot);}
   return row;}

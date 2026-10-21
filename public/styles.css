@@ -3498,7 +3498,9 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 /* Prompt: dark bubble, white text; a message that was never sent is a hollow dashed bubble. */
 .native-session-content .nt-user .nt-body { padding: 11px 18px; border: 0; border-radius: 20px; background: #17181c; color: #fff; }
 .native-session-content .nt-prompt-text { color: #fff; font-size: 14.5px; font-weight: 500; line-height: 1.65; }
-.native-session-content .nt-user .native-turn-files .attachment-card img { border-color: rgb(255 255 255 / 14%); border-radius: 10px; }
+.native-session-content .nt-user > .nt-prompt-files { max-width: min(640px, 78%); margin: 0 0 6px; }
+.native-session-content .nt-user > .nt-prompt-files .chat-attachments, .native-session-content .nt-user > .nt-prompt-files .native-turn-files { margin: 0; justify-content: flex-end; }
+.native-session-content .nt-user .native-turn-files .attachment-card img { border: 1px solid #e3e6ec; border-radius: 10px; }
 .native-session-content .nt-prompt-tools .nt-prompt-time { color: #9a9fa8; font-size: 12px; }
 .native-session-content .nt-user.is-unsent .nt-body { opacity: 1; border: 1px dashed #c4c8d0; background: transparent; }
 .native-session-content .nt-user.is-unsent .nt-prompt-text { color: #6b7080; font-weight: 400; }
