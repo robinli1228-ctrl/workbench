@@ -9,7 +9,7 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
  const nextPage=()=>{for(const item of chain){const loaded=sections.find(s=>identity(s.item)===identity(item));if(!loaded||loaded.cursor)return {item,loaded};}return null;};
  // Reuse loaded section nodes; late catalogues can insert an intermediate session without losing older cursors.
  function placeSections(){const ranks=new Map(chain.map((item,i)=>[identity(item),i]));sections.sort((a,b)=>ranks.get(identity(a.item))-ranks.get(identity(b.item)));root.replaceChildren(bar,...sections.toReversed().map(s=>s.block));highlightLatestChatCard(scroll);}
- function section(item){const block=document.createElement('section'),heading=document.createElement('div'),history=document.createElement('div');heading.className='native-history-separator';heading.textContent=label(item);history.className='native-history';block.append(heading,history);return {item,block,history,messages:new Map(),cursor:null,initialized:false};}
+ function section(item){const block=document.createElement('section'),heading=document.createElement('div'),history=document.createElement('div');heading.className='native-history-separator';heading.textContent=label(item);history.className='native-history';block.append(heading,history);return {item,block,history,messages:new Map(),cursor:null,initialized:false,turnStartedAt:null};}
  /** 最新页恢复不应清除更早分页的失败，也不能丢失未读消息断层提示。 */
  function renderNote(){const error=failed?`${label(failed.section.item)}: ${t(failed.error)}`:readError;note.className=error?'workspace-note chat-bubble is-error-card':'workspace-note';note.textContent=error|| (newerAvailable?t('Newer messages are available. Refresh latest history to read them.'):'');latest.hidden=!readError&&!newerAvailable;}
  /** 内容未变时也独立清除读取错误，不重建历史节点或重置分页。 */
@@ -21,7 +21,9 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
   if(!older&&prior.length&&page.historyPage===1&&rows.length&&rows[0].offset>prior.reduce((max,m)=>Math.max(max,m.offset),0)){newerAvailable=true;return;}
   if(page.historyPage!==1)target.messages.clear();
   rows.forEach((m,i)=>target.messages.set(m.id||String(i),m));
-  const ordered=[...target.messages.values()].sort((a,b)=>(a.offset??0)-(b.offset??0));target.history.replaceChildren(...renderMessages(ordered,target.item));
+  // The oldest page read decides where the loaded rows begin; a refresh of the latest page never moves that start.
+  if(!target.initialized||older)target.turnStartedAt=page.turnStartedAt||null;
+  const ordered=[...target.messages.values()].sort((a,b)=>(a.offset??0)-(b.offset??0));target.history.replaceChildren(...renderMessages(ordered,target.item,{turnStartedAt:target.turnStartedAt}));
   if(page.notice||target.skippedError){const n=document.createElement('p');n.className=target.skippedError?'workspace-note chat-bubble is-error-card':'workspace-note';n.textContent=t(page.notice||target.skippedError);target.history.append(n);}
   if(!target.initialized||older){target.cursor=page.nextCursor||null;target.initialized=true;}highlightLatestChatCard(scroll);
  }

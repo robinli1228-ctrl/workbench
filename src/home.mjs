@@ -1475,6 +1475,7 @@ const server = http.createServer(async (req, res) => {
     files['/media.js']='media.js';
     files['/pasted-text.js']='pasted-text.js';
     files['/side-preview.js']='side-preview.js';
+    files['/history-prompt.js']='history-prompt.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';

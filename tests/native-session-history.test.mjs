@@ -74,7 +74,7 @@ test('Codex and Grok histories yield the same tool rows, with the command behind
 
 test('a history page holds up to 45 prompts and 768 KB of rows, and its reply fits the 1 MB Worker socket', async t => {
   const { HISTORY_PAGE } = await import(pathToFileURL(join(root, 'src', 'native-sessions.mjs')).href);
-  assert.deepEqual({ ...HISTORY_PAGE }, { prompts: 45, bytes: 786432, window: 6291456 });
+  assert.deepEqual({ ...HISTORY_PAGE }, { prompts: 45, bytes: 786432, window: 6291456, lookback: 33554432, lookbackChunk: 1048576 });
   const home = mkdtempSync(join(tmpdir(), 'wb-claude-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const workspace = '/srv/work/paging', dir = join(home, 'projects', workspace.replace(/[^a-zA-Z0-9]/g, '-'));
@@ -103,4 +103,53 @@ test('a history page holds up to 45 prompts and 768 KB of rows, and its reply fi
   assert.ok(prompts(heavy).length < 45 && prompts(heavy).length > 10);
   assert.ok(Buffer.byteLength(JSON.stringify(heavy.messages)) <= HISTORY_PAGE.bytes);
   assert.ok(Buffer.byteLength(JSON.stringify({ type: 'reply', id: SID, result: heavy })) < 1024 * 1024);
+});
+
+test('a page that starts inside a turn carries the time of that turn\'s prompt, found by looking back', async t => {
+  const { HISTORY_PAGE } = await import(pathToFileURL(join(root, 'src', 'native-sessions.mjs')).href);
+  const home = mkdtempSync(join(tmpdir(), 'wb-claude-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const workspace = '/srv/work/lookback', dir = join(home, 'projects', workspace.replace(/[^a-zA-Z0-9]/g, '-'));
+  mkdirSync(dir, { recursive: true });
+  const env = { HOME: home, CLAUDE_CONFIG_DIR: home }, record = { id: SID, runtime: 'claude', workspace }, file = join(dir, `${SID}.jsonl`);
+  const at = s => `2026-10-21T05:${String(s).padStart(2, '0')}:00.000Z`;
+  const prompt = (text, s) => ({ type: 'user', timestamp: at(s), cwd: workspace, message: { role: 'user', content: text } });
+  const reply = (text, s) => ({ type: 'assistant', timestamp: at(s), message: { role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text }] } });
+  const tool = (n, s) => [
+    { type: 'assistant', timestamp: at(s), message: { role: 'assistant', content: [{ type: 'tool_use', id: `toolu_${n}`, name: 'Bash', input: { command: `step ${n}` } }] } },
+    { type: 'user', timestamp: at(s), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${n}`, content: 'o'.repeat(3000) }] } },
+  ];
+  const lines = rows => rows.map(r => JSON.stringify(r)).join('\n') + '\n';
+  // A small window puts only the last few rows on the first page; a small look-back chunk splits lines across reads.
+  const pageLimits = { ...HISTORY_PAGE, window: 9000, lookbackChunk: 1000 };
+  const read = (extra = {}) => readNativeSession('claude', SID, { env, record, historyPage: true, pageLimits, ...extra });
+
+  writeFileSync(file, lines([prompt('first task', 1), reply('done', 2), prompt('long task', 10),
+    // Injected context is a "user" row too, but it does not start a turn.
+    { type: 'user', timestamp: at(11), message: { role: 'user', content: '<system-reminder>context</system-reminder>' } },
+    ...Array.from({ length: 12 }, (_, i) => tool(i, 12 + i)).flat(), reply('long task finished', 30)]));
+  const page = await read();
+  assert.equal(page.messages.some(m => m.role === 'user' && m.text === 'long task'), false, 'the prompt is on an older page');
+  assert.equal(page.turnStartedAt, at(10), 'the reminder row is skipped; the turn began at its prompt');
+
+  // Appending to the same turn keeps the answer (the refresh reads only what was appended).
+  writeFileSync(file, lines([...tool(20, 31), reply('one more step', 32)]), { flag: 'a' });
+  assert.equal((await read()).turnStartedAt, at(10));
+
+  // A new prompt followed by a long turn: the latest page now starts inside the new turn.
+  writeFileSync(file, lines([prompt('next task', 40), ...Array.from({ length: 12 }, (_, i) => tool(30 + i, 41 + i)).flat(), reply('next done', 55)]), { flag: 'a' });
+  assert.equal((await read()).turnStartedAt, at(40));
+
+  // An older page that also starts mid-turn gets its own answer, and does not disturb the latest one.
+  const latest = await read(), older = await read({ cursor: latest.nextCursor });
+  assert.ok(older.messages.length);
+  assert.equal(older.turnStartedAt, at(40), 'the older page is still inside the same turn');
+  assert.equal((await read()).turnStartedAt, at(40));
+
+  // A page that starts with its prompt carries nothing, and a look-back that runs out of budget gives up quietly.
+  writeFileSync(file, lines([prompt('short', 1), reply('ok', 2)]));
+  assert.equal((await read()).turnStartedAt, undefined);
+  writeFileSync(file, lines([prompt('far back', 1), ...Array.from({ length: 30 }, (_, i) => tool(i, 2 + i)).flat()]));
+  assert.equal((await read({ pageLimits: { ...pageLimits, lookback: 4000 } })).turnStartedAt, undefined);
+  assert.equal((await read()).turnStartedAt, at(1), 'with the full budget the prompt is found');
 });

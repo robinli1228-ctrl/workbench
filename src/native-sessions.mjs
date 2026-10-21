@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {join,basename,dirname,relative,isAbsolute} from 'node:path';
 import {resumeArgs,managedRunProcessState,terminalOwnsProject,nativeSessionProjectIds} from './terminal-resume.mjs';
+import {isHistoryPrompt} from '../public/history-prompt.js';
 
 const runtimes=new Set(['codex','claude','grok','agy']);
 const idPattern=/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
@@ -204,7 +205,46 @@ export async function listNativeSessions(runtime,{env=process.env,limit=100,scop
  * carry request blobs close to 1 MB that yield no rows, so the read window bounds most pages. The rows travel in a single
  * Worker→Home socket message, which is capped at 1 MB.
  */
-export const HISTORY_PAGE=Object.freeze({prompts:45,bytes:786432,window:6291456});
+export const HISTORY_PAGE=Object.freeze({prompts:45,bytes:786432,window:6291456,lookback:33554432,lookbackChunk:1048576});
+
+/**
+ * A page that starts inside a turn (its prompt is on an older page) still shows how long that turn took: look back from
+ * the page start for the nearest row that starts a turn and return its time. The look-back reads at most `lookback`
+ * bytes. Histories only grow, so the answer for a start offset holds for any later start with no prompt in between:
+ * the latest answer per history is kept, and the 30-second refresh of the latest page only reads what was appended.
+ */
+const lookbacks=new Map();
+async function promptBefore(h,runtime,offset,limits,{key,mark}){
+ // A cached answer stands while the bytes just before its offset are unchanged (the history was not rewritten).
+ // An answer is reused only under the same look-back budget: "not found within it" is an answer too.
+ const cached=lookbacks.get(key),intact=Boolean(cached)&&cached.budget===limits.lookback&&cached.mark===await mark(cached.offset),usable=intact&&cached.offset<=offset;
+ const found=await scanBack(h,runtime,offset,usable?cached.offset:0,limits);
+ // Nothing between the cached start and this one: the turn began where the cached answer says.
+ const at=found!==undefined?found:usable?cached.at:null;
+ // Older pages read once; only the latest start (or a replacement for a stale entry) is kept for the refreshes.
+ if(!intact||offset>=cached.offset){lookbacks.delete(key);lookbacks.set(key,{offset,at,budget:limits.lookback,mark:await mark(offset)});if(lookbacks.size>64)lookbacks.delete(lookbacks.keys().next().value);}
+ return at;
+}
+/** Read backwards from `offset` to `floor` line by line; the time of the nearest turn-starting row, null when the budget ran out, undefined when none lies in range. */
+async function scanBack(h,runtime,offset,floor,limits){
+ let end=offset,carry=Buffer.alloc(0),scanned=0;
+ while(end>floor){
+  if(scanned>=limits.lookback)return null;
+  const start=Math.max(floor,end-limits.lookbackChunk),chunk=Buffer.alloc(end-start);await h.read(chunk,0,chunk.length,start);scanned+=chunk.length;
+  const buffer=carry.length?Buffer.concat([chunk,carry]):chunk;let pos=buffer.length;
+  while(pos>0){
+   let lineEnd=pos;while(lineEnd>0&&[10,13].includes(buffer[lineEnd-1]))lineEnd--;
+   if(!lineEnd){pos=0;break;}
+   const lf=buffer.lastIndexOf(10,lineEnd-1);
+   if(lf<0&&start>floor){pos=lineEnd;break;} // An incomplete line: finish it with the next, older chunk.
+   const rows=messagesFrom(jsonLines(buffer.subarray(lf+1,lineEnd).toString('utf8')),runtime);
+   for(let i=rows.length-1;i>=0;i--)if(rows[i].role==='user'&&isHistoryPrompt(rows[i].text))return rows[i].timestamp||null;
+   pos=Math.max(0,lf);
+  }
+  carry=buffer.subarray(0,pos);end=start;
+ }
+ return undefined;
+}
 
 /** Read backwards at line boundaries, pinning the original tail while a live CLI appends.
  * Cursors select offsets only inside this exact vendor file; each page has bounded I/O and wire size. */
@@ -238,9 +278,13 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
    messages.unshift(...found);bytes+=weight;prompts+=found.filter(m=>m.role==='user').length;next=start+lineStart;pos=Math.max(0,lf);
   }
   if(next===end&&end>0)throw Error('A native history record is too large to preview; the original history is unchanged.');
+  // The first rows belong to a turn whose prompt is further back when a reply or tool call comes before any prompt.
+  const firstPrompt=messages.findIndex(m=>m.role==='user'&&isHistoryPrompt(m.text));
+  const midTurn=next>0&&messages.slice(0,firstPrompt<0?messages.length:firstPrompt).some(m=>m.role==='assistant'||m.role==='tool_call');
+  const turnStartedAt=midTurn?await promptBefore(h,runtime,next,limits,{key,mark:tailAt}):null;
   const after=await stat(file.path);if(after.dev!==info.dev||after.ino!==info.ino||after.size<size)throw Error('Native history changed; reopen the session to read it again.');
   const encode=offset=>Buffer.from(JSON.stringify({v:1,key,size,end:offset,tail})).toString('base64url');
-  return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,
+  return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,...(turnStartedAt?{turnStartedAt}:{}),
    ...(!cursor?{sessionConfiguration:sessionConfiguration(jsonLines(buffer.subarray(start?(buffer.indexOf(10)<0?buffer.length:buffer.indexOf(10)+1):0).toString('utf8')),runtime)}:{})};
  }finally{await h.close();}
 }

@@ -14,6 +14,7 @@ import {pastesAsFile,pastedTextName,isTextName} from './pasted-text.js';
 import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {stripAnsi} from './run-log-data.js';
+import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt} from './history-prompt.js';
 import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
@@ -531,9 +532,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    else if(lastPromptAt&&m.timestamp){const ms=Date.parse(m.timestamp)-Date.parse(lastPromptAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(lastPromptAt,Date.parse(m.timestamp));}
    return row;}
  /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
- function renderHistory(rows,item){
-  const nodes=[],isPrompt=row=>Boolean(cleanUserText(row.text)||commandOf(row.text)||taskNotificationOf(row.text));
-  for(const turn of historyTurns(rows,{isPrompt})){
+ function renderHistory(rows,item,{turnStartedAt=null}={}){
+  const nodes=[],isPrompt=row=>isHistoryPrompt(row.text);
+  for(const [index,turn] of historyTurns(rows,{isPrompt}).entries()){
    if(turn.prompt)nodes.push(renderHistoryRow(turn.prompt,item));
    if(!turn.parts.length)continue;
    const frag=document.createDocumentFragment();let group=[],process=false;
@@ -542,7 +543,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    flush();
    const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
    row.dataset.role='assistant';if(process)row.dataset.process='1';
-   if(turn.prompt?.timestamp&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(turn.prompt.timestamp);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(turn.prompt.timestamp,Date.parse(turn.endedAt));}
+   // A turn whose prompt is on an older, unloaded page starts at the time the Worker looked back for (turnStartedAt).
+   const startedAt=turn.prompt?.timestamp||(index===0?turnStartedAt:null);
+   if(startedAt&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(startedAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(startedAt,Date.parse(turn.endedAt));}
    nodes.push(row);
   }
   return nodes;
@@ -842,14 +845,8 @@ const displayTitle=item=>{const text=String(item.title||'').replace(/<([a-z_-]+)
 const sizeText=n=>!Number.isFinite(n)?'':n<1024?`${n} B`:n<1048576?`${(n/1024).toFixed(1)} KB`:`${(n/1048576).toFixed(1)} MB`;
 /** Hide CLI-internal stderr logging (timestamped WARN/ERROR lines) from the run process; real errors arrive as error events. */
 const cliNoise=text=>/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/m.test(stripAnsi(String(text||'')));
-/** CLIs write injected context (system reminders, environment blocks, slash-command receipts) into history as "user" messages; only the words the person typed are a prompt. */
-const INJECTED=/<(system-reminder|user_info|environment_context|local-command-stdout|local-command-caveat|command-message|command-args|skill_metadata|available_skills|task-notification)\b[^>]*>[\s\S]*?(<\/\1>|$)/gi;
-/** A background task's completion notice: shown as one quiet system line, never as a prompt bubble. */
-const taskNotificationOf=text=>String(text||'').match(/<task-notification>[\s\S]*?<task-id>\s*([^<]+?)\s*<\/task-id>/i)?.[1]||'';
-const cleanUserText=text=>String(text||'').replace(/<image\b[^>]*>[\s\S]*?<\/image>/gi,'').replace(/\[Image: source:[^\]]*\]/g,'').replace(INJECTED,'').replace(/<command-name>[\s\S]*?<\/command-name>/gi,'').replace(/^\s*<user_query>\s*([\s\S]*?)\s*<\/user_query>\s*$/i,'$1').replace(/\n*Attached files for this message \(local paths\):[\s\S]*$/,'').trim();
 /** Prompt identity for anchoring page turns onto history rows; whitespace differences never make a second bubble. */
 const promptKey=text=>simplifiedCliOutput(String(text||'')).replace(/\s+/g,' ').trim();
-const commandOf=text=>String(text||'').match(/<command-name>\s*([^<]+?)\s*<\/command-name>/i)?.[1]||'';
 /** A turn shows its process only when it holds more than the final reply: tools, runtime notes or intermediate messages. */
 const norm=text=>stripAnsi(String(text||'')).replace(/\s+/g,' ').trim();
 const allRows=turn=>liveSceneRows(turn.events||[],{status:turn.status}).rows.filter(r=>!(r.kind==='log'&&cliNoise(r.text)));
