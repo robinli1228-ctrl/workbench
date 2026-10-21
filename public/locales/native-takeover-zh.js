@@ -313,4 +313,11 @@ export default {
  "Device disconnected before this message was sent": "发送前设备断开，消息没有发出",
  "Takeover ended before this message was sent": "接管已结束，消息没有发出",
  "Home restarted before this message was sent": "Home 重启，消息没有发出",
+ "Retry": "重试",
+ "No AGENTS.md yet": "还没有 AGENTS.md",
+ "No folder yet": "未选择目录",
+ "Not a Git repository": "不在 Git 仓库",
+ "Worker needs an upgrade": "需升级 Worker",
+ "Git is not installed": "设备上没有 Git",
+ "No files mentioned yet": "还没有提到文件",
 };

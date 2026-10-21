@@ -22,8 +22,12 @@ const button=(text,fn,cls='secondary')=>{const n=el('button',cls,t(text));n.type
 const closeButton=fn=>{const n=button('',fn,'icon-button native-close');setActionIcon(n,'close','Close');n.dataset.close='';return n;};
 /** Short utility actions in cards (refresh, edit, create, copy) are icons; the label is the tooltip and accessible name. */
 const iconButton=(name,label,fn,cls='')=>{const n=el('button',`icon-button native-icon-action ${cls}`.trim());n.type='button';setActionIcon(n,name,t(label));n.addEventListener('click',fn);return n;};
-/** An empty or loading card shows one quiet icon instead of a sentence. */
-const emptyState=(icon,label,busy=false)=>{const box=el('div',`native-files-empty${busy?' is-busy':''}`);box.innerHTML=UI_ICON[icon]||'';box.querySelector('svg')?.setAttribute('aria-hidden','true');box.title=t(label);box.setAttribute('role','img');box.setAttribute('aria-label',t(label));return box;};
+/** Empty, loading and failed cards: an icon in a soft tile and a few words. A failure is amber with Retry; its reason is the tooltip. */
+const stateBlock=(icon,text='',{tone='',retry=null,detail=''}={})=>{const box=el('div',`card-state${tone?` is-${tone}`:''}`),mark=el('span','card-state-icon');mark.innerHTML=UI_ICON[icon]||'';mark.querySelector('svg')?.setAttribute('aria-hidden','true');box.append(mark);
+ if(text)box.append(el('p','',t(text)));if(detail)box.title=t(detail);if(retry){const again=el('button','card-state-retry',t('Retry'));again.type='button';again.addEventListener('click',retry);box.append(again);}return box;};
+const failedState=(detail,retry)=>stateBlock('offline','Read failed',{tone:'warn',retry,detail});
+const busyState=icon=>stateBlock(icon,'',{tone:'busy'});
+const emptyState=(icon,label,busy=false)=>busy?busyState(icon):stateBlock(icon,label);
 
 /** The session view reads native history and prepares terminal links. Only after an explicit takeover does it submit turns, resuming the same native ID. */
 export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange,onPreview,onStateRefresh=async()=>{}}){
@@ -136,7 +140,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(others.length){const list=el('div','native-file-list');for(const path of others.slice(0,40))list.append(fileRow(session,path,null));body.append(list);}
   const records=(cached?.items||[]).filter(file=>!seen.has(file.path)&&!seen.has(file.originPath));
   if(records.length){const list=el('div','native-project-output-list');for(const file of records.slice(0,30))list.append(artifactRow(file));body.append(list);if(cached.partial||records.length>30)body.append(el('p','native-side-hint',t('Showing part of the project outputs; the group chat lists the rest.')));}
-  if(cached?.error)body.append(el('p','native-side-hint',t('Project outputs unavailable: {message}',{message:cached.error})));
+  if(cached?.error&&!body.childElementCount)body.append(failedState(cached.error,()=>void loadProjectOutputs(project.id,true)));
   const busy=Boolean(session.workspace&&(!st?.at||st.loading))||Boolean(project&&(!cached?.at||cached.loading));
   if(!body.childElementCount)body.append(busy?emptyState('original','Loading…',true):emptyState('original','No outputs yet'));
   return card;
@@ -170,7 +174,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  }
  function folderCard(session){
   const card=el('section','native-side-card native-folder-card'),root=session.workspace,folderHead=el('div','native-card-head');folderHead.append(el('h3','',t('Working folder')));card.append(folderHead);
-  if(!root){card.append(el('p','native-side-hint',t('Choose a folder when opening')));return card;}
+  if(!root){card.append(stateBlock('folder','No folder yet'));return card;}
   // Files this session read, edited or created in page turns, latest state per path, right above the folder they live in.
   const touched=takeover.files();
   if(touched.length){const changes=el('div','native-folder-changes'),list=el('div','native-file-list');changes.append(el('div','native-subhead',t('Touched in this session')),list);for(const {path,step} of touched.slice(0,20))list.append(fileRow(session,path,step,step.kind==='edit'&&(step.added||step.removed)?`+${step.added||0} −${step.removed||0}`:''));card.append(changes);}
@@ -180,15 +184,15 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const crumb=(label,path,last)=>{const b=el('button',`native-folder-crumb${last?' is-current':''}`,label);b.type='button';b.title=path;b.translate=false;b.disabled=last;b.addEventListener('click',()=>{st.path=path;st.entries=null;renderFolder();});return b;};
   crumbs.append(crumb(fileName(root)||root,root,!rel.length));let acc=root;rel.forEach((part,i)=>{acc=`${acc}/${part}`;crumbs.append(el('span','native-folder-sep','/'),crumb(part,acc,i===rel.length-1));});card.append(crumbs);
   if(!st.entries&&!st.loading&&!st.error)void loadFolder(session,st.path);
-  if(st.error)card.append(el('p','native-side-hint',t(st.error)));
+  if(st.error)card.append(failedState(st.error,()=>{st.entries=null;st.error=null;renderFolder();}));
   const list=el('div','native-file-list');
   for(const entry of st.entries||[]){
    if(entry.type==='folder'){const row=el('button','native-file-row is-folder');row.type='button';row.title=entry.path;row.translate=false;row.append(stepIcon('other'));const text=el('span','native-file-text');text.append(el('span','native-file-name',`${entry.name}/`));row.append(text);row.addEventListener('click',()=>{st.path=entry.path;st.entries=null;renderFolder();});list.append(row);}
    else list.append(fileRow(session,entry.path,null));
   }
-  if(st.entries&&!st.entries.length)list.append(el('p','native-side-hint',t('Empty folder')));
+  if(st.entries&&!st.entries.length)list.append(stateBlock('folder','Empty folder'));
   card.append(list);
-  if(st.loading)card.append(el('p','native-side-hint',t('Loading…')));
+  if(st.loading&&!st.entries)card.append(busyState('folder'));else if(st.loading)card.append(el('p','native-side-hint',t('Loading…')));
   else if(st.hasMore)card.append(button('Load more',()=>void loadFolder(session,st.path,st.nextOffset),'secondary native-card-action'));
   return card;
  }
@@ -201,11 +205,11 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function agentsCard(value){
   const card=el('section','native-side-card native-agents-card');card.dataset.nativeAgents='';const head=el('div','native-card-head');head.append(el('h3','','AGENTS.md'));card.append(head);
   const cached=agentsCache.get(key(value));
-  if(!value.workspace){card.append(el('p','native-side-hint',t('Choose a folder when opening')));return card;}
+  if(!value.workspace){card.append(stateBlock('original','No folder yet'));return card;}
   const reloadAgents=iconButton('refresh','Refresh',()=>void loadAgents(value,true));reloadAgents.disabled=Boolean(cached?.loading);head.append(reloadAgents);
-  if(!cached||cached.loading){card.append(el('p','native-side-hint',t('Loading…')));return card;}
-  const st=cached.state;if(st.error){card.append(el('p','native-side-hint',t(st.error)));return card;}
-  if(!st.found){card.append(el('p','native-side-hint',t('No AGENTS.md above this folder yet.')));head.append(iconButton('plus','Create AGENTS.md',()=>openAgentsEditor(value,st)));return card;}
+  if(!cached||cached.loading){card.append(busyState('original'));return card;}
+  const st=cached.state;if(st.error){card.append(failedState(st.error,()=>void loadAgents(value,true)));return card;}
+  if(!st.found){card.append(stateBlock('original','No AGENTS.md yet'));head.append(iconButton('plus','Create AGENTS.md',()=>openAgentsEditor(value,st)));return card;}
   const where=el('div','native-agents-path',st.path);where.title=st.path;where.translate=false;card.append(where);
   const preview=el('pre','native-agents-preview',st.tooLarge?t('File is larger than 600 KB; open it on the device.'):(st.content||'').trim()||t('(empty)'));preview.translate=false;preview.title=t('Edit');card.append(preview);
   const edit=iconButton('edit','Edit AGENTS.md',()=>openAgentsEditor(value,st));edit.disabled=Boolean(st.tooLarge);head.append(edit);
@@ -243,7 +247,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   // Two cards, half the panel each: the project's outputs first, then files named in the loaded replies.
   const mentioned=el('section','native-side-card native-files-half'),head=el('div','native-card-head'),body=el('div','native-files-body');head.append(el('h3','',t('Named in replies')));mentioned.append(head,body);
   const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
-  if(!items.length)body.append(emptyState('quote','No files named in replies yet'));
+  if(!items.length)body.append(emptyState('quote','No files mentioned yet'));
   else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));body.append(list);}
   panel.append(outputsCard(selected),mentioned);
  }
@@ -603,6 +607,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(prior)prior.replaceWith(section);else sidePanels.overview.append(section);
  }
  /** Read-only Git facts of the session's registered working folder, from its own device; cached per session. */
+ const GIT_SHORT={no_workspace:'No folder yet',not_git:'Not a Git repository',worker_upgrade:'Worker needs an upgrade',git_unavailable:'Git is not installed'};
  const GIT_REASONS={no_workspace:'No working folder is recorded for this session yet.',source_offline:'Device offline; Git status is unavailable.',worker_upgrade:'Upgrade this Worker to read Git status.',not_git:'The working folder is not inside a Git repository.',git_unavailable:'Git is not available for this folder on the device.',git_read_failed:'Could not read Git status.'};
  async function loadGit(value,force=false){
   const sessionKey=key(value),cached=gitCache.get(sessionKey);if(cached?.loading||!force&&cached)return;
@@ -617,11 +622,11 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const cached=gitCache.get(key(value)),section=el('section','native-side-card native-git-card');section.dataset.nativeGit='';
   const head=el('div','native-card-head'),refresh=iconButton('refresh','Refresh',()=>void loadGit(value,true));refresh.disabled=!cached||Boolean(cached.loading);
   head.append(el('h3','',t('Repository (Git)')),refresh);section.append(head);
-  if(!cached||cached.loading)section.append(el('p','native-side-hint',t('Reading Git status…')));
+  if(!cached||cached.loading)section.append(busyState('git'));
   else{
    const state=cached.state;
    // A working folder path alone is never shown as Git state: without a repository answer the card says why.
-   if(!state.available||!state.git){section.append(el('p','native-side-hint',t(GIT_REASONS[state.reason]||'Git status is unknown.')));if(state.detail&&state.reason!=='not_git')section.append(el('p','native-side-hint native-git-detail',t(state.detail)));}
+   if(!state.available||!state.git){if(['source_offline','git_read_failed'].includes(state.reason))section.append(failedState(state.detail||GIT_REASONS[state.reason],()=>void loadGit(value,true)));else section.append(stateBlock('git',GIT_SHORT[state.reason]||'Unknown',{detail:state.detail&&state.reason!=='not_git'?state.detail:''}));}
    else{
     const c=state.changes||{},parts=[['staged','{count} staged'],['modified','{count} modified'],['untracked','{count} untracked'],['conflicted','{count} conflicted']].filter(([k])=>c[k]>0).map(([k,label])=>t(label,{count:c[k]}));
     const changes=c.unknown?t('Unknown ({reason})',{reason:c.reason||'git'}):c.total===0?t('Clean'):parts.join(' · ')+(c.truncated?` · ${t('partial count')}`:'');

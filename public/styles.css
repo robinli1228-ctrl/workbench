@@ -3411,3 +3411,20 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .nt-user.is-unsent .nt-body { opacity: .72; border-style: dashed; }
 .nt-user.is-unsent .nt-prompt-tools { opacity: 1; }
 .nt-unsent-note { margin-right: 8px; color: #b45309; font-size: 11.5px; }
+
+/* ---- Side cards: a hairline under every title bar; empty / loading / failed states as icon + few words ---- */
+.native-side-card { --card-pad: 14px; }
+#native-side-outputs > .native-files-half { --card-pad: 16px; }
+.native-side-card > .native-card-head:first-child, .native-side-card > h3:first-child { margin: -2px calc(-1 * var(--card-pad)) 12px; padding: 0 var(--card-pad) 10px; border-bottom: 1px solid #edf0f4; }
+.native-side-card > .native-card-head:first-child > h3 { margin: 0 auto 0 0; }
+.native-card-head { justify-content: flex-start; gap: 2px; }
+.native-card-head > h3 { margin-right: auto; }
+.card-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 6px 6px; text-align: center; }
+.card-state-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: #f3f5f9; color: #9aa3b2; }
+.card-state-icon svg { width: 19px; height: 19px; }
+.card-state > p { margin: 0; color: #6b7280; font-size: 12.5px; line-height: 1.5; }
+.card-state.is-warn .card-state-icon { background: #fdf3e7; color: #c27a1a; }
+.card-state.is-busy .card-state-icon svg { animation: nt-pulse 1.4s ease-in-out infinite; }
+.card-state-retry { margin-top: 2px; padding: 3px 12px; border: 1px solid #e3e7ee; border-radius: 999px; background: #fff; color: var(--accent); font-size: 12px; cursor: pointer; }
+.card-state-retry:hover { border-color: rgb(79 91 206 / 35%); }
+.native-files-body > .card-state { margin: auto 0; }
