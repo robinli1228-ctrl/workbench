@@ -790,7 +790,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   renderSessionSettings(value);
   selectSideTab(sideTab);
  }
- const tokensText=n=>n==null?'':n>=1e6?`${(n/1e6).toFixed(n>=1e7?0:1)}m`:n>=1e3?`${(n/1e3).toFixed(n>=1e5?0:1)}k`:String(n);
+ const tokensText=n=>n==null?'':n>=1e6?`${(n/1e6).toFixed(n>=1e7?0:1)}M`:n>=1e3?`${(n/1e3).toFixed(n>=1e5?0:1)}k`:String(n);
  const EFFORT_LABELS={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra high',max:'Max',ultra:'Ultra',auto:'Automatic',default:'CLI default'};
  /** Model, reasoning effort and context: the page's chosen settings win over what history recorded; context comes from the newest page turn, else history. */
  function renderSessionSettings(value){
@@ -810,7 +810,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   card.append(grid);
   // context
   const ctx=el('div','native-context');const head=el('div','native-context-head');head.append(el('span','native-context-title',t('Context')));
-  const amount=used==null?t('Not measured yet'):limit?`${tokensText(used)} / ${tokensText(limit)} · ${pct}%`:t('{tokens} tokens',{tokens:tokensText(used)});head.append(el('span','native-context-amount',amount));
+  // The share of the window used is the number to read at a glance, so it is bold.
+  const amount=el('span','native-context-amount',used==null?t('Not measured yet'):limit?`${tokensText(used)} / ${tokensText(limit)} · `:t('{tokens} tokens',{tokens:tokensText(used)}));if(used!=null&&limit)amount.append(el('strong','native-context-pct',`${pct}%`));head.append(amount);
   ctx.append(head);
   // The bar and, after it, the compact icon on one line.
   const barRow=el('div','native-context-row'),bar=el('div',`native-context-bar${pct!=null?pct>=90?' is-high':pct>=70?' is-mid':'':' is-unknown'}`);const fill=el('span','');fill.style.width=`${pct??0}%`;bar.append(fill);barRow.append(bar);
