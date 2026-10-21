@@ -63,3 +63,59 @@ test('ending the takeover or losing the device drops queued messages instead of 
   assert.equal(db.get('nativeTurns', again.id).status, 'cancelled');
   assert.equal(db.get('nativeTurns', a.id).status, 'interrupted');
 });
+
+test('a paused queue holds its messages after the reply ends; steer still sends one, resume sends the rest', async () => {
+  const { turns, send, status, starts } = home();
+  const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'second'), c = send('client-turn-c', 'third');
+  assert.equal(turns.setQueue('n1', { runtime: 'claude', sessionId: SID, paused: true }).queue.paused, true);
+  status(a.id, 'succeeded'); await tick();
+  assert.deepEqual(starts(), ['first'], 'nothing leaves a paused queue when the reply ends');
+  const d = send('client-turn-d', 'fourth');
+  assert.equal(d.status, 'waiting', 'a new message joins the paused queue even though the session is idle');
+  turns.steer('n1', c.id); await tick();
+  assert.deepEqual(starts(), ['first', 'third'], 'steering is an explicit send');
+  status(c.id, 'succeeded'); await tick();
+  assert.deepEqual(starts(), ['first', 'third'], 'the queue stays paused after the steered message');
+  turns.setQueue('n1', { runtime: 'claude', sessionId: SID, paused: false }); await tick();
+  assert.deepEqual(starts(), ['first', 'third', 'second']);
+  status(b.id, 'succeeded'); await tick();
+  assert.deepEqual(starts(), ['first', 'third', 'second', 'fourth']);
+});
+
+test('an emptied queue un-pauses itself, so a later message is not held by a pause nobody can see', async () => {
+  const { turns, send, status, starts } = home();
+  const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'second');
+  turns.setQueue('n1', { runtime: 'claude', sessionId: SID, paused: true });
+  turns.withdraw('n1', b.id);
+  assert.equal(turns.queueState('n1', 'claude', SID).paused, false);
+  status(a.id, 'succeeded'); await tick();
+  assert.equal(send('client-turn-c', 'third').status, 'queued');
+  assert.deepEqual(starts(), ['first', 'third']);
+  assert.equal(turns.setQueue('n1', { runtime: 'claude', sessionId: SID, paused: true }).queue.paused, false, 'an empty queue cannot be paused');
+});
+
+test('the dragged order decides what goes next; a stale order is rejected', async () => {
+  const { turns, send, status, starts } = home();
+  const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'second'), c = send('client-turn-c', 'third'), d = send('client-turn-d', 'fourth');
+  assert.throws(() => turns.setQueue('n1', { runtime: 'claude', sessionId: SID, order: [d.id, b.id] }), /queue changed/);
+  const result = turns.setQueue('n1', { runtime: 'claude', sessionId: SID, order: [d.id, b.id, c.id] });
+  assert.deepEqual(result.items.map(t => t.prompt), ['fourth', 'second', 'third']);
+  const e = send('client-turn-e', 'fifth');
+  assert.deepEqual(turns.waiting('n1', 'claude', SID).map(t => t.prompt), ['fourth', 'second', 'third', 'fifth'], 'a later message joins at the end');
+  status(a.id, 'succeeded'); await tick();
+  assert.deepEqual(starts(), ['first', 'fourth']);
+  assert.ok(Number.isFinite(turns.list('n1', 'claude', SID).find(t => t.id === b.id).queueRank));
+  void e;
+});
+
+test('withdraw (delete or edit) only takes a message that is still waiting, and marks it as the user\'s own removal', async () => {
+  const { db, sent, turns, send, status } = home();
+  const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'second');
+  const gone = turns.withdraw('n1', b.id);
+  assert.equal(gone.status, 'cancelled'); assert.equal(gone.withdrawn, true);
+  assert.throws(() => turns.withdraw('n1', a.id), /already been sent/);
+  assert.equal(db.get('nativeTurns', a.id).status, 'queued', 'a message that already left the queue is never interrupted by withdraw');
+  assert.equal(sent.filter(m => m.type === 'native_turn_stop').length, 0);
+  assert.equal(turns.stop('n1', send('client-turn-c', 'third').id).withdrawn, true, 'the queue\'s own delete is a withdrawal too');
+  status(a.id, 'succeeded'); await tick();
+});

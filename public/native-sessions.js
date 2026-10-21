@@ -912,6 +912,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    for(const turn of turns){
     if(turn.status==='waiting')continue;
     if(turn.status==='cancelled'){
+     // A message the user deleted or took back to edit is gone, not "not sent".
+     if(turn.withdrawn)continue;
      // A queued message dropped before it was sent (device reconnect, takeover ended). When the same text reached the CLI afterwards
      // (resent, or queued by the CLI itself) that delivered copy is the message: the dropped one is not drawn again.
      const text=promptKey(turn.prompt),at=Date.parse(turn.createdAt||''),later=value=>{const when=Date.parse(value||'');return !Number.isFinite(at)||!Number.isFinite(when)||when>=at-60000;};
@@ -969,14 +971,43 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   // Queued messages sit above the composer like the group-chat queue: steer interrupts the reply and sends that one now, × withdraws it.
   const queue=el('details','message-queue native-queue'),queueSummary=el('summary',''),queueList=el('div','message-queue-list');queue.open=true;queue.append(queueSummary,queueList);queue.hidden=true;
   const queuePending=new Set();
-  function renderQueue(){const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||String(a.createdAt).localeCompare(String(b.createdAt)));queue.hidden=!waiting.length;queueList.replaceChildren();if(!waiting.length)return;
-   queueSummary.replaceChildren(el('span','message-queue-title',t('Queue · {v}',{v:waiting.length})));
-   waiting.forEach((turn,i)=>{const row=el('div','message-queue-item'),info=el('div','message-queue-info'),title=el('strong','',`${i+1}. ${turn.prompt}`);title.title=turn.prompt;title.translate=false;info.append(title);if(turn.createdAt){const when=el('span','',`${t('Queued')} · ${time(turn.createdAt)}`);when.translate=false;info.append(when);}row.append(info);
+  /** The queue above the composer: pause/resume at the right of its title, and per message a drag grip, the text with its send
+   * time on hover, then steer, edit (back to the input box) and delete. Rebuilt only when the queue itself changed, so a press on
+   * one of its buttons survives the 1s refresh; a drag in progress defers the rebuild. */
+  const GRIP='__GRIP__';
+  let queueState=null,queueSignature='',optimisticOrder=null;
+  const queueRank=turn=>Number.isFinite(turn.queueRank)?turn.queueRank:(Date.parse(turn.createdAt)||0);
+  const queueOrder=createListOrder({container:queueList,scope:()=>`native-queue:${k()}`,handle:'.message-queue-grip',onEnd:()=>{queueSignature='';renderQueue();},onError:message=>{operation().message=t(message);render();},
+   persist:async ids=>{optimisticOrder=ids;try{await api(`${turnsUrl()}/queue`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,order:ids}});}catch(error){operation().message=t(error.message);render();}finally{optimisticOrder=null;await refresh();}}});
+  async function setQueuePaused(paused){try{const result=await api(`${turnsUrl()}/queue`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,paused}});queueState=result.queue||queueState;renderQueue();await refresh();}catch(error){operation().message=t(error.message);render();}}
+  // Delete and edit take a message out only while it still waits; an older Home without withdraw cancels it the old way.
+  async function withdrawQueued(turn){queuePending.add(turn.id);renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/${queueState?'withdraw':'stop'}`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}}
+  async function editQueued(turn){const d=draft();
+   if(d.pending||input.value.trim()||d.attachments?.length){operation().message=t('Keep or send the current draft before editing a queued message');render();return;}
+   queuePending.add(turn.id);renderQueue();
+   try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/withdraw`,{method:'POST',json:{}});const back=draft();back.text=turn.prompt||'';back.attachments=(turn.attachments||[]).map(a=>({...a,reused:true}));save();await refresh();input.value=back.text;input.focus();syncSendButton();}
+   catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}}
+  function renderQueue(){
+   const pos=optimisticOrder?new Map(optimisticOrder.map((id,i)=>[id,i])):null;
+   const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||(pos?(pos.get(a.id)??Infinity)-(pos.get(b.id)??Infinity):0)||queueRank(a)-queueRank(b));
+   const signature=JSON.stringify([k(),waiting.map(x=>[x.id,x.prompt,Boolean(x.steer),x.createdAt,(x.attachments||[]).map(a=>a.id)]),queueState,[...queuePending]]);
+   if(queueOrder.active()||signature===queueSignature)return;queueSignature=signature;
+   queue.hidden=!waiting.length;queueList.replaceChildren();if(!waiting.length)return;
+   const paused=Boolean(queueState?.paused),head=[el('span','message-queue-title',t('Queue · {v}',{v:waiting.length}))];queue.classList.toggle('is-paused',paused);
+   if(paused)head.push(el('span','message-queue-paused',t('Paused')));
+   if(queueState){const toggle=iconButton(paused?'play':'pause',paused?'Resume the queue':'Pause the queue: keep these messages after the reply ends',e=>{e.preventDefault();e.stopPropagation();void setQueuePaused(!paused);},`message-queue-pause${paused?' is-paused':''}`);head.push(toggle);}
+   queueSummary.replaceChildren(...head);
+   const orderable=Boolean(queueState)&&waiting.filter(x=>!x.steer).length>1;queueList.classList.toggle('is-orderable',orderable);
+   waiting.forEach((turn,i)=>{const row=el('div','message-queue-item'),info=el('div','message-queue-info');
+    if(orderable&&!turn.steer){row.dataset.orderId=turn.id;const grip=el('span','message-queue-grip');grip.innerHTML=GRIP;grip.title=t('Drag to reorder');row.append(grip);}
+    const text=turn.prompt||(turn.attachments||[]).map(a=>a.name).join(', '),title=el('strong','',`${i+1}. ${text}`);title.title=text;title.translate=false;info.append(title);
+    if(turn.createdAt){const when=el('time','message-queue-time',clock(turn.createdAt));when.dateTime=turn.createdAt;when.title=time(turn.createdAt);when.translate=false;info.append(when);}row.append(info);
     const busy=queuePending.has(turn.id)||turn.steer,steer=el('button',`icon-button message-queue-steer${busy?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(turn.steer?'Interrupting and starting this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
-    steer.onclick=async()=>{queuePending.add(turn.id);renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
-    const cancel=closeIcon(el('button','icon-button'));cancel.type='button';cancel.title=t('Cancel queued message');cancel.setAttribute('aria-label',cancel.title);cancel.disabled=queuePending.has(turn.id);
-    cancel.onclick=async()=>{queuePending.add(turn.id);renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
-    row.append(steer,cancel);queueList.append(row);});}
+    steer.onclick=async()=>{queuePending.add(turn.id);queueSignature='';renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
+    row.append(steer);
+    if(queueState){const edit=iconButton('edit','Edit: back to the input box',()=>void editQueued(turn),'message-queue-edit');edit.disabled=busy;row.append(edit);}
+    const remove=iconButton('trash','Delete',()=>void withdrawQueued(turn),'message-queue-delete');remove.disabled=queuePending.has(turn.id);row.append(remove);
+    queueList.append(row);});}
   /** Stop only while a reply runs and nothing is typed; with text or files the button sends, and Home queues the message. */
   function syncSendButton(){if(!current)return;const d=draft(),op=operation(),state=sendState(d,op),live=activeTurn(),stopping=live?.status==='stopping',typing=Boolean(input.value.trim())||Boolean(d.attachments?.length)||Boolean(d.pending);
    const stopMode=Boolean(live)&&!typing,paused=Boolean(getData().settings?.paused);
@@ -1000,7 +1031,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    if(refocus&&!locked){refocus=false;if(document.activeElement===document.body||document.activeElement===sendButton)input.focus({preventScroll:true});}
   }
   async function endTakeover(value){const id=sessionKey(value),op=operation(id);if(op.releasing)return;op.releasing=true;op.message='';if(k()===id){render();renderSide(value,value.sessionId,true);}try{await api(`${endpoint(value.nodeId)}/takeover/release`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId}});if(k()===id)await refresh();else await onStateRefresh();}catch(error){op.releasing=false;op.message=t(error.message);if(k()===id){render();renderSide(value,value.sessionId,true);}}}
-  async function removeAttachment(id,nodeId,item){const op=operation(id);op.message='';if(k()===id)render();try{await api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(item.id)}`,{method:'DELETE'});const d=draft(id);d.attachments=(d.attachments||[]).filter(a=>a.id!==item.id);revokeAttachment(nodeId,item.id);save();}catch(error){op.message=t(error.message);}finally{if(k()===id)render();}}
+  async function removeAttachment(id,nodeId,item){const op=operation(id);op.message='';if(k()===id)render();try{
+   // A file brought back by editing a queued message still belongs to that message's record; dropping it from the draft is enough.
+   if(!item.reused)await api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(item.id)}`,{method:'DELETE'});const d=draft(id);d.attachments=(d.attachments||[]).filter(a=>a.id!==item.id);revokeAttachment(nodeId,item.id);save();}catch(error){op.message=t(error.message);}finally{if(k()===id)render();}}
   const input=el('textarea');input.rows=1;input.setAttribute('aria-label',t('Chat message'));
   const sendButton=el('button','primary chat-send');sendButton.type='submit';
   /** Send and Stop are one icon button inside the field; the label lives in the tooltip and accessible name. */
@@ -1037,7 +1070,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;}op.message=t(error.message);}
    finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[id]?.pending&&drafts[id].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}
-  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;controls=result.controls===true;settings=result.settings||{model:null,effort:null};residentState=result.process||'closed';turns=result.items||[];{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
+  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;controls=result.controls===true;settings=result.settings||{model:null,effort:null};residentState=result.process||'closed';turns=result.items||[];queueState=result.queue||null;{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
   function schedule(){clearInterval(poll);poll=null;if(current&&(activeTurn()||turns.some(x=>x.status==='waiting')||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
   /** Start chatting here: the one confirmation of bypassed permissions, then the composer. */
   function enable(value,{focus=true}={}){if(!value?.sessionId)return false;const id=sessionKey(value);if(!on.has(id)){on.add(id);save();}if(current&&k()===id){render();renderSide(value,value.sessionId,true);if(focus)input.focus();}return true;}

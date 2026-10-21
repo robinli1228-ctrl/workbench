@@ -322,4 +322,13 @@ export default {
  "No files mentioned yet": "还没有提到文件",
  "Today": "今天",
  "Yesterday": "昨天",
+ "Paused": "已暂停",
+ "Pause the queue: keep these messages after the reply ends": "暂停发送：当前回复结束后不自动发出",
+ "Resume the queue": "继续发送",
+ "Drag to reorder": "拖动调整顺序",
+ "Edit: back to the input box": "编辑：放回输入框",
+ "Delete": "删除",
+ "Keep or send the current draft before editing a queued message": "请先发送或清空输入框里的内容，再编辑排队消息",
+ "This message has already been sent": "这条消息已经发出",
+ "The queue changed; refresh and try again": "队列已变化，请刷新后重试",
 };

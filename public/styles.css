@@ -3508,3 +3508,30 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 /* Quota card: the window labels in dark semibold; the marks at half opacity so the numbers beside them lead. */
 .native-quota-line .native-quota-label { color: var(--ink); font-weight: 600; }
 .native-quota-line .role-quota-mark { opacity: .5; }
+
+/* ---- Sessions queue: blue rows; pause/resume at the right of the title; per row a drag grip, the text with its send time on
+   hover (beside the text, never over the icons), then steer, edit and delete. ---- */
+.native-queue .message-queue-item, .native-queue .message-queue-item:hover { background: linear-gradient(rgb(37 99 235 / 5%), rgb(37 99 235 / 5%)), #fff; }
+.native-queue .message-queue-item:hover { background: linear-gradient(rgb(37 99 235 / 9%), rgb(37 99 235 / 9%)), #fff; }
+.native-queue .message-queue-item { align-items: center; gap: 6px; padding: 6px 6px 6px 4px; }
+.native-queue .message-queue-list.is-orderable .message-queue-item[data-order-id] { cursor: default; }
+.native-queue .message-queue-list.is-orderable .message-queue-item[data-order-id]::before { content: none; }
+.native-queue .message-queue-grip { flex: none; display: grid; place-items: center; width: 18px; height: 24px; color: #b3b8c2; cursor: grab; touch-action: none; }
+.native-queue .message-queue-grip svg { width: 10px; height: 15px; }
+.native-queue .message-queue-item:hover .message-queue-grip { color: #7b8190; }
+.native-queue .message-queue-item:not([data-order-id]) .message-queue-info { padding-left: 6px; }
+.native-queue .message-queue-info { display: flex; align-items: center; gap: 10px; }
+.native-queue .message-queue-info strong { flex: 1; min-width: 0; font-weight: 500; }
+.native-queue .message-queue-time { flex: none; color: #9aa0aa; font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .12s; }
+.native-queue .message-queue-item:hover .message-queue-time, .native-queue .message-queue-item:focus-within .message-queue-time { opacity: 1; }
+.native-queue .message-queue-item .icon-button { width: 28px; height: 28px; min-height: 28px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); box-shadow: none; }
+.native-queue .message-queue-item .icon-button svg { width: 16px; height: 16px; }
+.native-queue .message-queue-item .message-queue-delete:hover:not(:disabled) { color: var(--danger); background: #fdecec; }
+.native-queue summary { padding-right: 8px; }
+.native-queue summary .message-queue-pause { margin-left: auto; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 5px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
+.native-queue summary .message-queue-pause:hover { color: var(--accent); background: var(--accent-tint, #eef0ff); }
+.native-queue summary .message-queue-pause.is-paused { color: #b45309; background: #fff4e5; }
+.native-queue summary .message-queue-pause svg { width: 16px; height: 16px; }
+.native-queue summary .message-queue-paused { margin-left: 2px; padding: 1px 8px; border-radius: 999px; background: #fff4e5; color: #b45309; font-size: 11.5px; font-weight: 600; }
+.native-queue .message-queue-item.list-order-placeholder { background: rgb(37 99 235 / 12%); }
+.message-queue-item.list-order-ghost .message-queue-time { opacity: 0; }
