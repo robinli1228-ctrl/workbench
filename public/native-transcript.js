@@ -19,6 +19,33 @@ const ICONS={
 };
 export function stepIcon(kind){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 20 20');svg.setAttribute('aria-hidden','true');svg.classList.add('nt-icon',`is-${kind}`);svg.innerHTML=ICONS[kind]||ICONS.other;return svg;}
 
+/** 只识别 Claude 的完整中断标记，正文引用和其他运行时的文字仍按原消息显示。 */
+export function nativeInterruptionText(row,runtime){
+ const value=typeof row.text==='string'?row.text.trim():'';
+ return runtime==='claude'&&row.role==='user'&&/^\[Request interrupted by user(?: for tool use)?\]$/.test(value)?value:null;
+}
+
+/** 页面队列消息按时间插入后再归位提示；只处理本会话的显示节点，不改原始记录或执行状态。 */
+export function attachInterruptionNotices(root,t){
+ for(const history of root.querySelectorAll('.native-history')){
+  for(const note of history.querySelectorAll('.nt-interruption-note'))note.remove();
+  for(const row of history.querySelectorAll('[data-native-interruption-attached]')){row.hidden=false;delete row.dataset.nativeInterruptionAttached;}
+  let previous=null;
+  for(const row of history.querySelectorAll('.native-chat-row')){
+   if(row.hidden)continue;
+   const original=row.dataset.nativeInterruption;
+   if(original){
+    const time=previous?.querySelector('.nt-prompt-tools .nt-prompt-time');
+    if(!time)continue; // 上一页尚未加载时保留独立提示，不能挂到另一原生会话。
+    let note=time.parentNode.querySelector('.nt-interruption-note');
+    if(!note){note=el('span','nt-interruption-note',t('Interrupted'));time.after(note);}
+    if(!note.title.split('\n').includes(original))note.title=[note.title,original].filter(Boolean).join('\n');
+    row.hidden=true;row.dataset.nativeInterruptionAttached='1';
+   }else if(row.classList.contains('nt-user'))previous=row;
+  }
+ }
+}
+
 const parseArgs=value=>{if(!value)return {};if(typeof value==='string'){try{const parsed=JSON.parse(value);return parsed&&typeof parsed==='object'?parsed:{raw:value};}catch{return {raw:value};}}return typeof value==='object'?value:{};};
 const text=value=>typeof value==='string'?value:value==null?'':JSON.stringify(value,null,2);
 const basename=path=>String(path||'').replace(/[\\/]+$/,'').split(/[\\/]/).pop()||String(path||'');
@@ -134,6 +161,9 @@ export function fileChips(steps){
 export function activityBlock({steps,notes=[],t,live=false,duration='',open=false,onPreview,onToggle}){
  const box=el('details','nt-activity');box.open=open;
  const summary=el('summary','nt-activity-summary');
+ // 与摘要首项的顺序一致；混合操作不改变原有文字和数量。
+ const kind=['read','edit','write','command','search','web','agent','other'].find(kind=>steps.some(step=>step.kind===kind));
+ if(kind)summary.append(stepIcon(kind));
  summary.append(el('span','nt-caret'),el('span','nt-activity-text',summarizeSteps(steps,t,{duration})||t(live?'Working…':'No tool calls')));
  const chips=fileChips(steps);
  if(chips.length){const row=el('span','nt-chips');for(const {path,step} of chips.slice(0,8)){const chip=el('button','nt-chip');chip.type='button';chip.title=path;chip.append(stepIcon(step.kind),el('span','',basename(path)));if(step.kind==='edit'&&(step.added||step.removed))chip.append(el('span','nt-chip-stat',stat(step.added,step.removed)));chip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();onPreview?.(step,path);});row.append(chip);}if(chips.length>8)row.append(el('span','nt-chip-more',`+${chips.length-8}`));summary.append(row);}

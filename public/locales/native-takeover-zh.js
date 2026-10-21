@@ -1,5 +1,6 @@
 /** Page-local Chinese strings for the native-session takeover. Kept out of locales/zh.js so other pages' translations are unchanged. */
 export default {
+ "No displayable messages in this portion. Earlier history remains; click Load older history to continue.": "已继续向前查找，这一段暂无可显示的消息。还有更早的历史，请再次点击「加载更早的历史」。",
  "Native session catalogue changed; refresh and try again.": "会话目录正在变化，请刷新后重试。",
  "Session history ({count})": "历史会话（{count}）",
  "Read-only preview. Take over at the bottom to continue here, or open iTerm.": "当前只读。点击底部「接管会话」可直接在这里继续，也可以在 iTerm 中继续。",

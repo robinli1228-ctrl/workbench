@@ -12,7 +12,7 @@ import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,o
 import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {stripAnsi} from './run-log-data.js';
-import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns} from './native-transcript.js';
+import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -516,6 +516,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(cursor?{cursor}:{}),...(snapshot?{snapshot}:{})})}`);
  let lastPromptAt=null;
  function renderHistoryRow(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text;
+   const interruption=nativeInterruptionText(m,item.runtime);
+   if(interruption){const row=el('div','nt-system native-chat-row',t('Interrupted'));row.title=interruption;row.dataset.nativeInterruption=interruption;
+    // 保留原生 user 边界，避免页面回执把后续工具记录归到上一条回复。
+    row.dataset.role='user';row.dataset.text=promptKey(interruption);if(m.id)row.dataset.historyId=m.id;if(m.timestamp)row.dataset.at=m.timestamp;return row;}
    // Injected context leaves nothing to show; a slash command shows as one quiet system line.
    if(m.role==='user'&&!text){const task=taskNotificationOf(m.text);if(task){const row=el('div','nt-system native-chat-row');row.dataset.role='system';row.dataset.text=`task:${task}`;if(m.id)row.dataset.historyId=m.id;if(m.timestamp)row.dataset.at=m.timestamp;row.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${task.slice(0,8)}`));return row;}
     const command=commandOf(m.text);if(!command)return document.createComment('injected');const row=el('div','nt-system native-chat-row');row.dataset.role='system';row.dataset.text=command.replace(/^\//,'').trim();if(m.id)row.dataset.historyId=m.id;if(m.timestamp)row.dataset.at=m.timestamp;row.append(el('span','nt-system-mark','\u2318'),el('code','',command));return row;}
@@ -540,7 +544,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   }
   return nodes;
  }
- const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed(),onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage:renderHistoryRow,renderMessages:renderHistory});
+ const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed({historyChanged:true}),onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage:renderHistoryRow,renderMessages:renderHistory});
  async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();if(!quiet){onPreview?.();preview.close();takeover.detach();const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);detailSignature='';}
   try{const id=nativeId(item),readable=id&&item.hasHistory!==false,value=readable?{...item,...await readPage(item,null,quiet?item.historySnapshot:null),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:item;if(ticket!==detailVersion||!active()||key(selected)!==key(item))return;selected=value;timeline.readSucceeded();const signature=JSON.stringify(value);if(quiet&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
    const history=timeline.update({...value,...(!value.messages?.length&&!value.notice?{notice:value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'}:{})});
@@ -885,9 +889,11 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const isLive=turn=>['queued','starting','running','waiting_user','stopping'].includes(turn.status);
   const signatureOf=()=>JSON.stringify([k(),[...(historyEl?.querySelectorAll('.native-chat-row:not(.native-turn-anchored)')||[])].map(serialOf),timeline.hasOlder(),[...openProcesses].sort(),
    turns.map(turn=>isLive(turn)&&!turn.control?[turn.id,turn.status,turn.prompt,turn.attachments,turn.createdAt]:turn)]);
-  function renderFeed(){const signature=signatureOf();
+  function renderFeed({historyChanged=false}={}){const signature=signatureOf();
    if(signature===feedSignature&&[...liveReplies.values()].every(row=>row.isConnected)){
     for(const [id,row] of liveReplies){const turn=turns.find(x=>x.id===id);if(!turn)continue;const content=el('div','nt-turn');content.append(turnContent(turn,current,{live:true,open:true}),workingLine(turn));row.querySelector('.nt-turn')?.replaceWith(content);}
+    // 更早的原生会话不改变当前会话签名，但新分段仍需归位；每秒文本刷新不重复遍历历史。
+    if(historyChanged)markLatestDuration();
     return;}
    feedSignature=signature;liveReplies.clear();
    feed.replaceChildren();for(const old of historyEl?.querySelectorAll('.native-turn-anchored')||[])old.remove();
@@ -967,7 +973,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(!last||at.toDateString()!==last.toDateString()||(row.classList.contains('nt-user')&&at-last>=30*60000)){const day=el('div','nt-day',dayLabel(at));day.translate=false;row.before(day);}last=at;}}
   function groupRows(){markDays();let prev=null;for(const node of scroll.querySelectorAll('.native-chat-row, .native-history-separator, .native-history-loader, .nt-day')){if(node.hidden){node.classList.remove('is-continued');continue;}const role=node.classList.contains('nt-agent')?'agent':node.classList.contains('nt-user')?'user':null;node.classList.toggle('is-continued',Boolean(role)&&prev===role);prev=role;}}
   /** Every finished reply shows how long its turn took, next to Copy; a reply still running or without a known start shows none. */
-  function markLatestDuration(){groupRows();for(const old of scroll.querySelectorAll('.nt-duration'))old.remove();for(const row of scroll.querySelectorAll('.nt-agent')){if(row.hidden||!row.dataset.duration||row.querySelector('.nt-working'))continue;const foot=row.querySelector('.nt-reply-foot');if(foot)foot.append(el('span','nt-duration',t('Took {duration}',{duration:row.dataset.duration})));}}
+  function markLatestDuration(){attachInterruptionNotices(scroll,t);groupRows();for(const old of scroll.querySelectorAll('.nt-duration'))old.remove();for(const row of scroll.querySelectorAll('.nt-agent')){if(row.hidden||!row.dataset.duration||row.querySelector('.nt-working'))continue;const foot=row.querySelector('.nt-reply-foot');if(foot)foot.append(el('span','nt-duration',t('Took {duration}',{duration:row.dataset.duration})));}}
   /** The composer is built once and kept in place: a refresh that re-created it would move the focused textarea and drop the caret (and any IME composition). */
   const form=el('form','chat-composer native-takeover-form'),barRow=el('div','chat-input-bar'),field=el('div','chat-input-field'),note=el('p','workspace-note native-takeover-note'),tray=el('div','chat-attachments native-takeover-tray');
   // Queued messages sit above the composer like the group-chat queue: steer interrupts the reply and sends that one now, × withdraws it.
