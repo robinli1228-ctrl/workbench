@@ -20,6 +20,10 @@ const names={codex:'Codex',claude:'Claude Code',grok:'Grok',agy:'Agy'};
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
 const button=(text,fn,cls='secondary')=>{const n=el('button',cls,t(text));n.type='button';n.addEventListener('click',fn);return n;};
 const closeButton=fn=>{const n=button('',fn,'icon-button native-close');setActionIcon(n,'close','Close');n.dataset.close='';return n;};
+/** Short utility actions in cards (refresh, edit, create, copy) are icons; the label is the tooltip and accessible name. */
+const iconButton=(name,label,fn,cls='')=>{const n=el('button',`icon-button native-icon-action ${cls}`.trim());n.type='button';setActionIcon(n,name,t(label));n.addEventListener('click',fn);return n;};
+/** An empty or loading card shows one quiet icon instead of a sentence. */
+const emptyState=(icon,label,busy=false)=>{const box=el('div',`native-files-empty${busy?' is-busy':''}`);box.innerHTML=UI_ICON[icon]||'';box.querySelector('svg')?.setAttribute('aria-hidden','true');box.title=t(label);box.setAttribute('role','img');box.setAttribute('aria-label',t(label));return box;};
 
 /** The session view reads native history and prepares terminal links. Only after an explicit takeover does it submit turns, resuming the same native ID. */
 export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange,onPreview,onStateRefresh=async()=>{}}){
@@ -97,17 +101,6 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   catch(error){projectOutputs.set(projectId,{items:[],error:error.message,at:Date.now()});}
   if(sideTab==='outputs')renderOutputs();
  }
- function projectOutputsCard(){
-  const section=el('section','native-side-card native-project-outputs'),project=sessionProject(selected),head=el('div','native-card-head');head.append(el('h3','',t('Project outputs')));section.append(head);
-  if(!project||!artifactRow)return null;
-  const cached=projectOutputs.get(project.id),refresh=button('Refresh',()=>void loadProjectOutputs(project.id,true),'secondary native-card-action');refresh.disabled=Boolean(cached?.loading);head.append(refresh);
-  if(!cached?.at)section.append(el('p','native-side-hint',t('Loading…')));
-  else if(cached.error)section.append(el('p','native-side-hint',t('Project outputs unavailable: {message}',{message:cached.error})));
-  else if(!cached.items.length)section.append(el('p','native-side-hint',t('Nothing yet')));
-  else{const list=el('div','native-project-output-list');for(const file of cached.items.slice(0,30))list.append(artifactRow(file));section.append(list);if(cached.partial||cached.items.length>30)section.append(el('p','native-side-hint',t('Showing part of the project outputs; the group chat lists the rest.')));}
-  if(!cached?.at||Date.now()-cached.at>=30000)void loadProjectOutputs(project.id);
-  return section;
- }
  /**
   * Media and files the session produced under its working folder's outputs/ and artifacts/ (one level of subfolders),
   * read through the device's folder listing; videos and images open in the media viewer, other files in the preview.
@@ -126,16 +119,26 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   producedState.set(id,{root,loading:false,files:found?files.slice(0,80):null,error:null,at:Date.now()});
   if(sideTab==='outputs'&&selected&&key(selected)===id)renderOutputs();
  }
- function producedCard(session){
-  const st=producedState.get(key(session)),context=mediaContext(session);
+  /**
+  * Files tab, card 1: the project's outputs — media and files under the working folder's outputs/ and artifacts/ (one level of
+  * subfolders), then the project's recorded outputs (the group chat's Recent Outputs) that are not already listed.
+  */
+ function outputsCard(session){
+  const card=el('section','native-side-card native-files-half native-outputs-card'),head=el('div','native-card-head'),body=el('div','native-files-body');
+  head.append(el('h3','',t('Project outputs')));card.append(head,body);
+  const st=producedState.get(key(session)),context=mediaContext(session),project=artifactRow?sessionProject(session):null,cached=project?projectOutputs.get(project.id):null;
   if(!st||st.root!==session.workspace||(!st.loading&&!st.at))void loadProduced(session);
-  if(!st?.files)return null;
-  const card=el('section','native-side-card native-produced-card'),head=el('div','native-card-head');head.append(el('h3','',t('Outputs folder')));
-  const refresh=button('Refresh',()=>void loadProduced(session,true),'secondary native-card-action');refresh.disabled=st.loading;head.append(refresh);card.append(head);
-  if(!st.files.length){card.append(el('p','native-side-hint',t('Nothing yet')));return card;}
-  const media=st.files.filter(path=>mediaKindFromName(path)!=='file'),others=st.files.filter(path=>mediaKindFromName(path)==='file');
-  if(media.length&&context){const list=el('div','native-output-list');media.slice(0,40).forEach((path,index)=>list.append(mediaCard(path,context,{describe:index<12})));card.append(list);}
-  if(others.length){const list=el('div','native-file-list');for(const path of others.slice(0,40))list.append(fileRow(session,path,null));card.append(list);}
+  if(project&&(!cached?.at||Date.now()-cached.at>=30000))void loadProjectOutputs(project.id);
+  const refresh=iconButton('refresh','Refresh',()=>{void loadProduced(session,true);if(project)void loadProjectOutputs(project.id,true);});refresh.disabled=Boolean(st?.loading||cached?.loading);head.append(refresh);
+  const produced=st?.root===session.workspace?st.files||[]:[],seen=new Set(produced);
+  const media=produced.filter(path=>mediaKindFromName(path)!=='file'),others=produced.filter(path=>mediaKindFromName(path)==='file');
+  if(media.length&&context){const list=el('div','native-output-list');media.slice(0,40).forEach((path,index)=>list.append(mediaCard(path,context,{describe:index<12})));body.append(list);}
+  if(others.length){const list=el('div','native-file-list');for(const path of others.slice(0,40))list.append(fileRow(session,path,null));body.append(list);}
+  const records=(cached?.items||[]).filter(file=>!seen.has(file.path)&&!seen.has(file.originPath));
+  if(records.length){const list=el('div','native-project-output-list');for(const file of records.slice(0,30))list.append(artifactRow(file));body.append(list);if(cached.partial||records.length>30)body.append(el('p','native-side-hint',t('Showing part of the project outputs; the group chat lists the rest.')));}
+  if(cached?.error)body.append(el('p','native-side-hint',t('Project outputs unavailable: {message}',{message:cached.error})));
+  const busy=Boolean(session.workspace&&(!st?.at||st.loading))||Boolean(project&&(!cached?.at||cached.loading));
+  if(!body.childElementCount)body.append(busy?emptyState('original','Loading…',true):emptyState('original','No outputs yet'));
   return card;
  }
  /** Files tab: what the CLI touched in page turns, files named in replies, the working folder itself, and project outputs. */
@@ -168,6 +171,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function folderCard(session){
   const card=el('section','native-side-card native-folder-card'),root=session.workspace;card.append(el('h3','',t('Working folder')));
   if(!root){card.append(el('p','native-side-hint',t('Choose a folder when opening')));return card;}
+  // Files this session read, edited or created in page turns, latest state per path, right above the folder they live in.
+  const touched=takeover.files();
+  if(touched.length){const changes=el('div','native-folder-changes'),list=el('div','native-file-list');changes.append(el('div','native-subhead',t('Touched in this session')),list);for(const {path,step} of touched.slice(0,20))list.append(fileRow(session,path,step,step.kind==='edit'&&(step.added||step.removed)?`+${step.added||0} −${step.removed||0}`:''));card.append(changes);}
   const id=key(session);let st=folderState.get(id);if(!st||st.root!==root){st={root,path:root,entries:null,loading:false,error:null,hasMore:false,nextOffset:0};folderState.set(id,st);}
   const crumbs=el('div','native-folder-crumbs'),rel=st.path.startsWith(root)?st.path.slice(root.length).split('/').filter(Boolean):[];
   const crumb=(label,path,last)=>{const b=el('button',`native-folder-crumb${last?' is-current':''}`,label);b.type='button';b.title=path;b.translate=false;b.disabled=last;b.addEventListener('click',()=>{st.path=path;st.entries=null;renderFolder();});return b;};
@@ -197,10 +203,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(!value.workspace){card.append(el('p','native-side-hint',t('Choose a folder when opening')));return card;}
   if(!cached||cached.loading){card.append(el('p','native-side-hint',t('Loading…')));return card;}
   const st=cached.state;if(st.error){card.append(el('p','native-side-hint',t(st.error)));return card;}
-  if(!st.found){card.append(el('p','native-side-hint',t('No AGENTS.md above this folder yet.')));head.append(button('Create',()=>openAgentsEditor(value,st),'secondary native-card-action'));return card;}
+  if(!st.found){card.append(el('p','native-side-hint',t('No AGENTS.md above this folder yet.')));head.append(iconButton('plus','Create AGENTS.md',()=>openAgentsEditor(value,st)));return card;}
   const where=el('div','native-agents-path',st.path);where.title=st.path;where.translate=false;card.append(where);
   const preview=el('pre','native-agents-preview',st.tooLarge?t('File is larger than 600 KB; open it on the device.'):(st.content||'').trim()||t('(empty)'));preview.translate=false;preview.title=t('Edit');card.append(preview);
-  const edit=button('Edit',()=>openAgentsEditor(value,st),'secondary native-card-action');edit.disabled=Boolean(st.tooLarge);head.append(edit);
+  const edit=iconButton('edit','Edit AGENTS.md',()=>openAgentsEditor(value,st));edit.disabled=Boolean(st.tooLarge);head.append(edit);
   if(!st.tooLarge)preview.addEventListener('click',()=>openAgentsEditor(value,st));
   return card;
  }
@@ -223,17 +229,12 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const panel=sidePanels.outputs;panel.replaceChildren();
   if(!selected){panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
   const context=mediaContext(selected);
-  // 1. Files the CLI read, edited or created in page turns of this session (latest state per path).
-  const touched=takeover.files(),changed=el('section','native-side-card');changed.append(el('h3','',t('Touched in this session')));
-  if(!touched.length)changed.append(el('p','native-side-hint',t('Nothing yet')));
-  else{const list=el('div','native-file-list');for(const {path,step} of touched.slice(0,40))list.append(fileRow(selected,path,step,step.kind==='edit'&&(step.added||step.removed)?`+${step.added||0} −${step.removed||0}`:''));changed.append(list);}
-  // 2. Media paths named in loaded replies.
-  const mentioned=el('section','native-side-card');mentioned.append(el('h3','',t('Named in replies')));
+  // Two cards, half the panel each: the project's outputs first, then files named in the loaded replies.
+  const mentioned=el('section','native-side-card native-files-half'),head=el('div','native-card-head'),body=el('div','native-files-body');head.append(el('h3','',t('Named in replies')));mentioned.append(head,body);
   const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
-  if(!items.length)mentioned.append(el('p','native-side-hint',t('Nothing yet')));
-  else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));mentioned.append(list);}
-  // Files named in replies first, then what this session touched, then the folder's outputs, project outputs and the folder itself.
-  panel.append(...[mentioned,changed,producedCard(selected),projectOutputsCard()].filter(Boolean));
+  if(!items.length)body.append(emptyState('quote','No files named in replies yet'));
+  else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));body.append(list);}
+  panel.append(outputsCard(selected),mentioned);
  }
  resetSide();
  // Session settings live behind a gear at the right end of the top bar, where the connection note sits in other modes.
@@ -293,7 +294,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const prevState=connectionStates.get(key(item));connectionStates.set(key(item),state);
   if(['terminal','prepared','returning','stopping'].includes(prevState)&&state==='idle')takeover.returned(item);
   const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
-  const copyCommand=sidePanels.resources.querySelector('.native-command-row button');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
+  const copyCommand=sidePanels.resources.querySelector('.native-copy-command');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
   const paused=Boolean(data.settings?.paused);
   const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,paused,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
@@ -602,7 +603,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function renderGit(value){
   const prior=sidePanels.resources.querySelector('[data-native-git]');if(!prior||side.dataset.sessionKey!==key(value))return;
   const cached=gitCache.get(key(value)),section=el('section','native-side-card native-git-card');section.dataset.nativeGit='';
-  const head=el('div','native-card-head'),refresh=button('Refresh',()=>void loadGit(value,true),'secondary native-card-action');refresh.disabled=!cached||Boolean(cached.loading);
+  const head=el('div','native-card-head'),refresh=iconButton('refresh','Refresh',()=>void loadGit(value,true));refresh.disabled=!cached||Boolean(cached.loading);
   head.append(el('h3','',t('Repository (Git)')),refresh);section.append(head);
   if(!cached||cached.loading)section.append(el('p','native-side-hint',t('Reading Git status…')));
   else{
@@ -680,9 +681,11 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   overview.append(controls,settingsCard);
   const identity=metaCard(resources,'Native session',[['Session ID',id||t('Not available yet'),id||null]]);
   // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
-  if(id&&value.workspace){const row=el('div','native-command-row');const copy=button('Copy iTerm command',async e=>{const b=e.target;b.disabled=true;b.dataset.pending='true';try{await copyTerminalCommand(value);b.textContent=t('Copied');setTimeout(()=>{b.textContent=t('Copy iTerm command');delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}catch(error){delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'secondary native-card-action');
+  if(id&&value.workspace){const copy=iconButton('copy','Copy iTerm command',async e=>{const b=e.currentTarget;b.disabled=true;b.dataset.pending='true';
+    try{await copyTerminalCommand(value);setActionIcon(b,'check',t('Copied'));setTimeout(()=>{setActionIcon(b,'copy',t('Copy iTerm command'));delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}
+    catch(error){delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'native-copy-command');
    copy.disabled=takeover.releaseDisabled(value);
-   row.append(copy);identity.append(row);}
+   const title=identity.querySelector('h3'),head=el('div','native-card-head');title.replaceWith(head);head.append(title,copy);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
   const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';const agentsPlaceholder=el('section','native-side-card');agentsPlaceholder.dataset.nativeAgents='';resources.append(repository,agentsPlaceholder,folderCard(value),identity);renderAgents(value);void loadAgents(value);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);

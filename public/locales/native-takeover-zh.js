@@ -307,4 +307,6 @@ export default {
  "Background task finished": "后台任务已完成",
  "5H tokens left": "5H token 剩余",
  "7D tokens left": "7D token 剩余",
+ "No outputs yet": "还没有产物",
+ "No files named in replies yet": "回复中还没有提到文件",
 };
