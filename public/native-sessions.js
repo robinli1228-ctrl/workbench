@@ -39,8 +39,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  document.querySelector('#project-list').after(list);document.querySelector('main.workspace').append(content);document.querySelector('#node-sidebar').append(side);
  /** The right side mirrors the group-chat inspector: one header, three panels and the same bottom tab bar and classes. */
  // Preview (desktop only) holds one message, picture, video or file opened "on the right" for reading beside the chat.
- const SIDE_TABS=['overview','outputs','resources','preview'],SIDE_TITLES={overview:'Overview',outputs:'Files',resources:'Resources',preview:'Preview'};
- const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,resources:UI_ICON.desktop,preview:UI_ICON.sideOpen};
+ // Resources moved out: the session ID sits under the This page / iTerm switch, the working folder in Files, the repository
+ // and AGENTS.md in Session settings.
+ const SIDE_TABS=['overview','outputs','preview'],SIDE_TITLES={overview:'Overview',outputs:'Files',preview:'Preview'};
+ const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,preview:UI_ICON.sideOpen};
  let sideTab='overview';
  const sideHeader=el('header','inspector-header native-side-header'),sideTitle=el('h2',''),sideBadge=el('span','native-side-badge');sideBadge.hidden=true;sideHeader.append(sideTitle,sideBadge);
  const sidePanels=Object.fromEntries(SIDE_TABS.map(name=>{const panel=el('section','inspector-panel native-side-panel');panel.id=`native-side-${name}`;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',`native-side-tab-${name}`);return [name,panel];}));
@@ -224,7 +226,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(!st.tooLarge)preview.addEventListener('click',()=>openAgentsEditor(value,st));
   return card;
  }
- function renderAgents(value){const prior=sidePanels.resources.querySelector('[data-native-agents]');if(prior&&side.dataset.sessionKey===key(value))prior.replaceWith(agentsCard(value));}
+ function renderAgents(value){const prior=dialog.querySelector('[data-native-agents]');if(prior&&side.dataset.sessionKey===key(value))prior.replaceWith(agentsCard(value));}
  let agentsDialog=null;
  function openAgentsEditor(value,st){
   if(!agentsDialog){agentsDialog=el('dialog','settings-edit-dialog native-session-dialog native-agents-dialog');document.body.append(agentsDialog);}
@@ -247,17 +249,17 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const folder=folderState.get(k);if(folder?.error&&!folder.loading&&now-(folder.errorAt||0)>8000){folder.error=null;folder.entries=null;renderFolder();}
  }
  /** The working folder browser sits on the Resources tab; navigating it redraws only that card. */
- function renderFolder(){const prior=sidePanels.resources.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
+ function renderFolder(){const prior=sidePanels.outputs.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
  function renderOutputs(){
   const panel=sidePanels.outputs;panel.replaceChildren();
   if(!selected){panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
   const context=mediaContext(selected);
-  // Two cards, half the panel each: the project's outputs first, then files named in the loaded replies.
+  // The project's outputs first, then files named in the loaded replies, then the working folder (with what this session touched).
   const mentioned=el('section','native-side-card native-files-half'),head=el('div','native-card-head'),body=el('div','native-files-body');head.append(el('h3','',t('Named in replies')));mentioned.append(head,body);
   const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
   if(!items.length)body.append(emptyState('quote','No files mentioned yet'));
   else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));body.append(list);}
-  panel.append(outputsCard(selected),mentioned);
+  panel.append(outputsCard(selected),mentioned,folderCard(selected));
  }
  resetSide();
  // Session settings live behind a gear at the right end of the top bar, where the connection note sits in other modes.
@@ -321,7 +323,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const prevState=connectionStates.get(key(item));connectionStates.set(key(item),state);
   if(['terminal','prepared','returning','stopping'].includes(prevState)&&state==='idle')takeover.returned(item);
   const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
-  const copyCommand=sidePanels.resources.querySelector('.native-copy-command');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
+  const copyCommand=side.querySelector('.native-copy-command');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
   const paused=Boolean(data.settings?.paused);
   const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,paused,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
@@ -464,7 +466,6 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function resetSide(){
   delete side.dataset.sessionKey;sideBadge.hidden=true;outputs.clear();gitKey=null;renaming=null;
   sidePanels.overview.replaceChildren(el('p','native-side-hint',t('Select a native session to view its details.')));
-  sidePanels.resources.replaceChildren(el('p','native-side-hint',t('Select a native session to view its details.')));
   selectSideTab(sideTab);
  }
  /** Reuse role-card device identities; cloud numbering follows the full roster, not the filtered session list. */
@@ -641,7 +642,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(selected&&key(selected)===sessionKey)renderGit(selected);
  }
  function renderGit(value){
-  const prior=sidePanels.resources.querySelector('[data-native-git]');if(!prior||side.dataset.sessionKey!==key(value))return;
+  const prior=dialog.querySelector('[data-native-git]');if(!prior||side.dataset.sessionKey!==key(value))return;
   const cached=gitCache.get(key(value)),section=el('section','native-side-card native-git-card');section.dataset.nativeGit='';
   const head=el('div','native-card-head'),refresh=iconButton('refresh','Refresh',()=>void loadGit(value,true));refresh.disabled=!cached||Boolean(cached.loading);
   head.append(el('h3','',t('Repository (Git)')),refresh);section.append(head);
@@ -658,6 +659,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
      ['Branch',state.branch||t('Detached HEAD')],
      ['Commit',state.commit?`${state.commit.slice(0,12)}${state.subject?` · ${state.subject}`:''}`:t('No commits yet'),state.commit||null],
      ['Upstream',state.upstream?`${state.upstream} · ${t('{ahead} ahead, {behind} behind',{ahead:state.ahead??'?',behind:state.behind??'?'})}`:t('No upstream configured')],
+     ...(state.remoteUrl?[['Remote',state.remoteUrl,state.remoteUrl]]:[]),
      ['Changes',changes]]));
    }
   }
@@ -689,10 +691,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   nameInput.type='text';nameInput.maxLength=120;nameInput.value=value.title||'';nameInput.setAttribute('aria-label',t('Session name'));nameInput.disabled=Boolean(blocked);nameSave.type='submit';nameSave.disabled=Boolean(blocked);
   nameForm.append(nameInput,nameSave);nameForm.addEventListener('submit',async e=>{e.preventDefault();nameSave.disabled=true;nameNote.className='native-side-hint';nameNote.textContent=t('Saving…');try{await renameSession(value,nameInput.value);nameNote.textContent=t('Saved');}catch(error){nameNote.className='global-error';nameNote.textContent=t(error.message);}finally{nameSave.disabled=false;}});
   nameCard.append(nameForm,nameNote);
-  const repo=el('section','native-settings-section');repo.append(el('h3','',t('Working folder and repository')));const git=gitCache.get(key(value))?.state;
-  const rows=el('dl','native-session-meta'),add=(label,text)=>{if(!text)return;rows.append(el('dt','',t(label)));const dd=el('dd','');const v=el('span','native-meta-value',text);v.translate=false;dd.append(v);rows.append(dd);};
-  add('Working folder',value.workspace);add('Git root',git?.root);add('Branch',git?.branch||(git?.detached?t('Detached HEAD'):null));add('Remote',git?.remoteUrl);
-  repo.append(rows);if(!git)repo.append(el('p','native-side-hint',t('Reading Git status…')));else if(!git.git)repo.append(el('p','native-side-hint',t('The working folder is not inside a Git repository.')));
+  // Repository and AGENTS.md (moved here from the old Resources tab): the same live cards, with refresh and edit.
+  const git=gitCache.get(key(value))?.state;
+  const repo=el('section','native-side-card native-git-card');repo.dataset.nativeGit='';
+  const agents=el('section','native-side-card native-agents-card');agents.dataset.nativeAgents='';
   const acct=el('section','native-settings-section');acct.append(el('h3','',t('Git account for pushes')));
   // Match the host of supported HTTPS/SCP remotes, never a hostname suffix or a repository path.
   const remote=String(git?.remoteUrl||'').trim().match(/^(?:https:\/\/([^/]+)\/|git@([^:]+):)/i),host=(remote?.[1]||remote?.[2]||'').toLowerCase();
@@ -720,7 +722,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    .then(state=>{deleteState=state;deleteButton.disabled=!state?.ok;deleteNote.textContent=state?.ok?(state.missing?t('The folder is already gone; delete removes the session from this list.'):`${t('Deletes this folder and removes the session from this list:')} ${state.path}`):t(state?.reason||'This folder cannot be deleted here');})
    .catch(error=>{deleteNote.className='global-error';deleteNote.textContent=t(error.message);});
   else deleteNote.textContent=t('Upgrade this Worker to branch or delete sessions');
-  body.append(nameCard,repo,acct,fork);dialog.append(body);dialog.showModal();
+  body.append(nameCard,repo,agents,acct,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
  }
  /** A branch says where it came from at the top of its transcript, with a way back to the original (a Codex branch shows
   * only its own turns; the conversation before the fork lives in the original). */
@@ -787,12 +789,12 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function renderSide(value,id,readable){
   side.dataset.sessionKey=key(value);
   sideBadge.hidden=true;
-  const {overview,resources}=sidePanels;overview.replaceChildren();resources.replaceChildren();agentDetailsSignature='';
-  // Overview: where the session runs, model and context, quota. Resources: identity, repository, device.
+  const {overview}=sidePanels;overview.replaceChildren();agentDetailsSignature='';
+  // Overview: where the session runs and its ID, then model and context, then quota.
   const controls=el('section','native-side-card native-connect');controls.dataset.nativeControls='';
   const settingsCard=el('section','native-side-card native-settings-card');settingsCard.dataset.nativeSettings='';
-  overview.append(controls,settingsCard);
-  const identity=metaCard(resources,'Native session',[['Session ID',id||t('Not available yet'),id||null]]);
+  overview.append(controls);
+  const identity=metaCard(overview,'Native session',[['Session ID',id||t('Not available yet'),id||null]]);identity.classList.add('native-identity-card');overview.append(settingsCard);
   // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
   if(id&&value.workspace){const copy=iconButton('copy','Copy iTerm command',async e=>{const b=e.currentTarget;b.disabled=true;b.dataset.pending='true';
     try{await copyTerminalCommand(value);setActionIcon(b,'check',t('Copied'));setTimeout(()=>{setActionIcon(b,'copy',t('Copy iTerm command'));delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}
@@ -800,7 +802,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    copy.disabled=takeover.releaseDisabled(value);
    const title=identity.querySelector('h3'),head=el('div','native-card-head');title.replaceWith(head);head.append(title,copy);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
-  const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';const agentsPlaceholder=el('section','native-side-card');agentsPlaceholder.dataset.nativeAgents='';resources.append(repository,agentsPlaceholder,folderCard(value),identity);renderAgents(value);void loadAgents(value);
+  void loadAgents(value);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
   // Resources: the device and CLI account this session runs on.
   renderAgentDetails(value);

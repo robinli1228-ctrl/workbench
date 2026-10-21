@@ -3700,3 +3700,13 @@ audio.side-preview-media { background: transparent; }
 .data-table .data-detail:last-child td { border-bottom: 0; }
 .data-kinds { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; color: var(--muted); font-size: 12px; list-style: none; }
 .form-feedback.is-error { color: var(--danger); }
+
+/* Files tab: outputs, named in replies, then the working folder; each card scrolls inside itself. */
+#native-side-outputs > .native-folder-card { flex: 1.4 1 0; min-height: 240px; overflow: auto; }
+#native-side-outputs > .native-files-half { min-height: 160px; }
+/* Overview: the session ID right under the This page / iTerm switch. */
+.native-identity-card .native-session-meta { margin-top: 6px; }
+/* Session settings now hold the repository and AGENTS.md cards. */
+.native-settings-dialog > .native-side-card { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: none; }
+.native-settings-dialog > .native-side-card h3 { margin: 0; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.native-settings-dialog .native-agents-preview { max-height: 180px; }
