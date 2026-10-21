@@ -56,7 +56,8 @@ export function linkMedia(root,context) {
   const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes=[];let node;
   while((node=walker.nextNode()))if(!node.parentElement.closest('a,pre,button,.media-card'))nodes.push(node);
   let described=0;
-  const card=path=>{const item=mediaCard(path,context,{describe:described++<12});return item;};
+  // Cards in a message show a preview (image thumbnail, video first frame) once the file is described.
+  const card=path=>{const item=mediaCard(path,context,{describe:described++<12,preview:true});return item;};
   for(const text of nodes){
     const value=text.textContent,exact=text.parentElement.tagName==='CODE'&&EXACT.test(value.trim());
     const matches=exact?[{index:value.indexOf(value.trim()),path:value.trim()}]:mediaPathMatches(value);if(!matches.length)continue;
@@ -74,7 +75,7 @@ export function linkMedia(root,context) {
   return root;
 }
 
-export function mediaCard(path,context,{describe=true}={}) {
+export function mediaCard(path,context,{describe=true,preview=false}={}) {
   const kind=mediaKindFromName(path),card=el('button','media-card');card.type='button';card.dataset.kind=kind;card.title=path;card.setAttribute('translate','no');
   const icon=el('span','media-card-icon',ICON[kind]),text=el('span','media-card-text'),name=el('span','media-card-name',baseName(path)),meta=el('span','media-card-meta',t(kind==='file'?'Click to download or send':'Click to open'));
   text.append(name,meta);card.append(icon,text);
@@ -82,10 +83,29 @@ export function mediaCard(path,context,{describe=true}={}) {
     if(!info.available){card.dataset.state=info.reason;meta.textContent=t(REASONS[info.reason]||'Unavailable');return;}
     card.dataset.state=info.copyOf?'copy':'ready';card.dataset.kind=info.kind;icon.textContent=ICON[info.kind]||ICON.file;
     meta.textContent=[formatBytes(info.size),info.copyOf?t('Local copy'):''].filter(Boolean).join(' · ');
+    if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info);
   };
   if(describe)void describeQueued(context,path).then(show).catch(()=>{});
   card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void openMediaViewer(path,context).then(show).catch(()=>{});});
   return card;
+}
+
+/**
+ * Thumbnail above the card's name: the image itself, or a video's first frame (metadata preload + a #t fragment, muted, no autoplay).
+ * It streams through the same ticket URL as the viewer and only once the card is near the viewport; a failure falls back to the icon.
+ */
+function attachPreview(card,info) {
+  if(card.querySelector('.media-card-preview'))return;
+  const box=el('span','media-card-preview');box.dataset.kind=info.kind;box.setAttribute('aria-hidden','true');
+  const drop=()=>{box.remove();card.classList.remove('has-preview');};
+  const load=()=>{
+    if(info.kind==='image'){const image=el('img');image.alt='';image.decoding='async';image.addEventListener('error',drop,{once:true});image.src=info.url;box.append(image);return;}
+    const video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='metadata';video.setAttribute('playsinline','');video.disablePictureInPicture=true;
+    video.addEventListener('error',drop,{once:true});video.src=`${info.url}#t=0.1`;box.append(video,el('span','media-card-play','\u25B6'));
+  };
+  card.classList.add('has-preview');card.prepend(box);
+  if('IntersectionObserver' in window){const watch=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){watch.disconnect();load();}},{rootMargin:'240px'});watch.observe(card);}
+  else load();
 }
 
 let viewer=null,viewerVersion=0;

@@ -3428,3 +3428,13 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .card-state-retry { margin-top: 2px; padding: 3px 12px; border: 1px solid #e3e7ee; border-radius: 999px; background: #fff; color: var(--accent); font-size: 12px; cursor: pointer; }
 .card-state-retry:hover { border-color: rgb(79 91 206 / 35%); }
 .native-files-body > .card-state { margin: auto 0; }
+
+/* Media cards in messages: a preview above the name (image thumbnail, video first frame with a play mark); click opens the viewer. */
+.media-card.has-preview { display: inline-grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 6px; width: min(100%, 280px); max-width: min(100%, 280px); padding: 6px 6px 8px; vertical-align: top; }
+.media-card.has-preview .media-card-icon { display: none; }
+.media-card.has-preview .media-card-text { padding: 0 4px; }
+.media-card-preview { position: relative; display: block; width: 100%; aspect-ratio: 16 / 10; overflow: hidden; border-radius: 8px; background: #eef1f6; }
+.media-card-preview > img, .media-card-preview > video { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.media-card-preview[data-kind="image"] > img { object-fit: contain; }
+.media-card-play { position: absolute; inset: 0; width: 36px; height: 36px; margin: auto; display: grid; place-items: center; border-radius: 50%; background: rgb(15 23 42 / 55%); color: #fff; font-size: 13px; padding-left: 2px; box-sizing: border-box; }
+.media-card.has-preview:hover .media-card-preview { filter: brightness(.97); }
