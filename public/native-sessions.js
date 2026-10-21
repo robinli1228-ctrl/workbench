@@ -165,16 +165,17 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const id=key(session),st=folderState.get(id);if(!st||st.path!==path)return;st.loading=true;st.error=null;renderFolder();
   try{const result=await api(`${endpoint(session.nodeId)}/folders?${new URLSearchParams({path,offset:String(offset)})}`);if(folderState.get(id)!==st||st.path!==path)return;
    const entries=(result.entries||[]).filter(e=>e.type==='folder'||e.type==='file');st.entries=offset?[...(st.entries||[]),...entries]:entries;st.hasMore=Boolean(result.hasMore);st.nextOffset=result.nextOffset||0;st.parent=result.parent||null;}
-  catch(error){st.error=error.message;}
+  catch(error){st.error=error.message;st.errorAt=Date.now();}
   finally{st.loading=false;if(selected&&key(selected)===id)renderFolder();}
  }
  function folderCard(session){
-  const card=el('section','native-side-card native-folder-card'),root=session.workspace;card.append(el('h3','',t('Working folder')));
+  const card=el('section','native-side-card native-folder-card'),root=session.workspace,folderHead=el('div','native-card-head');folderHead.append(el('h3','',t('Working folder')));card.append(folderHead);
   if(!root){card.append(el('p','native-side-hint',t('Choose a folder when opening')));return card;}
   // Files this session read, edited or created in page turns, latest state per path, right above the folder they live in.
   const touched=takeover.files();
   if(touched.length){const changes=el('div','native-folder-changes'),list=el('div','native-file-list');changes.append(el('div','native-subhead',t('Touched in this session')),list);for(const {path,step} of touched.slice(0,20))list.append(fileRow(session,path,step,step.kind==='edit'&&(step.added||step.removed)?`+${step.added||0} −${step.removed||0}`:''));card.append(changes);}
   const id=key(session);let st=folderState.get(id);if(!st||st.root!==root){st={root,path:root,entries:null,loading:false,error:null,hasMore:false,nextOffset:0};folderState.set(id,st);}
+  const reloadFolder=iconButton('refresh','Refresh',()=>{st.entries=null;st.error=null;st.hasMore=false;renderFolder();});reloadFolder.disabled=st.loading;folderHead.append(reloadFolder);
   const crumbs=el('div','native-folder-crumbs'),rel=st.path.startsWith(root)?st.path.slice(root.length).split('/').filter(Boolean):[];
   const crumb=(label,path,last)=>{const b=el('button',`native-folder-crumb${last?' is-current':''}`,label);b.type='button';b.title=path;b.translate=false;b.disabled=last;b.addEventListener('click',()=>{st.path=path;st.entries=null;renderFolder();});return b;};
   crumbs.append(crumb(fileName(root)||root,root,!rel.length));let acc=root;rel.forEach((part,i)=>{acc=`${acc}/${part}`;crumbs.append(el('span','native-folder-sep','/'),crumb(part,acc,i===rel.length-1));});card.append(crumbs);
@@ -201,6 +202,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const card=el('section','native-side-card native-agents-card');card.dataset.nativeAgents='';const head=el('div','native-card-head');head.append(el('h3','','AGENTS.md'));card.append(head);
   const cached=agentsCache.get(key(value));
   if(!value.workspace){card.append(el('p','native-side-hint',t('Choose a folder when opening')));return card;}
+  const reloadAgents=iconButton('refresh','Refresh',()=>void loadAgents(value,true));reloadAgents.disabled=Boolean(cached?.loading);head.append(reloadAgents);
   if(!cached||cached.loading){card.append(el('p','native-side-hint',t('Loading…')));return card;}
   const st=cached.state;if(st.error){card.append(el('p','native-side-hint',t(st.error)));return card;}
   if(!st.found){card.append(el('p','native-side-hint',t('No AGENTS.md above this folder yet.')));head.append(iconButton('plus','Create AGENTS.md',()=>openAgentsEditor(value,st)));return card;}
@@ -222,6 +224,15 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    try{await api(`${endpoint(value.nodeId)}/agents-md?${agentsQuery(value)}`,{method:'PUT',json:{path:st.found?st.path:null,content:area.value,expectedModifiedAt:st.found?st.modifiedAt:null,create:!st.found}});agentsDialog.close();await loadAgents(value,true);}
    catch(error){feedback.textContent=t(error.message);save.disabled=cancel.disabled=false;}},'primary');
   actions.append(cancel,save);agentsDialog.replaceChildren(heading,where,area,feedback,actions);agentsDialog.showModal();area.focus();
+ }
+ /** A read that failed (often while the device was reconnecting) is retried on the next state refresh once the device is online,
+  *  at most every 8 seconds and only for the cards that failed; successful reads stay cached. */
+ function retryFailedReads(value){
+  if(!value||side.dataset.sessionKey!==key(value)||!getData().workers?.find(w=>w.id===value.nodeId)?.online)return;
+  const k=key(value),now=Date.now();
+  const agents=agentsCache.get(k);if(agents?.state?.error&&!agents.loading&&now-(agents.at||0)>8000)void loadAgents(value,true);
+  const git=gitCache.get(k);if(git?.state&&!git.loading&&!git.state.available&&['source_offline','git_read_failed'].includes(git.state.reason)&&now-Date.parse(git.at||0)>8000)void loadGit(value,true);
+  const folder=folderState.get(k);if(folder?.error&&!folder.loading&&now-(folder.errorAt||0)>8000){folder.error=null;folder.entries=null;renderFolder();}
  }
  /** The working folder browser sits on the Resources tab; navigating it redraws only that card. */
  function renderFolder(){const prior=sidePanels.resources.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
@@ -610,7 +621,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   else{
    const state=cached.state;
    // A working folder path alone is never shown as Git state: without a repository answer the card says why.
-   if(!state.available||!state.git){section.append(el('p','native-side-hint',t(GIT_REASONS[state.reason]||'Git status is unknown.')));if(state.detail)section.append(el('p','native-side-hint native-git-detail',state.detail));}
+   if(!state.available||!state.git){section.append(el('p','native-side-hint',t(GIT_REASONS[state.reason]||'Git status is unknown.')));if(state.detail&&state.reason!=='not_git')section.append(el('p','native-side-hint native-git-detail',t(state.detail)));}
    else{
     const c=state.changes||{},parts=[['staged','{count} staged'],['modified','{count} modified'],['untracked','{count} untracked'],['conflicted','{count} conflicted']].filter(([k])=>c[k]>0).map(([k,label])=>t(label,{count:c[k]}));
     const changes=c.unknown?t('Unknown ({reason})',{reason:c.reason||'git'}):c.total===0?t('Clean'):parts.join(' · ')+(c.truncated?` · ${t('partial count')}`:'');
@@ -1089,5 +1100,5 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  // Only the visible Sessions page polls; returning from iTerm also refreshes immediately.
  setInterval(()=>{if(Date.now()-lastRefresh>=30000)refresh();},30000);
  list.hidden=filters.hidden=note.hidden=content.hidden=side.hidden=true;
- return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=gear.hidden=!visible;document.querySelector('#show-project-settings')?.toggleAttribute('hidden',visible);content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){renderTitle();renderList();document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected){renderSessionControls(selected);renderAgentDetails(selected);}if(changed)refresh();takeover.recheck();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
+ return {active,openNew:(defaults={})=>openForm(null,defaults),sync(){const changed=populate(),visible=active();list.hidden=filters.hidden=note.hidden=side.hidden=gear.hidden=!visible;document.querySelector('#show-project-settings')?.toggleAttribute('hidden',visible);content.hidden=!visible||document.body.dataset.workspaceView==='settings';if(visible&&document.body.dataset.workspaceView!=='settings'){renderTitle();renderList();document.querySelector('#show-project-form').setAttribute('aria-label',t('New native session'));if(selected){renderSessionControls(selected);renderAgentDetails(selected);retryFailedReads(selected);}if(changed)refresh();takeover.recheck();}else document.querySelector('#show-project-form').setAttribute('aria-label',t('New project'));},refresh};
 }
