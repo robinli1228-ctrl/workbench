@@ -59,7 +59,10 @@ test('ending the takeover or losing the device drops queued messages instead of 
   assert.equal(db.get('nativeTurns', b.id).status, 'cancelled'); assert.match(db.get('nativeTurns', b.id).error, /Takeover ended/);
   const again = send('client-turn-c', 'third');
   assert.equal(again.status, 'waiting', 'the first turn is still active until the Worker reports');
-  turns.disconnected('n1');
+  turns.disconnected('n1', { expireMs: 60000 });
+  assert.equal(db.get('nativeTurns', again.id).status, 'waiting', 'a connection blip keeps the queued message');
+  assert.equal(db.get('nativeTurns', a.id).status, 'queued', 'the active turn is not ended either');
+  turns.expireDisconnected('n1');
   assert.equal(db.get('nativeTurns', again.id).status, 'cancelled');
   assert.equal(db.get('nativeTurns', a.id).status, 'interrupted');
 });

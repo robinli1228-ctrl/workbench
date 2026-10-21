@@ -14,6 +14,8 @@ export const NATIVE_RESIDENT_RUNTIMES=new Set(['codex','claude','agy']);
 /** Images reach the model only where the adapter has a native image input. */
 export const NATIVE_IMAGE_RUNTIMES=new Set(['codex','claude']);
 export const NATIVE_IDLE_MS=30*60*1000;
+/** How long a Worker keeps its turns running after losing Home (a tunnel blip), and how much longer Home waits before it gives up on them. */
+export const NATIVE_RECONNECT_GRACE_MS=3*60*1000,NATIVE_DISCONNECT_EXPIRE_MS=NATIVE_RECONNECT_GRACE_MS+60*1000;
 const idPattern=/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
 export const turnIdPattern=/^[a-zA-Z0-9-]{8,100}$/;
 const ACTIVE=new Set(['queued','starting','running','waiting_user']);
@@ -76,9 +78,9 @@ export function applyNativeTurnEvent(turn,event){
 }
 
 export function nativeTurnView(turn){
- const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question}=turn;
+ const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question,disconnectedAt}=turn;
  return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
-  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{})};
+  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{})};
 }
 
 /** Home side: validation, idempotent creation, occupancy checks, attachment binding and event intake. */
@@ -291,8 +293,39 @@ export class NativeTurnsHome{
  }
  /** After a Home restart no Worker connection carries an unfinished turn any more. */
  recover(){for(const t of this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.status')='waiting'").all().map(r=>JSON.parse(r.data)))this.db.put('nativeTurns',{...t,status:'cancelled',error:'Home restarted before this message was sent',endedAt:now(),updatedAt:now()});for(const t of nativeTurnRows(this.db,{active:true,limit:-1}))this.db.put('nativeTurns',{...t,status:this.leases?'stopping':'interrupted',phase:null,error:'Home restarted; awaiting process verification',...(!this.leases?{endedAt:now()}:{})});for(const p of this.db.list('nativeTakeovers'))if(p.status==='open')this.db.put('nativeTakeovers',{...p,status:this.leases?'closing':'closed',reason:'home_restart'});}
- /** A lost Worker connection ends its turns and resident processes: the Worker closes them on disconnect. */
- disconnected(nodeId){
+ /**
+  * A lost Worker connection no longer ends its turns at once: the Worker keeps them running for NATIVE_RECONNECT_GRACE_MS and
+  * buffers their events, so a tunnel blip costs nothing. Turns and queued messages are marked disconnected for the page; if
+  * the Worker is not back within NATIVE_DISCONNECT_EXPIRE_MS they end as they used to.
+  */
+ disconnected(nodeId,{expireMs=NATIVE_DISCONNECT_EXPIRE_MS}={}){
+  let changed=false;const at=now();
+  for(const t of nativeTurnRows(this.db,{nodeId,active:true,limit:-1}))if(!t.disconnectedAt){this.db.put('nativeTurns',{...t,disconnectedAt:at});changed=true;}
+  for(const t of this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.status')='waiting'").all(nodeId).map(r=>JSON.parse(r.data)))if(!t.disconnectedAt){this.db.put('nativeTurns',{...t,disconnectedAt:at});changed=true;}
+  this.expiry??=new Map();clearTimeout(this.expiry.get(nodeId));
+  const timer=setTimeout(()=>{this.expiry.delete(nodeId);this.expireDisconnected(nodeId);},expireMs);timer.unref?.();this.expiry.set(nodeId,timer);
+  if(changed)this.change();
+ }
+ /** The Worker is back and names the turns it still runs: the others ended while it was away; queued messages are sent again. */
+ reconnected(nodeId,turnIds=[]){
+  clearTimeout(this.expiry?.get(nodeId));this.expiry?.delete(nodeId);
+  const alive=new Set(turnIds.map(String)),sessions=new Map();let changed=false;
+  for(const t of nativeTurnRows(this.db,{nodeId,active:true,limit:-1})){
+   if(!t.disconnectedAt)continue;
+   const {disconnectedAt,...rest}=t;
+   if(alive.has(t.id))this.db.put('nativeTurns',rest);
+   else this.db.put('nativeTurns',{...rest,status:this.leases?'stopping':'interrupted',phase:null,error:'Device reconnected without this turn',...(!this.leases?{endedAt:now()}:{})});
+   changed=true;
+  }
+  for(const t of this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.status')='waiting'").all(nodeId).map(r=>JSON.parse(r.data))){
+   if(t.disconnectedAt){const {disconnectedAt,...rest}=t;this.db.put('nativeTurns',rest);changed=true;}
+   sessions.set(sessionKey(nodeId,t.runtime,t.sessionId),t);
+  }
+  if(changed)this.change();
+  for(const t of sessions.values())void this.pump(nodeId,t.runtime,t.sessionId);
+ }
+ /** The Worker did not come back in time: unsent messages are cancelled and running turns end, as a disconnect always did. */
+ expireDisconnected(nodeId){
   let changed=false;for(const t of this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.status')='waiting'").all(nodeId).map(r=>JSON.parse(r.data))){this.db.put('nativeTurns',{...t,status:'cancelled',error:'Device disconnected before this message was sent',endedAt:now(),updatedAt:now()});changed=true;}
   for(const t of nativeTurnRows(this.db,{nodeId,active:true,limit:-1})){this.db.put('nativeTurns',{...t,status:this.leases?'stopping':'interrupted',phase:null,error:'Device disconnected; awaiting process verification',...(!this.leases?{endedAt:now()}:{})});changed=true;}
   for(const p of this.db.list('nativeTakeovers'))if(p.nodeId===nodeId&&p.status==='open'){this.db.put('nativeTakeovers',{...p,status:this.leases?'closing':'closed',reason:'disconnected'});changed=true;}
@@ -304,14 +337,25 @@ const alive=session=>Boolean(session?.proc&&session.proc.exitCode===null&&sessio
 
 /** Worker side: one resident CLI per taken-over session (where supported), exact resume in the history's original folder. */
 export class NativeTurnRunner{
- constructor({send,createSession,resolveSession,canStart,prepareInputs=async()=>({files:[],images:[]}),cleanup=null,idleMs=NATIVE_IDLE_MS,leases=null}){Object.assign(this,{send,createSession,resolveSession,canStart,prepareInputs,cleanup,idleMs,leases});this.turns=new Map();this.resident=new Map();this.closing=new Map();}
+ constructor({send,createSession,resolveSession,canStart,prepareInputs=async()=>({files:[],images:[]}),cleanup=null,idleMs=NATIVE_IDLE_MS,leases=null}){Object.assign(this,{send,createSession,resolveSession,canStart,prepareInputs,cleanup,idleMs,leases});this.turns=new Map();this.resident=new Map();this.closing=new Map();this.outbox=null;this.graceTimer=null;}
+ /** Messages to Home go out at once while connected and wait in order while Home is away (see suspend/resume). */
+ post(m){if(this.outbox){if(this.outbox.length<20000)this.outbox.push(m);return;}this.send(m);}
+ /** Turn ids this Worker still runs; sent with the next registration so Home can tell a kept turn from a lost one. */
+ activeIds(){return [...this.turns.keys()];}
+ /**
+  * Home went away: keep the CLIs running and buffer what they report. A connection blip on a lossy tunnel then costs nothing.
+  * If Home is not back within graceMs the turns end as a disconnect always ended them, and the buffered events tell Home so.
+  */
+ suspend({graceMs=NATIVE_RECONNECT_GRACE_MS}={}){if(this.outbox)return;this.outbox=[];this.graceTimer=setTimeout(()=>{this.graceTimer=null;void this.stopAll();},graceMs);this.graceTimer.unref?.();}
+ /** Home is back and this Worker is registered: deliver what happened meanwhile, in order. */
+ resume(){clearTimeout(this.graceTimer);this.graceTimer=null;const queued=this.outbox||[];this.outbox=null;for(const m of queued)this.send(m);}
  /** CLI slots: each resident process counts once, plus per-turn processes that are not resident. */
  get size(){return this.resident.size+[...this.turns.values()].filter(t=>!t.resident).length;}
  holds(runtime,sessionId){return this.resident.has(`${runtime}/${sessionId}`)||[...this.turns.values()].some(t=>t.key===`${runtime}/${sessionId}`);}
- event(id,event){this.send({type:'native_turn_event',id,event:{...event,...(typeof event.text==='string'?{text:event.text.slice(-MAX_TEXT)}:{}),...(event.item?{item:boundedItem(event.item)}:{})}});}
+ event(id,event){this.post({type:'native_turn_event',id,event:{...event,...(typeof event.text==='string'?{text:event.text.slice(-MAX_TEXT)}:{}),...(event.item?{item:boundedItem(event.item)}:{})}});}
  /** A production lease remains occupied until its exact process tree has exited. */
  close(key,reason){const entry=this.resident.get(key);if(!entry)return this.closing.get(key);clearTimeout(entry.timer);entry.closing=true;
-  const finish=()=>{if(this.resident.get(key)===entry)this.resident.delete(key);for(const state of this.turns.values())if(state.key===key&&state.session===entry.session)state.finish?.('interrupted');const [runtime,sessionId]=key.split('/');this.send({type:'native_takeover_closed',runtime,sessionId,reason,...(entry.message?.leaseId?{leaseId:entry.message.leaseId}:{})});};
+  const finish=()=>{if(this.resident.get(key)===entry)this.resident.delete(key);for(const state of this.turns.values())if(state.key===key&&state.session===entry.session)state.finish?.('interrupted');const [runtime,sessionId]=key.split('/');this.post({type:'native_takeover_closed',runtime,sessionId,reason,...(entry.message?.leaseId?{leaseId:entry.message.leaseId}:{})});};
   if(!this.leases){if(typeof entry.session.close==='function')entry.session.close();else entry.session.shutdown?.();finish();return;}
   if(this.closing.has(key))return this.closing.get(key);
   const pending=this.leases.retire(entry.message,entry.session).then(finish).catch(error=>{this.event(entry.busy,{kind:'status',status:'stopping',error:error.message});}).finally(()=>this.closing.delete(key));this.closing.set(key,pending);return pending;

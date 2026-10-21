@@ -45,6 +45,7 @@ export default {
  "Taken over · messages resume this native session": "已接管 · 消息会续接这个原生会话",
  "Stopping…": "正在停止…",
  "Waiting for the device…": "等待设备…",
+ "Device connection lost; waiting for it to return…": "设备连接中断，等待重连…",
  "Replying…": "正在回复…",
  "Interrupted": "已中断",
  "Enter a message": "请输入消息",

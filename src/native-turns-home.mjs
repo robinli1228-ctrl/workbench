@@ -87,5 +87,5 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
   }
   return {turns,http,gitCredentialFor:(nodeId,runtime,sessionId)=>gitCredential(turns.settings(nodeId,runtime,sessionId)),
     message:(nodeId,m)=>['native_turn_event','native_takeover_closed','native_takeover_lease'].includes(m.type)?(turns.receive(nodeId,m),true):false,
-    disconnected:nodeId=>turns.disconnected(nodeId)};
+    disconnected:nodeId=>turns.disconnected(nodeId),reconnected:(nodeId,turnIds)=>turns.reconnected(nodeId,turnIds)};
 }

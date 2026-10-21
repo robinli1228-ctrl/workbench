@@ -1508,8 +1508,10 @@ wss.on('connection', ws => {
   // Receiver errors (including oversized frames) close this socket, never the Home process or other Workers.
   ws.on('error',error=>console.error('Worker WebSocket rejected',JSON.stringify({nodeId:nodeId||null,code:error.code||'socket_error'})));
   const registerTimer = setTimeout(() => { if (!nodeId) ws.close(); }, 10000);
-  ws.alive = true; ws.on('pong', () => { ws.alive = true; });
+  // Any frame proves the connection; a Worker whose pong queues behind a large reply on a slow tunnel is not dead.
+  ws.alive = true; ws.missed = 0; ws.on('pong', () => { ws.alive = true; });
   ws.on('message', data => {
+    ws.alive = true;
     try {
       const m = JSON.parse(data);
       if (m.type === 'register') {
@@ -1520,6 +1522,8 @@ wss.on('connection', ws => {
         sockets.set(nodeId, ws); clearTimeout(registerTimer);
         const config=db.get('workerConfigs',nodeId),limits=registrationCapacity(m.node,config);
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId, lastSeen: new Date().toISOString() });
+        // Turns the Worker kept running through the disconnect continue; the ones it no longer has ended while it was away.
+        nativeTurns.reconnected(nodeId, Array.isArray(m.nativeTurns) ? m.nativeTurns.filter(id => typeof id === 'string').slice(0, 200) : []);
         send(ws, { type: 'registered', folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:m.node.capabilities?.readSourceBindings===1?1:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
       }
       if (!nodeId || sockets.get(nodeId) !== ws) throw new Error(tr('home.nodeNotRegisteredYet'));
@@ -1610,7 +1614,8 @@ wss.on('connection', ws => {
   });
 });
 const heartbeat = setInterval(() => {
-  for (const ws of wss.clients) { if (!ws.alive) ws.terminate(); else { ws.alive = false; ws.ping(); } }
+  // Three silent intervals (45 s) end a connection, not one: on a 170 ms, lossy tunnel one pong is easily late.
+  for (const ws of wss.clients) { if (!ws.alive && ++ws.missed >= 3) { ws.terminate(); continue; } if (ws.alive) ws.missed = 0; ws.alive = false; ws.ping(); }
   for (const r of viewers) r.write(': keepalive\n\n');
 }, 15000);
 const chatScheduler = setInterval(scheduleChat, 1000);

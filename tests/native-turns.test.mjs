@@ -63,14 +63,53 @@ test('turn events keep completed messages in order and ignore updates after the 
   assert.equal(applyNativeTurnEvent({ status: 'stopping' }, { kind: 'status', status: 'running' }).status, 'stopping');
 });
 
-test('disconnect and Home restart end unfinished turns instead of leaving them running', t => {
+test('a disconnect keeps a turn running until the Worker is back or the grace expires; a Home restart still ends it', t => {
   const { db, turns, worker } = home(t);
   const turn = turns.create('n1', worker, { runtime: 'grok', sessionId: SID, clientTurnId: 'client-000020', text: 'go' });
-  turns.disconnected('n1');
+  turns.disconnected('n1', { expireMs: 60000 });
+  assert.equal(db.get('nativeTurns', turn.id).status, 'queued', 'the turn is not ended by the disconnect');
+  assert.ok(db.get('nativeTurns', turn.id).disconnectedAt);
+  assert.ok(turns.list('n1', 'grok', SID)[0].disconnectedAt, 'the page sees the flag');
+  // The Worker reconnects and still runs this turn: the flag clears and nothing else changes.
+  turns.reconnected('n1', [turn.id]);
+  assert.equal(db.get('nativeTurns', turn.id).status, 'queued');
+  assert.equal(db.get('nativeTurns', turn.id).disconnectedAt, undefined);
+  // The Worker reconnects without it (it restarted): the turn ended while the device was away.
+  turns.disconnected('n1', { expireMs: 60000 }); turns.reconnected('n1', []);
   assert.equal(db.get('nativeTurns', turn.id).status, 'interrupted');
-  db.put('nativeTurns', { ...db.get('nativeTurns', turn.id), status: 'running' });
+  assert.match(db.get('nativeTurns', turn.id).error, /reconnected without/);
+  // No reconnection in time: the old ending applies.
+  const second = turns.create('n1', worker, { runtime: 'grok', sessionId: SID, clientTurnId: 'client-000021', text: 'again' });
+  turns.disconnected('n1', { expireMs: 60000 }); turns.expireDisconnected('n1');
+  assert.equal(db.get('nativeTurns', second.id).status, 'interrupted');
+  assert.match(db.get('nativeTurns', second.id).error, /Device disconnected/);
+  db.put('nativeTurns', { ...db.get('nativeTurns', second.id), status: 'running' });
   turns.recover();
-  assert.equal(db.get('nativeTurns', turn.id).status, 'interrupted');
+  assert.equal(db.get('nativeTurns', second.id).status, 'interrupted');
+});
+
+test('the Worker buffers what its turns report while Home is away, delivers it in order on resume, and stops them when the grace expires', async () => {
+  const created = [], sent = [];
+  const runner = new NativeTurnRunner({ send: m => sent.push(m), resolveSession: async () => ({ workspace: '/tmp/demo' }), createSession: options => { const s = residentFake(created)(options); s.hold = true; return s; } });
+  await runner.start({ id: 'k1', runtime: 'codex', sessionId: SID, prompt: 'long' });
+  const before = sent.length;
+  runner.suspend({ graceMs: 60000 });
+  created[0].options.emit('message', { text: 'still working' });
+  created[0].options.emit('tool', { text: 'Bash', item: { id: 't1', name: 'Bash', status: 'completed' } });
+  assert.equal(sent.length, before, 'nothing is sent while Home is away');
+  assert.deepEqual(runner.activeIds(), ['k1']);
+  assert.equal(created[0].shutdowns, 0, 'the CLI keeps running');
+  runner.resume();
+  assert.deepEqual(sent.slice(before).map(m => m.event.kind), ['message', 'tool'], 'buffered events arrive in order');
+  created[0].options.emit('message', { text: 'live again' });
+  assert.equal(sent.at(-1).event.text, 'live again', 'after resume events go out at once');
+  // Home does not come back in time: the turn is stopped, and that report waits for the next connection.
+  runner.suspend({ graceMs: 20 });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(created[0].options.emit && sent.at(-1).event.text, 'live again', 'the stop is buffered, not sent');
+  runner.resume();
+  assert.equal(sent.filter(m => m.id === 'k1').at(-1).event.status, 'interrupted');
+  assert.deepEqual(runner.activeIds(), []);
 });
 
 test('Worker runner resumes the history folder and stops a CLI that returns a different native ID', async () => {
