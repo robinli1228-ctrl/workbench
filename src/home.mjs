@@ -24,7 +24,7 @@ import { Rooms } from './rooms.mjs';
 import { CollaborationSessions, reviewView, reviewDocumentAllowed, setCollaborationSessionsEnabled } from './collaboration-sessions.mjs';
 import { SessionQueue, QueuePump, queueConfig, setQueueConfig, setSessionBroadcast, setTestProject, grantBudget, reassignRequest } from './session-queue.mjs';
 import { renderBatch } from './session-queue-worker.mjs';
-import { listRoleTemplates, hiddenRoleTemplates, saveRoleTemplate, deleteRoleTemplate, restoreRoleTemplate } from './role-templates.mjs';
+import { listRoleTemplates, saveRoleTemplate, restoreRoleTemplate } from './role-templates.mjs';
 import { Coordinator } from './coordinator.mjs';
 import { RoleCalls } from './role-calls.mjs';
 import {createAgentCalls} from './agent-calls.mjs';
@@ -372,7 +372,7 @@ function snapshot(scope=null) {
     repositories: db.list('repositories'), repositoryWorkspaces: db.list('repositoryWorkspaces'), setupProposals: db.list('setupProposals'), projectGitVersions:db.list('projectGitVersions'),
     approvals: db.list('approvals'), gitChecks: db.list('gitChecks'), settings: normalizePlatformSettings(db.get('settings', 'main')), wechat: wechat.status(),
     promptDefaults: { platformPrompt: defaultPlatformPrompt(), supervisorPrompt: defaultSupervisorPrompt() },
-    roleTemplates: listRoleTemplates(db), hiddenRoleTemplates: hiddenRoleTemplates(db), supervisors: db.list('supervisorConfigs'),
+    roleTemplates: listRoleTemplates(db), supervisors: db.list('supervisorConfigs'),
     executionPlans: db.list('executionPlans').map(({fingerprint,...p})=>p),
     roleSessions:db.list('roleSessions').filter(session=>!session.historyClearedAt).map(({nativeSession,...session})=>session),
     // Sidebar decoration only needs active native identities, never complete tool logs.
@@ -690,6 +690,42 @@ const server = http.createServer(async (req, res) => {
         if(req.method==='GET')return json(res,await workerQuery(scope,'native_agents_md',common,15000));
         const b=await body(req);
         return json(res,await workerQuery(scope,'native_agents_md_write',{...common,path:typeof b.path==='string'?b.path:null,content:b.content,expectedModifiedAt:typeof b.expectedModifiedAt==='string'?b.expectedModifiedAt:null,create:b.create===true,createDir:binding?.localRoot||null},20000));
+      }
+      // Branch and delete from the session settings. Branch copies the session's folder next to it and forks the CLI session into
+      // the copy; delete removes a folder Workbench made for the session and drops the entry (the CLI's own history stays).
+      const nativeBranch=pathname.match(/^\/api\/native-sessions\/([^/]+)\/(branch|delete)$/);
+      if(nativeBranch&&(req.method==='POST'||nativeBranch[2]==='delete'&&req.method==='GET')){
+        const nodeId=decodeURIComponent(nativeBranch[1]),worker=db.get('workers',nodeId),check=req.method==='GET';
+        const b=check?{runtime:url.searchParams.get('runtime'),sessionId:url.searchParams.get('sessionId'),entryId:url.searchParams.get('entryId')}:await body(req);
+        const runtime=b.runtime,sessionId=typeof b.sessionId==='string'&&b.sessionId?b.sessionId:null;
+        const entry=typeof b.entryId==='string'&&b.entryId?db.get('nativeCatalogEntries',b.entryId):sessionId?nativeCatalogRecords(nodeId,runtime).find(r=>r.sessionId===sessionId):null;
+        if(entry&&(entry.nodeId!==nodeId||entry.runtime!==runtime||sessionId&&entry.sessionId&&entry.sessionId!==sessionId))throw Error('Session identity does not match its Workbench entry');
+        const refuse=reason=>{if(check)return json(res,{ok:false,reason});throw Error(reason);};
+        if(!worker||!online(nodeId))return refuse('Device is offline; reconnect it first');
+        if(worker.capabilities?.nativeBranch!==1)return refuse('Upgrade this Worker to branch or delete sessions');
+        const turns=nativeTurns.turns,busy=Boolean(sessionId&&(turns.active(nodeId,runtime,sessionId)||turns.waiting(nodeId,runtime,sessionId).length));
+        const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
+        if(nativeBranch[2]==='delete'){
+          if(!entry)return refuse('Only sessions created in Workbench can delete their folder');
+          if(sessionId&&turns.process(nodeId,runtime,sessionId))return refuse('End the page takeover first');
+          if(busy)return refuse('This session is still replying or has queued messages');
+          const input={runtime,sessionId:entry.sessionId||sessionId,entryId:entry.id,bindings};
+          if(check)return json(res,await workerQuery({nodeId},'native_session_delete',{...input,dryRun:true},15000));
+          const result=await workerQuery({nodeId},'native_session_delete',input,120000);
+          if(result?.deleted!==true||result.entryId!==entry.id)throw Error('The device did not confirm the deletion');
+          db.remove('nativeCatalogEntries',entry.id);change();return json(res,result);
+        }
+        if(!['claude','codex'].includes(runtime))throw Error('Only Claude Code and Codex sessions can be branched for now');
+        const record=sessionId?ownedNativeSession(nodeId,runtime,sessionId):null;
+        if(!record)throw Error('Session is not registered with Workbench');
+        if(db.get('settings','main')?.paused)throw Error('Remote execution is paused');
+        if(busy)throw Error('This session is still replying or has queued messages; wait for it to finish first');
+        const branchEntryId=randomUUID(),title=`${String((entry||record).title||'').trim().slice(0,90)||runtime} · ${tr('nativeBranch.titleSuffix')}`;
+        const result=await workerQuery({nodeId},'native_session_branch',{runtime,sessionId,record,branchEntryId,newSessionId:runtime==='claude'?randomUUID():null,title},15*60000);
+        if(result?.entryId!==branchEntryId||!result.sessionId||!result.workspace)throw Error('The device did not confirm the branch');
+        const now=new Date().toISOString();
+        db.put('nativeCatalogEntries',{id:branchEntryId,nodeId,runtime,sessionId:result.sessionId,title:result.title,workspace:result.workspace,origin:'dialog',status:'ready',hasHistory:true,previewAvailable:true,folderCreated:true,branchOf:{sessionId},createdAt:now,modifiedAt:now});
+        change();return json(res,result,201);
       }
       const nativeTitle=pathname.match(/^\/api\/native-sessions\/([^/]+)\/title$/);
       if(nativeTitle&&req.method==='POST'){
@@ -1404,10 +1440,6 @@ const server = http.createServer(async (req, res) => {
         const input = await body(req);
         const template = restoreRoleTemplate(db, decodeURIComponent(m[1]), input.revision); change(); return json(res, template);
       }
-      if ((m = pathname.match(/^\/api\/settings\/role-templates\/([^/]+)$/)) && req.method === 'DELETE') {
-        const revision = new URL(req.url, 'http://local').searchParams.get('revision');
-        const result = deleteRoleTemplate(db, decodeURIComponent(m[1]), revision === null ? undefined : Number(revision)); change(); return json(res, result);
-      }
       if (pathname === '/api/settings/prompts' && req.method === 'POST') {
         const settings = db.put('settings', updatePlatformPrompts(db.get('settings', 'main'), await body(req)));
         change(); return json(res, settings);
@@ -1449,6 +1481,9 @@ const server = http.createServer(async (req, res) => {
     files['/native-sessions.js']='native-sessions.js';
     files['/native-transcript.js']='native-transcript.js';
     files['/media.js']='media.js';
+    files['/pasted-text.js']='pasted-text.js';
+    files['/side-preview.js']='side-preview.js';
+    files['/history-prompt.js']='history-prompt.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';

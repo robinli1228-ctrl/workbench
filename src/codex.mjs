@@ -72,7 +72,7 @@ export class CodexSession {
     this.permissionScope = maintenance ? null : permissionScope; this.toolRoots = toolRoots;
     this.effort = effort; this.autoApprove = this.permissionScope !== 'device-approval'; this.env = env;
     this.resumeSessionId = resumeSessionId;
-    this.nextId = 0; this.pending = new Map(); this.approvals = new Map();
+    this.nextId = 0; this.pending = new Map(); this.approvals = new Map(); this.questions = new Map();
     this.stopping = false; this.done = false;
     this.items = new Map(); this.toolOutputBuffers = new Map(); this.textBuffer = '';
   }
@@ -190,6 +190,15 @@ export class CodexSession {
       m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result); return;
     }
     if (m.id !== undefined && m.method) {
+      // request_user_input: the model's questions wait for the page (a takeover opts in); elsewhere the request is rejected as before.
+      if (m.method === 'item/tool/requestUserInput' && this.questionsSupported && Array.isArray(m.params?.questions) && m.params.questions.length) {
+        const id = String(m.params.itemId || m.id);
+        const questions = m.params.questions.slice(0, 8).map((q, i) => ({ id: String(q.id || `q${i + 1}`), header: String(q.header || '').slice(0, 40), question: String(q.question || '').slice(0, 2000), multiSelect: false, allowOther: q.isOther !== false, secret: q.isSecret === true,
+          options: (Array.isArray(q.options) ? q.options : []).slice(0, 8).map(o => ({ label: String(o?.label || '').slice(0, 200), description: String(o?.description || '').slice(0, 600) })) }));
+        this.questions.set(id, { rpcId: m.id, questions });
+        this.emit('question', { id, questions }); this.emit('status', { status: 'waiting_user' });
+        return;
+      }
       if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(m.method)) {
         if (this.autoApprove) {
           this.write({ id: m.id, result: { decision: 'accept' } });
@@ -242,6 +251,16 @@ export class CodexSession {
     }
     if (m.method === 'error') this.emit('log', { text: p.error?.message || tr('codex.runtimeError') });
   }
+  /** The page's answers, keyed by question id (each a list of labels or the typed text); skip answers nothing and lets the turn continue. */
+  answerQuestion({ id, answers = {}, skip = false } = {}) {
+    const q = id ? this.questions.get(String(id)) : [...this.questions.values()][0]; if (!q) throw new Error('This question is no longer waiting for an answer');
+    const key = [...this.questions.entries()].find(([, value]) => value === q)[0]; this.questions.delete(key);
+    const result = {};
+    if (!skip) for (const question of q.questions) { const given = [].concat(answers[question.id] ?? []).map(String).filter(Boolean); if (given.length) result[question.id] = { answers: given }; }
+    this.write({ id: q.rpcId, result: { answers: result } });
+    this.emit('question_resolved', { id: key });
+    if (!this.done && !this.stopping) this.emit('status', { status: 'running' });
+  }
   approve(id, decision) {
     const a = this.approvals.get(id); if (!a) throw new Error(tr('codex.approvalRequestDoesNotExist'));
     clearTimeout(a.timer); this.approvals.delete(id);
@@ -253,6 +272,7 @@ export class CodexSession {
     if (this.done) return;
     this.stopping = true;
     for (const id of [...this.approvals.keys()]) this.approve(id, 'decline');
+    for (const id of [...this.questions.keys()]) this.answerQuestion({ id, skip: true });
     if (this.threadId && this.turnId) {
       try { await this.request('turn/interrupt', { threadId: this.threadId, turnId: this.turnId }); }
       catch (e) { this.emit('log', { text: e.message }); }
@@ -268,7 +288,7 @@ export class CodexSession {
     for(const id of [...this.toolOutputBuffers.keys()])this.flushToolOutput(id);
     this.done = true; clearTimeout(this.stopTimer);
     for (const a of this.approvals.values()) clearTimeout(a.timer);
-    this.approvals.clear(); this.emit('status', { status, ...(status === 'reconciling' ? { controlLost: true } : {}), ...(error ? { error } : {}) });
+    this.approvals.clear(); this.questions.clear(); this.emit('status', { status, ...(status === 'reconciling' ? { controlLost: true } : {}), ...(error ? { error } : {}) });
   }
   flushText() { clearTimeout(this.textTimer); this.textTimer = null; if (this.textBuffer) { this.emit('text', { text: this.textBuffer }); this.textBuffer = ''; } }
   /** Coalesce noisy command chunks while retaining a stable tool ID; completion later replaces this delta view with its full snapshot. */

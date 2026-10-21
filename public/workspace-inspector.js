@@ -2,6 +2,7 @@ import { t, dateLocale } from './i18n.js';
 import {renderMarkdown} from './markdown.js';
 import {UI_ICON,deviceIconEl,workerDisplayName,workerKind} from './role-icons.js';
 import {sourceSyncPanel} from './source-sync.js';
+import {sideButton,canOpenSide} from './side-preview.js';
 
 const el=(tag,className,text)=>Object.assign(document.createElement(tag),{className:className||'',...(text!==undefined?{textContent:text}:{})});
 const date=value=>value?new Date(value).toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'Modified time unknown';
@@ -24,13 +25,16 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
   let resourcesLoadedAt=0,resourcesBusy=false;
   const localList=document.querySelector('#local-project-files-list'),localNote=document.querySelector('#local-project-files-note');
   document.querySelector('#close-artifact-detail').addEventListener('click',()=>dialog.close());
+  // Sessions page (desktop): "Open on the right" pins the file text beside the chat; shown once the text has loaded.
+  let sideItem=null;const side=sideButton('icon-button artifact-detail-side',t('Open on the right'),()=>sideItem,{before:()=>dialog.close()});side.hidden=true;
+  document.querySelector('#close-artifact-detail').before(side);
   dialog.addEventListener('close',()=>{detailVersion++;});
   async function detail(file){
     const version=++detailVersion;
     document.querySelector('#artifact-detail-title').textContent=file.name;
     const worker=getData().workers.find(w=>w.id===file.nodeId);
     document.querySelector('#artifact-detail-meta').textContent=`${file.type} · ${fileState(file)}${worker?` · ${worker.name}`:''}\n${file.path||''}`;
-    content.textContent='Reading file…';dialog.showModal();
+    content.textContent='Reading file…';side.hidden=true;sideItem=null;dialog.showModal();
     if(!file.shared&&!file.path){content.textContent=file.error||t('Local file not found.');return;}
     // An older Worker may only lack the metadata query; the existing content API still works, so details are not blocked.
     const path=file.relativePath||file.path,markdown=/\.(md|markdown)$/i.test(path),text=/\.(md|markdown|txt)$/i.test(path);
@@ -40,6 +44,8 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
       if(result.shared){document.querySelector('#artifact-detail-meta').textContent=`${fileState(result)}\n${result.path||''}`;
         if(result.content===null){content.textContent=t(result.preview==='binary'?'Binary file; preview unavailable.':result.preview==='too_large'?(result.reason==='serialized_response_limit'?'Text preview exceeds the serialized response size limit.':'Local file exceeds the 600 KB text preview limit.'):result.syncState==='pending'?'Waiting for local synchronization':'Local file not found.');return;}}
       content.replaceChildren(markdown?renderMarkdown(result.content):el('pre','artifact-code',result.content));
+      sideItem={title:file.name,subtitle:file.path||'',copyText:result.content,render:()=>{const box=el('div','artifact-side-content');box.append(markdown?renderMarkdown(result.content):el('pre','artifact-code',result.content));return box;}};
+      side.hidden=!canOpenSide();
       if(result.syncState==='conflict'||result.syncState==='pending')content.prepend(el('p','workspace-note',t(result.syncState==='conflict'?'Conflict detected; showing actual local file.':'Showing local changes; synchronization pending.')));
     }catch(error){if(version===detailVersion&&dialog.open)content.textContent=t('Unable to preview online: {message}. File info is kept; view it in the workspace of the corresponding device.', { message: error.message });}
   }
@@ -111,24 +117,29 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
 export function initWorkspaceColumns(){
   const shell=document.querySelector('.app-shell'),left=document.querySelector('.project-sidebar'),right=document.querySelector('.node-sidebar');
   const media=matchMedia('(min-width: 1001px)'),key='agent-workbench.column-widths';
-  let sizes={left:260,right:320};try{const saved=JSON.parse(localStorage.getItem(key));if(Number.isFinite(saved?.left)&&Number.isFinite(saved?.right))sizes=saved;}catch{}
+  let sizes={left:260,right:320,preview:480};try{const saved=JSON.parse(localStorage.getItem(key));if(Number.isFinite(saved?.left)&&Number.isFinite(saved?.right))sizes={left:saved.left,right:saved.right,preview:Number.isFinite(saved.preview)?saved.preview:480};}catch{}
+  // The Sessions page's Preview tab is for reading beside the chat: it opens wider and keeps its own width.
+  const wide=()=>document.body.dataset.navigationMode==='sessions'&&document.body.dataset.sessionSideTab==='preview';
+  const slot=side=>side==='right'&&wide()?'preview':side;
   function apply(){
     if(!media.matches)return;
-    const leftMax=Math.min(380,innerWidth-320-420),rightMax=Math.min(500,innerWidth-sizes.left-420);
-    sizes.left=Math.max(180,Math.min(leftMax,sizes.left));sizes.right=Math.max(280,Math.min(rightMax,sizes.right));
-    shell.style.setProperty('--project-width',`${sizes.left}px`);shell.style.setProperty('--inspector-width',`${sizes.right}px`);
-    for(const [name,side,node] of [['project','left',left],['inspector','right',right]]){const bar=document.querySelector(`#${name}-splitter`);bar.setAttribute('aria-valuenow',String(Math.round(sizes[side])));bar.setAttribute('aria-valuemin',side==='left'?'180':'280');bar.setAttribute('aria-valuemax',String(Math.round(side==='left'?leftMax:rightMax)));bar.style.left=side==='left'?`${node.getBoundingClientRect().right}px`:`${node.getBoundingClientRect().left}px`;}
+    const slotRight=slot('right'),leftMax=Math.min(380,innerWidth-320-420),rightMax=Math.min(wide()?960:500,innerWidth-sizes.left-420);
+    sizes.left=Math.max(180,Math.min(leftMax,sizes.left));sizes[slotRight]=Math.max(280,Math.min(rightMax,sizes[slotRight]));
+    shell.style.setProperty('--project-width',`${sizes.left}px`);shell.style.setProperty('--inspector-width',`${sizes[slotRight]}px`);
+    for(const [name,side,node] of [['project','left',left],['inspector','right',right]]){const bar=document.querySelector(`#${name}-splitter`);bar.setAttribute('aria-valuenow',String(Math.round(sizes[slot(side)])));bar.setAttribute('aria-valuemin',side==='left'?'180':'280');bar.setAttribute('aria-valuemax',String(Math.round(side==='left'?leftMax:rightMax)));bar.style.left=side==='left'?`${node.getBoundingClientRect().right}px`:`${node.getBoundingClientRect().left}px`;}
   }
   for(const [name,side] of [['project','left'],['inspector','right']]){
     const bar=document.querySelector(`#${name}-splitter`);let drag;
     const save=()=>{try{localStorage.setItem(key,JSON.stringify(sizes));}catch{}};
     const end=()=>{if(!drag)return;drag=null;document.body.classList.remove('resizing-columns');save();};
-    bar.addEventListener('pointerdown',e=>{if(!media.matches||e.button!==0)return;e.preventDefault();drag={x:e.clientX,width:sizes[side]};bar.setPointerCapture(e.pointerId);document.body.classList.add('resizing-columns');});
-    bar.addEventListener('pointermove',e=>{if(!drag)return;sizes[side]=drag.width+(e.clientX-drag.x)*(side==='left'?1:-1);apply();});
+    bar.addEventListener('pointerdown',e=>{if(!media.matches||e.button!==0)return;e.preventDefault();drag={x:e.clientX,slot:slot(side),width:sizes[slot(side)]};bar.setPointerCapture(e.pointerId);document.body.classList.add('resizing-columns');});
+    bar.addEventListener('pointermove',e=>{if(!drag)return;sizes[drag.slot]=drag.width+(e.clientX-drag.x)*(side==='left'?1:-1);apply();});
     bar.addEventListener('pointerup',end);bar.addEventListener('lostpointercapture',end);
-    bar.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();sizes[side]+=(e.key==='ArrowRight'?16:-16)*(side==='left'?1:-1);apply();save();});
-    bar.addEventListener('dblclick',()=>{sizes[side]=side==='left'?216:320;apply();save();});
+    bar.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();sizes[slot(side)]+=(e.key==='ArrowRight'?16:-16)*(side==='left'?1:-1);apply();save();});
+    bar.addEventListener('dblclick',()=>{const target=slot(side);sizes[target]=target==='left'?216:target==='preview'?480:320;apply();save();});
   }
+  // Switching to or from the Preview tab (or between Sessions and group chat) swaps the right column's width.
+  new MutationObserver(apply).observe(document.body,{attributes:true,attributeFilter:['data-navigation-mode','data-session-side-tab']});
   new ResizeObserver(apply).observe(shell);
   new ResizeObserver(apply).observe(left);window.addEventListener('resize',apply);apply();
 }

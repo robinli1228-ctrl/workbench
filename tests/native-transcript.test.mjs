@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const { classifyStep, diffLines, summarizeSteps, fileChips, stepTitle, elapsedText, historyTurns } = await import(pathToFileURL(join(root, 'public', 'native-transcript.js')).href);
+const { classifyStep, diffLines, summarizeSteps, fileChips, stepTitle, elapsedText, historyTurns, noteRows } = await import(pathToFileURL(join(root, 'public', 'native-transcript.js')).href);
 const t = (text, params) => params ? text.replace(/\{(\w+)\}/g, (m, k) => params[k] ?? m) : text;
 
 test('Claude, Codex, Grok and Agy tool items classify into read/edit/write/command/search steps with file paths', () => {
@@ -68,4 +68,20 @@ test('history rows group into turns: results join their calls, injected user row
   // A page that starts mid-turn still shows its tool activity under one reply row.
   assert.equal(historyTurns(rows.slice(2, 4))[0].prompt, null);
   assert.equal(classifyStep({ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'npm test' }, output: 'boom', is_error: true, status: 'completed' }, 'succeeded').kind, 'command');
+});
+
+test('notes collapse: thinking signals (old and new wording) become one thinking row with a count; identical notes merge', () => {
+  const t = text => text;
+  const notes = [
+    ...Array.from({ length: 14 }, () => ({ kind: 'log', text: '\u6a21\u578b\u6b63\u5728\u601d\u8003\uff08\u5df2\u6536\u5230\u539f\u751f\u8fdb\u5ea6\u4e8b\u4ef6\uff09' })),
+    { kind: 'log', text: 'Model is thinking' },
+    { kind: 'log', text: 'retrying request' }, { kind: 'log', text: 'retrying  request' },
+    { kind: 'error', text: 'Model is thinking' }
+  ];
+  assert.deepEqual(noteRows(notes, t), [
+    { kind: 'thinking', text: 'Model is thinking', count: 15 },
+    { kind: 'note', text: 'retrying request', count: 2 },
+    { kind: 'error', text: 'Model is thinking', count: 1 }
+  ]);
+  assert.deepEqual(noteRows([{ kind: 'log', text: '   ' }], t), []);
 });

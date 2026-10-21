@@ -51,7 +51,10 @@ const LEGACY_SUPERVISOR_DEFAULTS = new Set([
   '2e1f318253219def1ff5dd028af03961a368639bd4fc9bde5b8f518be081c46a',
   // Exact defaults before the operator-aligned templates; never include customized prompt text.
   '05423256820bf20af920b4876484122f324ba86b7738d4f57d5ce6152bf6d57e',
-  '3d93b7e8d344da4e1fc565d50cfe541c7073e50238c07d809f705a8014dfb034'
+  '3d93b7e8d344da4e1fc565d50cfe541c7073e50238c07d809f705a8014dfb034',
+  // Defaults before the supervisor stopped coding and started routing unaddressed messages by peers' state and balance.
+  '55ab7467b3ebfd0d14e8e142155ae64b3798b61daad78d5cec5fa34a17e15c1e',
+  '8ab1ec3517d5e91083434ca363fb4a59a25153b2422af339a84d142674d9a137'
 ]);
 const LEGACY_PLATFORM_DEFAULTS = new Set([
   '4a7bd0d1a4bedbfd714d1493b7fd6c9a439bfec754a23f43d150a845ff249324',
@@ -63,7 +66,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   '59bd2efea7e7abfdbf2080ba5c50d0114800e9d4694f273bfbd141fe8baec0a1',
   // Exact defaults before the operator-aligned templates; custom and explicitly empty prompts remain unchanged.
   'b69fedfb2ef0c528a66f62b624095c0353d62948bb86879b1b98cd21c034bc69',
-  '1f60ca54f13ca8da234dd30bef95ba7b19f38d8e4f4b4dd0ab38e07bf9c44f3f'
+  '1f60ca54f13ca8da234dd30bef95ba7b19f38d8e4f4b4dd0ab38e07bf9c44f3f',
+  // Defaults before the four ask-the-user cases, roles choosing whom to @, and review/sync/error text moving to wb help.
+  '4b0fb508e9184a7acb0f42f8a1ad72d48c2728c54335df5895fb46a4163782bf',
+  '1a1c7c92c460eb03cf2cd50d2e28f3f5d70f4bf57b6d5d4156089f1a71e70801'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */

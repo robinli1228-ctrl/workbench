@@ -119,3 +119,23 @@ test('withdraw (delete or edit) only takes a message that is still waiting, and 
   assert.equal(turns.stop('n1', send('client-turn-c', 'third').id).withdrawn, true, 'the queue\'s own delete is a withdrawal too');
   status(a.id, 'succeeded'); await tick();
 });
+
+test('the CLI process going away keeps the queue: a failed turn, an idle exit and a paused queue all survive; only ending the takeover drops it', async () => {
+  const { db, turns, send, status, starts } = home();
+  const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'second');
+  status(a.id, 'failed'); await tick();
+  assert.deepEqual(starts(), ['first', 'second'], 'a failed reply does not drop the next message');
+  const c = send('client-turn-c', 'third');
+  turns.setQueue('n1', { runtime: 'claude', sessionId: SID, paused: true });
+  status(b.id, 'succeeded'); await tick();
+  assert.deepEqual(starts(), ['first', 'second'], 'paused: nothing starts');
+  // The resident CLI idles out while the queue is paused.
+  turns.receive('n1', { type: 'native_takeover_closed', runtime: 'claude', sessionId: SID, reason: 'idle' }); await tick();
+  assert.equal(db.get('nativeTurns', c.id).status, 'waiting', 'an idle exit leaves the paused message in the queue');
+  assert.equal(turns.queueState('n1', 'claude', SID).paused, true);
+  turns.setQueue('n1', { runtime: 'claude', sessionId: SID, paused: false }); await tick();
+  assert.deepEqual(starts(), ['first', 'second', 'third'], 'resuming starts a fresh process for the kept message');
+  const d = send('client-turn-d', 'fourth');
+  turns.release('n1', { runtime: 'claude', sessionId: SID });
+  assert.equal(db.get('nativeTurns', d.id).status, 'cancelled'); assert.match(db.get('nativeTurns', d.id).error, /Takeover ended/);
+});

@@ -6,7 +6,7 @@ import {discussionPolicy,validatedDiscussionConfigurations,supportsDiscussion} f
 import {inspectArtifactFiles} from './run-artifacts.mjs';
 import { writeTurnContext, turnToolCommand } from './turn-context.mjs';
 import { hostname, platform, homedir } from 'node:os';
-import { readFile, mkdir, realpath, readdir, stat } from 'node:fs/promises';
+import { readFile, mkdir, realpath, readdir, stat, rm, lstat } from 'node:fs/promises';
 import {acquireWorkerLock} from './worker-lock.mjs';
 import { resolve, dirname, join, relative, isAbsolute, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +27,7 @@ import {FolderAccess} from './folder-access.mjs';
 import {createWorkerNativeTurns} from './native-turns-worker.mjs';
 import {listNativeSessions,readNativeSession,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
+import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
 import { inspectRuntimes, runtimeIssue, mergeRuntimeReports } from './runtime-probe.mjs';
 import { writeHandoff } from './wb-tools.mjs';
@@ -587,7 +588,7 @@ async function query(m) {
   if(m.action==='cli_capacity') {
     try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
   }
-  const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write'].includes(m.action);
+  const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write','native_session_branch','native_session_delete'].includes(m.action)&&!(m.action==='native_session_delete'&&m.path?.dryRun===true);
   const guarded=['source_inspect','source_read','read_query','project_file','file','document','collaboration_documents'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
@@ -690,7 +691,7 @@ async function query(m) {
       const result=method==='status'?roleSwitchWorker.status(m.path.operationId):await roleSwitchWorker[method](m.path);
       send({type:'reply',id:m.id,result});return;
     }
-    if(modifies){if(db.list('sourceSyncReservations').length)throw syncError('sync_busy');db.put('sourceSyncOperations',{id:m.id,projectId:m.path?.projectId||db.get('runs',m.runId)?.projectId||'*',status:'running'});}
+    if(modifies){if(db.list('sourceSyncReservations').length)throw syncError('sync_busy');db.put('sourceSyncOperations',{id:m.id,projectId:m.path?.projectId||(m.runId?db.get('runs',m.runId)?.projectId:null)||'*',status:'running'});}
     if(m.action==='source_sync_candidate'){
       const run=db.get('runs',m.runId),input=m.path,repo=run?.repositories?.find(r=>r.id===input.repositoryId),frozen=run?.sourceInputs?.find(r=>r.repositoryId===input.repositoryId);
       const directory=input.scopeKind==='directory';
@@ -773,6 +774,49 @@ async function query(m) {
     if(m.action==='native_agents_md'){send({type:'reply',id:m.id,result:await readAgentsFile(await folderAccess.allowedRoots(),await projectRoot(m.path?.workspace),{stopAt:m.path?.stopAt?await projectRoot(m.path.stopAt):null})});return;}
     if(m.action==='native_agents_md_write'){const input=m.path||{};send({type:'reply',id:m.id,result:await writeAgentsFile(await folderAccess.allowedRoots(),await projectRoot(input.workspace),{path:input.path||null,content:input.content,expectedModifiedAt:input.expectedModifiedAt||null,create:input.create===true,createDir:input.createDir?await projectRoot(input.createDir):null,stopAt:input.stopAt?await projectRoot(input.stopAt):null})});return;}
     if(m.action==='native_workspace_git'){send({type:'reply',id:m.id,result:await inspectWorkspaceGit(await projectRoot(m.path?.workspace),{authorizeRoot:projectRoot})});return;}
+    // Branch: copy the session's folder next to it and fork the CLI session into the copy (Claude, Codex). The new entry is
+    // registered here first; Home records its own copy after this reply.
+    if(m.action==='native_session_branch'){
+      const input=m.path||{},runtime=input.runtime;
+      if(!BRANCH_RUNTIMES.has(runtime))throw new Error('Only Claude Code and Codex sessions can be branched for now');
+      if(!runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false))throw new Error('CLI is not available on this device');
+      if(paused)throw new Error('Remote execution is paused');
+      if(occupiedSlots()>=capacity)throw new Error('Device CLI capacity is full');
+      if(typeof input.branchEntryId!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(input.branchEntryId)||db.get('nativeCatalogEntries',input.branchEntryId))throw new Error('Invalid branch entry');
+      if(runtime==='claude'&&(typeof input.newSessionId!=='string'||!/^[0-9a-f-]{36}$/i.test(input.newSessionId)))throw new Error('Upgrade Home to branch Claude sessions');
+      const base=typeof input.title==='string'?input.title.trim():'';if(!base||base.length>110)throw new Error('Session title is required and must be at most 110 characters');
+      const record=input.record||registeredNativeSession(db,runtime,input.sessionId);if(!record)throw new Error('Session is not registered with Workbench');
+      const history=await readNativeSession(runtime,input.sessionId,{record});
+      const source=await projectRoot(history.workspace||record.workspace);
+      const roots=await Promise.all((await folderAccess.allowedRoots()).map(root=>realpath(root).catch(()=>root)));
+      const target=await branchTarget(source,roots),size=await copyFolder(source,target);
+      // A Git copy gets its own local branch, so pushes from the two folders never land on the same branch by accident.
+      let gitBranch=null;
+      try{await lstat(join(target,'.git'));const head=(await exec('git',['-C',target,'symbolic-ref','--short','-q','HEAD'])).stdout.trim();
+        if(head){const name=`${head}-${target.match(/branch-\d+$/)[0]}`;await exec('git',['-C',target,'switch','-q','-c',name]);gitBranch=name;}}catch{}
+      const notice=tr('nativeBranch.notice',{source,target});
+      let forked;
+      try{forked=runtime==='claude'?await forkClaude({cwd:target,sessionId:input.sessionId,newSessionId:input.newSessionId,notice}):await forkCodex({cwd:target,sessionId:input.sessionId,notice});}
+      catch(error){await rm(target,{recursive:true,force:true}).catch(()=>{});throw error;}
+      const n=Number(target.match(/branch-(\d+)$/)[1]),title=n>1?`${base} ${n}`:base,now=new Date().toISOString();
+      db.put('nativeCatalogEntries',{id:input.branchEntryId,runtime,sessionId:forked.sessionId,title,workspace:target,origin:'dialog',status:'ready',folderCreated:true,branchOf:{sessionId:input.sessionId},createdAt:now,modifiedAt:now});
+      send({type:'reply',id:m.id,result:{entryId:input.branchEntryId,sessionId:forked.sessionId,title,workspace:target,source,gitBranch,entries:size.entries,bytes:size.bytes}});return;
+    }
+    // Delete: only a folder Workbench made for this session (see deletableFolder); dryRun answers whether and why not.
+    if(m.action==='native_session_delete'){
+      const input=m.path||{},runtime=input.runtime;
+      const entry=input.entryId?db.get('nativeCatalogEntries',input.entryId):db.list('nativeCatalogEntries').find(e=>e.runtime===runtime&&e.sessionId===input.sessionId);
+      if(entry&&(entry.runtime!==runtime||(input.sessionId&&entry.sessionId&&entry.sessionId!==input.sessionId)))throw new Error('Native catalog entry does not match this session');
+      const verdict=await deletableFolder({workspace:entry?.workspace,entry,registry:db.list('nativeCatalogEntries'),runs:db.list('runs').filter(r=>!terminal.has(r.status)),bindings:input.bindings||[],roots:await folderAccess.allowedRoots()});
+      const holder=verdict.path&&db.list('terminalSessions').find(s=>!['released','cancelled'].includes(s.status)&&s.workspace&&(s.workspace===verdict.path||s.workspace.startsWith(`${verdict.path}/`)||verdict.path.startsWith(`${s.workspace}/`)&&s.sessionId===entry?.sessionId));
+      const allowed=verdict.ok&&!holder,reason=!verdict.ok&&!verdict.missing?verdict.reason:holder?'A CLI is still running in this folder; end the takeover or quit it in iTerm first':null;
+      if(input.dryRun){send({type:'reply',id:m.id,result:{ok:allowed||Boolean(verdict.missing&&entry),missing:Boolean(verdict.missing),reason,path:verdict.path||entry?.workspace||null}});return;}
+      if(verdict.missing&&entry){db.remove('nativeCatalogEntries',entry.id);send({type:'reply',id:m.id,result:{deleted:true,missing:true,entryId:entry.id,path:entry.workspace}});return;}
+      if(!allowed)throw new Error(reason||verdict.reason);
+      await rm(verdict.path,{recursive:true,force:false});
+      db.remove('nativeCatalogEntries',entry.id);
+      send({type:'reply',id:m.id,result:{deleted:true,entryId:entry.id,path:verdict.path}});return;
+    }
     if(m.action==='native_session_title'){
       const input=m.path||{},title=typeof input.title==='string'?input.title.trim():'';
       if(!title||title.length>120)throw new Error('Session title is required and must be at most 120 characters');
@@ -1094,7 +1138,7 @@ function connect() {
     send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -1138,6 +1182,7 @@ function connect() {
       if (m.type === 'query') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>query(m)));
       if (m.type === 'native_turn') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>nativeTurns.start(m)));
       if (m.type === 'native_turn_stop') void nativeTurns.stop(m.id);
+      if (m.type === 'native_turn_answer') nativeTurns.answer(m.id,m);
       if (m.type === 'native_takeover_release') void nativeTurns.releaseLease(m.runtime,m.sessionId,m.leaseId).catch(e=>console.error('Native takeover release:',e.message));
       if (m.type === 'error') console.error(tr('worker.rejectedByHome'), m.error);
     } catch (e) { console.error(tr('worker.protocolError'), e.message); }

@@ -80,6 +80,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     if(area==='turns'&&a&&b==='stop'&&req.method==='POST'){json(res,turns.stop(nodeId,decodeURIComponent(a)));return true;}
     if(area==='turns'&&a&&b==='steer'&&req.method==='POST'){json(res,turns.steer(nodeId,decodeURIComponent(a)));return true;}
     if(area==='turns'&&a&&b==='withdraw'&&req.method==='POST'){json(res,turns.withdraw(nodeId,decodeURIComponent(a)));return true;}
+    if(area==='turns'&&a&&b==='answer'&&req.method==='POST'){json(res,turns.answer(nodeId,decodeURIComponent(a),await body(req)));return true;}
     // Pause/resume the session's queue or store its dragged order; both live on Home, which dispatches the next message.
     if(area==='turns'&&a==='queue'&&!b&&req.method==='POST'){json(res,turns.setQueue(nodeId,await body(req)));return true;}
     throw Error('Invalid session action');

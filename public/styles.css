@@ -1355,7 +1355,6 @@ body[data-workspace-view="settings"] #settings-usage-panel .settings-panel-headi
 .prompt-edit-dialog { width: min(760px, calc(100vw - 32px)); }
 .role-templates-browser { display: grid; gap: 14px; }
 .role-templates-list { display: grid; gap: 10px; }
-.role-templates-hidden h4 { margin: 4px 0 10px; color: #263f5a; font-size: 14px; }
 .role-template-item { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid var(--accent-line); border-radius: 8px; background: #fff; }
 .role-template-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .role-template-name { min-width: 0; overflow: hidden; color: #263f5a; text-overflow: ellipsis; white-space: nowrap; }
@@ -2911,10 +2910,20 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .nt-step-preview { flex: none; margin-left: 4px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 13px; line-height: 20px; opacity: 0; }
 .nt-step-head:hover .nt-step-preview, .nt-step-preview:focus-visible { opacity: 1; }
 .nt-step-preview:hover { background: var(--green-soft); color: var(--green-dark); }
-.nt-icon { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
-.nt-icon.is-edit, .nt-icon.is-write { color: var(--green-dark); }
-.nt-icon.is-error { color: var(--danger); }
-.nt-step.is-failed .nt-icon { color: var(--danger); }
+.nt-icon { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; color: var(--nt-icon, var(--muted)); }
+/* One colour per kind of work: looking in blues, changing in orange and green, running in indigo, delegating in pink, thinking in violet. */
+.nt-icon.is-read { --nt-icon: #3b82f6; }
+.nt-icon.is-search { --nt-icon: #0ea5e9; }
+.nt-icon.is-web { --nt-icon: #0891b2; }
+.nt-icon.is-edit { --nt-icon: #f97316; }
+.nt-icon.is-write { --nt-icon: #10b981; }
+.nt-icon.is-command { --nt-icon: #6366f1; }
+.nt-icon.is-agent { --nt-icon: #ec4899; }
+.nt-icon.is-thinking { --nt-icon: #a78bfa; }
+.nt-icon.is-folder { --nt-icon: #eab308; }
+.nt-icon.is-other, .nt-icon.is-note { --nt-icon: #94a3b8; }
+.nt-icon.is-error { --nt-icon: var(--danger); }
+.nt-step.is-failed .nt-icon { --nt-icon: var(--danger); }
 .nt-step > .nt-detail { display: none; }
 .nt-step.is-open > .nt-detail { display: block; }
 .nt-step .nt-detail { margin: 2px 8px 8px 31px; }
@@ -3203,7 +3212,7 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .nt-step-head { min-height: 24px; padding: 2px 6px; gap: 7px; color: #4b5563; font-size: 12px; line-height: 1.45; }
 .nt-step-verb { color: #8a939d; }
 .nt-step.is-note .nt-step-target, .nt-step.is-note .nt-step-verb { color: #9aa3ad; font-size: 11.5px; }
-.nt-step .nt-icon { width: 13px; height: 13px; color: #9aa3ad; }
+.nt-step .nt-icon { width: 13px; height: 13px; color: var(--nt-icon, #9aa3ad); }
 .nt-step .nt-detail { margin: 2px 6px 6px 26px; }
 .nt-working { font-size: 12px; color: #6b7280; }
 
@@ -3492,7 +3501,7 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-session-content .nt-steps { padding: 2px 0 0; border: 0; }
 .native-session-content .nt-step-head { min-height: 0; padding: 3px 0; gap: 9px; border-radius: 0; color: var(--nt-quiet); font-size: 14px; line-height: 1.5; }
 .native-session-content .nt-step-head:not(.is-static):hover { background: none; color: #4b505b; }
-.native-session-content .nt-step .nt-icon { width: 16px; height: 16px; color: #9da2ab; }
+.native-session-content .nt-step .nt-icon { width: 16px; height: 16px; color: var(--nt-icon, #9da2ab); }
 .native-session-content .nt-step.is-failed .nt-icon, .native-session-content .nt-step.is-error .nt-icon { color: var(--danger); }
 .native-session-content .nt-step-verb { color: inherit; }
 .native-session-content .nt-step-target { color: inherit; font-family: inherit; }
@@ -3581,3 +3590,99 @@ dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); 
   #native-session-dialog .native-session-form select,
   #native-session-dialog .native-workspace-row button { height: 40px; min-height: 40px; }
 }
+
+/* ---- The CLI's question above the composer: title row with pager and skip-all; the question; numbered options; a free-text reply
+   with Skip and Send. Same card language as the queue panel. ---- */
+.native-ask { margin: 0 16px 8px; padding: 12px 14px 12px; border: 1px solid var(--card-hairline, #e6e8ed); border-radius: var(--r-lg, 14px); background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 4%); }
+.native-ask-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.native-ask-title { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.native-ask-title svg { width: 17px; height: 17px; }
+.native-ask-pager { padding: 1px 8px; border-radius: 999px; background: #f0f2f6; color: #5f6470; font-size: 12px; font-variant-numeric: tabular-nums; }
+.native-ask-close { margin-left: auto; }
+.native-ask-text { margin: 0 0 10px; color: var(--ink); font-size: 14.5px; line-height: 1.6; font-weight: 500; white-space: pre-wrap; overflow-wrap: anywhere; }
+.native-ask-options { display: grid; gap: 4px; margin-bottom: 10px; }
+.native-ask-option { display: grid; grid-template-columns: 24px minmax(0, auto) minmax(0, 1fr); align-items: center; column-gap: 10px; width: 100%; padding: 8px 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.native-ask-option:hover { background: #f4f6fa; }
+.native-ask-option.is-picked { border-color: rgb(79 91 206 / 35%); background: var(--accent-tint, rgb(79 91 206 / 8%)); }
+.native-ask-key { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid #dfe3ea; border-radius: 6px; color: #6b7280; font-size: 12px; font-variant-numeric: tabular-nums; }
+.native-ask-option.is-picked .native-ask-key { border-color: rgb(79 91 206 / 45%); color: var(--accent); }
+.native-ask-label { font-weight: 500; }
+.native-ask-desc { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-ask-foot { display: flex; align-items: center; gap: 8px; }
+.native-ask-other { flex: 1; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfbfd; color: var(--ink); font: inherit; font-size: 14px; }
+.native-ask-other:focus { outline: none; border-color: rgb(79 91 206 / 45%); box-shadow: 0 0 0 3px rgb(79 91 206 / 10%); }
+.native-ask-foot .compact { height: 34px; min-height: 34px; padding: 0 16px; border-radius: 999px; font-size: 13.5px; }
+.native-ask-send:disabled { opacity: .45; }
+@media (max-width: 760px) { .native-ask { margin-inline: 8px; } .native-ask-option { grid-template-columns: 24px minmax(0, 1fr); } .native-ask-desc { grid-column: 2; } }
+
+/* Sessions queue: a long message never scrolls the panel sideways. The list is one shrinkable column, the text ends in an
+   ellipsis (the full text is in its tooltip), and the time and the steer/edit/delete buttons keep their place. */
+.native-queue .message-queue-list { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+.native-queue .message-queue-item { min-width: 0; }
+.native-queue .message-queue-info { min-width: 0; overflow: hidden; }
+.native-queue .message-queue-info strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.native-queue .message-queue-item > .icon-button, .native-queue .message-queue-item > .message-queue-grip, .native-queue .message-queue-time { flex: none; }
+/* The pause/resume button sits in the same column as the rows' delete buttons (list padding + row padding). */
+.native-queue summary { padding-right: 16px; }
+
+/* Session settings → branch and delete. */
+.native-branch-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 8px; }
+.native-branch-section .native-side-hint { margin: 4px 0 0; overflow-wrap: anywhere; }
+.native-branch-ack { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 4px; color: var(--ink); font-size: 13px; }
+.native-branch-ack input { margin-top: 3px; }
+.native-branch-result { display: grid; gap: 6px; justify-items: start; }
+.native-handover .native-meta-value { overflow-wrap: anywhere; color: var(--ink); font-size: 13px; }
+/* A branch's transcript opens with where it came from. */
+.native-branch-origin { display: flex; align-items: center; justify-content: center; gap: 10px; max-width: min(860px, 100%); margin: 0 auto 14px; color: var(--muted); font-size: 12.5px; }
+.native-branch-origin .compact { min-height: 26px; padding: 2px 10px; font-size: 12px; }
+.native-context-amount .native-context-pct { font-weight: 700; color: var(--ink); }
+/* A note repeated in one activity block shows once with its count; thinking gets a brain icon. */
+.nt-step-count { flex: none; margin-left: 2px; color: #a3a8b1; font-size: .92em; font-variant-numeric: tabular-nums; }
+.native-session-content .nt-step.is-thinking .nt-step-target { color: var(--nt-quiet, #8b909a); font-family: inherit; }
+/* Text attachments (pasted text) open in the media viewer as the text itself, wrapped and scrollable. */
+dialog.media-lightbox .media-stage.is-text { display: block; min-height: 120px; overflow: auto; border: 1px solid var(--line); background: #f8f9fb; }
+dialog.media-lightbox .media-text { margin: 0; padding: 14px 16px; color: var(--ink); font-size: 13.5px; line-height: 1.7; font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Right-side Preview tab (Sessions page, desktop): one pinned message or file, read beside the chat. */
+.native-session-sidebar .native-side-panel.is-preview { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.side-preview { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.side-preview-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 10px 10px 16px; border-bottom: 1px solid var(--card-hairline, var(--line)); background: #fff; }
+.side-preview-titles { flex: 1; min-width: 0; padding-top: 3px; }
+.side-preview-title { display: block; overflow: hidden; color: var(--ink); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.side-preview-sub { overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.side-preview-actions { display: flex; flex: none; gap: 2px; }
+.side-preview-actions .chat-icon-btn { display: grid; place-items: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; margin: 0; padding: 6px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
+.side-preview-actions .chat-icon-btn:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.side-preview-actions .chat-icon-btn svg { width: 17px; height: 17px; }
+.side-preview-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; padding: 16px 18px 24px; background: #fff; overscroll-behavior: contain; }
+.side-preview-body > .markdown-body { font-size: 14.5px; line-height: 1.75; overflow-wrap: anywhere; }
+.side-preview-image { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 8px; }
+.side-preview-media { width: 100%; max-height: 72vh; border-radius: 8px; background: #000; }
+audio.side-preview-media { background: transparent; }
+.side-preview-pdf { flex: 1; width: 100%; min-height: 70vh; border: 0; }
+.side-preview-text, .nt-side-prompt { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--ink); font-family: inherit; font-size: 14px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nt-side-sheet .nt-code { max-height: none; }
+.side-preview-body .artifact-code { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.side-preview-note { margin: 0; }
+.side-preview-empty { display: grid; justify-items: center; gap: 12px; max-width: 300px; margin: auto; padding: 32px 12px; color: var(--muted); font-size: 13px; line-height: 1.7; text-align: center; }
+.side-preview-empty p { margin: 0; }
+.side-preview-empty-icon svg { width: 30px; height: 30px; opacity: .55; }
+/* The entry buttons: beside Copy under replies and prompts, Download in the viewer, in the file sheet and output details. */
+.native-session-content .nt-reply-foot .nt-side { display: grid; place-items: center; width: 24px; height: 24px; min-height: 24px; margin-left: -6px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--nt-quiet, var(--muted)); }
+.native-session-content .nt-reply-foot .nt-side:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.nt-reply-foot .nt-side svg { width: 14px; height: 14px; }
+#artifact-detail-dialog .dialog-heading h2 { margin-right: auto; }
+#artifact-detail-dialog .dialog-heading { gap: 6px; }
+.artifact-detail-side svg { width: 18px; height: 18px; }
+@media (max-width: 1000px) {
+  #native-side-tab-preview, .nt-side, .nt-prompt-side, .media-side, .nt-sheet-btn.is-side, .artifact-detail-side { display: none !important; }
+}
+
+/* Both bottom bars (left: usage, jobs, settings; right: panel tabs) behave the same: the same grey icons, hover only darkens
+   the icon and never changes the background, and the current page or tab is the accent colour with no fill or underline. */
+.sidebar-footer .icon-button, .inspector-tabs button { color: var(--text-faint); background: transparent; }
+.sidebar-footer .icon-button:hover, .inspector-tabs button:hover { color: var(--text-body); background: transparent; }
+.sidebar-footer .icon-button[aria-current="page"], .inspector-tabs button[aria-selected="true"],
+.sidebar-footer .icon-button[aria-current="page"]:hover, .inspector-tabs button[aria-selected="true"]:hover { color: var(--accent); background: transparent; }
+.sidebar-footer .icon-button[aria-current="page"]::before { content: none; }
+.sidebar-footer .icon-button:focus-visible, .inspector-tabs button:focus-visible { background: transparent; outline: 2px solid var(--accent); outline-offset: -2px; }

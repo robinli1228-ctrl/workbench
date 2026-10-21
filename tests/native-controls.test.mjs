@@ -14,9 +14,11 @@ const SID = '00000000-1111-4222-8333-444444444444';
 
 test('chosen model and effort become CLI flags; nothing is added when they are unset', () => {
   assert.deepEqual(nativeTurnArgs('claude', { sessionId: SID, keepAlive: true, model: 'claude-haiku-5-5', effort: 'low' }),
-    ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--resume', SID, '--model', 'claude-haiku-5-5', '--effort', 'low', '--dangerously-skip-permissions']);
+    ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--resume', SID, '--model', 'claude-haiku-5-5', '--effort', 'low', '--permission-mode', 'bypassPermissions', '--permission-prompt-tool', 'stdio']);
   assert.deepEqual(nativeTurnArgs('claude', { sessionId: SID, keepAlive: true }),
-    ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--resume', SID, '--dangerously-skip-permissions']);
+    ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--resume', SID, '--permission-mode', 'bypassPermissions', '--permission-prompt-tool', 'stdio']);
+  // A one-shot turn has nobody to answer a prompt, so it keeps bypassing them.
+  assert.ok(nativeTurnArgs('claude', { sessionId: SID, prompt: 'hi' }).includes('--dangerously-skip-permissions'));
   assert.ok(nativeTurnArgs('grok', { cwd: '/w', sessionId: SID, prompt: 'hi', model: 'grok-5', effort: 'high' }).join(' ').includes('-m grok-5 --reasoning-effort high'));
   assert.ok(nativeTurnArgs('agy', { sessionId: SID, keepAlive: true, model: 'gemini-x' }).join(' ').includes('--model gemini-x --conversation'));
 });

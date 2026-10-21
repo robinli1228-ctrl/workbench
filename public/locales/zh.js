@@ -1666,7 +1666,6 @@ export default {
   "Manage": "管理",
   "Restore": "恢复",
   "Templates prefill the name, responsibility and prompt when creating a role. Changes apply only to roles created later; existing roles keep their own text.": "新建角色时用模板预填名称、职能和提示词。修改只影响之后新建的角色，已有角色保留各自的内容。",
-  "Deleted built-in templates": "已删除的内置模板",
   "New template": "新增模板",
   "Template name": "模板名称",
   "e.g. Tester": "例如：测试",
@@ -1684,8 +1683,6 @@ export default {
   "Prompt: {count} characters": "提示词：{count} 字",
   "No prompt": "无提示词",
   "Restore default": "恢复默认",
-  "Delete template \"{name}\"? Roles already created from it are not changed.": "删除模板“{name}”？已用它创建的角色不受影响。",
-  "Template deleted.": "模板已删除。",
   "Built-in template restored.": "内置模板已恢复。",
   "Template saved.": "模板已保存。",
   "Return queued message to input": "取回排队消息到输入框",
@@ -1734,4 +1731,6 @@ export default {
   "Hide guide": "收起",
   "The complete installation and configuration guide: architecture, prerequisites, environment variables, multi-device setup, services, upgrade and troubleshooting. Copy it and hand it to an AI assistant to walk through the setup with you.": "完整的安装与配置指南：架构、环境要求、环境变量、多设备部署、系统服务、升级与故障排查。复制后交给 AI 助手，它可以带你逐步完成配置。",
   "Copied the whole guide. Paste it to your AI assistant and ask it to help you configure Workbench.": "已复制全文。把它粘贴给你的 AI 助手，让它协助你完成 Workbench 的配置。",
+  "Open on the right": "在右侧打开",
+  "Close preview": "关闭预览",
 };
