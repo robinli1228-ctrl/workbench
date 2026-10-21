@@ -271,8 +271,10 @@ export class NativeTurnsHome{
  }
  receive(nodeId,m){
   if(m.type==='native_takeover_closed'){const key=sessionKey(nodeId,m.runtime,m.sessionId),current=this.db.get('nativeTakeovers',key);if(!current||this.leases&&current.leaseId!==m.leaseId||current.status==='closed')return true;
-   const resumeQueue=current.status==='retiring';
-   if(!resumeQueue)this.cancelWaiting(nodeId,m.runtime,m.sessionId,'Takeover ended before this message was sent');
+   // The CLI process going away (finished, idled out, crashed) is not the end of the queue: the next message, or a paused queue
+   // once resumed, starts a fresh process. Only ending the takeover or losing the device (status 'closing') drops the queue, and
+   // those paths cancelled it themselves.
+   const resumeQueue=current.status!=='closing';
    this.leases?.closed(nodeId,m);this.db.put('nativeTakeovers',{...current,status:'closed',reason:m.reason||null,updatedAt:now()});this.change();if(resumeQueue)void this.pump(nodeId,m.runtime,m.sessionId);return true;}
   if(m.type==='native_takeover_lease'){this.leases?.update(nodeId,m);this.change();return true;}
   const turn=this.db.get('nativeTurns',m.id);if(!turn||turn.nodeId!==nodeId)return false;
@@ -280,10 +282,8 @@ export class NativeTurnsHome{
   if(next.status!==turn.status){if(!ACTIVE.has(next.status)&&next.status!=='stopping'){
    const key=sessionKey(nodeId,turn.runtime,turn.sessionId),current=this.db.get('nativeTakeovers',key);
    if(this.leases&&m.event.resident===false&&current?.status==='open'&&this.process(nodeId,turn.runtime,turn.sessionId)){
-    // Successful per-turn exits and explicitly requested interrupts may continue; a broken process does not authorize a restart.
-    const resumeQueue=next.status==='succeeded'||turn.status==='stopping';
-    this.db.put('nativeTakeovers',{...current,status:resumeQueue?'retiring':'closing',updatedAt:now()});
-    if(!resumeQueue)this.cancelWaiting(nodeId,turn.runtime,turn.sessionId,'Takeover ended before this message was sent');
+    // The process is retiring however the turn ended; queued messages wait for its exit and then start a fresh process.
+    this.db.put('nativeTakeovers',{...current,status:'retiring',updatedAt:now()});
    }
    void this.pump(nodeId,turn.runtime,turn.sessionId);
   }this.change();}
