@@ -3406,3 +3406,8 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .project-item.is-running .list-run-status { box-sizing: border-box; border: 2px solid #dfe3fb; border-top-color: var(--accent); border-right-color: var(--accent); border-radius: 50%; animation: list-run-spin .9s linear infinite; }
 @keyframes list-run-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .project-item.is-running .list-run-status { animation: none; } }
+
+/* A queued message that was never sent: same place as when it was typed, quieter bubble, the reason right under it. */
+.nt-user.is-unsent .nt-body { opacity: .72; border-style: dashed; }
+.nt-user.is-unsent .nt-prompt-tools { opacity: 1; }
+.nt-unsent-note { margin-right: 8px; color: #b45309; font-size: 11.5px; }

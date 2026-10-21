@@ -309,4 +309,8 @@ export default {
  "7D tokens left": "7D token 剩余",
  "No outputs yet": "还没有产物",
  "No files named in replies yet": "回复中还没有提到文件",
+ "Not sent": "未发送",
+ "Device disconnected before this message was sent": "发送前设备断开，消息没有发出",
+ "Takeover ended before this message was sent": "接管已结束，消息没有发出",
+ "Home restarted before this message was sent": "Home 重启，消息没有发出",
 };

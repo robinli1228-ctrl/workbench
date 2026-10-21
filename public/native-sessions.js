@@ -889,7 +889,16 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     anchor.after(...nodes);};
    for(const turn of turns){
     if(turn.status==='waiting')continue;
-    if(turn.status==='cancelled'){const files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments||[])files.append(attachmentCard(item));feed.append(chatRow('user',turn.prompt,current.runtime,turn.createdAt,files.childElementCount?files:null),el('div','nt-system native-chat-row',`${t('Cancelled')}${turn.error?` · ${t(turn.error)}`:''}`));continue;}
+    if(turn.status==='cancelled'){
+     // A queued message dropped before it was sent (device reconnect, takeover ended). When the same text reached the CLI afterwards
+     // (resent, or queued by the CLI itself) that delivered copy is the message: the dropped one is not drawn again.
+     const text=promptKey(turn.prompt),at=Date.parse(turn.createdAt||''),later=value=>{const when=Date.parse(value||'');return !Number.isFinite(at)||!Number.isFinite(when)||when>=at-60000;};
+     if(rows.some(row=>row.dataset.role==='user'&&row.dataset.text===text&&later(row.dataset.at))||turns.some(other=>other!==turn&&other.status!=='cancelled'&&promptKey(other.prompt)===text&&later(other.createdAt)))continue;
+     // Otherwise it stays where it was sent, never at the bottom: the bubble, then "Not sent · reason" right under it.
+     const files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments||[])files.append(attachmentCard(item));
+     const row=chatRow('user',turn.prompt,current.runtime,turn.createdAt,files.childElementCount?files:null);row.dataset.role='user';row.dataset.text=text;row.classList.add('is-unsent');
+     const note=el('span','nt-unsent-note',`${t('Not sent')}${turn.error?` · ${t(turn.error)}`:''}`),tools=row.querySelector('.nt-prompt-tools');if(tools)tools.prepend(note);else row.append(note);
+     place([row],turn.createdAt);continue;}
     if(turn.control){
      const live=['queued','starting','running','waiting_user','stopping'].includes(turn.status),command=turn.control==='compact'&&turn.runtime==='codex'?'compact':(turn.prompt||'').replace(/^\//,'');
      const index=promptIndex(turn,'system',command);
