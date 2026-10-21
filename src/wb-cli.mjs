@@ -47,6 +47,8 @@ export async function main(argv = process.argv.slice(2)) {
   const tail = [sub, ...rest].filter(v => v !== undefined);
   try {
     // Discovery must work even when a retained process inherited a deleted turn context.
+    // Long-form guidance that left the platform template: read on demand, no turn context needed.
+    if(['help','-h','--help'].includes(cmd)&&['review','sync','errors'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
     if(!cmd||['help','-h','--help'].includes(cmd)||(tail.some(value=>['--help','-h'].includes(value))&&!tail.includes('--'))||(cmd==='deliver'&&sub==='help')) {
       const text=process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wbCli.wbScheduleJsonSupervisorSubmits',{HELP:helpText()}):helpText();
       return out(process.env.WB_DISCUSSION_PROTOCOL==='2'?`${text}\n\n${discussionHelp()}`:text);
