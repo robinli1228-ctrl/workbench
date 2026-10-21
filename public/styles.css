@@ -3587,3 +3587,13 @@ dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); 
 .native-ask-foot .compact { height: 34px; min-height: 34px; padding: 0 16px; border-radius: 999px; font-size: 13.5px; }
 .native-ask-send:disabled { opacity: .45; }
 @media (max-width: 760px) { .native-ask { margin-inline: 8px; } .native-ask-option { grid-template-columns: 24px minmax(0, 1fr); } .native-ask-desc { grid-column: 2; } }
+
+/* Sessions queue: a long message never scrolls the panel sideways. The list is one shrinkable column, the text ends in an
+   ellipsis (the full text is in its tooltip), and the time and the steer/edit/delete buttons keep their place. */
+.native-queue .message-queue-list { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+.native-queue .message-queue-item { min-width: 0; }
+.native-queue .message-queue-info { min-width: 0; overflow: hidden; }
+.native-queue .message-queue-info strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.native-queue .message-queue-item > .icon-button, .native-queue .message-queue-item > .message-queue-grip, .native-queue .message-queue-time { flex: none; }
+/* The pause/resume button sits in the same column as the rows' delete buttons (list padding + row padding). */
+.native-queue summary { padding-right: 16px; }
