@@ -31,7 +31,7 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
   try{
    const page=await readPage(next.item,target.loaded?.cursor||null);if(epoch!==generation)return;
    const top=scroll.scrollTop,height=scroll.scrollHeight,edge=scroll.getBoundingClientRect().top;
-   const anchor=[...root.querySelectorAll('.native-history > *')].find(node=>node.getBoundingClientRect().bottom>=edge),anchorTop=anchor?.getBoundingClientRect().top;
+   const anchor=[...root.querySelectorAll('.native-history > :not(.nt-day)')].find(node=>node.getBoundingClientRect().bottom>=edge),anchorTop=anchor?.getBoundingClientRect().top;
    merge(next,page,{older:true});if(!target.loaded){sections.push(next);placeSections();}onHistoryChange();
    controls();if(anchor?.isConnected)scroll.scrollTop+=anchor.getBoundingClientRect().top-anchorTop;else scroll.scrollTop=top+scroll.scrollHeight-height;
   }catch(error){if(epoch===generation)failed={section:next,error:error.message};}

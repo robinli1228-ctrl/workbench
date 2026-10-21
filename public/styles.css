@@ -3438,3 +3438,64 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .media-card-preview[data-kind="image"] > img { object-fit: contain; }
 .media-card-play { position: absolute; inset: 0; width: 36px; height: 36px; margin: auto; display: grid; place-items: center; border-radius: 50%; background: rgb(15 23 42 / 55%); color: #fff; font-size: 13px; padding-left: 2px; box-sizing: border-box; }
 .media-card.has-preview:hover .media-card-preview { filter: brightness(.97); }
+
+/* ---- Session transcript: reading layout. Dark prompt bubble; the reply column (indented past the agent icon) sits between a
+   hairline under the byline and one above Copy + Took; tool steps are plain grey lines; the live line shimmers. ---- */
+.native-session-content { --nt-rule: #e6e8ed; --nt-quiet: #8b909a; --nt-text: #1f2328; }
+.native-session-content .nt-agent { --nt-indent: 30px; }
+@media (max-width: 1000px) { .native-session-content .nt-agent { --nt-indent: 0px; } }
+.native-session-content .nt-day { max-width: min(860px, 100%); margin: 4px auto 18px; color: #9a9fa8; font-size: 12.5px; text-align: center; font-variant-numeric: tabular-nums; }
+/* Reply: icon, name and time; the text column starts under the name. */
+.native-session-content .nt-agent .nt-byline { margin: 0 0 8px; }
+.native-session-content .nt-agent .nt-byline .nt-name { color: var(--nt-text); font-size: 13.5px; font-weight: 600; }
+.native-session-content .nt-agent .nt-byline time { color: #9a9fa8; font-size: 12px; }
+.native-session-content .nt-agent .nt-body { max-width: calc(86% - var(--nt-indent)); margin-left: var(--nt-indent); padding: 12px 0 0; border-top: 1px solid var(--nt-rule); color: var(--nt-text); font-size: 15px; line-height: 1.75; }
+.native-session-content .nt-agent.is-continued .nt-body { padding-top: 0; border-top: 0; }
+.native-session-content .nt-agent .markdown-body { color: var(--nt-text); font-size: 15px; line-height: 1.75; }
+.native-session-content .nt-agent .markdown-body p { margin: 0 0 .7em; }
+.native-session-content .nt-agent .markdown-body > :last-child, .native-session-content .nt-turn > :last-child { margin-bottom: 0; }
+.native-session-content .nt-agent .markdown-body ul, .native-session-content .nt-agent .markdown-body ol { margin: .1em 0 .7em; padding-left: 1.3em; }
+.native-session-content .nt-agent .markdown-body li { margin: .12em 0; }
+.native-session-content .nt-agent .markdown-body strong { color: #000; font-weight: 600; }
+.native-session-content .nt-agent .markdown-body :not(pre) > code { padding: 1px 6px; border-radius: 6px; background: #eef0f4; color: var(--nt-text); font-size: .88em; }
+.native-session-content .nt-agent .nt-reply-foot { max-width: calc(86% - var(--nt-indent)); margin: 12px 0 0 var(--nt-indent); padding: 5px 0 0; gap: 8px; border-top: 1px solid var(--nt-rule); }
+.native-session-content .nt-reply-foot .nt-copy { margin-left: -5px; opacity: 1; color: var(--nt-quiet); }
+.native-session-content .nt-reply-foot .nt-duration { color: var(--nt-quiet); font-size: 12.5px; }
+@media (max-width: 1000px) { .native-session-content .nt-agent .nt-body, .native-session-content .nt-agent .nt-reply-foot { max-width: 94%; } }
+/* Tool steps: no box; the summary's chevron follows its text; rows are icon + grey text. */
+.native-session-content .nt-activity { margin: 2px 0 12px; border: 0; border-radius: 0; background: none; font-size: 14px; }
+.native-session-content .nt-turn > .markdown-body + .nt-activity, .native-session-content .nt-turn > .markdown-body + .nt-working { margin-top: 8px; }
+.native-session-content .nt-turn > .nt-activity + .markdown-body { margin-top: 0; }
+.native-session-content .nt-turn > .nt-activity + .nt-activity { margin-top: -6px; }
+.native-session-content .nt-agent .nt-body > .nt-extra + .markdown-body { margin-top: 0; }
+.native-session-content .nt-activity-summary { width: fit-content; max-width: 100%; gap: 6px; padding: 2px 0; color: var(--nt-quiet); font-size: 14px; }
+.native-session-content .nt-activity-summary:hover { color: #4b505b; }
+.native-session-content .nt-activity-text { order: 0; }
+.native-session-content .nt-caret { order: 1; width: 6px; height: 6px; margin: 0 4px 0 2px; border: 0; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); opacity: .8; }
+.native-session-content .nt-activity[open] > .nt-activity-summary .nt-caret { transform: translateY(-2px) rotate(45deg); }
+.native-session-content .nt-chips { order: 2; margin-left: 4px; gap: 4px; }
+.native-session-content .nt-chip { padding: 1px 8px 1px 5px; border: 0; background: #eef0f4; color: #5f6470; font-size: 11.5px; }
+.native-session-content .nt-chip:hover { background: #e3e6ed; color: var(--nt-text); }
+.native-session-content .nt-steps { padding: 2px 0 0; border: 0; }
+.native-session-content .nt-step-head { min-height: 0; padding: 3px 0; gap: 9px; border-radius: 0; color: var(--nt-quiet); font-size: 14px; line-height: 1.5; }
+.native-session-content .nt-step-head:not(.is-static):hover { background: none; color: #4b505b; }
+.native-session-content .nt-step .nt-icon { width: 16px; height: 16px; color: #9da2ab; }
+.native-session-content .nt-step.is-failed .nt-icon, .native-session-content .nt-step.is-error .nt-icon { color: var(--danger); }
+.native-session-content .nt-step-verb { color: inherit; }
+.native-session-content .nt-step-target { color: inherit; font-family: inherit; }
+.native-session-content .nt-step.is-note .nt-step-target, .native-session-content .nt-step.is-note .nt-step-verb { color: #9da2ab; font-size: 13px; }
+.native-session-content .nt-step .nt-detail { margin: 2px 0 8px 25px; }
+/* Live line: the current action shimmers, elapsed time after it; no dot. */
+.native-session-content .nt-working { gap: 8px; margin: 2px 0 0; color: #9da2ab; font-size: 14px; }
+.native-session-content .nt-working .nt-pulse { display: none; }
+.native-session-content .nt-working-hint { order: 0; background: linear-gradient(90deg, #9da2ab 0 35%, #e1e4ea 50%, #9da2ab 65% 100%) 0 0 / 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: nt-shimmer 1.8s linear infinite; }
+.native-session-content .nt-working-time { order: 1; color: #b3b7bf; font-size: 13px; }
+@keyframes nt-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .native-session-content .nt-working-hint { animation: none; background: none; color: #9da2ab; } }
+/* Prompt: dark bubble, white text; a message that was never sent is a hollow dashed bubble. */
+.native-session-content .nt-user .nt-body { padding: 11px 18px; border: 0; border-radius: 20px; background: #17181c; color: #fff; }
+.native-session-content .nt-prompt-text { color: #fff; font-size: 14.5px; font-weight: 500; line-height: 1.65; }
+.native-session-content .nt-user .native-turn-files .attachment-card img { border-color: rgb(255 255 255 / 14%); border-radius: 10px; }
+.native-session-content .nt-prompt-tools .nt-prompt-time { color: #9a9fa8; font-size: 12px; }
+.native-session-content .nt-user.is-unsent .nt-body { opacity: 1; border: 1px dashed #c4c8d0; background: transparent; }
+.native-session-content .nt-user.is-unsent .nt-prompt-text { color: #6b7080; font-weight: 400; }

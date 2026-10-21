@@ -270,6 +270,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const nativeId=item=>item.entryId?item.sessionId:item.sessionId||item.id;
  const workerName=id=>getData().workers?.find(w=>w.id===id)?.name||id;
  const time=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});};
+ /** Transcript rows show the clock time; the day sits on the centred date lines between them, the full stamp in the tooltip. */
+ const clock=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString(dateLocale(),{hour:'2-digit',minute:'2-digit'});};
+ const dayLabel=date=>{const now=new Date(),start=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime(),days=Math.round((start(now)-start(date))/864e5);
+  return `${days===0?t('Today'):days===1?t('Yesterday'):date.toLocaleDateString(dateLocale(),{...(date.getFullYear()===now.getFullYear()?{}:{year:'numeric'}),month:'2-digit',day:'2-digit'})} ${clock(date)}`;};
  let returningClaim=null,controlFeedback=null;
  /** 只用已有状态快照绘制占用，不新增轮询；归还始终指向保存的接管记录。 */
  function renderSessionControls(item){
@@ -564,14 +568,14 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  /** Transcript rows: assistant replies are plain prose with a small byline; prompts are a quiet block with a prompt mark. No card states or footers. */
  function chatRow(role,text,runtime,at,extra,state='completed',session,{content=null}={}){const agent=role!=='user',row=el('article',`nt-row ${agent?'nt-agent':'nt-user'} native-chat-row${state==='error'?' is-error':''}`);if(at)row.dataset.at=at;
   const body=simplifiedCliOutput(text||''),main=el('div','nt-body');
-  if(agent){const by=el('div','nt-byline');const avatar=el('span','nt-avatar');avatar.append(agentIconEl(runtime));const name=el('span','nt-name',names[runtime]||t('Assistant'));name.translate=false;by.append(avatar,name);if(at){const stamp=el('time','',time(at));stamp.dateTime=at;by.append(stamp);}
+  if(agent){const by=el('div','nt-byline');const avatar=el('span','nt-avatar');avatar.append(agentIconEl(runtime));const name=el('span','nt-name',names[runtime]||t('Assistant'));name.translate=false;by.append(avatar,name);if(at){const stamp=el('time','',clock(at));stamp.dateTime=at;stamp.title=time(at);by.append(stamp);}
    row.append(by);
    if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));main.append(md);}
    if(body&&session)noteOutputs(session,body,at);}
   else{
    // Attachments sit on top of the bubble, the text below; time, Copy and Full screen (when text is hidden) sit under the bubble, outside it.
    const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(el('div','nt-prompt-files'),textEl);
-   if(at){const stamp=el('time','nt-prompt-time',time(at));stamp.dateTime=at;tools.append(stamp);}
+   if(at){const stamp=el('time','nt-prompt-time',clock(at));stamp.dateTime=at;stamp.title=time(at);tools.append(stamp);}
    const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
    const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
    tools.append(expand,copy);row.dataset.tools='1';row._tools=tools;
@@ -867,7 +871,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   function attach(value,{readable,historyAt:at,history}){const same=current&&k()===`${value.nodeId}/${value.runtime}/${value.sessionId}`;current=value;historyAt=at;historyEl=history;if(!same){turns=[];historyAnchors.clear();feed.replaceChildren();}
    const worker=getData().workers?.find(w=>w.id===value.nodeId);supported=worker?.capabilities?.nativeTurns===3;
    const eligible=readable&&value.canResume!==false&&!value.canReopen&&Boolean(value.workspace);
-   if(!eligible){shell.remove();return;}
+   if(!eligible){shell.remove();markLatestDuration();return;}
    if(shell.parentNode!==content)content.append(shell);render();void refresh();
   }
   /** Turns already in native history keep their process next to the matching reply; others render as their own rows. */
@@ -940,7 +944,11 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content});reply.dataset.role='assistant';if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
     if(live)feed.append(...(userRow?[userRow,reply]:[reply]));else place([userRow,reply],turn.createdAt);
    }markLatestDuration();}
-  function groupRows(){let prev=null;for(const node of scroll.querySelectorAll('.native-chat-row, .native-history-separator, .native-history-loader')){if(node.hidden){node.classList.remove('is-continued');continue;}const role=node.classList.contains('nt-agent')?'agent':node.classList.contains('nt-user')?'user':null;node.classList.toggle('is-continued',Boolean(role)&&prev===role);prev=role;}}
+  /** A centred date line opens the transcript, and again on a new day or before a prompt after a pause of 30 minutes or more. */
+  function markDays(){for(const old of scroll.querySelectorAll('.nt-day'))old.remove();let last=null;
+   for(const row of scroll.querySelectorAll('.native-chat-row')){if(row.hidden||!row.dataset.at)continue;const at=new Date(row.dataset.at);if(Number.isNaN(at.getTime()))continue;
+    if(!last||at.toDateString()!==last.toDateString()||(row.classList.contains('nt-user')&&at-last>=30*60000)){const day=el('div','nt-day',dayLabel(at));day.translate=false;row.before(day);}last=at;}}
+  function groupRows(){markDays();let prev=null;for(const node of scroll.querySelectorAll('.native-chat-row, .native-history-separator, .native-history-loader, .nt-day')){if(node.hidden){node.classList.remove('is-continued');continue;}const role=node.classList.contains('nt-agent')?'agent':node.classList.contains('nt-user')?'user':null;node.classList.toggle('is-continued',Boolean(role)&&prev===role);prev=role;}}
   /** Every finished reply shows how long its turn took, next to Copy; a reply still running or without a known start shows none. */
   function markLatestDuration(){groupRows();for(const old of scroll.querySelectorAll('.nt-duration'))old.remove();for(const row of scroll.querySelectorAll('.nt-agent')){if(row.hidden||!row.dataset.duration||row.querySelector('.nt-working'))continue;const foot=row.querySelector('.nt-reply-foot');if(foot)foot.append(el('span','nt-duration',t('Took {duration}',{duration:row.dataset.duration})));}}
   /** The composer is built once and kept in place: a refresh that re-created it would move the focused textarea and drop the caret (and any IME composition). */

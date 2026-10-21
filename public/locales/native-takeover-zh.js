@@ -320,4 +320,6 @@ export default {
  "Worker needs an upgrade": "需升级 Worker",
  "Git is not installed": "设备上没有 Git",
  "No files mentioned yet": "还没有提到文件",
+ "Today": "今天",
+ "Yesterday": "昨天",
 };
