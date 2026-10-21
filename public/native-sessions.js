@@ -194,7 +194,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(st.error)card.append(failedState(st.error,()=>{st.entries=null;st.error=null;renderFolder();}));
   const list=el('div','native-file-list');
   for(const entry of st.entries||[]){
-   if(entry.type==='folder'){const row=el('button','native-file-row is-folder');row.type='button';row.title=entry.path;row.translate=false;row.append(stepIcon('other'));const text=el('span','native-file-text');text.append(el('span','native-file-name',`${entry.name}/`));row.append(text);row.addEventListener('click',()=>{st.path=entry.path;st.entries=null;renderFolder();});list.append(row);}
+   if(entry.type==='folder'){const row=el('button','native-file-row is-folder');row.type='button';row.title=entry.path;row.translate=false;row.append(stepIcon('folder'));const text=el('span','native-file-text');text.append(el('span','native-file-name',`${entry.name}/`));row.append(text);row.addEventListener('click',()=>{st.path=entry.path;st.entries=null;renderFolder();});list.append(row);}
    else list.append(fileRow(session,entry.path,null));
   }
   if(st.entries&&!st.entries.length)list.append(stateBlock('folder','Empty folder'));

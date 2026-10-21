@@ -2910,10 +2910,20 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .nt-step-preview { flex: none; margin-left: 4px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 13px; line-height: 20px; opacity: 0; }
 .nt-step-head:hover .nt-step-preview, .nt-step-preview:focus-visible { opacity: 1; }
 .nt-step-preview:hover { background: var(--green-soft); color: var(--green-dark); }
-.nt-icon { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
-.nt-icon.is-edit, .nt-icon.is-write { color: var(--green-dark); }
-.nt-icon.is-error { color: var(--danger); }
-.nt-step.is-failed .nt-icon { color: var(--danger); }
+.nt-icon { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; color: var(--nt-icon, var(--muted)); }
+/* One colour per kind of work: looking in blues, changing in orange and green, running in indigo, delegating in pink, thinking in violet. */
+.nt-icon.is-read { --nt-icon: #3b82f6; }
+.nt-icon.is-search { --nt-icon: #0ea5e9; }
+.nt-icon.is-web { --nt-icon: #0891b2; }
+.nt-icon.is-edit { --nt-icon: #f97316; }
+.nt-icon.is-write { --nt-icon: #10b981; }
+.nt-icon.is-command { --nt-icon: #6366f1; }
+.nt-icon.is-agent { --nt-icon: #ec4899; }
+.nt-icon.is-thinking { --nt-icon: #a78bfa; }
+.nt-icon.is-folder { --nt-icon: #eab308; }
+.nt-icon.is-other, .nt-icon.is-note { --nt-icon: #94a3b8; }
+.nt-icon.is-error { --nt-icon: var(--danger); }
+.nt-step.is-failed .nt-icon { --nt-icon: var(--danger); }
 .nt-step > .nt-detail { display: none; }
 .nt-step.is-open > .nt-detail { display: block; }
 .nt-step .nt-detail { margin: 2px 8px 8px 31px; }
@@ -3202,7 +3212,7 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .nt-step-head { min-height: 24px; padding: 2px 6px; gap: 7px; color: #4b5563; font-size: 12px; line-height: 1.45; }
 .nt-step-verb { color: #8a939d; }
 .nt-step.is-note .nt-step-target, .nt-step.is-note .nt-step-verb { color: #9aa3ad; font-size: 11.5px; }
-.nt-step .nt-icon { width: 13px; height: 13px; color: #9aa3ad; }
+.nt-step .nt-icon { width: 13px; height: 13px; color: var(--nt-icon, #9aa3ad); }
 .nt-step .nt-detail { margin: 2px 6px 6px 26px; }
 .nt-working { font-size: 12px; color: #6b7280; }
 
@@ -3481,7 +3491,7 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-session-content .nt-steps { padding: 2px 0 0; border: 0; }
 .native-session-content .nt-step-head { min-height: 0; padding: 3px 0; gap: 9px; border-radius: 0; color: var(--nt-quiet); font-size: 14px; line-height: 1.5; }
 .native-session-content .nt-step-head:not(.is-static):hover { background: none; color: #4b505b; }
-.native-session-content .nt-step .nt-icon { width: 16px; height: 16px; color: #9da2ab; }
+.native-session-content .nt-step .nt-icon { width: 16px; height: 16px; color: var(--nt-icon, #9da2ab); }
 .native-session-content .nt-step.is-failed .nt-icon, .native-session-content .nt-step.is-error .nt-icon { color: var(--danger); }
 .native-session-content .nt-step-verb { color: inherit; }
 .native-session-content .nt-step-target { color: inherit; font-family: inherit; }
@@ -3612,7 +3622,6 @@ dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); 
 /* A note repeated in one activity block shows once with its count; thinking gets a brain icon. */
 .nt-step-count { flex: none; margin-left: 2px; color: #a3a8b1; font-size: .92em; font-variant-numeric: tabular-nums; }
 .native-session-content .nt-step.is-thinking .nt-step-target { color: var(--nt-quiet, #8b909a); font-family: inherit; }
-.nt-step.is-thinking .nt-icon { color: #a78bfa; }
 /* Text attachments (pasted text) open in the media viewer as the text itself, wrapped and scrollable. */
 dialog.media-lightbox .media-stage.is-text { display: block; min-height: 120px; overflow: auto; border: 1px solid var(--line); background: #f8f9fb; }
 dialog.media-lightbox .media-text { margin: 0; padding: 14px 16px; color: var(--ink); font-size: 13.5px; line-height: 1.7; font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
