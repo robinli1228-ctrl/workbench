@@ -477,6 +477,12 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'gitVersion.remoteUnavailableThereNoLocal': '远端不可用且没有可比较的本地缓存',
   // src/history.mjs
   'history.limitMustBeIntegerFrom': 'limit 必须是 1–{maximum} 的整数',
+  'history.invalidRoleScope': 'role 必须是 1 到 8 个角色名或编号',
+  'history.roleNotFound': '项目里没有角色“{name}”',
+  'history.invalidFileScope': 'file 必须是最多 500 字符的路径',
+  'history.invalidTimeScope': '{label} 不是有效时间',
+  'history.timeScopeReversed': 'since 不能晚于 until',
+  'wbTools.historySearchUsage': '用法：wb history search [关键词] [--role 角色]... [--file 路径] [--since 时间] [--until 时间] [--limit 数字] [--cursor 编号]。时间可写 30m、2h、3d、1w、today、yesterday、2026-10-20 或完整时间；以 -- 开头的关键词放在 -- 之后。',
   'history.offsetMustBeNonNegative': 'offset 必须是非负整数',
   'history.invalidCursor': 'cursor 无效',
   'history.projectNotFound': '项目不存在',
@@ -1526,7 +1532,7 @@ wb capabilities      当前协作工具与协议版本
 wb setup catalog     只读查询当前项目完整角色名单、同伴职能、CLI、模型和配置，不返回自己的职能
 wb discuss peers     所有有效角色会话查询同行当前任务、工作目录和近期留言
 wb boot              按需读取最近交接，不必每轮执行
-wb history search 词 搜索当前项目消息及报告，返回来源编号
+wb history search [关键词] [--role 角色] [--file 路径] [--since 时间] [--until 时间]  搜索当前项目消息及报告，可按角色、文件、时间段缩小范围（时间如 2h、3d、today、2026-10-20），返回来源编号
 wb session current     查看本轮角色会话编号与状态
 wb session list --limit 20 [--cursor 编号]  列出项目角色会话
 wb session summary 会话编号  查看角色会话摘要

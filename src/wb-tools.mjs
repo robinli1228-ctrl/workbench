@@ -21,6 +21,39 @@ function managedRead(path,input){
   if(process.env.WB_READ_TOOLS!=='1'||!process.env.WB_BRIDGE)throw readError('unsupported');
   return agentRequest(path,{runId:context().runId,input});
 }
+/** wb history search [KEYWORDS] [--role NAME]... [--file PATH] [--since TIME] [--until TIME] [--limit N] [--cursor C] [-- KEYWORDS]
+ *  TIME: 30m / 2h / 3d / 1w (that long ago), today / yesterday (local midnight), a date (local; --until covers the whole day)
+ *  or a full time. Times are resolved here, on the machine the CLI runs on, and sent to Home as ISO times. */
+export function historySearchInput(args, now = new Date()) {
+  const input = {}, words = [], roles = [];
+  const day = (offset, end) => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + offset + (end ? 1 : 0)); return end ? new Date(d.getTime() - 1) : d; };
+  const time = (value, end) => {
+    const text = String(value || '').trim(), relative = text.match(/^(\d+)\s*(m|min|h|d|w)$/i);
+    if (relative) { const unit = { m: 60e3, min: 60e3, h: 3600e3, d: 86400e3, w: 604800e3 }[relative[2].toLowerCase()]; return new Date(now.getTime() - Number(relative[1]) * unit).toISOString(); }
+    if (/^(today|\u4eca\u5929)$/i.test(text)) return (end ? now : day(0, false)).toISOString();
+    if (/^(yesterday|\u6628\u5929)$/i.test(text)) return day(-1, end).toISOString();
+    const date = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (date) { const d = new Date(Number(date[1]), Number(date[2]) - 1, Number(date[3])); if (end) d.setDate(d.getDate() + 1); return new Date(d.getTime() - (end ? 1 : 0)).toISOString(); }
+    const ms = Date.parse(text);
+    if (!Number.isFinite(ms)) throw new Error(tr('wbTools.historySearchUsage'));
+    return new Date(ms).toISOString();
+  };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--') { words.push(...args.slice(i + 1)); break; }
+    if (!arg.startsWith('--')) { words.push(arg); continue; }
+    const value = args[i + 1];
+    if (value === undefined || !['--role', '--file', '--since', '--until', '--limit', '--cursor'].includes(arg) || (arg !== '--role' && input[arg.slice(2)] !== undefined)) throw new Error(tr('wbTools.historySearchUsage'));
+    i++;
+    if (arg === '--role') roles.push(value);
+    else if (arg === '--limit') { if (!/^\d+$/.test(value)) throw new Error(tr('wbTools.historySearchUsage')); input.limit = Number(value); }
+    else if (arg === '--since' || arg === '--until') input[arg.slice(2)] = time(value, arg === '--until');
+    else input[arg.slice(2)] = value;
+  }
+  if (roles.length) input.role = roles.length === 1 ? roles[0] : roles;
+  return { query: words.join(' '), ...input };
+}
+
 export function inspectReadSource(input){
   readObject(input,['requestId','sourceNodeId','sourceWorkspace','scopeId']);
   return managedRead('/api/agent/read-source',{requestId:readId(input.requestId),...normalizeReadSelector(input)});

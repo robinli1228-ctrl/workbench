@@ -477,6 +477,12 @@ Execution purpose: {purpose}. {p4}{p5}`,
   'gitVersion.remoteUnavailableThereNoLocal': 'The remote is unavailable and there is no local cache to compare',
   // src/history.mjs
   'history.limitMustBeIntegerFrom': 'limit must be an integer from 1 to {maximum}',
+  'history.invalidRoleScope': 'role must be 1 to 8 role names or IDs',
+  'history.roleNotFound': 'No role "{name}" in this project',
+  'history.invalidFileScope': 'file must be a path of at most 500 characters',
+  'history.invalidTimeScope': '{label} is not a valid time',
+  'history.timeScopeReversed': 'since must not be later than until',
+  'wbTools.historySearchUsage': 'Usage: wb history search [KEYWORDS] [--role ROLE]... [--file PATH] [--since TIME] [--until TIME] [--limit N] [--cursor ID]. TIME may be 30m, 2h, 3d, 1w, today, yesterday, 2026-10-20 or a full time; put keywords starting with -- after --.',
   'history.offsetMustBeNonNegative': 'offset must be a non-negative integer',
   'history.invalidCursor': 'Invalid cursor',
   'history.projectNotFound': 'Project not found',
@@ -1526,7 +1532,7 @@ wb capabilities      Current collaboration tools and protocol version
 wb setup catalog     Read-only current-project roster, peer responsibilities, CLIs, models and configuration; own responsibility omitted
 wb discuss peers     Query, for all valid role sessions, the current tasks, working directories, and recent notes of peers
 wb boot              Read the latest handoff on demand; not needed every turn
-wb history search TERM  Search messages and reports of the current project; returns source IDs
+wb history search [TERM] [--role ROLE] [--file PATH] [--since TIME] [--until TIME]  Search messages and reports of the current project, optionally by role, file and time window (TIME like 2h, 3d, today, 2026-10-20); returns source IDs
 wb session current     Show this turn's role session ID and status
 wb session list --limit 20 [--cursor ID]  List the project's role sessions
 wb session summary SESSION_ID  Show a role session summary

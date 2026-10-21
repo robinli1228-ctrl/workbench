@@ -5,7 +5,7 @@ import { agentRequest } from './agent-bridge.mjs';
 import {discussionHelp} from './discussion-policy.mjs';
 import { setupCatalog, setupPropose, updateRolePrompt } from './setup-tools.mjs';
 import {
-  helpText, boot, docsList, docsRead,inspectReadSource,queryNodeReadOnly,readDeviceFile,
+  helpText, historySearchInput, boot, docsList, docsRead,inspectReadSource,queryNodeReadOnly,readDeviceFile,
   gitStatus, chatPost, notifySupervisor, askRole, callRole, callDocument, waitForRole, requestDelivery, writeHandoff, handoffLast
 } from './wb-tools.mjs';
 import { tr } from './i18n.mjs';
@@ -104,7 +104,7 @@ export async function main(argv = process.argv.slice(2)) {
       if(sub==='verify'&&rest.length)return out(await agentRequest('/api/agent/progress',{runId:process.env.WB_RUN_ID,action:'verify',input:JSON.parse(rest.join(' '))}));
       throw new Error(tr('resultReceipts.usage'));
     }
-    if (cmd === 'history' && sub === 'search') return out(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,query:rest.join(' ')}));
+    if (cmd === 'history' && sub === 'search') return out(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(rest)}));
     if ((cmd === 'history' || cmd === 'result') && sub === 'read') return out(await agentRequest('/api/agent/history/read',{runId:process.env.WB_RUN_ID,kind:cmd==='history'?'message':'result',id:rest[0],offset:rest[1]===undefined?0:Number(rest[1]),version:rest[2]}));
     if (cmd === 'schedule') {
       if (!supervisor) throw new Error(tr('wbCli.onlyProjectSupervisorCanSubmit'));
