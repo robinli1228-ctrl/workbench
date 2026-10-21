@@ -1,4 +1,4 @@
-export const SETTINGS_TABS = Object.freeze(['general', 'devices', 'hosting', 'prompts', 'information']);
+export const SETTINGS_TABS = Object.freeze(['general', 'devices', 'hosting', 'prompts', 'information', 'data']);
 
 /** 只切换可见性，不重新加载配置或重建表单，保留各分类尚未保存的输入。 */
 function selectProjectSettingsTab(root, value) {

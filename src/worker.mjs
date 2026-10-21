@@ -25,6 +25,7 @@ import { supportedPermissionScopes, workerPermissionScopes, PERMISSION_CONTRACT_
 import { browseFolders, createFolder, prepareNativeSessionFolder } from './folders.mjs';
 import {FolderAccess} from './folder-access.mjs';
 import {createWorkerNativeTurns} from './native-turns-worker.mjs';
+import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {listNativeSessions,readNativeSession,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
@@ -585,6 +586,12 @@ async function command(m) {
 }
 /** Only serves plain text files inside registered workspaces and does not follow symlinks that escape them. */
 async function query(m) {
+  // The Data page: what this Worker's store holds and what the policy lets go; cleanup runs the same pass as the daily one.
+  if(m.action==='data_stats'||m.action==='data_cleanup'){
+    try{if(m.path?.policy)retention=normalizeRetention(m.path.policy);
+      send({type:'reply',id:m.id,result:m.action==='data_stats'?await dataStats(db,{policy:retention,blobRoot:sourceSync.blobRoot}):await runMaintenance()});}
+    catch(e){send({type:'reply',id:m.id,error:e.message});}return;
+  }
   if(m.action==='cli_capacity') {
     try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
   }
@@ -1138,7 +1145,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -1164,12 +1171,13 @@ function connect() {
         if(ws!==connection||connection.readyState!==1)return;
         registered=true;readySent=false;eventSent.clear();clearTimeout(reconnectCleanup);
         nativeTurns?.resume?.();
+        if(m.retention)retention=normalizeRetention(m.retention);startMaintenance();
         if(paused)void warmSessions.closeAll();
         for (const r of db.list('runs').filter(r => !terminal.has(r.status))) emit(r.id, 'status', { status: r.status });
         flushOutbox();console.log(tr('worker.workerConnected', { homeUrl, nodeId: identity.nodeId }));
         if (runtimeRetryDue) { runtimeRetryDue = false; void refreshRuntimes(); }
       }
-      if (m.type === 'settings') {paused = m.paused;if(paused)void warmSessions.closeAll();}
+      if (m.type === 'settings') {paused = m.paused;if(paused)void warmSessions.closeAll();if(m.retention)retention=normalizeRetention(m.retention);}
       if (m.type === 'language') { try { setLanguage(m.language); } catch { /* ignore unsupported values */ } }
       if (m.type === 'ack') {db.remove('outbox', m.id);eventSent.delete(m.id);flushOutbox();}
       // Each command/query runs under the language Home put on the message, so prompts and errors built on this Worker match it.
@@ -1200,6 +1208,22 @@ function connect() {
   });
 }
 const outboxTimer=setInterval(flushOutbox,1000);outboxTimer.unref();
+/**
+ * Data retention (src/data-retention.mjs): Home sets the policy; a pass runs a minute after the first registration and
+ * daily after that, deleting in small batches. VACUUM waits for an idle moment (no CLI, no takeover turn, no sync in flight).
+ */
+let retention=normalizeRetention({}),maintenanceStarted=false,vacuumRetry=null;
+const quiet=()=>sessions.size===0&&organizerRunning===0&&(nativeTurns?.size||0)===0&&(sourceSync.inFlight?.size||0)===0&&db.list('sourceSyncReservations').length===0;
+function vacuumWhenQuiet(){clearTimeout(vacuumRetry);vacuumRetry=null;
+  if(!quiet()){vacuumRetry=setTimeout(vacuumWhenQuiet,10*60000);vacuumRetry.unref();return {vacuumed:false,deferred:true};}
+  try{const result=vacuumIfWasteful(db);if(result.vacuumed)console.log(`Data: VACUUM ${Math.round(result.before/1048576)} MB -> ${Math.round(result.after/1048576)} MB`);return result;}catch(e){console.error('Data: VACUUM failed',e.message);return {vacuumed:false,error:e.message};}}
+async function runMaintenance(){
+  try{const summary=await cleanupData(db,{policy:retention,blobRoot:sourceSync.blobRoot,log:line=>console.error('Data:',line)});
+    const n=Object.values(summary.deleted).reduce((a,b)=>a+b,0);if(n||summary.blobsDeleted)console.log(`Data: removed ${n} records (${Math.round(summary.bytes/1048576)} MB) and ${summary.blobsDeleted} blobs (${Math.round(summary.blobBytes/1048576)} MB)`);
+    return {...summary,vacuum:vacuumWhenQuiet()};}
+  catch(e){console.error('Data: cleanup failed',e.message);return {error:e.message};}
+}
+function startMaintenance(){if(maintenanceStarted)return;maintenanceStarted=true;const first=setTimeout(()=>void runMaintenance(),60000);first.unref();const daily=setInterval(()=>void runMaintenance(),24*3600000);daily.unref();}
 const sourceSyncTimer=setInterval(()=>{if(registered)sourceSync.flush();void sourceSync.watch.tick().catch(e=>console.error('Source sync observation failed:',e.code||e.message));},500);sourceSyncTimer.unref();
 const heartbeat = setInterval(() => send({ type: 'heartbeat' }), 15000);
 const runtimeTimer = setInterval(() => { if (ws?.readyState === 1) void refreshRuntimes(); }, 300000);

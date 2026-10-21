@@ -1,3 +1,4 @@
+import {createDataSettingsUI} from './data-settings.js';
 import { t, getLanguage, setLanguage, onLanguageChange, syncLanguageWithBackend, dateLocale } from './i18n.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {createNativeSessionUI} from './native-sessions.js';
@@ -161,6 +162,7 @@ const setupUI = projectSetupUI({ api, getData: () => app.data, getProject: getCu
 const platformUI = platformAdminUI({api,getData:()=>app.data,refreshState,create});
 const spacesUI = projectSpaceUI({api,getData:()=>app.data,getProject:getCurrentProject,refreshState,create});
 const tokenUI = tokenUsageUI({api,getData:()=>app.data,create});
+const dataUI = createDataSettingsUI({api});
 const schedulesUI = createScheduledJobsUI({api,getData:()=>app.data,getProject:getCurrentProject,getConversationId:()=>app.selectedConversationId,refreshState,create,
   openTask:async(projectId,taskId,conversationId=projectId)=>{
     selectProject(projectId,conversationId);closeSettings();await refreshState({quiet:true});
@@ -284,6 +286,7 @@ function openSettings(value = 'devices') {
   renderSettingsDevices();
   platformUI.refresh(); spacesUI.refresh(); tokenUI.refresh();
   if (tab === 'usage') tokenUI.show();
+  if (tab === 'data') dataUI.show();
   if (tab === 'timers') schedulesUI.show();
   if (tab === 'prompts') renderPlatformPrompts();
   mobilePanel('chat');

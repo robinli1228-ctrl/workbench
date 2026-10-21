@@ -133,6 +133,7 @@
               <button type="button" role="tab" data-settings-tab="hosting">Code Hosting Accounts</button>
               <button type="button" role="tab" data-settings-tab="prompts">Platform Prompts</button>
               <button type="button" role="tab" data-settings-tab="information">Configuration Information</button>
+              <button type="button" role="tab" data-settings-tab="data">Data</button>
             </nav>
             <nav id="project-settings-tabs" class="settings-tabs" role="tablist" aria-label="Project settings categories" hidden>
               <button id="project-tab-basic" type="button" role="tab" data-project-settings-tab="basic" aria-controls="project-panel-basic" aria-selected="true">Basic information</button>
@@ -306,6 +307,17 @@
               </dialog>
             </section>
 
+            <section class="settings-panel" data-settings-panel="data" id="settings-data-panel" hidden>
+              <div class="settings-panel-heading"><h3>Data</h3><p>What Home and each device store, and what the retention policy lets go. Finished sync bookkeeping and old sync snapshots are reclaimed; chat history, session turns, attachments and run logs are never touched. A pass runs a minute after start and daily; the file itself shrinks at the next idle moment.</p></div>
+              <form id="data-retention-form" class="form-grid data-retention-form">
+                <label>Keep finished sync records (days)<input name="syncCommandDays" type="number" min="0" max="365" step="0.5" required></label>
+                <label>Keep unreferenced sync snapshots (days)<input name="blobDays" type="number" min="0" max="365" step="1" required></label>
+                <label>Manifest versions kept per repository<input name="manifestVersions" type="number" min="1" max="500" step="1" required></label>
+                <div class="form-actions full-width"><button class="secondary" type="submit">Save retention</button><button class="secondary" id="data-refresh" type="button">Refresh</button><button class="primary" id="data-clean-all" type="button">Clean up all</button></div>
+              </form>
+              <p id="data-feedback" class="form-feedback" hidden></p>
+              <section class="settings-block"><table class="data-table"><tbody id="data-table"></tbody></table></section>
+            </section>
             <section class="settings-panel" data-settings-panel="information" hidden>
               <div class="settings-panel-heading"><h3>Configuration Information</h3><p>Software versions and update notes only. This page does not call an AI, install updates or restart services.</p></div>
               <div class="settings-block setup-guide" id="setup-guide">

@@ -65,6 +65,7 @@ import { inspectRunProgress } from './run-monitor.mjs';
 import { projectTerminalLock, nativeSessionProjectIds, nativeTerminalProject, terminalCommand, terminalLaunchView, TERMINAL_PREPARATION_TTL_MS } from './terminal-resume.mjs';
 import { ProjectGitVersions } from './project-git-versions.mjs';
 import {SourceSyncHome} from './source-sync-transport.mjs';
+import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {acceptSourceProvenance} from './source-sync-provenance.mjs';
 import { WechatChannel, wechatTransport } from './wechat-channel.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
@@ -1430,8 +1431,35 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/settings' && req.method === 'POST') {
         const b = await body(req);
         const settings = db.put('settings', updatePausedSetting(db.get('settings', 'main'), b.paused));
-        for (const ws of sockets.values()) send(ws, { type: 'settings', ...settings });
+        for (const ws of sockets.values()) send(ws, { type: 'settings', ...settings, retention:retentionPolicy() });
         change(); return json(res, settings);
+      }
+      // Data page: what Home and each device hold, what the retention policy lets go, and a cleanup on demand.
+      if (pathname === '/api/settings/retention' && req.method === 'POST') {
+        const b = await body(req), retention = normalizeRetention(b);
+        db.put('settings', { ...(db.get('settings', 'main') || {}), id: 'main', retention });
+        for (const ws of sockets.values()) send(ws, { type: 'settings', ...db.get('settings', 'main'), retention });
+        change(); return json(res, { retention });
+      }
+      if (pathname === '/api/data/stats' && req.method === 'GET') {
+        const home = await dataStats(db, { policy: retentionPolicy() });
+        const devices = await Promise.all(db.list('workers').filter(w => !db.get('removedDevices', w.id)).map(async w => {
+          if (!online(w.id)) return { nodeId: w.id, name: w.name, online: false };
+          if (w.capabilities?.dataRetention !== 1) return { nodeId: w.id, name: w.name, online: true, upgrade: true };
+          try { return { nodeId: w.id, name: w.name, online: true, stats: await workerQuery({ nodeId: w.id }, 'data_stats', { policy: retentionPolicy() }, 20000) }; }
+          catch (e) { return { nodeId: w.id, name: w.name, online: true, error: e.message }; }
+        }));
+        return json(res, { home, devices, retention: retentionPolicy() });
+      }
+      if (pathname === '/api/data/cleanup' && req.method === 'POST') {
+        const b = await body(req), target = typeof b.target === 'string' ? b.target : 'all', results = {};
+        if (target === 'home' || target === 'all') results.home = await runHomeMaintenance();
+        for (const w of db.list('workers')) {
+          if (target !== 'all' && target !== w.id) continue;
+          if (!online(w.id) || w.capabilities?.dataRetention !== 1) { if (target === w.id) throw new Error(online(w.id) ? 'Upgrade this Worker to clean its data' : tr('home.executionNodeOfflineUnableRead')); continue; }
+          try { results[w.id] = await workerQuery({ nodeId: w.id }, 'data_cleanup', { policy: retentionPolicy() }, 120000); } catch (e) { results[w.id] = { error: e.message }; }
+        }
+        change(); return json(res, results);
       }
       if (pathname === '/api/settings/role-templates' && req.method === 'POST') {
         const template = saveRoleTemplate(db, await body(req)); change(); return json(res, template);
@@ -1484,6 +1512,7 @@ const server = http.createServer(async (req, res) => {
     files['/pasted-text.js']='pasted-text.js';
     files['/side-preview.js']='side-preview.js';
     files['/history-prompt.js']='history-prompt.js';
+    files['/data-settings.js']='data-settings.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';
@@ -1524,7 +1553,7 @@ wss.on('connection', ws => {
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId, lastSeen: new Date().toISOString() });
         // Turns the Worker kept running through the disconnect continue; the ones it no longer has ended while it was away.
         nativeTurns.reconnected(nodeId, Array.isArray(m.nativeTurns) ? m.nativeTurns.filter(id => typeof id === 'string').slice(0, 200) : []);
-        send(ws, { type: 'registered', folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:m.node.capabilities?.readSourceBindings===1?1:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
+        send(ws, { type: 'registered', retention:retentionPolicy(), folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:m.node.capabilities?.readSourceBindings===1?1:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
       }
       if (!nodeId || sockets.get(nodeId) !== ws) throw new Error(tr('home.nodeNotRegisteredYet'));
       if(['source_sync_receipt','source_sync_command_ack','source_sync_watch_ack','source_sync_watch_status','source_sync_dirty'].includes(m.type)){
@@ -1619,6 +1648,22 @@ const heartbeat = setInterval(() => {
   for (const r of viewers) r.write(': keepalive\n\n');
 }, 15000);
 const chatScheduler = setInterval(scheduleChat, 1000);
+/** Data retention on Home: a pass a minute after start and daily; VACUUM only while nothing runs (see src/data-retention.mjs). */
+function retentionPolicy() { return normalizeRetention(db.get('settings', 'main')?.retention || {}); }
+const homeQuiet = () => db.activeRuns().length === 0 && queries.size === 0 && !db.listSourceSyncCommands({ pending: true }).length
+  && !db.db.prepare("SELECT 1 FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('queued','starting','running','waiting_user','stopping') LIMIT 1").get();
+let homeVacuumRetry = null;
+function homeVacuumWhenQuiet() { clearTimeout(homeVacuumRetry); homeVacuumRetry = null;
+  if (!homeQuiet()) { homeVacuumRetry = setTimeout(homeVacuumWhenQuiet, 10 * 60000); homeVacuumRetry.unref(); return { vacuumed: false, deferred: true }; }
+  try { const result = vacuumIfWasteful(db); if (result.vacuumed) console.log(`Data: VACUUM ${Math.round(result.before / 1048576)} MB -> ${Math.round(result.after / 1048576)} MB`); return result; } catch (e) { console.error('Data: VACUUM failed', e.message); return { vacuumed: false, error: e.message }; } }
+async function runHomeMaintenance() {
+  try { const summary = await cleanupData(db, { policy: retentionPolicy(), log: line => console.error('Data:', line) });
+    const n = Object.values(summary.deleted).reduce((a, b) => a + b, 0); if (n) console.log(`Data: removed ${n} records (${Math.round(summary.bytes / 1048576)} MB)`);
+    return { ...summary, vacuum: homeVacuumWhenQuiet() }; }
+  catch (e) { console.error('Data: cleanup failed', e.message); return { error: e.message }; }
+}
+const maintenanceFirst = setTimeout(() => void runHomeMaintenance(), 60000); maintenanceFirst.unref();
+const maintenanceDaily = setInterval(() => void runHomeMaintenance(), 24 * 3600000); maintenanceDaily.unref();
 const sessionQueueTimer=setInterval(()=>{try{queuePump.tick();void queuePump.reconcileVerifications().then(changed=>{if(changed)change();}).catch(e=>console.error(e.message));}catch(e){console.error(e.message);}},2000);sessionQueueTimer.unref();
 const terminalMonitor=setInterval(()=>{void reconcileTerminals();},15000);terminalMonitor.unref();
 const sourceSyncTimer=setInterval(()=>{void sourceSync.tick().catch(e=>console.error(e.message));},1000);sourceSyncTimer.unref();
