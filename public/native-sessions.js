@@ -453,10 +453,11 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    const running=isRunning(item);
    const b=el('button',`project-item${key(selected)===key(item)?' active':''}${running?' is-running':''}`);b.type='button';b.dataset.orderId=key(item);b.title=`${displayTitle(item)}\n${workerName(item.nodeId)}${running?` · ${t('In progress')}`:''}`;
    b.setAttribute('aria-label',`${displayTitle(item)}${running?` · ${t('In progress')}`:''}`);
-   const copy=el('span','project-item-copy'),heading=el('span','native-session-title'),title=el('strong','',displayTitle(item));title.translate=false;heading.append(title);
-   const worker=byId.get(item.nodeId);
-   if(worker){const deviceIcon=machineIconEl(worker,cloudNumbers.get(item.nodeId));deviceIcon.classList.add('native-session-device');heading.append(deviceIcon);}
-   const when=el('small','native-session-time',time(item.createdAt||item.modifiedAt));when.translate=false;copy.append(heading,when);b.append(agentIconEl(item.runtime),copy);b.addEventListener('click',()=>read(item));if(!latest)delete b.dataset.orderId;return b;
+   // Two lines with a right column: title | device, time | running spinner (drawn by CSS when the row is running).
+   const copy=el('span','project-item-copy has-status'),title=el('strong','',displayTitle(item));title.translate=false;
+   const worker=byId.get(item.nodeId),deviceIcon=worker?machineIconEl(worker,cloudNumbers.get(item.nodeId)):el('span','');deviceIcon.classList.add('native-session-device','list-device-slot');
+   const when=el('small','native-session-time',time(item.createdAt||item.modifiedAt));when.translate=false;
+   const status=el('span','list-run-status');status.setAttribute('aria-hidden','true');copy.append(title,deviceIcon,when,status);b.append(agentIconEl(item.runtime),copy);b.addEventListener('click',()=>read(item));if(!latest)delete b.dataset.orderId;return b;
   };
   for(const group of ordered){
    const entry=row(group.latest,true);
