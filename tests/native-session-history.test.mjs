@@ -74,7 +74,7 @@ test('Codex and Grok histories yield the same tool rows, with the command behind
 
 test('a history page holds up to 45 prompts and 768 KB of rows, and its reply fits the 1 MB Worker socket', async t => {
   const { HISTORY_PAGE } = await import(pathToFileURL(join(root, 'src', 'native-sessions.mjs')).href);
-  assert.deepEqual({ ...HISTORY_PAGE }, { prompts: 45, bytes: 786432, window: 6291456, scan: 12582912, lookback: 33554432, lookbackChunk: 1048576 });
+  assert.deepEqual({ ...HISTORY_PAGE }, { prompts: 45, bytes: 786432, window: 6291456, scan: 12582912, line: 33554432, lookback: 33554432, lookbackChunk: 1048576 });
   const home = mkdtempSync(join(tmpdir(), 'wb-claude-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const workspace = '/srv/work/paging', dir = join(home, 'projects', workspace.replace(/[^a-zA-Z0-9]/g, '-'));
@@ -176,4 +176,35 @@ test('windows that hold only internal rows are crossed within the scan budget; p
   let cursor = stopped.nextCursor, page = stopped;
   for (let i = 0; i < 8 && !page.messages.length && cursor; i++) { page = await read({ scan: 4000 }, cursor); cursor = page.nextCursor; }
   assert.deepEqual(page.messages.map(m => m.text), ['before the blobs', 'answered'], 'following the cursor reaches them');
+});
+
+test('a single record longer than the read window (a screenshot in a tool result) is read whole instead of failing the page', async t => {
+  const { HISTORY_PAGE } = await import(pathToFileURL(join(root, 'src', 'native-sessions.mjs')).href);
+  const home = mkdtempSync(join(tmpdir(), 'wb-claude-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const workspace = '/srv/work/longline', dir = join(home, 'projects', workspace.replace(/[^a-zA-Z0-9]/g, '-'));
+  mkdirSync(dir, { recursive: true });
+  const env = { HOME: home, CLAUDE_CONFIG_DIR: home }, record = { id: SID, runtime: 'claude', workspace }, file = join(dir, `${SID}.jsonl`);
+  const at = s => `2026-10-21T06:${String(s).padStart(2, '0')}:00.000Z`;
+  const image = { type: 'user', timestamp: at(2), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_shot', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(2.5 * 1048576) } }] }] } };
+  writeFileSync(file, [
+    { type: 'user', timestamp: at(1), cwd: workspace, message: { role: 'user', content: 'look at the screenshot' } },
+    { type: 'assistant', timestamp: at(2), message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_shot', name: 'Read', input: { file_path: '/tmp/shot.png' } }] } },
+    image,
+    { type: 'assistant', timestamp: at(3), message: { role: 'assistant', content: [{ type: 'text', text: 'It shows the preview tab.' }] } },
+    { type: 'user', timestamp: at(4), cwd: workspace, message: { role: 'user', content: 'thanks' } },
+    { type: 'assistant', timestamp: at(5), message: { role: 'assistant', content: [{ type: 'text', text: 'Any time.' }] } },
+  ].map(r => JSON.stringify(r)).join('\n') + '\n');
+  const read = (pageLimits, cursor = null) => readNativeSession('claude', SID, { env, record, historyPage: true, cursor, pageLimits: { ...HISTORY_PAGE, window: 1048576, ...pageLimits } });
+  const all = async pageLimits => { const pages = []; let cursor = null; do { const page = await read(pageLimits, cursor); pages.push(page); cursor = page.nextCursor; } while (cursor); return pages; };
+  // The released 1 MiB window could not hold the 2.5 MiB record and failed the page. Now the rows after it come first,
+  // and the next page widens its read to take the record whole together with what precedes it.
+  const pages = await all({});
+  assert.equal(pages.length, 2);
+  assert.deepEqual(pages[0].messages.map(m => m.text), ['It shows the preview tab.', 'thanks', 'Any time.']);
+  assert.deepEqual(pages[1].messages.map(m => m.role), ['user', 'tool_call', 'tool_result']);
+  assert.equal(pages[1].messages[0].text, 'look at the screenshot');
+  for (const page of pages) assert.ok(Buffer.byteLength(JSON.stringify(page)) < 512 * 1024, 'the image bytes do not travel to the page');
+  // Past the per-record cap the page still says so rather than skipping the record silently.
+  await assert.rejects(all({ line: 2 * 1048576 }), /too large to preview/);
 });

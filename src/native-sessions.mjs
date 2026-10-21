@@ -206,7 +206,23 @@ export async function listNativeSessions(runtime,{env=process.env,limit=100,scop
  * a window with no rows at all is crossed, up to `scan` (two windows) per request. The rows travel in a single
  * Worker→Home socket message, which is capped at 1 MB.
  */
-export const HISTORY_PAGE=Object.freeze({prompts:45,bytes:786432,window:6291456,scan:12582912,lookback:33554432,lookbackChunk:1048576});
+export const HISTORY_PAGE=Object.freeze({prompts:45,bytes:786432,window:6291456,scan:12582912,line:33554432,lookback:33554432,lookbackChunk:1048576});
+
+/** Whether the buffer holds at least one complete line: a newline before the (possibly newline-terminated) last line. */
+const hasCompleteLine=buffer=>{let end=buffer.length;while(end>0&&[10,13].includes(buffer[end-1]))end--;return end===0||buffer.lastIndexOf(10,end-1)>=0;};
+/**
+ * The bytes before `windowEnd`: one window, widened when the last record alone is longer than the window. A tool result
+ * that carries a screenshot is one JSONL line of 1 MiB or more; such a record is read whole, up to `limits.line`, so a
+ * page never fails on it. Only a record past that cap is reported as too large.
+ */
+async function windowBefore(h,windowEnd,limits){
+ let start=Math.max(0,windowEnd-limits.window),buffer=Buffer.alloc(windowEnd-start);await h.read(buffer,0,buffer.length,start);
+ while(start>0&&!hasCompleteLine(buffer)&&windowEnd-start<limits.line){
+  const wider=Math.max(0,windowEnd-Math.min(limits.line,(windowEnd-start)*2)),more=Buffer.alloc(start-wider);await h.read(more,0,more.length,wider);
+  buffer=Buffer.concat([more,buffer]);start=wider;
+ }
+ return {start,buffer};
+}
 
 /**
  * A page that starts inside a turn (its prompt is on an older page) still shows how long that turn took: look back from
@@ -269,7 +285,7 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
   // Internal request blobs and large tool results can fill a window without adding a chat row. Cross only empty windows,
   // counting overlapping bytes too, so one click never reads more than limits.scan bytes of transcript data.
   while(next>0&&!messages.length&&scanned<limits.scan){
-   const windowEnd=next,start=Math.max(0,windowEnd-limits.window),buffer=Buffer.alloc(windowEnd-start);await h.read(buffer,0,buffer.length,start);scanned+=buffer.length;
+   const windowEnd=next,{start,buffer}=await windowBefore(h,windowEnd,limits);scanned+=buffer.length;
    if(!cursor&&configuration===undefined)configuration=sessionConfiguration(jsonLines(buffer.subarray(start?(buffer.indexOf(10)<0?buffer.length:buffer.indexOf(10)+1):0).toString('utf8')),runtime);
    let pos=buffer.length,bytes=0,prompts=0;
    while(pos>0){
