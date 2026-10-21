@@ -3231,10 +3231,13 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-turn-files .attachment-file-card .attachment-open { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px; text-align: left; cursor: pointer; }
 
 /* ---- Polish batch: one dock height, uniform icons, quieter cards ---- */
-/* 1. The composer dock and the right panel's tab bar share one height, so their top hairlines meet. */
+/* 1. One dock height for the three bottom bars — left sidebar footer, composer, right tab bar — so their top hairlines meet.
+   67px is the sidebar footer's height; the composer centres its 42px field inside it instead of growing with padding
+   (measured in a browser: padding 13-14px made it 69-71px). It grows only when its content does (quote, attachments, lines). */
 @media (min-width: 1001px) {
-  #chat-form, .native-takeover-form.chat-composer { display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; min-height: 68px; padding-block: 14px; }
-  .inspector-tabs { height: 68px; min-height: 68px; box-sizing: border-box; }
+  #chat-form, .native-takeover-form.chat-composer { display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; min-height: 67px; padding-block: 8px; }
+  .inspector-tabs { height: 67px; min-height: 67px; box-sizing: border-box; }
+  body[data-project-sidebar] .sidebar-footer { height: 67px; min-height: 67px; box-sizing: border-box; }
 }
 /* 2. Quota lines: both marks the same 22px disc, the figure centred, no decorations. */
 .native-quota-line .role-quota-mark, .native-quota-line .role-quota-mark.is-five-hour, .native-quota-line .role-quota-mark.is-weekly { width: 22px; height: 22px; font-size: 9px; font-weight: 700; }
