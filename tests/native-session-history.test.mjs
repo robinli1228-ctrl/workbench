@@ -71,3 +71,36 @@ test('Codex and Grok histories yield the same tool rows, with the command behind
   assert.deepEqual(grok.map(m => m.role), ['user', 'assistant', 'tool_call', 'tool_result']);
   assert.equal(grok[2].name, 'run_terminal_command'); assert.equal(grok[3].output, 'a b');
 });
+
+test('a history page holds up to 45 prompts and 768 KB of rows, and its reply fits the 1 MB Worker socket', async t => {
+  const { HISTORY_PAGE } = await import(pathToFileURL(join(root, 'src', 'native-sessions.mjs')).href);
+  assert.deepEqual({ ...HISTORY_PAGE }, { prompts: 45, bytes: 786432, window: 6291456 });
+  const home = mkdtempSync(join(tmpdir(), 'wb-claude-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const workspace = '/srv/work/paging', dir = join(home, 'projects', workspace.replace(/[^a-zA-Z0-9]/g, '-'));
+  mkdirSync(dir, { recursive: true });
+  const env = { HOME: home, CLAUDE_CONFIG_DIR: home }, record = { id: SID, runtime: 'claude', workspace }, file = join(dir, `${SID}.jsonl`);
+  const turn = (i, reply = `reply ${i}`) => [
+    { type: 'user', uuid: `u${i}`, timestamp: '2026-10-21T05:00:00.000Z', cwd: workspace, message: { role: 'user', content: `prompt ${i}` } },
+    // A request blob near 1 MB yields no rows; it only uses up the raw read window.
+    ...(i % 10 === 0 ? [{ type: 'api-request-blob', message: { role: 'user', content: [{ type: 'text', text: 'b'.repeat(900000) }] } }] : []),
+    { type: 'assistant', uuid: `a${i}`, timestamp: '2026-10-21T05:00:01.000Z', message: { role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: reply }] } },
+  ];
+  const write = rows => writeFileSync(file, rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+  const prompts = page => page.messages.filter(m => m.role === 'user').map(m => m.text);
+
+  // 60 short turns: 45 on the first page (the old page held 15), the other 15 behind the cursor.
+  write(Array.from({ length: 60 }, (_, i) => turn(i + 1)).flat());
+  const first = await readNativeSession('claude', SID, { env, record, historyPage: true });
+  assert.equal(prompts(first).length, 45); assert.equal(prompts(first)[0], 'prompt 16'); assert.equal(prompts(first).at(-1), 'prompt 60');
+  assert.ok(first.nextCursor);
+  const second = await readNativeSession('claude', SID, { env, record, historyPage: true, cursor: first.nextCursor });
+  assert.deepEqual(prompts(second), Array.from({ length: 15 }, (_, i) => `prompt ${i + 1}`)); assert.equal(second.nextCursor, null);
+
+  // Long replies stop the page at 768 KB of rows, so the whole reply stays under the socket's 1 MB message limit.
+  write(Array.from({ length: 60 }, (_, i) => turn(i + 1, `${i}`.padEnd(40000, 'x'))).flat());
+  const heavy = await readNativeSession('claude', SID, { env, record, historyPage: true });
+  assert.ok(prompts(heavy).length < 45 && prompts(heavy).length > 10);
+  assert.ok(Buffer.byteLength(JSON.stringify(heavy.messages)) <= HISTORY_PAGE.bytes);
+  assert.ok(Buffer.byteLength(JSON.stringify({ type: 'reply', id: SID, result: heavy })) < 1024 * 1024);
+});

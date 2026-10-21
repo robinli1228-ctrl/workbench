@@ -199,9 +199,16 @@ export async function listNativeSessions(runtime,{env=process.env,limit=100,scop
  return {items:items.slice(0,limit),partial:items.length>limit};
 }
 
+/**
+ * One history page: up to 45 prompts, 768 KB of preview rows and 3 MB of raw history read backwards. Raw Claude histories
+ * carry request blobs close to 1 MB that yield no rows, so the read window bounds most pages. The rows travel in a single
+ * Worker→Home socket message, which is capped at 1 MB.
+ */
+export const HISTORY_PAGE=Object.freeze({prompts:45,bytes:786432,window:6291456});
+
 /** Read backwards at line boundaries, pinning the original tail while a live CLI appends.
  * Cursors select offsets only inside this exact vendor file; each page has bounded I/O and wire size. */
-async function historyPage(file,runtime,id,cursor,snapshot){
+async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
  if(!inside(await realpath(file.root),await realpath(file.path)))throw Error('History outside CLI directory');
  const h=await open(file.path,constants.O_RDONLY|constants.O_NOFOLLOW),hash=value=>createHash('sha256').update(value).digest('hex');
  try{
@@ -217,7 +224,7 @@ async function historyPage(file,runtime,id,cursor,snapshot){
   if(prior&&prior.tail!==tail)throw Error('Native history changed; reopen the session to read it again.');
   // Quiet refresh must verify the previous snapshot, even when its last page had no older cursor.
   if(snapshot){size=info.size;end=size;tail=await tailAt(size);}
-  const start=Math.max(0,end-1048576),buffer=Buffer.alloc(end-start);await h.read(buffer,0,buffer.length,start);
+  const start=Math.max(0,end-limits.window),buffer=Buffer.alloc(end-start);await h.read(buffer,0,buffer.length,start);
   let pos=buffer.length,next=end,bytes=0,prompts=0;const messages=[];
   while(pos>0){
    let lineEnd=pos;while(lineEnd>0&&[10,13].includes(buffer[lineEnd-1]))lineEnd--;
@@ -227,7 +234,7 @@ async function historyPage(file,runtime,id,cursor,snapshot){
    const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map((m,index)=>({...m,id:`${id}:${start+lineStart}${index?`:${index}`:''}`,offset:start+lineStart}));
    const weight=Buffer.byteLength(JSON.stringify(found));
    // Pages are sized by prompts, not by tool rows, so a turn with many tool calls still reads as one page.
-   if(found.length&&(prompts>=15||bytes+weight>262144))break;
+   if(found.length&&(prompts>=limits.prompts||bytes+weight>limits.bytes))break;
    messages.unshift(...found);bytes+=weight;prompts+=found.filter(m=>m.role==='user').length;next=start+lineStart;pos=Math.max(0,lf);
   }
   if(next===end&&end>0)throw Error('A native history record is too large to preview; the original history is unchanged.');
@@ -239,11 +246,11 @@ async function historyPage(file,runtime,id,cursor,snapshot){
 }
 
 /** Resume and preview resolve an exact native ID on the selected device, never a filename from the client. */
-export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null}={}){
+export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null,pageLimits=HISTORY_PAGE}={}){
  if(!idPattern.test(id||''))throw Error('Invalid native session ID');
  const file=await registeredFile(runtime,id,env,record);if(!file)throw Error('Registered native session history is unavailable; no external histories were scanned');
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
- if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot)};
+ if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot,pageLimits)};
  const window=await readWindow(file.path,file.root,true,524288),rows=jsonLines(window.text),messages=messagesFrom(rows,runtime);
  const texts=messages.filter(m=>m.role==='user'||m.role==='assistant'),from=texts.length>80?messages.indexOf(texts.at(-80)):0;
  return {...info,messages:messages.slice(from),sessionConfiguration:sessionConfiguration(rows,runtime),partial:window.partial||texts.length>80};
