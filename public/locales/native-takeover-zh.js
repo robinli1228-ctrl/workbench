@@ -379,4 +379,7 @@ export default {
  "The device did not confirm the branch": "设备没有确认分支",
  "Device is offline; reconnect it first": "设备离线，先重新连接",
  "Upgrade Home to branch Claude sessions": "升级 Home 后才能分支 Claude 会话",
+ "Branched from “{title}”": "从「{title}」分出",
+ "Branched from another session": "从另一个会话分出",
+ "Open the original": "打开原会话",
 };

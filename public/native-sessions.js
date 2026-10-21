@@ -544,7 +544,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();if(!quiet){onPreview?.();preview.close();takeover.detach();const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);detailSignature='';}
   try{const id=nativeId(item),readable=id&&item.hasHistory!==false,value=readable?{...item,...await readPage(item,null,quiet?item.historySnapshot:null),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:item;if(ticket!==detailVersion||!active()||key(selected)!==key(item))return;selected=value;timeline.readSucceeded();const signature=JSON.stringify(value);if(quiet&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
    const history=timeline.update({...value,...(!value.messages?.length&&!value.notice?{notice:value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'}:{})});
-   const historyAt=Date.now();if(!scroll.contains(timeline.root))scroll.replaceChildren(timeline.root,takeover.feed);if(!content.contains(scroll))content.replaceChildren(scroll);
+   const historyAt=Date.now();if(!scroll.contains(timeline.root))scroll.replaceChildren(timeline.root,takeover.feed);renderBranchOrigin(value);if(!content.contains(scroll))content.replaceChildren(scroll);
    takeover.attach(value,{readable,historyAt,history});
    renderSide(value,id,readable);
    if(quiet&&!atBottom)scroll.scrollTop=top;else scroll.scrollTop=scroll.scrollHeight;
@@ -703,6 +703,17 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    .catch(error=>{deleteNote.className='global-error';deleteNote.textContent=t(error.message);});
   else deleteNote.textContent=t('Upgrade this Worker to branch or delete sessions');
   body.append(nameCard,repo,acct,fork);dialog.append(body);dialog.showModal();
+ }
+ /** A branch says where it came from at the top of its transcript, with a way back to the original (a Codex branch shows
+  * only its own turns; the conversation before the fork lives in the original). */
+ function renderBranchOrigin(value){
+  scroll.querySelector('.native-branch-origin')?.remove();
+  const origin=value?.branchOf?.sessionId;if(!origin)return;
+  const parent=items.find(item=>item.nodeId===value.nodeId&&item.runtime===value.runtime&&nativeId(item)===origin);
+  const line=el('div','native-branch-origin');
+  line.append(el('span','',parent?t('Branched from “{title}”',{title:displayTitle(parent)}):t('Branched from another session')));
+  if(parent)line.append(button('Open the original',()=>void read(parent),'secondary compact'));
+  scroll.prepend(line);
  }
  let forkDialog=null;
  /** One confirm-then-progress dialog for branch and delete, in the same step style as the handover dialog. */
