@@ -84,7 +84,7 @@ export class SourceSyncHome {
           if(Date.now()-Date.parse(n.queuedAt)>retryDelay(n.attempts||1))this.db.put('sourceSyncWatchNotices',{...n,batchId:null});
         }
       }
-      if(this.db.listProject('sourceSyncBatches',config.projectId).some(b=>!['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready'].includes(b.status)))continue;
+      if(this.db.listSourceSyncBatches({projectId:config.projectId}).length)continue;
       const pending=this.db.listProject('sourceSyncWatchNotices',config.projectId).filter(n=>n.generation===config.generation&&!n.handled&&!n.batchId);if(!pending.length)continue;
       const sourceNodeId=config.nodeIds.includes(pending[0].nodeId)?pending[0].nodeId:config.nodeIds[0];
       try{const batch=this.sync.request(config.projectId,{requestId:contentHash(JSON.stringify(pending.map(n=>[n.noticeId,n.attempts||0]))),sourceNodeId,targetNodeIds:config.nodeIds.filter(id=>id!==sourceNodeId)} ,{kind:'watcher'});
@@ -108,11 +108,11 @@ export class SourceSyncHome {
   async message(nodeId,message){
     if(['source_sync_watch_ack','source_sync_watch_status','source_sync_dirty'].includes(message.type)){this.watchMessage(nodeId,message);return;}
     if(this.db.get('sourceSyncTombstones',message.commandId)?.nodeId===nodeId){this.socket(nodeId)?.send(JSON.stringify({type:'source_sync_receipt_ack',commandId:message.commandId,disposition:'project_deleted'}));return;}
-    const c=this.db.get('sourceSyncCommands',message.commandId);if(!c||c.nodeId!==nodeId)throw syncError('receipt_owner_mismatch');
-    // Replays with a previously validated hash need no manifest reads or file revalidation.
-    const ackKey=typeof message.receiptHash==='string'&&/^[a-f0-9]{64}$/.test(message.receiptHash)?`${c.id}:${message.receiptHash}`:null;
-    const previousAck=ackKey&&this.db.get('sourceSyncReceiptAcks',ackKey);
+    // Compact proof survives command retention: only the authenticated owner and exact accepted hash may replay its ACK.
+    const ackKey=typeof message.receiptHash==='string'&&/^[a-f0-9]{64}$/.test(message.receiptHash)?`${message.commandId}:${message.receiptHash}`:null;
+    const previousAck=ackKey&&(this.db.get('sourceSyncReceiptAcks',ackKey)||this.db.get('sourceSyncRetiredReceipts',ackKey));
     if(message.type==='source_sync_receipt'&&previousAck?.nodeId===nodeId){this.socket(nodeId)?.send(JSON.stringify(previousAck.ack));return;}
+    const c=this.db.get('sourceSyncCommands',message.commandId);if(!c||c.nodeId!==nodeId)throw syncError('receipt_owner_mismatch');
     const uploaded=c.action==='apply'?this.db.get('sourceSyncUploadReceipts',c.id):null;
     if(message.type==='source_sync_command_ack'){
       this.db.put('sourceSyncCommands',{...c,ackedAt:new Date().toISOString()});

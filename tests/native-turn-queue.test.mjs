@@ -59,7 +59,10 @@ test('ending the takeover or losing the device drops queued messages instead of 
   assert.equal(db.get('nativeTurns', b.id).status, 'cancelled'); assert.match(db.get('nativeTurns', b.id).error, /Takeover ended/);
   const again = send('client-turn-c', 'third');
   assert.equal(again.status, 'waiting', 'the first turn is still active until the Worker reports');
-  turns.disconnected('n1');
+  turns.disconnected('n1', { expireMs: 60000 });
+  assert.equal(db.get('nativeTurns', again.id).status, 'waiting', 'a connection blip keeps the queued message');
+  assert.equal(db.get('nativeTurns', a.id).status, 'queued', 'the active turn is not ended either');
+  turns.expireDisconnected('n1');
   assert.equal(db.get('nativeTurns', again.id).status, 'cancelled');
   assert.equal(db.get('nativeTurns', a.id).status, 'interrupted');
 });
@@ -118,4 +121,41 @@ test('withdraw (delete or edit) only takes a message that is still waiting, and 
   assert.equal(sent.filter(m => m.type === 'native_turn_stop').length, 0);
   assert.equal(turns.stop('n1', send('client-turn-c', 'third').id).withdrawn, true, 'the queue\'s own delete is a withdrawal too');
   status(a.id, 'succeeded'); await tick();
+});
+
+test('the CLI process going away keeps the queue: a failed turn, an idle exit and a paused queue all survive; only ending the takeover drops it', async () => {
+  const { db, turns, send, status, starts } = home();
+  const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'second');
+  status(a.id, 'failed'); await tick();
+  assert.deepEqual(starts(), ['first', 'second'], 'a failed reply does not drop the next message');
+  const c = send('client-turn-c', 'third');
+  turns.setQueue('n1', { runtime: 'claude', sessionId: SID, paused: true });
+  status(b.id, 'succeeded'); await tick();
+  assert.deepEqual(starts(), ['first', 'second'], 'paused: nothing starts');
+  // The resident CLI idles out while the queue is paused.
+  turns.receive('n1', { type: 'native_takeover_closed', runtime: 'claude', sessionId: SID, reason: 'idle' }); await tick();
+  assert.equal(db.get('nativeTurns', c.id).status, 'waiting', 'an idle exit leaves the paused message in the queue');
+  assert.equal(turns.queueState('n1', 'claude', SID).paused, true);
+  turns.setQueue('n1', { runtime: 'claude', sessionId: SID, paused: false }); await tick();
+  assert.deepEqual(starts(), ['first', 'second', 'third'], 'resuming starts a fresh process for the kept message');
+  const d = send('client-turn-d', 'fourth');
+  turns.release('n1', { runtime: 'claude', sessionId: SID });
+  assert.equal(db.get('nativeTurns', d.id).status, 'cancelled'); assert.match(db.get('nativeTurns', d.id).error, /Takeover ended/);
+});
+
+test('one silent failure keeps the queue; a second in a row means the CLI cannot start and cancels the rest with the reason', async () => {
+  const { db, turns, send, status, starts } = home();
+  const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'second'), c = send('client-turn-c', 'third'), d = send('client-turn-d', 'fourth');
+  turns.receive('n1', { type: 'native_turn_event', id: a.id, event: { kind: 'status', status: 'failed', error: 'claude: not logged in' } }); await tick();
+  assert.deepEqual(starts(), ['first', 'second'], 'the first failure still sends the next message');
+  turns.receive('n1', { type: 'native_turn_event', id: b.id, event: { kind: 'status', status: 'failed', error: 'claude: not logged in' } }); await tick();
+  assert.equal(db.get('nativeTurns', c.id).status, 'cancelled'); assert.match(db.get('nativeTurns', c.id).error, /did not start twice in a row \(claude: not logged in\)/);
+  assert.equal(db.get('nativeTurns', d.id).status, 'cancelled');
+  assert.deepEqual(starts(), ['first', 'second'], 'the rest is not sent to a CLI that cannot start');
+  // A failure after output is an ordinary failed reply, even right after a silent one.
+  const e = send('client-turn-e', 'fifth'), f = send('client-turn-f', 'sixth');
+  status(e.id, 'running');
+  turns.receive('n1', { type: 'native_turn_event', id: e.id, event: { kind: 'message', text: 'half an answer' } });
+  turns.receive('n1', { type: 'native_turn_event', id: e.id, event: { kind: 'status', status: 'failed', error: 'tool crashed' } }); await tick();
+  assert.deepEqual(starts(), ['first', 'second', 'fifth', 'sixth']);
 });

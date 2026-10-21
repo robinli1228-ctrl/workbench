@@ -24,7 +24,7 @@ import { Rooms } from './rooms.mjs';
 import { CollaborationSessions, reviewView, reviewDocumentAllowed, setCollaborationSessionsEnabled } from './collaboration-sessions.mjs';
 import { SessionQueue, QueuePump, queueConfig, setQueueConfig, setSessionBroadcast, setTestProject, grantBudget, reassignRequest } from './session-queue.mjs';
 import { renderBatch } from './session-queue-worker.mjs';
-import { listRoleTemplates, hiddenRoleTemplates, saveRoleTemplate, deleteRoleTemplate, restoreRoleTemplate } from './role-templates.mjs';
+import { listRoleTemplates, saveRoleTemplate, restoreRoleTemplate } from './role-templates.mjs';
 import { Coordinator } from './coordinator.mjs';
 import { RoleCalls } from './role-calls.mjs';
 import {createAgentCalls} from './agent-calls.mjs';
@@ -65,6 +65,7 @@ import { inspectRunProgress } from './run-monitor.mjs';
 import { projectTerminalLock, nativeSessionProjectIds, nativeTerminalProject, terminalCommand, terminalLaunchView, TERMINAL_PREPARATION_TTL_MS } from './terminal-resume.mjs';
 import { ProjectGitVersions } from './project-git-versions.mjs';
 import {SourceSyncHome} from './source-sync-transport.mjs';
+import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {acceptSourceProvenance} from './source-sync-provenance.mjs';
 import { WechatChannel, wechatTransport } from './wechat-channel.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
@@ -372,7 +373,7 @@ function snapshot(scope=null) {
     repositories: db.list('repositories'), repositoryWorkspaces: db.list('repositoryWorkspaces'), setupProposals: db.list('setupProposals'), projectGitVersions:db.list('projectGitVersions'),
     approvals: db.list('approvals'), gitChecks: db.list('gitChecks'), settings: normalizePlatformSettings(db.get('settings', 'main')), wechat: wechat.status(),
     promptDefaults: { platformPrompt: defaultPlatformPrompt(), supervisorPrompt: defaultSupervisorPrompt() },
-    roleTemplates: listRoleTemplates(db), hiddenRoleTemplates: hiddenRoleTemplates(db), supervisors: db.list('supervisorConfigs'),
+    roleTemplates: listRoleTemplates(db), supervisors: db.list('supervisorConfigs'),
     executionPlans: db.list('executionPlans').map(({fingerprint,...p})=>p),
     roleSessions:db.list('roleSessions').filter(session=>!session.historyClearedAt).map(({nativeSession,...session})=>session),
     // Sidebar decoration only needs active native identities, never complete tool logs.
@@ -690,6 +691,42 @@ const server = http.createServer(async (req, res) => {
         if(req.method==='GET')return json(res,await workerQuery(scope,'native_agents_md',common,15000));
         const b=await body(req);
         return json(res,await workerQuery(scope,'native_agents_md_write',{...common,path:typeof b.path==='string'?b.path:null,content:b.content,expectedModifiedAt:typeof b.expectedModifiedAt==='string'?b.expectedModifiedAt:null,create:b.create===true,createDir:binding?.localRoot||null},20000));
+      }
+      // Branch and delete from the session settings. Branch copies the session's folder next to it and forks the CLI session into
+      // the copy; delete removes a folder Workbench made for the session and drops the entry (the CLI's own history stays).
+      const nativeBranch=pathname.match(/^\/api\/native-sessions\/([^/]+)\/(branch|delete)$/);
+      if(nativeBranch&&(req.method==='POST'||nativeBranch[2]==='delete'&&req.method==='GET')){
+        const nodeId=decodeURIComponent(nativeBranch[1]),worker=db.get('workers',nodeId),check=req.method==='GET';
+        const b=check?{runtime:url.searchParams.get('runtime'),sessionId:url.searchParams.get('sessionId'),entryId:url.searchParams.get('entryId')}:await body(req);
+        const runtime=b.runtime,sessionId=typeof b.sessionId==='string'&&b.sessionId?b.sessionId:null;
+        const entry=typeof b.entryId==='string'&&b.entryId?db.get('nativeCatalogEntries',b.entryId):sessionId?nativeCatalogRecords(nodeId,runtime).find(r=>r.sessionId===sessionId):null;
+        if(entry&&(entry.nodeId!==nodeId||entry.runtime!==runtime||sessionId&&entry.sessionId&&entry.sessionId!==sessionId))throw Error('Session identity does not match its Workbench entry');
+        const refuse=reason=>{if(check)return json(res,{ok:false,reason});throw Error(reason);};
+        if(!worker||!online(nodeId))return refuse('Device is offline; reconnect it first');
+        if(worker.capabilities?.nativeBranch!==1)return refuse('Upgrade this Worker to branch or delete sessions');
+        const turns=nativeTurns.turns,busy=Boolean(sessionId&&(turns.active(nodeId,runtime,sessionId)||turns.waiting(nodeId,runtime,sessionId).length));
+        const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
+        if(nativeBranch[2]==='delete'){
+          if(!entry)return refuse('Only sessions created in Workbench can delete their folder');
+          if(sessionId&&turns.process(nodeId,runtime,sessionId))return refuse('End the page takeover first');
+          if(busy)return refuse('This session is still replying or has queued messages');
+          const input={runtime,sessionId:entry.sessionId||sessionId,entryId:entry.id,bindings};
+          if(check)return json(res,await workerQuery({nodeId},'native_session_delete',{...input,dryRun:true},15000));
+          const result=await workerQuery({nodeId},'native_session_delete',input,120000);
+          if(result?.deleted!==true||result.entryId!==entry.id)throw Error('The device did not confirm the deletion');
+          db.remove('nativeCatalogEntries',entry.id);change();return json(res,result);
+        }
+        if(!['claude','codex'].includes(runtime))throw Error('Only Claude Code and Codex sessions can be branched for now');
+        const record=sessionId?ownedNativeSession(nodeId,runtime,sessionId):null;
+        if(!record)throw Error('Session is not registered with Workbench');
+        if(db.get('settings','main')?.paused)throw Error('Remote execution is paused');
+        if(busy)throw Error('This session is still replying or has queued messages; wait for it to finish first');
+        const branchEntryId=randomUUID(),title=`${String((entry||record).title||'').trim().slice(0,90)||runtime} · ${tr('nativeBranch.titleSuffix')}`;
+        const result=await workerQuery({nodeId},'native_session_branch',{runtime,sessionId,record,branchEntryId,newSessionId:runtime==='claude'?randomUUID():null,title},15*60000);
+        if(result?.entryId!==branchEntryId||!result.sessionId||!result.workspace)throw Error('The device did not confirm the branch');
+        const now=new Date().toISOString();
+        db.put('nativeCatalogEntries',{id:branchEntryId,nodeId,runtime,sessionId:result.sessionId,title:result.title,workspace:result.workspace,origin:'dialog',status:'ready',hasHistory:true,previewAvailable:true,folderCreated:true,branchOf:{sessionId},createdAt:now,modifiedAt:now});
+        change();return json(res,result,201);
       }
       const nativeTitle=pathname.match(/^\/api\/native-sessions\/([^/]+)\/title$/);
       if(nativeTitle&&req.method==='POST'){
@@ -1394,8 +1431,35 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/settings' && req.method === 'POST') {
         const b = await body(req);
         const settings = db.put('settings', updatePausedSetting(db.get('settings', 'main'), b.paused));
-        for (const ws of sockets.values()) send(ws, { type: 'settings', ...settings });
+        for (const ws of sockets.values()) send(ws, { type: 'settings', ...settings, retention:retentionPolicy() });
         change(); return json(res, settings);
+      }
+      // Data page: what Home and each device hold, what the retention policy lets go, and a cleanup on demand.
+      if (pathname === '/api/settings/retention' && req.method === 'POST') {
+        const b = await body(req), retention = normalizeRetention(b);
+        db.put('settings', { ...(db.get('settings', 'main') || {}), id: 'main', retention });
+        for (const ws of sockets.values()) send(ws, { type: 'settings', ...db.get('settings', 'main'), retention });
+        change(); return json(res, { retention });
+      }
+      if (pathname === '/api/data/stats' && req.method === 'GET') {
+        const home = await dataStats(db, { policy: retentionPolicy() });
+        const devices = await Promise.all(db.list('workers').filter(w => !db.get('removedDevices', w.id)).map(async w => {
+          if (!online(w.id)) return { nodeId: w.id, name: w.name, online: false };
+          if (w.capabilities?.dataRetention !== 1) return { nodeId: w.id, name: w.name, online: true, upgrade: true };
+          try { return { nodeId: w.id, name: w.name, online: true, stats: await workerQuery({ nodeId: w.id }, 'data_stats', { policy: retentionPolicy() }, 20000) }; }
+          catch (e) { return { nodeId: w.id, name: w.name, online: true, error: e.message }; }
+        }));
+        return json(res, { home, devices, retention: retentionPolicy() });
+      }
+      if (pathname === '/api/data/cleanup' && req.method === 'POST') {
+        const b = await body(req), target = typeof b.target === 'string' ? b.target : 'all', results = {};
+        if (target === 'home' || target === 'all') results.home = await runHomeMaintenance();
+        for (const w of db.list('workers')) {
+          if (target !== 'all' && target !== w.id) continue;
+          if (!online(w.id) || w.capabilities?.dataRetention !== 1) { if (target === w.id) throw new Error(online(w.id) ? 'Upgrade this Worker to clean its data' : tr('home.executionNodeOfflineUnableRead')); continue; }
+          try { results[w.id] = await workerQuery({ nodeId: w.id }, 'data_cleanup', { policy: retentionPolicy() }, 120000); } catch (e) { results[w.id] = { error: e.message }; }
+        }
+        change(); return json(res, results);
       }
       if (pathname === '/api/settings/role-templates' && req.method === 'POST') {
         const template = saveRoleTemplate(db, await body(req)); change(); return json(res, template);
@@ -1403,10 +1467,6 @@ const server = http.createServer(async (req, res) => {
       if ((m = pathname.match(/^\/api\/settings\/role-templates\/([^/]+)\/restore$/)) && req.method === 'POST') {
         const input = await body(req);
         const template = restoreRoleTemplate(db, decodeURIComponent(m[1]), input.revision); change(); return json(res, template);
-      }
-      if ((m = pathname.match(/^\/api\/settings\/role-templates\/([^/]+)$/)) && req.method === 'DELETE') {
-        const revision = new URL(req.url, 'http://local').searchParams.get('revision');
-        const result = deleteRoleTemplate(db, decodeURIComponent(m[1]), revision === null ? undefined : Number(revision)); change(); return json(res, result);
       }
       if (pathname === '/api/settings/prompts' && req.method === 'POST') {
         const settings = db.put('settings', updatePlatformPrompts(db.get('settings', 'main'), await body(req)));
@@ -1449,6 +1509,10 @@ const server = http.createServer(async (req, res) => {
     files['/native-sessions.js']='native-sessions.js';
     files['/native-transcript.js']='native-transcript.js';
     files['/media.js']='media.js';
+    files['/pasted-text.js']='pasted-text.js';
+    files['/side-preview.js']='side-preview.js';
+    files['/history-prompt.js']='history-prompt.js';
+    files['/data-settings.js']='data-settings.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';
@@ -1473,8 +1537,10 @@ wss.on('connection', ws => {
   // Receiver errors (including oversized frames) close this socket, never the Home process or other Workers.
   ws.on('error',error=>console.error('Worker WebSocket rejected',JSON.stringify({nodeId:nodeId||null,code:error.code||'socket_error'})));
   const registerTimer = setTimeout(() => { if (!nodeId) ws.close(); }, 10000);
-  ws.alive = true; ws.on('pong', () => { ws.alive = true; });
+  // Any frame proves the connection; a Worker whose pong queues behind a large reply on a slow tunnel is not dead.
+  ws.alive = true; ws.missed = 0; ws.on('pong', () => { ws.alive = true; });
   ws.on('message', data => {
+    ws.alive = true;
     try {
       const m = JSON.parse(data);
       if (m.type === 'register') {
@@ -1485,7 +1551,9 @@ wss.on('connection', ws => {
         sockets.set(nodeId, ws); clearTimeout(registerTimer);
         const config=db.get('workerConfigs',nodeId),limits=registrationCapacity(m.node,config);
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId, lastSeen: new Date().toISOString() });
-        send(ws, { type: 'registered', folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:m.node.capabilities?.readSourceBindings===1?1:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
+        // Turns the Worker kept running through the disconnect continue; the ones it no longer has ended while it was away.
+        nativeTurns.reconnected(nodeId, Array.isArray(m.nativeTurns) ? m.nativeTurns.filter(id => typeof id === 'string').slice(0, 200) : []);
+        send(ws, { type: 'registered', retention:retentionPolicy(), folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:m.node.capabilities?.readSourceBindings===1?1:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
       }
       if (!nodeId || sockets.get(nodeId) !== ws) throw new Error(tr('home.nodeNotRegisteredYet'));
       if(['source_sync_receipt','source_sync_command_ack','source_sync_watch_ack','source_sync_watch_status','source_sync_dirty'].includes(m.type)){
@@ -1575,10 +1643,27 @@ wss.on('connection', ws => {
   });
 });
 const heartbeat = setInterval(() => {
-  for (const ws of wss.clients) { if (!ws.alive) ws.terminate(); else { ws.alive = false; ws.ping(); } }
+  // Three silent intervals (45 s) end a connection, not one: on a 170 ms, lossy tunnel one pong is easily late.
+  for (const ws of wss.clients) { if (!ws.alive && ++ws.missed >= 3) { ws.terminate(); continue; } if (ws.alive) ws.missed = 0; ws.alive = false; ws.ping(); }
   for (const r of viewers) r.write(': keepalive\n\n');
 }, 15000);
 const chatScheduler = setInterval(scheduleChat, 1000);
+/** Data retention on Home: a pass a minute after start and daily; VACUUM only while nothing runs (see src/data-retention.mjs). */
+function retentionPolicy() { return normalizeRetention(db.get('settings', 'main')?.retention || {}); }
+const homeQuiet = () => db.activeRuns().length === 0 && queries.size === 0 && !db.listSourceSyncCommands({ pending: true }).length
+  && !db.db.prepare("SELECT 1 FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('queued','starting','running','waiting_user','stopping') LIMIT 1").get();
+let homeVacuumRetry = null;
+function homeVacuumWhenQuiet() { clearTimeout(homeVacuumRetry); homeVacuumRetry = null;
+  if (!homeQuiet()) { homeVacuumRetry = setTimeout(homeVacuumWhenQuiet, 10 * 60000); homeVacuumRetry.unref(); return { vacuumed: false, deferred: true }; }
+  try { const result = vacuumIfWasteful(db); if (result.vacuumed) console.log(`Data: VACUUM ${Math.round(result.before / 1048576)} MB -> ${Math.round(result.after / 1048576)} MB`); return result; } catch (e) { console.error('Data: VACUUM failed', e.message); return { vacuumed: false, error: e.message }; } }
+async function runHomeMaintenance() {
+  try { const summary = await cleanupData(db, { policy: retentionPolicy(), log: line => console.error('Data:', line) });
+    const n = Object.values(summary.deleted).reduce((a, b) => a + b, 0); if (n) console.log(`Data: removed ${n} records (${Math.round(summary.bytes / 1048576)} MB)`);
+    return { ...summary, vacuum: homeVacuumWhenQuiet() }; }
+  catch (e) { console.error('Data: cleanup failed', e.message); return { error: e.message }; }
+}
+const maintenanceFirst = setTimeout(() => void runHomeMaintenance(), 60000); maintenanceFirst.unref();
+const maintenanceDaily = setInterval(() => void runHomeMaintenance(), 24 * 3600000); maintenanceDaily.unref();
 const sessionQueueTimer=setInterval(()=>{try{queuePump.tick();void queuePump.reconcileVerifications().then(changed=>{if(changed)change();}).catch(e=>console.error(e.message));}catch(e){console.error(e.message);}},2000);sessionQueueTimer.unref();
 const terminalMonitor=setInterval(()=>{void reconcileTerminals();},15000);terminalMonitor.unref();
 const sourceSyncTimer=setInterval(()=>{void sourceSync.tick().catch(e=>console.error(e.message));},1000);sourceSyncTimer.unref();

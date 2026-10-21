@@ -5,17 +5,32 @@ import {stripAnsi} from './run-log-data.js';
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
 const MAX_DIFF_LINES=4000,MAX_PREVIEW=400000;
 
+/** Step icons: 24-unit line artwork scaled into the 20-unit box; each kind gets its own colour in the stylesheet. */
 const ICONS={
- read:'<path d="M4 3.5h7.5L16 8v8.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1Z"/><path d="M11.5 3.5V8H16"/>',
- edit:'<path d="M12.5 4.5l3 3L7 16H4v-3l8.5-8.5Z"/><path d="M11 6l3 3"/>',
- write:'<path d="M4 3.5h7.5L16 8v8.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1Z"/><path d="M10 9v5M7.5 11.5h5"/>',
- command:'<path d="M4 6l4 4-4 4"/><path d="M10 14h6"/>',
- search:'<circle cx="9" cy="9" r="5"/><path d="M13 13l4 4"/>',
- web:'<circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2.5 2.5 2.5 11.5 0 14M10 3c-2.5 2.5-2.5 11.5 0 14"/>',
- agent:'<circle cx="10" cy="7" r="3"/><path d="M4 17c0-3 2.7-5 6-5s6 2 6 5"/>',
- note:'<path d="M5 5h10M5 9h10M5 13h6"/>',
- error:'<circle cx="10" cy="10" r="7"/><path d="M7.5 7.5l5 5M12.5 7.5l-5 5"/>',
- other:'<circle cx="10" cy="10" r="2"/><circle cx="4.5" cy="10" r="1.5"/><circle cx="15.5" cy="10" r="1.5"/>'
+ // A page with lines: a file read.
+ read:'<g transform="scale(.8333)"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8M16 13H8M16 17H8"/></g>',
+ // A pencil over a line: a file changed in place.
+ edit:'<g transform="scale(.8333)"><path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7.4 18.6a2 2 0 0 1-.9.5l-2.9.8a.5.5 0 0 1-.6-.6l.8-2.9a2 2 0 0 1 .5-.8Z"/><path d="m15 5 3 3"/></g>',
+ // A page with a plus: a new file.
+ write:'<g transform="scale(.8333)"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6M12 12v6"/></g>',
+ // A terminal window with a prompt: a shell command.
+ command:'<g transform="scale(.8333)"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/></g>',
+ // A magnifier over code brackets: a code or file search.
+ search:'<g transform="scale(.8333)"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="m13 13.5 2-2.5-2-2.5M9 8.5 7 11l2 2.5"/></g>',
+ // A globe: a page fetched from the web.
+ web:'<g transform="scale(.8333)"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></g>',
+ // A robot: a task handed to a sub-agent.
+ agent:'<g transform="scale(.8333)"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></g>',
+ // An info mark: a progress note from the CLI.
+ note:'<g transform="scale(.8333)"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></g>',
+ // A brain: the model is thinking.
+ thinking:'<g transform="scale(.8333)"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M6 18a4 4 0 0 1-1.967-.516M19.967 17.484A4 4 0 0 1 18 18"/></g>',
+ // A crossed circle: an error.
+ error:'<g transform="scale(.8333)"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></g>',
+ // A folder (folder rows in the Files tab).
+ folder:'<g transform="scale(.8333)"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></g>',
+ // A wrench: any other tool call.
+ other:'<g transform="scale(.8333)"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9Z"/></g>'
 };
 export function stepIcon(kind){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 20 20');svg.setAttribute('aria-hidden','true');svg.classList.add('nt-icon',`is-${kind}`);svg.innerHTML=ICONS[kind]||ICONS.other;return svg;}
 
@@ -157,14 +172,27 @@ export function fileChips(steps){
  return [...byPath].map(([path,step])=>({path,step}));
 }
 
+const THINKING=/^(?:Model is thinking|模型正在思考)/i;
+/** Notes of one activity block: thinking signals and identical notes collapse to one row each, in first-seen order, with a count. */
+export function noteRows(notes,t){
+ const rows=new Map();
+ for(const note of notes){
+  const raw=stripAnsi(String(note.text||'')).replace(/\s+/g,' ').trim(),thinking=note.kind!=='error'&&THINKING.test(raw);
+  const kind=note.kind==='error'?'error':thinking?'thinking':'note',text=thinking?t('Model is thinking'):raw.slice(0,160),key=`${kind}\0${text}`;
+  if(!text)continue;const row=rows.get(key);if(row)row.count++;else rows.set(key,{kind,text,count:1});
+ }
+ return [...rows.values()];
+}
+
 /** The activity block: summary line with file chips; the step list opens on click (or stays open while live). */
 export function activityBlock({steps,notes=[],t,live=false,duration='',open=false,onPreview,onToggle}){
  const box=el('details','nt-activity');box.open=open;
  const summary=el('summary','nt-activity-summary');
- // 与摘要首项的顺序一致；混合操作不改变原有文字和数量。
- const kind=['read','edit','write','command','search','web','agent','other'].find(kind=>steps.some(step=>step.kind===kind));
+ const merged=noteRows(notes,t),onlyThinking=!steps.length&&merged.length===1&&merged[0].kind==='thinking';
+ // 与摘要首项的顺序一致；混合操作不改变原有文字和数量。只有思考记录时，摘要用大脑图标。
+ const kind=['read','edit','write','command','search','web','agent','other'].find(kind=>steps.some(step=>step.kind===kind))||(onlyThinking?'thinking':null);
  if(kind)summary.append(stepIcon(kind));
- summary.append(el('span','nt-caret'),el('span','nt-activity-text',summarizeSteps(steps,t,{duration})||t(live?'Working…':'No tool calls')));
+ summary.append(el('span','nt-caret'),el('span','nt-activity-text',summarizeSteps(steps,t,{duration})||(onlyThinking?`${t('Model is thinking')}${merged[0].count>1?` \u00d7${merged[0].count}`:''}`:t(live?'Working…':'No tool calls'))));
  const chips=fileChips(steps);
  if(chips.length){const row=el('span','nt-chips');for(const {path,step} of chips.slice(0,8)){const chip=el('button','nt-chip');chip.type='button';chip.title=path;chip.append(stepIcon(step.kind),el('span','',basename(path)));if(step.kind==='edit'&&(step.added||step.removed))chip.append(el('span','nt-chip-stat',stat(step.added,step.removed)));chip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();onPreview?.(step,path);});row.append(chip);}if(chips.length>8)row.append(el('span','nt-chip-more',`+${chips.length-8}`));summary.append(row);}
  box.append(summary);
@@ -179,24 +207,28 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
   if(step.files?.length&&onPreview){const preview=el('button','nt-step-preview');preview.type='button';preview.title=t('Preview');preview.setAttribute('aria-label',t('Preview'));preview.textContent='↗';preview.addEventListener('click',()=>onPreview(step,step.files[0]));head.append(preview);}
   list.append(row);
  }
- for(const note of notes){const row=el('div',`nt-step is-${note.kind==='error'?'error':'note'}`);const head=el('div','nt-step-head is-static');head.append(stepIcon(note.kind==='error'?'error':'note'),el('span','nt-step-target',stripAnsi(note.text).replace(/\s+/g,' ').trim().slice(0,160)));row.append(head);list.append(row);}
+ // Runtime notes, merged: the same note shows once with "×N". The CLI's periodic "model is thinking" signal becomes one
+ // thinking row with a brain icon; older records' "(native progress event received)" suffix is dropped.
+ for(const note of noteRows(notes,t)){const row=el('div',`nt-step is-${note.kind}`);const head=el('div','nt-step-head is-static');head.append(stepIcon(note.kind),el('span','nt-step-target',note.text));if(note.count>1)head.append(el('span','nt-step-count',`\u00d7${note.count}`));row.append(head);list.append(row);}
  box.append(list);
  box.addEventListener('toggle',()=>onToggle?.(box.open));
  return box;
 }
 
 /** A sheet over the transcript column that shows one file: a transcript step (latest edit as a diff, content read or written) or the file as it is on the device. */
-export function createPreviewSheet(host,t){
+/** The file sheet over the transcript. With onSide (Sessions page, desktop), "Open on the right" moves what it shows into the right-side Preview tab. */
+export function createPreviewSheet(host,t,{onSide=null,canSide=()=>Boolean(onSide)}={}){
  let sheet=null;
  const onKey=e=>{if(e.key==='Escape'&&sheet)close();};
  const close=()=>{sheet?.remove();sheet=null;host.classList.remove('has-preview');document.removeEventListener('keydown',onKey);};
- function frame(path,{icon='read',kind='',actions=[]}){
+ function frame(path,{icon='read',kind='',actions=[],side=null}){
   close();sheet=el('aside','nt-sheet');sheet.setAttribute('aria-label',path);
   const head=el('header','nt-sheet-head'),name=el('div','nt-sheet-name');name.append(stepIcon(icon),el('strong','',basename(path)));name.translate=false;
   const dir=String(path||'').slice(0,Math.max(0,String(path||'').length-basename(path).length));const sub=el('div','nt-sheet-path',dir);sub.translate=false;sub.title=path;
   const titles=el('div','nt-sheet-titles');titles.append(name,sub);head.append(titles);
   if(kind)head.append(el('span','nt-sheet-kind',kind));
   for(const action of actions){const b=el('button','nt-sheet-btn');b.type='button';b.textContent=action.label;b.addEventListener('click',()=>action.onClick(b));head.append(b);}
+  if(side&&canSide()){const b=el('button','nt-sheet-btn is-side');b.type='button';b.textContent=t('Open on the right');b.addEventListener('click',()=>{const item=side();close();onSide(item);});head.append(b);}
   const copy=el('button','nt-sheet-btn');copy.type='button';copy.textContent=t('Copy path');copy.addEventListener('click',()=>void navigator.clipboard?.writeText(path).catch(()=>{}));
   const x=el('button','nt-sheet-btn is-close');x.type='button';x.setAttribute('aria-label',t('Close'));x.textContent='\u00d7';x.addEventListener('click',close);
   head.append(copy,x);
@@ -204,8 +236,9 @@ export function createPreviewSheet(host,t){
   return body;
  }
  return {close,
-  open(step,path,{actions=[]}={}){const body=frame(path,{icon:step.kind,kind:t(step.kind==='edit'?'Latest edit':step.kind==='write'?'Written content':step.kind==='read'?'Content read by the CLI':'Tool call'),actions});body.append(stepDetail(step,t));},
-  openText(path,{content=null,note='',kind='',actions=[]}={}){const body=frame(path,{icon:'read',kind:kind||t('Current file'),actions});if(typeof content==='string')body.append(codeBlock(content));if(note)body.append(el('p','nt-detail-note',note));},
+  open(step,path,{actions=[]}={}){const kind=t(step.kind==='edit'?'Latest edit':step.kind==='write'?'Written content':step.kind==='read'?'Content read by the CLI':'Tool call');
+   const body=frame(path,{icon:step.kind,kind,actions,side:()=>({title:basename(path),subtitle:`${kind} \u00b7 ${path}`,copyText:path,render:()=>{const box=el('div','nt-side-sheet');box.append(stepDetail(step,t));return box;}})});body.append(stepDetail(step,t));},
+  openText(path,{content=null,note='',kind='',actions=[]}={}){const label=kind||t('Current file'),body=frame(path,{icon:'read',kind:label,actions,side:typeof content==='string'?()=>({title:basename(path),subtitle:`${label} \u00b7 ${path}`,copyText:content,render:()=>{const box=el('div','nt-side-sheet');box.append(codeBlock(content));return box;}}):null});if(typeof content==='string')body.append(codeBlock(content));if(note)body.append(el('p','nt-detail-note',note));},
   loading(path){const body=frame(path,{icon:'read',kind:t('Current file')});body.append(el('p','nt-detail-note',t('Loading\u2026')));}
  };
 }

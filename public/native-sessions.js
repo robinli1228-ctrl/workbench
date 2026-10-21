@@ -8,10 +8,13 @@ import {groupNativeSessions,readNativeSessionPages} from './native-session-group
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
-import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,formatBytes} from './media.js';
+import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,openTextLightbox,formatBytes,copyAction} from './media.js';
+import {createSidePreview,setSidePreviewOpener,sideButton,canOpenSide,openSide} from './side-preview.js';
+import {pastesAsFile,pastedTextName,isTextName} from './pasted-text.js';
 import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {stripAnsi} from './run-log-data.js';
+import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt} from './history-prompt.js';
 import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
@@ -35,8 +38,12 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  list.id='native-session-list';content.id='native-session-content';side.id='native-session-sidebar';
  document.querySelector('#project-list').after(list);document.querySelector('main.workspace').append(content);document.querySelector('#node-sidebar').append(side);
  /** The right side mirrors the group-chat inspector: one header, three panels and the same bottom tab bar and classes. */
- const SIDE_TABS=['overview','outputs','resources'],SIDE_TITLES={overview:'Overview',outputs:'Files',resources:'Resources'};
- const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,resources:UI_ICON.desktop};
+ // Preview (desktop only) holds one message, picture, video or file opened "on the right" for reading beside the chat.
+ // Resources moved out: the session ID sits under the This page / iTerm switch, the working folder in Files, the repository
+ // and AGENTS.md in Session settings.
+ // Side question: a read-only chat beside the session that never reaches it (Claude and Codex only).
+ const SIDE_TABS=['overview','outputs','preview','ask'],SIDE_TITLES={overview:'Overview',outputs:'Files',preview:'Preview',ask:'Side question'};
+ const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,preview:UI_ICON.sideOpen,ask:UI_ICON.sideAsk};
  let sideTab='overview';
  const sideHeader=el('header','inspector-header native-side-header'),sideTitle=el('h2',''),sideBadge=el('span','native-side-badge');sideBadge.hidden=true;sideHeader.append(sideTitle,sideBadge);
  const sidePanels=Object.fromEntries(SIDE_TABS.map(name=>{const panel=el('section','inspector-panel native-side-panel');panel.id=`native-side-${name}`;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',`native-side-tab-${name}`);return [name,panel];}));
@@ -49,9 +56,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    const next=event.key==='Home'?0:event.key==='End'?SIDE_TABS.length-1:(index+(event.key==='ArrowRight'?1:-1)+SIDE_TABS.length)%SIDE_TABS.length;selectSideTab(SIDE_TABS[next]);sideTabButtons[next].focus();});
   return tab;});
  sideTabBar.append(...sideTabButtons);side.append(sideHeader,...Object.values(sidePanels),sideTabBar);
+ const sidePreview=createSidePreview({t,formatSize:formatBytes,stamp:value=>time(value),copyAction,emptyText:t('Use \u201cOpen on the right\u201d beside Copy on a message, or beside Download in a picture or file preview. It stays here while you read the chat or switch sessions.')});
+ sidePanels.preview.classList.add('is-preview');sidePanels.preview.append(sidePreview.root);
+ // The panel is offered only while the Sessions page is shown; opening shows the right column if it was hidden.
+ setSidePreviewOpener({available:()=>active(),open:item=>{if(document.body.dataset.inspector==='hidden')document.querySelector('#toggle-inspector')?.click();selectSideTab('preview');void sidePreview.open(item);}});
  /** The chosen tab stays selected across sessions, like the group-chat inspector. */
  function selectSideTab(name){
-  sideTab=name;for(const [tab,panel] of Object.entries(sidePanels))panel.hidden=tab!==name;
+  sideTab=name;document.body.dataset.sessionSideTab=name;for(const [tab,panel] of Object.entries(sidePanels))panel.hidden=tab!==name;
   sideTitle.textContent=t(SIDE_TITLES[name]);side.setAttribute('aria-label',t(SIDE_TITLES[name]));
   sideTabButtons.forEach((tab,i)=>{const on=SIDE_TABS[i]===name;tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
   if(name==='outputs')renderOutputs();
@@ -187,7 +198,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(st.error)card.append(failedState(st.error,()=>{st.entries=null;st.error=null;renderFolder();}));
   const list=el('div','native-file-list');
   for(const entry of st.entries||[]){
-   if(entry.type==='folder'){const row=el('button','native-file-row is-folder');row.type='button';row.title=entry.path;row.translate=false;row.append(stepIcon('other'));const text=el('span','native-file-text');text.append(el('span','native-file-name',`${entry.name}/`));row.append(text);row.addEventListener('click',()=>{st.path=entry.path;st.entries=null;renderFolder();});list.append(row);}
+   if(entry.type==='folder'){const row=el('button','native-file-row is-folder');row.type='button';row.title=entry.path;row.translate=false;row.append(stepIcon('folder'));const text=el('span','native-file-text');text.append(el('span','native-file-name',`${entry.name}/`));row.append(text);row.addEventListener('click',()=>{st.path=entry.path;st.entries=null;renderFolder();});list.append(row);}
    else list.append(fileRow(session,entry.path,null));
   }
   if(st.entries&&!st.entries.length)list.append(stateBlock('folder','Empty folder'));
@@ -216,7 +227,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(!st.tooLarge)preview.addEventListener('click',()=>openAgentsEditor(value,st));
   return card;
  }
- function renderAgents(value){const prior=sidePanels.resources.querySelector('[data-native-agents]');if(prior&&side.dataset.sessionKey===key(value))prior.replaceWith(agentsCard(value));}
+ function renderAgents(value){const prior=dialog.querySelector('[data-native-agents]');if(prior&&side.dataset.sessionKey===key(value))prior.replaceWith(agentsCard(value));}
  let agentsDialog=null;
  function openAgentsEditor(value,st){
   if(!agentsDialog){agentsDialog=el('dialog','settings-edit-dialog native-session-dialog native-agents-dialog');document.body.append(agentsDialog);}
@@ -239,17 +250,17 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const folder=folderState.get(k);if(folder?.error&&!folder.loading&&now-(folder.errorAt||0)>8000){folder.error=null;folder.entries=null;renderFolder();}
  }
  /** The working folder browser sits on the Resources tab; navigating it redraws only that card. */
- function renderFolder(){const prior=sidePanels.resources.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
+ function renderFolder(){const prior=sidePanels.outputs.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
  function renderOutputs(){
   const panel=sidePanels.outputs;panel.replaceChildren();
   if(!selected){panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
   const context=mediaContext(selected);
-  // Two cards, half the panel each: the project's outputs first, then files named in the loaded replies.
+  // The project's outputs first, then files named in the loaded replies, then the working folder (with what this session touched).
   const mentioned=el('section','native-side-card native-files-half'),head=el('div','native-card-head'),body=el('div','native-files-body');head.append(el('h3','',t('Named in replies')));mentioned.append(head,body);
   const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
   if(!items.length)body.append(emptyState('quote','No files mentioned yet'));
   else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));body.append(list);}
-  panel.append(outputsCard(selected),mentioned);
+  panel.append(outputsCard(selected),mentioned,folderCard(selected));
  }
  resetSide();
  // Session settings live behind a gear at the right end of the top bar, where the connection note sits in other modes.
@@ -313,7 +324,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const prevState=connectionStates.get(key(item));connectionStates.set(key(item),state);
   if(['terminal','prepared','returning','stopping'].includes(prevState)&&state==='idle')takeover.returned(item);
   const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
-  const copyCommand=sidePanels.resources.querySelector('.native-copy-command');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
+  const copyCommand=side.querySelector('.native-copy-command');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
   const paused=Boolean(data.settings?.paused);
   const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,paused,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
@@ -456,7 +467,6 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function resetSide(){
   delete side.dataset.sessionKey;sideBadge.hidden=true;outputs.clear();gitKey=null;renaming=null;
   sidePanels.overview.replaceChildren(el('p','native-side-hint',t('Select a native session to view its details.')));
-  sidePanels.resources.replaceChildren(el('p','native-side-hint',t('Select a native session to view its details.')));
   selectSideTab(sideTab);
  }
  /** Reuse role-card device identities; cloud numbering follows the full roster, not the filtered session list. */
@@ -528,9 +538,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    else if(lastPromptAt&&m.timestamp){const ms=Date.parse(m.timestamp)-Date.parse(lastPromptAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(lastPromptAt,Date.parse(m.timestamp));}
    return row;}
  /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
- function renderHistory(rows,item){
-  const nodes=[],isPrompt=row=>Boolean(cleanUserText(row.text)||commandOf(row.text)||taskNotificationOf(row.text));
-  for(const turn of historyTurns(rows,{isPrompt})){
+ function renderHistory(rows,item,{turnStartedAt=null}={}){
+  const nodes=[],isPrompt=row=>isHistoryPrompt(row.text);
+  for(const [index,turn] of historyTurns(rows,{isPrompt}).entries()){
    if(turn.prompt)nodes.push(renderHistoryRow(turn.prompt,item));
    if(!turn.parts.length)continue;
    const frag=document.createDocumentFragment();let group=[],process=false;
@@ -539,7 +549,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    flush();
    const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
    row.dataset.role='assistant';if(process)row.dataset.process='1';
-   if(turn.prompt?.timestamp&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(turn.prompt.timestamp);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(turn.prompt.timestamp,Date.parse(turn.endedAt));}
+   // A turn whose prompt is on an older, unloaded page starts at the time the Worker looked back for (turnStartedAt).
+   const startedAt=turn.prompt?.timestamp||(index===0?turnStartedAt:null);
+   if(startedAt&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(startedAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(startedAt,Date.parse(turn.endedAt));}
    nodes.push(row);
   }
   return nodes;
@@ -548,7 +560,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();if(!quiet){onPreview?.();preview.close();takeover.detach();const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);detailSignature='';}
   try{const id=nativeId(item),readable=id&&item.hasHistory!==false,value=readable?{...item,...await readPage(item,null,quiet?item.historySnapshot:null),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:item;if(ticket!==detailVersion||!active()||key(selected)!==key(item))return;selected=value;timeline.readSucceeded();const signature=JSON.stringify(value);if(quiet&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
    const history=timeline.update({...value,...(!value.messages?.length&&!value.notice?{notice:value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'}:{})});
-   const historyAt=Date.now();if(!scroll.contains(timeline.root))scroll.replaceChildren(timeline.root,takeover.feed);if(!content.contains(scroll))content.replaceChildren(scroll);
+   const historyAt=Date.now();if(!scroll.contains(timeline.root))scroll.replaceChildren(timeline.root,takeover.feed);renderBranchOrigin(value);if(!content.contains(scroll))content.replaceChildren(scroll);
    takeover.attach(value,{readable,historyAt,history});
    renderSide(value,id,readable);
    if(quiet&&!atBottom)scroll.scrollTop=top;else scroll.scrollTop=scroll.scrollHeight;
@@ -583,13 +595,17 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(at){const stamp=el('time','nt-prompt-time',clock(at));stamp.dateTime=at;stamp.title=time(at);tools.append(stamp);}
    const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
    const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
-   tools.append(expand,copy);row.dataset.tools='1';row._tools=tools;
+   const pin=sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),subtitle:session?.title||'',at,copyText:body,render:()=>el('div','nt-side-prompt',body)}));pin.hidden||=!body.trim();
+   tools.append(expand,copy,pin);row.dataset.tools='1';row._tools=tools;
    requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
   }
   if(extra){if(agent)main.append(extra);else files.append(extra);}
   if(files)row.append(files);row.append(main);if(row._tools){row.append(row._tools);delete row._tools;}
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
-  if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);row.append(foot);}
+  if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);
+   // Open on the right: the same text Copy takes, rendered as in the chat, pinned beside it (and kept while another session is open).
+   if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,mediaContext(session));return md;}})));
+   row.append(foot);}
   return row;}
  let agentDetailsSignature='';
  /** Reuse reported CLI quota and this session's recorded settings; refreshing the card never probes a model. */
@@ -627,7 +643,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(selected&&key(selected)===sessionKey)renderGit(selected);
  }
  function renderGit(value){
-  const prior=sidePanels.resources.querySelector('[data-native-git]');if(!prior||side.dataset.sessionKey!==key(value))return;
+  const prior=dialog.querySelector('[data-native-git]');if(!prior||side.dataset.sessionKey!==key(value))return;
   const cached=gitCache.get(key(value)),section=el('section','native-side-card native-git-card');section.dataset.nativeGit='';
   const head=el('div','native-card-head'),refresh=iconButton('refresh','Refresh',()=>void loadGit(value,true));refresh.disabled=!cached||Boolean(cached.loading);
   head.append(el('h3','',t('Repository (Git)')),refresh);section.append(head);
@@ -644,6 +660,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
      ['Branch',state.branch||t('Detached HEAD')],
      ['Commit',state.commit?`${state.commit.slice(0,12)}${state.subject?` · ${state.subject}`:''}`:t('No commits yet'),state.commit||null],
      ['Upstream',state.upstream?`${state.upstream} · ${t('{ahead} ahead, {behind} behind',{ahead:state.ahead??'?',behind:state.behind??'?'})}`:t('No upstream configured')],
+     ...(state.remoteUrl?[['Remote',state.remoteUrl,state.remoteUrl]]:[]),
      ['Changes',changes]]));
    }
   }
@@ -675,10 +692,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   nameInput.type='text';nameInput.maxLength=120;nameInput.value=value.title||'';nameInput.setAttribute('aria-label',t('Session name'));nameInput.disabled=Boolean(blocked);nameSave.type='submit';nameSave.disabled=Boolean(blocked);
   nameForm.append(nameInput,nameSave);nameForm.addEventListener('submit',async e=>{e.preventDefault();nameSave.disabled=true;nameNote.className='native-side-hint';nameNote.textContent=t('Saving…');try{await renameSession(value,nameInput.value);nameNote.textContent=t('Saved');}catch(error){nameNote.className='global-error';nameNote.textContent=t(error.message);}finally{nameSave.disabled=false;}});
   nameCard.append(nameForm,nameNote);
-  const repo=el('section','native-settings-section');repo.append(el('h3','',t('Working folder and repository')));const git=gitCache.get(key(value))?.state;
-  const rows=el('dl','native-session-meta'),add=(label,text)=>{if(!text)return;rows.append(el('dt','',t(label)));const dd=el('dd','');const v=el('span','native-meta-value',text);v.translate=false;dd.append(v);rows.append(dd);};
-  add('Working folder',value.workspace);add('Git root',git?.root);add('Branch',git?.branch||(git?.detached?t('Detached HEAD'):null));add('Remote',git?.remoteUrl);
-  repo.append(rows);if(!git)repo.append(el('p','native-side-hint',t('Reading Git status…')));else if(!git.git)repo.append(el('p','native-side-hint',t('The working folder is not inside a Git repository.')));
+  // Repository and AGENTS.md (moved here from the old Resources tab): the same live cards, with refresh and edit.
+  const git=gitCache.get(key(value))?.state;
+  const repo=el('section','native-side-card native-git-card');repo.dataset.nativeGit='';
+  const agents=el('section','native-side-card native-agents-card');agents.dataset.nativeAgents='';
   const acct=el('section','native-settings-section');acct.append(el('h3','',t('Git account for pushes')));
   // Match the host of supported HTTPS/SCP remotes, never a hostname suffix or a repository path.
   const remote=String(git?.remoteUrl||'').trim().match(/^(?:https:\/\/([^/]+)\/|git@([^:]+):)/i),host=(remote?.[1]||remote?.[2]||'').toLowerCase();
@@ -692,7 +709,80 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   sel.addEventListener('change',async()=>{sel.disabled=true;acctNote.className='native-side-hint';acctNote.textContent=t('Saving…');const r=await takeover.saveSetting('hostingAccountId',sel.value,{repoUrl:git?.remoteUrl||null});if(r)acctNote.textContent=t('Saved');else{acctNote.className='global-error';acctNote.textContent=takeover.feedback(value)||t('Could not save');}sel.disabled=false;});
   const manage=button('Manage accounts…',()=>{dialog.close();document.querySelector('#show-app-settings')?.click();},'secondary');
   acct.append(sel,acctNote,manage);
-  body.append(nameCard,repo,acct);dialog.append(body);dialog.showModal();
+  // Branch and delete: branch copies the folder next to it and forks the session (Claude, Codex); delete removes a folder
+  // Workbench made for this session. The device answers first whether delete is allowed, and why not.
+  const fork=el('section','native-settings-section native-branch-section');fork.append(el('h3','',t('Branch and delete')));
+  const forkWorker=getData().workers?.find(w=>w.id===value.nodeId),supported=forkWorker?.capabilities?.nativeBranch===1;
+  const branchReason=!supported?'Upgrade this Worker to branch or delete sessions':!['claude','codex'].includes(value.runtime)?'Grok and Agy sessions cannot be branched yet':!nativeId(value)?'This session has no history yet':takeover.busy()?'Wait for the current reply to finish':'';
+  const forkActions=el('div','native-branch-actions'),branchButton=button('Branch',()=>{dialog.close();openBranchDialog(value);},'secondary'),deleteButton=button('Delete folder',()=>{dialog.close();openDeleteDialog(value,deleteState);},'danger');
+  branchButton.disabled=Boolean(branchReason);deleteButton.disabled=true;
+  const branchNote=el('p','native-side-hint',t(branchReason||'Copies the folder next to it and opens a new session that continues this conversation; the two do not touch each other’s files.'));
+  const deleteNote=el('p','native-side-hint',t('Checking…'));let deleteState=null;
+  forkActions.append(branchButton,deleteButton);fork.append(forkActions,branchNote,deleteNote);
+  if(supported)void api(`${endpoint(value.nodeId)}/delete?${new URLSearchParams({runtime:value.runtime,...(nativeId(value)?{sessionId:nativeId(value)}:{}),...(value.entryId?{entryId:value.entryId}:{})})}`)
+   .then(state=>{deleteState=state;deleteButton.disabled=!state?.ok;deleteNote.textContent=state?.ok?(state.missing?t('The folder is already gone; delete removes the session from this list.'):`${t('Deletes this folder and removes the session from this list:')} ${state.path}`):t(state?.reason||'This folder cannot be deleted here');})
+   .catch(error=>{deleteNote.className='global-error';deleteNote.textContent=t(error.message);});
+  else deleteNote.textContent=t('Upgrade this Worker to branch or delete sessions');
+  body.append(nameCard,repo,agents,acct,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
+ }
+ /** A branch says where it came from at the top of its transcript, with a way back to the original (a Codex branch shows
+  * only its own turns; the conversation before the fork lives in the original). */
+ function renderBranchOrigin(value){
+  scroll.querySelector('.native-branch-origin')?.remove();
+  const origin=value?.branchOf?.sessionId;if(!origin)return;
+  const parent=items.find(item=>item.nodeId===value.nodeId&&item.runtime===value.runtime&&nativeId(item)===origin);
+  const line=el('div','native-branch-origin');
+  line.append(el('span','',parent?t('Branched from “{title}”',{title:displayTitle(parent)}):t('Branched from another session')));
+  if(parent)line.append(button('Open the original',()=>void read(parent),'secondary compact'));
+  scroll.prepend(line);
+ }
+ let forkDialog=null;
+ /** One confirm-then-progress dialog for branch and delete, in the same step style as the handover dialog. */
+ function forkFlow({title,intro,steps,confirmLabel,danger=false,ack=null,run}){
+  if(!forkDialog){forkDialog=el('dialog','settings-edit-dialog native-session-dialog native-handover');document.body.append(forkDialog);}
+  const heading=el('div','dialog-heading');heading.append(el('h2','',t(title)));
+  const list=el('ol','native-handover-steps'),rows=new Map();
+  for(const [id,label] of steps){const li=el('li','');li.append(el('span','native-handover-mark'),el('span','',t(label)));rows.set(id,li);list.append(li);}
+  const message=el('p','global-error');message.hidden=true;const after=el('div','native-handover-after');after.hidden=true;
+  const actions=el('div','native-session-actions'),cancel=button('Cancel',()=>forkDialog.close(),'secondary'),confirm=button(confirmLabel,()=>void go(),danger?'danger':'primary');
+  let check=null;
+  if(ack){check=el('input');check.type='checkbox';const label=el('label','native-branch-ack');label.append(check,el('span','',t(ack)));confirm.disabled=true;check.addEventListener('change',()=>{confirm.disabled=!check.checked;});forkDialog.replaceChildren(heading,...intro,list,label,message,after,actions);}
+  else forkDialog.replaceChildren(heading,...intro,list,message,after,actions);
+  actions.append(cancel,confirm);forkDialog.showModal();
+  const mark=(id,state)=>{const li=rows.get(id);if(!li)return;li.className=`is-${state}`;const m=li.querySelector('.native-handover-mark');m.replaceChildren();if(state==='running')m.append(el('span','nt-pulse'));else if(state==='done')m.innerHTML=UI_ICON.check;else if(state==='failed')m.innerHTML=UI_ICON.close;};
+  async function go(){
+   confirm.disabled=cancel.disabled=true;if(check)check.disabled=true;message.hidden=true;
+   try{await run({mark,after});cancel.textContent=t('Close');cancel.disabled=false;confirm.hidden=true;}
+   catch(error){for(const li of rows.values())if(li.className==='is-running'){li.className='is-failed';li.querySelector('.native-handover-mark').innerHTML=UI_ICON.close;}
+    message.textContent=t(error.message);message.hidden=false;cancel.disabled=false;cancel.textContent=t('Close');}
+  }
+ }
+ function openBranchDialog(value){
+  const intro=[el('p','native-side-hint',t('The working folder is copied next to it, then a new session continues this conversation in the copy. The CLI runs one short turn to start the branch.')),
+   el('p','native-meta-value',value.workspace||'')];
+  forkFlow({title:'Branch this session',intro,confirmLabel:'Branch',steps:[['copy','Copy the folder'],['fork','Start the branch session']],run:async({mark,after})=>{
+   mark('copy','running');
+   const progress=setTimeout(()=>{mark('copy','done');mark('fork','running');},4000);
+   let result;
+   try{result=await api(`${endpoint(value.nodeId)}/branch`,{method:'POST',json:{runtime:value.runtime,sessionId:nativeId(value),...(value.entryId?{entryId:value.entryId}:{})}});}
+   finally{clearTimeout(progress);}
+   mark('copy','done');mark('fork','done');
+   const facts=el('div','native-branch-result');
+   facts.append(el('p','native-meta-value',result.workspace));if(result.gitBranch)facts.append(el('p','native-side-hint',`${t('Git branch')}: ${result.gitBranch}`));
+   const open=button('Open the branch',async()=>{forkDialog.close();await load({quiet:true});const next=items.find(item=>item.nodeId===value.nodeId&&item.entryId===result.entryId);if(next)void read(next);},'primary');
+   facts.append(open);after.replaceChildren(facts);after.hidden=false;void load({quiet:true});
+  }});
+ }
+ function openDeleteDialog(value,state){
+  const intro=[el('p','native-side-hint',t(state?.missing?'The folder is already gone. The session is removed from this list; the CLI’s own history is kept.':'This deletes the folder and everything in it, and removes the session from this list. The CLI’s own history is kept. This cannot be undone.')),
+   el('p','native-meta-value',state?.path||value.workspace||'')];
+  forkFlow({title:'Delete the session folder',intro,danger:true,confirmLabel:'Delete',ack:state?.missing?null:'I understand every file in this folder will be deleted',steps:[['delete',state?.missing?'Remove the session':'Delete the folder']],run:async({mark})=>{
+   mark('delete','running');
+   await api(`${endpoint(value.nodeId)}/delete`,{method:'POST',json:{runtime:value.runtime,...(nativeId(value)?{sessionId:nativeId(value)}:{}),...(value.entryId?{entryId:value.entryId}:{})}});
+   mark('delete','done');
+   if(selected&&key(selected)===key(value)){try{sessionStorage.removeItem(SELECTION_KEY);}catch{}resetDetail();}
+   void load({quiet:true});
+  }});
  }
  /** Label/value rows with optional copy buttons, shared by the session, repository and runtime cards. */
  function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;if(typeof text==='string')valueText.title=text;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}
@@ -700,12 +790,12 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function renderSide(value,id,readable){
   side.dataset.sessionKey=key(value);
   sideBadge.hidden=true;
-  const {overview,resources}=sidePanels;overview.replaceChildren();resources.replaceChildren();agentDetailsSignature='';
-  // Overview: where the session runs, model and context, quota. Resources: identity, repository, device.
+  const {overview}=sidePanels;overview.replaceChildren();agentDetailsSignature='';
+  // Overview: where the session runs and its ID, then model and context, then quota.
   const controls=el('section','native-side-card native-connect');controls.dataset.nativeControls='';
   const settingsCard=el('section','native-side-card native-settings-card');settingsCard.dataset.nativeSettings='';
-  overview.append(controls,settingsCard);
-  const identity=metaCard(resources,'Native session',[['Session ID',id||t('Not available yet'),id||null]]);
+  overview.append(controls);
+  const identity=metaCard(overview,'Native session',[['Session ID',id||t('Not available yet'),id||null]]);identity.classList.add('native-identity-card');overview.append(settingsCard);
   // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
   if(id&&value.workspace){const copy=iconButton('copy','Copy iTerm command',async e=>{const b=e.currentTarget;b.disabled=true;b.dataset.pending='true';
     try{await copyTerminalCommand(value);setActionIcon(b,'check',t('Copied'));setTimeout(()=>{setActionIcon(b,'copy',t('Copy iTerm command'));delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}
@@ -713,15 +803,16 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    copy.disabled=takeover.releaseDisabled(value);
    const title=identity.querySelector('h3'),head=el('div','native-card-head');title.replaceWith(head);head.append(title,copy);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
-  const repository=el('section','native-side-card native-git-card');repository.dataset.nativeGit='';const agentsPlaceholder=el('section','native-side-card');agentsPlaceholder.dataset.nativeAgents='';resources.append(repository,agentsPlaceholder,folderCard(value),identity);renderAgents(value);void loadAgents(value);
+  void loadAgents(value);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
   // Resources: the device and CLI account this session runs on.
   renderAgentDetails(value);
   renderSessionControls(value);
   renderSessionSettings(value);
-  selectSideTab(sideTab);
+  const askable=sideAsk.available(value);sideTabButtons[SIDE_TABS.indexOf('ask')].hidden=!askable;if(askable)sideAsk.attach(value);else sideAsk.detach();
+  selectSideTab(sideTab==='ask'&&!askable?'overview':sideTab);
  }
- const tokensText=n=>n==null?'':n>=1e6?`${(n/1e6).toFixed(n>=1e7?0:1)}m`:n>=1e3?`${(n/1e3).toFixed(n>=1e5?0:1)}k`:String(n);
+ const tokensText=n=>n==null?'':n>=1e6?`${(n/1e6).toFixed(n>=1e7?0:1)}M`:n>=1e3?`${(n/1e3).toFixed(n>=1e5?0:1)}k`:String(n);
  const EFFORT_LABELS={none:'None',minimal:'Minimal',low:'Low',medium:'Medium',high:'High',xhigh:'Extra high',max:'Max',ultra:'Ultra',auto:'Automatic',default:'CLI default'};
  /** Model, reasoning effort and context: the page's chosen settings win over what history recorded; context comes from the newest page turn, else history. */
  function renderSessionSettings(value){
@@ -741,7 +832,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   card.append(grid);
   // context
   const ctx=el('div','native-context');const head=el('div','native-context-head');head.append(el('span','native-context-title',t('Context')));
-  const amount=used==null?t('Not measured yet'):limit?`${tokensText(used)} / ${tokensText(limit)} · ${pct}%`:t('{tokens} tokens',{tokens:tokensText(used)});head.append(el('span','native-context-amount',amount));
+  // The share of the window used is the number to read at a glance, so it is bold.
+  const amount=el('span','native-context-amount',used==null?t('Not measured yet'):limit?`${tokensText(used)} / ${tokensText(limit)} · `:t('{tokens} tokens',{tokens:tokensText(used)}));if(used!=null&&limit)amount.append(el('strong','native-context-pct',`${pct}%`));head.append(amount);
   ctx.append(head);
   // The bar and, after it, the compact icon on one line.
   const barRow=el('div','native-context-row'),bar=el('div',`native-context-bar${pct!=null?pct>=90?' is-high':pct>=70?' is-mid':'':' is-unknown'}`);const fill=el('span','');fill.style.width=`${pct??0}%`;bar.append(fill);barRow.append(bar);
@@ -751,7 +843,110 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   card.append(ctx);
   const feedback=takeover.feedback(value);if(feedback)card.append(el('p','global-error',feedback));
  }
+ /**
+  * Side question tab. A blank chat on open; each question runs read-only on a temporary copy of the session (Claude: its
+  * last 10 turns) and never reaches it. Nothing is kept: the trash icon clears it, and so do switching sessions, a new
+  * prompt in the main session, an hour without use and two hours of age. Switching to another right-side tab keeps it.
+  */
+ function createSideAsk(){
+  const root=el('div','native-side-ask'),head=el('div','side-preview-head native-ask-head'),titles=el('div','side-preview-titles'),title=el('strong','side-preview-title'),sub=el('div','side-preview-sub',t('Answers stay here only; nothing is kept after you clear it'));
+  const clear=iconButton('trash','Clear this side question',()=>void reset({tell:true}));titles.append(title,sub);head.append(titles,clear);
+  const body=el('div','side-preview-body native-ask-body'),note=el('p','workspace-note native-ask-note');note.hidden=true;
+  const form=el('form','chat-composer native-takeover-form native-ask-form'),bar=el('div','chat-input-bar'),field=el('div','chat-input-field'),tray=el('div','chat-attachments native-takeover-tray');tray.hidden=true;
+  const attach=el('button','native-attach');attach.type='button';attach.title=t('Upload an image or file');attach.setAttribute('aria-label',t('Upload file'));attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
+  const model=el('select','native-ask-model');model.setAttribute('aria-label',t('Model for side questions'));
+  const input=el('textarea');input.rows=1;input.placeholder=t('Ask a quick question that does not interrupt the main session…');input.setAttribute('aria-label',t('Side question'));
+  const send=el('button','primary chat-send');send.type='submit';setActionIcon(send,'send',t('Send'));
+  const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
+  field.append(tray,attach,model,input,send);bar.append(field);form.append(bar);root.append(head,body,note,form);
+  let session=null,sideId=null,view=null,pending=false,poll=null,signature='',files=[],uploads=0,notice='',generation=0;
+  const sessionKey=value=>value?key(value):'';
+  const live=q=>['queued','starting','running','waiting_user','stopping'].includes(q?.status);
+  const NOTES={main_prompt:'The main session has a new prompt; side questions start over.',main_session_moved:'The main session has a new prompt; side questions start over.',idle:'Closed after an hour without use.',expired:'Closed two hours after it began.',replaced:'Closed because another side question started.',device_disconnected:'The device disconnected; the side question was closed.',restart:'The device restarted; the side question was closed.'};
+  function available(value){const worker=getData().workers?.find(w=>w.id===value?.nodeId);return Boolean(value&&['claude','codex'].includes(value.runtime)&&worker?.capabilities?.nativeSideAsk===1&&nativeId(value)&&value.workspace);}
+  function fillModels(){
+   const worker=getData().workers?.find(w=>w.id===session?.nodeId),runtime=worker?.runtimes?.find(r=>r.type===session?.runtime),main=takeover.settings().model||session?.sessionConfiguration?.model||'';
+   const keep=model.value;model.replaceChildren();const follow=el('option','',main?t('Follow the session · {model}',{model:main}):t('Follow the session'));follow.value='';model.append(follow);
+   for(const m of runtime?.models||[]){if(m.id===main)continue;const o=el('option','',m.name||m.id);o.value=m.id;model.append(o);}
+   model.value=[...model.options].some(o=>o.value===keep)?keep:'';
+  }
+  function setNote(text){note.hidden=!text;note.textContent=text?t(text):'';}
+  function render(){
+   if(!session)return;
+   title.textContent=`${names[session.runtime]||session.runtime}${session.runtime==='claude'?` · ${t('last {count} turns',{count:view?.turns??10})}`:''}`;
+   const questions=view?.questions||[];const sig=JSON.stringify([sessionKey(session),questions.map(q=>[q.id,q.status,q.text.length,q.events.length,q.error,q.endedAt]),notice,pending,uploads,files.map(f=>f.id)]);
+   const busy=pending||questions.some(live);send.disabled=busy||uploads>0||(!input.value.trim()&&!files.length);attach.disabled=busy;clear.disabled=!sideId&&!questions.length&&!pending&&!uploads;
+   tray.replaceChildren();for(const f of files){const chip=el('div','attachment-card attachment-file-card');chip.title=f.name;const open=el('span','attachment-open');open.append(el('span','attachment-name',f.name),el('small','',formatBytes(f.size)));chip.append(open,closeIcon(button('',()=>{files=files.filter(x=>x.id!==f.id);render();},'attachment-remove'),t('Remove attachment')));tray.append(chip);}
+   if(uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
+   if(sig===signature)return;signature=sig;
+   body.replaceChildren();
+   if(notice)body.append(el('p','workspace-note native-ask-restarted',t(notice)));
+   if(!questions.length){const empty=el('div','side-preview-empty');const icon=el('span','side-preview-empty-icon');icon.innerHTML=UI_ICON.sideAsk;empty.append(icon,el('p','',t(session.runtime==='claude'?'Ask a quick question that does not interrupt the main session. The answer sees its last 10 turns, stays here only, and is gone once you clear it or the main session moves on.':'Ask a quick question that does not interrupt the main session. The answer stays here only, and is gone once you clear it or the main session moves on.')));body.append(empty);return;}
+   for(const q of questions){
+    const files=q.attachments?.length?el('div','chat-attachments native-turn-files'):null;if(files)for(const a of q.attachments)files.append(el('span','attachment-name native-ask-file',a.name));
+    const user=chatRow('user',q.prompt,session.runtime,q.createdAt,files);
+    const content=el('div','nt-turn');content.append(turnContent(q,session,{live:live(q),open:live(q)}));
+    if(live(q))content.append(workingLine(q));else if(q.status!=='succeeded')content.append(el('div','nt-error',`${t(q.status==='interrupted'?'Interrupted':'Failed')}${q.error?` · ${t(q.error)}`:''}`));
+    const reply=chatRow('assistant',replyText(q),session.runtime,q.endedAt||q.createdAt,null,live(q)?'running':q.status==='succeeded'?'completed':'error',session,{content});
+    if(q.endedAt)reply.querySelector('.nt-reply-foot')?.append(el('span','nt-duration',t('Took {duration}',{duration:elapsedText(q.createdAt,new Date(q.endedAt).getTime())})));
+    body.append(user,reply);
+   }
+   const usage=[...questions].reverse().find(q=>q.contextUsage?.usedTokens)?.contextUsage?.usedTokens;
+   body.append(el('p','workspace-note native-ask-usage',[usage?t('Context about {tokens} tokens',{tokens:usage>=1000?`${Math.round(usage/1000)}k`:usage}):'',t('{count} side questions',{count:questions.length})].filter(Boolean).join(' · ')));
+   body.scrollTop=body.scrollHeight;
+  }
+  function stopPoll(){clearInterval(poll);poll=null;}
+  function startPoll(){if(poll)return;poll=setInterval(()=>void refresh(),1000);}
+  async function refresh(){
+   if(!session||!sideId)return stopPoll();const asked=sideId,owner=sessionKey(session),ticket=generation;
+   try{const next=await api(`${endpoint(session.nodeId)}/side/${encodeURIComponent(asked)}`);if(ticket!==generation||sideId!==asked||sessionKey(session)!==owner)return;
+    if(next.closed){sideId=null;view=null;notice=NOTES[next.reason]||'';stopPoll();render();return;}
+    view=next;notice=next.restarted?'The main session has a new prompt; side questions start over.':notice;if(!next.questions.some(live))stopPoll();render();}
+   catch(error){if(ticket===generation&&sideId===asked&&sessionKey(session)===owner)setNote(error.message);}
+  }
+  async function reset({tell=false,reason=''}={}){
+   stopPoll();generation++;const old=sideId,owner=session;sideId=null;view=null;files=[];pending=false;uploads=0;notice=reason?NOTES[reason]||'':'';signature='';setNote('');
+   if(tell&&old&&owner)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(old)}`,{method:'DELETE'}).catch(()=>{});
+   render();
+  }
+  async function ask(){
+   if(!session||pending)return;const prompt=input.value;if(!prompt.trim()&&!files.length)return;
+   // Every async result belongs to the original session and this opening of its side panel, even after A -> B -> A.
+   const owner=session,ticket=generation,current=()=>ticket===generation&&sessionKey(session)===sessionKey(owner);
+   pending=true;setNote('');render();
+   try{const next=await api(`${endpoint(owner.nodeId)}/side`,{method:'POST',json:{sideId,runtime:owner.runtime,sessionId:nativeId(owner),prompt,model:model.value||null,attachmentIds:files.map(f=>f.id)}});
+    if(!current()){if(next.id)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(next.id)}`,{method:'DELETE'}).catch(()=>{});return;}
+    if(next.id!==sideId&&sideId&&view?.questions?.length)notice='The main session has a new prompt; side questions start over.';
+    sideId=next.id;view=next;input.value='';files=[];startPoll();}
+   catch(error){if(current())setNote(error.message);}
+   finally{if(current()){pending=false;render();}}
+  }
+  async function upload(list){
+   if(!session)return;const list2=[...list],owner=session,ticket=generation,current=()=>ticket===generation&&sessionKey(session)===sessionKey(owner);
+   if(files.length+uploads+list2.length>6){setNote('At most 6 attachments per message');return;}
+   if(list2.some(f=>!f.size||f.size>20*1024*1024)){setNote('Attachments cannot be empty; each file is limited to 20 MB');return;}
+   uploads+=list2.length;render();
+   for(const file of list2){if(!current())break;
+    try{const item=await api(`${endpoint(owner.nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});
+     if(!current()){void api(`${endpoint(owner.nodeId)}/attachments/${encodeURIComponent(item.id)}`,{method:'DELETE'}).catch(()=>{});return;}
+     files.push({id:item.id,name:item.name,mime:item.mime,size:item.size});}
+    catch(error){if(current())setNote(error.message);}finally{if(current()){uploads--;render();}}}
+  }
+  form.addEventListener('submit',e=>{e.preventDefault();void ask();});
+  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;render();});
+  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!send.disabled){e.preventDefault();void ask();}});
+  input.addEventListener('paste',e=>{const list=[...(e.clipboardData?.files||[])];if(list.length){e.preventDefault();void upload(list);}});
+  attach.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
+  return {root,available,
+   /** A different session starts a blank side question (the old one is closed); the same session keeps it. */
+   attach(value){if(sessionKey(value)!==sessionKey(session)){const previous=session;void reset({tell:Boolean(previous)});session=value;}else session=value;fillModels();render();},
+   detach(){void reset({tell:true});session=null;},
+   /** The main session got a new prompt from this page: the side question starts over. */
+   mainPrompted(value){if(session&&sessionKey(value)===sessionKey(session)&&(sideId||view?.questions?.length||pending))void reset({reason:'main_prompt'});}
+  };
+ }
  const takeover=createTakeover();
+ const sideAsk=createSideAsk();sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);
  // Sessions opened on this page with "Allow all": once the headless first turn has produced history, chat here without a separate takeover confirmation.
  const pageOpened=new Set();
  const IMAGE_CLIS=new Set(['codex','claude']),openProcesses=new Set();
@@ -761,14 +956,8 @@ const displayTitle=item=>{const text=String(item.title||'').replace(/<([a-z_-]+)
 const sizeText=n=>!Number.isFinite(n)?'':n<1024?`${n} B`:n<1048576?`${(n/1024).toFixed(1)} KB`:`${(n/1048576).toFixed(1)} MB`;
 /** Hide CLI-internal stderr logging (timestamped WARN/ERROR lines) from the run process; real errors arrive as error events. */
 const cliNoise=text=>/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/m.test(stripAnsi(String(text||'')));
-/** CLIs write injected context (system reminders, environment blocks, slash-command receipts) into history as "user" messages; only the words the person typed are a prompt. */
-const INJECTED=/<(system-reminder|user_info|environment_context|local-command-stdout|local-command-caveat|command-message|command-args|skill_metadata|available_skills|task-notification)\b[^>]*>[\s\S]*?(<\/\1>|$)/gi;
-/** A background task's completion notice: shown as one quiet system line, never as a prompt bubble. */
-const taskNotificationOf=text=>String(text||'').match(/<task-notification>[\s\S]*?<task-id>\s*([^<]+?)\s*<\/task-id>/i)?.[1]||'';
-const cleanUserText=text=>String(text||'').replace(/<image\b[^>]*>[\s\S]*?<\/image>/gi,'').replace(/\[Image: source:[^\]]*\]/g,'').replace(INJECTED,'').replace(/<command-name>[\s\S]*?<\/command-name>/gi,'').replace(/^\s*<user_query>\s*([\s\S]*?)\s*<\/user_query>\s*$/i,'$1').replace(/\n*Attached files for this message \(local paths\):[\s\S]*$/,'').trim();
 /** Prompt identity for anchoring page turns onto history rows; whitespace differences never make a second bubble. */
 const promptKey=text=>simplifiedCliOutput(String(text||'')).replace(/\s+/g,' ').trim();
-const commandOf=text=>String(text||'').match(/<command-name>\s*([^<]+?)\s*<\/command-name>/i)?.[1]||'';
 /** A turn shows its process only when it holds more than the final reply: tools, runtime notes or intermediate messages. */
 const norm=text=>stripAnsi(String(text||'')).replace(/\s+/g,' ').trim();
 const allRows=turn=>liveSceneRows(turn.events||[],{status:turn.status}).rows.filter(r=>!(r.kind==='log'&&cliNoise(r.text)));
@@ -779,7 +968,7 @@ const processRows=(turn,{includeFinal=false}={})=>{const rows=allRows(turn),mess
 const replyText=turn=>{const f=finalReply(turn);return f?f.text:turn.text||'';};
 const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind==='tool'||r.kind==='log'||r.kind==='error')||rows.some(r=>r.kind==='message'||r.kind==='text');};
  /** The group-chat live-scene projection orders text, messages, logs and merged tool states for one turn. */
- const preview=createPreviewSheet(content,t);
+ const preview=createPreviewSheet(content,t,{onSide:openSide,canSide:canOpenSide});
  /** One activity line per turn: tool steps classified across CLIs, intermediate agent notes and runtime errors behind it. */
  function stepsOf(turn){const rows=processRows(turn);return {steps:rows.filter(r=>r.kind==='tool').map(r=>classifyStep(r.item,turn.status)),notes:rows.filter(r=>r.kind!=='tool'&&(r.kind==='error'||r.kind==='log'||r.kind==='message'||r.kind==='text'))};}
  function activityFor(turn,{live=false,open=false}={}){
@@ -803,7 +992,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  function workingLine(turn,onStop){
   const line=el('div','nt-working');const pulse=el('span','nt-pulse');pulse.setAttribute('aria-hidden','true');
   const {steps}=stepsOf(turn),running=[...steps].reverse().find(s=>s.running),now=running?stepTitle(running,t):null;
-  const hint=turn.status==='queued'?t('Waiting for the device\u2026'):turn.status==='stopping'?t('Stopping\u2026'):turn.status==='starting'||!turn.phase?t('Starting the CLI\u2026'):now?`${now.verb} ${now.target}`.trim():turn.phase==='replying'?t('Replying\u2026'):t('Working\u2026');
+  const hint=turn.disconnectedAt?t('Device connection lost; waiting for it to return\u2026'):turn.status==='queued'?t('Waiting for the device\u2026'):turn.status==='stopping'?t('Stopping\u2026'):turn.question&&!turn.question.answered?t('Waiting for your answer\u2026'):turn.status==='starting'||!turn.phase?t('Starting the CLI\u2026'):now?`${now.verb} ${now.target}`.trim():turn.phase==='replying'?t('Replying\u2026'):t('Working\u2026');
   line.append(pulse,el('span','nt-working-time',elapsedText(turn.createdAt)),el('span','nt-working-hint',hint));if(onStop)line.append(button('Stop',onStop,'secondary compact nt-stop'));return line;
  }
  /** Takeover reuses the group-chat composer behaviour: Enter sends, Shift+Enter breaks lines, paste/drag/attach uploads files. An unconfirmed send keeps Send disabled while the same message ID is looked up; only a confirmed absence allows a retry with that ID. */
@@ -855,6 +1044,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   function previewAttachment(item,from=null){if(!current)return;
    // Pictures open in the shared viewer (download, copy, close; name, size and the message time); other files keep the details dialog.
    if(item.mime?.startsWith('image/')){openImageLightbox({name:item.name,size:item.size,at:from?.closest('[data-at]')?.dataset.at||null,url:fileUrl(current.nodeId,item)});return;}
+   // Pasted text and other text files show their text in the same viewer.
+   if(isTextName(item.name)){openTextLightbox({name:item.name,size:item.size,at:from?.closest('[data-at]')?.dataset.at||null,url:fileUrl(current.nodeId,item)});return;}
    if(!previewDialog){previewDialog=el('dialog','attachment-dialog');document.body.append(previewDialog);}
    const close=closeIcon(el('button','icon-button'),t('Close'));close.type='button';close.onclick=()=>previewDialog.close();
    previewDialog.setAttribute('aria-label',item.name);previewDialog.replaceChildren(close);
@@ -998,6 +1189,44 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/withdraw`,{method:'POST',json:{}});d.text=turn.prompt||'';d.attachments=(turn.attachments||[]).map(a=>({...a,reused:true}));save();if(k()===id)await refresh();}
    catch(error){op.message=t(error.message);}
    finally{op.editing=false;queuePending.delete(turn.id);if(k()===id){render();input.focus();}}}
+  /** The CLI's question card above the composer: the question, its numbered options, a free-text reply, Skip and Send; several
+   * questions page through with "1/2" and are answered together. Built once per question, so typing survives the 1s refresh. */
+  const ask=el('section','native-ask');ask.hidden=true;ask.setAttribute('aria-label',t('Question'));
+  let askState=null,askBuilt='';
+  const askIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L4 21l1.6-4.4A8.5 8.5 0 1 1 21 12Z"/><path d="M9.8 9.5a2.3 2.3 0 0 1 4.4.8c0 1.5-2.2 2-2.2 3.2"/><path d="M12 16.6h.01"/></svg>';
+  async function sendAnswer(live,body){const id=live.id;askState=null;askBuilt='';ask.hidden=true;ask.replaceChildren();
+   try{await api(`${turnsUrl()}/${encodeURIComponent(id)}/answer`,{method:'POST',json:body});await refresh();}catch(error){operation().message=t(error.message);render();}}
+  function renderAsk(){
+   const live=activeTurn(),q=live?.question&&!live.question.answered?live.question:null;
+   if(!q||!current){ask.hidden=true;if(askBuilt){ask.replaceChildren();askBuilt='';}askState=null;return;}
+   if(askState?.turnId!==live.id||askState.questionId!==q.id)askState={turnId:live.id,questionId:q.id,index:0,picked:{},typed:{}};
+   const st=askState,total=q.questions.length,question=q.questions[st.index]||q.questions[0],built=JSON.stringify([live.id,q.id,st.index]);
+   ask.hidden=false;if(built===askBuilt)return;askBuilt=built;
+   const picked=new Set(st.picked[question.id]||[]);
+   const head=el('div','native-ask-head'),title=el('span','native-ask-title');title.innerHTML=askIcon;title.append(el('span','',t('Question')));head.append(title);
+   if(total>1)head.append(el('span','native-ask-pager',`${st.index+1}/${total}`));
+   const close=iconButton('close','Skip all questions',()=>void sendAnswer(live,{questionId:q.id,skip:true}),'native-ask-close');head.append(close);
+   const text=el('p','native-ask-text',question.question);text.translate=false;
+   const list=el('div','native-ask-options');
+   const answerOf=()=>{const typed=(st.typed[question.id]||'').trim();return [...(st.picked[question.id]||[]),...(typed?[typed]:[])];};
+   const paint=()=>{for(const row of list.children)row.classList.toggle('is-picked',(st.picked[question.id]||[]).includes(row.dataset.label));send.disabled=!answerOf().length;};
+   question.options.forEach((option,i)=>{const row=el('button','native-ask-option');row.type='button';row.dataset.label=option.label;row.append(el('span','native-ask-key',String(i+1)),el('span','native-ask-label',option.label));
+    if(option.description)row.append(el('span','native-ask-desc',option.description));row.translate=false;
+    row.addEventListener('click',()=>{const now=new Set(question.multiSelect?st.picked[question.id]||[]:[]);if(now.has(option.label))now.delete(option.label);else now.add(option.label);st.picked[question.id]=[...now];paint();if(!question.multiSelect)other.value='';st.typed[question.id]='';});
+    list.append(row);});
+   const foot=el('div','native-ask-foot'),other=el('input','native-ask-other');other.type=question.secret?'password':'text';other.placeholder=t('Or write your own reply');other.value=st.typed[question.id]||'';other.setAttribute('aria-label',other.placeholder);
+   other.addEventListener('input',()=>{st.typed[question.id]=other.value;if(!question.multiSelect&&other.value.trim()){st.picked[question.id]=[];}paint();});
+   const skip=el('button','secondary compact native-ask-skip',t('Skip')),send=el('button','primary compact native-ask-send',t('Send'));skip.type=send.type='button';
+   const advance=()=>{if(st.index<total-1){st.index+=1;askBuilt='';renderAsk();ask.querySelector('.native-ask-other')?.focus({preventScroll:true});return;}
+    const answers={};for(const item of q.questions){const typed=(st.typed[item.id]||'').trim(),values=[...(st.picked[item.id]||[]),...(typed?[typed]:[])];if(values.length)answers[item.id]=values;}
+    void sendAnswer(live,Object.keys(answers).length?{questionId:q.id,answers}:{questionId:q.id,skip:true});};
+   skip.addEventListener('click',()=>{st.picked[question.id]=[];st.typed[question.id]='';advance();});
+   send.addEventListener('click',()=>{if(answerOf().length)advance();});
+   other.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();if(answerOf().length)advance();}});
+   ask.addEventListener('keydown',e=>{if(e.target===other||e.ctrlKey||e.metaKey||e.altKey)return;const n=Number(e.key);if(n>=1&&n<=question.options.length){e.preventDefault();list.children[n-1].click();}else if(e.key==='Enter'&&answerOf().length){e.preventDefault();advance();}});
+   foot.append(other,skip,send);ask.replaceChildren(head,text,list,foot);paint();
+   if(!input.matches(':focus'))other.focus({preventScroll:true});
+  }
   function renderQueue(){
    const pos=optimisticOrder?new Map(optimisticOrder.map((id,i)=>[id,i])):null;
    const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||(pos?(pos.get(a.id)??Infinity)-(pos.get(b.id)??Infinity):0)||queueRank(a)-queueRank(b));
@@ -1034,11 +1263,11 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    note.textContent=op.message||'';note.hidden=!note.textContent;note.classList.toggle('chat-bubble',Boolean(op.message));note.classList.toggle('is-error-card',Boolean(op.message));const state=sendState(d,op);
    tray.replaceChildren();for(const item of d.attachments||[])tray.append(attachmentCard(item,()=>{if(!d.pending)void removeAttachment(id,value.nodeId,item);}));
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
-   syncSendButton();renderQueue();
+   syncSendButton();renderQueue();renderAsk();
    // Disabling the textarea while a send is in flight drops focus; give it back once typing is possible again.
    const locked=op.sending||op.releasing||op.editing||Boolean(d.pending);if(locked&&!input.disabled&&[input,sendButton].includes(document.activeElement))refocus=true;
    input.disabled=locked;attachButton.disabled=locked;
-   if(!shell.contains(form))shell.replaceChildren(queue,form);resize();
+   if(!shell.contains(form))shell.replaceChildren(queue,ask,form);resize();
    if(refocus&&!locked){refocus=false;if(document.activeElement===document.body||document.activeElement===sendButton)input.focus({preventScroll:true});}
   }
   async function endTakeover(value){const id=sessionKey(value),op=operation(id);if(op.releasing)return;op.releasing=true;op.message='';if(k()===id){render();renderSide(value,value.sessionId,true);}try{await api(`${endpoint(value.nodeId)}/takeover/release`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId}});if(k()===id)await refresh();else await onStateRefresh();}catch(error){op.releasing=false;op.message=t(error.message);if(k()===id){render();renderSide(value,value.sessionId,true);}}}
@@ -1055,13 +1284,21 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   attachButton.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
   field.append(tray,attachButton,input,sendButton);barRow.append(field);form.append(note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});
   /** Same limits as the group chat: at most 6 files per message, 20 MB each; images only for CLIs with image input. */
-  async function upload(list){if(!current)return;const id=k(),nodeId=current.nodeId,runtime=current.runtime,d=draft(id),op=operation(id),files=[...list];if(op.sending||op.releasing||op.editing||d.pending)return;op.message='';
+  async function upload(list,{onFailed=null}={}){if(!current)return;const id=k(),nodeId=current.nodeId,runtime=current.runtime,d=draft(id),op=operation(id),files=[...list];if(op.sending||op.releasing||op.editing||d.pending)return;op.message='';
    if((d.attachments?.length||0)+op.uploads+files.length>6){op.message=t('At most 6 attachments per message');render();return;}
    if(files.some(f=>!f.size||f.size>20*1024*1024)){op.message=t('Attachments cannot be empty; each file is limited to 20 MB');render();return;}
    if(!IMAGE_CLIS.has(runtime)&&files.some(f=>f.type.startsWith('image/'))){op.message=t('{tool} cannot receive images here; files are passed as paths',{tool:names[runtime]});render();return;}
    op.uploads+=files.length;render();
-   for(const file of files){let uploaded=null;try{uploaded=await api(`${endpoint(nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});if(!IMAGE_CLIS.has(runtime)&&uploaded.mime.startsWith('image/'))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');(d.attachments||=[]).push({id:uploaded.id,name:uploaded.name,mime:uploaded.mime,size:uploaded.size});save();}catch(error){if(uploaded)void api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(uploaded.id)}`,{method:'DELETE'}).catch(()=>{});op.message=t(error.message);}finally{op.uploads--;if(k()===id)render();}}}
-  input.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();void upload(files);}});
+   for(const file of files){let uploaded=null;try{uploaded=await api(`${endpoint(nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});if(!IMAGE_CLIS.has(runtime)&&uploaded.mime.startsWith('image/'))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');(d.attachments||=[]).push({id:uploaded.id,name:uploaded.name,mime:uploaded.mime,size:uploaded.size});save();}catch(error){if(uploaded)void api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(uploaded.id)}`,{method:'DELETE'}).catch(()=>{});op.message=t(error.message);onFailed?.(error);}finally{op.uploads--;if(k()===id)render();}}}
+  /** Pasted text over 200 characters goes in as a text attachment so the box stays short; a failed upload puts the text back where it was pasted. */
+  function pasteAsFile(text){if(!current||!pastesAsFile(text))return false;const id=k(),d=draft(id),op=operation(id);if(op.sending||op.releasing||op.editing||d.pending)return false;
+   if((d.attachments?.length||0)+op.uploads>=6){op.message=t('Attachments are full; the long text stays in the input box. Remove an attachment first');render();return false;}
+   const file=new File([text],pastedTextName(text),{type:'text/markdown'});if(file.size>20*1024*1024){op.message=t('Text exceeds the 20 MB per-attachment limit; the original is kept, please split it before sending');render();return false;}
+   const start=input.selectionStart??input.value.length,end=input.selectionEnd??start,before=input.value.slice(0,start),after=input.value.slice(end);
+   input.value=before+after;input.setSelectionRange(start,start);d.text=input.value;save();resize();
+   void upload([file],{onFailed:error=>{const now=draft(id);now.text=now.text===before+after?before+text+after:`${now.text?`${now.text}\n`:''}${text}`;save();if(k()===id){input.value=now.text;resize();}op.message=t('The pasted text could not become an attachment ({message}); it is back in the input box',{message:t(error.message)});}});
+   return true;}
+  input.addEventListener('paste',e=>{const files=[...(e.clipboardData?.files||[])];if(files.length){e.preventDefault();void upload(files);return;}if(pasteAsFile(e.clipboardData?.getData('text/plain')||''))e.preventDefault();});
   shell.addEventListener('dragover',e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();shell.classList.add('is-dragging');}});
   shell.addEventListener('dragleave',()=>shell.classList.remove('is-dragging'));
   shell.addEventListener('drop',e=>{shell.classList.remove('is-dragging');if(e.dataTransfer?.files.length&&current&&(isOn(current)||canChat(current))){e.preventDefault();void upload(e.dataTransfer.files);}});
@@ -1077,7 +1314,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
     d.pending={clientTurnId:sameSend(d.rejected?.payload,payload)?d.rejected.clientTurnId:crypto.randomUUID(),...payload};}
    delete d.rejected;d.sendState='sending';const sent=d.pending;save();op.sending=true;render();
-   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});drafts[id]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
+   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});if(!d.pending?.control)sideAsk.mainPrompted(value);drafts[id]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
    catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;}op.message=t(error.message);}
    finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[id]?.pending&&drafts[id].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}

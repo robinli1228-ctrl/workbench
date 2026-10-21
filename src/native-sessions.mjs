@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {join,basename,dirname,relative,isAbsolute} from 'node:path';
 import {resumeArgs,managedRunProcessState,terminalOwnsProject,nativeSessionProjectIds} from './terminal-resume.mjs';
+import {isHistoryPrompt} from '../public/history-prompt.js';
 
 const runtimes=new Set(['codex','claude','grok','agy']);
 const idPattern=/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
@@ -161,10 +162,10 @@ async function describe(runtime,file){
  try{return {...await entry.value};}catch(error){if(descriptionCache.get(key)===entry)descriptionCache.delete(key);throw error;}
 }
 
-const nativeView=(history,{nodeId=null,runtime=history?.runtime,origin='vendor',title=null,createdAt=null,id=history?.id,sessionId=history?.id,status=history?'ready':'missing_history',workspace=null,exactLastScan=null}={})=>({
+const nativeView=(history,{nodeId=null,runtime=history?.runtime,origin='vendor',title=null,createdAt=null,id=history?.id,sessionId=history?.id,status=history?'ready':'missing_history',workspace=null,exactLastScan=null,branchOf=null}={})=>({
  id,...(origin==='dialog'?{entryId:id}:{}),nodeId,runtime,sessionId:sessionId||null,title:title||history?.title||sessionId||id,
  createdAt:createdAt||null,modifiedAt:history?.modifiedAt||createdAt||null,workspace:workspace||history?.workspace||null,origin,status,
- hasHistory:Boolean(history),previewAvailable:Boolean(history?.previewAvailable),canReopen:origin==='dialog'&&status==='draft',canResume:Boolean(history)&&!['active','prepared'].includes(status),exactLastScan,...(history?.error?{error:history.error}:{})
+ hasHistory:Boolean(history),previewAvailable:Boolean(history?.previewAvailable),canReopen:origin==='dialog'&&status==='draft',canResume:Boolean(history)&&!['active','prepared'].includes(status),exactLastScan,...(branchOf?.sessionId?{branchOf:{sessionId:branchOf.sessionId}}:{}),...(history?.error?{error:history.error}:{})
 });
 
 /** Native history remains on its device; every filtered item is matched by an exact native ID. */
@@ -183,7 +184,7 @@ export async function listNativeSessions(runtime,{env=process.env,limit=100,scop
   for(const record of records){
    const entryId=record.entryId||record.id;if(typeof entryId!=='string'||!entryId)continue;
    const exact=await history(record.sessionId,record),status=exact?(record.status==='active'||record.status==='prepared'?record.status:'ready'):record.sessionId?(record.status==='active'||record.status==='prepared'||record.status==='draft'?record.status:'awaiting_history'):(record.status||'awaiting_native_id');
-   items.push(nativeView(exact,{nodeId,runtime,origin:'dialog',id:entryId,sessionId:record.sessionId,title:record.title,createdAt:record.createdAt,status,workspace:record.workspace,exactLastScan:record.exactLastScan}));
+   items.push(nativeView(exact,{nodeId,runtime,origin:'dialog',id:entryId,sessionId:record.sessionId,title:record.title,createdAt:record.createdAt,status,workspace:record.workspace,exactLastScan:record.exactLastScan,branchOf:record.branchOf}));
   }
  }else if(scope==='group'){
   for(const record of managedSessions){
@@ -192,16 +193,79 @@ export async function listNativeSessions(runtime,{env=process.env,limit=100,scop
   }
  }else{
   const managedIds=new Set(managedSessions.map(record=>record?.sessionId||record?.id).filter(id=>idPattern.test(id||''))),dialogIds=new Set(dialogRecords.map(record=>record.sessionId).filter(id=>idPattern.test(id||'')));
-  for(const record of dialogRecords){const entryId=record.entryId||record.id;if(typeof entryId!=='string'||!entryId)continue;const exact=await history(record.sessionId,record),status=exact?(record.status==='active'||record.status==='prepared'?record.status:'ready'):record.sessionId?(record.status==='active'||record.status==='prepared'||record.status==='draft'?record.status:'awaiting_history'):(record.status||'awaiting_native_id');items.push(nativeView(exact,{nodeId,runtime,origin:'dialog',id:entryId,sessionId:record.sessionId,title:record.title,createdAt:record.createdAt,status,workspace:record.workspace,exactLastScan:record.exactLastScan}));}
+  for(const record of dialogRecords){const entryId=record.entryId||record.id;if(typeof entryId!=='string'||!entryId)continue;const exact=await history(record.sessionId,record),status=exact?(record.status==='active'||record.status==='prepared'?record.status:'ready'):record.sessionId?(record.status==='active'||record.status==='prepared'||record.status==='draft'?record.status:'awaiting_history'):(record.status||'awaiting_native_id');items.push(nativeView(exact,{nodeId,runtime,origin:'dialog',id:entryId,sessionId:record.sessionId,title:record.title,createdAt:record.createdAt,status,workspace:record.workspace,exactLastScan:record.exactLastScan,branchOf:record.branchOf}));}
   for(const record of adoptedSessions){const id=record.sessionId;if(!idPattern.test(id||'')||managedIds.has(id)||dialogIds.has(id)||record.runtime!==runtime)continue;items.push(nativeView(await history(id,record),{nodeId,runtime,origin:'takeover',id,sessionId:id,workspace:record.workspace,createdAt:record.createdAt}));}
  }
  items.sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||'')));
  return {items:items.slice(0,limit),partial:items.length>limit};
 }
 
+/**
+ * One history page: up to 45 prompts and 768 KB of preview rows, read backwards through a 6 MB window. Raw Claude histories
+ * carry request blobs and screenshot results close to 1 MB each that yield few or no rows, so the window bounds most pages;
+ * a window with no rows at all is crossed, up to `scan` (two windows) per request. The rows travel in a single
+ * Worker→Home socket message, which is capped at 1 MB.
+ */
+export const HISTORY_PAGE=Object.freeze({prompts:45,bytes:786432,window:6291456,scan:12582912,line:33554432,lookback:33554432,lookbackChunk:1048576});
+
+/** Whether the buffer holds at least one complete line: a newline before the (possibly newline-terminated) last line. */
+const hasCompleteLine=buffer=>{let end=buffer.length;while(end>0&&[10,13].includes(buffer[end-1]))end--;return end===0||buffer.lastIndexOf(10,end-1)>=0;};
+/**
+ * The bytes before `windowEnd`: one window, widened when the last record alone is longer than the window. A tool result
+ * that carries a screenshot is one JSONL line of 1 MiB or more; such a record is read whole, up to `limits.line`, so a
+ * page never fails on it. Only a record past that cap is reported as too large.
+ */
+async function windowBefore(h,windowEnd,limits){
+ let start=Math.max(0,windowEnd-limits.window),buffer=Buffer.alloc(windowEnd-start);await h.read(buffer,0,buffer.length,start);
+ while(start>0&&!hasCompleteLine(buffer)&&windowEnd-start<limits.line){
+  const wider=Math.max(0,windowEnd-Math.min(limits.line,(windowEnd-start)*2)),more=Buffer.alloc(start-wider);await h.read(more,0,more.length,wider);
+  buffer=Buffer.concat([more,buffer]);start=wider;
+ }
+ return {start,buffer};
+}
+
+/**
+ * A page that starts inside a turn (its prompt is on an older page) still shows how long that turn took: look back from
+ * the page start for the nearest row that starts a turn and return its time. The look-back reads at most `lookback`
+ * bytes. Histories only grow, so the answer for a start offset holds for any later start with no prompt in between:
+ * the latest answer per history is kept, and the 30-second refresh of the latest page only reads what was appended.
+ */
+const lookbacks=new Map();
+async function promptBefore(h,runtime,offset,limits,{key,mark}){
+ // A cached answer stands while the bytes just before its offset are unchanged (the history was not rewritten).
+ // An answer is reused only under the same look-back budget: "not found within it" is an answer too.
+ const cached=lookbacks.get(key),intact=Boolean(cached)&&cached.budget===limits.lookback&&cached.mark===await mark(cached.offset),usable=intact&&cached.offset<=offset;
+ const found=await scanBack(h,runtime,offset,usable?cached.offset:0,limits);
+ // Nothing between the cached start and this one: the turn began where the cached answer says.
+ const at=found!==undefined?found:usable?cached.at:null;
+ // Older pages read once; only the latest start (or a replacement for a stale entry) is kept for the refreshes.
+ if(!intact||offset>=cached.offset){lookbacks.delete(key);lookbacks.set(key,{offset,at,budget:limits.lookback,mark:await mark(offset)});if(lookbacks.size>64)lookbacks.delete(lookbacks.keys().next().value);}
+ return at;
+}
+/** Read backwards from `offset` to `floor` line by line; the time of the nearest turn-starting row, null when the budget ran out, undefined when none lies in range. */
+async function scanBack(h,runtime,offset,floor,limits){
+ let end=offset,carry=Buffer.alloc(0),scanned=0;
+ while(end>floor){
+  if(scanned>=limits.lookback)return null;
+  const start=Math.max(floor,end-limits.lookbackChunk),chunk=Buffer.alloc(end-start);await h.read(chunk,0,chunk.length,start);scanned+=chunk.length;
+  const buffer=carry.length?Buffer.concat([chunk,carry]):chunk;let pos=buffer.length;
+  while(pos>0){
+   let lineEnd=pos;while(lineEnd>0&&[10,13].includes(buffer[lineEnd-1]))lineEnd--;
+   if(!lineEnd){pos=0;break;}
+   const lf=buffer.lastIndexOf(10,lineEnd-1);
+   if(lf<0&&start>floor){pos=lineEnd;break;} // An incomplete line: finish it with the next, older chunk.
+   const rows=messagesFrom(jsonLines(buffer.subarray(lf+1,lineEnd).toString('utf8')),runtime);
+   for(let i=rows.length-1;i>=0;i--)if(rows[i].role==='user'&&isHistoryPrompt(rows[i].text))return rows[i].timestamp||null;
+   pos=Math.max(0,lf);
+  }
+  carry=buffer.subarray(0,pos);end=start;
+ }
+ return undefined;
+}
+
 /** Read backwards at line boundaries, pinning the original tail while a live CLI appends.
  * Cursors select offsets only inside this exact vendor file; each page has bounded I/O and wire size. */
-async function historyPage(file,runtime,id,cursor,snapshot){
+async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
  if(!inside(await realpath(file.root),await realpath(file.path)))throw Error('History outside CLI directory');
  const h=await open(file.path,constants.O_RDONLY|constants.O_NOFOLLOW),hash=value=>createHash('sha256').update(value).digest('hex');
  try{
@@ -218,10 +282,10 @@ async function historyPage(file,runtime,id,cursor,snapshot){
   // Quiet refresh must verify the previous snapshot, even when its last page had no older cursor.
   if(snapshot){size=info.size;end=size;tail=await tailAt(size);}
   let next=end,scanned=0,configuration;const messages=[];
-  // Internal request blobs can fill a window without adding a chat row. Cross only empty windows,
-  // counting overlapping bytes too, so one click never reads more than 8 MiB of transcript data.
-  while(next>0&&!messages.length&&scanned<8*1048576){
-   const windowEnd=next,start=Math.max(0,windowEnd-1048576),buffer=Buffer.alloc(windowEnd-start);await h.read(buffer,0,buffer.length,start);scanned+=buffer.length;
+  // Internal request blobs and large tool results can fill a window without adding a chat row. Cross only empty windows,
+  // counting overlapping bytes too, so one click never reads more than limits.scan bytes of transcript data.
+  while(next>0&&!messages.length&&scanned<limits.scan){
+   const windowEnd=next,{start,buffer}=await windowBefore(h,windowEnd,limits);scanned+=buffer.length;
    if(!cursor&&configuration===undefined)configuration=sessionConfiguration(jsonLines(buffer.subarray(start?(buffer.indexOf(10)<0?buffer.length:buffer.indexOf(10)+1):0).toString('utf8')),runtime);
    let pos=buffer.length,bytes=0,prompts=0;
    while(pos>0){
@@ -232,25 +296,29 @@ async function historyPage(file,runtime,id,cursor,snapshot){
     const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map((m,index)=>({...m,id:`${id}:${start+lineStart}${index?`:${index}`:''}`,offset:start+lineStart}));
     const weight=Buffer.byteLength(JSON.stringify(found));
     // Pages are sized by prompts, not by tool rows, so a turn with many tool calls still reads as one page.
-    if(found.length&&(prompts>=15||bytes+weight>262144))break;
+    if(found.length&&(prompts>=limits.prompts||bytes+weight>limits.bytes))break;
     messages.unshift(...found);bytes+=weight;prompts+=found.filter(m=>m.role==='user').length;next=start+lineStart;pos=Math.max(0,lf);
    }
    if(next===windowEnd)throw Error('A native history record is too large to preview; the original history is unchanged.');
   }
+  // The first rows belong to a turn whose prompt is further back when a reply or tool call comes before any prompt.
+  const firstPrompt=messages.findIndex(m=>m.role==='user'&&isHistoryPrompt(m.text));
+  const midTurn=next>0&&messages.slice(0,firstPrompt<0?messages.length:firstPrompt).some(m=>m.role==='assistant'||m.role==='tool_call');
+  const turnStartedAt=midTurn?await promptBefore(h,runtime,next,limits,{key,mark:tailAt}):null;
   const after=await stat(file.path);if(after.dev!==info.dev||after.ino!==info.ino||after.size<size)throw Error('Native history changed; reopen the session to read it again.');
   const encode=offset=>Buffer.from(JSON.stringify({v:1,key,size,end:offset,tail})).toString('base64url');
-  return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,
+  return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,...(turnStartedAt?{turnStartedAt}:{}),
    ...(!messages.length&&next>0?{notice:'No displayable messages in this portion. Earlier history remains; click Load older history to continue.'}:{}),
    ...(!cursor?{sessionConfiguration:configuration||sessionConfiguration([],runtime)}:{})};
  }finally{await h.close();}
 }
 
 /** Resume and preview resolve an exact native ID on the selected device, never a filename from the client. */
-export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null}={}){
+export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null,pageLimits=HISTORY_PAGE}={}){
  if(!idPattern.test(id||''))throw Error('Invalid native session ID');
  const file=await registeredFile(runtime,id,env,record);if(!file)throw Error('Registered native session history is unavailable; no external histories were scanned');
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
- if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot)};
+ if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot,pageLimits)};
  const window=await readWindow(file.path,file.root,true,524288),rows=jsonLines(window.text),messages=messagesFrom(rows,runtime);
  const texts=messages.filter(m=>m.role==='user'||m.role==='assistant'),from=texts.length>80?messages.indexOf(texts.at(-80)):0;
  return {...info,messages:messages.slice(from),sessionConfiguration:sessionConfiguration(rows,runtime),partial:window.partial||texts.length>80};

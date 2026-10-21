@@ -1,5 +1,6 @@
 import {t,dateLocale} from './i18n.js';
 import {setActionIcon} from './role-icons.js';
+import {canOpenSide,openSide} from './side-preview.js';
 
 /**
  * One media card and one in-page viewer for group chat and native sessions. A file stays on the device that produced
@@ -113,7 +114,7 @@ function messageTime(node){return node.closest('[data-at]')?.dataset.at||node.cl
 const stamp=value=>{const date=new Date(value||'');return Number.isNaN(date.getTime())?'':date.toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});};
 /** Copy puts the picture itself on the clipboard (as PNG); anything else, or a browser without image clipboard, copies the text. */
 async function toPng(blob){if(blob.type==='image/png')return blob;const bitmap=await createImageBitmap(blob),canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;canvas.getContext('2d').drawImage(bitmap,0,0);return new Promise((resolve,reject)=>canvas.toBlob(png=>png?resolve(png):reject(Error('PNG')),'image/png'));}
-function copyAction(button,{url,kind,text}){
+export function copyAction(button,{url,kind,text}){
   button.hidden=false;
   const done=()=>{setActionIcon(button,'check',t('Copied'));setTimeout(()=>setActionIcon(button,'copy',t('Copy')),1500);};
   button.onclick=async()=>{
@@ -131,17 +132,21 @@ function lightbox({name,size=null,at=null}){
   const version=++viewerVersion;
   if(!viewer){viewer=el('dialog','media-viewer media-lightbox');viewer.addEventListener('close',()=>{viewerVersion++;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});});document.body.append(viewer);}
   const actions=el('div','media-lightbox-actions'),download=setActionIcon(el('a','chat-icon-btn media-download'),'follow',t('Download'));download.hidden=true;download.setAttribute('download','');
+  // Open on the right (Sessions page, desktop): pins this file beside the chat and closes the viewer.
+  const side=setActionIcon(el('button','chat-icon-btn media-side'),'sideOpen',t('Open on the right'));side.type='button';side.hidden=true;
   const copy=setActionIcon(el('button','chat-icon-btn media-copy'),'copy',t('Copy'));copy.type='button';copy.hidden=true;
   const close=setActionIcon(el('button','chat-icon-btn'),'close',t('Close'));close.type='button';close.addEventListener('click',()=>viewer.close());close.autofocus=true;
-  actions.append(download,copy,close);
+  actions.append(download,side,copy,close);
   const stage=el('div','media-stage'),overlay=el('div','media-loading',t('Loading…')),status=el('p','workspace-note media-status');status.setAttribute('role','status');status.hidden=true;stage.append(overlay);
   const foot=el('div','media-lightbox-foot'),label=el('div','media-lightbox-label'),title=el('strong','media-lightbox-name',name),bytes=el('span','media-lightbox-size',size==null?'':formatBytes(size)),when=el('time','media-lightbox-time');
   const setTime=value=>{when.textContent=stamp(value);if(when.textContent)when.dateTime=value;};setTime(at);
   label.append(title,bytes);foot.append(label,when);
   viewer.setAttribute('aria-label',name);viewer.replaceChildren(actions,stage,status,foot);
   if(!viewer.open)viewer.showModal();
-  return {version,download,copy,stage,overlay,status,title,bytes,when,setTime};
+  return {version,download,side,copy,stage,overlay,status,title,bytes,when,setTime};
 }
+/** Show "Open on the right" once the file is ready, when the Sessions page can take it. */
+function offerSide(v,item){if(v.version!==viewerVersion||!canOpenSide())return;v.side.hidden=false;v.side.onclick=()=>{viewer.close();openSide(item);};}
 
 /** A picture people sent (an attachment): the same viewer as media in replies. `url` may be a promise of an object URL. */
 export function openImageLightbox({name,size=null,at=null,url}){
@@ -151,6 +156,19 @@ export function openImageLightbox({name,size=null,at=null,url}){
     const image=el('img','media-image');image.alt=name;image.decoding='async';
     image.addEventListener('load',()=>{v.overlay.hidden=true;});image.addEventListener('error',()=>{v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:name});});
     image.src=src;v.stage.prepend(image);v.download.href=src;v.download.setAttribute('download',name);v.download.hidden=false;copyAction(v.copy,{url:src,kind:'image',text:name});
+    offerSide(v,{kind:'image',title:name,size,at,src});
+  }).catch(error=>{if(v.version!==viewerVersion)return;v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:error.message});});
+}
+
+/** A text attachment (pasted text, Markdown, plain text) in the same viewer: the text as written, download, copy the text, close. */
+export function openTextLightbox({name,size=null,at=null,url}){
+  const v=lightbox({name,size,at});v.stage.classList.add('is-text');
+  void Promise.resolve(url).then(async src=>{
+    const response=await fetch(src);if(!response.ok)throw Error(`HTTP ${response.status}`);
+    const text=await response.text();if(v.version!==viewerVersion)return;
+    v.overlay.hidden=true;const body=el('pre','media-text',text);body.translate=false;v.stage.prepend(body);
+    v.download.href=src;v.download.setAttribute('download',name);v.download.hidden=false;copyAction(v.copy,{text});
+    offerSide(v,{kind:'text',title:name,size,at,text});
   }).catch(error=>{if(v.version!==viewerVersion)return;v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:error.message});});
 }
 
@@ -166,6 +184,7 @@ export async function openMediaViewer(path,context,{at=null}={}) {
   bytes.textContent=formatBytes(info.size);if(!at)v.setTime(info.modifiedAt);
   download.href=info.downloadUrl;download.hidden=false;download.title=t('Download to this computer · {size}',{size:formatBytes(info.size)});
   copyAction(v.copy,{url:info.url,kind:info.kind,text:info.copyOf?info.name:path});
+  if(info.kind!=='file')offerSide(v,{kind:info.kind,title:info.name||baseName(path),subtitle:path,size:info.size,at:at||info.modifiedAt||null,src:info.url,download:info.downloadUrl,renew:()=>describeQueued(context,path,{fresh:true}).then(fresh=>fresh.available?fresh.url:null)});
   const summary=[info.copyOf?t('Playing the local copy on {device}; the source device is offline.',{device:info.sourceName}):t('From {device}',{device:info.sourceName}),formatBytes(info.size)].join(' · ');
   renderStage(stage,overlay,status,info,summary,path,context,version);
   return info;

@@ -16,13 +16,12 @@ import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl } from './elapsed.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
+import { pastesAsFile, pastedTextName } from './pasted-text.js';
 
-/** Long text only changes its carrier; the file content keeps the original line breaks, whitespace and trailing characters. */
+/** Typed text that grows this long moves into an attachment too; pasted text moves at a much lower limit (pasted-text.js). The file keeps the original line breaks, whitespace and trailing characters. */
 export function longTextFileName(text) {
   if (text.length <= 8000 && text.split(/\r\n|\r|\n/).length <= 80) return null;
-  const title = text.split(/\r\n|\r|\n/).find(line => line.trim()) || 'Pasted text';
-  const stem = [...title.replace(/^\s*#+\s*/, '').replace(/[\x00-\x1f/\\:*?"<>|]/g, '_').trim()].slice(0, 48).join('') || 'Pasted text';
-  return `${stem.replace(/\.(md|markdown|txt)$/i, '')}.md`;
+  return pastedTextName(text);
 }
 
 /** Refresh real terminal processes before CLI probes; stale takeover receipts let the original queued work continue. */
@@ -469,7 +468,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const d = draft(), ownerId = scopeId;
     if ((d.attachments?.length || 0) + (d.textFiles?.length || 0) + (uploadCounts.get(ownerId) || 0) >= 6) { setError('Attachments are full; the long text stays in the input box. Remove an attachment first'); return null; }
     if (new Blob([text]).size > 20 * 1024 * 1024) { setError('Text exceeds the 20 MB per-attachment limit; the original is kept, please split it before sending'); return null; }
-    const entry = { id: crypto.randomUUID(), name: longTextFileName(text) || 'Pasted text.md', text };
+    const entry = { id: crypto.randomUUID(), name: pastedTextName(text), text };
     const previous = d.text;
     (d.textFiles ||= []).push(entry); d.text = remaining;
     if (!saveDrafts()) { d.textFiles.pop(); d.text = previous; return null; }
@@ -490,7 +489,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const files=items.length?items:[...(e.clipboardData?.files||[])];
     if(files.length){e.preventDefault();void uploadFiles(files);return;}
     const text = e.clipboardData?.getData('text/plain') || '';
-    if (longTextFileName(text)) {
+    // Pasted text over 200 characters becomes a text attachment; the rest of what was typed stays in the box.
+    if (pastesAsFile(text)) {
       const remaining = input.value.slice(0, input.selectionStart) + input.value.slice(input.selectionEnd);
       if (queueTextFile(text, remaining)) e.preventDefault();
     }

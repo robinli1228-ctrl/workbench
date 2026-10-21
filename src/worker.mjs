@@ -6,7 +6,7 @@ import {discussionPolicy,validatedDiscussionConfigurations,supportsDiscussion} f
 import {inspectArtifactFiles} from './run-artifacts.mjs';
 import { writeTurnContext, turnToolCommand } from './turn-context.mjs';
 import { hostname, platform, homedir } from 'node:os';
-import { readFile, mkdir, realpath, readdir, stat } from 'node:fs/promises';
+import { readFile, mkdir, realpath, readdir, stat, rm, lstat } from 'node:fs/promises';
 import {acquireWorkerLock} from './worker-lock.mjs';
 import { resolve, dirname, join, relative, isAbsolute, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,9 +24,12 @@ import { CliPrintSession } from './cli-print-session.mjs';
 import { supportedPermissionScopes, workerPermissionScopes, PERMISSION_CONTRACT_VERSION } from './role-permissions.mjs';
 import { browseFolders, createFolder, prepareNativeSessionFolder } from './folders.mjs';
 import {FolderAccess} from './folder-access.mjs';
-import {createWorkerNativeTurns} from './native-turns-worker.mjs';
+import {createWorkerNativeTurns,receiveTurnFiles} from './native-turns-worker.mjs';
+import {SideAsks} from './native-side-ask.mjs';
+import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {listNativeSessions,readNativeSession,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
+import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
 import { inspectRuntimes, runtimeIssue, mergeRuntimeReports } from './runtime-probe.mjs';
 import { writeHandoff } from './wb-tools.mjs';
@@ -136,7 +139,9 @@ const recoveryBinding=m=>({taskId:m.run.taskId||m.task.id,projectId:m.run.projec
 async function checkNativeDriver(m){const binding=recoveryBinding(m);if(!binding.nativeSessionId&&!binding.priorRunId)return;if(!cliRecoveryEnabled){const owned=sessions.get(binding.runId),pid=(owned?.preparing?owned.session:owned)?.proc?.pid;if(cliRecovery.records(binding).some(r=>r.pid!==pid&&!warmSessions.owns(r.pid)&&managedRunProcessState(r)!=='exited'))throw Error(tr('worker.nativeSessionStillHasProcess'));return;}const result=await cliRecovery.check(binding);if(result.state!=='ready'){const error=Error(result.reason||tr('cliRecovery.waiting'));error.code='CLI_RECOVERY_WAIT';error.recovery=result;throw error;}}
 /** Slot reservations count before asynchronous preparation; retained processes are reclaimed, never active work. */
 let nativeTurns=null;
-function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalSlots(db,identity.nodeId);}
+/** Side questions (src/native-side-ask.mjs): read-only, one temporary session each, removed on close, expiry or restart. */
+let sideAsks=null;
+function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalSlots(db,identity.nodeId)+(sideAsks?.size||0);}
 /** Session-page takeover hook (src/native-turns-worker.mjs); idle unless a native session is taken over. */
 nativeTurns=createWorkerNativeTurns({db,send:m=>send(m),data,homeHttp:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,projectRoot:path=>projectRoot(path),
   isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots())});
@@ -584,10 +589,16 @@ async function command(m) {
 }
 /** Only serves plain text files inside registered workspaces and does not follow symlinks that escape them. */
 async function query(m) {
+  // The Data page: what this Worker's store holds and what the policy lets go; cleanup runs the same pass as the daily one.
+  if(m.action==='data_stats'||m.action==='data_cleanup'){
+    try{if(m.path?.policy)retention=normalizeRetention(m.path.policy);
+      send({type:'reply',id:m.id,result:m.action==='data_stats'?await dataStats(db,{policy:retention,blobRoot:sourceSync.blobRoot}):await runMaintenance()});}
+    catch(e){send({type:'reply',id:m.id,error:e.message});}return;
+  }
   if(m.action==='cli_capacity') {
     try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
   }
-  const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write'].includes(m.action);
+  const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write','native_session_branch','native_session_delete'].includes(m.action)&&!(m.action==='native_session_delete'&&m.path?.dryRun===true);
   const guarded=['source_inspect','source_read','read_query','project_file','file','document','collaboration_documents'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
@@ -690,7 +701,7 @@ async function query(m) {
       const result=method==='status'?roleSwitchWorker.status(m.path.operationId):await roleSwitchWorker[method](m.path);
       send({type:'reply',id:m.id,result});return;
     }
-    if(modifies){if(db.list('sourceSyncReservations').length)throw syncError('sync_busy');db.put('sourceSyncOperations',{id:m.id,projectId:m.path?.projectId||db.get('runs',m.runId)?.projectId||'*',status:'running'});}
+    if(modifies){if(db.list('sourceSyncReservations').length)throw syncError('sync_busy');db.put('sourceSyncOperations',{id:m.id,projectId:m.path?.projectId||(m.runId?db.get('runs',m.runId)?.projectId:null)||'*',status:'running'});}
     if(m.action==='source_sync_candidate'){
       const run=db.get('runs',m.runId),input=m.path,repo=run?.repositories?.find(r=>r.id===input.repositoryId),frozen=run?.sourceInputs?.find(r=>r.repositoryId===input.repositoryId);
       const directory=input.scopeKind==='directory';
@@ -773,6 +784,49 @@ async function query(m) {
     if(m.action==='native_agents_md'){send({type:'reply',id:m.id,result:await readAgentsFile(await folderAccess.allowedRoots(),await projectRoot(m.path?.workspace),{stopAt:m.path?.stopAt?await projectRoot(m.path.stopAt):null})});return;}
     if(m.action==='native_agents_md_write'){const input=m.path||{};send({type:'reply',id:m.id,result:await writeAgentsFile(await folderAccess.allowedRoots(),await projectRoot(input.workspace),{path:input.path||null,content:input.content,expectedModifiedAt:input.expectedModifiedAt||null,create:input.create===true,createDir:input.createDir?await projectRoot(input.createDir):null,stopAt:input.stopAt?await projectRoot(input.stopAt):null})});return;}
     if(m.action==='native_workspace_git'){send({type:'reply',id:m.id,result:await inspectWorkspaceGit(await projectRoot(m.path?.workspace),{authorizeRoot:projectRoot})});return;}
+    // Branch: copy the session's folder next to it and fork the CLI session into the copy (Claude, Codex). The new entry is
+    // registered here first; Home records its own copy after this reply.
+    if(m.action==='native_session_branch'){
+      const input=m.path||{},runtime=input.runtime;
+      if(!BRANCH_RUNTIMES.has(runtime))throw new Error('Only Claude Code and Codex sessions can be branched for now');
+      if(!runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false))throw new Error('CLI is not available on this device');
+      if(paused)throw new Error('Remote execution is paused');
+      if(occupiedSlots()>=capacity)throw new Error('Device CLI capacity is full');
+      if(typeof input.branchEntryId!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(input.branchEntryId)||db.get('nativeCatalogEntries',input.branchEntryId))throw new Error('Invalid branch entry');
+      if(runtime==='claude'&&(typeof input.newSessionId!=='string'||!/^[0-9a-f-]{36}$/i.test(input.newSessionId)))throw new Error('Upgrade Home to branch Claude sessions');
+      const base=typeof input.title==='string'?input.title.trim():'';if(!base||base.length>110)throw new Error('Session title is required and must be at most 110 characters');
+      const record=input.record||registeredNativeSession(db,runtime,input.sessionId);if(!record)throw new Error('Session is not registered with Workbench');
+      const history=await readNativeSession(runtime,input.sessionId,{record});
+      const source=await projectRoot(history.workspace||record.workspace);
+      const roots=await Promise.all((await folderAccess.allowedRoots()).map(root=>realpath(root).catch(()=>root)));
+      const target=await branchTarget(source,roots),size=await copyFolder(source,target);
+      // A Git copy gets its own local branch, so pushes from the two folders never land on the same branch by accident.
+      let gitBranch=null;
+      try{await lstat(join(target,'.git'));const head=(await exec('git',['-C',target,'symbolic-ref','--short','-q','HEAD'])).stdout.trim();
+        if(head){const name=`${head}-${target.match(/branch-\d+$/)[0]}`;await exec('git',['-C',target,'switch','-q','-c',name]);gitBranch=name;}}catch{}
+      const notice=tr('nativeBranch.notice',{source,target});
+      let forked;
+      try{forked=runtime==='claude'?await forkClaude({cwd:target,sessionId:input.sessionId,newSessionId:input.newSessionId,notice}):await forkCodex({cwd:target,sessionId:input.sessionId,notice});}
+      catch(error){await rm(target,{recursive:true,force:true}).catch(()=>{});throw error;}
+      const n=Number(target.match(/branch-(\d+)$/)[1]),title=n>1?`${base} ${n}`:base,now=new Date().toISOString();
+      db.put('nativeCatalogEntries',{id:input.branchEntryId,runtime,sessionId:forked.sessionId,title,workspace:target,origin:'dialog',status:'ready',folderCreated:true,branchOf:{sessionId:input.sessionId},createdAt:now,modifiedAt:now});
+      send({type:'reply',id:m.id,result:{entryId:input.branchEntryId,sessionId:forked.sessionId,title,workspace:target,source,gitBranch,entries:size.entries,bytes:size.bytes}});return;
+    }
+    // Delete: only a folder Workbench made for this session (see deletableFolder); dryRun answers whether and why not.
+    if(m.action==='native_session_delete'){
+      const input=m.path||{},runtime=input.runtime;
+      const entry=input.entryId?db.get('nativeCatalogEntries',input.entryId):db.list('nativeCatalogEntries').find(e=>e.runtime===runtime&&e.sessionId===input.sessionId);
+      if(entry&&(entry.runtime!==runtime||(input.sessionId&&entry.sessionId&&entry.sessionId!==input.sessionId)))throw new Error('Native catalog entry does not match this session');
+      const verdict=await deletableFolder({workspace:entry?.workspace,entry,registry:db.list('nativeCatalogEntries'),runs:db.list('runs').filter(r=>!terminal.has(r.status)),bindings:input.bindings||[],roots:await folderAccess.allowedRoots()});
+      const holder=verdict.path&&db.list('terminalSessions').find(s=>!['released','cancelled'].includes(s.status)&&s.workspace&&(s.workspace===verdict.path||s.workspace.startsWith(`${verdict.path}/`)||verdict.path.startsWith(`${s.workspace}/`)&&s.sessionId===entry?.sessionId));
+      const allowed=verdict.ok&&!holder,reason=!verdict.ok&&!verdict.missing?verdict.reason:holder?'A CLI is still running in this folder; end the takeover or quit it in iTerm first':null;
+      if(input.dryRun){send({type:'reply',id:m.id,result:{ok:allowed||Boolean(verdict.missing&&entry),missing:Boolean(verdict.missing),reason,path:verdict.path||entry?.workspace||null}});return;}
+      if(verdict.missing&&entry){db.remove('nativeCatalogEntries',entry.id);send({type:'reply',id:m.id,result:{deleted:true,missing:true,entryId:entry.id,path:entry.workspace}});return;}
+      if(!allowed)throw new Error(reason||verdict.reason);
+      await rm(verdict.path,{recursive:true,force:false});
+      db.remove('nativeCatalogEntries',entry.id);
+      send({type:'reply',id:m.id,result:{deleted:true,entryId:entry.id,path:verdict.path}});return;
+    }
     if(m.action==='native_session_title'){
       const input=m.path||{},title=typeof input.title==='string'?input.title.trim():'';
       if(!title||title.length>120)throw new Error('Session title is required and must be at most 120 characters');
@@ -1091,10 +1145,10 @@ function connect() {
   ws = new WebSocket(homeUrl, { headers: { Authorization: `Bearer ${token}` }, maxPayload: 1024 * 1024 });
   ws.on('open', () => {
     const systemPlatform = platform();
-    send({ type: 'register', node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
+    send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -1119,12 +1173,14 @@ function connect() {
         if(m.capacity!==undefined)await applyCapacity(m.capacity);
         if(ws!==connection||connection.readyState!==1)return;
         registered=true;readySent=false;eventSent.clear();clearTimeout(reconnectCleanup);
+        nativeTurns?.resume?.();
+        if(m.retention)retention=normalizeRetention(m.retention);startMaintenance();
         if(paused)void warmSessions.closeAll();
         for (const r of db.list('runs').filter(r => !terminal.has(r.status))) emit(r.id, 'status', { status: r.status });
         flushOutbox();console.log(tr('worker.workerConnected', { homeUrl, nodeId: identity.nodeId }));
         if (runtimeRetryDue) { runtimeRetryDue = false; void refreshRuntimes(); }
       }
-      if (m.type === 'settings') {paused = m.paused;if(paused)void warmSessions.closeAll();}
+      if (m.type === 'settings') {paused = m.paused;if(paused)void warmSessions.closeAll();if(m.retention)retention=normalizeRetention(m.retention);}
       if (m.type === 'language') { try { setLanguage(m.language); } catch { /* ignore unsupported values */ } }
       if (m.type === 'ack') {db.remove('outbox', m.id);eventSent.delete(m.id);flushOutbox();}
       // Each command/query runs under the language Home put on the message, so prompts and errors built on this Worker match it.
@@ -1138,6 +1194,9 @@ function connect() {
       if (m.type === 'query') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>query(m)));
       if (m.type === 'native_turn') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>nativeTurns.start(m)));
       if (m.type === 'native_turn_stop') void nativeTurns.stop(m.id);
+      if (m.type === 'side_ask') void runWithLanguage(m.language, () => sideAsks.ask(m));
+      if (m.type === 'side_ask_close') void sideAsks.close(m.sideId,'cleared');
+      if (m.type === 'native_turn_answer') nativeTurns.answer(m.id,m);
       if (m.type === 'native_takeover_release') void nativeTurns.releaseLease(m.runtime,m.sessionId,m.leaseId).catch(e=>console.error('Native takeover release:',e.message));
       if (m.type === 'error') console.error(tr('worker.rejectedByHome'), m.error);
     } catch (e) { console.error(tr('worker.protocolError'), e.message); }
@@ -1146,13 +1205,41 @@ function connect() {
   ws.on('close', () => {
     for(const query of configurationQueries.values()){clearTimeout(query.timer);query.reject(new Error('Home disconnected during execution configuration query.'));}configurationQueries.clear();
     paused=true;registered=false;readySent=false;eventSent.clear();
-    void nativeTurns.stopAll();
+    // Running turns outlive a connection blip: they continue for a grace period and report what happened once Home is back.
+    if(quitting)void nativeTurns.stopAll();else nativeTurns.suspend();
     // A brief network blip keeps idle processes, still subject to the original identity fingerprint and idle deadline; an explicit pause/quit closes them immediately.
     clearTimeout(reconnectCleanup);reconnectCleanup=setTimeout(()=>{void warmSessions.closeAll();},30000);reconnectCleanup.unref();
     for(const controller of organizerControllers)controller.abort();if(!quitting)setTimeout(connect,5000);
   });
 }
 const outboxTimer=setInterval(flushOutbox,1000);outboxTimer.unref();
+sideAsks=new SideAsks({db,send,data,env:process.env,
+  canStart:m=>{
+    if(paused||quitting)throw new Error('Remote execution is paused');
+    if(!runtimes.some(r=>r.type===m.runtime&&r.available&&r.supported!==false))throw new Error('CLI is not available on this device');
+    if(occupiedSlots()>=capacity)throw new Error('Device CLI capacity is full; try the side question again shortly');
+  },
+  receiveFiles:async m=>{if(!m.attachments?.length)return [];const root=join(data,'side-ask-files');m.questionDir=join(root,m.questionId);
+    return receiveTurnFiles({items:m.attachments,turnId:m.questionId,root,home:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,route:`/api/agent/side-asks/${m.sideId}`});}});
+// Anything left from before this start is removed; then quiet or old side questions close every five minutes.
+void sideAsks.sweep({all:true}).catch(e=>console.error('Side questions:',e.message));
+const sideAskTimer=setInterval(()=>void sideAsks.sweep().catch(e=>console.error('Side questions:',e.message)),5*60000);sideAskTimer.unref();
+/**
+ * Data retention (src/data-retention.mjs): Home sets the policy; a pass runs a minute after the first registration and
+ * daily after that, deleting in small batches. VACUUM waits for an idle moment (no CLI, no takeover turn, no sync in flight).
+ */
+let retention=normalizeRetention({}),maintenanceStarted=false,vacuumRetry=null;
+const quiet=()=>sessions.size===0&&organizerRunning===0&&(nativeTurns?.size||0)===0&&(sourceSync.inFlight?.size||0)===0&&db.list('sourceSyncReservations').length===0;
+function vacuumWhenQuiet(){clearTimeout(vacuumRetry);vacuumRetry=null;
+  if(!quiet()){vacuumRetry=setTimeout(vacuumWhenQuiet,10*60000);vacuumRetry.unref();return {vacuumed:false,deferred:true};}
+  try{const result=vacuumIfWasteful(db);if(result.vacuumed)console.log(`Data: VACUUM ${Math.round(result.before/1048576)} MB -> ${Math.round(result.after/1048576)} MB`);return result;}catch(e){console.error('Data: VACUUM failed',e.message);return {vacuumed:false,error:e.message};}}
+async function runMaintenance(){
+  try{const summary=await cleanupData(db,{policy:retention,blobRoot:sourceSync.blobRoot,log:line=>console.error('Data:',line)});
+    const n=Object.values(summary.deleted).reduce((a,b)=>a+b,0);if(n||summary.blobsDeleted)console.log(`Data: removed ${n} records (${Math.round(summary.bytes/1048576)} MB) and ${summary.blobsDeleted} blobs (${Math.round(summary.blobBytes/1048576)} MB)`);
+    return {...summary,vacuum:vacuumWhenQuiet()};}
+  catch(e){console.error('Data: cleanup failed',e.message);return {error:e.message};}
+}
+function startMaintenance(){if(maintenanceStarted)return;maintenanceStarted=true;const first=setTimeout(()=>void runMaintenance(),60000);first.unref();const daily=setInterval(()=>void runMaintenance(),24*3600000);daily.unref();}
 const sourceSyncTimer=setInterval(()=>{if(registered)sourceSync.flush();void sourceSync.watch.tick().catch(e=>console.error('Source sync observation failed:',e.code||e.message));},500);sourceSyncTimer.unref();
 const heartbeat = setInterval(() => send({ type: 'heartbeat' }), 15000);
 const runtimeTimer = setInterval(() => { if (ws?.readyState === 1) void refreshRuntimes(); }, 300000);

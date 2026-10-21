@@ -1,4 +1,4 @@
-// Role templates: stale editors must be rejected after edit, delete or restore; revisions never go backwards.
+// Role templates: five built-ins that can be edited and restored, never deleted; stale editors are rejected and revisions never go backwards.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -40,24 +40,22 @@ test('restore checks the editor revision and rejects a missing one', () => withS
   assert.equal(tester(db).responsibility, 'edited');
 }));
 
-test('delete and restore of a built-in keep revisions increasing and reject stale pages', () => withStore(db => {
-  const opened = tester(db);
-  templates.deleteRoleTemplate(db, 'tester', opened.revision);
-  assert.equal(tester(db), undefined);
-  const hidden = templates.hiddenRoleTemplates(db).find(t => t.key === 'tester');
-  assert.ok(hidden.revision > opened.revision);
-  assert.throws(() => save(db, opened, { responsibility: 'old page' }), /not found|changed/);
-  const restored = templates.restoreRoleTemplate(db, 'tester', hidden.revision);
-  assert.ok(restored.revision > hidden.revision);
-  assert.throws(() => save(db, opened, { responsibility: 'old page' }), stale);
+test('five built-in templates ship; a delete record left by an older version no longer hides one', () => withStore(db => {
+  assert.deepEqual(templates.listRoleTemplates(db).map(t => t.key), ['planner', 'developer', 'reviewer', 'tester', 'crossDevice']);
+  assert.equal(typeof templates.deleteRoleTemplate, 'undefined');
+  db.put('roleTemplateRecords', { id: 'tester', deleted: true, revision: 7, updatedAt: new Date().toISOString() });
+  const shown = tester(db);
+  assert.equal(shown.customized, false); assert.equal(shown.revision, 7, 'the stale record still sets the revision an editor must name');
+  assert.equal(save(db, shown, { responsibility: 'edited' }).revision, 8);
+  const edited = tester(db);
+  assert.equal(edited.customized, true, 'the stale delete mark does not swallow the edit');
+  assert.equal(edited.responsibility, 'edited');
 }));
 
-test('updates and deletes require the current revision', () => withStore(db => {
+test('updates require the current revision; an added template can be edited but not removed', () => withStore(db => {
   const created = templates.saveRoleTemplate(db, { name: 'QA', responsibility: 'check', instructions: 'run' });
   assert.throws(() => templates.saveRoleTemplate(db, { key: created.key, name: 'QA', responsibility: 'x', instructions: '' }), stale);
-  assert.throws(() => templates.deleteRoleTemplate(db, created.key, undefined), stale);
   const updated = save(db, created, { responsibility: 'new' });
-  assert.throws(() => templates.deleteRoleTemplate(db, created.key, created.revision), stale);
-  templates.deleteRoleTemplate(db, created.key, updated.revision);
-  assert.equal(templates.listRoleTemplates(db).some(t => t.key === created.key), false);
+  assert.equal(updated.revision, created.revision + 1);
+  assert.ok(templates.listRoleTemplates(db).some(t => t.key === created.key && t.responsibility === 'new'));
 }));

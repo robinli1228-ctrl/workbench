@@ -1,7 +1,7 @@
 // Directory events drive source observation; the periodic sweeps are a backstop whose cadence depends on watcher health.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, unlinkSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, linkSync, unlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const load = name => import(pathToFileURL(join(root, 'src', name)).href);
 const { Store } = await load('store.mjs');
-const { SourceSyncWatch, OBSERVATION_INTERVALS } = await load('source-sync-watch.mjs');
+const { SourceSyncWatch, OBSERVATION_INTERVALS, RETRY_BASE_MS, RETRY_MAX_MS } = await load('source-sync-watch.mjs');
 const { readSourceFile } = await load('source-sync-files.mjs');
 
 const MINUTE = 60000;
@@ -95,4 +95,71 @@ test('a walked observation reuses an unchanged file after one lstat and still re
   await assert.rejects(readSourceFile(dir, 'a.txt', {}, { walked: true, cached, metrics }), /unsafe_file/);
   unlinkSync(join(dir, 'a.txt'));
   assert.deepEqual(await readSourceFile(dir, 'a.txt', {}, { walked: true, cached, metrics }), { entry: null, bytes: null });
+});
+
+test('a symbolic link in the tree is listed as excluded; the scope keeps watching instead of failing every 30 seconds', async t => {
+  const { dir, db, watch, scope, id, statuses, advance } = env(t);
+  mkdirSync(join(dir, '.agents', 'skills'), { recursive: true });
+  symlinkSync('../../skills/elsewhere', join(dir, '.agents', 'skills', 'linked'));
+  await watch.configure({ version: 'v1', scopes: [scope] });
+  await watch.tick();
+  assert.equal(statuses().length, 1);
+  assert.equal(statuses()[0].status, 'watching', 'the link does not block the other files');
+  assert.deepEqual(Object.keys(db.get('sourceSyncWatchStates', id).entries).sort(), ['a.txt', 'docs/b.md']);
+  assert.deepEqual(watch.observations.get(id).snapshot.excluded.find(e => e.path === '.agents/skills/linked'), { path: '.agents/skills/linked', reason: 'symlink' });
+  for (let i = 0; i < 9; i++) { advance(30000); await watch.tick(); }
+  assert.equal(statuses().length, 1, 'no retry loop: nothing failed');
+});
+
+test('a failing scope backs off from 30 seconds to 10 minutes and keeps its observation cache for the next success', async t => {
+  let broken = false;
+  const { watch, scope, id, statuses, advance } = env(t, { resolveBinding: scope => { if (broken) throw Object.assign(new Error('unreadable'), { code: 'scan_failed' }); return { root: scope.root }; } });
+  await watch.configure({ version: 'v1', scopes: [scope] });
+  await watch.tick();
+  const cache = watch.observations.get(id).cache;
+  assert.ok(cache.size, 'a successful scan published its cache');
+  broken = true;
+  const delays = [];
+  for (let i = 0; i < 8; i++) {
+    advance(RETRY_MAX_MS); await watch.tick();
+    delays.push(watch.retryAt.get(id) - Date.parse('2026-10-20T10:00:00Z') - RETRY_MAX_MS * (i + 1));
+  }
+  assert.deepEqual(delays, [30000, 60000, 120000, 240000, 480000, 600000, 600000, 600000]);
+  assert.equal(RETRY_BASE_MS, 30000); assert.equal(RETRY_MAX_MS, 600000);
+  assert.equal(statuses().at(-1).status, 'blocked');
+  assert.equal(watch.observations.get(id).cache, cache, 'the cache from the last good scan is kept');
+  advance(1000); await watch.tick();
+  assert.equal(statuses().length, 9, 'inside the back-off window nothing is retried');
+  broken = false;
+  advance(RETRY_MAX_MS); await watch.tick();
+  assert.equal(statuses().at(-1).status, 'watching');
+  // More than an hour passed during the back-off, so this recovery is the hourly full hash; the cache is republished by it.
+  assert.equal(watch.observations.get(id).fullHash, true);
+  assert.equal(watch.observations.get(id).cache.size, 2);
+  assert.equal(watch.failures.get(id), undefined, 'success resets the back-off');
+});
+
+test('a file replaced by a link between sweeps is excluded by the event-driven check; a hard link still blocks as in a full walk', async t => {
+  const { dir, db, watch, scope, id, statuses, advance } = env(t);
+  await watch.configure({ version: 'v1', scopes: [scope] });
+  await watch.tick();
+  unlinkSync(join(dir, 'a.txt')); symlinkSync('/etc/hostname', join(dir, 'a.txt'));
+  advance(1000); watch.hint(id, 'a.txt');
+  advance(600); await watch.tick();
+  assert.equal(statuses().at(-1).status, 'watching', 'the link does not fail the scope');
+  assert.deepEqual(Object.keys(db.get('sourceSyncWatchStates', id).entries), ['docs/b.md'], 'the path left the manifest');
+  assert.deepEqual(watch.observations.get(id).snapshot.excluded.filter(e => e.path === 'a.txt'), [{ path: 'a.txt', reason: 'symlink' }]);
+  // Back to a regular file: the stale excluded entry is not carried over.
+  unlinkSync(join(dir, 'a.txt')); writeFileSync(join(dir, 'a.txt'), 'alpha again');
+  advance(1000); watch.hint(id, 'a.txt');
+  advance(600); await watch.tick();
+  assert.deepEqual(Object.keys(db.get('sourceSyncWatchStates', id).entries).sort(), ['a.txt', 'docs/b.md']);
+  assert.equal(watch.observations.get(id).snapshot.excluded.some(e => e.path === 'a.txt'), false);
+  // A hard link is a transfer boundary, not a scope-level exclusion: the scope blocks and backs off.
+  linkSync(join(dir, 'docs', 'b.md'), join(dir, 'docs', 'b-link.md'));
+  advance(1000); watch.hint(id, 'docs/b-link.md');
+  advance(600); await watch.tick();
+  assert.equal(statuses().at(-1).status, 'blocked');
+  assert.equal(statuses().at(-1).error, 'unsafe_file');
+  assert.equal(watch.failures.get(id), 1);
 });

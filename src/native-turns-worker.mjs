@@ -10,14 +10,14 @@ import { nativeTerminalProject, projectTerminalLock, terminalProcessIdentity, pr
 const LIMIT=20*1024*1024,COUNT=6,uuid=/^[a-f0-9-]{36}$/;
 
 /** Takeover attachments are verified from Home into the Worker's own data folder, never into the user's session folder. */
-export async function receiveTurnFiles({items=[],turnId,root,home,token,fetchImpl=fetch}) {
+export async function receiveTurnFiles({items=[],turnId,root,home,token,fetchImpl=fetch,route=`/api/agent/native-turns/${turnId}`}) {
   if(!items.length)return [];
   if(!uuid.test(turnId)||items.length>COUNT)throw new Error('Invalid takeover attachments');
   const directory=join(root,turnId);await mkdir(directory,{recursive:true,mode:0o700});
   const received=[];
   for(const item of items){
     if(!uuid.test(item.id)||!Number.isSafeInteger(item.size)||item.size<1||item.size>LIMIT||!/^[a-f0-9]{64}$/.test(item.sha256||'')||typeof item.name!=='string')throw new Error('Invalid takeover attachment');
-    const response=await fetchImpl(new URL(`/api/agent/native-turns/${turnId}/${item.id}`,home),{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
+    const response=await fetchImpl(new URL(`${route}/${item.id}`,home),{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(60000)});
     if(!response.ok)throw new Error(`Attachment download failed: ${item.name} (${response.status})`);
     const chunks=[];let size=0;
     for await(const chunk of response.body){size+=chunk.length;if(size>item.size||size>LIMIT)throw new Error('Attachment download exceeds its declared size');chunks.push(chunk);}
