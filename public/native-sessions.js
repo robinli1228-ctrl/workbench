@@ -820,7 +820,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const isReleasing=value=>operation(sessionKey(value)).releasing;
   const activeTurn=()=>turns.find(x=>['queued','starting','running','waiting_user','stopping'].includes(x.status));
   // 按钮移到侧栏后仍使用当前会话的发送、上传及执行状态，避免误结束活动轮次。
-  const releaseDisabled=value=>{const op=operation(sessionKey(value));return Boolean(sessionKey(value)===k()&&activeTurn()||op.sending||op.uploads>0||op.releasing);};
+  const releaseDisabled=value=>{const op=operation(sessionKey(value));return Boolean(sessionKey(value)===k()&&activeTurn()||op.sending||op.uploads>0||op.releasing||op.editing);};
   const turnsUrl=()=>`${endpoint(current.nodeId)}/turns`;
   // Same send lifecycle as the group chat (send-state.js); the takeover API is idempotent by clientTurnId.
   const sendState=(d,op)=>sendStateOf(d,Boolean(op?.sending));
@@ -984,11 +984,14 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   async function setQueuePaused(paused){try{const result=await api(`${turnsUrl()}/queue`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,paused}});queueState=result.queue||queueState;renderQueue();await refresh();}catch(error){operation().message=t(error.message);render();}}
   // Delete and edit take a message out only while it still waits; an older Home without withdraw cancels it the old way.
   async function withdrawQueued(turn){queuePending.add(turn.id);renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/${queueState?'withdraw':'stop'}`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}}
-  async function editQueued(turn){const d=draft();
-   if(d.pending||input.value.trim()||d.attachments?.length){operation().message=t('Keep or send the current draft before editing a queued message');render();return;}
-   queuePending.add(turn.id);renderQueue();
-   try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/withdraw`,{method:'POST',json:{}});const back=draft();back.text=turn.prompt||'';back.attachments=(turn.attachments||[]).map(a=>({...a,reused:true}));save();await refresh();input.value=back.text;input.focus();syncSendButton();}
-   catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}}
+  /** 撤回期间只锁原会话的草稿，返回结果不能写入后来切换的会话。 */
+  async function editQueued(turn){const id=k(),d=draft(id),op=operation(id);
+   if(op.editing||op.sending||op.releasing||op.uploads)return;
+   if(d.pending||d.text?.trim()||input.value.trim()||d.attachments?.length){op.message=t('Keep or send the current draft before editing a queued message');render();return;}
+   op.editing=true;op.message='';queuePending.add(turn.id);render();
+   try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/withdraw`,{method:'POST',json:{}});d.text=turn.prompt||'';d.attachments=(turn.attachments||[]).map(a=>({...a,reused:true}));save();if(k()===id)await refresh();}
+   catch(error){op.message=t(error.message);}
+   finally{op.editing=false;queuePending.delete(turn.id);if(k()===id){render();input.focus();}}}
   function renderQueue(){
    const pos=optimisticOrder?new Map(optimisticOrder.map((id,i)=>[id,i])):null;
    const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||(pos?(pos.get(a.id)??Infinity)-(pos.get(b.id)??Infinity):0)||queueRank(a)-queueRank(b));
@@ -1007,14 +1010,14 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const busy=queuePending.has(turn.id)||turn.steer,steer=el('button',`icon-button message-queue-steer${busy?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(turn.steer?'Interrupting and starting this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
     steer.onclick=async()=>{queuePending.add(turn.id);queueSignature='';renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
     row.append(steer);
-    if(queueState){const edit=iconButton('edit','Edit: back to the input box',()=>void editQueued(turn),'message-queue-edit');edit.disabled=busy;row.append(edit);}
+    if(queueState){const edit=iconButton('edit','Edit: back to the input box',()=>void editQueued(turn),'message-queue-edit');edit.disabled=busy||Boolean(operation().editing);row.append(edit);}
     const remove=iconButton('trash','Delete',()=>void withdrawQueued(turn),'message-queue-delete');remove.disabled=queuePending.has(turn.id);row.append(remove);
     queueList.append(row);});}
   /** Stop only while a reply runs and nothing is typed; with text or files the button sends, and Home queues the message. */
   function syncSendButton(){if(!current)return;const d=draft(),op=operation(),state=sendState(d,op),live=activeTurn(),stopping=live?.status==='stopping',typing=Boolean(input.value.trim())||Boolean(d.attachments?.length)||Boolean(d.pending);
    const stopMode=Boolean(live)&&!typing,paused=Boolean(getData().settings?.paused);
-   if(stopMode){sendButton.disabled=stopping||op.releasing;setSend('stop',stopping?'Stopping…':'Stop');}
-   else{sendButton.disabled=paused||op.sending||op.releasing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);setSend('send',paused?'Remote execution is paused':SEND_LABELS[state]||'Send');}
+   if(stopMode){sendButton.disabled=stopping||op.releasing||op.editing;setSend('stop',stopping?'Stopping…':'Stop');}
+   else{sendButton.disabled=paused||op.sending||op.releasing||op.editing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);setSend('send',paused?'Remote execution is paused':SEND_LABELS[state]||'Send');}
    input.placeholder=paused?t('Remote execution is paused; resume it in the connection card or the top bar'):live?t('Reply in progress; Enter queues your message, Stop interrupts'):t('Message {tool}; replies continue this native session',{tool:names[current.runtime]||current.runtime});}
   let refocus=false;
   function render(){
@@ -1027,7 +1030,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
    syncSendButton();renderQueue();
    // Disabling the textarea while a send is in flight drops focus; give it back once typing is possible again.
-   const locked=op.sending||op.releasing||Boolean(d.pending);if(locked&&!input.disabled&&[input,sendButton].includes(document.activeElement))refocus=true;
+   const locked=op.sending||op.releasing||op.editing||Boolean(d.pending);if(locked&&!input.disabled&&[input,sendButton].includes(document.activeElement))refocus=true;
    input.disabled=locked;attachButton.disabled=locked;
    if(!shell.contains(form))shell.replaceChildren(queue,form);resize();
    if(refocus&&!locked){refocus=false;if(document.activeElement===document.body||document.activeElement===sendButton)input.focus({preventScroll:true});}
@@ -1046,7 +1049,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   attachButton.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
   field.append(tray,attachButton,input,sendButton);barRow.append(field);form.append(note,barRow);form.addEventListener('submit',e=>{e.preventDefault();void submit();});
   /** Same limits as the group chat: at most 6 files per message, 20 MB each; images only for CLIs with image input. */
-  async function upload(list){if(!current)return;const id=k(),nodeId=current.nodeId,runtime=current.runtime,d=draft(id),op=operation(id),files=[...list];if(op.sending||op.releasing||d.pending)return;op.message='';
+  async function upload(list){if(!current)return;const id=k(),nodeId=current.nodeId,runtime=current.runtime,d=draft(id),op=operation(id),files=[...list];if(op.sending||op.releasing||op.editing||d.pending)return;op.message='';
    if((d.attachments?.length||0)+op.uploads+files.length>6){op.message=t('At most 6 attachments per message');render();return;}
    if(files.some(f=>!f.size||f.size>20*1024*1024)){op.message=t('Attachments cannot be empty; each file is limited to 20 MB');render();return;}
    if(!IMAGE_CLIS.has(runtime)&&files.some(f=>f.type.startsWith('image/'))){op.message=t('{tool} cannot receive images here; files are passed as paths',{tool:names[runtime]});render();return;}
@@ -1059,7 +1062,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const resize=()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;};
   input.addEventListener('input',()=>{draft().text=input.value;save();resize();syncSendButton();});
   input.addEventListener('keydown',e=>{if(window.matchMedia('(max-width: 1000px)').matches)return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!sendButton.disabled){e.preventDefault();input.form?.requestSubmit();}});
-  async function submit(){if(!current)return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.uploads)return;
+  async function submit(){if(!current)return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.editing||op.uploads)return;
    // An in-flight or unknown send is only looked up again (click, double click, Enter); it is never resent with a new ID.
    if(d.pending&&d.sendState!=='failed'){void verifyTurn(id);return;}
    if(!d.pending&&!input.value.trim()&&!d.attachments?.length)return;op.message='';
