@@ -1731,4 +1731,6 @@ export default {
   "Hide guide": "收起",
   "The complete installation and configuration guide: architecture, prerequisites, environment variables, multi-device setup, services, upgrade and troubleshooting. Copy it and hand it to an AI assistant to walk through the setup with you.": "完整的安装与配置指南：架构、环境要求、环境变量、多设备部署、系统服务、升级与故障排查。复制后交给 AI 助手，它可以带你逐步完成配置。",
   "Copied the whole guide. Paste it to your AI assistant and ask it to help you configure Workbench.": "已复制全文。把它粘贴给你的 AI 助手，让它协助你完成 Workbench 的配置。",
+  "Open on the right": "在右侧打开",
+  "Close preview": "关闭预览",
 };

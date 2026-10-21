@@ -3616,3 +3616,38 @@ dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); 
 /* Text attachments (pasted text) open in the media viewer as the text itself, wrapped and scrollable. */
 dialog.media-lightbox .media-stage.is-text { display: block; min-height: 120px; overflow: auto; border: 1px solid var(--line); background: #f8f9fb; }
 dialog.media-lightbox .media-text { margin: 0; padding: 14px 16px; color: var(--ink); font-size: 13.5px; line-height: 1.7; font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Right-side Preview tab (Sessions page, desktop): one pinned message or file, read beside the chat. */
+.native-session-sidebar .native-side-panel.is-preview { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.side-preview { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.side-preview-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 10px 10px 16px; border-bottom: 1px solid var(--card-hairline, var(--line)); background: #fff; }
+.side-preview-titles { flex: 1; min-width: 0; padding-top: 3px; }
+.side-preview-title { display: block; overflow: hidden; color: var(--ink); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.side-preview-sub { overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.side-preview-actions { display: flex; flex: none; gap: 2px; }
+.side-preview-actions .chat-icon-btn { display: grid; place-items: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; margin: 0; padding: 6px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
+.side-preview-actions .chat-icon-btn:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.side-preview-actions .chat-icon-btn svg { width: 17px; height: 17px; }
+.side-preview-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; padding: 16px 18px 24px; background: #fff; overscroll-behavior: contain; }
+.side-preview-body > .markdown-body { font-size: 14.5px; line-height: 1.75; overflow-wrap: anywhere; }
+.side-preview-image { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 8px; }
+.side-preview-media { width: 100%; max-height: 72vh; border-radius: 8px; background: #000; }
+audio.side-preview-media { background: transparent; }
+.side-preview-pdf { flex: 1; width: 100%; min-height: 70vh; border: 0; }
+.side-preview-text, .nt-side-prompt { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--ink); font-family: inherit; font-size: 14px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nt-side-sheet .nt-code { max-height: none; }
+.side-preview-body .artifact-code { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.side-preview-note { margin: 0; }
+.side-preview-empty { display: grid; justify-items: center; gap: 12px; max-width: 300px; margin: auto; padding: 32px 12px; color: var(--muted); font-size: 13px; line-height: 1.7; text-align: center; }
+.side-preview-empty p { margin: 0; }
+.side-preview-empty-icon svg { width: 30px; height: 30px; opacity: .55; }
+/* The entry buttons: beside Copy under replies and prompts, Download in the viewer, in the file sheet and output details. */
+.native-session-content .nt-reply-foot .nt-side { display: grid; place-items: center; width: 24px; height: 24px; min-height: 24px; margin-left: -6px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--nt-quiet, var(--muted)); }
+.native-session-content .nt-reply-foot .nt-side:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.nt-reply-foot .nt-side svg { width: 14px; height: 14px; }
+#artifact-detail-dialog .dialog-heading h2 { margin-right: auto; }
+#artifact-detail-dialog .dialog-heading { gap: 6px; }
+.artifact-detail-side svg { width: 18px; height: 18px; }
+@media (max-width: 1000px) {
+  #native-side-tab-preview, .nt-side, .nt-prompt-side, .media-side, .nt-sheet-btn.is-side, .artifact-detail-side { display: none !important; }
+}

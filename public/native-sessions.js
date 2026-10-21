@@ -8,7 +8,8 @@ import {groupNativeSessions,readNativeSessionPages} from './native-session-group
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
-import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,openTextLightbox,formatBytes} from './media.js';
+import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,openTextLightbox,formatBytes,copyAction} from './media.js';
+import {createSidePreview,setSidePreviewOpener,sideButton,canOpenSide,openSide} from './side-preview.js';
 import {pastesAsFile,pastedTextName,isTextName} from './pasted-text.js';
 import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
@@ -36,8 +37,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  list.id='native-session-list';content.id='native-session-content';side.id='native-session-sidebar';
  document.querySelector('#project-list').after(list);document.querySelector('main.workspace').append(content);document.querySelector('#node-sidebar').append(side);
  /** The right side mirrors the group-chat inspector: one header, three panels and the same bottom tab bar and classes. */
- const SIDE_TABS=['overview','outputs','resources'],SIDE_TITLES={overview:'Overview',outputs:'Files',resources:'Resources'};
- const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,resources:UI_ICON.desktop};
+ // Preview (desktop only) holds one message, picture, video or file opened "on the right" for reading beside the chat.
+ const SIDE_TABS=['overview','outputs','resources','preview'],SIDE_TITLES={overview:'Overview',outputs:'Files',resources:'Resources',preview:'Preview'};
+ const SIDE_ICONS={overview:UI_ICON.overview,outputs:UI_ICON.original,resources:UI_ICON.desktop,preview:UI_ICON.sideOpen};
  let sideTab='overview';
  const sideHeader=el('header','inspector-header native-side-header'),sideTitle=el('h2',''),sideBadge=el('span','native-side-badge');sideBadge.hidden=true;sideHeader.append(sideTitle,sideBadge);
  const sidePanels=Object.fromEntries(SIDE_TABS.map(name=>{const panel=el('section','inspector-panel native-side-panel');panel.id=`native-side-${name}`;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',`native-side-tab-${name}`);return [name,panel];}));
@@ -50,9 +52,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    const next=event.key==='Home'?0:event.key==='End'?SIDE_TABS.length-1:(index+(event.key==='ArrowRight'?1:-1)+SIDE_TABS.length)%SIDE_TABS.length;selectSideTab(SIDE_TABS[next]);sideTabButtons[next].focus();});
   return tab;});
  sideTabBar.append(...sideTabButtons);side.append(sideHeader,...Object.values(sidePanels),sideTabBar);
+ const sidePreview=createSidePreview({t,formatSize:formatBytes,stamp:value=>time(value),copyAction,emptyText:t('Use \u201cOpen on the right\u201d beside Copy on a message, or beside Download in a picture or file preview. It stays here while you read the chat or switch sessions.')});
+ sidePanels.preview.classList.add('is-preview');sidePanels.preview.append(sidePreview.root);
+ // The panel is offered only while the Sessions page is shown; opening shows the right column if it was hidden.
+ setSidePreviewOpener({available:()=>active(),open:item=>{if(document.body.dataset.inspector==='hidden')document.querySelector('#toggle-inspector')?.click();selectSideTab('preview');void sidePreview.open(item);}});
  /** The chosen tab stays selected across sessions, like the group-chat inspector. */
  function selectSideTab(name){
-  sideTab=name;for(const [tab,panel] of Object.entries(sidePanels))panel.hidden=tab!==name;
+  sideTab=name;document.body.dataset.sessionSideTab=name;for(const [tab,panel] of Object.entries(sidePanels))panel.hidden=tab!==name;
   sideTitle.textContent=t(SIDE_TITLES[name]);side.setAttribute('aria-label',t(SIDE_TITLES[name]));
   sideTabButtons.forEach((tab,i)=>{const on=SIDE_TABS[i]===name;tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
   if(name==='outputs')renderOutputs();
@@ -580,13 +586,17 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(at){const stamp=el('time','nt-prompt-time',clock(at));stamp.dateTime=at;stamp.title=time(at);tools.append(stamp);}
    const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
    const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
-   tools.append(expand,copy);row.dataset.tools='1';row._tools=tools;
+   const pin=sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),subtitle:session?.title||'',at,copyText:body,render:()=>el('div','nt-side-prompt',body)}));pin.hidden||=!body.trim();
+   tools.append(expand,copy,pin);row.dataset.tools='1';row._tools=tools;
    requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
   }
   if(extra){if(agent)main.append(extra);else files.append(extra);}
   if(files)row.append(files);row.append(main);if(row._tools){row.append(row._tools);delete row._tools;}
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
-  if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);row.append(foot);}
+  if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);
+   // Open on the right: the same text Copy takes, rendered as in the chat, pinned beside it (and kept while another session is open).
+   if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,mediaContext(session));return md;}})));
+   row.append(foot);}
   return row;}
  let agentDetailsSignature='';
  /** Reuse reported CLI quota and this session's recorded settings; refreshing the card never probes a model. */
@@ -850,7 +860,7 @@ const processRows=(turn,{includeFinal=false}={})=>{const rows=allRows(turn),mess
 const replyText=turn=>{const f=finalReply(turn);return f?f.text:turn.text||'';};
 const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind==='tool'||r.kind==='log'||r.kind==='error')||rows.some(r=>r.kind==='message'||r.kind==='text');};
  /** The group-chat live-scene projection orders text, messages, logs and merged tool states for one turn. */
- const preview=createPreviewSheet(content,t);
+ const preview=createPreviewSheet(content,t,{onSide:openSide,canSide:canOpenSide});
  /** One activity line per turn: tool steps classified across CLIs, intermediate agent notes and runtime errors behind it. */
  function stepsOf(turn){const rows=processRows(turn);return {steps:rows.filter(r=>r.kind==='tool').map(r=>classifyStep(r.item,turn.status)),notes:rows.filter(r=>r.kind!=='tool'&&(r.kind==='error'||r.kind==='log'||r.kind==='message'||r.kind==='text'))};}
  function activityFor(turn,{live=false,open=false}={}){

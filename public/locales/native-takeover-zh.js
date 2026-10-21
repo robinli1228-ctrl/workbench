@@ -384,4 +384,8 @@ export default {
  "Open the original": "打开原会话",
  "Model is thinking": "模型正在思考",
  "The pasted text could not become an attachment ({message}); it is back in the input box": "粘贴的文本没能转成附件（{message}），已放回输入框",
+ "Open on the right": "在右侧打开",
+ "My message": "我的消息",
+ "Close preview": "关闭预览",
+ "Use \u201cOpen on the right\u201d beside Copy on a message, or beside Download in a picture or file preview. It stays here while you read the chat or switch sessions.": "在消息的复制旁，或图片、文件预览的下载旁点「在右侧打开」。内容会固定在这里，看对话或切换会话时都不会消失，方便对照。",
 };
