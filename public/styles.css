@@ -3504,3 +3504,7 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-session-content .nt-prompt-tools .nt-prompt-time { color: #9a9fa8; font-size: 12px; }
 .native-session-content .nt-user.is-unsent .nt-body { opacity: 1; border: 1px dashed #c4c8d0; background: transparent; }
 .native-session-content .nt-user.is-unsent .nt-prompt-text { color: #6b7080; font-weight: 400; }
+
+/* Quota card: the window labels in dark semibold; the marks at half opacity so the numbers beside them lead. */
+.native-quota-line .native-quota-label { color: var(--ink); font-weight: 600; }
+.native-quota-line .role-quota-mark { opacity: .5; }
