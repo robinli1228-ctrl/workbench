@@ -3452,22 +3452,25 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-session-content .nt-agent .nt-body { max-width: calc(86% - var(--nt-indent)); margin-left: var(--nt-indent); padding: 12px 0 0; border-top: 1px solid var(--nt-rule); color: var(--nt-text); font-size: 15px; line-height: 1.75; }
 .native-session-content .nt-agent.is-continued .nt-body { padding-top: 0; border-top: 0; }
 .native-session-content .nt-agent .markdown-body { color: var(--nt-text); font-size: 15px; line-height: 1.75; }
-.native-session-content .nt-agent .markdown-body p { margin: 0 0 .7em; }
-.native-session-content .nt-agent .markdown-body > :last-child, .native-session-content .nt-turn > :last-child { margin-bottom: 0; }
-.native-session-content .nt-agent .markdown-body ul, .native-session-content .nt-agent .markdown-body ol { margin: .1em 0 .7em; padding-left: 1.3em; }
-.native-session-content .nt-agent .markdown-body li { margin: .12em 0; }
 .native-session-content .nt-agent .markdown-body strong { color: #000; font-weight: 600; }
 .native-session-content .nt-agent .markdown-body :not(pre) > code { padding: 1px 6px; border-radius: 6px; background: #eef0f4; color: var(--nt-text); font-size: .88em; }
 .native-session-content .nt-agent .nt-reply-foot { max-width: calc(86% - var(--nt-indent)); margin: 12px 0 0 var(--nt-indent); padding: 5px 0 0; gap: 8px; border-top: 1px solid var(--nt-rule); }
 .native-session-content .nt-reply-foot .nt-copy { margin-left: -5px; opacity: 1; color: var(--nt-quiet); }
 .native-session-content .nt-reply-foot .nt-duration { color: var(--nt-quiet); font-size: 12.5px; }
 @media (max-width: 1000px) { .native-session-content .nt-agent .nt-body, .native-session-content .nt-agent .nt-reply-foot { max-width: 94%; } }
+/* One rhythm in a reply: the same gap between any two blocks (paragraphs, lists, code, tool lines, the live line, errors),
+   whether the reply is a page turn (.nt-turn) or history (blocks straight in .nt-body). */
+.native-session-content .nt-agent { --nt-gap: 10px; }
+.native-session-content .nt-agent .nt-body > *, .native-session-content .nt-agent .nt-turn > *, .native-session-content .nt-agent .nt-extra > *, .native-session-content .nt-agent .markdown-body > * { margin-top: 0; margin-bottom: 0; }
+.native-session-content .nt-agent .nt-body > * + *, .native-session-content .nt-agent .nt-turn > * + *, .native-session-content .nt-agent .nt-extra > * + *, .native-session-content .nt-agent .markdown-body > * + * { margin-top: var(--nt-gap); }
+.native-session-content .nt-agent .markdown-body > * + :is(h1, h2, h3, h4) { margin-top: 18px; }
+.native-session-content .nt-agent .markdown-body > :is(h1, h2, h3, h4, h5, h6) + * { margin-top: 6px; }
+.native-session-content .nt-agent .markdown-body :is(ul, ol) { padding-left: 1.3em; }
+.native-session-content .nt-agent .markdown-body li { margin: 0; }
+.native-session-content .nt-agent .markdown-body li + li { margin-top: 2px; }
+.native-session-content .nt-agent .markdown-body li > :is(p, ul, ol) { margin: 0; }
 /* Tool steps: no box; the summary's chevron follows its text; rows are icon + grey text. */
-.native-session-content .nt-activity { margin: 2px 0 12px; border: 0; border-radius: 0; background: none; font-size: 14px; }
-.native-session-content .nt-turn > .markdown-body + .nt-activity, .native-session-content .nt-turn > .markdown-body + .nt-working { margin-top: 8px; }
-.native-session-content .nt-turn > .nt-activity + .markdown-body { margin-top: 0; }
-.native-session-content .nt-turn > .nt-activity + .nt-activity { margin-top: -6px; }
-.native-session-content .nt-agent .nt-body > .nt-extra + .markdown-body { margin-top: 0; }
+.native-session-content .nt-activity { margin: 0; border: 0; border-radius: 0; background: none; font-size: 14px; }
 .native-session-content .nt-activity-summary { width: fit-content; max-width: 100%; gap: 6px; padding: 2px 0; color: var(--nt-quiet); font-size: 14px; }
 .native-session-content .nt-activity-summary:hover { color: #4b505b; }
 .native-session-content .nt-activity-text { order: 0; }
@@ -3486,7 +3489,7 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-session-content .nt-step.is-note .nt-step-target, .native-session-content .nt-step.is-note .nt-step-verb { color: #9da2ab; font-size: 13px; }
 .native-session-content .nt-step .nt-detail { margin: 2px 0 8px 25px; }
 /* Live line: the current action shimmers, elapsed time after it; no dot. */
-.native-session-content .nt-working { gap: 8px; margin: 2px 0 0; color: #9da2ab; font-size: 14px; }
+.native-session-content .nt-working { gap: 8px; margin: 0; color: #9da2ab; font-size: 14px; }
 .native-session-content .nt-working .nt-pulse { display: none; }
 .native-session-content .nt-working-hint { order: 0; background: linear-gradient(90deg, #9da2ab 0 35%, #e1e4ea 50%, #9da2ab 65% 100%) 0 0 / 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: nt-shimmer 1.8s linear infinite; }
 .native-session-content .nt-working-time { order: 1; color: #b3b7bf; font-size: 13px; }
