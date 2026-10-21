@@ -217,24 +217,31 @@ async function historyPage(file,runtime,id,cursor,snapshot){
   if(prior&&prior.tail!==tail)throw Error('Native history changed; reopen the session to read it again.');
   // Quiet refresh must verify the previous snapshot, even when its last page had no older cursor.
   if(snapshot){size=info.size;end=size;tail=await tailAt(size);}
-  const start=Math.max(0,end-1048576),buffer=Buffer.alloc(end-start);await h.read(buffer,0,buffer.length,start);
-  let pos=buffer.length,next=end,bytes=0,prompts=0;const messages=[];
-  while(pos>0){
-   let lineEnd=pos;while(lineEnd>0&&[10,13].includes(buffer[lineEnd-1]))lineEnd--;
-   if(!lineEnd){next=start;break;}
-   const lf=buffer.lastIndexOf(10,lineEnd-1),lineStart=lf+1;
-   if(lf<0&&start>0)break; // Retry this incomplete leading line from its end on the next page.
-   const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map((m,index)=>({...m,id:`${id}:${start+lineStart}${index?`:${index}`:''}`,offset:start+lineStart}));
-   const weight=Buffer.byteLength(JSON.stringify(found));
-   // Pages are sized by prompts, not by tool rows, so a turn with many tool calls still reads as one page.
-   if(found.length&&(prompts>=15||bytes+weight>262144))break;
-   messages.unshift(...found);bytes+=weight;prompts+=found.filter(m=>m.role==='user').length;next=start+lineStart;pos=Math.max(0,lf);
+  let next=end,scanned=0,configuration;const messages=[];
+  // Internal request blobs can fill a window without adding a chat row. Cross only empty windows,
+  // counting overlapping bytes too, so one click never reads more than 8 MiB of transcript data.
+  while(next>0&&!messages.length&&scanned<8*1048576){
+   const windowEnd=next,start=Math.max(0,windowEnd-1048576),buffer=Buffer.alloc(windowEnd-start);await h.read(buffer,0,buffer.length,start);scanned+=buffer.length;
+   if(!cursor&&configuration===undefined)configuration=sessionConfiguration(jsonLines(buffer.subarray(start?(buffer.indexOf(10)<0?buffer.length:buffer.indexOf(10)+1):0).toString('utf8')),runtime);
+   let pos=buffer.length,bytes=0,prompts=0;
+   while(pos>0){
+    let lineEnd=pos;while(lineEnd>0&&[10,13].includes(buffer[lineEnd-1]))lineEnd--;
+    if(!lineEnd){next=start;break;}
+    const lf=buffer.lastIndexOf(10,lineEnd-1),lineStart=lf+1;
+    if(lf<0&&start>0)break; // Retry this incomplete leading line from its end on the next page.
+    const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map((m,index)=>({...m,id:`${id}:${start+lineStart}${index?`:${index}`:''}`,offset:start+lineStart}));
+    const weight=Buffer.byteLength(JSON.stringify(found));
+    // Pages are sized by prompts, not by tool rows, so a turn with many tool calls still reads as one page.
+    if(found.length&&(prompts>=15||bytes+weight>262144))break;
+    messages.unshift(...found);bytes+=weight;prompts+=found.filter(m=>m.role==='user').length;next=start+lineStart;pos=Math.max(0,lf);
+   }
+   if(next===windowEnd)throw Error('A native history record is too large to preview; the original history is unchanged.');
   }
-  if(next===end&&end>0)throw Error('A native history record is too large to preview; the original history is unchanged.');
   const after=await stat(file.path);if(after.dev!==info.dev||after.ino!==info.ino||after.size<size)throw Error('Native history changed; reopen the session to read it again.');
   const encode=offset=>Buffer.from(JSON.stringify({v:1,key,size,end:offset,tail})).toString('base64url');
   return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,
-   ...(!cursor?{sessionConfiguration:sessionConfiguration(jsonLines(buffer.subarray(start?(buffer.indexOf(10)<0?buffer.length:buffer.indexOf(10)+1):0).toString('utf8')),runtime)}:{})};
+   ...(!messages.length&&next>0?{notice:'No displayable messages in this portion. Earlier history remains; click Load older history to continue.'}:{}),
+   ...(!cursor?{sessionConfiguration:configuration||sessionConfiguration([],runtime)}:{})};
  }finally{await h.close();}
 }
 
