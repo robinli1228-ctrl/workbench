@@ -84,7 +84,7 @@ export class SourceSyncHome {
           if(Date.now()-Date.parse(n.queuedAt)>retryDelay(n.attempts||1))this.db.put('sourceSyncWatchNotices',{...n,batchId:null});
         }
       }
-      if(this.db.listProject('sourceSyncBatches',config.projectId).some(b=>!['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready'].includes(b.status)))continue;
+      if(this.db.listSourceSyncBatches({projectId:config.projectId}).length)continue;
       const pending=this.db.listProject('sourceSyncWatchNotices',config.projectId).filter(n=>n.generation===config.generation&&!n.handled&&!n.batchId);if(!pending.length)continue;
       const sourceNodeId=config.nodeIds.includes(pending[0].nodeId)?pending[0].nodeId:config.nodeIds[0];
       try{const batch=this.sync.request(config.projectId,{requestId:contentHash(JSON.stringify(pending.map(n=>[n.noticeId,n.attempts||0]))),sourceNodeId,targetNodeIds:config.nodeIds.filter(id=>id!==sourceNodeId)} ,{kind:'watcher'});

@@ -27,6 +27,8 @@ const now = () => new Date().toISOString();
 // Match the existing !command.result rule, including legacy null/false/zero/empty results.
 const pendingSourceCommand = "COALESCE(json_extract(data,'$.result'),0) IN (0,'')";
 const activeRun = "COALESCE(json_extract(data,'$.status'),'') NOT IN ('succeeded','failed','interrupted')";
+// A batch that still needs work; terminal statuses match SourceSync's done set and the transport's watch gate.
+const openSourceBatch = "COALESCE(json_extract(data,'$.status'),'') NOT IN ('completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready')";
 const chatTask = "json_extract(data,'$.origin')='chat' AND json_extract(data,'$.status') IN ('ready','in_progress')";
 const schedulableRequest = "json_extract(data,'$.status') IN ('queued','waiting_call','waiting_delivery')";
 const pendingCallResult = "json_extract(data,'$.status') IN ('running','queued')";
@@ -48,6 +50,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_kind_project ON records(kind,json_extract(data,'$.projectId'));
       CREATE INDEX IF NOT EXISTS records_source_command_batch ON records(json_extract(data,'$.projectId'),json_extract(data,'$.batchId')) WHERE kind='sourceSyncCommands';
       CREATE INDEX IF NOT EXISTS records_source_command_pending ON records(json_extract(data,'$.projectId'),json_extract(data,'$.nodeId')) WHERE kind='sourceSyncCommands' AND ${pendingSourceCommand};
+      CREATE INDEX IF NOT EXISTS records_source_batch_open ON records(json_extract(data,'$.projectId')) WHERE kind='sourceSyncBatches' AND ${openSourceBatch};
       CREATE INDEX IF NOT EXISTS records_active_runs ON records(json_extract(data,'$.nodeId')) WHERE kind='runs' AND ${activeRun};
       CREATE INDEX IF NOT EXISTS records_chat_tasks ON records(id) WHERE kind='tasks' AND ${chatTask};
       CREATE INDEX IF NOT EXISTS records_role_steering ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId')) WHERE kind='tasks' AND json_extract(data,'$.steering') IS NOT NULL;
@@ -161,6 +164,13 @@ export class Store {
     // Without statistics SQLite may prefer the general kind index and parse every historical manifest.
     const index=pending?'records_source_command_pending':'records_source_command_batch';
     return this.db.prepare(`SELECT data FROM records INDEXED BY ${index} WHERE ${conditions.join(' AND ')} ORDER BY rowid`).all(...params).map(r=>JSON.parse(r.data));
+  }
+  /** Open (non-terminal) batches, optionally one project or one status, from the partial index: the per-second sync tick never parses the finished history. */
+  listSourceSyncBatches({projectId,status}={}) {
+    const conditions=["kind='sourceSyncBatches'",openSourceBatch],params=[];
+    if(projectId!==undefined){conditions.push("json_extract(data,'$.projectId')=?");params.push(projectId);}
+    if(status!==undefined){conditions.push("json_extract(data,'$.status')=?");params.push(status);}
+    return this.db.prepare(`SELECT data FROM records INDEXED BY records_source_batch_open WHERE ${conditions.join(' AND ')} ORDER BY rowid`).all(...params).map(r=>JSON.parse(r.data));
   }
   /** Page small transport records first; never parse historical receipt bodies just to select work. */
   sourceReceiptTransports({ready=true,at=Date.now(),limit=16,exclude=[]}={}) {

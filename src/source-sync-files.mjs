@@ -213,7 +213,8 @@ export async function captureDirectorySnapshot(options) {
       const shared=policy.sharedDocs===true&&(path==='.workbench'||path==='.workbench/docs'||path.startsWith('.workbench/docs/'));
       const sharedParent=shared&&(path==='.workbench'||path==='.workbench/docs');
       if(!sharedParent&&(excludedSourcePath(path,policy)||!outputs&&!shared&&isIgnored(path))){excluded.push({path,reason:'excluded'});continue;}
-      if(item.isSymbolicLink()||!item.isFile()&&!item.isDirectory())throw syncError('unsafe_file',path);
+      // A link or a special file is never read or transferred; it is listed as excluded so one link cannot block the whole scope.
+      if(item.isSymbolicLink()||!item.isFile()&&!item.isDirectory()){excluded.push({path,reason:item.isSymbolicLink()?'symlink':'special_file'});continue;}
       if(item.isDirectory()){
         if(outputs&&await runtimeDirectory(join(dir,item.name))){excluded.push({path,reason:'runtime_directory'});continue;}
         if(await exists(join(dir,item.name,'.git'))){excluded.push({path,reason:'nested_repository'});continue;}
@@ -231,6 +232,8 @@ export async function captureDirectorySnapshot(options) {
       // A file this device never synchronized and that exceeds the per-file limit is recorded as oversize, not a batch
       // failure; it stays viewable through on-demand media reads. A previously synchronized file still blocks (Home fences it).
       if(e.code==='file_too_large'&&!options.baselineEntries?.[path]){excluded.push({path,reason:'oversize',size:e.limit?.actual??null});return undefined;}
+      // A changed path (from a directory event) that is now a link or hard link leaves the observation like a deleted file.
+      if(e.code==='unsafe_file'&&partial){excluded.push({path,reason:'symlink'});delete entries[path];nextCache.delete(path);return undefined;}
       throw e;
     }
     if(!value.entry){if(partial){delete entries[path];nextCache.delete(path);return undefined;}throw syncError('source_busy',path);}

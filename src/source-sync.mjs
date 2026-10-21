@@ -127,9 +127,9 @@ export class SourceSync {
   /** Returns persistent commands; connection code supplies resend timing and node authentication. */
   schedule(){
     if(this.db.get('settings','main')?.paused)return [];
-    const batches=this.db.list('sourceSyncBatches');
-    for(const batch of batches.filter(b=>b.status==='queued')){
-      if(batches.some(b=>b.id!==batch.id&&b.projectId===batch.projectId&&!done.has(b.status)&&b.status!=='queued'))continue;
+    // Queued and in-progress batches come from the open-batch index; finished history is never read here.
+    for(const batch of this.db.listSourceSyncBatches({status:'queued'})){
+      if(this.db.listSourceSyncBatches({projectId:batch.projectId}).some(b=>b.id!==batch.id&&b.status!=='queued'))continue;
       if(this.db.listSourceSyncCommands({projectId:batch.projectId,pending:true}).some(c=>c.batchId!==batch.id))continue;
       if(batch.kind!=='preview'&&(!this.config(batch.projectId).enabled||this.config(batch.projectId).generation!==batch.generation)){
         this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason:'configuration_changed'});continue;

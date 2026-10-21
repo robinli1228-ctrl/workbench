@@ -5,6 +5,7 @@ import {captureDirectorySnapshot} from './source-sync-files.mjs';
 import {excludedSourcePath,entryEqual,manifestDigest,syncError} from './source-sync-manifest.mjs';
 
 const key=c=>`${c.projectId}:${c.repositoryId}:${c.generation}`;
+export const RETRY_BASE_MS=30000,RETRY_MAX_MS=10*60000;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 /** Directory events drive observation. The periodic sweeps are only a backstop for lost events, so a scope whose
@@ -17,7 +18,7 @@ export const OBSERVATION_INTERVALS=Object.freeze({
 /** Background observation persists notices; the existing SourceSync queue transfers files without a browser. */
 export class SourceSyncWatch {
   constructor({db,send,resolveBinding,blocked=()=>false,busy=()=>false,clock=Date.now,intervals=OBSERVATION_INTERVALS,maxWatches=4096,pause:wait=pause,scopePause={idle:250,busy:1000,max:5000}}){
-    Object.assign(this,{db,send,resolveBinding,blocked,busy,clock,intervals,maxWatches,pause:wait,scopePause});this.watches=new Map();this.hints=new Map();this.checked=new Map();this.fullChecked=new Map();this.observations=new Map();this.epochs=new Map();this.retryAt=new Map();this.sent=new Map();this.degraded=new Map();this.running=false;this.closed=false;
+    Object.assign(this,{db,send,resolveBinding,blocked,busy,clock,intervals,maxWatches,pause:wait,scopePause});this.watches=new Map();this.hints=new Map();this.failures=new Map();this.checked=new Map();this.fullChecked=new Map();this.observations=new Map();this.epochs=new Map();this.retryAt=new Map();this.sent=new Map();this.degraded=new Map();this.running=false;this.closed=false;
   }
   /** Until the first complete installation proves every directory is watched, treat the scope as unwatched. */
   cadence(id){return this.intervals[this.degraded.get(id)===false?'watching':'degraded'];}
@@ -76,7 +77,7 @@ export class SourceSyncWatch {
         if(this.closed)break;
         // Configuration changed during the asynchronous scan: discard the old generation's observation.
         if(!current())continue;
-        this.observations.set(id,observation);this.retryAt.delete(id);
+        this.observations.set(id,observation);this.retryAt.delete(id);this.failures.delete(id);
         if(fullHash){this.fullChecked.set(id,this.clock());this.checked.set(id,this.clock());}else if(metadataDue)this.checked.set(id,this.clock());
         const degraded=this.install({...scope,root:binding.root},manifest.entries,observation.directories);this.degraded.set(id,degraded);const state={id,projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,entries:manifest.entries,digest:manifest.digest,checkedAt:new Date().toISOString(),status:degraded?'reconciling':'watching'};
         this.db.transaction(()=>{
@@ -85,7 +86,10 @@ export class SourceSyncWatch {
         });
         this.send({type:'source_sync_watch_status',...state,entries:undefined});
         if(periodic)periodicScans++;
-      }catch(e){if(!current())continue;this.retryAt.set(id,this.clock()+30000);this.invalidate(id);const state={id,projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,status:'blocked',error:e.code||'scan_failed',...(e.limit?{limit:e.limit}:{}),checkedAt:new Date().toISOString()};this.db.put('sourceSyncWatchStates',{...this.db.get('sourceSyncWatchStates',id),...state});this.send({type:'source_sync_watch_status',...state});}
+      }catch(e){if(!current())continue;
+        // A persistent failure (a link that stays, a folder that stays unreadable) retries at 30 s, 1 min, 2 min … 10 min, not every 30 s.
+        // The observation cache stays: a failed scan never publishes into it, so the next success still reuses unchanged files.
+        const failures=(this.failures.get(id)||0)+1;this.failures.set(id,failures);this.retryAt.set(id,this.clock()+Math.min(RETRY_BASE_MS*2**(failures-1),RETRY_MAX_MS));const state={id,projectId:scope.projectId,repositoryId:scope.repositoryId,generation:scope.generation,status:'blocked',error:e.code||'scan_failed',...(e.limit?{limit:e.limit}:{}),checkedAt:new Date().toISOString()};this.db.put('sourceSyncWatchStates',{...this.db.get('sourceSyncWatchStates',id),...state});this.send({type:'source_sync_watch_status',...state});}
     }this.flush();}finally{this.running=false;}
   }
   flush(){for(const notice of this.db.list('sourceSyncWatchNotices')){const sent=this.sent.get(notice.noticeId);if(sent!==undefined&&this.clock()-sent<5000)continue;this.send({type:'source_sync_dirty',...notice});this.sent.set(notice.noticeId,this.clock());}}
