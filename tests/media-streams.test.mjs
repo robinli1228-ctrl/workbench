@@ -193,3 +193,24 @@ test('chat text turns media paths into cards and leaves URLs and documents alone
   assert.equal(mediaKindFromName('a.mkv'),'video');assert.equal(mediaKindFromName('a.flac'),'audio');assert.equal(mediaKindFromName('a.zip'),'file');
   assert.equal(formatBytes(25*1024*1024),'25 MB');assert.equal(formatBytes(1536),'1.5 KB');
 });
+
+test('a bare file name missing from the folder is found in its outputs or artifacts folder, and plays from there', async () => {
+  const h=await harness();
+  try {
+    const png=Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),Buffer.alloc(40,7)]);
+    await mkdir(join(h.source,'outputs'),{recursive:true});await mkdir(join(h.source,'artifacts'),{recursive:true});
+    await writeFile(join(h.source,'outputs','shot.png'),png);await writeFile(join(h.source,'artifacts','report.pdf'),Buffer.from('%PDF-1.7\n%%EOF\n'));
+    await writeFile(join(h.source,'both.png'),png);await writeFile(join(h.source,'outputs','both.png'),Buffer.concat([png,png]));
+    assert.equal((await statMedia({root:h.source,path:'shot.png'})).relativePath,'outputs/shot.png');
+    assert.equal((await statMedia({root:h.source,path:'report.pdf'})).relativePath,'artifacts/report.pdf');
+    assert.equal((await statMedia({root:h.source,path:'both.png'})).relativePath,'both.png','the folder itself comes first');
+    await assert.rejects(statMedia({root:h.source,path:'missing.png'}),/media_missing/);
+    await assert.rejects(statMedia({root:h.source,path:'sub/shot.png'}),/media_missing/,'a path with a folder is never rerouted');
+    await assert.rejects(statMedia({root:h.source,path:'.env'}),/invalid_media_path/,'blocked names stay blocked');
+    // The card and the player use the path that was found.
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'shot.png'));
+    assert.equal(info.available,true);assert.equal(info.kind,'image');assert.equal(info.size,png.length);
+    const response=await fetch(h.base+info.url);
+    assert.equal(response.status,200);assert.ok(Buffer.from(await response.arrayBuffer()).equals(png));
+  } finally {await h.close();}
+});

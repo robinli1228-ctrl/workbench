@@ -58,8 +58,23 @@ async function openStable(root,path,expected) {
 }
 
 /** Identity used by tickets: size, modification time and inode pin one version of the file. */
+/** Where a bare file name is also looked for, in order, when the folder itself has no such file: where sessions keep their outputs. */
+export const OUTPUT_FOLDERS=Object.freeze(['outputs','artifacts']);
+/**
+ * A reply often names a screenshot or output by its bare file name. Look in the folder first, then in its output folders,
+ * before calling it missing; the card and player then use the path that was found. Paths with a folder are never rerouted.
+ */
+async function openNamed(root,path) {
+  try {return await openStable(root,path);}
+  catch(error) {
+    if(error.code!=='media_missing'||typeof path!=='string'||/[\\/]/.test(path))throw error;
+    for(const folder of OUTPUT_FOLDERS){try{return await openStable(root,join(folder,path));}catch{}}
+    throw error;
+  }
+}
+
 export async function statMedia({root,path}) {
-  const {handle,relativePath,version}=await openStable(root,path);
+  const {handle,relativePath,version}=await openNamed(root,path);
   try {
     const head=Buffer.alloc(64),{bytesRead}=await handle.read(head,0,64,0);
     return {relativePath,name:basename(relativePath),...version,...sniffMedia(head.subarray(0,bytesRead),relativePath)};
