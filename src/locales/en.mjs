@@ -159,7 +159,7 @@ Send failures, reproduction steps, expected/actual behavior, version and evidenc
   'cliPrintSession.cliInputStreamClosed': 'CLI input stream is closed: {message}',
   'cliPrintSession.processExited': 'Process exited {p1}',
   'cliPrintSession.eventHandlingError': 'Event handling error {message}',
-  'cliPrintSession.modelThinkingNativeProgressEvent': 'Model is thinking (native progress event received)',
+  'cliPrintSession.modelThinkingNativeProgressEvent': 'Model is thinking',
   'cliPrintSession.runtimeError': 'Runtime error',
   'cliPrintSession.runtimeReturnedErrorResultCheck': 'Runtime returned an error result; check the CLI log',
   'cliPrintSession.toolCall': 'Tool call',

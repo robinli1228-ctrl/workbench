@@ -14,6 +14,8 @@ const ICONS={
  web:'<circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2.5 2.5 2.5 11.5 0 14M10 3c-2.5 2.5-2.5 11.5 0 14"/>',
  agent:'<circle cx="10" cy="7" r="3"/><path d="M4 17c0-3 2.7-5 6-5s6 2 6 5"/>',
  note:'<path d="M5 5h10M5 9h10M5 13h6"/>',
+ // A brain: the model is thinking (24-unit artwork scaled into the 20-unit box).
+ thinking:'<g transform="scale(.8333)"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M6 18a4 4 0 0 1-1.967-.516M19.967 17.484A4 4 0 0 1 18 18"/></g>',
  error:'<circle cx="10" cy="10" r="7"/><path d="M7.5 7.5l5 5M12.5 7.5l-5 5"/>',
  other:'<circle cx="10" cy="10" r="2"/><circle cx="4.5" cy="10" r="1.5"/><circle cx="15.5" cy="10" r="1.5"/>'
 };
@@ -130,11 +132,24 @@ export function fileChips(steps){
  return [...byPath].map(([path,step])=>({path,step}));
 }
 
+const THINKING=/^(?:Model is thinking|模型正在思考)/i;
+/** Notes of one activity block: thinking signals and identical notes collapse to one row each, in first-seen order, with a count. */
+export function noteRows(notes,t){
+ const rows=new Map();
+ for(const note of notes){
+  const raw=stripAnsi(String(note.text||'')).replace(/\s+/g,' ').trim(),thinking=note.kind!=='error'&&THINKING.test(raw);
+  const kind=note.kind==='error'?'error':thinking?'thinking':'note',text=thinking?t('Model is thinking'):raw.slice(0,160),key=`${kind}\0${text}`;
+  if(!text)continue;const row=rows.get(key);if(row)row.count++;else rows.set(key,{kind,text,count:1});
+ }
+ return [...rows.values()];
+}
+
 /** The activity block: summary line with file chips; the step list opens on click (or stays open while live). */
 export function activityBlock({steps,notes=[],t,live=false,duration='',open=false,onPreview,onToggle}){
  const box=el('details','nt-activity');box.open=open;
  const summary=el('summary','nt-activity-summary');
- summary.append(el('span','nt-caret'),el('span','nt-activity-text',summarizeSteps(steps,t,{duration})||t(live?'Working…':'No tool calls')));
+ const merged=noteRows(notes,t),onlyThinking=!steps.length&&merged.length===1&&merged[0].kind==='thinking';
+ summary.append(el('span','nt-caret'),el('span','nt-activity-text',summarizeSteps(steps,t,{duration})||(onlyThinking?`${t('Model is thinking')}${merged[0].count>1?` \u00d7${merged[0].count}`:''}`:t(live?'Working…':'No tool calls'))));
  const chips=fileChips(steps);
  if(chips.length){const row=el('span','nt-chips');for(const {path,step} of chips.slice(0,8)){const chip=el('button','nt-chip');chip.type='button';chip.title=path;chip.append(stepIcon(step.kind),el('span','',basename(path)));if(step.kind==='edit'&&(step.added||step.removed))chip.append(el('span','nt-chip-stat',stat(step.added,step.removed)));chip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();onPreview?.(step,path);});row.append(chip);}if(chips.length>8)row.append(el('span','nt-chip-more',`+${chips.length-8}`));summary.append(row);}
  box.append(summary);
@@ -149,7 +164,9 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
   if(step.files?.length&&onPreview){const preview=el('button','nt-step-preview');preview.type='button';preview.title=t('Preview');preview.setAttribute('aria-label',t('Preview'));preview.textContent='↗';preview.addEventListener('click',()=>onPreview(step,step.files[0]));head.append(preview);}
   list.append(row);
  }
- for(const note of notes){const row=el('div',`nt-step is-${note.kind==='error'?'error':'note'}`);const head=el('div','nt-step-head is-static');head.append(stepIcon(note.kind==='error'?'error':'note'),el('span','nt-step-target',stripAnsi(note.text).replace(/\s+/g,' ').trim().slice(0,160)));row.append(head);list.append(row);}
+ // Runtime notes, merged: the same note shows once with "×N". The CLI's periodic "model is thinking" signal becomes one
+ // thinking row with a brain icon; older records' "(native progress event received)" suffix is dropped.
+ for(const note of noteRows(notes,t)){const row=el('div',`nt-step is-${note.kind}`);const head=el('div','nt-step-head is-static');head.append(stepIcon(note.kind),el('span','nt-step-target',note.text));if(note.count>1)head.append(el('span','nt-step-count',`\u00d7${note.count}`));row.append(head);list.append(row);}
  box.append(list);
  box.addEventListener('toggle',()=>onToggle?.(box.open));
  return box;

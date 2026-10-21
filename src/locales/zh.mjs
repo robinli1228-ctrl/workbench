@@ -159,7 +159,7 @@ export default Object.freeze({
   'cliPrintSession.cliInputStreamClosed': 'CLI 输入流已关闭：{message}',
   'cliPrintSession.processExited': '进程退出 {p1}',
   'cliPrintSession.eventHandlingError': '事件处理异常 {message}',
-  'cliPrintSession.modelThinkingNativeProgressEvent': '模型正在思考（已收到原生进度事件）',
+  'cliPrintSession.modelThinkingNativeProgressEvent': '模型正在思考',
   'cliPrintSession.runtimeError': 'Runtime 错误',
   'cliPrintSession.runtimeReturnedErrorResultCheck': 'Runtime 返回错误结果，请查看 CLI 日志',
   'cliPrintSession.toolCall': '工具调用',

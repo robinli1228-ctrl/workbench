@@ -382,4 +382,5 @@ export default {
  "Branched from “{title}”": "从「{title}」分出",
  "Branched from another session": "从另一个会话分出",
  "Open the original": "打开原会话",
+ "Model is thinking": "模型正在思考",
 };
