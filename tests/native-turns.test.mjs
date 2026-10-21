@@ -1,7 +1,7 @@
 // Session-page takeover: exact native resume, idempotent sends, occupancy refusal and no Workbench injection.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, realpathSync, readFileSync } from "node:fs";
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -10,7 +10,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const load = name => import(pathToFileURL(join(root, 'src', name)).href);
 const { NativeTurnsHome, NativeTurnRunner, applyNativeTurnEvent } = await load('native-turns.mjs');
 const { Store } = await load('store.mjs');
-const { nativeTurnArgs, NativeCliSession: CliPrintSession, NativeCodexSession } = await load('native-turn-sessions.mjs');
+const { nativeTurnArgs, NativeCliSession: CliPrintSession, NativeCodexSession, createNativeSession } = await load('native-turn-sessions.mjs');
 const { createHomeNativeTurns } = await load('native-turns-home.mjs');
 const { receiveTurnFiles } = await load('native-turns-worker.mjs');
 const { assertNativeSessionIdle } = await load('native-sessions.mjs');
@@ -330,4 +330,111 @@ test('the turns route reports the queue state and takes pause, order and withdra
   assert.deepEqual(ordered.items.map(x => x.prompt), ['third', 'second']);
   assert.equal((await call('POST', `/api/native-sessions/n1/turns/${b.id}/withdraw`)).withdrawn, true);
   assert.equal(db.get('nativeTurns', b.id).status, 'cancelled');
+});
+
+test('a question from the CLI waits on the turn until the page answers; the CLI\'s resolution clears it', () => {
+  let turn = { id: 'x', status: 'running', phase: 'working', text: '' };
+  turn = applyNativeTurnEvent(turn, { kind: 'question', id: 'req-1', questions: [{ id: 'q1', header: 'Colour', question: 'Which colour?', options: [{ label: 'Red', description: '' }, { label: 'Blue', description: '' }], multiSelect: false, allowOther: true }] });
+  assert.equal(turn.status, 'waiting_user'); assert.equal(turn.phase, 'waiting'); assert.equal(turn.question.id, 'req-1'); assert.equal(turn.question.questions[0].question, 'Which colour?');
+  assert.ok(!turn.events?.length, 'the question is not an event row');
+  const other = applyNativeTurnEvent(turn, { kind: 'question_resolved', id: 'req-9' });
+  assert.ok(other.question, 'a resolution for another question leaves this one waiting');
+  turn = applyNativeTurnEvent(turn, { kind: 'question_resolved', id: 'req-1' });
+  assert.equal(turn.question, undefined); assert.equal(turn.status, 'running'); assert.equal(turn.phase, 'working');
+  const ended = applyNativeTurnEvent(applyNativeTurnEvent({ id: 'y', status: 'running', text: '' }, { kind: 'question', id: 'r', questions: [{ id: 'q1', question: 'x', options: [] }] }), { kind: 'status', status: 'succeeded' });
+  assert.equal(ended.question, undefined, 'a turn that ends takes its open question with it');
+});
+
+test('Home forwards the page\'s answer to the Worker once and marks the question answered until the CLI resolves it', t => {
+  const { db, sent, turns, worker } = home(t);
+  const turn = turns.create('n1', worker, { runtime: 'claude', sessionId: SID, clientTurnId: 'client-ask-01', text: 'ask me' });
+  turns.receive('n1', { type: 'native_turn_event', id: turn.id, event: { kind: 'status', status: 'running' } });
+  assert.throws(() => turns.answer('n1', turn.id, { answers: { q1: ['Blue'] } }), /no longer waiting/);
+  turns.receive('n1', { type: 'native_turn_event', id: turn.id, event: { kind: 'question', id: 'req-1', questions: [{ id: 'q1', header: 'Colour', question: 'Which colour?', options: [{ label: 'Red' }, { label: 'Blue' }], multiSelect: false, allowOther: true }] } });
+  assert.equal(turns.list('n1', 'claude', SID)[0].question.id, 'req-1');
+  assert.throws(() => turns.answer('n1', turn.id, { answers: {} }), /Enter an answer/);
+  assert.throws(() => turns.answer('n1', turn.id, { questionId: 'other', answers: { q1: ['Blue'] } }), /no longer waiting/);
+  const view = turns.answer('n1', turn.id, { answers: { q1: ['Blue'], bogus: ['x'] } });
+  assert.equal(view.question.answered, true); assert.equal(view.status, 'waiting_user');
+  const message = sent.find(m => m.type === 'native_turn_answer');
+  assert.deepEqual({ ...message, nodeId: undefined }, { type: 'native_turn_answer', id: turn.id, questionId: 'req-1', answers: { q1: ['Blue'] }, skip: false, nodeId: undefined });
+  assert.throws(() => turns.answer('n1', turn.id, { answers: { q1: ['Red'] } }), /no longer waiting/, 'an answered question takes no second answer');
+  turns.receive('n1', { type: 'native_turn_event', id: turn.id, event: { kind: 'question_resolved', id: 'req-1' } });
+  assert.equal(db.get('nativeTurns', turn.id).question, undefined); assert.equal(db.get('nativeTurns', turn.id).status, 'running');
+  turns.receive('n1', { type: 'native_turn_event', id: turn.id, event: { kind: 'question', id: 'req-2', questions: [{ id: 'q1', question: 'Again?', options: [] }] } });
+  assert.equal(turns.answer('n1', turn.id, { skip: true }).question.skip, true);
+  assert.equal(sent.filter(m => m.type === 'native_turn_answer').at(-1).skip, true);
+});
+
+test('a resident Claude hosts permission prompts: AskUserQuestion reaches the page as a question, the answer goes back as updatedInput, other prompts are allowed', async t => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'wb-native-ask-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bin = join(dir, 'claude'), log = join(dir, 'stdin.log');
+  writeFileSync(bin, `#!/usr/bin/env node
+const fs=require('node:fs');const a=process.argv.slice(2);if(!a.includes('--permission-prompt-tool'))process.exit(3);const id=a[a.indexOf('--resume')+1];
+console.log(JSON.stringify({type:'system',session_id:id}));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{fs.appendFileSync('${log}',line+'\\n');const m=JSON.parse(line);
+ if(m.type==='control_request'&&m.request.subtype==='initialize'){console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{commands:[]}}}));return;}
+ if(m.type==='user'){
+  console.log(JSON.stringify({type:'control_request',request_id:'perm-bash',request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'ls'},tool_use_id:'tu-bash'}}));
+  console.log(JSON.stringify({type:'control_request',request_id:'perm-ask',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions:[{question:'Which colour?',header:'Colour',options:[{label:'Red',description:'r'},{label:'Blue',description:'b'}],multiSelect:false}]},tool_use_id:'tu-ask',requires_user_interaction:true}}));
+  return;}
+ if(m.type==='control_response'&&m.response.request_id==='perm-ask'){const r=m.response.response;
+  console.log(JSON.stringify({type:'result',subtype:'success',session_id:id,result:'answers='+JSON.stringify(r.updatedInput?r.updatedInput.answers:null)+' behavior='+r.behavior}));}});
+`.replace('#!/usr/bin/env node\n', '#!/usr/bin/env node\nconst require=(await import("node:module")).createRequire(import.meta.url);\n'));
+  writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
+  chmodSync(bin, 0o755);
+  const prior = process.env.CLAUDE_BIN; process.env.CLAUDE_BIN = bin; t.after(() => { if (prior === undefined) delete process.env.CLAUDE_BIN; else process.env.CLAUDE_BIN = prior; });
+  const events = [];
+  const runner = new NativeTurnRunner({ send: m => events.push(m), resolveSession: async () => ({ workspace: dir }), createSession: options => createNativeSession(options) });
+  t.after(() => runner.stopAll());
+  const until = pred => new Promise(resolve => { const timer = setInterval(() => { const e = events.find(pred); if (e) { clearInterval(timer); resolve(e); } }, 20); });
+  await runner.start({ id: 'a1', runtime: 'claude', sessionId: SID, prompt: 'ask' });
+  const asked = await until(e => e.id === 'a1' && e.event?.kind === 'question');
+  assert.equal(asked.event.id, 'perm-ask');
+  assert.deepEqual(asked.event.questions, [{ id: 'q1', header: 'Colour', question: 'Which colour?', multiSelect: false, allowOther: true, options: [{ label: 'Red', description: 'r' }, { label: 'Blue', description: 'b' }] }]);
+  assert.ok(events.some(e => e.id === 'a1' && e.event?.status === 'waiting_user'));
+  runner.answer('a1', { questionId: 'perm-ask', answers: { q1: ['Blue'] } });
+  const done = await until(e => e.id === 'a1' && ['succeeded', 'failed'].includes(e.event?.status));
+  assert.equal(done.event.status, 'succeeded');
+  assert.ok(events.some(e => e.id === 'a1' && e.event?.kind === 'question_resolved' && e.event.id === 'perm-ask'));
+  const reply = events.filter(e => e.id === 'a1' && e.event?.kind === 'message').map(e => e.event.text).join('\n');
+  assert.match(reply, /answers=\{"Which colour\?":"Blue"\} behavior=allow/);
+  const lines = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  assert.equal(lines[0].request.subtype, 'initialize', 'the SDK handshake precedes the first message');
+  const bash = lines.find(l => l.type === 'control_response' && l.response.request_id === 'perm-bash');
+  assert.deepEqual(bash.response.response, { behavior: 'allow', updatedInput: { command: 'ls' } }, 'ordinary prompts are allowed, as the bypass mode would');
+});
+
+test('a resident Codex opts into request_user_input; the question reaches the page and the answers go back by question id', async t => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'wb-native-codex-ask-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bin = join(dir, 'codex.mjs'), log = join(dir, 'stdin.log');
+  writeFileSync(bin, `import {createInterface} from 'node:readline';import {appendFileSync} from 'node:fs';const out=m=>process.stdout.write(JSON.stringify(m)+'\\n');
+appendFileSync('${log}',JSON.stringify(process.argv.slice(2))+'\\n');
+createInterface({input:process.stdin}).on('line',line=>{appendFileSync('${log}',line+'\\n');const m=JSON.parse(line);
+ if(m.method==='initialize')out({id:m.id,result:{}});
+ if(m.method==='thread/resume')out({id:m.id,result:{thread:{id:m.params.threadId}}});
+ if(m.method==='turn/start'){out({id:m.id,result:{turn:{id:'t1'}}});out({method:'turn/started',params:{turn:{id:'t1'}}});
+  out({id:77,method:'item/tool/requestUserInput',params:{threadId:m.params.threadId,turnId:'t1',itemId:'call_1',questions:[{id:'colour',header:'Colour',question:'Which colour?',isOther:true,isSecret:false,options:[{label:'Red',description:'r'},{label:'Blue',description:'b'}]}],isBlocking:false}});}
+ if(m.id===77){out({method:'item/completed',params:{item:{id:'msg1',type:'agentMessage',text:'answers='+JSON.stringify(m.result.answers)}}});out({method:'turn/completed',params:{turn:{id:'t1',status:'completed'}}});}
+});`);
+  const wrapper = join(dir, 'codex');
+  writeFileSync(wrapper, `#!/bin/sh\nexec "${process.execPath}" "${bin}" "$@"\n`); chmodSync(wrapper, 0o755);
+  const prior = process.env.CODEX_BIN; process.env.CODEX_BIN = wrapper; t.after(() => { if (prior === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = prior; });
+  const events = [];
+  const runner = new NativeTurnRunner({ send: m => events.push(m), resolveSession: async () => ({ workspace: dir }), createSession: options => createNativeSession(options) });
+  t.after(() => runner.stopAll());
+  const until = pred => new Promise(resolve => { const timer = setInterval(() => { const e = events.find(pred); if (e) { clearInterval(timer); resolve(e); } }, 20); });
+  await runner.start({ id: 'k1', runtime: 'codex', sessionId: SID, prompt: 'ask' });
+  const asked = await until(e => e.id === 'k1' && e.event?.kind === 'question');
+  assert.equal(asked.event.id, 'call_1');
+  assert.deepEqual(asked.event.questions, [{ id: 'colour', header: 'Colour', question: 'Which colour?', multiSelect: false, allowOther: true, secret: false, options: [{ label: 'Red', description: 'r' }, { label: 'Blue', description: 'b' }] }]);
+  runner.answer('k1', { questionId: 'call_1', answers: { colour: ['Blue'] } });
+  assert.equal((await until(e => e.id === 'k1' && ['succeeded', 'failed'].includes(e.event?.status))).event.status, 'succeeded');
+  const reply = events.filter(e => e.id === 'k1' && e.event?.kind === 'message').map(e => e.event.text).join('\n');
+  assert.match(reply, /answers=\{"colour":\{"answers":\["Blue"\]\}\}/);
+  const lines = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+  assert.ok(lines[0].join(' ').includes('-c features.default_mode_request_user_input=true app-server'), 'the feature flag rides on the launch');
+  assert.equal(lines.find(l => l.method === 'initialize').params.capabilities.experimentalApi, true);
 });

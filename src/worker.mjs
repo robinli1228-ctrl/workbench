@@ -1138,6 +1138,7 @@ function connect() {
       if (m.type === 'query') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>query(m)));
       if (m.type === 'native_turn') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>nativeTurns.start(m)));
       if (m.type === 'native_turn_stop') void nativeTurns.stop(m.id);
+      if (m.type === 'native_turn_answer') nativeTurns.answer(m.id,m);
       if (m.type === 'native_takeover_release') void nativeTurns.releaseLease(m.runtime,m.sessionId,m.leaseId).catch(e=>console.error('Native takeover release:',e.message));
       if (m.type === 'error') console.error(tr('worker.rejectedByHome'), m.error);
     } catch (e) { console.error(tr('worker.protocolError'), e.message); }

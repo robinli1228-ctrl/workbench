@@ -331,4 +331,11 @@ export default {
  "Keep or send the current draft before editing a queued message": "请先发送或清空输入框里的内容，再编辑排队消息",
  "This message has already been sent": "这条消息已经发出",
  "The queue changed; refresh and try again": "队列已变化，请刷新后重试",
+ "Question": "问题",
+ "Skip": "跳过",
+ "Skip all questions": "跳过全部问题",
+ "Or write your own reply": "或自行撰写回复",
+ "Waiting for your answer…": "等待你的回答…",
+ "This question is no longer waiting for an answer": "这个问题已经不在等待回答",
+ "Enter an answer": "请选择或填写回答",
 };

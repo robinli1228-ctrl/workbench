@@ -14,8 +14,10 @@ export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,mod
   if(!sessionId)throw new Error('A takeover turn needs an exact native session ID');
   if(keepAlive&&!NATIVE_KEEPALIVE.has(runtime))throw new Error('This CLI has no resident input mode');
   const chosen=(modelFlag,effortFlag)=>[...(model?[modelFlag,model]:[]),...(effort?[effortFlag,effort]:[])];
-  if(runtime==='claude')return [...(keepAlive?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--resume',sessionId]
-    :['-p',prompt,'--output-format','stream-json','--verbose','--resume',sessionId]),...chosen('--model','--effort'),'--dangerously-skip-permissions'];
+  // A resident Claude answers permission prompts over stdio: every tool is still allowed by the bypass mode, but AskUserQuestion
+  // (which only exists with a prompt host) reaches the page as a question card. A one-shot turn cannot answer, so it keeps bypassing.
+  if(runtime==='claude')return keepAlive?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--resume',sessionId,...chosen('--model','--effort'),'--permission-mode','bypassPermissions','--permission-prompt-tool','stdio']
+    :['-p',prompt,'--output-format','stream-json','--verbose','--resume',sessionId,...chosen('--model','--effort'),'--dangerously-skip-permissions'];
   if(runtime==='grok')return ['--always-approve','--no-plan','--cwd',cwd,...chosen('-m','--reasoning-effort'),'--output-format','streaming-messages-json','--include-partial-messages','--permission-mode','bypassPermissions','--resume',sessionId,'-p',prompt];
   if(runtime==='agy')return ['--output-format','stream-json','--dangerously-skip-permissions','--mode','accept-edits',...chosen('--model','--effort'),'--conversation',sessionId,...(keepAlive?['--input-format','stream-json']:['--print',prompt])];
   throw new Error('Unsupported CLI');
@@ -23,7 +25,9 @@ export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,mod
 
 /** Codex App Server: thread/resume once per process, then turn/start on the loaded thread (images as localImage items). */
 export class NativeCodexSession extends CodexSession {
-  constructor(options){super({...options,effort:options.effort??null});this.hold=false;this.control=options.control||null;}
+  constructor(options){super({...options,effort:options.effort??null});this.hold=false;this.control=options.control||null;this.questionsSupported=true;}
+  /** request_user_input is off in Codex's default mode unless the client opts in; the page answers it, so a takeover does. */
+  launchArgs(){return ['-c','features.default_mode_request_user_input=true',...super.launchArgs()];}
   async openThread() {
     if(this.threadId)return {id:this.threadId};
     const response=await this.request('thread/resume',{threadId:this.resumeSessionId,cwd:this.cwd,approvalPolicy:'never',sandbox:'workspace-write',...(this.model?{model:this.model}:{})});
@@ -32,6 +36,7 @@ export class NativeCodexSession extends CodexSession {
   }
   /** The chosen model rides on every turn; a compaction control turn starts thread/compact/start instead of a prompt (it completes as an ordinary turn). */
   request(method,params) {
+    if(method==='initialize')params={...params,capabilities:{...(params?.capabilities||{}),experimentalApi:true}};
     // A turn/started notification may precede the empty compaction acknowledgement.
     if(method==='turn/start'&&this.control==='compact')return super.request('thread/compact/start',{threadId:params.threadId}).then(result=>({turn:{id:result?.turn?.id??this.turnId}}));
     if(method==='turn/start'&&this.model)params={...params,model:this.model};
@@ -48,15 +53,43 @@ export class NativeCodexSession extends CodexSession {
 
 /** Claude/Agy resident stream-json input, Grok one process per turn. Claude gets images as base64 content blocks. */
 export class NativeCliSession extends CliPrintSession {
-  constructor(options){super(options);this.inputImages=options.inputImages||[];this.closing=false;}
+  constructor(options){super(options);this.inputImages=options.inputImages||[];this.closing=false;this.question=null;this.initialized=false;}
   args(prompt){return nativeTurnArgs(this.runtime,{cwd:this.cwd,sessionId:this.resumeSessionId,prompt,keepAlive:this.keepAlive,model:this.model,effort:this.effort});}
+  get questionsSupported(){return this.keepAlive&&this.runtime==='claude';}
   /** Only a completed native result may keep the CLI; broken transport shutdown must still retire it. */
   receive(message){
+    if(this.questionsSupported&&message&&typeof message==='object'){
+      if(message.type==='control_response')return;
+      if(message.type==='control_request')return this.control(message);
+      if(message.type==='control_cancel_request'){if(this.question?.requestId===message.request_id){const {id}=this.question;this.question=null;this.emit('question_resolved',{id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});}return;}
+    }
     // Native Claude interrupts a turn without killing its resident process; only its owner's result confirms that boundary.
     if(!this.done&&this.stopping&&!this.closing&&this.keepAlive&&this.runtime==='claude'&&message?.type==='result'&&!message.parent_tool_use_id)return this.finish('interrupted');
     this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;}
   }
+  /** Claude's stdio permission host: AskUserQuestion becomes a question for the page; every other prompt is allowed as the bypass mode would. */
+  control(message){
+    const {request_id:requestId,request={}}=message,reply=response=>this.write({type:'control_response',response:{subtype:'success',request_id:requestId,response}});
+    if(request.subtype!=='can_use_tool')return this.write({type:'control_response',response:{subtype:'error',request_id:requestId,error:'Unsupported control request'}});
+    if(request.tool_name!=='AskUserQuestion'||!Array.isArray(request.input?.questions)||!request.input.questions.length)return reply({behavior:'allow',updatedInput:request.input});
+    const id=requestId,questions=request.input.questions.map((q,i)=>({id:`q${i+1}`,header:String(q.header||'').slice(0,40),question:String(q.question||'').slice(0,2000),multiSelect:q.multiSelect===true,allowOther:true,
+      options:(Array.isArray(q.options)?q.options:[]).slice(0,8).map(o=>({label:String(o?.label||'').slice(0,200),description:String(o?.description||'').slice(0,600)}))}));
+    this.question={id,requestId,input:request.input,questions};
+    this.emit('question',{id,questions});this.emit('status',{status:'waiting_user'});
+  }
+  write(message){try{this.proc?.stdin?.write(`${JSON.stringify(message)}\n`);}catch{}}
+  /** Answers go back as the tool's updatedInput ("question" -> "label, label" or the typed text); skip denies with a reason so the turn carries on. */
+  answerQuestion({id,answers={},skip=false}={}){
+    const q=this.question;if(!q||(id&&q.id!==id))throw new Error('This question is no longer waiting for an answer');
+    this.question=null;
+    if(skip)this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'The user skipped these questions. Continue without the answers, using your best judgement.'}}});
+    else{const map={};q.questions.forEach((question,i)=>{const given=[].concat(answers[question.id]??answers[String(i)]??[]).map(String).filter(Boolean);if(given.length)map[q.input.questions[i].question]=given.join(', ');});
+      this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'allow',updatedInput:{...q.input,answers:map}}}});}
+    this.emit('question_resolved',{id:q.id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});
+  }
   sendTurn(prompt) {
+    // The SDK handshake precedes the first message of a session that hosts permission prompts.
+    if(this.questionsSupported&&!this.initialized){this.initialized=true;this.write({type:'control_request',request_id:`init-${Date.now()}`,request:{subtype:'initialize'}});}
     const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text:prompt},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
     const message=this.runtime==='agy'?{event:'user',message:{role:'user',content}}:{type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
     this.inputAttempted=true;
@@ -66,6 +99,7 @@ export class NativeCliSession extends CliPrintSession {
   async stop() {
     if(this.done)return;
     this.stopping=true;
+    if(this.question){const q=this.question;this.question=null;this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'Interrupted by the user.'}}});this.emit('question_resolved',{id:q.id});}
     if(this.keepAlive&&this.runtime==='claude'&&this.proc?.stdin?.writable){
       try{this.proc.stdin.write(`${JSON.stringify({type:'control_request',request_id:`interrupt-${Date.now()}`,request:{subtype:'interrupt'}})}\n`);}catch{}
       clearTimeout(this.interruptTimer);this.interruptTimer=setTimeout(()=>{if(!this.done)this.close();},10000);this.interruptTimer.unref?.();

@@ -3564,3 +3564,27 @@ dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); 
 .media-card.has-preview .media-card-preview > img, .media-card.has-preview .media-card-preview[data-kind="image"] > img, .media-card.has-preview .media-card-preview > video { object-fit: cover; }
 .media-card.has-preview .media-card-play { width: 26px; height: 26px; font-size: 10px; }
 .media-card.has-preview:hover .media-card-preview { filter: brightness(.96); }
+
+/* ---- The CLI's question above the composer: title row with pager and skip-all; the question; numbered options; a free-text reply
+   with Skip and Send. Same card language as the queue panel. ---- */
+.native-ask { margin: 0 16px 8px; padding: 12px 14px 12px; border: 1px solid var(--card-hairline, #e6e8ed); border-radius: var(--r-lg, 14px); background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 4%); }
+.native-ask-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.native-ask-title { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.native-ask-title svg { width: 17px; height: 17px; }
+.native-ask-pager { padding: 1px 8px; border-radius: 999px; background: #f0f2f6; color: #5f6470; font-size: 12px; font-variant-numeric: tabular-nums; }
+.native-ask-close { margin-left: auto; }
+.native-ask-text { margin: 0 0 10px; color: var(--ink); font-size: 14.5px; line-height: 1.6; font-weight: 500; white-space: pre-wrap; overflow-wrap: anywhere; }
+.native-ask-options { display: grid; gap: 4px; margin-bottom: 10px; }
+.native-ask-option { display: grid; grid-template-columns: 24px minmax(0, auto) minmax(0, 1fr); align-items: center; column-gap: 10px; width: 100%; padding: 8px 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.native-ask-option:hover { background: #f4f6fa; }
+.native-ask-option.is-picked { border-color: rgb(79 91 206 / 35%); background: var(--accent-tint, rgb(79 91 206 / 8%)); }
+.native-ask-key { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid #dfe3ea; border-radius: 6px; color: #6b7280; font-size: 12px; font-variant-numeric: tabular-nums; }
+.native-ask-option.is-picked .native-ask-key { border-color: rgb(79 91 206 / 45%); color: var(--accent); }
+.native-ask-label { font-weight: 500; }
+.native-ask-desc { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-ask-foot { display: flex; align-items: center; gap: 8px; }
+.native-ask-other { flex: 1; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfbfd; color: var(--ink); font: inherit; font-size: 14px; }
+.native-ask-other:focus { outline: none; border-color: rgb(79 91 206 / 45%); box-shadow: 0 0 0 3px rgb(79 91 206 / 10%); }
+.native-ask-foot .compact { height: 34px; min-height: 34px; padding: 0 16px; border-radius: 999px; font-size: 13.5px; }
+.native-ask-send:disabled { opacity: .45; }
+@media (max-width: 760px) { .native-ask { margin-inline: 8px; } .native-ask-option { grid-template-columns: 24px minmax(0, 1fr); } .native-ask-desc { grid-column: 2; } }

@@ -799,7 +799,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  function workingLine(turn,onStop){
   const line=el('div','nt-working');const pulse=el('span','nt-pulse');pulse.setAttribute('aria-hidden','true');
   const {steps}=stepsOf(turn),running=[...steps].reverse().find(s=>s.running),now=running?stepTitle(running,t):null;
-  const hint=turn.status==='queued'?t('Waiting for the device\u2026'):turn.status==='stopping'?t('Stopping\u2026'):turn.status==='starting'||!turn.phase?t('Starting the CLI\u2026'):now?`${now.verb} ${now.target}`.trim():turn.phase==='replying'?t('Replying\u2026'):t('Working\u2026');
+  const hint=turn.status==='queued'?t('Waiting for the device\u2026'):turn.status==='stopping'?t('Stopping\u2026'):turn.question&&!turn.question.answered?t('Waiting for your answer\u2026'):turn.status==='starting'||!turn.phase?t('Starting the CLI\u2026'):now?`${now.verb} ${now.target}`.trim():turn.phase==='replying'?t('Replying\u2026'):t('Working\u2026');
   line.append(pulse,el('span','nt-working-time',elapsedText(turn.createdAt)),el('span','nt-working-hint',hint));if(onStop)line.append(button('Stop',onStop,'secondary compact nt-stop'));return line;
  }
  /** Takeover reuses the group-chat composer behaviour: Enter sends, Shift+Enter breaks lines, paste/drag/attach uploads files. An unconfirmed send keeps Send disabled while the same message ID is looked up; only a confirmed absence allows a retry with that ID. */
@@ -989,6 +989,44 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    queuePending.add(turn.id);renderQueue();
    try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/withdraw`,{method:'POST',json:{}});const back=draft();back.text=turn.prompt||'';back.attachments=(turn.attachments||[]).map(a=>({...a,reused:true}));save();await refresh();input.value=back.text;input.focus();syncSendButton();}
    catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}}
+  /** The CLI's question card above the composer: the question, its numbered options, a free-text reply, Skip and Send; several
+   * questions page through with "1/2" and are answered together. Built once per question, so typing survives the 1s refresh. */
+  const ask=el('section','native-ask');ask.hidden=true;ask.setAttribute('aria-label',t('Question'));
+  let askState=null,askBuilt='';
+  const askIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L4 21l1.6-4.4A8.5 8.5 0 1 1 21 12Z"/><path d="M9.8 9.5a2.3 2.3 0 0 1 4.4.8c0 1.5-2.2 2-2.2 3.2"/><path d="M12 16.6h.01"/></svg>';
+  async function sendAnswer(live,body){const id=live.id;askState=null;askBuilt='';ask.hidden=true;ask.replaceChildren();
+   try{await api(`${turnsUrl()}/${encodeURIComponent(id)}/answer`,{method:'POST',json:body});await refresh();}catch(error){operation().message=t(error.message);render();}}
+  function renderAsk(){
+   const live=activeTurn(),q=live?.question&&!live.question.answered?live.question:null;
+   if(!q||!current){ask.hidden=true;if(askBuilt){ask.replaceChildren();askBuilt='';}askState=null;return;}
+   if(askState?.turnId!==live.id||askState.questionId!==q.id)askState={turnId:live.id,questionId:q.id,index:0,picked:{},typed:{}};
+   const st=askState,total=q.questions.length,question=q.questions[st.index]||q.questions[0],built=JSON.stringify([live.id,q.id,st.index]);
+   ask.hidden=false;if(built===askBuilt)return;askBuilt=built;
+   const picked=new Set(st.picked[question.id]||[]);
+   const head=el('div','native-ask-head'),title=el('span','native-ask-title');title.innerHTML=askIcon;title.append(el('span','',t('Question')));head.append(title);
+   if(total>1)head.append(el('span','native-ask-pager',`${st.index+1}/${total}`));
+   const close=iconButton('close','Skip all questions',()=>void sendAnswer(live,{questionId:q.id,skip:true}),'native-ask-close');head.append(close);
+   const text=el('p','native-ask-text',question.question);text.translate=false;
+   const list=el('div','native-ask-options');
+   const answerOf=()=>{const typed=(st.typed[question.id]||'').trim();return [...(st.picked[question.id]||[]),...(typed?[typed]:[])];};
+   const paint=()=>{for(const row of list.children)row.classList.toggle('is-picked',(st.picked[question.id]||[]).includes(row.dataset.label));send.disabled=!answerOf().length;};
+   question.options.forEach((option,i)=>{const row=el('button','native-ask-option');row.type='button';row.dataset.label=option.label;row.append(el('span','native-ask-key',String(i+1)),el('span','native-ask-label',option.label));
+    if(option.description)row.append(el('span','native-ask-desc',option.description));row.translate=false;
+    row.addEventListener('click',()=>{const now=new Set(question.multiSelect?st.picked[question.id]||[]:[]);if(now.has(option.label))now.delete(option.label);else now.add(option.label);st.picked[question.id]=[...now];paint();if(!question.multiSelect)other.value='';st.typed[question.id]='';});
+    list.append(row);});
+   const foot=el('div','native-ask-foot'),other=el('input','native-ask-other');other.type=question.secret?'password':'text';other.placeholder=t('Or write your own reply');other.value=st.typed[question.id]||'';other.setAttribute('aria-label',other.placeholder);
+   other.addEventListener('input',()=>{st.typed[question.id]=other.value;if(!question.multiSelect&&other.value.trim()){st.picked[question.id]=[];}paint();});
+   const skip=el('button','secondary compact native-ask-skip',t('Skip')),send=el('button','primary compact native-ask-send',t('Send'));skip.type=send.type='button';
+   const advance=()=>{if(st.index<total-1){st.index+=1;askBuilt='';renderAsk();ask.querySelector('.native-ask-other')?.focus({preventScroll:true});return;}
+    const answers={};for(const item of q.questions){const typed=(st.typed[item.id]||'').trim(),values=[...(st.picked[item.id]||[]),...(typed?[typed]:[])];if(values.length)answers[item.id]=values;}
+    void sendAnswer(live,Object.keys(answers).length?{questionId:q.id,answers}:{questionId:q.id,skip:true});};
+   skip.addEventListener('click',()=>{st.picked[question.id]=[];st.typed[question.id]='';advance();});
+   send.addEventListener('click',()=>{if(answerOf().length)advance();});
+   other.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();if(answerOf().length)advance();}});
+   ask.addEventListener('keydown',e=>{if(e.target===other||e.ctrlKey||e.metaKey||e.altKey)return;const n=Number(e.key);if(n>=1&&n<=question.options.length){e.preventDefault();list.children[n-1].click();}else if(e.key==='Enter'&&answerOf().length){e.preventDefault();advance();}});
+   foot.append(other,skip,send);ask.replaceChildren(head,text,list,foot);paint();
+   if(!input.matches(':focus'))other.focus({preventScroll:true});
+  }
   function renderQueue(){
    const pos=optimisticOrder?new Map(optimisticOrder.map((id,i)=>[id,i])):null;
    const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||(pos?(pos.get(a.id)??Infinity)-(pos.get(b.id)??Infinity):0)||queueRank(a)-queueRank(b));
@@ -1025,11 +1063,11 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    note.textContent=op.message||'';note.hidden=!note.textContent;note.classList.toggle('chat-bubble',Boolean(op.message));note.classList.toggle('is-error-card',Boolean(op.message));const state=sendState(d,op);
    tray.replaceChildren();for(const item of d.attachments||[])tray.append(attachmentCard(item,()=>{if(!d.pending)void removeAttachment(id,value.nodeId,item);}));
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
-   syncSendButton();renderQueue();
+   syncSendButton();renderQueue();renderAsk();
    // Disabling the textarea while a send is in flight drops focus; give it back once typing is possible again.
    const locked=op.sending||op.releasing||Boolean(d.pending);if(locked&&!input.disabled&&[input,sendButton].includes(document.activeElement))refocus=true;
    input.disabled=locked;attachButton.disabled=locked;
-   if(!shell.contains(form))shell.replaceChildren(queue,form);resize();
+   if(!shell.contains(form))shell.replaceChildren(queue,ask,form);resize();
    if(refocus&&!locked){refocus=false;if(document.activeElement===document.body||document.activeElement===sendButton)input.focus({preventScroll:true});}
   }
   async function endTakeover(value){const id=sessionKey(value),op=operation(id);if(op.releasing)return;op.releasing=true;op.message='';if(k()===id){render();renderSide(value,value.sessionId,true);}try{await api(`${endpoint(value.nodeId)}/takeover/release`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId}});if(k()===id)await refresh();else await onStateRefresh();}catch(error){op.releasing=false;op.message=t(error.message);if(k()===id){render();renderSide(value,value.sessionId,true);}}}
