@@ -309,3 +309,25 @@ test('Worker refuses a second concurrent turn for one session and cleans files a
   assert.ok(sent.some(m => m.id === 'a' && m.event?.status === 'succeeded'));
   assert.deepEqual(cleaned.sort(), ['a', 'b']);
 });
+
+test('the turns route reports the queue state and takes pause, order and withdraw', async t => {
+  const { db, worker } = home(t);
+  db.put('workers', worker);
+  const dir = mkdtempSync(join(tmpdir(), 'wb-native-queue-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const hook = createHomeNativeTurns({ db, dataDir: dir, send() {}, online: () => true, change() {} }), turns = hook.turns;
+  const call = async (method, path, payload = {}) => {
+    let out = null; const url = new URL(`http://h${path}`);
+    const handled = await hook.http({ method }, {}, { pathname: url.pathname, url, json: (res, value) => { out = value; }, body: async () => payload });
+    assert.equal(handled, true); return out;
+  };
+  const send = (id, text) => turns.create('n1', worker, { runtime: 'claude', sessionId: SID, clientTurnId: id, text });
+  send('client-route-a', 'first'); const b = send('client-route-b', 'second'), c = send('client-route-c', 'third');
+  const read = () => call('GET', `/api/native-sessions/n1/turns?runtime=claude&sessionId=${SID}`);
+  assert.deepEqual((await read()).queue, { paused: false });
+  assert.equal((await call('POST', '/api/native-sessions/n1/turns/queue', { runtime: 'claude', sessionId: SID, paused: true })).queue.paused, true);
+  assert.deepEqual((await read()).queue, { paused: true });
+  const ordered = await call('POST', '/api/native-sessions/n1/turns/queue', { runtime: 'claude', sessionId: SID, order: [c.id, b.id] });
+  assert.deepEqual(ordered.items.map(x => x.prompt), ['third', 'second']);
+  assert.equal((await call('POST', `/api/native-sessions/n1/turns/${b.id}/withdraw`)).withdrawn, true);
+  assert.equal(db.get('nativeTurns', b.id).status, 'cancelled');
+});

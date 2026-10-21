@@ -74,11 +74,14 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       json(res,{clientTurnId,exists:nativeTurnRows(db,{nodeId,runtime:q.get('runtime'),sessionId:q.get('sessionId'),clientTurnId,limit:1}).length>0});return true;}
     if(area==='turns'&&!a&&req.method==='GET'){const q=url.searchParams,[runtime,sessionId]=[q.get('runtime'),q.get('sessionId')];
       const open=turns.process(nodeId,runtime,sessionId);if(!open)finishTurns(nodeId,runtime,sessionId);
-      json(res,{items:turns.list(nodeId,runtime,sessionId),process:open?'open':'closed',supported:worker.capabilities?.nativeTurns===3,controls:worker.capabilities?.nativeControls===1,settings:turns.settings(nodeId,runtime,sessionId)});return true;}
+      json(res,{items:turns.list(nodeId,runtime,sessionId),queue:turns.queueState(nodeId,runtime,sessionId),process:open?'open':'closed',supported:worker.capabilities?.nativeTurns===3,controls:worker.capabilities?.nativeControls===1,settings:turns.settings(nodeId,runtime,sessionId)});return true;}
     if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');if(input.control&&worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to compact a native session');
       const credential=input.control?null:await gitCredential(turns.settings(nodeId,input.runtime,input.sessionId));json(res,turns.create(nodeId,worker,input,{gitCredential:credential}),201);return true;}
     if(area==='turns'&&a&&b==='stop'&&req.method==='POST'){json(res,turns.stop(nodeId,decodeURIComponent(a)));return true;}
     if(area==='turns'&&a&&b==='steer'&&req.method==='POST'){json(res,turns.steer(nodeId,decodeURIComponent(a)));return true;}
+    if(area==='turns'&&a&&b==='withdraw'&&req.method==='POST'){json(res,turns.withdraw(nodeId,decodeURIComponent(a)));return true;}
+    // Pause/resume the session's queue or store its dragged order; both live on Home, which dispatches the next message.
+    if(area==='turns'&&a==='queue'&&!b&&req.method==='POST'){json(res,turns.setQueue(nodeId,await body(req)));return true;}
     throw Error('Invalid session action');
   }
   return {turns,http,gitCredentialFor:(nodeId,runtime,sessionId)=>gitCredential(turns.settings(nodeId,runtime,sessionId)),

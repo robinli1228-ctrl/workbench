@@ -21,6 +21,8 @@ const MAX_TEXT=60000,MAX_PROMPT=12000,MAX_EVENTS=400,MAX_EVENT_TEXT=8000;
 const MAX_EVENT_BYTES=128*1024,MAX_ITEM_BYTES=24*1024;
 const now=()=>new Date().toISOString();
 const sessionKey=(nodeId,runtime,sessionId)=>`${nodeId}/${runtime}/${sessionId}`;
+/** Queue position: the order the user dragged to, otherwise the time it was sent. */
+const queueRank=turn=>Number.isFinite(turn.queueRank)?turn.queueRank:(Date.parse(turn.createdAt)||0);
 /** Control turns: a compaction request, or the slash command that changes a resident Claude's model or effort in place. */
 const CONTROLS=new Set(['compact','model','effort']);
 const EFFORTS=new Set(['none','minimal','low','medium','high','xhigh','max','ultra','auto','default']);
@@ -70,9 +72,9 @@ export function applyNativeTurnEvent(turn,event){
 }
 
 export function nativeTurnView(turn){
- const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer}=turn;
+ const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn}=turn;
  return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
-  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer)};
+  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{})};
 }
 
 /** Home side: validation, idempotent creation, occupancy checks, attachment binding and event intake. */
@@ -140,7 +142,7 @@ export class NativeTurnsHome{
   if(!this.online(nodeId))throw Error('Device offline or not connected');
   const turn={id:randomUUID(),clientTurnId,nodeId,runtime,sessionId,prompt:text,text:'',events:[],attachments:items,status:'waiting',phase:null,createdAt:now(),updatedAt:now(),...(control?{control}:{})};
   // A message sent while the session is replying waits in Home's queue, like a queued group-chat message; it starts when the reply ends.
-  if(this.active(nodeId,runtime,sessionId)||this.waitsForExit(nodeId,runtime,sessionId)||this.waiting(nodeId,runtime,sessionId).length){this.db.put('nativeTurns',turn);this.change();void this.pump(nodeId,runtime,sessionId);return nativeTurnView(turn);}
+  if(this.active(nodeId,runtime,sessionId)||this.waitsForExit(nodeId,runtime,sessionId)||this.waiting(nodeId,runtime,sessionId).length||this.queueState(nodeId,runtime,sessionId).paused){this.db.put('nativeTurns',turn);this.change();void this.pump(nodeId,runtime,sessionId);return nativeTurnView(turn);}
   return nativeTurnView(this.dispatch(turn,{gitCredential}));
  }
  /** Reserve the resident process and hand the turn to the Worker; the only place a turn leaves the queue. */
@@ -155,15 +157,42 @@ export class NativeTurnsHome{
   this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:turn.prompt,attachments:turn.attachments||[],...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(turn.control?{control:turn.control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
   this.change();return started;
  }
- /** Queued turns of one session: a steered message first, then in the order they were sent. */
+ /** Queued turns of one session: a steered message first, then in the order the user arranged (by default, the order they were sent). */
  waiting(nodeId,runtime,sessionId){
   return this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.runtime')=? AND json_extract(data,'$.sessionId')=? AND json_extract(data,'$.status')='waiting' ORDER BY rowid").all(nodeId,runtime,sessionId).map(r=>JSON.parse(r.data))
-   .sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||String(a.steerAt||'').localeCompare(String(b.steerAt||'')));
+   .sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||String(a.steerAt||'').localeCompare(String(b.steerAt||''))||queueRank(a)-queueRank(b));
+ }
+ /** A paused queue keeps its messages after the reply ends; it only exists while something waits, so an emptied queue un-pauses itself. */
+ queueState(nodeId,runtime,sessionId){
+  const key=sessionKey(nodeId,runtime,sessionId),stored=this.db.get('nativeQueues',key);if(!stored?.paused)return {paused:false};
+  if(!this.waiting(nodeId,runtime,sessionId).length){this.db.remove('nativeQueues',key);return {paused:false};}
+  return {paused:true};
+ }
+ /** Pause or resume a session's queue, or store the order the user dragged its waiting messages into. */
+ setQueue(nodeId,body){
+  const {runtime,sessionId,paused,order}=body||{};
+  if(!NATIVE_TURN_RUNTIMES.includes(runtime))throw Error('Unsupported CLI');
+  if(!idPattern.test(sessionId||''))throw Error('Invalid native session ID');
+  if(typeof paused!=='boolean'&&!Array.isArray(order))throw Error('Nothing to change');
+  this.db.transaction(()=>{
+   if(Array.isArray(order)){
+    // The order must name exactly the messages still waiting (a steered one already goes first); a stale page refreshes instead.
+    const waiting=this.waiting(nodeId,runtime,sessionId).filter(t=>!t.steer),ids=new Set(waiting.map(t=>t.id));
+    if(order.length!==ids.size||new Set(order).size!==order.length||order.some(id=>!ids.has(id)))throw Error('The queue changed; refresh and try again');
+    const base=Math.min(...waiting.map(queueRank));
+    order.forEach((id,i)=>{const t=waiting.find(x=>x.id===id);this.db.put('nativeTurns',{...t,queueRank:base+i/1000,updatedAt:now()});});
+   }
+   if(typeof paused==='boolean'){const key=sessionKey(nodeId,runtime,sessionId);
+    if(paused&&this.waiting(nodeId,runtime,sessionId).length)this.db.put('nativeQueues',{id:key,nodeId,runtime,sessionId,paused:true,updatedAt:now()});else this.db.remove('nativeQueues',key);}
+  });
+  this.change();if(!this.queueState(nodeId,runtime,sessionId).paused)void this.pump(nodeId,runtime,sessionId);
+  return {queue:this.queueState(nodeId,runtime,sessionId),items:this.waiting(nodeId,runtime,sessionId).map(nativeTurnView)};
  }
  /** When the session is idle, start the next queued turn; the Git credential is resolved only now, never stored with the queue. */
  async pump(nodeId,runtime,sessionId){
   while(this.online(nodeId)&&!this.active(nodeId,runtime,sessionId)&&!this.waitsForExit(nodeId,runtime,sessionId)){
    const next=this.waiting(nodeId,runtime,sessionId)[0];if(!next)return;
+   if(!next.steer&&this.queueState(nodeId,runtime,sessionId).paused)return;
    try{
     const credential=next.control||!this.gitCredential?null:await this.gitCredential(this.settings(nodeId,runtime,sessionId));
     const fresh=this.db.get('nativeTurns',next.id);
@@ -195,9 +224,16 @@ export class NativeTurnsHome{
  attachmentFor(turnId,attachmentId){const turn=this.db.get('nativeTurns',turnId);if(!turn||!(ACTIVE.has(turn.status)||turn.status==='stopping')||!turn.attachments?.some(a=>a.id===attachmentId))throw Error('Attachment does not belong to an unfinished takeover turn');return {owner:NativeTurnsHome.owner(turn.nodeId),id:attachmentId};}
  stop(nodeId,id){
   const turn=this.db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
-  if(turn.status==='waiting'){this.db.put('nativeTurns',{...turn,status:'cancelled',endedAt:now(),updatedAt:now()});this.change();return nativeTurnView(this.db.get('nativeTurns',id));}
+  if(turn.status==='waiting'){this.db.put('nativeTurns',{...turn,status:'cancelled',withdrawn:true,endedAt:now(),updatedAt:now()});this.change();return nativeTurnView(this.db.get('nativeTurns',id));}
   if(!ACTIVE.has(turn.status))return nativeTurnView(turn);
   this.db.put('nativeTurns',{...turn,status:'stopping',updatedAt:now()});this.send(nodeId,{type:'native_turn_stop',id});this.change();return nativeTurnView(this.db.get('nativeTurns',id));
+ }
+ /** Delete or edit a queued message: it leaves the queue only while still waiting, so a message that has just started is never interrupted. */
+ withdraw(nodeId,id){
+  const turn=this.db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
+  if(turn.status!=='waiting')throw Error('This message has already been sent');
+  this.db.put('nativeTurns',{...turn,status:'cancelled',withdrawn:true,endedAt:now(),updatedAt:now()});this.queueState(turn.nodeId,turn.runtime,turn.sessionId);this.change();
+  return nativeTurnView(this.db.get('nativeTurns',id));
  }
  /** Ending takeover closes the resident CLI; an unfinished turn is stopped first by the Worker. */
  release(nodeId,{runtime,sessionId}={}){

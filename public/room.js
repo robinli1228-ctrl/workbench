@@ -2,7 +2,7 @@ import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
-import { linkMedia } from './media.js';
+import { linkMedia, openImageLightbox } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
 import {setChatCardState,highlightLatestChatCard} from './chat-card-state.js';
@@ -338,13 +338,9 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const open = button('', async () => {
       try {
         const url = await attachmentUrl(item);
+        // Pictures open in the same viewer as media named in replies: download, copy, close; name, size and the message time.
         if (item.mime.startsWith('image/')) {
-          previewDialog.className = 'attachment-dialog';
-          previewDialog.setAttribute('aria-label', 'Image preview');
-          previewDialog.replaceChildren();
-          const image = create('img'); image.src = url; image.alt = item.name;
-          previewDialog.append(iconAction('close','Close',()=>previewDialog.close()), image, create('p','',item.name));
-          previewDialog.showModal();
+          openImageLightbox({ name:item.name, size:item.size, at:open.closest('.chat-row')?.querySelector('time[datetime]')?.getAttribute('datetime')||null, url });
         } else if (/\.(md|markdown|txt)$/i.test(item.name)) {
           const response = await fetch(url);
           previewText(await response.text(), item.name, url);
@@ -818,13 +814,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
 
   /** Chat prose is simplified for display only; copying and the Original view retain the complete stored text. */
   /** Media files named in a reply open in the shared viewer; bytes stay on the device that ran the turn until requested. */
-  function mediaTargets(){
-    const bindings=(data.workspaces||[]).filter(w=>w.projectId===projectId);
-    return (data.workers||[]).filter(w=>bindings.some(b=>b.nodeId===w.id)).map(w=>({nodeId:w.id,name:workerDisplayName(w),online:Boolean(w.online),ready:Boolean(w.online&&w.capabilities?.mediaStream===1)}));
-  }
-  const mediaContext=runId=>runId?{key:`run:${runId}`,describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`),
-    transfers:projectId?{targets:mediaTargets,start:payload=>api(`/api/projects/${encodeURIComponent(projectId)}/media-transfers`,{method:'POST',json:payload}),
-      read:id=>api(`/api/projects/${encodeURIComponent(projectId)}/media-transfers/${encodeURIComponent(id)}`)}:null}:null;
+  const mediaContext=runId=>runId?{key:`run:${runId}`,describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`)}:null;
   const renderLinkedMarkdown=(text,runId)=>previewDocumentLinks(localizeDocumentLinks(linkMedia(linkRunDocuments(renderMarkdown(simplifiedCliOutput(text)),runId),mediaContext(runId)),runId,api));
   function replyPreview(text, markdown = true, runId = null, key = '') {
     const preview = create('div', 'chat-reply-preview');

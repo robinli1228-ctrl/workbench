@@ -1,4 +1,5 @@
 import { t } from './i18n.js';
+import { setActionIcon } from './role-icons.js';
 
 /** Platform-wide role templates: list, edit, delete and restore. Roles already created keep their own copied text. */
 export function roleTemplatesUI({ api, getData, refreshState, create }) {
@@ -41,7 +42,8 @@ export function roleTemplatesUI({ api, getData, refreshState, create }) {
     text.setAttribute('translate', 'no');
     const meta = create('p', 'role-template-meta', item.instructions?.trim() ? t('Prompt: {count} characters', { count: item.instructions.trim().length }) : 'No prompt');
     const actions = create('div', 'role-template-actions');
-    const button = (label, handler, className = 'secondary compact') => { const b = create('button', className, label); b.type = 'button'; b.addEventListener('click', handler); actions.append(b); return b; };
+    // Same as the scheduled-job rows: short row actions are icons, the label stays as tooltip and accessible name.
+    const button = (label, handler, className = 'secondary compact') => { const b = create('button', className, label); b.type = 'button'; const icon = { Edit: 'edit', Delete: 'trash', Restore: 'back', 'Restore default': 'back' }[label]; if (icon) setActionIcon(b, icon, t(label)); b.addEventListener('click', handler); actions.append(b); return b; };
     if (deleted) button('Restore', () => restore(item));
     else {
       button('Edit', () => openForm(item));

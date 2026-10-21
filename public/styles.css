@@ -2056,11 +2056,11 @@ body .project-sidebar .sidebar-heading { align-items:center; gap:10px; padding:0
 }
 /* Native fields retain values, validation and form bindings; only their popup is replaced. */
 body select:not([multiple]):not([size]), body select[size="1"] {
-  appearance:none; -webkit-appearance:none; min-height:42px; padding:10px 38px 10px 13px;
-  font-size:14px; font-weight:400; line-height:1.4; -webkit-tap-highlight-color:transparent;
-  border:1px solid #dce2ed; border-radius:10px; background-color:#fff; color:#273248;
+  appearance:none; -webkit-appearance:none; box-sizing:border-box; height:32px; min-height:32px; padding:0 30px 0 11px;
+  font-size:13px; font-weight:400; line-height:30px; -webkit-tap-highlight-color:transparent; text-overflow:ellipsis; white-space:nowrap;
+  border:1px solid #dce2ed; border-radius:8px; background-color:#fff; color:#273248; background-size:14px 14px; transition:border-color .15s;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235559df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat:no-repeat; background-position:right 13px center; box-shadow:none; cursor:pointer;
+  background-repeat:no-repeat; background-position:right 10px center; box-shadow:none; cursor:pointer;
 }
 body select:not([multiple]):hover:not(:disabled) { border-color:#b5bdec; }
 body select:not([multiple]):focus-visible, body select.wb-select-open { outline:2px solid #dfe3ff; outline-offset:1px; border-color:#777de8; }
@@ -3168,14 +3168,6 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .native-identity-item:first-child { flex: 1 1 auto; }
 
-/* Selects, app-wide: 34px, a quiet chevron, no native arrow; inputs keep their height. Cards use the 30px size. */
-select { appearance: none; -webkit-appearance: none; height: 34px; min-height: 34px; padding: 0 30px 0 10px; font-size: 13px; line-height: 32px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 9px center; background-size: 14px 14px; }
-select:disabled { opacity: .6; }
-.settings-page select, .native-session-form select, :is(#role-form, #supervisor-form) select { height: 34px; min-height: 34px; }
-.native-setting select { height: 30px; min-height: 30px; padding: 0 26px 0 8px; font-size: 12px; line-height: 28px; background-position: right 7px center; background-size: 12px 12px; }
-@media (max-width: 1000px) { select { height: 38px; min-height: 38px; font-size: 16px; line-height: 36px; } .native-setting select { height: 34px; min-height: 34px; font-size: 14px; line-height: 32px; } }
 
 /* Context: the bar with the compact icon after it. */
 .native-context-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 8px; }
@@ -3239,13 +3231,18 @@ select:disabled { opacity: .6; }
 .native-turn-files .attachment-file-card .attachment-open { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 6px; text-align: left; cursor: pointer; }
 
 /* ---- Polish batch: one dock height, uniform icons, quieter cards ---- */
-/* 1. The composer dock and the right panel's tab bar share one height, so their top hairlines meet. */
+/* 1. One dock height for the three bottom bars — left sidebar footer, composer, right tab bar — so their top hairlines meet.
+   67px is the sidebar footer's height; the composer centres its 42px field inside it instead of growing with padding
+   (measured in a browser: padding 13-14px made it 69-71px). It grows only when its content does (quote, attachments, lines). */
 @media (min-width: 1001px) {
-  #chat-form, .native-takeover-form.chat-composer { display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; min-height: 68px; padding-block: 14px; }
-  .inspector-tabs { height: 68px; min-height: 68px; box-sizing: border-box; }
+  #chat-form, .native-takeover-form.chat-composer { display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; min-height: 67px; padding-block: 8px; }
+  .inspector-tabs { height: 67px; min-height: 67px; box-sizing: border-box; }
+  body[data-project-sidebar] .sidebar-footer { height: 67px; min-height: 67px; box-sizing: border-box; }
 }
 /* 2. Quota lines: both marks the same 22px disc, the figure centred, no decorations. */
-.native-quota-line .role-quota-mark, .native-quota-line .role-quota-mark.is-five-hour, .native-quota-line .role-quota-mark.is-weekly { width: 22px; height: 22px; clip-path: none; border-radius: 50%; font-size: 9px; font-weight: 700; }
+.native-quota-line .role-quota-mark, .native-quota-line .role-quota-mark.is-five-hour, .native-quota-line .role-quota-mark.is-weekly { width: 22px; height: 22px; font-size: 9px; font-weight: 700; }
+.native-quota-line .role-quota-mark.is-weekly { border-radius: 50%; }
+.native-quota-line .role-quota-mark.is-five-hour { border-radius: 0; clip-path: polygon(29.3% 0, 70.7% 0, 100% 29.3%, 100% 70.7%, 70.7% 100%, 29.3% 100%, 0 70.7%, 0 29.3%); }
 .native-quota-line .role-quota-mark::before, .native-quota-line .role-quota-mark::after { content: none; }
 .native-quota-line .role-name-quota { gap: 0; margin: 0; }
 .native-quota-window { font-size: 13px; }
@@ -3325,7 +3322,7 @@ button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 1
 .native-takeover-form textarea { padding-left: 8px; }
 /* ---- Forms and control rows: one control height per context ---- */
 /* New-session dialog: inputs, selects and the folder button share 38px; labels one weight. */
-.native-session-form input:not([type="checkbox"]), .native-session-form select, .native-workspace-row button { height: 38px; min-height: 38px; }
+.native-workspace-row button { height: 36px; min-height: 36px; }
 .native-workspace-row button svg { width: 18px; height: 18px; }
 .native-session-form .native-field { gap: 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
 .native-session-form .native-permissions { margin: 0; }
@@ -3357,8 +3354,228 @@ button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 1
 :is(#chat-attachments, .native-takeover-tray):has(> .attachment-card:not(.attachment-file-card)) { max-height: 98px; }
 :is(#chat-attachments, .native-takeover-tray) > .attachment-card > :is(.attachment-remove, .chat-icon-btn) { width: 22px; height: 22px; min-width: 22px; min-height: 22px; }
 :is(#chat-attachments, .native-takeover-tray) > .attachment-card:not(.attachment-file-card) > .attachment-remove { width: 22px; height: 22px; }
-/* The generic dialog selector carries an ID inside :is(); keep the new-session form's 38px controls authoritative. */
+/* Keep the new-session form aligned with the current dialog control height, including the folder button. */
 #native-session-dialog .native-session-form input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not(.wb-select-search),
 #native-session-dialog .native-session-form select,
-#native-session-dialog .native-workspace-row button { height: 38px; min-height: 38px; }
-#native-session-dialog .native-session-form select { padding-block: 8px; }
+#native-session-dialog .native-workspace-row button { height: 36px; min-height: 36px; }
+#native-session-dialog .native-session-form select { padding-block: 0; }
+
+/* ---- Selects by context (the body-level base above is 32px) ---- */
+/* Dialogs, the project form and the settings page: inputs and selects share 36px. */
+body :is(dialog, #project-form-panel, #settings-page) select:not([multiple]):not([size]) { height: 36px; min-height: 36px; line-height: 34px; padding-left: 12px; }
+:is(dialog, #project-form-panel) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])):not(.wb-select-search) { height: 36px; padding-inline: 12px; border-radius: 8px; font-size: 13px; }
+#settings-page :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])):not(dialog *) { height: 36px; padding-inline: 12px; }
+/* Compact places: side-panel model/effort, the session list filters, toolbars. */
+body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([multiple]):not([size]) { height: 28px; min-height: 28px; padding: 0 24px 0 8px; font-size: 12px; line-height: 26px; border-radius: 7px; background-position: right 7px center; background-size: 12px 12px; }
+/* The popup list matches: 34px options, a 32px search field, a lighter frame. */
+.wb-select-menu[popover] { padding: 4px; border-radius: 10px; }
+.wb-select-menu[popover]:popover-open { gap: 4px; }
+.wb-select-menu .wb-select-search { min-height: 32px; padding: 6px 10px 6px 32px; font-size: 13px; border-radius: 7px; background-position: 10px center; }
+.wb-select-option { min-height: 34px; padding: 7px 10px; gap: 10px; border-radius: 7px; font-size: 13px; line-height: 1.35; }
+.wb-select-check { font-size: 14px; }
+.wb-select-group, .wb-select-empty { padding: 6px 10px; font-size: 11.5px; }
+@media (max-width: 1000px) {
+  body select:not([multiple]):not([size]) { height: 40px; min-height: 40px; line-height: 38px; font-size: 16px; }
+  body :is(dialog, #project-form-panel, #settings-page) select:not([multiple]):not([size]) { height: 40px; min-height: 40px; line-height: 38px; }
+  :is(dialog, #project-form-panel) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])):not(.wb-select-search) { height: 40px; }
+  #settings-page :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"])):not(dialog *) { height: 40px; }
+  body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([multiple]):not([size]) { height: 34px; min-height: 34px; line-height: 32px; font-size: 14px; }
+  .wb-select-option { min-height: 40px; }
+}
+/* A cloud device's number sits inside its icon wherever the icon is used (it floated away in the connection card). */
+.role-machine { position: relative; }
+/* Quota lines: label, mark, time until reset; marks line up in one column. */
+.native-quota-line { gap: 8px; }
+.native-quota-label { flex: 0 0 auto; min-width: 7.2em; color: var(--muted); font-size: 12.5px; }
+
+/* ---- Files tab: two cards, each half of the panel; quiet icon empty states; icon actions in card heads ---- */
+#native-side-outputs:not([hidden]) { display: flex; flex-direction: column; gap: 12px; }
+#native-side-outputs > .native-files-half { flex: 1 1 0; min-height: 200px; display: flex; flex-direction: column; padding: 16px; overflow: hidden; }
+.native-files-half > .native-card-head { flex: none; }
+.native-files-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; margin: 0 -4px; padding: 2px 4px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+.native-files-body > .native-output-list, .native-files-body > .native-file-list, .native-files-body > .native-project-output-list { margin: 0; }
+.native-files-empty { flex: 1; display: grid; place-items: center; min-height: 96px; color: #c3cad4; }
+.native-files-empty svg { width: 30px; height: 30px; stroke-width: 1.5; }
+.native-files-empty.is-busy svg { animation: nt-pulse 1.4s ease-in-out infinite; }
+.native-side-card .native-icon-action { width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); box-shadow: none; }
+.native-side-card .native-icon-action:hover:not(:disabled) { color: var(--accent); background: var(--accent-tint, #eef0ff); }
+.native-side-card .native-icon-action:disabled { opacity: .45; }
+.native-side-card .native-icon-action svg { width: 16px; height: 16px; }
+/* Resources: this session's changes sit at the top of the working folder card, above the browser. */
+.native-folder-changes { margin: 2px 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.native-subhead { margin: 0 0 4px; color: var(--muted); font-size: 11.5px; }
+
+/* ---- Left lists: running state is a small spinner under the device (second line, right column) ---- */
+#project-list .project-item, #native-session-list .project-item { padding-right: 12px; }
+#project-list .project-item.is-running::before, #native-session-list .project-item.is-running::before { content: none; animation: none; }
+.project-item-copy.has-status { display: grid; grid-template-columns: minmax(0, 1fr) 18px; grid-template-rows: auto auto; column-gap: 8px; row-gap: 2px; align-items: center; }
+.project-item-copy.has-status > strong { grid-column: 1; grid-row: 1; min-width: 0; }
+.project-item-copy.has-status > .list-device-slot { grid-column: 2; grid-row: 1; justify-self: center; position: relative; width: 18px; height: 18px; overflow: visible; }
+.project-item-copy.has-status > small { grid-column: 1; grid-row: 2; min-width: 0; margin: 0; }
+.project-item-copy.has-status > .list-run-status { grid-column: 2; grid-row: 2; justify-self: center; width: 13px; height: 13px; }
+.project-item.is-running .list-run-status { box-sizing: border-box; border: 2px solid #dfe3fb; border-top-color: var(--accent); border-right-color: var(--accent); border-radius: 50%; animation: list-run-spin .9s linear infinite; }
+@keyframes list-run-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .project-item.is-running .list-run-status { animation: none; } }
+
+/* A queued message that was never sent: same place as when it was typed, quieter bubble, the reason right under it. */
+.nt-user.is-unsent .nt-body { opacity: .72; border-style: dashed; }
+.nt-user.is-unsent .nt-prompt-tools { opacity: 1; }
+.nt-unsent-note { margin-right: 8px; color: #b45309; font-size: 11.5px; }
+
+/* ---- Side cards: a hairline under every title bar; empty / loading / failed states as icon + few words ---- */
+.native-side-card { --card-pad: 14px; }
+#native-side-outputs > .native-files-half { --card-pad: 16px; }
+.native-side-card > .native-card-head:first-child, .native-side-card > h3:first-child { margin: -2px calc(-1 * var(--card-pad)) 12px; padding: 0 var(--card-pad) 10px; border-bottom: 1px solid #edf0f4; }
+.native-side-card > .native-card-head:first-child > h3 { margin: 0 auto 0 0; }
+.native-card-head { justify-content: flex-start; gap: 2px; }
+.native-card-head > h3 { margin-right: auto; }
+.card-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 6px 6px; text-align: center; }
+.card-state-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: #f3f5f9; color: #9aa3b2; }
+.card-state-icon svg { width: 19px; height: 19px; }
+.card-state > p { margin: 0; color: #6b7280; font-size: 12.5px; line-height: 1.5; }
+.card-state.is-warn .card-state-icon { background: #fdf3e7; color: #c27a1a; }
+.card-state.is-busy .card-state-icon svg { animation: nt-pulse 1.4s ease-in-out infinite; }
+.card-state-retry { margin-top: 2px; padding: 3px 12px; border: 1px solid #e3e7ee; border-radius: 999px; background: #fff; color: var(--accent); font-size: 12px; cursor: pointer; }
+.card-state-retry:hover { border-color: rgb(79 91 206 / 35%); }
+.native-files-body > .card-state { margin: auto 0; }
+
+/* Media cards in messages: a preview above the name (image thumbnail, video first frame with a play mark); click opens the viewer. */
+.media-card.has-preview { display: inline-grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 6px; width: min(100%, 280px); max-width: min(100%, 280px); padding: 6px 6px 8px; vertical-align: top; }
+.media-card.has-preview .media-card-icon { display: none; }
+.media-card.has-preview .media-card-text { padding: 0 4px; }
+.media-card-preview { position: relative; display: block; width: 100%; aspect-ratio: 16 / 10; overflow: hidden; border-radius: 8px; background: #eef1f6; }
+.media-card-preview > img, .media-card-preview > video { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.media-card-preview[data-kind="image"] > img { object-fit: contain; }
+.media-card-play { position: absolute; inset: 0; width: 36px; height: 36px; margin: auto; display: grid; place-items: center; border-radius: 50%; background: rgb(15 23 42 / 55%); color: #fff; font-size: 13px; padding-left: 2px; box-sizing: border-box; }
+.media-card.has-preview:hover .media-card-preview { filter: brightness(.97); }
+
+/* ---- Session transcript: reading layout. Dark prompt bubble; the reply column (indented past the agent icon) sits between a
+   hairline under the byline and one above Copy + Took; tool steps are plain grey lines; the live line shimmers. ---- */
+.native-session-content { --nt-rule: #e6e8ed; --nt-quiet: #8b909a; --nt-text: #1f2328; }
+.native-session-content .nt-agent { --nt-indent: 30px; }
+@media (max-width: 1000px) { .native-session-content .nt-agent { --nt-indent: 0px; } }
+.native-session-content .nt-day { max-width: min(860px, 100%); margin: 4px auto 18px; color: #9a9fa8; font-size: 12.5px; text-align: center; font-variant-numeric: tabular-nums; }
+/* Reply: icon, name and time; the text column starts under the name. */
+.native-session-content .nt-agent .nt-byline { margin: 0 0 8px; }
+.native-session-content .nt-agent .nt-byline .nt-name { color: var(--nt-text); font-size: 13.5px; font-weight: 600; }
+.native-session-content .nt-agent .nt-byline time { color: #9a9fa8; font-size: 12px; }
+.native-session-content .nt-agent .nt-body { max-width: calc(86% - var(--nt-indent)); margin-left: var(--nt-indent); padding: 12px 0 0; border-top: 1px solid var(--nt-rule); color: var(--nt-text); font-size: 15px; line-height: 1.75; }
+.native-session-content .nt-agent.is-continued .nt-body { padding-top: 0; border-top: 0; }
+.native-session-content .nt-agent .markdown-body { color: var(--nt-text); font-size: 15px; line-height: 1.75; }
+.native-session-content .nt-agent .markdown-body strong { color: #000; font-weight: 600; }
+.native-session-content .nt-agent .markdown-body :not(pre) > code { padding: 1px 6px; border-radius: 6px; background: #eef0f4; color: var(--nt-text); font-size: .88em; }
+.native-session-content .nt-agent .nt-reply-foot { max-width: calc(86% - var(--nt-indent)); margin: 12px 0 0 var(--nt-indent); padding: 5px 0 0; gap: 8px; border-top: 1px solid var(--nt-rule); }
+.native-session-content .nt-reply-foot .nt-copy { margin-left: -5px; opacity: 1; color: var(--nt-quiet); }
+.native-session-content .nt-reply-foot .nt-duration { color: var(--nt-quiet); font-size: 12.5px; }
+@media (max-width: 1000px) { .native-session-content .nt-agent .nt-body, .native-session-content .nt-agent .nt-reply-foot { max-width: 94%; } }
+/* One rhythm in a reply: the same gap between any two blocks (paragraphs, lists, code, tool lines, the live line, errors),
+   whether the reply is a page turn (.nt-turn) or history (blocks straight in .nt-body). */
+.native-session-content .nt-agent { --nt-gap: 10px; }
+.native-session-content .nt-agent .nt-body > *, .native-session-content .nt-agent .nt-turn > *, .native-session-content .nt-agent .nt-extra > *, .native-session-content .nt-agent .markdown-body > * { margin-top: 0; margin-bottom: 0; }
+.native-session-content .nt-agent .nt-body > * + *, .native-session-content .nt-agent .nt-turn > * + *, .native-session-content .nt-agent .nt-extra > * + *, .native-session-content .nt-agent .markdown-body > * + * { margin-top: var(--nt-gap); }
+.native-session-content .nt-agent .markdown-body > * + :is(h1, h2, h3, h4) { margin-top: 18px; }
+.native-session-content .nt-agent .markdown-body > :is(h1, h2, h3, h4, h5, h6) + * { margin-top: 6px; }
+.native-session-content .nt-agent .markdown-body :is(ul, ol) { padding-left: 1.3em; }
+.native-session-content .nt-agent .markdown-body li { margin: 0; }
+.native-session-content .nt-agent .markdown-body li + li { margin-top: 2px; }
+.native-session-content .nt-agent .markdown-body li > :is(p, ul, ol) { margin: 0; }
+/* Tool steps: no box; the summary's chevron follows its text; rows are icon + grey text. */
+.native-session-content .nt-activity { margin: 0; border: 0; border-radius: 0; background: none; font-size: 14px; }
+.native-session-content .nt-activity-summary { width: fit-content; max-width: 100%; gap: 6px; padding: 2px 0; color: var(--nt-quiet); font-size: 14px; }
+.native-session-content .nt-activity-summary:hover { color: #4b505b; }
+.native-session-content .nt-activity-text { order: 0; }
+.native-session-content .nt-caret { order: 1; width: 6px; height: 6px; margin: 0 4px 0 2px; border: 0; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); opacity: .8; }
+.native-session-content .nt-activity[open] > .nt-activity-summary .nt-caret { transform: translateY(-2px) rotate(45deg); }
+.native-session-content .nt-chips { order: 2; margin-left: 4px; gap: 4px; }
+.native-session-content .nt-chip { padding: 1px 8px 1px 5px; border: 0; background: #eef0f4; color: #5f6470; font-size: 11.5px; }
+.native-session-content .nt-chip:hover { background: #e3e6ed; color: var(--nt-text); }
+.native-session-content .nt-steps { padding: 2px 0 0; border: 0; }
+.native-session-content .nt-step-head { min-height: 0; padding: 3px 0; gap: 9px; border-radius: 0; color: var(--nt-quiet); font-size: 14px; line-height: 1.5; }
+.native-session-content .nt-step-head:not(.is-static):hover { background: none; color: #4b505b; }
+.native-session-content .nt-step .nt-icon { width: 16px; height: 16px; color: #9da2ab; }
+.native-session-content .nt-step.is-failed .nt-icon, .native-session-content .nt-step.is-error .nt-icon { color: var(--danger); }
+.native-session-content .nt-step-verb { color: inherit; }
+.native-session-content .nt-step-target { color: inherit; font-family: inherit; }
+.native-session-content .nt-step.is-note .nt-step-target, .native-session-content .nt-step.is-note .nt-step-verb { color: #9da2ab; font-size: 13px; }
+.native-session-content .nt-step .nt-detail { margin: 2px 0 8px 25px; }
+/* Live line: the current action shimmers, elapsed time after it; no dot. */
+.native-session-content .nt-working { gap: 8px; margin: 0; color: #9da2ab; font-size: 14px; }
+.native-session-content .nt-working .nt-pulse { display: none; }
+.native-session-content .nt-working-hint { order: 0; background: linear-gradient(90deg, #9da2ab 0 35%, #e1e4ea 50%, #9da2ab 65% 100%) 0 0 / 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: nt-shimmer 1.8s linear infinite; }
+.native-session-content .nt-working-time { order: 1; color: #b3b7bf; font-size: 13px; }
+@keyframes nt-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .native-session-content .nt-working-hint { animation: none; background: none; color: #9da2ab; } }
+/* Prompt: the page's own light-indigo bubble, a shade deeper, in the rounded shape; a message never sent is a hollow dashed bubble. */
+.native-session-content .nt-user .nt-body { padding: 11px 18px; border: 0; border-radius: 20px; background: #e3e7fa; color: var(--ink); }
+.native-session-content .nt-prompt-text { color: #1f2433; font-size: 14.5px; font-weight: 400; line-height: 1.65; }
+.native-session-content .nt-user > .nt-prompt-files { max-width: min(640px, 78%); margin: 0 0 6px; }
+.native-session-content .nt-user > .nt-prompt-files .chat-attachments, .native-session-content .nt-user > .nt-prompt-files .native-turn-files { margin: 0; justify-content: flex-end; }
+.native-session-content .nt-user .native-turn-files .attachment-card img { border: 1px solid #e3e6ec; border-radius: 10px; }
+.native-session-content .nt-prompt-tools .nt-prompt-time { color: #9a9fa8; font-size: 12px; }
+.native-session-content .nt-user.is-unsent .nt-body { opacity: 1; border: 1px dashed #c4c8d0; background: transparent; }
+.native-session-content .nt-user.is-unsent .nt-prompt-text { color: #6b7080; font-weight: 400; }
+
+/* Quota card: the window labels in dark semibold; the marks at half opacity so the numbers beside them lead. */
+.native-quota-line .native-quota-label { color: var(--ink); font-weight: 600; }
+.native-quota-line .role-quota-mark { opacity: .5; }
+
+/* ---- Sessions queue: blue rows; pause/resume at the right of the title; per row a drag grip, the text with its send time on
+   hover (beside the text, never over the icons), then steer, edit and delete. ---- */
+.native-queue .message-queue-item, .native-queue .message-queue-item:hover { background: linear-gradient(rgb(37 99 235 / 5%), rgb(37 99 235 / 5%)), #fff; }
+.native-queue .message-queue-item:hover { background: linear-gradient(rgb(37 99 235 / 9%), rgb(37 99 235 / 9%)), #fff; }
+.native-queue .message-queue-item { align-items: center; gap: 6px; padding: 6px 6px 6px 4px; }
+.native-queue .message-queue-list.is-orderable .message-queue-item[data-order-id] { cursor: default; }
+.native-queue .message-queue-list.is-orderable .message-queue-item[data-order-id]::before { content: none; }
+.native-queue .message-queue-grip { flex: none; display: grid; place-items: center; width: 18px; height: 24px; color: #b3b8c2; cursor: grab; touch-action: none; }
+.native-queue .message-queue-grip svg { width: 10px; height: 15px; }
+.native-queue .message-queue-item:hover .message-queue-grip { color: #7b8190; }
+.native-queue .message-queue-item:not([data-order-id]) .message-queue-info { padding-left: 6px; }
+.native-queue .message-queue-info { display: flex; align-items: center; gap: 10px; }
+.native-queue .message-queue-info strong { flex: 1; min-width: 0; font-weight: 500; }
+.native-queue .message-queue-time { flex: none; color: #9aa0aa; font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .12s; }
+.native-queue .message-queue-item:hover .message-queue-time, .native-queue .message-queue-item:focus-within .message-queue-time { opacity: 1; }
+.native-queue .message-queue-item .icon-button { width: 28px; height: 28px; min-height: 28px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); box-shadow: none; }
+.native-queue .message-queue-item .icon-button svg { width: 16px; height: 16px; }
+.native-queue .message-queue-item .message-queue-delete:hover:not(:disabled) { color: var(--danger); background: #fdecec; }
+.native-queue summary { padding-right: 8px; }
+.native-queue summary .message-queue-pause { margin-left: auto; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 5px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
+.native-queue summary .message-queue-pause:hover { color: var(--accent); background: var(--accent-tint, #eef0ff); }
+.native-queue summary .message-queue-pause.is-paused { color: #b45309; background: #fff4e5; }
+.native-queue summary .message-queue-pause svg { width: 16px; height: 16px; }
+.native-queue summary .message-queue-paused { margin-left: 2px; padding: 1px 8px; border-radius: 999px; background: #fff4e5; color: #b45309; font-size: 11.5px; font-weight: 600; }
+.native-queue .message-queue-item.list-order-placeholder { background: rgb(37 99 235 / 12%); }
+.message-queue-item.list-order-ghost .message-queue-time { opacity: 0; }
+
+/* ---- One viewer for every picture and video in the chats: download, copy and close at the top right; a plain light stage
+   (no black bars); name and size bottom left, the message time bottom right. ---- */
+dialog.media-lightbox { width: min(1100px, calc(100vw - 48px)); max-width: none; max-height: calc(var(--app-height, 100dvh) - 48px); padding: 0; overflow: hidden; }
+dialog.media-lightbox[open] { display: flex; flex-direction: column; }
+.media-lightbox-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 10px 12px 0; }
+.media-lightbox-actions .chat-icon-btn { display: grid; place-items: center; width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 6px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
+.media-lightbox-actions .chat-icon-btn:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+.media-lightbox-actions .chat-icon-btn svg { width: 18px; height: 18px; }
+.media-lightbox-actions .media-download { margin-left: 0; }
+dialog.media-lightbox .media-stage { flex: 1; min-height: 200px; margin: 6px 16px 0; border-radius: 10px; background: transparent; }
+dialog.media-lightbox .media-stage img, dialog.media-lightbox .media-stage video { max-width: 100%; max-height: calc(var(--app-height, 100dvh) - 190px); border-radius: 8px; object-fit: contain; }
+dialog.media-lightbox .media-loading { inset: 50% auto auto 50%; transform: translate(-50%, -50%); background: rgb(15 23 42 / 62%); }
+dialog.media-lightbox .media-unavailable { color: var(--muted); }
+dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); font-size: 12.5px; }
+.media-lightbox-foot { display: flex; align-items: center; gap: 16px; padding: 12px 18px 14px; }
+.media-lightbox-label { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin-right: auto; }
+.media-lightbox-name { overflow: hidden; color: var(--ink); font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.media-lightbox-size, .media-lightbox-time { flex: none; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+/* Pictures and videos named in messages show as the same thumbnail as a picture someone sent (96×72, cropped to fill, 10px
+   corners); the name is in the tooltip and at the bottom of the viewer. Other files keep their card. */
+.media-card.has-preview { display: inline-block; width: auto; max-width: none; margin: 2px 6px 2px 0; padding: 0; border: 0; border-radius: 10px; background: none; vertical-align: top; }
+.media-card.has-preview:hover { background: none; }
+.media-card.has-preview .media-card-text { display: none; }
+.media-card.has-preview .media-card-preview { width: 96px; height: 72px; aspect-ratio: auto; border: 1px solid #e3e6ec; border-radius: 10px; background: #f3f5f8; }
+.media-card.has-preview .media-card-preview > img, .media-card.has-preview .media-card-preview[data-kind="image"] > img, .media-card.has-preview .media-card-preview > video { object-fit: cover; }
+.media-card.has-preview .media-card-play { width: 26px; height: 26px; font-size: 10px; }
+.media-card.has-preview:hover .media-card-preview { filter: brightness(.96); }
+@media (max-width: 1000px) {
+  #native-session-dialog .native-session-form input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not(.wb-select-search),
+  #native-session-dialog .native-session-form select,
+  #native-session-dialog .native-workspace-row button { height: 40px; min-height: 40px; }
+}
