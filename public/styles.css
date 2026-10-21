@@ -3660,3 +3660,12 @@ audio.side-preview-media { background: transparent; }
 @media (max-width: 1000px) {
   #native-side-tab-preview, .nt-side, .nt-prompt-side, .media-side, .nt-sheet-btn.is-side, .artifact-detail-side { display: none !important; }
 }
+
+/* Both bottom bars (left: usage, jobs, settings; right: panel tabs) behave the same: the same grey icons, hover only darkens
+   the icon and never changes the background, and the current page or tab is the accent colour with no fill or underline. */
+.sidebar-footer .icon-button, .inspector-tabs button { color: var(--text-faint); background: transparent; }
+.sidebar-footer .icon-button:hover, .inspector-tabs button:hover { color: var(--text-body); background: transparent; }
+.sidebar-footer .icon-button[aria-current="page"], .inspector-tabs button[aria-selected="true"],
+.sidebar-footer .icon-button[aria-current="page"]:hover, .inspector-tabs button[aria-selected="true"]:hover { color: var(--accent); background: transparent; }
+.sidebar-footer .icon-button[aria-current="page"]::before { content: none; }
+.sidebar-footer .icon-button:focus-visible, .inspector-tabs button:focus-visible { background: transparent; outline: 2px solid var(--accent); outline-offset: -2px; }
