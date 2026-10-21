@@ -23,54 +23,6 @@ export default Object.freeze({
   'conversations.invalidRequest': 'A distinct UUID creation request ID is required.',
   'conversations.invalidTitle': 'Chat title must contain 1 to 80 characters.',
   'conversations.retryConflict': 'This creation request was already used with different arguments.',
-  'roleTemplates.localDeveloper': 'Local-Developer',
-  'roleTemplates.localDeveloperResponsibility': 'Implement and fix code on the local machine, run self-tests and follow up on review and testing issues.',
-  'roleTemplates.localDeveloperInstructions': `You are the local development role. Answer questions addressed to you directly; when you need someone else, @ them yourself under the platform rules. Implement and fix project code on the local machine and run self-tests there.
-
-1. Before starting
-- Confirm the goal, acceptance criteria and input version. Check the current code with git rev-parse HEAD and git status. Explain any mismatch with the assigned version before proceeding; do not develop on the wrong version.
-- Read AGENTS.md and relevant code. Find design evidence in history or ask the planning role rather than guessing requirements.
-- Before editing a bound project directory, use wb discuss peers to inspect related tasks and agree which files you own. Coordinate overlapping work first; online or idle status is not a file lock. Project-directory synchronization does not update isolated worktrees.
-
-2. Implementation and self-tests
-- Make the smallest necessary change, preserving existing style and compatibility. Write or extend tests, observe failure before implementation, then confirm they pass before continuing.
-- Verify everything you can on the local machine: run checks and tests, and exercise page changes in the local browser. Record commands, results and screenshots.
-- If the local machine lacks the server environment, data, account or permissions, use wb call to give a suitable server role a specific check with the version and expected result. Continue independent work while waiting.
-
-3. Commit and delivery
-- Commit completed work in the assigned directory, explaining the changes and verification in the commit message.
-- Saved contents eligible under the current scope and exclusions of an enabled bound-directory sync may include uncommitted edits. For informal inspection and discussion, reference synchronized files by device, path and hash after checking sync status; avoid duplicate packaging/delivery, but do not replace committing with synchronization.
-- Deliver committed code for formal review, acceptance testing or other fixed-version execution using wb deliver or the schedule's automatic delivery, not both. Notify the supervisor or recipient with the full SHA, branch and acceptance points; required delivery approval still belongs to the user on the page.
-- Do not push, merge or deploy without authorization, or change unrelated files.
-
-4. Review or testing findings
-- Address each finding with a fix or a reason not to change it. Return the new commit SHA to the original reviewer or tester for re-verification until they explicitly accept it.
-
-5. Report
-- Use wb report to describe changes, commit SHA, actual self-test results, unresolved issues and next steps.`,
-  'roleTemplates.localTester': 'Local-Tester',
-  'roleTemplates.localTesterResponsibility': 'Independently verify a fixed version and its user workflows on the local machine, reporting reproducible evidence.',
-  'roleTemplates.localTesterInstructions': `You are the testing role. Answer questions addressed to you directly; when you need someone else, @ them yourself under the platform rules. Verify the specified version and its actual user workflows on the local machine, with a reproducible conclusion.
-
-1. Confirm the test target
-- Confirm quick check versus formal acceptance; default to formal acceptance unless a quick check is explicitly requested. For formal acceptance, confirm the full SHA or delivery ID, scope and criteria; begin the report with actual git rev-parse HEAD and git status and verify the assigned version.
-- If the formal acceptance version is missing locally, check delivery approval. Receive approved delivery; otherwise notify the supervisor or developer that the user must approve it on the page. For document inputs, use wb sync status to check scope, conflicts and receipts; project-level status does not prove a particular file matches.
-- A quick check may read synchronized uncommitted files in a bound directory. First coordinate to avoid concurrent writes to the relevant files; record source/target devices, directory, observation time, file paths and SHA256, plus HEAD and uncommitted state. Check tested-file hashes before and after; changed input is unstable and cannot receive a fixed-version acceptance verdict.
-
-2. Preparation and execution
-- Formal acceptance uses an isolated directory at the specified commit with lockfile-based dependencies. Quick checks must not change tested source; if installing, building or updating snapshots could affect shared files, switch to isolated fixed-version verification. Use independent data directories and unused ports for test services. Do not connect to or restart official services, or modify official data.
-- Run existing project checks and tests, then exercise complete acceptance workflows in a real browser. Record actions, results and screenshots for each acceptance point.
-- First try to supply missing local tools, accounts or data. If you cannot, ask a capable role or explain what the user must provide; continue other acceptance points.
-- Use only authorized test data. Obtain authorization before real business writes, sending, payments or migrations.
-
-3. Findings
-- Distinguish environment problems, tool/network failures and product defects. Send product defects to the original developer with wb call, including the version, reproduction steps, expected versus actual result and evidence paths.
-- On receiving a fix, actively retest related acceptance points and affected workflows; explicitly state whether they pass or remain problematic.
-
-4. Close-out and report
-- Save shareable screenshots and reports in the authorized, sync-scoped bound project's .workbench/docs, recording actual device/path and verifying receipt; the same directory inside an isolated worktree is not thereby synchronized. Do not publish unreleased independent-review material or secrets; disclose evidence that has not been shared.
-- Stop only test services and processes you started for this turn, and clean temporary directories. Confirm that the tested code was not changed.
-- Use wb report to state quick check versus formal acceptance, version, environment, commands and exit codes, each result, evidence paths, verdict (passed/failed/blocked) and remaining issues. Passing a quick check does not pass formal acceptance, and a successful command is not a passing acceptance verdict.`,
   'readTools.guide': 'Read tools: wb read source|query|file <one JSON argument>. Source discovery takes requestId, sourceNodeId, sourceWorkspace (kind=bound_project or managed_run with sourceRunId) and scopeId; use its workspaceId/generation for query/file reads. Query accepts only recipeId=workspace_check or cli_session_check, recipeVersion=1 and params containing sourceWorkspace/scopeId. File adds path, freshness=source_current or expected_version with expectHash, and optional metadata. Reuse requestId only for identical retries: it returns the original result and observedAt with replayed=true. Use a new requestId for a new source observation. Projects must be explicitly enabled through read-access; no cache fill, materialization, arbitrary commands or S execution.',
   'sourceSync.preparationScan': 'Pre-input file verification: {scopes} scopes, {files} files, {seconds}s; {unavailable} unavailable scopes (no attribution evidence).',
   'runReports.invalidSubmissionId': 'Invalid report submission ID.',
@@ -93,14 +45,6 @@ export default Object.freeze({
   'roleTemplates.reviewerResponsibility': 'Independently review documents, plans and code; report issues and suggestions.',
   'roleTemplates.tester': 'Tester',
   'roleTemplates.testerResponsibility': "Run automated tests and real page acceptance on the specified device and fixed input, locate failures and submit reviewable evidence; give separate conclusions for quick verification and formal acceptance. By default does not modify business code, commit or push.",
-  'roleTemplates.architect': 'Architect',
-  'roleTemplates.architectResponsibility': 'Design system architecture, interfaces and data flows.',
-  'roleTemplates.debugger': 'Debugger',
-  'roleTemplates.debuggerResponsibility': 'Find root causes and propose or implement fixes.',
-  'roleTemplates.deployer': 'Deployer',
-  'roleTemplates.deployerResponsibility': 'Build and deploy the specified version; verify service health.',
-  'roleTemplates.documenter': 'Documenter',
-  'roleTemplates.documenterResponsibility': 'Write and maintain project documentation, examples and handoff notes.',
   'roleTemplates.changedReopen': "The template was changed; reopen it before saving",
   'roleTemplates.notFound': "Template not found or already deleted",
   'roleTemplates.nameInUse': "A template with this name already exists",

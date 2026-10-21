@@ -1355,7 +1355,6 @@ body[data-workspace-view="settings"] #settings-usage-panel .settings-panel-headi
 .prompt-edit-dialog { width: min(760px, calc(100vw - 32px)); }
 .role-templates-browser { display: grid; gap: 14px; }
 .role-templates-list { display: grid; gap: 10px; }
-.role-templates-hidden h4 { margin: 4px 0 10px; color: #263f5a; font-size: 14px; }
 .role-template-item { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid var(--accent-line); border-radius: 8px; background: #fff; }
 .role-template-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .role-template-name { min-width: 0; overflow: hidden; color: #263f5a; text-overflow: ellipsis; white-space: nowrap; }

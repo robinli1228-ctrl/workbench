@@ -1,5 +1,5 @@
 import { tr } from './i18n.mjs';
-/** Shipped presets may be edited or hidden; only opt-in cross-device/local-work presets include prompts, and no seats are created automatically. */
+/** Five shipped presets (planning, execution, review, testing, cross-device); they can be edited and restored, not removed. Only the cross-device preset includes a prompt, and no seats are created automatically. */
 export function defaultRoleTemplates() {
   return Object.freeze([
     {
@@ -41,54 +41,6 @@ export function defaultRoleTemplates() {
       mode: 'workspace-write',
       modelHint: tr('defaultRoles.midTierModelRecommendedFor'),
       instructions: tr('roleTemplates.crossDeviceInstructions')
-    },
-    {
-      key: 'architect',
-      responsibility: tr('roleTemplates.architectResponsibility'),
-      name: tr('roleTemplates.architect'),
-      mode: 'workspace-write',
-      modelHint: tr('defaultRoles.strongReasoningModelRecommendedFor'),
-      instructions: ''
-    },
-    {
-      key: 'debugger',
-      responsibility: tr('roleTemplates.debuggerResponsibility'),
-      name: tr('roleTemplates.debugger'),
-      mode: 'workspace-write',
-      modelHint: tr('defaultRoles.strongReasoningModelRecommendedFor'),
-      instructions: ''
-    },
-    {
-      key: 'deployer',
-      responsibility: tr('roleTemplates.deployerResponsibility'),
-      name: tr('roleTemplates.deployer'),
-      mode: 'workspace-write',
-      modelHint: tr('defaultRoles.midTierModelRecommendedFor'),
-      instructions: ''
-    },
-    {
-      key: 'documenter',
-      responsibility: tr('roleTemplates.documenterResponsibility'),
-      name: tr('roleTemplates.documenter'),
-      mode: 'workspace-write',
-      modelHint: tr('defaultRoles.fastModelRecommendedForRoutine'),
-      instructions: ''
-    },
-    {
-      key: 'local-developer',
-      responsibility: tr('roleTemplates.localDeveloperResponsibility'),
-      name: tr('roleTemplates.localDeveloper'),
-      mode: 'workspace-write',
-      modelHint: tr('defaultRoles.midTierModelRecommendedFor'),
-      instructions: tr('roleTemplates.localDeveloperInstructions')
-    },
-    {
-      key: 'local-tester',
-      responsibility: tr('roleTemplates.localTesterResponsibility'),
-      name: tr('roleTemplates.localTester'),
-      mode: 'workspace-write',
-      modelHint: tr('defaultRoles.fastModelRecommendedForRoutine'),
-      instructions: tr('roleTemplates.localTesterInstructions')
     }
   ]);
 }

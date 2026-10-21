@@ -527,7 +527,6 @@ async function refreshState({ quiet = false } = {}) {
       roleSwitches:Array.isArray(data.roleSwitches)?data.roleSwitches:[],
       cliRecoveries:Array.isArray(data.cliRecoveries)?data.cliRecoveries:[],
       roleTemplates: Array.isArray(data.roleTemplates) ? data.roleTemplates : [],
-      hiddenRoleTemplates: Array.isArray(data.hiddenRoleTemplates) ? data.hiddenRoleTemplates : [],
       rooms: Array.isArray(data.rooms) ? data.rooms : [],
       gitChecks: Array.isArray(data.gitChecks) ? data.gitChecks : [],
       workspaces: Array.isArray(data.workspaces) ? data.workspaces : [],
