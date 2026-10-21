@@ -859,7 +859,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const send=el('button','primary chat-send');send.type='submit';setActionIcon(send,'send',t('Send'));
   const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
   field.append(tray,attach,model,input,send);bar.append(field);form.append(bar);root.append(head,body,note,form);
-  let session=null,sideId=null,view=null,pending=false,poll=null,signature='',files=[],uploads=0,notice='';
+  let session=null,sideId=null,view=null,pending=false,poll=null,signature='',files=[],uploads=0,notice='',generation=0;
   const sessionKey=value=>value?key(value):'';
   const live=q=>['queued','starting','running','waiting_user','stopping'].includes(q?.status);
   const NOTES={main_prompt:'The main session has a new prompt; side questions start over.',main_session_moved:'The main session has a new prompt; side questions start over.',idle:'Closed after an hour without use.',expired:'Closed two hours after it began.',replaced:'Closed because another side question started.',device_disconnected:'The device disconnected; the side question was closed.',restart:'The device restarted; the side question was closed.'};
@@ -875,7 +875,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(!session)return;
    title.textContent=`${names[session.runtime]||session.runtime}${session.runtime==='claude'?` · ${t('last {count} turns',{count:view?.turns??10})}`:''}`;
    const questions=view?.questions||[];const sig=JSON.stringify([sessionKey(session),questions.map(q=>[q.id,q.status,q.text.length,q.events.length,q.error,q.endedAt]),notice,pending,uploads,files.map(f=>f.id)]);
-   const busy=pending||questions.some(live);send.disabled=busy||uploads>0||(!input.value.trim()&&!files.length);attach.disabled=busy;clear.disabled=!sideId&&!questions.length;
+   const busy=pending||questions.some(live);send.disabled=busy||uploads>0||(!input.value.trim()&&!files.length);attach.disabled=busy;clear.disabled=!sideId&&!questions.length&&!pending&&!uploads;
    tray.replaceChildren();for(const f of files){const chip=el('div','attachment-card attachment-file-card');chip.title=f.name;const open=el('span','attachment-open');open.append(el('span','attachment-name',f.name),el('small','',formatBytes(f.size)));chip.append(open,closeIcon(button('',()=>{files=files.filter(x=>x.id!==f.id);render();},'attachment-remove'),t('Remove attachment')));tray.append(chip);}
    if(uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
    if(sig===signature)return;signature=sig;
@@ -898,33 +898,39 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   function stopPoll(){clearInterval(poll);poll=null;}
   function startPoll(){if(poll)return;poll=setInterval(()=>void refresh(),1000);}
   async function refresh(){
-   if(!session||!sideId)return stopPoll();const asked=sideId,owner=sessionKey(session);
-   try{const next=await api(`${endpoint(session.nodeId)}/side/${encodeURIComponent(asked)}`);if(sideId!==asked||sessionKey(session)!==owner)return;
+   if(!session||!sideId)return stopPoll();const asked=sideId,owner=sessionKey(session),ticket=generation;
+   try{const next=await api(`${endpoint(session.nodeId)}/side/${encodeURIComponent(asked)}`);if(ticket!==generation||sideId!==asked||sessionKey(session)!==owner)return;
     if(next.closed){sideId=null;view=null;notice=NOTES[next.reason]||'';stopPoll();render();return;}
     view=next;notice=next.restarted?'The main session has a new prompt; side questions start over.':notice;if(!next.questions.some(live))stopPoll();render();}
-   catch(error){setNote(error.message);}
+   catch(error){if(ticket===generation&&sideId===asked&&sessionKey(session)===owner)setNote(error.message);}
   }
   async function reset({tell=false,reason=''}={}){
-   stopPoll();const old=sideId,owner=session;sideId=null;view=null;files=[];notice=reason?NOTES[reason]||'':'';signature='';setNote('');
+   stopPoll();generation++;const old=sideId,owner=session;sideId=null;view=null;files=[];pending=false;uploads=0;notice=reason?NOTES[reason]||'':'';signature='';setNote('');
    if(tell&&old&&owner)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(old)}`,{method:'DELETE'}).catch(()=>{});
    render();
   }
   async function ask(){
    if(!session||pending)return;const prompt=input.value;if(!prompt.trim()&&!files.length)return;
+   // Every async result belongs to the original session and this opening of its side panel, even after A -> B -> A.
+   const owner=session,ticket=generation,current=()=>ticket===generation&&sessionKey(session)===sessionKey(owner);
    pending=true;setNote('');render();
-   try{const next=await api(`${endpoint(session.nodeId)}/side`,{method:'POST',json:{sideId,runtime:session.runtime,sessionId:nativeId(session),prompt,model:model.value||null,attachmentIds:files.map(f=>f.id)}});
+   try{const next=await api(`${endpoint(owner.nodeId)}/side`,{method:'POST',json:{sideId,runtime:owner.runtime,sessionId:nativeId(owner),prompt,model:model.value||null,attachmentIds:files.map(f=>f.id)}});
+    if(!current()){if(next.id)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(next.id)}`,{method:'DELETE'}).catch(()=>{});return;}
     if(next.id!==sideId&&sideId&&view?.questions?.length)notice='The main session has a new prompt; side questions start over.';
     sideId=next.id;view=next;input.value='';files=[];startPoll();}
-   catch(error){setNote(error.message);}
-   finally{pending=false;render();}
+   catch(error){if(current())setNote(error.message);}
+   finally{if(current()){pending=false;render();}}
   }
   async function upload(list){
-   if(!session)return;const list2=[...list];
+   if(!session)return;const list2=[...list],owner=session,ticket=generation,current=()=>ticket===generation&&sessionKey(session)===sessionKey(owner);
    if(files.length+uploads+list2.length>6){setNote('At most 6 attachments per message');return;}
    if(list2.some(f=>!f.size||f.size>20*1024*1024)){setNote('Attachments cannot be empty; each file is limited to 20 MB');return;}
-   for(const file of list2){uploads++;render();
-    try{const item=await api(`${endpoint(session.nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});files.push({id:item.id,name:item.name,mime:item.mime,size:item.size});}
-    catch(error){setNote(error.message);}finally{uploads--;render();}}
+   uploads+=list2.length;render();
+   for(const file of list2){if(!current())break;
+    try{const item=await api(`${endpoint(owner.nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});
+     if(!current()){void api(`${endpoint(owner.nodeId)}/attachments/${encodeURIComponent(item.id)}`,{method:'DELETE'}).catch(()=>{});return;}
+     files.push({id:item.id,name:item.name,mime:item.mime,size:item.size});}
+    catch(error){if(current())setNote(error.message);}finally{if(current()){uploads--;render();}}}
   }
   form.addEventListener('submit',e=>{e.preventDefault();void ask();});
   input.addEventListener('input',()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;render();});
@@ -936,7 +942,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    attach(value){if(sessionKey(value)!==sessionKey(session)){const previous=session;void reset({tell:Boolean(previous)});session=value;}else session=value;fillModels();render();},
    detach(){void reset({tell:true});session=null;},
    /** The main session got a new prompt from this page: the side question starts over. */
-   mainPrompted(value){if(session&&sessionKey(value)===sessionKey(session)&&(sideId||view?.questions?.length))void reset({reason:'main_prompt'});}
+   mainPrompted(value){if(session&&sessionKey(value)===sessionKey(session)&&(sideId||view?.questions?.length||pending))void reset({reason:'main_prompt'});}
   };
  }
  const takeover=createTakeover();

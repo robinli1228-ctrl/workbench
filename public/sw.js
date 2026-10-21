@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v170-chat-history-polish-20261021';
+const CACHE = 'agent-workbench-static-v171-integration-20261022';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',

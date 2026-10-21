@@ -119,66 +119,90 @@ async function latestPrompt(runtime,sessionId,record,env){
 /** Worker side: one side question at a time per side id; events go to Home, which only keeps them in memory. */
 export class SideAsks{
  constructor({db,send,canStart=()=>{},receiveFiles=async()=>[],data,env=process.env,limits=SIDE_ASK_LIMITS,createClaude=o=>new SideClaudeSession(o),createCodex=o=>new SideCodexSession(o),deleteThread=deleteCodexThread,parentState=latestPrompt,historyFile=registeredNativeHistoryFile,clock=Date.now}){
-  Object.assign(this,{db,send,canStart,receiveFiles,data,env,limits,createClaude,createCodex,deleteThread,parentState,historyFile,clock});this.running=new Map();
+  Object.assign(this,{db,send,canStart,receiveFiles,data,env,limits,createClaude,createCodex,deleteThread,parentState,historyFile,clock});this.running=new Map();this.closing=new Map();
  }
  get size(){return this.running.size;}
  record(sideId){return this.db.get('sideAsks',sideId);}
  event(sideId,questionId,event){this.send({type:'side_ask_event',sideId,questionId,event});}
- /** Remove a side question's temporary session or thread; best effort, and the record goes either way. */
+ /** Keep failed deletions discoverable by the next sweep, including after a Worker restart. */
+ async cleanup(sideId){
+  const r=this.record(sideId);if(!r)return true;
+  this.db.put('sideAsks',{...r,cleanupPending:true});
+  try{
+   if(r.tempPath)await unlink(r.tempPath).catch(e=>{if(e.code!=='ENOENT')throw e;});
+   if(r.forkId)await this.deleteThread(r.forkId,{cwd:r.cwd,env:this.env});
+   this.db.remove('sideAsks',sideId);return true;
+  }catch(e){console.error('Side question cleanup:',e.message);return false;}
+ }
+ /** Closing owns preparation too: wait for its final file/thread identity before removing it. */
  async close(sideId,reason='closed',{notify=false}={}){
+  if(this.closing.has(sideId))return this.closing.get(sideId);
   // A question still being answered is stopped first, and its process given a moment to exit: Codex refuses to delete a
   // thread another app-server still writes.
   const running=this.running.get(sideId);
-  if(running){running.closing=true;const proc=running.session?.proc;try{running.session.stop?.();running.session.close?.();}catch{}
-   if(proc&&proc.exitCode===null&&!proc.signalCode)await new Promise(resolve=>{const t=setTimeout(resolve,5000);t.unref?.();proc.once('exit',()=>{clearTimeout(t);resolve();});});}
-  const r=this.record(sideId);if(!r){if(notify)this.send({type:'side_ask_closed',sideId,reason});return;}
-  this.db.remove('sideAsks',sideId);
-  try{if(r.tempPath)await unlink(r.tempPath).catch(e=>{if(e.code!=='ENOENT')throw e;});if(r.forkId)await this.deleteThread(r.forkId,{cwd:r.cwd,env:this.env});}catch(e){console.error('Side question cleanup:',e.message);}
-  if(notify)this.send({type:'side_ask_closed',sideId,reason});
+  if(running)running.closing=true;
+  const cleanup=(async()=>{
+   await running?.prepared;
+   if(running){const proc=running.session?.proc;try{running.session?.stop?.();running.session?.close?.();}catch{}
+    if(proc&&proc.exitCode===null&&!proc.signalCode)await new Promise(resolve=>{const t=setTimeout(resolve,5000);t.unref?.();proc.once('exit',()=>{clearTimeout(t);resolve();});});}
+   await this.cleanup(sideId);
+   if(notify)this.send({type:'side_ask_closed',sideId,reason});
+  })();
+  this.closing.set(sideId,cleanup);
+  try{await cleanup;}finally{this.closing.delete(sideId);}
  }
  /** Close what has gone quiet for an hour or began two hours ago; on Worker start everything left over. */
  async sweep({all=false}={}){
   const now=this.clock();
   for(const r of this.db.list('sideAsks')){
    if(this.running.has(r.id))continue;
-   const reason=all?'restart':now-Date.parse(r.lastUsedAt||r.createdAt)>=this.limits.idleMs?'idle':now-Date.parse(r.createdAt)>=this.limits.maxAgeMs?'expired':null;
+   const reason=all?'restart':r.cleanupPending?'cleanup_retry':now-Date.parse(r.lastUsedAt||r.createdAt)>=this.limits.idleMs?'idle':now-Date.parse(r.createdAt)>=this.limits.maxAgeMs?'expired':null;
    if(reason)await this.close(r.id,reason,{notify:true});
   }
  }
  async ask(m){
   const {sideId,questionId,runtime,sessionId}=m;
   const fail=error=>{this.event(sideId,questionId,{kind:'status',status:'failed',error:error.message||String(error)});};
-  let claimed=false;
+  let state=null,prepared;
   try{
    if(!SIDE_ID.test(sideId||'')||!SIDE_ID.test(questionId||''))throw Error('Invalid side question');
    if(!SIDE_ASK_RUNTIMES.has(runtime))throw Error('Side questions work with Claude and Codex sessions');
-   if(this.running.has(sideId))throw Error('The previous side question is still being answered');
+   if(this.running.get(sideId)?.questionId===questionId)return;
+   if(this.running.has(sideId)||this.closing.has(sideId))throw Error('The previous side question is still being answered');
    this.canStart(m);
+   // Reserve before the first asynchronous read; a duplicate must never release this request's slot.
+   state={questionId,closing:false,session:null,prepared:new Promise(resolve=>{prepared=resolve;})};this.running.set(sideId,state);
    const record=m.record||registeredNativeSession(this.db,runtime,sessionId);
    const parent=await this.parentState(runtime,sessionId,record,this.env);
+   if(state.closing)return;
    if(!parent.workspace)throw Error('The main session has no working folder yet');
    let r=this.record(sideId);
    // The main session has a newer prompt than the one this side question started from (or this Worker restarted and lost
    // the temporary session): start a fresh side session and say so.
-   if(r&&(r.parentPromptId!==parent.id||r.sessionId!==sessionId)){await this.close(sideId,'main_session_moved');r=null;this.event(sideId,questionId,{kind:'restarted'});}
+   if(r&&(r.cleanupPending||r.parentPromptId!==parent.id||r.sessionId!==sessionId)){
+    if(!await this.cleanup(sideId))throw Error('The previous side question could not be cleaned up; try again shortly');
+    if(state.closing)return;r=null;this.event(sideId,questionId,{kind:'restarted'});
+   }
    else if(!r&&m.followUp)this.event(sideId,questionId,{kind:'restarted'});
    if(!r){
     r={id:sideId,runtime,sessionId,cwd:parent.workspace,parentPromptId:parent.id,createdAt:new Date(this.clock()).toISOString()};
     if(runtime==='claude'){
      const file=await this.historyFile(runtime,sessionId,{env:this.env,record});if(!file)throw Error('The main session history is unavailable');
+     if(state.closing)return;
      r.tempId=randomUUID();r.tempPath=join(dirname(file.path),`${r.tempId}.jsonl`);
      this.db.put('sideAsks',r);
      const trimmed=await trimClaudeSession({parentPath:file.path,tempPath:r.tempPath,tempId:r.tempId,limits:this.limits});
+     if(state.closing)return;
      this.event(sideId,questionId,{kind:'scope',turns:trimmed.prompts});
     }else this.db.put('sideAsks',r);
    }
    const files=await this.receiveFiles(m);
+   if(state.closing)return;
    const others=files.filter(f=>runtime!=='codex'||!f.mime?.startsWith('image/'));
    const prompt=[m.prompt||'',others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
-   const state={closing:false,session:null};this.running.set(sideId,state);claimed=true;
    let ended=false;
    const end=async(status,error)=>{
-    if(ended)return;ended=true;this.running.delete(sideId);
+    if(ended)return;ended=true;if(this.running.get(sideId)===state)this.running.delete(sideId);
     const current=this.record(sideId);if(current)this.db.put('sideAsks',{...current,lastUsedAt:new Date(this.clock()).toISOString()});
     if(m.questionDir)await rm(m.questionDir,{recursive:true,force:true}).catch(()=>{});
     this.event(sideId,questionId,{kind:'status',status:state.closing?'interrupted':status,...(error?{error}:{})});
@@ -194,11 +218,20 @@ export class SideAsks{
     else if(type==='context_usage'&&p&&typeof p==='object')this.event(sideId,questionId,{kind:'context_usage',sample:p});
    };
    const current=this.record(sideId);
+   const beforeInput=()=>{if(state.closing)throw Error('The side question was closed before its input was sent');};
    state.session=runtime==='claude'
-    ?this.createClaude({runtime:'claude',cwd:current.cwd,resumeSessionId:current.tempId,emit,keepAlive:false,model:m.model||null,env:this.env})
-    :this.createCodex({cwd:current.cwd,writableRoots:[],attachments:files,emit,resumeSessionId:current.forkId||null,forkFrom:current.forkId?null:sessionId,keepAlive:false,model:m.model||null,env:this.env});
+    ?this.createClaude({runtime:'claude',cwd:current.cwd,resumeSessionId:current.tempId,emit,beforeInput,keepAlive:false,model:m.model||null,env:this.env})
+    :this.createCodex({cwd:current.cwd,writableRoots:[],attachments:files,emit,beforeInput,resumeSessionId:current.forkId||null,forkFrom:current.forkId?null:sessionId,keepAlive:false,model:m.model||null,env:this.env});
    this.event(sideId,questionId,{kind:'status',status:'running'});
    await state.session.start(prompt);
-  }catch(error){if(claimed)this.running.delete(sideId);fail(error);}
+  }catch(error){if(state)state.closing=true;fail(error);}
+  finally{
+   if(state){
+    if(!state.session&&this.running.get(sideId)===state)this.running.delete(sideId);
+    prepared();
+    if(state.closing)await this.close(sideId);
+    if(!state.session&&m.questionDir)await rm(m.questionDir,{recursive:true,force:true}).catch(()=>{});
+   }
+  }
  }
 }

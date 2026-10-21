@@ -1,5 +1,7 @@
-import {readdir,stat,unlink} from 'node:fs/promises';
+import {readdir,stat} from 'node:fs/promises';
+import {unlinkSync} from 'node:fs';
 import {join} from 'node:path';
+import {contentHash} from './source-sync-manifest.mjs';
 
 /**
  * Data retention for Home and Worker stores. What each side keeps forever (chat history, session turns, attachments,
@@ -15,6 +17,8 @@ export const RETENTION_DEFAULTS=Object.freeze({syncCommandDays:1,blobDays:7,mani
 const DAY=86400000,TERMINAL=new Set(['completed','partial_conflict','cancelled','blocked']);
 const TERMINAL_BATCH=new Set(['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready']);
 const HASH=/[a-f0-9]{64}/g;
+// These are the plan's inputs. Store revisions also invalidate on direct SQL or another connection's writes.
+const RETENTION_KINDS=['sourceSyncBatches','sourceSyncCommands','sourceSyncTransport','sourceSyncReceipts','sourceSyncReceiptAcks','sourceSyncJournals','sourceSyncCancellations','workspaces','repositoryWorkspaces','sourceSyncConflicts','runs','sourceSyncVersions'];
 
 export function normalizeRetention(value={}){
  const days=(v,fallback,max)=>{const n=Number(v);return Number.isFinite(n)&&n>=0&&n<=max?Math.round(n*100)/100:fallback;};
@@ -33,17 +37,20 @@ export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,
  const batches=new Map(rows(db,'sourceSyncBatches').map(r=>{const b=JSON.parse(r.data);return [b.id,b];}));
  const transportRows=rows(db,'sourceSyncTransport'),transports=new Map(transportRows.map(r=>[r.id,JSON.parse(r.data)])),transportBytes=new Map(transportRows.map(r=>[r.id,r.bytes]));
  const receipts=new Set(rows(db,'sourceSyncReceipts').map(r=>r.id));
+ // Downloads precede command persistence; captures publish their hashes only when finished.
+ let blobsBusy=[...transports.values()].some(t=>t.ready===false);
  const keptCommandText=[];
  for(const r of rows(db,'sourceSyncCommands')){
   const c=JSON.parse(r.data);let reclaim=false,at=null;
   if(c.command){
+   if(!TERMINAL.has(c.result?.status))blobsBusy=true;
    // Worker shape: the executed command, its result and the transport that carried the receipt to Home.
    const t=transports.get(c.id);
    reclaim=TERMINAL.has(c.result?.status)&&Boolean(t?.acknowledgedAt)&&!receipts.has(c.id);at=t?.acknowledgedAt;
   }else{
    // Home shape: the issued command, acknowledged by its Worker, inside a batch that has ended.
    const batch=batches.get(c.batchId);
-   reclaim=(!batch||TERMINAL_BATCH.has(batch.status))&&(Boolean(c.ackedAt)||TERMINAL.has(c.result?.status)||TERMINAL.has(c.status));at=c.ackedAt||c.receivedAt||batch?.updatedAt||batch?.createdAt||c.lastSentAt;
+   reclaim=(!batch||TERMINAL_BATCH.has(batch.status))&&TERMINAL.has(c.result?.status);at=c.receivedAt||c.ackedAt||batch?.updatedAt||batch?.createdAt||c.lastSentAt;
   }
   if(reclaim&&age(at,now)>=p.syncCommandDays*DAY){
    drop('sourceSyncCommands',c.id,r.bytes);
@@ -65,7 +72,7 @@ export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,
  const perRepo=new Map();
  for(const r of rows(db,'sourceSyncVersions').reverse()){const o=JSON.parse(r.data),key=`${o.projectId}:${o.repositoryId}`,n=(perRepo.get(key)||0)+1;perRepo.set(key,n);if(n>p.manifestVersions&&!named.has(r.id))drop('sourceSyncVersions',r.id,r.bytes);}
  // Blobs: content a remaining command still refers to stays; the rest goes once old enough.
- if(blobRoot){
+ if(blobRoot&&!blobsBusy){
   const referenced=new Set();for(const text of keptCommandText)for(const h of text.match(HASH)||[])referenced.add(h);
   for(const r of rows(db,'sourceSyncReceipts'))for(const h of r.data.match(HASH)||[])referenced.add(h);
   let names=[];try{names=await readdir(blobRoot);}catch(error){if(error.code!=='ENOENT')throw error;}
@@ -96,19 +103,34 @@ export async function dataStats(db,{policy,blobRoot=null,now=Date.now()}={}){
 
 /** Delete what the plan names, a few hundred rows per transaction with a yield between, then unlink blobs the same way. */
 export async function cleanupData(db,{policy,blobRoot=null,now=Date.now(),batch=200,pause=()=>new Promise(resolve=>setImmediate(resolve)),log=()=>{}}={}){
+ let revision=db.readRevision(RETENTION_KINDS);
  const plan=await retentionPlan(db,{policy,blobRoot,now});
- const deleted={};let bytes=0;
+ const deleted={};let bytes=0,deferred=false;
+ // A plan is safe only while its inputs are unchanged. Yielding never grants permission to delete from a stale plan.
+ const current=()=>{if(db.readRevision(RETENTION_KINDS)===revision)return true;deferred=true;return false;};
  for(let i=0;i<plan.records.length;i+=batch){
+  if(!current())break;
   const slice=plan.records.slice(i,i+batch);
-  db.transaction(()=>{for(const x of slice){if(!db.get(x.kind,x.id))continue;bytes+=x.bytes||0;db.remove(x.kind,x.id);deleted[x.kind]=(deleted[x.kind]||0)+1;}});
+  db.transaction(()=>{for(const x of slice){const record=db.get(x.kind,x.id);if(!record)continue;
+   // The command body can go, but a lost ACK must remain replayable by its authenticated Worker and exact result hash.
+   if(x.kind==='sourceSyncCommands'&&!record.command&&record.nodeId&&TERMINAL.has(record.result?.status)){
+    const receiptHash=contentHash(JSON.stringify(record.result)),id=`${record.id}:${receiptHash}`;
+    db.put('sourceSyncRetiredReceipts',{id,projectId:record.projectId,nodeId:record.nodeId,ack:{type:'source_sync_receipt_ack',commandId:record.id,receiptHash}});
+   }
+   if(x.kind==='sourceSyncReceiptAcks'&&record.nodeId&&record.ack?.commandId&&record.ack?.receiptHash)db.put('sourceSyncRetiredReceipts',record);
+   bytes+=x.bytes||0;db.remove(x.kind,x.id);deleted[x.kind]=(deleted[x.kind]||0)+1;
+  }});
+  revision=db.readRevision(RETENTION_KINDS);
   await pause();
  }
  let blobsDeleted=0,blobBytes=0;
  for(let i=0;i<plan.blobs.length;i++){
-  const b=plan.blobs[i];try{await unlink(join(blobRoot,b.name));blobsDeleted++;blobBytes+=b.bytes;}catch(error){if(error.code!=='ENOENT')log(`blob ${b.name}: ${error.message}`);}
+  if(deferred||!current())break;
+  // One local unlink is synchronous so a new capture cannot publish/reuse a hash between validation and deletion.
+  const b=plan.blobs[i];try{unlinkSync(join(blobRoot,b.name));blobsDeleted++;blobBytes+=b.bytes;}catch(error){if(error.code!=='ENOENT')log(`blob ${b.name}: ${error.message}`);}
   if(i%50===49)await pause();
  }
- const summary={deleted,bytes,blobsDeleted,blobBytes,at:new Date(now).toISOString()};
+ const summary={deleted,bytes,blobsDeleted,blobBytes,...(deferred?{deferred:true}:{}),at:new Date(now).toISOString()};
  db.put('settings',{...(db.get('settings','data-maintenance')||{}),id:'data-maintenance',lastCleanupAt:summary.at,lastCleanup:summary});
  return summary;
 }

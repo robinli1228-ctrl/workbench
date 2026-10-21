@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { cp, lstat, readdir, realpath, rm } from 'node:fs/promises';
+import { cp, lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 
 /**
@@ -31,6 +31,8 @@ export async function measureFolder(root, limits = BRANCH_LIMITS) {
       entries++;
       if (entries > limits.entries) throw Error(`The folder has more than ${limits.entries} files; it is too large to branch`);
       const path = join(dir, entry.name);
+      // A copied worktree/submodule pointer would keep the original HEAD and index writable from the new folder.
+      if (entry.name === '.git' && !entry.isDirectory()) throw Error('A linked Git worktree cannot be copied safely; use an independent checkout before branching');
       if (entry.isDirectory()) await walk(path);
       else if (entry.isFile()) { bytes += (await lstat(path)).size; if (bytes > limits.bytes) throw Error(`The folder is larger than ${Math.round(limits.bytes / 1024 ** 3)} GB; it is too large to branch`); }
     }
@@ -39,11 +41,19 @@ export async function measureFolder(root, limits = BRANCH_LIMITS) {
   return { entries, bytes };
 }
 
-/** An exact copy (hidden files and .git included, timestamps kept, symlinks as links); a partial copy is removed on failure. */
+/** Reserve the destination exclusively; only this call's partial copy may be removed on failure. Linked Git pointers are refused. */
 export async function copyFolder(source, target, limits = BRANCH_LIMITS) {
   const size = await measureFolder(source, limits);
-  try { await cp(source, target, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true, verbatimSymlinks: true }); }
-  catch (error) { await rm(target, { recursive: true, force: true }).catch(() => {}); throw error; }
+  await mkdir(target);
+  const owned = await lstat(target);
+  try {
+    for (const name of await readdir(source)) await cp(join(source, name), join(target, name), { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true, verbatimSymlinks: true });
+  }
+  catch (error) {
+    const current = await lstat(target).catch(() => null);
+    if (current?.dev === owned.dev && current?.ino === owned.ino) await rm(target, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
   return size;
 }
 
