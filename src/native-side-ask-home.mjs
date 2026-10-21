@@ -1,13 +1,13 @@
 import {randomUUID} from 'node:crypto';
 import {applyNativeTurnEvent} from './native-turns.mjs';
-import {SIDE_ASK_LIMITS} from './native-side-ask.mjs';
+import {SIDE_ASK_LIMITS,SIDE_ASK_RUNTIMES} from './native-side-ask.mjs';
 
 /**
  * Home side of side questions: held in memory only (a Home restart forgets them), one side question at a time across the
  * Sessions page. A question is a small turn-shaped record so the page renders it like a reply; the Worker owns the
  * temporary session and removes it when Home closes the side question, when it expires, or when the main session moves on.
  */
-const RUNTIMES=new Set(['claude','codex']),SIDE_ID=/^[a-f0-9-]{36}$/;
+const SIDE_ID=/^[a-f0-9-]{36}$/;
 export function createHomeSideAsks({send,online,attachments=null,owner=nodeId=>nodeId,change=()=>{},clock=Date.now,limits=SIDE_ASK_LIMITS}){
  const sides=new Map(),closed=new Map();
  const stamp=()=>new Date(clock()).toISOString();
@@ -23,12 +23,13 @@ export function createHomeSideAsks({send,online,attachments=null,owner=nodeId=>n
  function closeFor(nodeId,runtime,sessionId,reason='main_prompt'){for(const side of [...sides.values()])if(side.nodeId===nodeId&&side.runtime===runtime&&side.sessionId===sessionId)close(side.id,reason);}
  function ask(nodeId,worker,body={}){
   const {runtime,sessionId}=body,prompt=typeof body.prompt==='string'?body.prompt:'';
-  if(!RUNTIMES.has(runtime))throw Error('Side questions work with Claude and Codex sessions');
+  if(!SIDE_ASK_RUNTIMES.has(runtime))throw Error('Side questions work with Claude and Codex sessions');
   if(worker?.capabilities?.nativeSideAsk!==1)throw Error('Upgrade this Worker to ask side questions');
   if(!online(nodeId))throw Error('Device is offline');
   if(typeof sessionId!=='string'||!sessionId)throw Error('Invalid native session ID');
   if(!prompt.trim()&&!body.attachmentIds?.length)throw Error('Enter a question');
   if(prompt.length>20000)throw Error('A side question is limited to 20,000 characters');
+  if(body.sideId!=null&&!SIDE_ID.test(String(body.sideId)))throw Error('Invalid side question');
   let side=body.sideId&&sides.get(body.sideId);
   if(side&&(side.nodeId!==nodeId||side.runtime!==runtime||side.sessionId!==sessionId))side=null;
   if(side?.questions.some(q=>['queued','starting','running','waiting_user','stopping'].includes(q.status)))throw Error('The previous side question is still being answered');

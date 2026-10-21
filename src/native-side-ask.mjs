@@ -103,7 +103,8 @@ async function deleteCodexThreadOnce(threadId,{bin=process.env.CODEX_BIN||'codex
  let id=0;const pending=new Map();
  const request=(method,params)=>new Promise((resolve,reject)=>{const n=++id;pending.set(n,{resolve,reject});proc.stdin.write(`${JSON.stringify({id:n,method,params})}\n`);});
  createInterface({input:proc.stdout}).on('line',line=>{let m;try{m=JSON.parse(line);}catch{return;}const p=m.id!==undefined&&!m.method?pending.get(m.id):null;if(!p)return;pending.delete(m.id);m.error?p.reject(Error(m.error.message)):p.resolve(m.result);});
- proc.on('exit',()=>{for(const p of pending.values())p.reject(Error('Codex exited'));});
+ const dead=message=>{for(const p of pending.values())p.reject(Error(message));pending.clear();};
+ proc.on('exit',()=>dead('Codex exited'));proc.on('error',e=>dead(e.message));proc.stdin.on('error',e=>dead(e.message));
  try{await request('initialize',{clientInfo:{name:'agent_collaboration_worker',version:'0.3.0'}});proc.stdin.write(`${JSON.stringify({method:'initialized'})}\n`);await request('thread/delete',{threadId});return true;}
  finally{clearTimeout(timer);kill();}
 }
@@ -147,6 +148,7 @@ export class SideAsks{
  async ask(m){
   const {sideId,questionId,runtime,sessionId}=m;
   const fail=error=>{this.event(sideId,questionId,{kind:'status',status:'failed',error:error.message||String(error)});};
+  let claimed=false;
   try{
    if(!SIDE_ID.test(sideId||'')||!SIDE_ID.test(questionId||''))throw Error('Invalid side question');
    if(!SIDE_ASK_RUNTIMES.has(runtime))throw Error('Side questions work with Claude and Codex sessions');
@@ -173,7 +175,7 @@ export class SideAsks{
    const files=await this.receiveFiles(m);
    const others=files.filter(f=>runtime!=='codex'||!f.mime?.startsWith('image/'));
    const prompt=[m.prompt||'',others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
-   const state={closing:false,session:null};this.running.set(sideId,state);
+   const state={closing:false,session:null};this.running.set(sideId,state);claimed=true;
    let ended=false;
    const end=async(status,error)=>{
     if(ended)return;ended=true;this.running.delete(sideId);
@@ -197,6 +199,6 @@ export class SideAsks{
     :this.createCodex({cwd:current.cwd,writableRoots:[],attachments:files,emit,resumeSessionId:current.forkId||null,forkFrom:current.forkId?null:sessionId,keepAlive:false,model:m.model||null,env:this.env});
    this.event(sideId,questionId,{kind:'status',status:'running'});
    await state.session.start(prompt);
-  }catch(error){this.running.delete(sideId);fail(error);}
+  }catch(error){if(claimed)this.running.delete(sideId);fail(error);}
  }
 }

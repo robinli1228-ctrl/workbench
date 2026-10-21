@@ -100,3 +100,10 @@ createInterface({input:process.stdin}).on('line',line=>{appendFileSync(${JSON.st
   assert.deepEqual(turn.params, { threadId: 'forked-thread-1', input: [{ type: 'text', text: 'copied to X' }] });
   assert.ok(lines.some(l => l.id === 77 && l.error), 'an approval request during the notice turn is refused, so it cannot hang');
 });
+
+test('a Codex that cannot start fails the branch at once instead of hanging it', async t => {
+  const dir = sandbox(t), cwd = join(dir, 'copy'); mkdirSync(cwd);
+  const started = Date.now();
+  await assert.rejects(forkCodex({ bin: join(dir, 'no-such-codex'), cwd, sessionId: 'thread-1', notice: 'x' }), /could not start/);
+  assert.ok(Date.now() - started < 5000);
+});

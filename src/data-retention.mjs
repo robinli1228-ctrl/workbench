@@ -29,9 +29,9 @@ const rows=(db,kind)=>db.db.prepare('SELECT id,data,LENGTH(data) AS bytes FROM r
 /** Which records and blobs the policy lets go right now. Pure: nothing is deleted. */
 export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,now=Date.now()}={}){
  const p=normalizeRetention(policy),plan={records:[],blobs:[],bytes:0,blobBytes:0,kept:{}};
- const drop=(kind,id,bytes)=>{plan.records.push({kind,id});plan.bytes+=bytes;};
+ const drop=(kind,id,bytes)=>{plan.records.push({kind,id,bytes});plan.bytes+=bytes;};
  const batches=new Map(rows(db,'sourceSyncBatches').map(r=>{const b=JSON.parse(r.data);return [b.id,b];}));
- const transports=new Map(rows(db,'sourceSyncTransport').map(r=>[r.id,JSON.parse(r.data)]));
+ const transportRows=rows(db,'sourceSyncTransport'),transports=new Map(transportRows.map(r=>[r.id,JSON.parse(r.data)])),transportBytes=new Map(transportRows.map(r=>[r.id,r.bytes]));
  const receipts=new Set(rows(db,'sourceSyncReceipts').map(r=>r.id));
  const keptCommandText=[];
  for(const r of rows(db,'sourceSyncCommands')){
@@ -47,7 +47,7 @@ export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,
   }
   if(reclaim&&age(at,now)>=p.syncCommandDays*DAY){
    drop('sourceSyncCommands',c.id,r.bytes);
-   const t=transports.get(c.id);if(t)drop('sourceSyncTransport',c.id,Buffer.byteLength(JSON.stringify(t)));
+   const t=transports.get(c.id);if(t)drop('sourceSyncTransport',c.id,transportBytes.get(c.id)||0);
   }else keptCommandText.push(r.data);
  }
  // Home-side receipt-ack cache and Worker-side journals/cancellations belong to their command.
@@ -60,6 +60,8 @@ export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,
  const named=new Set();
  for(const kind of ['workspaces','repositoryWorkspaces'])for(const r of rows(db,kind)){const o=JSON.parse(r.data);if(o.sourceBaseManifestId)named.add(o.sourceBaseManifestId);}
  for(const r of rows(db,'sourceSyncConflicts')){const o=JSON.parse(r.data);if(o.status==='open')for(const h of r.data.match(HASH)||[])named.add(h);}
+ // A run still to start or running carries the manifest versions its inputs were frozen at.
+ for(const r of rows(db,'runs')){const o=JSON.parse(r.data);if(['succeeded','failed','interrupted'].includes(o.status))continue;for(const input of o.sourceInputs||[])if(input?.manifestId)named.add(input.manifestId);}
  const perRepo=new Map();
  for(const r of rows(db,'sourceSyncVersions').reverse()){const o=JSON.parse(r.data),key=`${o.projectId}:${o.repositoryId}`,n=(perRepo.get(key)||0)+1;perRepo.set(key,n);if(n>p.manifestVersions&&!named.has(r.id))drop('sourceSyncVersions',r.id,r.bytes);}
  // Blobs: content a remaining command still refers to stays; the rest goes once old enough.
@@ -80,8 +82,7 @@ export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,
 /** Counts and bytes per kind, the file's size and free space, blob totals, and what the plan would reclaim: the Data page. */
 export async function dataStats(db,{policy,blobRoot=null,now=Date.now()}={}){
  const plan=await retentionPlan(db,{policy,blobRoot,now}),byKind=sizes(db);
- const reclaim={};for(const x of plan.records){const s=reclaim[x.kind]||={count:0};s.count++;}
- for(const x of plan.records){const r=db.db.prepare('SELECT LENGTH(data) AS b FROM records WHERE kind=? AND id=?').get(x.kind,x.id);reclaim[x.kind].bytes=(reclaim[x.kind].bytes||0)+(r?.b||0);}
+ const reclaim={};for(const x of plan.records){const s=reclaim[x.kind]||={count:0,bytes:0};s.count++;s.bytes+=x.bytes||0;}
  const pageSize=db.db.prepare('PRAGMA page_size').get().page_size,pages=db.db.prepare('PRAGMA page_count').get().page_count,free=db.db.prepare('PRAGMA freelist_count').get().freelist_count;
  let blobs=null;
  if(blobRoot){
@@ -99,7 +100,7 @@ export async function cleanupData(db,{policy,blobRoot=null,now=Date.now(),batch=
  const deleted={};let bytes=0;
  for(let i=0;i<plan.records.length;i+=batch){
   const slice=plan.records.slice(i,i+batch);
-  db.transaction(()=>{for(const x of slice){const r=db.db.prepare('SELECT LENGTH(data) AS b FROM records WHERE kind=? AND id=?').get(x.kind,x.id);if(!r)continue;bytes+=r.b;db.remove(x.kind,x.id);deleted[x.kind]=(deleted[x.kind]||0)+1;}});
+  db.transaction(()=>{for(const x of slice){if(!db.get(x.kind,x.id))continue;bytes+=x.bytes||0;db.remove(x.kind,x.id);deleted[x.kind]=(deleted[x.kind]||0)+1;}});
   await pause();
  }
  let blobsDeleted=0,blobBytes=0;

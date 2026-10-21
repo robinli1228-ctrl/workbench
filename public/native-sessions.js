@@ -919,7 +919,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    finally{pending=false;render();}
   }
   async function upload(list){
-   if(!session)return;for(const file of [...list]){if(files.length+uploads>=6){setNote('At most 6 attachments per message');break;}uploads++;render();
+   if(!session)return;const list2=[...list];
+   if(files.length+uploads+list2.length>6){setNote('At most 6 attachments per message');return;}
+   if(list2.some(f=>!f.size||f.size>20*1024*1024)){setNote('Attachments cannot be empty; each file is limited to 20 MB');return;}
+   for(const file of list2){uploads++;render();
     try{const item=await api(`${endpoint(session.nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});files.push({id:item.id,name:item.name,mime:item.mime,size:item.size});}
     catch(error){setNote(error.message);}finally{uploads--;render();}}
   }

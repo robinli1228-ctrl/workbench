@@ -287,6 +287,11 @@ export class NativeTurnsHome{
     // The process is retiring however the turn ended; queued messages wait for its exit and then start a fresh process.
     this.db.put('nativeTakeovers',{...current,status:'retiring',updatedAt:now()});
    }
+   // One failed reply never drops the queue. Two in a row that failed before the CLI produced anything mean the process
+   // cannot start (login expired, binary gone): the rest would fail the same way one by one, so they are cancelled with the reason.
+   const silent=t=>t.status==='failed'&&!(t.events||[]).some(e=>['message','text','tool'].includes(e.type));
+   if(silent(next)){const previous=nativeTurnRows(this.db,{nodeId,runtime:turn.runtime,sessionId:turn.sessionId,limit:10}).find(t=>t.id!==turn.id&&t.endedAt&&t.status!=='cancelled');
+    if(previous&&silent(previous))this.cancelWaiting(nodeId,turn.runtime,turn.sessionId,`The CLI did not start twice in a row${next.error?` (${next.error})`:''}; queued messages were not sent`);}
    void this.pump(nodeId,turn.runtime,turn.sessionId);
   }this.change();}
   return true;
@@ -339,9 +344,15 @@ const alive=session=>Boolean(session?.proc&&session.proc.exitCode===null&&sessio
 export class NativeTurnRunner{
  constructor({send,createSession,resolveSession,canStart,prepareInputs=async()=>({files:[],images:[]}),cleanup=null,idleMs=NATIVE_IDLE_MS,leases=null}){Object.assign(this,{send,createSession,resolveSession,canStart,prepareInputs,cleanup,idleMs,leases});this.turns=new Map();this.resident=new Map();this.closing=new Map();this.outbox=null;this.graceTimer=null;}
  /** Messages to Home go out at once while connected and wait in order while Home is away (see suspend/resume). */
- post(m){if(this.outbox){if(this.outbox.length<20000)this.outbox.push(m);return;}this.send(m);}
- /** Turn ids this Worker still runs; sent with the next registration so Home can tell a kept turn from a lost one. */
- activeIds(){return [...this.turns.keys()];}
+ post(m){
+  if(!this.outbox)return this.send(m);
+  // A full buffer sheds the oldest text, log and tool reports first; status events (how a turn ended) are always kept.
+  if(this.outbox.length>=20000){const i=this.outbox.findIndex(x=>x.type==='native_turn_event'&&x.event?.kind!=='status');if(i>=0)this.outbox.splice(i,1);}
+  this.outbox.push(m);
+ }
+ /** Turn ids this Worker still runs, or whose reports still wait in the buffer; sent with the next registration so Home can
+  * tell a kept turn from a lost one, and a turn that ended during the blip is settled by its own buffered status, not as lost. */
+ activeIds(){const ids=new Set(this.turns.keys());for(const m of this.outbox||[])if(m.type==='native_turn_event'&&m.id)ids.add(m.id);return [...ids];}
  /**
   * Home went away: keep the CLIs running and buffer what they report. A connection blip on a lossy tunnel then costs nothing.
   * If Home is not back within graceMs the turns end as a disconnect always ended them, and the buffered events tell Home so.

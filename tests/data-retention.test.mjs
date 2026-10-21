@@ -83,8 +83,11 @@ test('manifest versions keep the newest 20 per repository plus any a binding or 
   db.put('repositoryWorkspaces', { id: 'rw', projectId: 'p1', nodeId: 'n1', repositoryId: 'r1', localRoot: '/x', sourceBaseManifestId: hash(2) });
   db.put('sourceSyncConflicts', { id: 'k1', projectId: 'p1', status: 'open', versionId: hash(3) });
   db.put('sourceSyncConflicts', { id: 'k2', projectId: 'p1', status: 'resolved', versionId: hash(4) });
+  db.put('runs', { id: 'run-queued', projectId: 'p1', nodeId: 'n1', status: 'queued', sourceInputs: [{ manifestId: hash(5) }] });
+  db.put('runs', { id: 'run-done', projectId: 'p1', nodeId: 'n1', status: 'succeeded', sourceInputs: [{ manifestId: hash(1) }] });
   const plan = await retentionPlan(db, { now: NOW });
-  assert.deepEqual(plan.records.map(x => x.id).sort(), [hash(1), hash(4), hash(5)].sort(), 'versions 1-5 are beyond the newest 20; 2 (binding) and 3 (open conflict) stay');
+  assert.deepEqual(plan.records.map(x => x.id).sort(), [hash(1), hash(4)].sort(), 'versions 1-5 are beyond the newest 20; 2 (binding), 3 (open conflict) and 5 (an unfinished run\'s input) stay');
+  assert.ok(plan.records.every(x => x.bytes > 0), 'the plan carries each record\'s size');
   assert.equal((await retentionPlan(db, { now: NOW, policy: { manifestVersions: 2 } })).records.filter(x => x.id.startsWith('00000')).length, 0);
 });
 

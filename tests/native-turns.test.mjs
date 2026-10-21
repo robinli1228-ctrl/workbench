@@ -112,6 +112,31 @@ test('the Worker buffers what its turns report while Home is away, delivers it i
   assert.deepEqual(runner.activeIds(), []);
 });
 
+test('a turn that ends during the blip is still named on reconnection, so Home settles it by its own report, not as lost', async t => {
+  const created = [], sent = [];
+  const runner = new NativeTurnRunner({ send: m => sent.push(m), resolveSession: async () => ({ workspace: '/tmp/demo' }), createSession: options => { const s = residentFake(created)(options); s.hold = true; return s; } });
+  await runner.start({ id: 'b1', runtime: 'codex', sessionId: SID, prompt: 'long' });
+  runner.suspend({ graceMs: 60000 });
+  created[0].options.emit('message', { text: 'done while away' }); created[0].options.emit('status', { status: 'succeeded' });
+  assert.deepEqual(runner.activeIds(), ['b1'], 'the finished turn still waits in the buffer');
+  // Home: the registration names b1, so it stays; the buffered succeeded report then ends it without an error.
+  const { db, turns, worker } = home(t);
+  const turn = turns.create('n1', worker, { runtime: 'codex', sessionId: SID, clientTurnId: 'client-000030', text: 'long' });
+  turns.disconnected('n1', { expireMs: 60000 }); turns.reconnected('n1', [turn.id]);
+  assert.equal(db.get('nativeTurns', turn.id).error, undefined);
+  turns.receive('n1', { type: 'native_turn_event', id: turn.id, event: { kind: 'message', text: 'done while away' } });
+  turns.receive('n1', { type: 'native_turn_event', id: turn.id, event: { kind: 'status', status: 'succeeded' } });
+  assert.equal(db.get('nativeTurns', turn.id).status, 'succeeded'); assert.equal(db.get('nativeTurns', turn.id).error, undefined);
+  runner.resume();
+  assert.deepEqual(runner.activeIds(), []);
+  // A full buffer sheds old text first and never the ending status.
+  const r2 = new NativeTurnRunner({ send: m => sent.push(m), resolveSession: async () => ({ workspace: '/tmp/demo' }), createSession: residentFake([]) });
+  r2.suspend({ graceMs: 60000 }); for (let i = 0; i < 20000; i++) r2.post({ type: 'native_turn_event', id: 'x', event: { kind: 'text', text: String(i) } });
+  r2.post({ type: 'native_turn_event', id: 'x', event: { kind: 'status', status: 'succeeded' } });
+  assert.equal(r2.outbox.length, 20000); assert.equal(r2.outbox[0].event.text, '1'); assert.equal(r2.outbox.at(-1).event.kind, 'status');
+  r2.resume();
+});
+
 test('Worker runner resumes the history folder and stops a CLI that returns a different native ID', async () => {
   const events = [], created = [];
   const fake = reply => ({ start: async () => reply(), stop: async () => { fake.stopped = true; }, shutdown() {} });

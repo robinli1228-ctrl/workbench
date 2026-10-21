@@ -60,7 +60,8 @@ export function saveRoleTemplate(db, input = {}) {
     const template = current(db, input.key);
     checkRevision(template, input.revision);
     const value = validate(db, input, template.key), old = db.get(KIND, template.key);
-    db.put(KIND, { ...old, id: template.key, custom: !template.builtin, restored: false, ...value,
+    // A 'deleted' mark left by an older version must not swallow the edit: templates cannot be deleted any more.
+    db.put(KIND, { ...old, id: template.key, custom: !template.builtin, restored: false, deleted: false, ...value,
       revision: template.revision + 1, createdAt: old?.createdAt || now(), updatedAt: now() });
     return current(db, template.key);
   });

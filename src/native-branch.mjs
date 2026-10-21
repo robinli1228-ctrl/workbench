@@ -77,7 +77,8 @@ export async function deletableFolder({ workspace, entry, registry = [], runs = 
 function child(bin, args, { cwd, env, timeoutMs }) {
   const proc = spawn(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
   const timer = setTimeout(() => { try { process.kill(-proc.pid, 'SIGTERM'); } catch { proc.kill('SIGTERM'); } }, timeoutMs); timer.unref?.();
-  const done = new Promise((resolve, reject) => { proc.on('error', reject); proc.on('exit', code => { clearTimeout(timer); resolve(code); }); });
+  const done = new Promise((resolve, reject) => { proc.on('error', error => { clearTimeout(timer); reject(error); }); proc.on('exit', code => { clearTimeout(timer); resolve(code); }); });
+  proc.stdin.on('error', () => {});
   return { proc, done, stop: () => { clearTimeout(timer); try { process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill('SIGTERM'); } catch {} } } };
 }
 
@@ -108,7 +109,9 @@ export async function forkCodex({ bin = process.env.CODEX_BIN || 'codex', cwd, s
     if (m.id !== undefined && m.method) { write({ id: m.id, error: { code: -32601, message: 'Not available while branching' } }); return; }
     for (const waiter of [...waiters]) if (waiter.match(m)) { waiters.splice(waiters.indexOf(waiter), 1); waiter.resolve(m); }
   });
-  const exited = run.done.then(code => { for (const p of pending.values()) p.reject(Error(`Codex exited (${code})`)); for (const w of waiters) w.reject(Error(`Codex exited (${code})`)); });
+  const dead = message => { for (const p of pending.values()) p.reject(Error(message)); pending.clear(); for (const w of waiters.splice(0)) w.reject(Error(message)); };
+  // A Codex that cannot start (missing or unrunnable binary) fails the branch at once instead of hanging it.
+  const exited = run.done.then(code => dead(`Codex exited (${code})`), error => dead(`Codex could not start: ${error.message}`));
   const waitFor = match => new Promise((resolve, reject) => waiters.push({ match, resolve, reject }));
   try {
     await request('initialize', { clientInfo: { name: 'agent_collaboration_worker', version: '0.3.0' } });

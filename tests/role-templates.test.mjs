@@ -47,6 +47,9 @@ test('five built-in templates ship; a delete record left by an older version no 
   const shown = tester(db);
   assert.equal(shown.customized, false); assert.equal(shown.revision, 7, 'the stale record still sets the revision an editor must name');
   assert.equal(save(db, shown, { responsibility: 'edited' }).revision, 8);
+  const edited = tester(db);
+  assert.equal(edited.customized, true, 'the stale delete mark does not swallow the edit');
+  assert.equal(edited.responsibility, 'edited');
 }));
 
 test('updates require the current revision; an added template can be edited but not removed', () => withStore(db => {

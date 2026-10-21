@@ -142,3 +142,20 @@ test('the CLI process going away keeps the queue: a failed turn, an idle exit an
   turns.release('n1', { runtime: 'claude', sessionId: SID });
   assert.equal(db.get('nativeTurns', d.id).status, 'cancelled'); assert.match(db.get('nativeTurns', d.id).error, /Takeover ended/);
 });
+
+test('one silent failure keeps the queue; a second in a row means the CLI cannot start and cancels the rest with the reason', async () => {
+  const { db, turns, send, status, starts } = home();
+  const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'second'), c = send('client-turn-c', 'third'), d = send('client-turn-d', 'fourth');
+  turns.receive('n1', { type: 'native_turn_event', id: a.id, event: { kind: 'status', status: 'failed', error: 'claude: not logged in' } }); await tick();
+  assert.deepEqual(starts(), ['first', 'second'], 'the first failure still sends the next message');
+  turns.receive('n1', { type: 'native_turn_event', id: b.id, event: { kind: 'status', status: 'failed', error: 'claude: not logged in' } }); await tick();
+  assert.equal(db.get('nativeTurns', c.id).status, 'cancelled'); assert.match(db.get('nativeTurns', c.id).error, /did not start twice in a row \(claude: not logged in\)/);
+  assert.equal(db.get('nativeTurns', d.id).status, 'cancelled');
+  assert.deepEqual(starts(), ['first', 'second'], 'the rest is not sent to a CLI that cannot start');
+  // A failure after output is an ordinary failed reply, even right after a silent one.
+  const e = send('client-turn-e', 'fifth'), f = send('client-turn-f', 'sixth');
+  status(e.id, 'running');
+  turns.receive('n1', { type: 'native_turn_event', id: e.id, event: { kind: 'message', text: 'half an answer' } });
+  turns.receive('n1', { type: 'native_turn_event', id: e.id, event: { kind: 'status', status: 'failed', error: 'tool crashed' } }); await tick();
+  assert.deepEqual(starts(), ['first', 'second', 'fifth', 'sixth']);
+});
