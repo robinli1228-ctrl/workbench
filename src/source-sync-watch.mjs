@@ -26,7 +26,7 @@ export class SourceSyncWatch {
     if(!config||typeof config.version!=='string'||!Array.isArray(config.scopes)||config.scopes.length>480)throw syncError('invalid_watch_config');
     for(const scope of config.scopes){if(scope.scopeKind!=='directory')throw syncError('invalid_watch_config');await this.resolveBinding(scope);}
     const previous=this.db.get('sourceSyncWatchConfig','main')?.scopes||[];
-    for(const scope of previous)if(!config.scopes.some(s=>key(s)===key(scope)&&JSON.stringify(s)===JSON.stringify(scope))){const id=key(scope);this.invalidate(id);for(const w of this.watches.get(id)?.values()||[])w.close();this.watches.delete(id);this.hints.delete(id);this.checked.delete(id);this.retryAt.delete(id);this.degraded.delete(id);}
+    for(const scope of previous)if(!config.scopes.some(s=>key(s)===key(scope)&&JSON.stringify(s)===JSON.stringify(scope))){const id=key(scope);this.invalidate(id);for(const w of this.watches.get(id)?.values()||[])w.close();this.watches.delete(id);this.hints.delete(id);this.checked.delete(id);this.retryAt.delete(id);this.failures.delete(id);this.degraded.delete(id);}
     this.db.put('sourceSyncWatchConfig',{...config,id:'main'});
     const current=new Set(config.scopes.map(key));for(const [id,group] of this.watches)if(!current.has(id)){for(const w of group.values())w.close();this.watches.delete(id);}
     for(const record of this.db.list('sourceSyncWatchNotices'))if(!current.has(record.id))this.db.remove('sourceSyncWatchNotices',record.id);

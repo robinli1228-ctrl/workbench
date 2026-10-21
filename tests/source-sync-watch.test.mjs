@@ -1,7 +1,7 @@
 // Directory events drive source observation; the periodic sweeps are a backstop whose cadence depends on watcher health.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, unlinkSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync, linkSync, unlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -137,4 +137,29 @@ test('a failing scope backs off from 30 seconds to 10 minutes and keeps its obse
   assert.equal(watch.observations.get(id).fullHash, true);
   assert.equal(watch.observations.get(id).cache.size, 2);
   assert.equal(watch.failures.get(id), undefined, 'success resets the back-off');
+});
+
+test('a file replaced by a link between sweeps is excluded by the event-driven check; a hard link still blocks as in a full walk', async t => {
+  const { dir, db, watch, scope, id, statuses, advance } = env(t);
+  await watch.configure({ version: 'v1', scopes: [scope] });
+  await watch.tick();
+  unlinkSync(join(dir, 'a.txt')); symlinkSync('/etc/hostname', join(dir, 'a.txt'));
+  advance(1000); watch.hint(id, 'a.txt');
+  advance(600); await watch.tick();
+  assert.equal(statuses().at(-1).status, 'watching', 'the link does not fail the scope');
+  assert.deepEqual(Object.keys(db.get('sourceSyncWatchStates', id).entries), ['docs/b.md'], 'the path left the manifest');
+  assert.deepEqual(watch.observations.get(id).snapshot.excluded.filter(e => e.path === 'a.txt'), [{ path: 'a.txt', reason: 'symlink' }]);
+  // Back to a regular file: the stale excluded entry is not carried over.
+  unlinkSync(join(dir, 'a.txt')); writeFileSync(join(dir, 'a.txt'), 'alpha again');
+  advance(1000); watch.hint(id, 'a.txt');
+  advance(600); await watch.tick();
+  assert.deepEqual(Object.keys(db.get('sourceSyncWatchStates', id).entries).sort(), ['a.txt', 'docs/b.md']);
+  assert.equal(watch.observations.get(id).snapshot.excluded.some(e => e.path === 'a.txt'), false);
+  // A hard link is a transfer boundary, not a scope-level exclusion: the scope blocks and backs off.
+  linkSync(join(dir, 'docs', 'b.md'), join(dir, 'docs', 'b-link.md'));
+  advance(1000); watch.hint(id, 'docs/b-link.md');
+  advance(600); await watch.tick();
+  assert.equal(statuses().at(-1).status, 'blocked');
+  assert.equal(statuses().at(-1).error, 'unsafe_file');
+  assert.equal(watch.failures.get(id), 1);
 });
