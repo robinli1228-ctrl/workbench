@@ -974,7 +974,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   /** The queue above the composer: pause/resume at the right of its title, and per message a drag grip, the text with its send
    * time on hover, then steer, edit (back to the input box) and delete. Rebuilt only when the queue itself changed, so a press on
    * one of its buttons survives the 1s refresh; a drag in progress defers the rebuild. */
-  const GRIP='__GRIP__';
+  const GRIP='<svg viewBox="0 0 12 18" aria-hidden="true"><g fill="currentColor"><circle cx="3.5" cy="4" r="1.4"/><circle cx="8.5" cy="4" r="1.4"/><circle cx="3.5" cy="9" r="1.4"/><circle cx="8.5" cy="9" r="1.4"/><circle cx="3.5" cy="14" r="1.4"/><circle cx="8.5" cy="14" r="1.4"/></g></svg>';
   let queueState=null,queueSignature='',optimisticOrder=null;
   const queueRank=turn=>Number.isFinite(turn.queueRank)?turn.queueRank:(Date.parse(turn.createdAt)||0);
   const queueOrder=createListOrder({container:queueList,scope:()=>`native-queue:${k()}`,handle:'.message-queue-grip',onEnd:()=>{queueSignature='';renderQueue();},onError:message=>{operation().message=t(message);render();},
