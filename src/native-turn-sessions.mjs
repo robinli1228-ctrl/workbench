@@ -9,14 +9,12 @@ import { tr } from './i18n.mjs';
  */
 export const NATIVE_KEEPALIVE=new Set(['claude','agy']);
 /**
- * Told to a CLI the page takes over, in the user turn itself as a system-reminder block (the page strips those from
- * display): the page shows a question as a card with options, so the model should ask when a choice is the user's instead
- * of guessing or listing options as text. An appended system prompt alone (Claude) is not followed, and Codex ignores
- * developerInstructions on thread/resume; the user turn is what both act on. Left out of one-shot turns, which cannot answer.
+ * A nudge, not a rule: the page shows the model's questions as cards with options, so when a choice is the user's it
+ * should prefer asking through its question tool to guessing or listing options as text. Given at launch, at system level
+ * (Claude: an appended system prompt; Codex: developer instructions), so it is never written into the conversation.
+ * One-shot turns, which cannot answer, do not get it.
  */
-/** A prompt as the page sends it: the hint block, then the words the person typed. */
-export const withQuestionHint=prompt=>`<system-reminder>\n${QUESTION_HINT}\n</system-reminder>\n\n${prompt}`;
-export const QUESTION_HINT='This session is driven from a Workbench page. The user sees your questions only as cards: every question or choice you need from the user MUST be asked with your user-question tool (AskUserQuestion in Claude Code, request_user_input in Codex), never written as plain text. Rule: before doing a task whose goal, scope or approach is not fully specified, ask first with that tool instead of guessing; when several reasonable approaches exist, offer them as options and mark the one you recommend. Keep each question short, at most four options; the card also has a free-text field, so you may ask open questions too.';
+export const QUESTION_HINT='This session is driven from a Workbench page that shows AskUserQuestion / request_user_input as a card with options and a free-text field. When a requirement is unclear or a choice belongs to the user, prefer asking with that tool over guessing or listing the options as plain text. Keep questions short, with a few options and the recommended one marked.';
 
 /** Exact resume arguments; print/stream flags only, plus the model and effort the person chose on the Sessions page. Resident Claude/Agy read stream-json turns from stdin. */
 export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,model=null,effort=null}) {
@@ -36,7 +34,7 @@ export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,mod
 export class NativeCodexSession extends CodexSession {
   constructor(options){super({...options,effort:options.effort??null});this.hold=false;this.control=options.control||null;this.questionsSupported=true;}
   /** request_user_input is off in Codex's default mode unless the client opts in; the page answers it, so a takeover does. */
-  launchArgs(){return ['-c','features.default_mode_request_user_input=true',...super.launchArgs()];}
+  launchArgs(){return this.questionsSupported?['-c','features.default_mode_request_user_input=true','-c',`developer_instructions=${JSON.stringify(QUESTION_HINT)}`,...super.launchArgs()]:super.launchArgs();}
   async openThread() {
     if(this.threadId)return {id:this.threadId};
     const response=await this.request('thread/resume',{threadId:this.resumeSessionId,cwd:this.cwd,approvalPolicy:'never',sandbox:'workspace-write',...(this.model?{model:this.model}:{})});
@@ -49,8 +47,6 @@ export class NativeCodexSession extends CodexSession {
     // A turn/started notification may precede the empty compaction acknowledgement.
     if(method==='turn/start'&&this.control==='compact')return super.request('thread/compact/start',{threadId:params.threadId}).then(result=>({turn:{id:result?.turn?.id??this.turnId}}));
     if(method==='turn/start'&&this.model)params={...params,model:this.model};
-    // The question hint rides in the prompt text (developerInstructions on thread/resume are ignored by the App Server).
-    if(method==='turn/start'&&this.questionsSupported&&params.input?.[0]?.type==='text')params={...params,input:[{...params.input[0],text:withQuestionHint(params.input[0].text)},...params.input.slice(1)]};
     return super.request(method,params);
   }
   receive(m) {
@@ -101,10 +97,7 @@ export class NativeCliSession extends CliPrintSession {
   sendTurn(prompt) {
     // The SDK handshake precedes the first message of a session that hosts permission prompts.
     if(this.questionsSupported&&!this.initialized){this.initialized=true;this.write({type:'control_request',request_id:`init-${Date.now()}`,request:{subtype:'initialize'}});}
-    // The hint rides in the user turn too, as a system-reminder block (the page strips those from display): an appended
-    // system prompt alone is not followed, the model keeps writing its questions as text.
-    const text=this.questionsSupported?withQuestionHint(prompt):prompt;
-    const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:text;
+    const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text:prompt},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
     const message=this.runtime==='agy'?{event:'user',message:{role:'user',content}}:{type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
     this.inputAttempted=true;
     this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error)this.emit('status',{inputDeliveryState:'accepted'});});

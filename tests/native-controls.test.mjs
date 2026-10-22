@@ -19,6 +19,9 @@ test('chosen model and effort become CLI flags; nothing is added when they are u
     ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--resume', SID, '--permission-mode', 'bypassPermissions', '--permission-prompt-tool', 'stdio', '--append-system-prompt', QUESTION_HINT]);
   // A one-shot turn has nobody to answer a prompt, so it keeps bypassing them (and gets no hint to ask).
   assert.ok(!nativeTurnArgs('claude', { sessionId: SID, prompt: 'hi' }).includes('--append-system-prompt'));
+  // Codex gets the same nudge as developer instructions when its app-server starts.
+  const codexArgs = new NativeCodexSession({ cwd: '/w', resumeSessionId: SID, emit() {} }).launchArgs();
+  assert.ok(codexArgs.includes(`developer_instructions=${JSON.stringify(QUESTION_HINT)}`));
   assert.ok(nativeTurnArgs('claude', { sessionId: SID, prompt: 'hi' }).includes('--dangerously-skip-permissions'));
   assert.ok(nativeTurnArgs('grok', { cwd: '/w', sessionId: SID, prompt: 'hi', model: 'grok-5', effort: 'high' }).join(' ').includes('-m grok-5 --reasoning-effort high'));
   assert.ok(nativeTurnArgs('agy', { sessionId: SID, keepAlive: true, model: 'gemini-x' }).join(' ').includes('--model gemini-x --conversation'));
