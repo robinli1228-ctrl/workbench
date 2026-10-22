@@ -3853,5 +3853,12 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .native-turn-files .attachment-file-card small { color: var(--muted); font-size: 11.5px; line-height: 16px; }
 .native-turn-files .attachment-file-card:hover { border-color: #c8d2e0; background: #fafbfd; }
 /* The composer tray shows the same glyph, a size smaller, without the grey tile other file icons sit on. */
-:is(#chat-attachments, .native-takeover-tray) .attachment-open > .native-file-icon.file-glyph { width: 32px; height: 38px; margin: 0 4px; border-radius: 0; background: none; }
-:is(#chat-attachments, .native-takeover-tray) .attachment-open > .native-file-icon.file-glyph svg { width: 100%; height: 100%; }
+:is(#chat-attachments, .native-takeover-tray) .attachment-open > :is(.native-file-icon, .attachment-file-icon).file-glyph { width: 32px; height: 38px; margin: 0 4px; border-radius: 0; background: none; }
+:is(#chat-attachments, .native-takeover-tray) .attachment-open > :is(.native-file-icon, .attachment-file-icon).file-glyph svg { width: 100%; height: 100%; }
+/* A file in a group-chat message: the glyph over two rows, name above size, the send-to-device button at the top right. */
+#chat-feed .attachment-file-card { width: 240px; }
+#chat-feed .attachment-file-card .attachment-open { grid-template-columns: 34px minmax(0, 1fr) 24px; grid-template-rows: 19px 19px; column-gap: 10px; row-gap: 1px; padding: 8px 9px; }
+#chat-feed .attachment-file-card .attachment-open > .file-glyph { grid-column: 1; grid-row: 1 / -1; width: 34px; height: 38px; }
+#chat-feed .attachment-file-card .attachment-name { grid-column: 2; grid-row: 1; align-self: end; overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+#chat-feed .attachment-file-card .attachment-open small { grid-column: 2; grid-row: 2; align-self: start; color: var(--muted); font-size: 11.5px; }
+#chat-feed .attachment-file-card > .chat-icon-btn { top: 50%; margin-top: -11px; }
