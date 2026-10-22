@@ -1745,6 +1745,7 @@ export default {
   "Clean up": "清理",
   "Database": "数据库",
   "Sync snapshots": "同步快照",
+  "Media cache: {count} files · {size} (dropped after {days} days unused, at most {limit})": "媒体缓存：{count} 个文件 · {size}（{days} 天未用自动清理，上限 {limit}）",
   "Reclaimable now": "现在可清理",
   "Last cleanup": "上次清理",
   "Home": "Home",

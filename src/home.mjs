@@ -33,6 +33,7 @@ import {supportsDiscussion} from './discussion-policy.mjs';
 import {recentProjectArtifacts} from './run-artifacts.mjs';
 import {ProjectFiles} from './project-files.mjs';
 import {MediaStreams,MEDIA_CACHE_CONTROL} from './media-streams.mjs';
+import {MediaCache} from './media-cache.mjs';
 import {CrossDeviceRead} from './cross-device-read.mjs';
 import { RoleSteering } from './role-steering.mjs';
 import { collaborationQueueView } from './coordination-wait.mjs';
@@ -187,7 +188,9 @@ const mediaKeyFile=join(data,'media-ticket.key');
 let mediaSecret;try{mediaSecret=Buffer.from((await readFile(mediaKeyFile,'utf8')).trim(),'base64');}catch{}
 if(mediaSecret?.length!==32){mediaSecret=randomBytes(32);await writeFile(mediaKeyFile,mediaSecret.toString('base64'),{mode:0o600});}
 await chmod(mediaKeyFile,0o600);
-const mediaStreams=new MediaStreams({db,online,secret:mediaSecret,query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
+// Media bytes that came from a device are kept on Home by file version for 10 days (2 GB at most).
+const mediaCache=new MediaCache({dir:join(data,'media-cache')});
+const mediaStreams=new MediaStreams({db,online,secret:mediaSecret,cache:mediaCache,query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
 const crossDeviceRead=new CrossDeviceRead({db,online,query:workerQuery});
 const setup = new ProjectSetup(db, rooms, workerQuery, online, change);
 const credentials = new CredentialStore(join(data, 'credentials'));
@@ -1448,7 +1451,7 @@ const server = http.createServer(async (req, res) => {
         change(); return json(res, { retention });
       }
       if (pathname === '/api/data/stats' && req.method === 'GET') {
-        const home = await dataStats(db, { policy: retentionPolicy() });
+        const home = { ...await dataStats(db, { policy: retentionPolicy() }), mediaCache: await mediaCache.stats().catch(() => null) };
         const devices = await Promise.all(db.list('workers').filter(w => !db.get('removedDevices', w.id)).map(async w => {
           if (!online(w.id)) return { nodeId: w.id, name: w.name, online: false };
           if (w.capabilities?.dataRetention !== 1) return { nodeId: w.id, name: w.name, online: true, upgrade: true };
@@ -1665,7 +1668,8 @@ function homeVacuumWhenQuiet() { clearTimeout(homeVacuumRetry); homeVacuumRetry 
 async function runHomeMaintenance() {
   try { const summary = await cleanupData(db, { policy: retentionPolicy(), log: line => console.error('Data:', line) });
     const n = Object.values(summary.deleted).reduce((a, b) => a + b, 0); if (n) console.log(`Data: removed ${n} records (${Math.round(summary.bytes / 1048576)} MB)`);
-    return { ...summary, vacuum: homeVacuumWhenQuiet() }; }
+    const media = await mediaCache.sweep().catch(e => ({ error: e.message })); if (media.deleted) console.log(`Data: media cache dropped ${media.deleted} files (${Math.round(media.freed / 1048576)} MB)`);
+    return { ...summary, mediaCache: media, vacuum: homeVacuumWhenQuiet() }; }
   catch (e) { console.error('Data: cleanup failed', e.message); return { error: e.message }; }
 }
 const maintenanceFirst = setTimeout(() => void runHomeMaintenance(), 60000); maintenanceFirst.unref();

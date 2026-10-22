@@ -1,5 +1,6 @@
 import {randomUUID,randomBytes,createHmac,timingSafeEqual} from 'node:crypto';
 import {pipeline} from 'node:stream/promises';
+import {Writable} from 'node:stream';
 import {resolve,relative,isAbsolute,basename} from 'node:path';
 
 /**
@@ -23,9 +24,9 @@ const equal=(a,b)=>a.length===b.length&&timingSafeEqual(a,b);
 const beneath=(root,path)=>{const rel=relative(root,path);return !isAbsolute(rel)&&rel!=='..'&&!rel.startsWith('../');};
 
 export class MediaStreams {
-  constructor({db,query,online,change=()=>{},secret=randomBytes(32),clock=()=>Date.now()}) {
-    Object.assign(this,{db,query,online,change,secret,clock});
-    this.pending=new Map();this.slots=new Map();this.transfers=new Map();
+  constructor({db,query,online,change=()=>{},secret=randomBytes(32),clock=()=>Date.now(),cache=null}) {
+    Object.assign(this,{db,query,online,change,secret,clock,cache});
+    this.pending=new Map();this.slots=new Map();this.transfers=new Map();this.prefetching=new Set();
   }
 
   sign(payload) {const body=b64(JSON.stringify(payload));return `${body}.${createHmac('sha256',this.secret).update(body).digest('base64url')}`;}
@@ -112,7 +113,9 @@ export class MediaStreams {
     if(!['GET','HEAD'].includes(req.method))return respond(res,405,{error:'Method not allowed'});
     if(req.headers['sec-fetch-site']==='cross-site')return respond(res,403,{error:'Cross-site media request rejected'});
     const t=this.verify(token);if(!t)return respond(res,401,{error:'media_ticket_invalid',code:'media_ticket_invalid'});
-    const reason=this.usable(t.n);if(reason)return respond(res,STATUS[reason],{error:reason,code:reason});
+    // Home's copy of this exact version answers first, so the bytes never cross the device link twice (and still open offline).
+    const cached=this.cache?await this.cache.lookup(t):null;
+    const reason=cached?null:this.usable(t.n);if(reason)return respond(res,STATUS[reason],{error:reason,code:reason});
     const size=t.s;let start=0,end=size-1,partial=false;
     const range=req.headers.range;
     if(range&&size>0){
@@ -130,16 +133,31 @@ export class MediaStreams {
       ...(partial?{'Content-Range':`bytes ${start}-${end}/${size}`}:{})};
     const status=partial?206:200;
     if(req.method==='HEAD'||size===0){res.writeHead(status,headers);return res.end();}
+    if(cached){res.writeHead(status,headers);return pipeline(this.cache.read(cached,start,end),res).catch(()=>res.destroy());}
     const tracked=this.progress.has(token)?{onBytes:count=>this.trackProgress(token,count)}:{};
-    return this.relay(t,start,end,res,status,headers,tracked);
+    // A whole-file read is copied as it passes; a range read of a small enough file fetches the whole file once in the background.
+    const writer=this.cache&&start===0&&end===size-1?await this.cache.writer(t):null;
+    if(!writer&&this.cache&&partial&&size<=this.cache.prefetchBytes)void this.prefetch(t);
+    return this.relay(t,start,end,res,status,headers,{...tracked,writer});
   }
 
-  async relay(t,start,end,res,status,headers,{onBytes}={}) {
+  /** Fill Home's copy of a file the viewer is reading in ranges: one full relay into the cache, nothing to the browser. */
+  async prefetch(t) {
+    const key=this.cache.key(t);if(this.prefetching.has(key)||await this.cache.lookup(t))return;
+    this.prefetching.add(key);
+    try{
+      const writer=await this.cache.writer(t);if(!writer)return;
+      const sink=new Writable({write(chunk,encoding,callback){callback();}});sink.writeHead=()=>{};
+      await this.relay(t,0,t.s-1,sink,200,{},{writer});
+    }finally{this.prefetching.delete(key);}
+  }
+
+  async relay(t,start,end,res,status,headers,{onBytes,writer=null}={}) {
     let release;
-    try{release=await this.slot(t.n);}catch(error){return respond(res,STATUS[error.code]||503,{error:error.code,code:error.code},{'Retry-After':'2'});}
+    try{release=await this.slot(t.n);}catch(error){void writer?.finish(false);return respond(res,STATUS[error.code]||503,{error:error.code,code:error.code},{'Retry-After':'2'});}
     const id=randomUUID(),secret=randomBytes(24).toString('hex'),length=end-start+1;
     let settle;const done=new Promise(resolveDone=>{settle=resolveDone;});
-    const entry={id,secret,nodeId:t.n,length,status,headers,res,started:false,closed:false,onBytes,settle:()=>{clearTimeout(entry.timer);this.pending.delete(id);release();settle();}};
+    const entry={id,secret,nodeId:t.n,length,status,headers,res,started:false,closed:false,onBytes,writer,complete:false,settle:()=>{clearTimeout(entry.timer);this.pending.delete(id);release();void writer?.finish(entry.complete).finally(settle);}};
     this.pending.set(id,entry);
     entry.timer=setTimeout(()=>this.fail(id,'media_timeout'),ARRIVAL_MS);
     res.on('close',()=>{entry.closed=true;if(!entry.started)this.fail(id,null);});
@@ -165,8 +183,8 @@ export class MediaStreams {
     out.writeHead(entry.status,entry.headers);
     let count=0,idle;
     const touch=()=>{clearTimeout(idle);idle=setTimeout(()=>req.destroy(new Error('media_idle')),IDLE_MS);};touch();
-    req.on('data',chunk=>{count+=chunk.length;touch();entry.onBytes?.(count);if(count>entry.length)req.destroy(new Error('media_overflow'));});
-    try{await pipeline(req,out);respond(res,count===entry.length?200:400,{received:count});}
+    req.on('data',chunk=>{count+=chunk.length;touch();entry.onBytes?.(count);entry.writer?.write(chunk);if(count>entry.length)req.destroy(new Error('media_overflow'));});
+    try{await pipeline(req,out);entry.complete=count===entry.length;respond(res,entry.complete?200:400,{received:count});}
     catch{out.destroy();if(!res.headersSent)respond(res,400,{received:count});}
     finally{clearTimeout(idle);entry.settle();}
   }

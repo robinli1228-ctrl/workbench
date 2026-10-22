@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {Store} from '../src/store.mjs';
 import {MediaStreams,PREVIEW_CHUNK} from '../src/media-streams.mjs';
+import {MediaCache} from '../src/media-cache.mjs';
 import {sniffMedia,mediaPath,statMedia,streamMedia,hashMedia,receiveMedia} from '../src/media-files.mjs';
 import {captureDirectorySnapshot} from '../src/source-sync-files.mjs';
 import {mediaPathMatches,mediaKindFromName,formatBytes} from '../public/media.js';
@@ -20,7 +21,7 @@ function bigVideo(size=25*1024*1024) {
 }
 
 /** Home's relay and the Worker's file functions in one process, joined by a real loopback HTTP server. */
-async function harness({capable=true}={}) {
+async function harness({capable=true,cache=false}={}) {
   const root=await mkdtemp(join(tmpdir(),'wb-media-')),source=join(root,'server'),target=join(root,'mac');
   await mkdir(join(source,'out'),{recursive:true});await mkdir(target,{recursive:true});
   const db=new Store(':memory:'),onlineNodes=new Set(['srv','mac']);
@@ -41,7 +42,8 @@ async function harness({capable=true}={}) {
     }
     throw new Error('unknown action');
   };
-  const media=new MediaStreams({db,query,online:id=>onlineNodes.has(id)});
+  const mediaCache=cache?new MediaCache({dir:join(root,'home-cache'),...(typeof cache==='object'?cache:{})}):null;
+  const media=new MediaStreams({db,query,online:id=>onlineNodes.has(id),cache:mediaCache});
   const server=http.createServer((req,res)=>{
     const url=new URL(req.url,'http://x');let m;
     if((m=url.pathname.match(/^\/api\/worker\/media-streams\/([a-f0-9-]{36})$/)))return void media.receive(req,res,m[1]);
@@ -50,7 +52,7 @@ async function harness({capable=true}={}) {
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));base=`http://127.0.0.1:${server.address().port}`;
   const run={id:'r1',projectId:'p1',nodeId:'srv',workspace:source,projectRoot:source};
-  return {root,source,target,db,media,onlineNodes,base,run,close:async()=>{server.close();await rm(root,{recursive:true,force:true});}};
+  return {root,source,target,db,media,mediaCache,onlineNodes,base,run,close:async()=>{server.close();await rm(root,{recursive:true,force:true});}};
 }
 
 test('media type comes from header bytes, not the file name', () => {
@@ -133,6 +135,45 @@ test('one file version keeps one link for the day, cached 10 days; a changed fil
     await utimes(path,new Date(),new Date(Date.now()+5000));
     assert.notEqual((await h.media.describe(source())).url,first.url,'a new version is a new link');
   } finally {await h.close();}
+});
+
+test('Home keeps a full copy of a relayed file by version, serves it again without the device, and drops partial copies', async () => {
+  const h=await harness({cache:{prefetchBytes:2*1024*1024}});
+  const until=async check=>{for(let i=0;i<100&&!(await check());i++)await new Promise(r=>setTimeout(r,20));};
+  try {
+    const bytes=bigVideo(512*1024);await writeFile(join(h.source,'out','shot.mp4'),bytes);
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'out/shot.mp4')),t=h.media.verify(info.ticket);
+    assert.equal(sha(Buffer.from(await (await fetch(h.base+info.url)).arrayBuffer())),sha(bytes));
+    await until(async()=>Boolean(await h.mediaCache.lookup(t)));
+    assert.ok(await h.mediaCache.lookup(t),'a whole-file read leaves a copy keyed by version');
+    h.onlineNodes.delete('srv');
+    const offline=await fetch(h.base+info.url,{headers:{Range:'bytes=1000-1999'}});
+    assert.equal(offline.status,206,'the copy answers while the device is offline');
+    assert.deepEqual(Buffer.from(await offline.arrayBuffer()),bytes.subarray(1000,2000));
+    h.onlineNodes.add('srv');
+    // A range read of a small file fills the copy in the background.
+    const clip=bigVideo(1024*1024);await writeFile(join(h.source,'out','clip.mp4'),clip);
+    const clipInfo=await h.media.describe(h.media.sourceForRun(h.run,'out/clip.mp4')),clipTicket=h.media.verify(clipInfo.ticket);
+    await (await fetch(h.base+clipInfo.url,{headers:{Range:'bytes=0-99'}})).arrayBuffer();
+    await until(async()=>Boolean(await h.mediaCache.lookup(clipTicket)));
+    assert.ok(await h.mediaCache.lookup(clipTicket),'the background fill completed');
+    // An interrupted write leaves nothing behind.
+    const w=await h.mediaCache.writer({n:'x',r:'/',p:'a',s:10,m:1,i:1,d:1});w.write(Buffer.alloc(4));assert.equal(await w.finish(true),false);
+    assert.deepEqual((await readdir(join(h.root,'home-cache'))).filter(n=>n.endsWith('.part')),[]);
+  } finally {await h.close();}
+});
+
+test('the media cache drops copies unused for 10 days, then the least recently used beyond its limit', async () => {
+  const dir=await mkdtemp(join(tmpdir(),'wb-media-cache-'));let now=Date.parse('2026-10-22T00:00:00Z');
+  try {
+    const cache=new MediaCache({dir,limitBytes:250,clock:()=>now});
+    const put=async(name,size,daysAgo)=>{const t={n:name,r:'/',p:name,s:size,m:1,i:1,d:1},w=await cache.writer(t);w.write(Buffer.alloc(size));await w.finish(true);const at=new Date(now-daysAgo*86400000);await utimes(join(dir,cache.key(t)),at,at);return t;};
+    const old=await put('old',100,11),a=await put('a',100,3),b=await put('b',100,2),c=await put('c',100,1);
+    const result=await cache.sweep();
+    assert.equal(result.deleted,2,'the 11-day-old copy, then the least recently used one to get under 250 bytes');
+    assert.deepEqual(await Promise.all([old,a,b,c].map(async t=>Boolean(await cache.lookup(t)))),[false,false,true,true]);
+    assert.deepEqual(await cache.stats(),{count:2,bytes:200,limitBytes:250,maxAgeDays:10});
+  } finally {await rm(dir,{recursive:true,force:true});}
 });
 
 test('a disguised file is served only as a download, never inline', async () => {
