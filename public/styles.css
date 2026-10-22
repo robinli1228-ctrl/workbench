@@ -3765,3 +3765,6 @@ body .native-ask-tools select.native-ask-model:not([multiple]):focus-visible { o
 .native-side-card > .native-card-head .native-icon-action { width: 22px; min-width: 22px; height: 22px; min-height: 22px; padding: 3px; }
 .native-side-card > .native-card-head .native-card-action { min-height: 22px; height: 22px; padding: 0 9px; }
 #native-side-outputs > .native-files-half { padding-top: 14px; }
+/* Sessions / Group chats switch: a line icon before each label, in the label's colour. */
+.project-sidebar .navigation-mode button { display: inline-flex; align-items: center; gap: 5px; }
+.navigation-mode-icon { flex: none; width: 16px; height: 16px; }
