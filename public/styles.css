@@ -3819,3 +3819,11 @@ dialog.media-lightbox .media-nav svg { width: 22px; height: 22px; }
 dialog.media-lightbox .media-nav-prev { left: 10px; }
 dialog.media-lightbox .media-nav-next { right: 10px; }
 .media-lightbox-count { margin-left: 8px; color: var(--text-muted, #8a91a0); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* Reply foot: copy, open on the right, the time, then why the turn did not finish. The icon buttons are 24px (the generic
+   36px icon-button minimum made the spacing uneven); with a 4px gap and 5px of padding around each 14px icon, every step
+   you see (icon to icon, icon to time, time to note) is 14px. */
+:is(.native-session-content, .native-ask-body) .nt-agent .nt-reply-foot, .nt-reply-foot { gap: 4px; }
+.nt-reply-foot :is(.nt-copy, .nt-side) { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 5px; }
+:is(.native-session-content, .native-ask-body) .nt-reply-foot .nt-side { margin-left: 0; }
+.nt-reply-foot .nt-duration { margin-left: 5px; }
+.nt-reply-foot .nt-foot-status { margin-left: 10px; color: var(--danger, #c0263a); font-size: 12px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
