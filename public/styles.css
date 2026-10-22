@@ -3668,8 +3668,8 @@ audio.side-preview-media { background: transparent; }
 .side-preview-empty p { margin: 0; }
 .side-preview-empty-icon svg { width: 30px; height: 30px; opacity: .55; }
 /* The entry buttons: beside Copy under replies and prompts, Download in the viewer, in the file sheet and output details. */
-.native-session-content .nt-reply-foot .nt-side { display: grid; place-items: center; width: 24px; height: 24px; min-height: 24px; margin-left: -6px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--nt-quiet, var(--muted)); }
-.native-session-content .nt-reply-foot .nt-side:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+:is(.native-session-content, .native-ask-body) .nt-reply-foot .nt-side { display: grid; place-items: center; width: 24px; height: 24px; min-height: 24px; margin-left: -6px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--nt-quiet, var(--muted)); }
+:is(.native-session-content, .native-ask-body) .nt-reply-foot .nt-side:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
 .nt-reply-foot .nt-side svg { width: 14px; height: 14px; }
 #artifact-detail-dialog .dialog-heading h2 { margin-right: auto; }
 #artifact-detail-dialog .dialog-heading { gap: 6px; }
@@ -3714,8 +3714,6 @@ audio.side-preview-media { background: transparent; }
 /* Side question tab: the preview panel's frame with a chat inside and a composer at the bottom. */
 .native-session-sidebar .native-side-panel.is-ask { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .native-side-ask { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.native-ask-head { align-items: center; }
-.native-ask-head .side-preview-titles { padding-top: 0; }
 .native-ask-body { display: block; padding: 12px 16px 16px; }
 .native-ask-body > .side-preview-empty { margin-top: 18vh; }
 .native-ask-body .nt-row { margin-bottom: 14px; }
@@ -3729,7 +3727,18 @@ audio.side-preview-media { background: transparent; }
 .native-ask-restarted { margin: 0 0 12px; }
 .native-ask-note { margin: 0; padding: 6px 16px; color: var(--danger); font-size: 12.5px; }
 .native-ask-form { flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--card-hairline, var(--line)); background: #f8fafd; }
-.native-ask-form .chat-input-field { grid-template-columns: 36px auto minmax(0, 1fr) auto; align-items: center; }
-.native-ask-model { align-self: center; width: auto; max-width: 160px; height: 28px; min-height: 28px; margin: 0 2px 0 -2px; padding: 0 24px 0 8px; border-radius: 8px; font-size: 12px; }
+.native-ask-form .chat-input-field { display: flex; flex-direction: column; align-items: stretch; }
+.native-ask-form .chat-input-field textarea { width: 100%; min-height: 36px; padding: 10px 12px 2px; }
+.native-ask-tools { display: flex; align-items: center; gap: 2px; padding: 0 4px 4px; }
+.native-ask-tools-gap { flex: 1; }
+.native-ask-tools .native-attach { margin: 0; }
+/* Send is a bare icon like attach: no filled button. */
+.native-ask-tools .chat-send, .native-ask-tools .chat-send:hover:not(:disabled) { margin: 0; border: 0; background: transparent; box-shadow: none; color: var(--accent); }
+.native-ask-tools .chat-send:hover:not(:disabled) { background: var(--accent-tint, rgb(79 91 206 / 8%)); }
+.native-ask-tools .chat-send:disabled { background: transparent; color: var(--text-muted, #8a91a0); opacity: .5; }
+/* The model picker reads as plain text with a caret, not a field (beats the global select box rule). */
+body .native-ask-tools select.native-ask-model:not([multiple]):not([size]) { flex: 0 1 auto; width: auto; min-width: 0; max-width: calc(100% - 84px); height: 28px; min-height: 28px; padding: 0 18px 0 6px; border: 0; border-radius: 6px; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a91a0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 3px center / 12px; box-shadow: none; outline: none; color: var(--text-muted, #6b7280); font-size: 12.5px; line-height: 28px; appearance: none; -webkit-appearance: none; text-overflow: ellipsis; cursor: pointer; }
+body .native-ask-tools select.native-ask-model:not([multiple]):hover:not(:disabled) { background-color: #f1f3f7; color: var(--ink); }
+body .native-ask-tools select.native-ask-model:not([multiple]):focus-visible { outline: 0; box-shadow: var(--focus-ring); }
 .native-ask-file { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef0f4; font-size: 12px; }
 @media (max-width: 1000px) { #native-side-tab-ask { display: none !important; } }

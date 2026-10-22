@@ -65,6 +65,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   sideTab=name;document.body.dataset.sessionSideTab=name;for(const [tab,panel] of Object.entries(sidePanels))panel.hidden=tab!==name;
   sideTitle.textContent=t(SIDE_TITLES[name]);side.setAttribute('aria-label',t(SIDE_TITLES[name]));
   sideTabButtons.forEach((tab,i)=>{const on=SIDE_TABS[i]===name;tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
+  const clearAsk=sideHeader.querySelector('.native-ask-clear');if(clearAsk)clearAsk.hidden=name!=='ask';
   if(name==='outputs')renderOutputs();
  }
  /**
@@ -845,12 +846,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  }
  /**
   * Side question tab. A blank chat on open; each question runs read-only on a temporary copy of the session (Claude: its
-  * last 10 turns) and never reaches it. Nothing is kept: the trash icon clears it, and so do switching sessions, a new
+  * last 10 turns) and never reaches it. Nothing is kept: the brush in the panel header clears it, and so do switching sessions, a new
   * prompt in the main session, an hour without use and two hours of age. Switching to another right-side tab keeps it.
   */
  function createSideAsk(){
-  const root=el('div','native-side-ask'),head=el('div','side-preview-head native-ask-head'),titles=el('div','side-preview-titles'),title=el('strong','side-preview-title'),sub=el('div','side-preview-sub',t('Answers stay here only; nothing is kept after you clear it'));
-  const clear=iconButton('trash','Clear this side question',()=>void reset({tell:true}));titles.append(title,sub);head.append(titles,clear);
+  const root=el('div','native-side-ask');
+  // The clear button sits in the right panel's header, shown while this tab is selected.
+  const clear=iconButton('brush','Clear this side question',()=>void reset({tell:true}),'native-ask-clear');
   const body=el('div','side-preview-body native-ask-body'),note=el('p','workspace-note native-ask-note');note.hidden=true;
   const form=el('form','chat-composer native-takeover-form native-ask-form'),bar=el('div','chat-input-bar'),field=el('div','chat-input-field'),tray=el('div','chat-attachments native-takeover-tray');tray.hidden=true;
   const attach=el('button','native-attach');attach.type='button';attach.title=t('Upload an image or file');attach.setAttribute('aria-label',t('Upload file'));attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
@@ -858,7 +860,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const input=el('textarea');input.rows=1;input.placeholder=t('Ask a quick question that does not interrupt the main session…');input.setAttribute('aria-label',t('Side question'));
   const send=el('button','primary chat-send');send.type='submit';setActionIcon(send,'send',t('Send'));
   const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
-  field.append(tray,attach,model,input,send);bar.append(field);form.append(bar);root.append(head,body,note,form);
+  // Text on top, a tool row under it: attach and model on the left, send on the right.
+  const tools=el('div','native-ask-tools'),gap=el('span','native-ask-tools-gap');tools.append(attach,model,gap,send);
+  field.append(tray,input,tools);bar.append(field);form.append(bar);root.append(body,note,form);
   let session=null,sideId=null,view=null,pending=false,poll=null,signature='',files=[],uploads=0,notice='',generation=0;
   const sessionKey=value=>value?key(value):'';
   const live=q=>['queued','starting','running','waiting_user','stopping'].includes(q?.status);
@@ -873,7 +877,6 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   function setNote(text){note.hidden=!text;note.textContent=text?t(text):'';}
   function render(){
    if(!session)return;
-   title.textContent=`${names[session.runtime]||session.runtime}${session.runtime==='claude'?` · ${t('last {count} turns',{count:view?.turns??10})}`:''}`;
    const questions=view?.questions||[];const sig=JSON.stringify([sessionKey(session),questions.map(q=>[q.id,q.status,q.text.length,q.events.length,q.error,q.endedAt]),notice,pending,uploads,files.map(f=>f.id)]);
    const busy=pending||questions.some(live);send.disabled=busy||uploads>0||(!input.value.trim()&&!files.length);attach.disabled=busy;clear.disabled=!sideId&&!questions.length&&!pending&&!uploads;
    tray.replaceChildren();for(const f of files){const chip=el('div','attachment-card attachment-file-card');chip.title=f.name;const open=el('span','attachment-open');open.append(el('span','attachment-name',f.name),el('small','',formatBytes(f.size)));chip.append(open,closeIcon(button('',()=>{files=files.filter(x=>x.id!==f.id);render();},'attachment-remove'),t('Remove attachment')));tray.append(chip);}
@@ -881,7 +884,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(sig===signature)return;signature=sig;
    body.replaceChildren();
    if(notice)body.append(el('p','workspace-note native-ask-restarted',t(notice)));
-   if(!questions.length){const empty=el('div','side-preview-empty');const icon=el('span','side-preview-empty-icon');icon.innerHTML=UI_ICON.sideAsk;empty.append(icon,el('p','',t(session.runtime==='claude'?'Ask a quick question that does not interrupt the main session. The answer sees its last 10 turns, stays here only, and is gone once you clear it or the main session moves on.':'Ask a quick question that does not interrupt the main session. The answer stays here only, and is gone once you clear it or the main session moves on.')));body.append(empty);return;}
+   if(!questions.length){const empty=el('div','side-preview-empty');const icon=el('span','side-preview-empty-icon');icon.innerHTML=UI_ICON.sideAsk;empty.append(icon,el('p','',t('Ask a quick question that does not interrupt the main session. The answer stays here only, and is gone once you clear it or the main session moves on.')));body.append(empty);return;}
    for(const q of questions){
     const files=q.attachments?.length?el('div','chat-attachments native-turn-files'):null;if(files)for(const a of q.attachments)files.append(el('span','attachment-name native-ask-file',a.name));
     const user=chatRow('user',q.prompt,session.runtime,q.createdAt,files);
@@ -892,7 +895,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
     body.append(user,reply);
    }
    const usage=[...questions].reverse().find(q=>q.contextUsage?.usedTokens)?.contextUsage?.usedTokens;
-   body.append(el('p','workspace-note native-ask-usage',[usage?t('Context about {tokens} tokens',{tokens:usage>=1000?`${Math.round(usage/1000)}k`:usage}):'',t('{count} side questions',{count:questions.length})].filter(Boolean).join(' · ')));
+   if(usage)body.append(el('p','workspace-note native-ask-usage',t('Context about {tokens} tokens',{tokens:usage>=1000?`${Math.round(usage/1000)}k`:usage})));
    body.scrollTop=body.scrollHeight;
   }
   function stopPoll(){clearInterval(poll);poll=null;}
@@ -937,7 +940,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!send.disabled){e.preventDefault();void ask();}});
   input.addEventListener('paste',e=>{const list=[...(e.clipboardData?.files||[])];if(list.length){e.preventDefault();void upload(list);}});
   attach.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
-  return {root,available,
+  return {root,clear,available,
    /** A different session starts a blank side question (the old one is closed); the same session keeps it. */
    attach(value){if(sessionKey(value)!==sessionKey(session)){const previous=session;void reset({tell:Boolean(previous)});session=value;}else session=value;fillModels();render();},
    detach(){void reset({tell:true});session=null;},
@@ -946,7 +949,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   };
  }
  const takeover=createTakeover();
- const sideAsk=createSideAsk();sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);
+ const sideAsk=createSideAsk();sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);sideAsk.clear.hidden=sideTab!=='ask';sideHeader.append(sideAsk.clear);
  // Sessions opened on this page with "Allow all": once the headless first turn has produced history, chat here without a separate takeover confirmation.
  const pageOpened=new Set();
  const IMAGE_CLIS=new Set(['codex','claude']),openProcesses=new Set();
