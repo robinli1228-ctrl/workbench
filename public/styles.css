@@ -3802,3 +3802,10 @@ body .native-ask-tools select.native-ask-model:not([multiple]):focus-visible { o
 .role-machine.is-cloud .role-device-number { top: calc(50% + 2px); left: 47%; }
 .role-machine .role-device-number { color: var(--text-muted); }
 #native-session-list .project-item.active .role-device-number { color: var(--accent); }
+/* Session ID line under the This page / iTerm switch: the ID in a quiet monospace pill, then copy ID and copy iTerm command. */
+.native-session-id-row { display: flex; align-items: center; gap: 2px; margin-top: 10px; }
+.native-session-id-value { flex: 1; min-width: 0; margin-right: 4px; padding: 5px 10px; border-radius: 8px; background: #f3f5f8; color: var(--text-muted); font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-session-id-row .native-icon-action { flex: none; width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 5px; border: 0; border-radius: 7px; background: transparent; box-shadow: none; color: var(--text-muted); }
+.native-session-id-row .native-icon-action:hover:not(:disabled) { color: var(--accent); background: var(--accent-tint, #eef0ff); }
+.native-session-id-row .native-icon-action:disabled { opacity: .45; }
+.native-session-id-row .native-icon-action svg { width: 16px; height: 16px; }

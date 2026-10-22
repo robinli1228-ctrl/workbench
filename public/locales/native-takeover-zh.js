@@ -238,6 +238,7 @@ export default {
  "The page takeover is still closing; try again in a moment": "页面接管还在结束中，请稍后再试",
  "The terminal CLI has not exited yet; quit it in iTerm or stop it below": "终端 CLI 还没退出，请在 iTerm 中退出，或在下方停止它",
  "Copy iTerm command": "复制 iTerm 命令",
+ "Copy session ID": "复制会话 ID",
  "Prepares a one-time link for this session; paste the command into any terminal. Cancel it from the Connection card if unused.": "会为此会话准备一次性链接；把命令粘贴到任意终端即可。不用的话可在「接入」卡取消。",
  "End the page takeover and prepare a terminal link for this session?": "结束页面接管并为此会话准备终端链接？",
  "Cancelled": "已取消",

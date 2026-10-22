@@ -294,7 +294,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const clock=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString(dateLocale(),{hour:'2-digit',minute:'2-digit'});};
  const dayLabel=date=>{const now=new Date(),start=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime(),days=Math.round((start(now)-start(date))/864e5);
   return `${days===0?t('Today'):days===1?t('Yesterday'):date.toLocaleDateString(dateLocale(),{...(date.getFullYear()===now.getFullYear()?{}:{year:'numeric'}),month:'2-digit',day:'2-digit'})} ${clock(date)}`;};
- let returningClaim=null,controlFeedback=null;
+ let returningClaim=null,controlFeedback=null,sessionIdRow=null;
  /** 只用已有状态快照绘制占用，不新增轮询；归还始终指向保存的接管记录。 */
  function renderSessionControls(item){
   if(!item||!active())return;
@@ -370,6 +370,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   else if(claim&&['terminal','returning','stopping'].includes(state)){const stop=iconButton('stop','Stop CLI',()=>void perform('stop'),'is-danger');stop.disabled=Boolean(returningClaim)||!online||worker?.capabilities?.terminalControl!==1||claim.processState==='unknown';if(worker?.capabilities?.terminalControl!==1)stop.title=t('Upgrade this Worker to check or stop terminal processes.');row.append(stop);}
   else if(state==='unstarted'){const open=button('Open on this page',()=>openForm(item),'primary native-card-action');open.disabled=!canTakeover;row.append(open);}
   panel.append(row);
+  // Right under the switch: the session ID with its copy buttons (built in renderSide, kept across rebuilds).
+  if(sessionIdRow?.dataset.key===key(item))panel.append(sessionIdRow);
   // The platform-wide pause (top bar / basic settings) blocks every start and send; say so here and offer the resume, instead of a bare error after a failed send.
   if(paused){const note=el('div','native-paused'),resume=button('Resume remote',async b=>{b.target.disabled=true;try{await api('/api/settings',{method:'POST',json:{paused:false}});await onStateRefresh();}catch(error){controlFeedback={key:key(item),text:error.message};}finally{if(selected)renderSessionControls(selected);}},'secondary native-card-action');
    note.append(el('span','',t('Remote execution is paused for the whole platform; nothing can start or be sent until it is resumed.')),resume);panel.append(note);}
@@ -806,17 +808,20 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   side.dataset.sessionKey=key(value);
   sideBadge.hidden=true;
   const {overview}=sidePanels;overview.replaceChildren();agentDetailsSignature='';
-  // Overview: where the session runs and its ID, then model and context, then quota.
+  // Overview: where the session runs and its ID (under the switch), then model and context, then quota.
   const controls=el('section','native-side-card native-connect');controls.dataset.nativeControls='';
   const settingsCard=el('section','native-side-card native-settings-card');settingsCard.dataset.nativeSettings='';
   overview.append(controls);
-  const identity=metaCard(overview,'Native session',[['Session ID',id||t('Not available yet'),id||null]]);identity.classList.add('native-identity-card');overview.append(settingsCard);
+  overview.append(settingsCard);
+  // The session ID line under the This page / iTerm switch: the ID, copy it, and copy the command that opens it in iTerm.
+  sessionIdRow=el('div','native-session-id-row');sessionIdRow.dataset.key=key(value);
+  const idText=el('span','native-session-id-value',id||t('Not available yet'));idText.translate=false;idText.title=id?`${t('Session ID')} · ${id}`:'';sessionIdRow.append(idText);
+  if(id){const copyId=iconButton('copy','Copy session ID',async e=>{const b=e.currentTarget;try{await navigator.clipboard.writeText(id);setActionIcon(b,'check',t('Copied'));setTimeout(()=>setActionIcon(b,'copy',t('Copy session ID')),1500);}catch{}});sessionIdRow.append(copyId);}
   // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
-  if(id&&value.workspace){const copy=iconButton('copy','Copy iTerm command',async e=>{const b=e.currentTarget;b.disabled=true;b.dataset.pending='true';
-    try{await copyTerminalCommand(value);setActionIcon(b,'check',t('Copied'));setTimeout(()=>{setActionIcon(b,'copy',t('Copy iTerm command'));delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}
+  if(id&&value.workspace){const copy=iconButton('terminal','Copy iTerm command',async e=>{const b=e.currentTarget;b.disabled=true;b.dataset.pending='true';
+    try{await copyTerminalCommand(value);setActionIcon(b,'check',t('Copied'));setTimeout(()=>{setActionIcon(b,'terminal',t('Copy iTerm command'));delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}
     catch(error){delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'native-copy-command');
-   copy.disabled=takeover.releaseDisabled(value);
-   const title=identity.querySelector('h3'),head=el('div','native-card-head');title.replaceWith(head);head.append(title,copy);}
+   copy.disabled=takeover.releaseDisabled(value);sessionIdRow.append(copy);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
   void loadAgents(value);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
