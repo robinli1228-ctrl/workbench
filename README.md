@@ -130,6 +130,8 @@ Session details now show terminal occupancy and offer Return to platform or conf
 
 The role terminal dialog shows the latest historical session without a dropdown and keeps older records intact. **Open new session** reuses the independent native-session form with the role's device and CLI preselected; the folder is chosen separately, and no group history or role prompt is supplied. **Verify and resume history** retains the existing exact-session checks and terminal return controls.
 
+Claude and Codex page takeovers receive a short question-card hint once per session and instruction version. The page hides this block while native history retains it; explicit input acceptance confirms delivery, independently of whether the reply later fails or is interrupted. Unsupported Workers and control turns do not receive the hint. No launch-level duplicate prompt is added.
+
 Task progress uses six labels: **Pending execution, In progress, Waiting, Completed, Stopped, Execution error**. A normally delivered review is completed even when its business verdict is negative; verdicts remain in the reply and delivery report. Waiting reasons and execution errors stay visible, and process stop must be confirmed. Existing plan policies and acceptance actions are unchanged; old records are not rewritten or automatically retried.
 
 Home checks steering barriers through a role-scoped index instead of rereading every historical task for each queued item. Follow-up coverage reuses one project-request read per synchronous check. Neither change caches scheduling decisions across turns or changes queue, approval or history rules.

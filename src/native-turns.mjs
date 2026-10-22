@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {giteeRepository} from './repository.mjs';
 import {traditionalInput} from './input-language.mjs';
 
@@ -6,7 +6,8 @@ import {traditionalInput} from './input-language.mjs';
  * Takeover turns: the user continues one exact native CLI session from the Sessions page.
  * Home records each turn with its process events; the Worker resumes the same native ID in its original folder
  * and keeps one resident CLI per taken-over session where the CLI has a resident input mode.
- * No Task/Run, role rules, platform prompt or wb context is created or injected.
+ * No Task/Run, role rules, platform prompt or wb context is created or injected; the one addition is the short page
+ * instructions (see PAGE_INSTRUCTIONS), sent once per session and version.
  */
 export const NATIVE_TURN_RUNTIMES=['codex','claude','grok','agy'];
 /** Resident processes: Codex app-server (thread/resume once, then turn/start), Claude and Agy stream-json input. Grok resumes per turn. */
@@ -27,6 +28,16 @@ const sessionKey=(nodeId,runtime,sessionId)=>`${nodeId}/${runtime}/${sessionId}`
 const queueRank=turn=>Number.isFinite(turn.queueRank)?turn.queueRank:(Date.parse(turn.createdAt)||0);
 /** Control turns: a compaction request, or the slash command that changes a resident Claude's model or effort in place. */
 const CONTROLS=new Set(['compact','model','effort']);
+/**
+ * Page instructions, delivered like a group chat's role instructions: once per native session and version, as a block in
+ * front of the first prompt this page sends (the page hides system-reminder blocks), never again until the text changes.
+ * A nudge, not a rule: the page shows the model's questions as cards, so prefer asking to guessing.
+ */
+export const PAGE_INSTRUCTIONS='This session is now also driven from a Workbench page, which shows AskUserQuestion / request_user_input as a card with options and a free-text field. When a requirement is unclear or a choice belongs to the user, prefer asking with that tool over guessing or listing the options as plain text. Keep questions short, with a few options and the recommended one marked.';
+export const PAGE_INSTRUCTIONS_VERSION=createHash('sha256').update(PAGE_INSTRUCTIONS).digest('hex').slice(0,16);
+const PAGE_INSTRUCTION_RUNTIMES=new Set(['claude','codex']);
+/** The prompt a CLI receives: the page instructions block (when this turn carries it), then the person's words. */
+export const withPageInstructions=(prompt,instructions)=>instructions?.text?`<system-reminder>\nWorkbench page instructions, version ${instructions.version}:\n${instructions.text}\n</system-reminder>\n\n${prompt}`:prompt;
 const EFFORTS=new Set(['none','minimal','low','medium','high','xhigh','max','ultra','auto','default']);
 const modelPattern=/^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,79}$/;
 export function nativeSettingsKey(nodeId,runtime,sessionId){return `settings:${sessionKey(nodeId,runtime,sessionId)}`;}
@@ -46,7 +57,8 @@ export function nativeTurnRows(db,{nodeId,runtime,sessionId,clientTurnId,active=
 export function applyNativeTurnEvent(turn,event){
  if(!turn||!event)return turn;
  const ended=!ACTIVE.has(turn.status)&&turn.status!=='stopping';
- if(ended&&event.kind!=='status')return turn;
+ // Replayed acceptance may arrive after disconnect expiry; record only this monotonic fact, never reopen a terminal turn.
+ if(ended)return event.kind==='status'&&event.inputDeliveryState==='accepted'&&turn.inputDeliveryState!=='accepted'?{...turn,inputDeliveryState:'accepted',updatedAt:now()}:turn;
  const next={...turn,updatedAt:now()},events=[...(turn.events||[])];
  const push=(type,payload)=>{const prior=events.at(-1);
   // Adjacent text deltas are merged into one event, so long replies stay within the bounded event list.
@@ -64,7 +76,8 @@ export function applyNativeTurnEvent(turn,event){
  if(event.kind==='tool'&&event.item){push('tool',{text:clip(String(event.text||'')),item:boundedItem(event.item)});next.phase=['completed','failed'].includes(event.item.status)?'working':'tool';next.toolName=String(event.item.name||event.item.command||event.item.tool||event.item.title||event.item.type||event.text||'').slice(0,200);}
  if(event.kind==='log'&&typeof event.text==='string'){push('log',{text:clip(event.text)});if(event.thinking)next.phase='thinking';}
  if(event.kind==='status'){
-  if(ended)return turn;
+  // Input acceptance is independent of the task outcome; a later failure cannot undo delivery.
+  if(next.inputDeliveryState!=='accepted'&&['accepted','not_delivered'].includes(event.inputDeliveryState))next.inputDeliveryState=event.inputDeliveryState;
   if(event.status&&!(turn.status==='stopping'&&ACTIVE.has(event.status)))next.status=event.status;
   if(event.status==='starting')next.phase='starting';
   if(event.status==='running'&&!next.phase)next.phase='thinking';
@@ -160,7 +173,13 @@ export class NativeTurnsHome{
   this.db.put('nativeTurns',started);
   this.db.put('nativeTakeovers',{id:key,nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
   const settings=this.settings(nodeId,runtime,sessionId);
-  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:turn.prompt,attachments:turn.attachments||[],...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(turn.control?{control:turn.control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
+  // The first page turn of a session (or the first after the instructions changed) carries them; a control turn never does.
+  const delivered=this.db.get('nativePageInstructions',key)?.version===PAGE_INSTRUCTIONS_VERSION;
+  // An older Worker would drop them unseen; it gets none, and nothing is marked delivered.
+  const capable=this.db.get('workers',nodeId)?.capabilities?.nativePageInstructions===1;
+  const instructions=capable&&!delivered&&!turn.control&&PAGE_INSTRUCTION_RUNTIMES.has(runtime)?{version:PAGE_INSTRUCTIONS_VERSION,text:PAGE_INSTRUCTIONS}:null;
+  if(instructions)this.db.put('nativeTurns',{...started,instructionsVersion:instructions.version});
+  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:turn.prompt,...(instructions?{instructions}:{}),attachments:turn.attachments||[],...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(turn.control?{control:turn.control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
   this.change();return started;
  }
  /** Queued turns of one session: a steered message first, then in the order the user arranged (by default, the order they were sent). */
@@ -281,6 +300,8 @@ export class NativeTurnsHome{
   if(m.type==='native_takeover_lease'){this.leases?.update(nodeId,m);this.change();return true;}
   const turn=this.db.get('nativeTurns',m.id);if(!turn||turn.nodeId!==nodeId)return false;
   const next=applyNativeTurnEvent(turn,m.event);if(next!==turn)this.db.put('nativeTurns',next);
+  // Only explicit input acceptance proves delivery: interruption can also happen before any input is sent.
+  if(next.instructionsVersion===PAGE_INSTRUCTIONS_VERSION&&next.inputDeliveryState==='accepted'&&turn.inputDeliveryState!=='accepted'){const key=sessionKey(nodeId,turn.runtime,turn.sessionId);this.db.put('nativePageInstructions',{id:key,nodeId,runtime:turn.runtime,sessionId:turn.sessionId,version:next.instructionsVersion,deliveredAt:now()});}
   if(next.status!==turn.status){if(!ACTIVE.has(next.status)&&next.status!=='stopping'){
    const key=sessionKey(nodeId,turn.runtime,turn.sessionId),current=this.db.get('nativeTakeovers',key);
    if(this.leases&&m.event.resident===false&&current?.status==='open'&&this.process(nodeId,turn.runtime,turn.sessionId)){
@@ -397,10 +418,12 @@ export class NativeTurnRunner{
    if(state.stopRequested)return end('interrupted');
    if(images.length&&!NATIVE_IMAGE_RUNTIMES.has(m.runtime))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');
    const others=files.filter(f=>!(m.runtime==='codex'&&f.mime?.startsWith('image/'))&&!(m.runtime==='claude'&&f.mime?.startsWith('image/')));
-   const prompt=[m.prompt,others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
+   const prompt=withPageInstructions([m.prompt,others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n'),m.control?null:m.instructions);
    const emit=(type,p={})=>{
     if(ended)return;
     if(type==='status'&&p.nativeSessionId&&p.nativeSessionId!==m.sessionId){void state.session?.stop();return end('mismatch','The CLI resumed a different native session; stopped');}
+    // Delivery receipts need not carry a status; forward them before settling a terminal event.
+    if(type==='status'&&['accepted','not_delivered'].includes(p.inputDeliveryState))this.event(m.id,{kind:'status',inputDeliveryState:p.inputDeliveryState});
     if(type==='status'&&p.status==='reconciling'){this.event(m.id,{kind:'status',status:'stopping',error:p.error});if(this.leases)void this.close(key,'unconfirmed');return;}
     if(type==='status'&&['succeeded','failed','interrupted'].includes(p.status))return end(p.status,p.error);
     if(type==='status'&&p.status)this.event(m.id,{kind:'status',status:p.status});
