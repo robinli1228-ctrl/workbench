@@ -67,6 +67,18 @@ test('history rows group into turns: results join their calls, injected user row
   assert.equal(turns[1].prompt.text, 'thanks'); assert.deepEqual(turns[1].parts, []);
   // A page that starts mid-turn still shows its tool activity under one reply row.
   assert.equal(historyTurns(rows.slice(2, 4))[0].prompt, null);
+  // A background task finishing stays inside the running turn as a notice; the reply after it joins the same turn.
+  const notice = text => text.match(/<task-id>(\w+)<\/task-id>/)?.[1] || '';
+  const bg = historyTurns([
+    { role: 'user', text: 'run four agents', timestamp: 't1' },
+    { role: 'assistant', text: 'started', timestamp: 't2' },
+    { role: 'user', text: '<task-notification><task-id>afb520e7</task-id></task-notification>', timestamp: 't3' },
+    { role: 'assistant', text: 'one back', timestamp: 't4' },
+    { role: 'user', text: 'next question', timestamp: 't5' },
+  ], { isPrompt: row => !row.text.startsWith('<'), noticeOf: row => notice(row.text) });
+  assert.equal(bg.length, 2);
+  assert.deepEqual(bg[0].parts.map(p => p.kind === 'notice' ? `notice:${p.task}` : p.text), ['started', 'notice:afb520e7', 'one back']);
+  assert.equal(bg[0].endedAt, 't4');
   assert.equal(classifyStep({ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'npm test' }, output: 'boom', is_error: true, status: 'completed' }, 'succeeded').kind, 'command');
 });
 

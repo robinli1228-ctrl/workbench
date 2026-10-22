@@ -14,5 +14,6 @@ export const cleanUserText=text=>String(text||'').replace(/<image\b[^>]*>[\s\S]*
 export const commandOf=text=>String(text||'').match(/<command-name>\s*([^<]+?)\s*<\/command-name>/i)?.[1]||'';
 /** Claude Code's context compaction writes its summary into history as a "user" row; older Workers do not flag it, so the opening sentence identifies it too. */
 export const isCompactSummary=(text,flag=false)=>flag===true||/^\s*This session is being continued from a previous conversation that ran out of context\./.test(String(text||''));
-/** Whether a history "user" row starts a turn. */
-export const isHistoryPrompt=text=>Boolean(cleanUserText(text)||commandOf(text)||taskNotificationOf(text));
+/** Whether a history "user" row starts a turn. A background task's completion notice does not: Claude Code writes it as a
+ * "user" row, but it belongs to the turn that is running, so the page shows it as a line inside that turn. */
+export const isHistoryPrompt=text=>Boolean(cleanUserText(text)||commandOf(text));

@@ -557,12 +557,14 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
  function renderHistory(rows,item,{turnStartedAt=null}={}){
   const nodes=[],isPrompt=row=>isHistoryPrompt(row.text);
-  for(const [index,turn] of historyTurns(rows,{isPrompt}).entries()){
+  for(const [index,turn] of historyTurns(rows,{isPrompt,noticeOf:row=>taskNotificationOf(row.text)}).entries()){
    if(turn.prompt)nodes.push(renderHistoryRow(turn.prompt,item));
    if(!turn.parts.length)continue;
    const frag=document.createDocumentFragment();let group=[],process=false;
    const flush=()=>{if(!group.length)return;process=true;frag.append(activityBlock({steps:group.map(tool=>classifyStep({type:'tool_use',id:tool.id,name:tool.name,input:tool.input,output:tool.output,is_error:tool.failed,status:'completed'},'succeeded')),notes:[],t,onPreview:(step,path)=>preview.open(step,path)}));group=[];};
-   for(const part of turn.parts){if(part.kind==='tool'){group.push(part);continue;}flush();const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));frag.append(md);}
+   for(const part of turn.parts){if(part.kind==='tool'){group.push(part);continue;}flush();
+    // A background task finished while this turn ran: one quiet line in place, the reply goes on below it.
+    if(part.kind==='notice'){const line=el('div','nt-system nt-turn-notice');line.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${part.task.slice(0,8)}`));if(part.timestamp)line.title=time(part.timestamp);frag.append(line);continue;}const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));frag.append(md);}
    flush();
    const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
    row.dataset.role='assistant';if(process)row.dataset.process='1';
