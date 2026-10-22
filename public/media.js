@@ -88,12 +88,13 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
   text.append(name,meta);card.append(icon,text);
   const show=info=>{
     if(!info.available){card.dataset.state=info.reason;meta.textContent=t(REASONS[info.reason]||'Unavailable');return;}
-    card.dataset.state=info.copyOf?'copy':'ready';card.dataset.kind=info.kind;icon.textContent=ICON[info.kind]||ICON.file;
+    card.dataset.state=info.copyOf?'copy':'ready';card.dataset.kind=info.kind;icon.textContent=ICON[info.kind]||ICON.file;markImageOpener(card,info.kind==='image');
     meta.textContent=[formatBytes(info.size),info.copyOf?t('Local copy'):''].filter(Boolean).join(' · ');
     if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info,()=>describeQueued(context,path,{fresh:true}));
   };
   if(describe)void describeQueued(context,path).then(show).catch(()=>{});
-  card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void openMediaViewer(path,context,{at:messageTime(card)}).then(show).catch(()=>{});});
+  card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void openMediaViewer(path,context,{at:messageTime(card),from:card}).then(show).catch(()=>{});});
+  markImageOpener(card,kind==='image');
   return card;
 }
 
@@ -133,14 +134,36 @@ export function copyAction(button,{url,kind,text}){
   };
 }
 
-let viewer=null,viewerVersion=0;
+let viewer=null,viewerVersion=0,viewerFrom=null;
+/**
+ * Neighbouring pictures: every element that opens a picture in this viewer carries data-image-open (picture cards in
+ * replies, picture attachments). The viewer remembers which one opened it; left and right open the previous and next one
+ * in the same conversation, in page order, by triggering that element's own open action.
+ */
+export function markImageOpener(node,on=true){if(on)node.dataset.imageOpen='';else delete node.dataset.imageOpen;return node;}
+const NEIGHBOUR_SCOPE='.native-session-scroll,#chat-feed,.native-ask-body,.side-preview-body';
+function neighbours(from){
+  const scope=from?.isConnected?from.closest(NEIGHBOUR_SCOPE):null;if(!scope)return {list:[],index:-1};
+  const list=[...scope.querySelectorAll('[data-image-open]')].filter(node=>!node.closest('[hidden]')&&node.getClientRects().length);
+  return {list,index:list.indexOf(from)};
+}
+function step(delta){
+  const {list,index}=neighbours(viewerFrom),next=index<0?null:list[index+delta];
+  if(next){next.scrollIntoView({block:'nearest'});next.click();}
+}
 /**
  * One viewer for every image and video in the chats (media named in replies and attachments people send): download, copy and
  * close at the top right; the picture on a plain stage; its name and size bottom left, the message time bottom right.
  */
-function lightbox({name,size=null,at=null}){
-  const version=++viewerVersion;
-  if(!viewer){viewer=el('dialog','media-viewer media-lightbox');viewer.addEventListener('close',()=>{viewerVersion++;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});});document.body.append(viewer);}
+function lightbox({name,size=null,at=null,from=null}){
+  const version=++viewerVersion;viewerFrom=from;
+  if(!viewer){viewer=el('dialog','media-viewer media-lightbox');viewer.addEventListener('close',()=>{viewerVersion++;viewerFrom=null;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});});
+    // ← → step through neighbouring pictures (not while typing or while a video has focus, where arrows seek).
+    viewer.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight'].includes(event.key)||event.altKey||event.ctrlKey||event.metaKey)return;if(event.target.closest?.('input,textarea,video,audio'))return;event.preventDefault();step(event.key==='ArrowLeft'?-1:1);});
+    // A horizontal swipe on the picture does the same on touch screens.
+    let touch=null;viewer.addEventListener('touchstart',event=>{touch=event.touches.length===1?{x:event.touches[0].clientX,y:event.touches[0].clientY}:null;},{passive:true});
+    viewer.addEventListener('touchend',event=>{if(!touch)return;const t=event.changedTouches[0],dx=t.clientX-touch.x,dy=t.clientY-touch.y;touch=null;if(Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)*1.5&&!event.target.closest?.('video,audio'))step(dx>0?-1:1);},{passive:true});
+    document.body.append(viewer);}
   const actions=el('div','media-lightbox-actions'),download=setActionIcon(el('a','chat-icon-btn media-download'),'follow',t('Download'));download.hidden=true;download.setAttribute('download','');
   // Open on the right (Sessions page, desktop): pins this file beside the chat and closes the viewer.
   const side=setActionIcon(el('button','chat-icon-btn media-side'),'sideOpen',t('Open on the right'));side.type='button';side.hidden=true;
@@ -151,6 +174,15 @@ function lightbox({name,size=null,at=null}){
   const foot=el('div','media-lightbox-foot'),label=el('div','media-lightbox-label'),title=el('strong','media-lightbox-name',name),bytes=el('span','media-lightbox-size',size==null?'':formatBytes(size)),when=el('time','media-lightbox-time');
   const setTime=value=>{when.textContent=stamp(value);if(when.textContent)when.dateTime=value;};setTime(at);
   label.append(title,bytes);foot.append(label,when);
+  // Previous / next picture in this conversation, with "3 / 12" beside the name; hidden at either end and for a single picture.
+  const {list,index}=neighbours(from);
+  if(index>=0&&list.length>1){
+   const arrow=(delta,label,path)=>{const b=el('button',`media-nav media-nav-${delta<0?'prev':'next'}`);b.type='button';b.title=t(label);b.setAttribute('aria-label',t(label));
+    b.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
+    b.hidden=!list[index+delta];b.addEventListener('click',()=>step(delta));return b;};
+   stage.append(arrow(-1,'Previous picture','m15 18-6-6 6-6'),arrow(1,'Next picture','m9 18 6-6-6-6'));
+   label.append(el('span','media-lightbox-count',`${index+1} / ${list.length}`));
+  }
   viewer.setAttribute('aria-label',name);viewer.replaceChildren(actions,stage,status,foot);
   if(!viewer.open)viewer.showModal();
   return {version,download,side,copy,stage,overlay,status,title,bytes,when,setTime};
@@ -159,8 +191,8 @@ function lightbox({name,size=null,at=null}){
 function offerSide(v,item){if(v.version!==viewerVersion||!canOpenSide())return;v.side.hidden=false;v.side.onclick=()=>{viewer.close();openSide(item);};}
 
 /** A picture people sent (an attachment): the same viewer as media in replies. `url` may be a promise of an object URL. */
-export function openImageLightbox({name,size=null,at=null,url}){
-  const v=lightbox({name,size,at});
+export function openImageLightbox({name,size=null,at=null,url,from=null}){
+  const v=lightbox({name,size,at,from});
   void Promise.resolve(url).then(src=>{
     if(v.version!==viewerVersion)return;
     const image=el('img','media-image');image.alt=name;image.decoding='async';
@@ -183,8 +215,8 @@ export function openTextLightbox({name,size=null,at=null,url}){
 }
 
 /** The viewer streams through the ticket URL: playback starts with the first ranges, seeking fetches only what is needed. */
-export async function openMediaViewer(path,context,{at=null}={}) {
-  const v=lightbox({name:baseName(path),at}),{version,download,stage,overlay,status,title,bytes}=v;
+export async function openMediaViewer(path,context,{at=null,from=null}={}) {
+  const v=lightbox({name:baseName(path),at,from}),{version,download,stage,overlay,status,title,bytes}=v;
   let info;
   // A description from the last 30 s is reused (the link the thumbnail just loaded); an older one is renewed, so a file
   // regenerated at the same path or a device that went offline is noticed. Unchanged files keep their link either way.

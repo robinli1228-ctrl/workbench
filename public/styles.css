@@ -3811,3 +3811,11 @@ body .native-ask-tools select.native-ask-model:not([multiple]):focus-visible { o
 .native-session-id-row .native-icon-action svg { width: 16px; height: 16px; }
 /* A background-task notice inside a reply: the same quiet system line, aligned with the reply's own content. */
 .nt-turn .nt-turn-notice, .nt-body .nt-turn-notice { max-width: none; margin: 6px 0 10px; }
+/* Viewer: previous / next picture in the conversation, over the picture's left and right edges. */
+dialog.media-lightbox .media-nav { position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 40px; height: 40px; min-height: 40px; margin-top: -20px; padding: 0; border: 0; border-radius: 999px; background: rgb(15 23 42 / 45%); color: #fff; box-shadow: none; cursor: pointer; transition: background .15s; }
+dialog.media-lightbox .media-nav:hover { background: rgb(15 23 42 / 70%); }
+dialog.media-lightbox .media-nav:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+dialog.media-lightbox .media-nav svg { width: 22px; height: 22px; }
+dialog.media-lightbox .media-nav-prev { left: 10px; }
+dialog.media-lightbox .media-nav-next { right: 10px; }
+.media-lightbox-count { margin-left: 8px; color: var(--text-muted, #8a91a0); font-size: 12px; font-variant-numeric: tabular-nums; }
