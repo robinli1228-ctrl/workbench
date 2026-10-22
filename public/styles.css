@@ -3792,3 +3792,13 @@ body .native-ask-tools select.native-ask-model:not([multiple]):focus-visible { o
   .role-card-head .role-name-device, .role-card-head .role-live-scene { width: 44px; height: 44px; }
   .role-card-head .role-name-device svg, .role-card-head .role-live-scene svg { width: 19px; height: 19px; }
 }
+/* Device icons (2026-10-22): one colour everywhere (status is the dot or badge beside it), 18px in lists, chips and
+   cards, 16px inline after a role name; the overview strip pairs it with the 20px agent icon. */
+.role-machine svg, .device-glyph svg { color: var(--text-muted); }
+#native-session-list .project-item.active .native-session-device svg { color: var(--accent); }
+.role-name-device[role="button"]:hover svg { color: var(--accent); }
+.device-glyph, .device-glyph svg { width: 18px; height: 18px; }
+/* The number of a cloud server sits in the body of the cloud. */
+.role-machine.is-cloud .role-device-number { top: calc(50% + 2px); left: 47%; }
+.role-machine .role-device-number { color: var(--text-muted); }
+#native-session-list .project-item.active .role-device-number { color: var(--accent); }
