@@ -117,13 +117,12 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
 export function initWorkspaceColumns(){
   const shell=document.querySelector('.app-shell'),left=document.querySelector('.project-sidebar'),right=document.querySelector('.node-sidebar');
   const media=matchMedia('(min-width: 1001px)'),key='agent-workbench.column-widths';
-  let sizes={left:260,right:320,preview:480};try{const saved=JSON.parse(localStorage.getItem(key));if(Number.isFinite(saved?.left)&&Number.isFinite(saved?.right))sizes={left:saved.left,right:saved.right,preview:Number.isFinite(saved.preview)?saved.preview:480};}catch{}
-  // The Sessions page's Preview tab is for reading beside the chat: it opens wider and keeps its own width.
-  const wide=()=>document.body.dataset.navigationMode==='sessions'&&document.body.dataset.sessionSideTab==='preview';
-  const slot=side=>side==='right'&&wide()?'preview':side;
+  let sizes={left:260,right:320};try{const saved=JSON.parse(localStorage.getItem(key));if(Number.isFinite(saved?.left)&&Number.isFinite(saved?.right))sizes={left:saved.left,right:saved.right};}catch{}
+  // Every right-side tab shares one width (the user widens it by hand when reading a preview), so the column never jumps.
+  const slot=side=>side;
   function apply(){
     if(!media.matches)return;
-    const slotRight=slot('right'),leftMax=Math.min(380,innerWidth-320-420),rightMax=Math.min(wide()?960:500,innerWidth-sizes.left-420);
+    const slotRight=slot('right'),leftMax=Math.min(380,innerWidth-320-420),rightMax=Math.min(960,innerWidth-sizes.left-420);
     sizes.left=Math.max(180,Math.min(leftMax,sizes.left));sizes[slotRight]=Math.max(280,Math.min(rightMax,sizes[slotRight]));
     shell.style.setProperty('--project-width',`${sizes.left}px`);shell.style.setProperty('--inspector-width',`${sizes[slotRight]}px`);
     for(const [name,side,node] of [['project','left',left],['inspector','right',right]]){const bar=document.querySelector(`#${name}-splitter`);bar.setAttribute('aria-valuenow',String(Math.round(sizes[slot(side)])));bar.setAttribute('aria-valuemin',side==='left'?'180':'280');bar.setAttribute('aria-valuemax',String(Math.round(side==='left'?leftMax:rightMax)));bar.style.left=side==='left'?`${node.getBoundingClientRect().right}px`:`${node.getBoundingClientRect().left}px`;}
@@ -136,10 +135,8 @@ export function initWorkspaceColumns(){
     bar.addEventListener('pointermove',e=>{if(!drag)return;sizes[drag.slot]=drag.width+(e.clientX-drag.x)*(side==='left'?1:-1);apply();});
     bar.addEventListener('pointerup',end);bar.addEventListener('lostpointercapture',end);
     bar.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();sizes[slot(side)]+=(e.key==='ArrowRight'?16:-16)*(side==='left'?1:-1);apply();save();});
-    bar.addEventListener('dblclick',()=>{const target=slot(side);sizes[target]=target==='left'?216:target==='preview'?480:320;apply();save();});
+    bar.addEventListener('dblclick',()=>{const target=slot(side);sizes[target]=target==='left'?216:320;apply();save();});
   }
-  // Switching to or from the Preview tab (or between Sessions and group chat) swaps the right column's width.
-  new MutationObserver(apply).observe(document.body,{attributes:true,attributeFilter:['data-navigation-mode','data-session-side-tab']});
   new ResizeObserver(apply).observe(shell);
   new ResizeObserver(apply).observe(left);window.addEventListener('resize',apply);apply();
 }
