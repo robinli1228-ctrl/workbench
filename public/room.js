@@ -2,7 +2,7 @@ import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
-import { linkMedia, openImageLightbox } from './media.js';
+import { linkMedia, openImageLightbox, markImageOpener } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
 import {setChatCardState,highlightLatestChatCard} from './chat-card-state.js';
@@ -339,7 +339,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         const url = await attachmentUrl(item);
         // Pictures open in the same viewer as media named in replies: download, copy, close; name, size and the message time.
         if (item.mime.startsWith('image/')) {
-          openImageLightbox({ name:item.name, size:item.size, at:open.closest('.chat-row')?.querySelector('time[datetime]')?.getAttribute('datetime')||null, url });
+          openImageLightbox({ name:item.name, size:item.size, at:open.closest('.chat-row')?.querySelector('time[datetime]')?.getAttribute('datetime')||null, url, from:open });
         } else if (/\.(md|markdown|txt)$/i.test(item.name)) {
           const response = await fetch(url);
           previewText(await response.text(), item.name, url);
@@ -356,7 +356,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       } catch (e) { setError(e.message); }
     }, 'attachment-open');
     if (item.mime.startsWith('image/')) {
-      const thumb = create('img'); thumb.alt = item.name; open.append(thumb);
+      const thumb = create('img'); thumb.alt = item.name; open.append(thumb); if (!removable) markImageOpener(open);
       void attachmentUrl(item).then(url=>{thumb.src=url;}).catch(()=>{thumb.alt='Preview failed to load; click to retry';});
     } else if (removable) { const icon = create('span','attachment-file-icon'); icon.innerHTML = UI_ICON.original; open.append(icon); }
     else open.append(create('span','attachment-file-icon','▤'));

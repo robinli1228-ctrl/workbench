@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v171-integration-20261022';
+const CACHE = 'agent-workbench-static-v172-history-cache-20261022';
 const STATIC = [
   '/group-conversations.js',
   '/model-usage.js',
@@ -12,6 +12,7 @@ const STATIC = [
   '/pasted-text.js',
   '/side-preview.js',
   '/history-prompt.js',
+  '/history-cache.js',
   '/data-settings.js',
   '/', '/styles.css', '/app.js', '/native-sessions.js', '/list-order.js', '/select-controls.js', '/mention-input.js', '/context-usage.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png',
   '/platform-admin.js', '/configuration-information.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',

@@ -30,6 +30,8 @@ export function createDataSettingsUI({api}){
     const detail=el('tr','data-detail'),cell=el('td');cell.colSpan=6;const list=el('ul','data-kinds');
     for(const k of (stats.kinds||[]).filter(k=>k.bytes>=65536).slice(0,8))list.append(el('li','',`${t(KIND_LABELS[k.kind]||k.kind)}: ${k.count} · ${mb(k.bytes)}${k.reclaimableCount?` · ${t('{count} ({size}) reclaimable',{count:k.reclaimableCount,size:mb(k.reclaimableBytes)})}`:''}`));
     if(stats.blobs?.reclaimableCount)list.append(el('li','',`${t('Sync snapshots')}: ${t('{count} ({size}) reclaimable',{count:stats.blobs.reclaimableCount,size:mb(stats.blobs.reclaimableBytes)})}`));
+    // Home's copies of pictures and videos from devices: cleared automatically, shown so the size is never a surprise.
+    if(stats.mediaCache)list.append(el('li','',t('Media cache: {count} files · {size} (dropped after {days} days unused, at most {limit})',{count:stats.mediaCache.count,size:mb(stats.mediaCache.bytes),days:stats.mediaCache.maxAgeDays,limit:mb(stats.mediaCache.limitBytes)})));
     cell.append(list);detail.append(cell);
     const frag=document.createDocumentFragment();frag.append(tr,detail);void total;return frag;
   }

@@ -31,15 +31,21 @@ const el=(tag,className='',text)=>{const node=document.createElement(tag);if(cla
 const baseName=path=>String(path).split(/[\\/]/).at(-1)||path;
 
 const cache=new Map(),queue=[];let active=0;
-/** Metadata reads share a small queue so long chats never crowd out state and message requests. */
-function describeQueued(context,path,{fresh=false}={}) {
+/**
+ * Metadata reads share a small queue so long chats never crowd out state and message requests. A description is reused
+ * for a minute (30 s when unavailable), so a file regenerated at the same path shows its new version soon; the link
+ * itself names one file version and stays the same all day, so re-describing does not re-download unchanged bytes.
+ * `maxAge` lets a caller (the viewer) ask for a fresher description.
+ */
+const DESCRIBED_MS=60000,UNAVAILABLE_MS=30000;
+function describeQueued(context,path,{fresh=false,maxAge=DESCRIBED_MS}={}) {
   const key=`${context.key}\n${path}`,cached=cache.get(key);
-  if(!fresh&&cached&&Date.now()-cached.at<60000)return cached.promise;
-  const entry={at:Date.now()};
+  if(!fresh&&cached&&Date.now()-cached.at<Math.min(maxAge,cached.available===false?UNAVAILABLE_MS:DESCRIBED_MS))return cached.promise;
+  const entry={at:Date.now(),available:null};
   entry.promise=new Promise((resolve,reject)=>{
     queue.push({run:()=>context.describe(path),resolve,reject});
     const drain=()=>{while(active<2&&queue.length){const next=queue.shift();active++;Promise.resolve().then(next.run).then(next.resolve,next.reject).finally(()=>{active--;drain();});}};drain();
-  }).catch(error=>{cache.delete(key);throw error;});
+  }).then(info=>{entry.available=Boolean(info?.available);return info;}).catch(error=>{if(cache.get(key)===entry)cache.delete(key);throw error;});
   cache.set(key,entry);return entry.promise;
 }
 
@@ -82,12 +88,13 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
   text.append(name,meta);card.append(icon,text);
   const show=info=>{
     if(!info.available){card.dataset.state=info.reason;meta.textContent=t(REASONS[info.reason]||'Unavailable');return;}
-    card.dataset.state=info.copyOf?'copy':'ready';card.dataset.kind=info.kind;icon.textContent=ICON[info.kind]||ICON.file;
+    card.dataset.state=info.copyOf?'copy':'ready';card.dataset.kind=info.kind;icon.textContent=ICON[info.kind]||ICON.file;markImageOpener(card,info.kind==='image');
     meta.textContent=[formatBytes(info.size),info.copyOf?t('Local copy'):''].filter(Boolean).join(' · ');
-    if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info);
+    if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info,()=>describeQueued(context,path,{fresh:true}));
   };
   if(describe)void describeQueued(context,path).then(show).catch(()=>{});
-  card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void openMediaViewer(path,context,{at:messageTime(card)}).then(show).catch(()=>{});});
+  card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void openMediaViewer(path,context,{at:messageTime(card),from:card}).then(show).catch(()=>{});});
+  markImageOpener(card,kind==='image');
   return card;
 }
 
@@ -95,14 +102,18 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
  * Thumbnail above the card's name: the image itself, or a video's first frame (metadata preload + a #t fragment, muted, no autoplay).
  * It streams through the same ticket URL as the viewer and only once the card is near the viewport; a failure falls back to the icon.
  */
-function attachPreview(card,info) {
+function attachPreview(card,info,renew=null) {
   if(card.querySelector('.media-card-preview'))return;
   const box=el('span','media-card-preview');box.dataset.kind=info.kind;box.setAttribute('aria-hidden','true');
   const drop=()=>{box.remove();card.classList.remove('has-preview');};
+  // The file may have changed since it was described (its old link then fails): describe it again once, then give up.
+  // Each element keeps its own link: the description object is shared by every card of the same file.
+  const retry=(node,suffix='')=>{let tried=false,current=info.url;node.addEventListener('error',()=>{if(tried||!renew){drop();return;}tried=true;
+    void renew().then(fresh=>{if(fresh?.available&&fresh.url&&fresh.url!==current){current=fresh.url;node.src=`${fresh.url}${suffix}`;}else drop();}).catch(drop);});};
   const load=()=>{
-    if(info.kind==='image'){const image=el('img');image.alt='';image.decoding='async';image.addEventListener('error',drop,{once:true});image.src=info.url;box.append(image);return;}
+    if(info.kind==='image'){const image=el('img');image.alt='';image.decoding='async';retry(image);image.src=info.url;box.append(image);return;}
     const video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='metadata';video.setAttribute('playsinline','');video.disablePictureInPicture=true;
-    video.addEventListener('error',drop,{once:true});video.src=`${info.url}#t=0.1`;box.append(video,el('span','media-card-play','\u25B6'));
+    retry(video,'#t=0.1');video.src=`${info.url}#t=0.1`;box.append(video,el('span','media-card-play','\u25B6'));
   };
   card.classList.add('has-preview');card.prepend(box);
   if('IntersectionObserver' in window){const watch=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){watch.disconnect();load();}},{rootMargin:'240px'});watch.observe(card);}
@@ -123,14 +134,36 @@ export function copyAction(button,{url,kind,text}){
   };
 }
 
-let viewer=null,viewerVersion=0;
+let viewer=null,viewerVersion=0,viewerFrom=null;
+/**
+ * Neighbouring pictures: every element that opens a picture in this viewer carries data-image-open (picture cards in
+ * replies, picture attachments). The viewer remembers which one opened it; left and right open the previous and next one
+ * in the same conversation, in page order, by triggering that element's own open action.
+ */
+export function markImageOpener(node,on=true){if(on)node.dataset.imageOpen='';else delete node.dataset.imageOpen;return node;}
+const NEIGHBOUR_SCOPE='.native-session-scroll,#chat-feed,.native-ask-body,.side-preview-body';
+function neighbours(from){
+  const scope=from?.isConnected?from.closest(NEIGHBOUR_SCOPE):null;if(!scope)return {list:[],index:-1};
+  const list=[...scope.querySelectorAll('[data-image-open]')].filter(node=>!node.closest('[hidden]')&&node.getClientRects().length);
+  return {list,index:list.indexOf(from)};
+}
+function step(delta){
+  const {list,index}=neighbours(viewerFrom),next=index<0?null:list[index+delta];
+  if(next){next.scrollIntoView({block:'nearest'});next.click();}
+}
 /**
  * One viewer for every image and video in the chats (media named in replies and attachments people send): download, copy and
  * close at the top right; the picture on a plain stage; its name and size bottom left, the message time bottom right.
  */
-function lightbox({name,size=null,at=null}){
-  const version=++viewerVersion;
-  if(!viewer){viewer=el('dialog','media-viewer media-lightbox');viewer.addEventListener('close',()=>{viewerVersion++;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});});document.body.append(viewer);}
+function lightbox({name,size=null,at=null,from=null}){
+  const version=++viewerVersion;viewerFrom=from;
+  if(!viewer){viewer=el('dialog','media-viewer media-lightbox');viewer.addEventListener('close',()=>{viewerVersion++;viewerFrom=null;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});});
+    // ← → step through neighbouring pictures (not while typing or while a video has focus, where arrows seek).
+    viewer.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight'].includes(event.key)||event.altKey||event.ctrlKey||event.metaKey)return;if(event.target.closest?.('input,textarea,video,audio'))return;event.preventDefault();step(event.key==='ArrowLeft'?-1:1);});
+    // A horizontal swipe on the picture does the same on touch screens.
+    let touch=null;viewer.addEventListener('touchstart',event=>{touch=event.touches.length===1?{x:event.touches[0].clientX,y:event.touches[0].clientY}:null;},{passive:true});
+    viewer.addEventListener('touchend',event=>{if(!touch)return;const t=event.changedTouches[0],dx=t.clientX-touch.x,dy=t.clientY-touch.y;touch=null;if(Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)*1.5&&!event.target.closest?.('video,audio'))step(dx>0?-1:1);},{passive:true});
+    document.body.append(viewer);}
   const actions=el('div','media-lightbox-actions'),download=setActionIcon(el('a','chat-icon-btn media-download'),'follow',t('Download'));download.hidden=true;download.setAttribute('download','');
   // Open on the right (Sessions page, desktop): pins this file beside the chat and closes the viewer.
   const side=setActionIcon(el('button','chat-icon-btn media-side'),'sideOpen',t('Open on the right'));side.type='button';side.hidden=true;
@@ -141,16 +174,27 @@ function lightbox({name,size=null,at=null}){
   const foot=el('div','media-lightbox-foot'),label=el('div','media-lightbox-label'),title=el('strong','media-lightbox-name',name),bytes=el('span','media-lightbox-size',size==null?'':formatBytes(size)),when=el('time','media-lightbox-time');
   const setTime=value=>{when.textContent=stamp(value);if(when.textContent)when.dateTime=value;};setTime(at);
   label.append(title,bytes);foot.append(label,when);
+  // Previous / next picture in this conversation, with "3 / 12" beside the name; hidden at either end and for a single picture.
+  const {list,index}=neighbours(from);
+  if(index>=0&&list.length>1){
+   const arrow=(delta,label,path)=>{const b=el('button',`media-nav media-nav-${delta<0?'prev':'next'}`);b.type='button';b.title=t(label);b.setAttribute('aria-label',t(label));
+    b.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
+    b.hidden=!list[index+delta];b.addEventListener('click',()=>step(delta));return b;};
+   stage.append(arrow(-1,'Previous picture','m15 18-6-6 6-6'),arrow(1,'Next picture','m9 18 6-6-6-6'));
+   label.append(el('span','media-lightbox-count',`${index+1} / ${list.length}`));
+  }
   viewer.setAttribute('aria-label',name);viewer.replaceChildren(actions,stage,status,foot);
   if(!viewer.open)viewer.showModal();
+  // Switching pictures replaces the focused arrow; keep keyboard navigation inside the still-open dialog.
+  else close.focus({preventScroll:true});
   return {version,download,side,copy,stage,overlay,status,title,bytes,when,setTime};
 }
 /** Show "Open on the right" once the file is ready, when the Sessions page can take it. */
 function offerSide(v,item){if(v.version!==viewerVersion||!canOpenSide())return;v.side.hidden=false;v.side.onclick=()=>{viewer.close();openSide(item);};}
 
 /** A picture people sent (an attachment): the same viewer as media in replies. `url` may be a promise of an object URL. */
-export function openImageLightbox({name,size=null,at=null,url}){
-  const v=lightbox({name,size,at});
+export function openImageLightbox({name,size=null,at=null,url,from=null}){
+  const v=lightbox({name,size,at,from});
   void Promise.resolve(url).then(src=>{
     if(v.version!==viewerVersion)return;
     const image=el('img','media-image');image.alt=name;image.decoding='async';
@@ -173,10 +217,12 @@ export function openTextLightbox({name,size=null,at=null,url}){
 }
 
 /** The viewer streams through the ticket URL: playback starts with the first ranges, seeking fetches only what is needed. */
-export async function openMediaViewer(path,context,{at=null}={}) {
-  const v=lightbox({name:baseName(path),at}),{version,download,stage,overlay,status,title,bytes}=v;
+export async function openMediaViewer(path,context,{at=null,from=null}={}) {
+  const v=lightbox({name:baseName(path),at,from}),{version,download,stage,overlay,status,title,bytes}=v;
   let info;
-  try{info=await describeQueued(context,path,{fresh:true});}
+  // A description from the last 30 s is reused (the link the thumbnail just loaded); an older one is renewed, so a file
+  // regenerated at the same path or a device that went offline is noticed. Unchanged files keep their link either way.
+  try{info=await describeQueued(context,path,{maxAge:30000});}
   catch(error){if(version===viewerVersion){overlay.hidden=true;status.hidden=false;status.textContent=t('Unable to open: {message}',{message:error.message});}throw error;}
   if(version!==viewerVersion)return info;
   title.textContent=info.name||baseName(path);
@@ -197,7 +243,7 @@ function renderStage(stage,overlay,status,info,summary,path,context,version) {
     let reason='format';
     try{const response=await fetch(info.url,{headers:{Range:'bytes=0-0'}});reason=response.ok?'format':((await response.json().catch(()=>({}))).code||`HTTP ${response.status}`);}catch{reason='network';}
     if(version!==viewerVersion)return;
-    if(reason==='media_ticket_invalid'&&!media.dataset.renewed){
+    if(['media_ticket_invalid','file_changed','source_offline'].includes(reason)&&!media.dataset.renewed){
       const fresh=await describeQueued(context,path,{fresh:true}).catch(()=>null);
       if(fresh?.available){media.dataset.renewed='1';info.url=fresh.url;media.src=fresh.url;overlay.hidden=false;return;}
     }

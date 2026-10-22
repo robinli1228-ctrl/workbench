@@ -20,13 +20,20 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
   // Empty progress pages advance the cursor without rebuilding the rows the user is reading.
   if(older&&page.historyPage===1&&!rows.length){target.cursor=page.nextCursor||null;target.initialized=true;return;}
   // Do not silently bridge an unobserved burst while the reader is in loaded history.
-  if(!older&&prior.length&&page.historyPage===1&&rows.length&&rows[0].offset>prior.reduce((max,m)=>Math.max(max,m.offset),0)){newerAvailable=true;return;}
+  // (Rows appended right after the loaded ones, a `delta`, are contiguous by construction and join directly.)
+  if(!older&&!page.delta&&prior.length&&page.historyPage===1&&rows.length&&rows[0].offset>prior.reduce((max,m)=>Math.max(max,m.offset),0)){newerAvailable=true;return;}
   if(page.historyPage!==1)target.messages.clear();
   rows.forEach((m,i)=>target.messages.set(m.id||String(i),m));
   // The oldest page read decides where the loaded rows begin; a refresh of the latest page never moves that start.
   if(!target.initialized||older)target.turnStartedAt=page.turnStartedAt||null;
-  const ordered=[...target.messages.values()].sort((a,b)=>(a.offset??0)-(b.offset??0));target.history.replaceChildren(...renderMessages(ordered,target.item,{turnStartedAt:target.turnStartedAt}));
-  if(page.notice||target.skippedError){const n=document.createElement('p');n.className=target.skippedError?'workspace-note chat-bubble is-error-card':'workspace-note';n.textContent=t(page.notice||target.skippedError);target.history.append(n);}
+  const ordered=[...target.messages.values()].sort((a,b)=>(a.offset??0)-(b.offset??0)),nodes=renderMessages(ordered,target.item,{turnStartedAt:target.turnStartedAt});
+  // Unchanged turns come back as the same nodes; when nothing changed at all, the list is left alone (the feed's own
+  // anchored rows, day lines and notes stay where they are). Otherwise the list is swapped, reusing those nodes.
+  // The notice line under the rows is the timeline's own: it is replaced on its own and never forces the rows to be swapped.
+  for(const old of target.history.querySelectorAll(':scope > .native-history-notice'))old.remove();
+  const owned=[...target.history.children].filter(node=>!node.matches('.native-turn-anchored,.nt-day,.nt-interruption-note'));
+  if(owned.length!==nodes.length||owned.some((node,i)=>node!==nodes[i]))target.history.replaceChildren(...nodes);
+  if(page.notice||target.skippedError){const n=document.createElement('p');n.className=`${target.skippedError?'workspace-note chat-bubble is-error-card':'workspace-note'} native-history-notice`;n.textContent=t(page.notice||target.skippedError);target.history.append(n);}
   if(!target.initialized||older){target.cursor=page.nextCursor||null;target.initialized=true;}highlightLatestChatCard(scroll);
  }
  async function loadOlder(){
@@ -53,6 +60,8 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
   setOlder(item,older){if(!sections.length||identity(sections[0].item)!==identity(item))return;chain=[...new Map([chain[0],...older,...chain.slice(1)].map(value=>[identity(value),value])).values()];controls();},
   clear(){generation++;busy=false;failed=readError=olderNotice=null;newerAvailable=false;chain=[];sections=[];root.replaceChildren();},
   showError(error){readError=t(error.message);renderNote();},
+  /** A background refresh found more rows than one delta can carry; preserve the reader's loaded pages and cursor. */
+  showNewer(){newerAvailable=true;readSucceeded();controls();},
   readSucceeded,
   update(page){if(!sections.length)return null;readSucceeded();const top=scroll.scrollTop;merge(sections[0],page);controls();scroll.scrollTop=top;return sections[0].history;}
  };

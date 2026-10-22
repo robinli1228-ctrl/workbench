@@ -32,7 +32,8 @@ import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
 import {recentProjectArtifacts} from './run-artifacts.mjs';
 import {ProjectFiles} from './project-files.mjs';
-import {MediaStreams} from './media-streams.mjs';
+import {MediaStreams,MEDIA_CACHE_CONTROL,cachedMediaAllowed} from './media-streams.mjs';
+import {MediaCache} from './media-cache.mjs';
 import {CrossDeviceRead} from './cross-device-read.mjs';
 import { RoleSteering } from './role-steering.mjs';
 import { collaborationQueueView } from './coordination-wait.mjs';
@@ -182,7 +183,14 @@ const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify
 const online = id => sockets.get(id)?.readyState === 1&&!reconnectingNodes.has(id);
 const sourceSync=new SourceSyncHome({db,data,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery});
 const projectFiles=new ProjectFiles({db,online,query:workerQuery});
-const mediaStreams=new MediaStreams({db,online,query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
+// The media ticket key survives restarts, so a file version keeps its link (and the browser its cached copy) across them.
+const mediaKeyFile=join(data,'media-ticket.key');
+let mediaSecret;try{mediaSecret=Buffer.from((await readFile(mediaKeyFile,'utf8')).trim(),'base64');}catch{}
+if(mediaSecret?.length!==32){mediaSecret=randomBytes(32);await writeFile(mediaKeyFile,mediaSecret.toString('base64'),{mode:0o600});}
+await chmod(mediaKeyFile,0o600);
+// Media bytes that came from a device are kept on Home by file version for 10 days (2 GB at most).
+const mediaCache=new MediaCache({dir:join(data,'media-cache')});
+const mediaStreams=new MediaStreams({db,online,secret:mediaSecret,cache:mediaCache,canReadCached:t=>cachedMediaAllowed(db,t),query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
 const crossDeviceRead=new CrossDeviceRead({db,online,query:workerQuery});
 const setup = new ProjectSetup(db, rooms, workerQuery, online, change);
 const credentials = new CredentialStore(join(data, 'credentials'));
@@ -622,7 +630,8 @@ const server = http.createServer(async (req, res) => {
           projectId=transfer.projectId;id=transferAttachment[2];
         }
         const { item, bytes } = await attachments.read(projectId, id);
-        res.writeHead(200, { 'Content-Type': item.mime, 'Content-Length': bytes.length, 'Cache-Control': 'private, no-store',
+        // An attachment never changes under its ID: the browser keeps it for 10 days instead of fetching it on every render (Workers still read no-store).
+        res.writeHead(200, { 'Content-Type': item.mime, 'Content-Length': bytes.length, 'Cache-Control': attachmentMatch ? MEDIA_CACHE_CONTROL : 'private, no-store',
           'Content-Disposition': `${item.mime.startsWith('image/') ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(item.name)}` });
         return res.end(bytes);
       }
@@ -780,10 +789,10 @@ const server = http.createServer(async (req, res) => {
           const revision=scope==='group'?createHash('sha256').update(JSON.stringify(managed)).digest('hex'):null;
           if(!sessionId&&scope==='group'&&offset&&url.searchParams.get('revision')!==revision)return json(res,{restart:true});
           const page=scope==='group'?managed.slice(offset,offset+50):managed.map(({sessionId})=>({sessionId}));
-          const paged=Boolean(sessionId&&url.searchParams.get('historyPage')==='1'),cursor=url.searchParams.get('cursor'),historySnapshot=url.searchParams.get('snapshot');
+          const paged=Boolean(sessionId&&url.searchParams.get('historyPage')==='1'),cursor=url.searchParams.get('cursor'),historySnapshot=url.searchParams.get('snapshot'),delta=Boolean(historySnapshot&&url.searchParams.get('delta')==='1');
           if((cursor||historySnapshot)&&(!paged||cursor?.length>2048||historySnapshot?.length>2048||cursor&&historySnapshot))throw Error('Invalid native history cursor');
           if(paged&&worker.capabilities?.nativeHistoryPages!==1)throw Error('Upgrade this Worker to load older native history.');
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:historySnapshot}:{})},30000);
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:historySnapshot,...(delta?{delta:true}:{})}:{})},30000);
           if(!sessionId&&scope==='group'){
             const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));
             return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});
@@ -1442,7 +1451,7 @@ const server = http.createServer(async (req, res) => {
         change(); return json(res, { retention });
       }
       if (pathname === '/api/data/stats' && req.method === 'GET') {
-        const home = await dataStats(db, { policy: retentionPolicy() });
+        const home = { ...await dataStats(db, { policy: retentionPolicy() }), mediaCache: await mediaCache.stats().catch(() => null) };
         const devices = await Promise.all(db.list('workers').filter(w => !db.get('removedDevices', w.id)).map(async w => {
           if (!online(w.id)) return { nodeId: w.id, name: w.name, online: false };
           if (w.capabilities?.dataRetention !== 1) return { nodeId: w.id, name: w.name, online: true, upgrade: true };
@@ -1512,6 +1521,7 @@ const server = http.createServer(async (req, res) => {
     files['/pasted-text.js']='pasted-text.js';
     files['/side-preview.js']='side-preview.js';
     files['/history-prompt.js']='history-prompt.js';
+    files['/history-cache.js']='history-cache.js';
     files['/data-settings.js']='data-settings.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
@@ -1659,7 +1669,8 @@ function homeVacuumWhenQuiet() { clearTimeout(homeVacuumRetry); homeVacuumRetry 
 async function runHomeMaintenance() {
   try { const summary = await cleanupData(db, { policy: retentionPolicy(), log: line => console.error('Data:', line) });
     const n = Object.values(summary.deleted).reduce((a, b) => a + b, 0); if (n) console.log(`Data: removed ${n} records (${Math.round(summary.bytes / 1048576)} MB)`);
-    return { ...summary, vacuum: homeVacuumWhenQuiet() }; }
+    const media = await mediaCache.sweep().catch(e => ({ error: e.message })); if (media.deleted) console.log(`Data: media cache dropped ${media.deleted} files (${Math.round(media.freed / 1048576)} MB)`);
+    return { ...summary, mediaCache: media, vacuum: homeVacuumWhenQuiet() }; }
   catch (e) { console.error('Data: cleanup failed', e.message); return { error: e.message }; }
 }
 const maintenanceFirst = setTimeout(() => void runHomeMaintenance(), 60000); maintenanceFirst.unref();
