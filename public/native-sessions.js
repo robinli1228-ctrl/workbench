@@ -65,7 +65,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   sideTab=name;document.body.dataset.sessionSideTab=name;for(const [tab,panel] of Object.entries(sidePanels))panel.hidden=tab!==name;
   sideTitle.textContent=t(SIDE_TITLES[name]);side.setAttribute('aria-label',t(SIDE_TITLES[name]));
   sideTabButtons.forEach((tab,i)=>{const on=SIDE_TABS[i]===name;tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
-  const clearAsk=sideHeader.querySelector('.native-ask-clear');if(clearAsk)clearAsk.hidden=name!=='ask';
+  // Header actions belong to one tab each: the brush clears the side question, the folder opens the working folder.
+  for(const [cls,tab] of [['.native-ask-clear','ask'],['.native-folder-open','outputs']]){const b=sideHeader.querySelector(cls);if(b)b.hidden=name!==tab;}
   if(name==='outputs')renderOutputs();
  }
  /**
@@ -185,7 +186,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   finally{st.loading=false;if(selected&&key(selected)===id)renderFolder();}
  }
  function folderCard(session){
-  const card=el('section','native-side-card native-folder-card'),root=session.workspace,folderHead=el('div','native-card-head');folderHead.append(el('h3','',t('Working folder')));card.append(folderHead);
+  // Shown in the working-folder dialog: the path crumbs head the card, the dialog carries the title.
+  const card=el('section','native-side-card native-folder-card'),root=session.workspace,folderHead=el('div','native-card-head');card.append(folderHead);
   if(!root){card.append(stateBlock('folder','No folder yet'));return card;}
   // Files this session read, edited or created in page turns, latest state per path, right above the folder they live in.
   const touched=takeover.files();
@@ -194,7 +196,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const reloadFolder=iconButton('refresh','Refresh',()=>{st.entries=null;st.error=null;st.hasMore=false;renderFolder();});reloadFolder.disabled=st.loading;folderHead.append(reloadFolder);
   const crumbs=el('div','native-folder-crumbs'),rel=st.path.startsWith(root)?st.path.slice(root.length).split('/').filter(Boolean):[];
   const crumb=(label,path,last)=>{const b=el('button',`native-folder-crumb${last?' is-current':''}`,label);b.type='button';b.title=path;b.translate=false;b.disabled=last;b.addEventListener('click',()=>{st.path=path;st.entries=null;renderFolder();});return b;};
-  crumbs.append(crumb(fileName(root)||root,root,!rel.length));let acc=root;rel.forEach((part,i)=>{acc=`${acc}/${part}`;crumbs.append(el('span','native-folder-sep','/'),crumb(part,acc,i===rel.length-1));});card.append(crumbs);
+  crumbs.append(crumb(fileName(root)||root,root,!rel.length));let acc=root;rel.forEach((part,i)=>{acc=`${acc}/${part}`;crumbs.append(el('span','native-folder-sep','/'),crumb(part,acc,i===rel.length-1));});folderHead.prepend(crumbs);
   if(!st.entries&&!st.loading&&!st.error)void loadFolder(session,st.path);
   if(st.error)card.append(failedState(st.error,()=>{st.entries=null;st.error=null;renderFolder();}));
   const list=el('div','native-file-list');
@@ -251,17 +253,23 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const folder=folderState.get(k);if(folder?.error&&!folder.loading&&now-(folder.errorAt||0)>8000){folder.error=null;folder.entries=null;renderFolder();}
  }
  /** The working folder browser sits on the Resources tab; navigating it redraws only that card. */
- function renderFolder(){const prior=sidePanels.outputs.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
+ /** The working folder opens in a dialog from the folder icon in the Files header. */
+ const folderDialog=el('dialog','settings-edit-dialog native-session-dialog native-folder-dialog');document.body.append(folderDialog);
+ {const heading=el('div','dialog-heading');heading.append(el('h2','',t('Working folder')),closeButton(()=>folderDialog.close()));folderDialog.append(heading,el('div','native-folder-slot'));}
+ // A text file opens in the sheet over the transcript, which a modal dialog would cover: close it first. Pictures open above it.
+ folderDialog.addEventListener('click',event=>{const row=event.target.closest?.('.native-file-row:not(.is-folder)');if(row&&mediaKindFromName(row.title)==='file')folderDialog.close();},true);
+ function openFolder(){if(!selected)return;folderDialog.querySelector('.native-folder-slot').replaceChildren(folderCard(selected));if(!folderDialog.open)folderDialog.showModal();}
+ function renderFolder(){const prior=folderDialog.open&&folderDialog.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
  function renderOutputs(){
   const panel=sidePanels.outputs;panel.replaceChildren();
-  if(!selected){panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
+  if(!selected){if(folderDialog.open)folderDialog.close();panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
   const context=mediaContext(selected);
-  // The project's outputs first, then files named in the loaded replies, then the working folder (with what this session touched).
+  // The project's outputs take most of the height, files named in the loaded replies the rest; the working folder is a dialog.
   const mentioned=el('section','native-side-card native-files-half'),head=el('div','native-card-head'),body=el('div','native-files-body');head.append(el('h3','',t('Named in replies')));mentioned.append(head,body);
   const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
   if(!items.length)body.append(emptyState('quote','No files mentioned yet'));
   else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));body.append(list);}
-  panel.append(outputsCard(selected),mentioned,folderCard(selected));
+  panel.append(outputsCard(selected),mentioned);renderFolder();
  }
  resetSide();
  // Session settings live behind a gear at the right end of the top bar, where the connection note sits in other modes.
@@ -956,6 +964,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  }
  const takeover=createTakeover();
  const sideAsk=createSideAsk();sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);sideAsk.clear.hidden=sideTab!=='ask';sideHeader.append(sideAsk.clear);
+ const folderOpen=iconButton('folder','Working folder',()=>openFolder(),'native-folder-open');folderOpen.hidden=sideTab!=='outputs';sideHeader.append(folderOpen);
  // Sessions opened on this page with "Allow all": once the headless first turn has produced history, chat here without a separate takeover confirmation.
  const pageOpened=new Set();
  const IMAGE_CLIS=new Set(['codex','claude']),openProcesses=new Set();

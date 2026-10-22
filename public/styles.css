@@ -3751,3 +3751,17 @@ body .native-ask-tools select.native-ask-model:not([multiple]):focus-visible { o
 .nt-compact-toggle.is-open, .nt-compact[open] .nt-compact-toggle:not(.is-open) { display: none; }
 .nt-compact[open] .nt-compact-toggle.is-open { display: inline; }
 .nt-compact-body { max-height: 420px; margin-top: 10px; padding: 12px 16px; overflow: auto; border: 1px solid var(--card-hairline, var(--line)); border-radius: 12px; background: #fff; color: var(--ink); font-size: 13px; }
+/* Files tab: project outputs take most of the height, files named in replies the rest. */
+#native-side-outputs > .native-outputs-card { flex: 2 1 0; }
+#native-side-outputs > .native-files-half:not(.native-outputs-card) { flex: 1 1 0; min-height: 140px; }
+/* Working folder dialog: the folder card without its own frame, crumbs and refresh on the head line. */
+.native-folder-dialog { width: min(560px, 92vw); }
+.native-folder-dialog .native-folder-card { max-height: min(62vh, 560px); overflow: auto; padding: 0; border: 0; box-shadow: none; }
+.native-folder-dialog .native-folder-card > .native-card-head:first-child { height: auto; min-height: 22px; margin: 0 0 8px; padding: 0 0 8px; }
+.native-folder-dialog .native-folder-crumbs { flex: 1; min-width: 0; margin: 0; }
+/* Every right-panel card has the same slim title bar, with or without an action icon. */
+.native-side-card { --card-head: 22px; }
+.native-side-card > .native-card-head:first-child, .native-side-card > h3:first-child { box-sizing: content-box; display: flex; align-items: center; height: var(--card-head); min-height: var(--card-head); margin: -4px calc(-1 * var(--card-pad)) 10px; padding: 0 var(--card-pad) 8px; }
+.native-side-card > .native-card-head .native-icon-action { width: 22px; min-width: 22px; height: 22px; min-height: 22px; padding: 3px; }
+.native-side-card > .native-card-head .native-card-action { min-height: 22px; height: 22px; padding: 0 9px; }
+#native-side-outputs > .native-files-half { padding-top: 14px; }
