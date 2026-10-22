@@ -20,7 +20,8 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
   // Empty progress pages advance the cursor without rebuilding the rows the user is reading.
   if(older&&page.historyPage===1&&!rows.length){target.cursor=page.nextCursor||null;target.initialized=true;return;}
   // Do not silently bridge an unobserved burst while the reader is in loaded history.
-  if(!older&&prior.length&&page.historyPage===1&&rows.length&&rows[0].offset>prior.reduce((max,m)=>Math.max(max,m.offset),0)){newerAvailable=true;return;}
+  // (Rows appended right after the loaded ones, a `delta`, are contiguous by construction and join directly.)
+  if(!older&&!page.delta&&prior.length&&page.historyPage===1&&rows.length&&rows[0].offset>prior.reduce((max,m)=>Math.max(max,m.offset),0)){newerAvailable=true;return;}
   if(page.historyPage!==1)target.messages.clear();
   rows.forEach((m,i)=>target.messages.set(m.id||String(i),m));
   // The oldest page read decides where the loaded rows begin; a refresh of the latest page never moves that start.

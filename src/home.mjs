@@ -789,10 +789,10 @@ const server = http.createServer(async (req, res) => {
           const revision=scope==='group'?createHash('sha256').update(JSON.stringify(managed)).digest('hex'):null;
           if(!sessionId&&scope==='group'&&offset&&url.searchParams.get('revision')!==revision)return json(res,{restart:true});
           const page=scope==='group'?managed.slice(offset,offset+50):managed.map(({sessionId})=>({sessionId}));
-          const paged=Boolean(sessionId&&url.searchParams.get('historyPage')==='1'),cursor=url.searchParams.get('cursor'),historySnapshot=url.searchParams.get('snapshot');
+          const paged=Boolean(sessionId&&url.searchParams.get('historyPage')==='1'),cursor=url.searchParams.get('cursor'),historySnapshot=url.searchParams.get('snapshot'),delta=Boolean(historySnapshot&&url.searchParams.get('delta')==='1');
           if((cursor||historySnapshot)&&(!paged||cursor?.length>2048||historySnapshot?.length>2048||cursor&&historySnapshot))throw Error('Invalid native history cursor');
           if(paged&&worker.capabilities?.nativeHistoryPages!==1)throw Error('Upgrade this Worker to load older native history.');
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:historySnapshot}:{})},30000);
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:historySnapshot,...(delta?{delta:true}:{})}:{})},30000);
           if(!sessionId&&scope==='group'){
             const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));
             return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});
@@ -1521,6 +1521,7 @@ const server = http.createServer(async (req, res) => {
     files['/pasted-text.js']='pasted-text.js';
     files['/side-preview.js']='side-preview.js';
     files['/history-prompt.js']='history-prompt.js';
+    files['/history-cache.js']='history-cache.js';
     files['/data-settings.js']='data-settings.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';

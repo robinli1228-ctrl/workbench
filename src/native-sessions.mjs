@@ -264,9 +264,16 @@ async function scanBack(h,runtime,offset,floor,limits){
  return undefined;
 }
 
+/** The offset of the line that contains `offset`: itself when a line ended just before it, null when no line start lies within `budget` bytes. */
+async function lineStartAt(h,offset,budget){
+ if(offset<=0)return 0;
+ const length=Math.min(offset,budget),chunk=Buffer.alloc(length);await h.read(chunk,0,length,offset-length);
+ if(chunk[length-1]===10)return offset;
+ const lf=chunk.lastIndexOf(10);return lf>=0?offset-length+lf+1:offset-length===0?0:null;
+}
 /** Read backwards at line boundaries, pinning the original tail while a live CLI appends.
  * Cursors select offsets only inside this exact vendor file; each page has bounded I/O and wire size. */
-async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
+async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{delta=false}={}){
  if(!inside(await realpath(file.root),await realpath(file.path)))throw Error('History outside CLI directory');
  const h=await open(file.path,constants.O_RDONLY|constants.O_NOFOLLOW),hash=value=>createHash('sha256').update(value).digest('hex');
  try{
@@ -281,6 +288,27 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
   let tail=await tailAt(size);
   if(prior&&prior.tail!==tail)throw Error('Native history changed; reopen the session to read it again.');
   // Quiet refresh must verify the previous snapshot, even when its last page had no older cursor.
+  if(snapshot&&delta){
+   // Only what was appended since the snapshot: from the start of the line that was still being written then (re-read whole
+   // now) to the end. Nothing new is an empty answer; a burst too large for one reply falls back to the latest page below.
+   const from=prior.size,to=info.size;
+   const start=to-from>2*limits.bytes?null:await lineStartAt(h,from,limits.lookbackChunk);
+   if(start!==null){
+    const buffer=Buffer.alloc(to-start);if(buffer.length)await h.read(buffer,0,buffer.length,start);
+    const messages=[],rows=[];let pos=0;
+    while(pos<buffer.length){
+     const lf=buffer.indexOf(10,pos),lineEnd=lf<0?buffer.length:lf,line=buffer.subarray(pos,lineEnd).toString('utf8');
+     const parsed=jsonLines(line);rows.push(...parsed);
+     messages.push(...messagesFrom(parsed,runtime).map((m,index)=>({...m,id:`${id}:${start+pos}${index?`:${index}`:''}`,offset:start+pos})));
+     pos=lineEnd+1;
+    }
+    const tailNow=await tailAt(to),after=await stat(file.path);
+    if(after.dev!==info.dev||after.ino!==info.ino||after.size<to)throw Error('Native history changed; reopen the session to read it again.');
+    const configuration=sessionConfiguration(rows,runtime);
+    return {messages,historyPage:1,delta:true,historySnapshot:Buffer.from(JSON.stringify({v:1,key,size:to,end:to,tail:tailNow})).toString('base64url'),
+     ...(rows.length?{sessionConfiguration:configuration}:{})};
+   }
+  }
   if(snapshot){size=info.size;end=size;tail=await tailAt(size);}
   let next=end,scanned=0,configuration;const messages=[];
   // Internal request blobs and large tool results can fill a window without adding a chat row. Cross only empty windows,
@@ -315,11 +343,11 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
 }
 
 /** Resume and preview resolve an exact native ID on the selected device, never a filename from the client. */
-export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null,pageLimits=HISTORY_PAGE}={}){
+export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null,delta=false,pageLimits=HISTORY_PAGE}={}){
  if(!idPattern.test(id||''))throw Error('Invalid native session ID');
  const file=await registeredFile(runtime,id,env,record);if(!file)throw Error('Registered native session history is unavailable; no external histories were scanned');
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
- if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot,pageLimits)};
+ if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot,pageLimits,{delta:Boolean(snapshot&&delta)})};
  const window=await readWindow(file.path,file.root,true,524288),rows=jsonLines(window.text),messages=messagesFrom(rows,runtime);
  const texts=messages.filter(m=>m.role==='user'||m.role==='assistant'),from=texts.length>80?messages.indexOf(texts.at(-80)):0;
  return {...info,messages:messages.slice(from),sessionConfiguration:sessionConfiguration(rows,runtime),partial:window.partial||texts.length>80};

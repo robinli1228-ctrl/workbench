@@ -15,6 +15,7 @@ import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {stripAnsi} from './run-log-data.js';
 import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSummary} from './history-prompt.js';
+import {cachedHistory,saveHistory,forgetHistory} from './history-cache.js';
 import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
@@ -534,7 +535,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  }
  /** History scrolls above a persistent footer, so quiet refreshes never discard a takeover draft. */
  const scroll=el('div','native-session-scroll');
- const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(cursor?{cursor}:{}),...(snapshot?{snapshot}:{})})}`);
+ // With a snapshot the refresh asks only for rows appended since it (`delta`); a Worker that cannot answers with the latest page.
+ const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(cursor?{cursor}:{}),...(snapshot?{snapshot,delta:'1'}:{})})}`);
+ /** Settings read from appended rows refine the ones already known; a field the new rows do not mention keeps its value. */
+ const mergeConfiguration=(known,fresh)=>{if(!fresh)return known;const out={...(known||{})};for(const [k,v] of Object.entries(fresh))if(v!=null)out[k]=v;return out;};
  let lastPromptAt=null;
  function renderHistoryRow(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text;
    // Context compaction: one quiet line; the summary Claude carries forward opens on demand.
@@ -597,13 +601,59 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   return nodes;
  }
  const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed({historyChanged:true}),onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage:renderHistoryRow,renderMessages:renderHistory});
- async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();if(!quiet){onPreview?.();preview.close();takeover.detach();const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);detailSignature='';}
-  try{const id=nativeId(item),readable=id&&item.hasHistory!==false,value=readable?{...item,...await readPage(item,null,quiet?item.historySnapshot:null),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:item;if(ticket!==detailVersion||!active()||key(selected)!==key(item))return;selected=value;timeline.readSucceeded();const signature=JSON.stringify(value);if(quiet&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
-   const history=timeline.update({...value,...(!value.messages?.length&&!value.notice?{notice:value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'}:{})});
+ /** Latest pages saved in this browser, as last saved (rows appended by refreshes are added to them). */
+ const savedPages=new Map();
+ function rememberPage(item,page,{appended=false}={}){
+  const k=key(item);
+  if(!appended){const {messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice}=page;const saved={messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice};savedPages.set(k,saved);void saveHistory(k,saved);return;}
+  const saved=savedPages.get(k);if(!saved)return;
+  const known=new Set(saved.messages.map(m=>m.id)),next={...saved,messages:[...saved.messages,...page.messages.filter(m=>!known.has(m.id))],historySnapshot:page.historySnapshot,sessionConfiguration:mergeConfiguration(saved.sessionConfiguration,page.sessionConfiguration)};
+  savedPages.set(k,next);void saveHistory(k,next);
+ }
+ async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
+  const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];
+  const restart=()=>{timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));detailSignature='';};
+  if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);}
+  const id=nativeId(item),readable=id&&item.hasHistory!==false,current=()=>ticket===detailVersion&&active()&&key(selected)===key(item);
+  /** Draw a page: a full one (opening, or a fallback) or rows appended since the last read (`delta`). */
+  const present=(base,page,{quietly})=>{
+   const delta=Boolean(page?.delta);
+   const value=readable?{...base,...page,...(delta?{sessionConfiguration:mergeConfiguration(base.sessionConfiguration,page.sessionConfiguration)}:{}),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:base;
+   selected=value;timeline.readSucceeded();
+   // Nothing appended since the last read: keep everything as it is (only the snapshot moved on).
+   if(quietly&&delta&&!page.messages?.length)return;
+   const signature=JSON.stringify(value);if(quietly&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
+   const history=timeline.update({...value,...(!delta&&!value.messages?.length&&!value.notice?{notice:value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'}:{})});
    const historyAt=Date.now();if(!scroll.contains(timeline.root))scroll.replaceChildren(timeline.root,takeover.feed);renderBranchOrigin(value);if(!content.contains(scroll))content.replaceChildren(scroll);
    takeover.attach(value,{readable,historyAt,history});
    renderSide(value,id,readable);
-   if(quiet&&!atBottom)scroll.scrollTop=top;else scroll.scrollTop=scroll.scrollHeight;
+   if(quietly&&!atBottom)scroll.scrollTop=top;else scroll.scrollTop=scroll.scrollHeight;
+  };
+  try{
+   if(!readable){if(current())present(item,null,{quietly:quiet});return;}
+   // Opening: the copy saved in this browser shows at once; the device is then asked only for rows appended since.
+   if(!quiet){
+    const saved=savedPages.get(key(item))||await cachedHistory(key(item));
+    if(!current())return;
+    if(saved?.historySnapshot&&Array.isArray(saved.messages)){
+     savedPages.set(key(item),saved);present(item,saved,{quietly:false});
+     let page;
+     try{page=await readPage(selected,null,saved.historySnapshot);}
+     catch(error){
+      // The history was rewritten since the copy: forget it and read the latest page as usual.
+      if(!/changed/i.test(error.message)){if(current())timeline.showError(error);return;}
+      savedPages.delete(key(item));void forgetHistory(key(item));page=null;
+     }
+     if(!current())return;
+     if(page?.delta){present(selected,page,{quietly:true});if(page.messages?.length)rememberPage(item,page,{appended:true});return;}
+     restart();
+     if(!page){page=await readPage(item,null,null);if(!current())return;}
+     present(item,page,{quietly:false});rememberPage(item,page);return;
+    }
+   }
+   const page=await readPage(item,null,quiet?item.historySnapshot:null);if(!current())return;
+   present(item,page,{quietly:quiet});
+   if(page.delta){if(page.messages?.length)rememberPage(item,page,{appended:true});}else rememberPage(item,page);
   }catch(e){if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
  }
  /** Full text of one prompt in the group chat's reading layer; nothing stays on the page when it is closed. */

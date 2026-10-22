@@ -85,6 +85,41 @@ test('Codex and Grok histories yield the same tool rows, with the command behind
   assert.equal(grok[2].name, 'run_terminal_command'); assert.equal(grok[3].output, 'a b');
 });
 
+test('a refresh with the last snapshot gets only the rows appended since, a half-written line whole once finished', async t => {
+  const { appendFileSync } = await import('node:fs');
+  const home = mkdtempSync(join(tmpdir(), 'wb-claude-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const workspace = '/srv/work/delta', dir = join(home, 'projects', workspace.replace(/[^a-zA-Z0-9]/g, '-'));
+  mkdirSync(dir, { recursive: true });
+  const env = { HOME: home, CLAUDE_CONFIG_DIR: home }, record = { id: SID, runtime: 'claude', workspace }, file = join(dir, `${SID}.jsonl`);
+  const row = (role, text, i) => JSON.stringify({ type: role, uuid: `${role[0]}${i}`, timestamp: `2026-10-22T01:00:${String(i).padStart(2, '0')}.000Z`, cwd: workspace, message: { role, content: role === 'user' ? text : [{ type: 'text', text }] } });
+  writeFileSync(file, [row('user', 'first', 1), row('assistant', 'one', 2)].join('\n') + '\n');
+  const read = snapshot => readNativeSession('claude', SID, { env, record, historyPage: true, ...(snapshot ? { snapshot, delta: true } : {}) });
+  const full = await read();
+  assert.deepEqual(full.messages.map(m => m.text), ['first', 'one']); assert.equal(full.delta, undefined);
+  // Nothing new: an empty answer, not the page again.
+  const same = await read(full.historySnapshot);
+  assert.equal(same.delta, true); assert.deepEqual(same.messages, []);
+  // A reply appended, plus half of the next line still being written.
+  const next = row('assistant', 'two', 3), half = row('user', 'second', 4);
+  appendFileSync(file, next + '\n' + half.slice(0, 20));
+  const grew = await read(same.historySnapshot);
+  assert.deepEqual(grew.messages.map(m => m.text), ['two'], 'only the appended reply; the half line is not a row yet');
+  assert.ok(grew.messages[0].id.startsWith(`${SID}:`) && grew.messages[0].offset > full.messages[1].offset);
+  // The rest of that line arrives: it is read whole, from its own start.
+  appendFileSync(file, half.slice(20) + '\n' + row('assistant', 'three', 5) + '\n');
+  const finished = await read(grew.historySnapshot);
+  assert.deepEqual(finished.messages.map(m => m.text), ['second', 'three']);
+  // Ids match what a full read gives for the same rows, so the page can merge them.
+  const again = await read();
+  const ids = new Map(again.messages.map(m => [m.text, m.id]));
+  for (const m of [...grew.messages, ...finished.messages]) assert.equal(m.id, ids.get(m.text));
+  // A burst larger than one reply falls back to the latest page.
+  appendFileSync(file, Array.from({ length: 40 }, (_, i) => row('assistant', 'x'.repeat(50000), 10 + i)).join('\n') + '\n');
+  const burst = await read(finished.historySnapshot);
+  assert.equal(burst.delta, undefined); assert.ok(burst.messages.length > 0);
+});
+
 test('a history page holds up to 45 prompts and 768 KB of rows, and its reply fits the 1 MB Worker socket', async t => {
   const { HISTORY_PAGE } = await import(pathToFileURL(join(root, 'src', 'native-sessions.mjs')).href);
   assert.deepEqual({ ...HISTORY_PAGE }, { prompts: 45, bytes: 786432, window: 6291456, scan: 12582912, line: 33554432, lookback: 33554432, lookbackChunk: 1048576 });
