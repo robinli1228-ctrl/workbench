@@ -3768,3 +3768,27 @@ body .native-ask-tools select.native-ask-model:not([multiple]):focus-visible { o
 /* Sessions / Group chats switch: a line icon before each label, in the label's colour. */
 .project-sidebar .navigation-mode button { display: inline-flex; align-items: center; gap: 5px; }
 .navigation-mode-icon { flex: none; width: 16px; height: 16px; }
+
+/* Icon consistency (2026-10-22): icons that sit side by side share one size and one colour. */
+/* Left heading: the Sessions / Group chats icons and the new-conversation icon are the same size. */
+.navigation-mode-icon, .project-sidebar .new-conversation-button svg { width: 18px; height: 18px; }
+/* Role card: the device icon and the live-execution button read as a pair. */
+.role-card-head .role-name-device, .role-card-head .role-live-scene { color: var(--text-muted); }
+.role-card-head .role-name-device { width: 22px; height: 24px; }
+.role-card-head .role-live-scene { display: inline-grid; place-items: center; width: 24px; height: 24px; min-height: 24px; padding: 0; }
+.role-card-head .role-name-device svg, .role-card-head .role-live-scene svg { width: 16px; height: 16px; }
+.role-card-head .role-live-scene:hover { color: var(--accent); }
+/* Group chat right panel: card-level actions are plain muted icons like the Sessions side cards (26px target, 16px glyph). */
+#node-sidebar :is(.artifact-section-heading .icon-button, .git-summary-head .chat-icon-btn, #source-sync-panel .source-sync-heading > button) { display: inline-grid; place-items: center; width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; box-shadow: none; color: var(--text-muted); }
+#node-sidebar :is(.artifact-section-heading .icon-button, .git-summary-head .chat-icon-btn, #source-sync-panel .source-sync-heading > button):hover:not(:disabled) { color: var(--accent); background: var(--accent-tint, #eef0ff); }
+#node-sidebar :is(.artifact-section-heading .icon-button, .git-summary-head .chat-icon-btn, #source-sync-panel .source-sync-heading > button) svg { width: 16px; height: 16px; }
+#node-sidebar .artifact-section-heading .pause-button.active { color: #92500a; background: #fff5e9; }
+/* Card titles: the repository card's title icon is muted like any heading, not a link colour. */
+.git-summary-icon { color: var(--text-muted); }
+.git-summary-icon svg { width: 16px; height: 16px; }
+/* Device icons in lists and quick-access chips are one size. */
+#inspector-resources .sidebar-device .device-glyph, #inspector-resources .sidebar-device .device-glyph svg { width: 18px; height: 18px; }
+@media (max-width: 1000px) {
+  .role-card-head .role-name-device, .role-card-head .role-live-scene { width: 44px; height: 44px; }
+  .role-card-head .role-name-device svg, .role-card-head .role-live-scene svg { width: 19px; height: 19px; }
+}
