@@ -281,7 +281,9 @@ test('a resident Claude stream-json process receives exact resume, keeps its pid
 const a=process.argv.slice(2);if(!a.includes('--input-format'))process.exit(3);const id=a[a.indexOf('--resume')+1];
 console.log(JSON.stringify({type:'system',session_id:id}));
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.type!=='user')return;
- const c=m.message.content,images=Array.isArray(c)?c.filter(b=>b.type==='image').length:0,text=Array.isArray(c)?c[0].text:c;
+ const c=m.message.content,images=Array.isArray(c)?c.filter(b=>b.type==='image').length:0,raw=Array.isArray(c)?c[0].text:c;
+ // The page's question hint rides in a system-reminder block ahead of the prompt; the words the person typed follow it.
+ const end='</system-reminder>',hinted=raw.startsWith('<system-reminder>')&&raw.includes('AskUserQuestion'),text=(hinted?raw.slice(raw.indexOf(end)+end.length).trimStart():raw)+(hinted?'':' nohint');
  console.log(JSON.stringify({type:'assistant',message:{content:[{type:'tool_use',id:'tu'+text,name:'Read',input:{file:'x'}}]}}));
  console.log(JSON.stringify({type:'result',subtype:'success',session_id:id,result:'pid='+process.pid+' text='+text+' images='+images}));});
 `.replace('#!/usr/bin/env node\n', '#!/usr/bin/env node\nconst require=(await import("node:module")).createRequire(import.meta.url);\n'));
@@ -315,9 +317,9 @@ test('a resident Codex app-server resumes the thread once and reuses it for late
 createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);
  if(m.method==='initialize')out({id:m.id,result:{}});
  if(m.method==='thread/resume'){resumes++;out({id:m.id,result:{thread:{id:m.params.threadId}}});}
- if(m.method==='turn/start'){turns++;const images=m.params.input.filter(i=>i.type==='localImage').length,id='turn'+turns;out({id:m.id,result:{turn:{id}}});out({method:'turn/started',params:{turn:{id}}});
+ if(m.method==='turn/start'){turns++;const images=m.params.input.filter(i=>i.type==='localImage').length,hinted=String(m.params.input[0]?.text).startsWith('<system-reminder>')&&String(m.params.input[0]?.text).includes('request_user_input'),id='turn'+turns;out({id:m.id,result:{turn:{id}}});out({method:'turn/started',params:{turn:{id}}});
   out({method:'item/started',params:{item:{id:'cmd'+turns,type:'commandExecution',command:'ls'}}});
-  out({method:'item/completed',params:{item:{id:'msg'+turns,type:'agentMessage',text:'resumes='+resumes+' turns='+turns+' images='+images+' pid='+process.pid}}});
+  out({method:'item/completed',params:{item:{id:'msg'+turns,type:'agentMessage',text:'resumes='+resumes+' turns='+turns+' images='+images+' hinted='+hinted+' pid='+process.pid}}});
   out({method:'turn/completed',params:{turn:{id,status:'completed'}}});}
 });`);
   const wrapper = join(dir, 'codex');
@@ -334,8 +336,9 @@ createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line)
   await runner.start({ id: 'x2', runtime: 'codex', sessionId: SID, prompt: 'b', withImage: true });
   assert.equal((await finished('x2')).event.status, 'succeeded', JSON.stringify(events.filter(e => e.id === 'x2')));
   const replies = events.filter(e => e.event?.kind === 'message').map(e => e.event.text);
-  assert.match(replies[0], /resumes=1 turns=1 images=0/);
-  assert.match(replies[1], /resumes=1 turns=2 images=1/);
+  // Each page turn carries the question hint ahead of the typed words.
+  assert.match(replies[0], /resumes=1 turns=1 images=0 hinted=true/);
+  assert.match(replies[1], /resumes=1 turns=2 images=1 hinted=true/);
   assert.equal(replies[0].match(/pid=(\d+)/)[1], replies[1].match(/pid=(\d+)/)[1]);
   assert.ok(events.some(e => e.event?.kind === 'tool' && e.event.item.command === 'ls'));
 });

@@ -4,10 +4,19 @@ import { tr } from './i18n.mjs';
 
 /**
  * Session-page takeover adapters. They extend the shared managed adapters without changing them:
- * no Workbench rules, model, developer instructions or environment overrides are sent, and a resident
+ * only the page's question-tool hint and explicitly selected model/settings are added; a resident
  * process survives an interrupted turn. Managed group-chat Runs never construct these classes.
  */
 export const NATIVE_KEEPALIVE=new Set(['claude','agy']);
+/**
+ * Told to a CLI the page takes over, in the user turn itself as a system-reminder block (the page strips those from
+ * display): the page shows a question as a card with options, so the model should ask when a choice is the user's instead
+ * of guessing or listing options as text. An appended system prompt alone (Claude) is not followed, and Codex ignores
+ * developerInstructions on thread/resume; the user turn is what both act on. Left out of one-shot turns, which cannot answer.
+ */
+/** A prompt as the page sends it: the hint block, then the words the person typed. */
+export const withQuestionHint=prompt=>`<system-reminder>\n${QUESTION_HINT}\n</system-reminder>\n\n${prompt}`;
+export const QUESTION_HINT='This session is driven from a Workbench page. The user sees your questions only as cards: every question or choice you need from the user MUST be asked with your user-question tool (AskUserQuestion in Claude Code, request_user_input in Codex), never written as plain text. Rule: before doing a task whose goal, scope or approach is not fully specified, ask first with that tool instead of guessing; when several reasonable approaches exist, offer them as options and mark the one you recommend. Keep each question short, at most four options; the card also has a free-text field, so you may ask open questions too.';
 
 /** Exact resume arguments; print/stream flags only, plus the model and effort the person chose on the Sessions page. Resident Claude/Agy read stream-json turns from stdin. */
 export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,model=null,effort=null}) {
@@ -16,7 +25,7 @@ export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,mod
   const chosen=(modelFlag,effortFlag)=>[...(model?[modelFlag,model]:[]),...(effort?[effortFlag,effort]:[])];
   // A resident Claude answers permission prompts over stdio: every tool is still allowed by the bypass mode, but AskUserQuestion
   // (which only exists with a prompt host) reaches the page as a question card. A one-shot turn cannot answer, so it keeps bypassing.
-  if(runtime==='claude')return keepAlive?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--resume',sessionId,...chosen('--model','--effort'),'--permission-mode','bypassPermissions','--permission-prompt-tool','stdio']
+  if(runtime==='claude')return keepAlive?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--resume',sessionId,...chosen('--model','--effort'),'--permission-mode','bypassPermissions','--permission-prompt-tool','stdio','--append-system-prompt',QUESTION_HINT]
     :['-p',prompt,'--output-format','stream-json','--verbose','--resume',sessionId,...chosen('--model','--effort'),'--dangerously-skip-permissions'];
   if(runtime==='grok')return ['--always-approve','--no-plan','--cwd',cwd,...chosen('-m','--reasoning-effort'),'--output-format','streaming-messages-json','--include-partial-messages','--permission-mode','bypassPermissions','--resume',sessionId,'-p',prompt];
   if(runtime==='agy')return ['--output-format','stream-json','--dangerously-skip-permissions','--mode','accept-edits',...chosen('--model','--effort'),'--conversation',sessionId,...(keepAlive?['--input-format','stream-json']:['--print',prompt])];
@@ -40,6 +49,8 @@ export class NativeCodexSession extends CodexSession {
     // A turn/started notification may precede the empty compaction acknowledgement.
     if(method==='turn/start'&&this.control==='compact')return super.request('thread/compact/start',{threadId:params.threadId}).then(result=>({turn:{id:result?.turn?.id??this.turnId}}));
     if(method==='turn/start'&&this.model)params={...params,model:this.model};
+    // The question hint rides in the prompt text (developerInstructions on thread/resume are ignored by the App Server).
+    if(method==='turn/start'&&this.questionsSupported&&params.input?.[0]?.type==='text')params={...params,input:[{...params.input[0],text:withQuestionHint(params.input[0].text)},...params.input.slice(1)]};
     return super.request(method,params);
   }
   receive(m) {
@@ -90,7 +101,10 @@ export class NativeCliSession extends CliPrintSession {
   sendTurn(prompt) {
     // The SDK handshake precedes the first message of a session that hosts permission prompts.
     if(this.questionsSupported&&!this.initialized){this.initialized=true;this.write({type:'control_request',request_id:`init-${Date.now()}`,request:{subtype:'initialize'}});}
-    const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text:prompt},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
+    // The hint rides in the user turn too, as a system-reminder block (the page strips those from display): an appended
+    // system prompt alone is not followed, the model keeps writing its questions as text.
+    const text=this.questionsSupported?withQuestionHint(prompt):prompt;
+    const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:text;
     const message=this.runtime==='agy'?{event:'user',message:{role:'user',content}}:{type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
     this.inputAttempted=true;
     this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error)this.emit('status',{inputDeliveryState:'accepted'});});
