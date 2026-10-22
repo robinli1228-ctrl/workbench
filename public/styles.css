@@ -3742,3 +3742,12 @@ body .native-ask-tools select.native-ask-model:not([multiple]):hover:not(:disabl
 body .native-ask-tools select.native-ask-model:not([multiple]):focus-visible { outline: 0; box-shadow: var(--focus-ring); }
 .native-ask-file { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef0f4; font-size: 12px; }
 @media (max-width: 1000px) { #native-side-tab-ask { display: none !important; } }
+/* Context compaction in history: a quiet line; the summary unfolds below it. */
+.nt-compact { display: block; }
+.nt-compact > summary { display: flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; }
+.nt-compact > summary::-webkit-details-marker { display: none; }
+.nt-compact > summary::before, .nt-compact > summary::after { content: ""; flex: 1; height: 1px; background: var(--card-hairline, var(--line)); }
+.nt-compact-toggle { color: var(--accent); }
+.nt-compact-toggle.is-open, .nt-compact[open] .nt-compact-toggle:not(.is-open) { display: none; }
+.nt-compact[open] .nt-compact-toggle.is-open { display: inline; }
+.nt-compact-body { max-height: 420px; margin-top: 10px; padding: 12px 16px; overflow: auto; border: 1px solid var(--card-hairline, var(--line)); border-radius: 12px; background: #fff; color: var(--ink); font-size: 13px; }

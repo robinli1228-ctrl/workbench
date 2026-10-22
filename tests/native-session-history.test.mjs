@@ -51,6 +51,19 @@ test('tool calls and results come out of a Claude history as rows the page can p
   assert.equal(messages[3].output.length, 4001); assert.equal(messages[3].failed, false);
 });
 
+test('a compaction summary is flagged so the page folds it into a system line, also when an older Worker does not flag it', async () => {
+  const { isCompactSummary } = await import(pathToFileURL(join(root, 'public', 'history-prompt.js')).href);
+  const summary = 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary: …';
+  const messages = historyMessages([
+    { type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, timestamp: '2026-10-22T01:23:02Z', message: { role: 'user', content: summary } },
+    { type: 'user', timestamp: '2026-10-22T01:24:00Z', message: { role: 'user', content: '继续' } },
+  ], 'claude');
+  assert.deepEqual(messages.map(m => [m.text.slice(0, 4), m.compact === true]), [['This', true], ['继续', false]]);
+  assert.equal(isCompactSummary(summary), true);
+  assert.equal(isCompactSummary('继续', true), true);
+  assert.equal(isCompactSummary('Please explain: This session is being continued from a previous conversation that ran out of context.'), false);
+});
+
 test('Codex and Grok histories yield the same tool rows, with the command behind a Codex exec script', () => {
   const codex = historyMessages([
     { type: 'response_item', timestamp: 't1', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] } },

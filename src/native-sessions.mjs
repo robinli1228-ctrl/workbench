@@ -51,11 +51,12 @@ const call=(callId,name,input,at)=>({role:'tool_call',callId:String(callId||''),
 const result=(callId,output,failed,at)=>({role:'tool_result',callId:String(callId||''),output:clip(toolText(output),4000),failed:failed===true,timestamp:at});
 /** Conversation rows plus the tool calls and results between them; the page pairs them and shows each turn like a page turn. */
 function messagesFrom(rows,runtime){return rows.flatMap(row=>{
- const at=row.timestamp||null,out=[],say=(role,content)=>{const text=bodyText(content);if(text)out.push({role,text:text.slice(0,12000),timestamp:at});};
+ const at=row.timestamp||null,out=[],say=(role,content,extra)=>{const text=bodyText(content);if(text)out.push({role,text:text.slice(0,12000),timestamp:at,...extra});};
  if(runtime==='claude'){
   // Meta user rows are context Claude Code injects (image descriptions, command caveats), never something the user typed.
   const m=row.isSidechain===true||row.isMeta===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
-  say(m.role,m.content);
+  // A compaction summary is context Claude Code wrote, not a prompt: the page shows it as a folded system line.
+  say(m.role,m.content,row.isCompactSummary===true?{compact:true}:undefined);
   for(const b of Array.isArray(m.content)?m.content:[]){if(b?.type==='tool_use')out.push(call(b.id,b.name,b.input,at));else if(b?.type==='tool_result')out.push(result(b.tool_use_id,b.content,b.is_error,at));}
  }else if(runtime==='codex'){
   if(row.type!=='response_item')return [];const p=row.payload||{};

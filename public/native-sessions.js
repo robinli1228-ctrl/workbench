@@ -14,7 +14,7 @@ import {pastesAsFile,pastedTextName,isTextName} from './pasted-text.js';
 import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {stripAnsi} from './run-log-data.js';
-import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt} from './history-prompt.js';
+import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSummary} from './history-prompt.js';
 import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
@@ -527,6 +527,12 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(cursor?{cursor}:{}),...(snapshot?{snapshot}:{})})}`);
  let lastPromptAt=null;
  function renderHistoryRow(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text;
+   // Context compaction: one quiet line; the summary Claude carries forward opens on demand.
+   if(m.role==='user'&&isCompactSummary(m.text,m.compact)){
+    const row=el('details','nt-system nt-compact native-chat-row'),head=el('summary','');row.dataset.role='system';row.dataset.text=`compact:${m.timestamp||m.id||''}`;if(m.id)row.dataset.historyId=m.id;if(m.timestamp)row.dataset.at=m.timestamp;
+    head.append(el('span','nt-system-mark','\u21E3'),el('span','',t('Context compacted; the session continues from a summary')),el('span','nt-compact-toggle',t('Show summary')),el('span','nt-compact-toggle is-open',t('Hide summary')));
+    const body=el('div','nt-compact-body');row.addEventListener('toggle',()=>{if(row.open&&!body.childElementCount){const md=renderMarkdown(text);md.classList?.add('markdown-body');body.append(md);}},{once:false});
+    row.append(head,body);return row;}
    const interruption=nativeInterruptionText(m,item.runtime);
    if(interruption){const row=el('div','nt-system native-chat-row',t('Interrupted'));row.title=interruption;row.dataset.nativeInterruption=interruption;
     // 保留原生 user 边界，避免页面回执把后续工具记录归到上一条回复。
