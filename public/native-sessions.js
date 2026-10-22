@@ -280,7 +280,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const note=el('p','workspace-note');list.before(note);note.classList.add('native-session-note');
  // A narrowed left column (dragged below ~230px, or collapsed) drops the device/tool filters; the list keeps the width.
  const sidebar=document.querySelector('#project-sidebar');if(sidebar&&'ResizeObserver' in window)new ResizeObserver(()=>{filters.classList.toggle('is-narrow',sidebar.getBoundingClientRect().width<205);}).observe(sidebar);
- let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue=(()=>{try{const saved=sessionStorage.getItem('agent-workbench.navigation-mode');return saved==='groups'||saved==='sessions'?saved:'sessions';}catch{return 'sessions';}})(),lastRefresh=0,listSignature='',detailSignature='';
+ let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue=(()=>{try{const saved=sessionStorage.getItem('agent-workbench.navigation-mode');return saved==='groups'||saved==='sessions'?saved:'sessions';}catch{return 'sessions';}})(),lastRefresh=0,listSignature='',detailSignature='',detailMeta='';
  const active=()=>modeValue==='sessions';
  const endpoint=nodeId=>`/api/native-sessions/${encodeURIComponent(nodeId)}`;
  const key=item=>item?`${item.nodeId}/${item.runtime}/${item.entryId||item.id}`:'';
@@ -475,7 +475,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  function workers(){return(getData().workers||[]).filter(w=>['all','created','group'].includes(device.value)||(device.value==='other'?!['local','cloud'].includes(w.nodeKind):w.nodeKind===device.value));}
  /** Keep the selected name in the shared header, including after state refreshes and selection resets. */
  function renderTitle(){if(!active()||document.body.dataset.workspaceView==='settings')return;const title=document.querySelector('#workspace-title');title.translate=!selected;title.textContent=selected?displayTitle(selected):t('Native sessions');gear.disabled=!selected;}
- function resetDetail(){detailVersion++;selected=null;renderTitle();detailSignature='';timeline.clear();takeover.detach();content.replaceChildren(el('div','native-empty',t('Select a native session to view its details.')));resetSide();}
+ function resetDetail(){detailVersion++;selected=null;renderTitle();detailSignature=detailMeta='';timeline.clear();takeover.detach();content.replaceChildren(el('div','native-empty',t('Select a native session to view its details.')));resetSide();}
  function resetSide(){
   delete side.dataset.sessionKey;sideBadge.hidden=true;outputs.clear();gitKey=null;renaming=null;
   sidePanels.overview.replaceChildren(el('p','native-side-hint',t('Select a native session to view its details.')));
@@ -567,7 +567,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   turn.parts.map(p=>p.kind==='tool'?[p.id,p.done,p.failed,(p.output||'').length]:p.kind==='notice'?['n',p.task,p.timestamp]:['t',p.timestamp,(p.text||'').length])]);
  /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
  function renderHistory(rows,item,{turnStartedAt=null}={}){
-  const nodes=[],isPrompt=row=>isHistoryPrompt(row.text),sessionKey=key(item),before=renderedTurns.get(sessionKey)||new Map(),after=new Map();
+  // Cached per session and language (the nodes carry translated labels and local times).
+  const nodes=[],isPrompt=row=>isHistoryPrompt(row.text),sessionKey=`${key(item)}|${getLanguage()}`,before=renderedTurns.get(sessionKey)||new Map(),after=new Map();
   // Inside a turn that did change (the one still running), its prompt, text blocks and activity groups that did not change
   // are taken over from the turn's previous rendering, so a picture in a reply that is still growing is not reloaded.
   const piecesBefore=renderedPieces.get(sessionKey)||new Map(),piecesAfter=new Map();
@@ -576,11 +577,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    // A turn whose prompt is on an older, unloaded page starts at the time the Worker looked back for (turnStartedAt).
    const startedAt=turn.prompt?.timestamp||(index===0?turnStartedAt:null),signature=turnSignature(turn,startedAt);
    const kept=before.get(signature);
-   if(kept){after.set(signature,kept);for(const [id,node] of kept.pieces)piecesAfter.set(id,node);nodes.push(...kept.nodes);continue;}
+   if(kept){after.set(signature,kept);for(const [id,node] of kept.pieces)piecesAfter.set(id,node);nodes.push(...kept.nodes);
+    // A reused turn is not drawn again, so the files it names are noted here (the Files tab list is rebuilt after a reset).
+    const last=[...turn.parts].reverse().find(part=>part.kind==='text');if(last?.text)noteOutputs(item,last.text,turn.endedAt);continue;}
    own=new Map();const turnNodes=renderHistoryTurn(turn,item,startedAt,piece);after.set(signature,{nodes:turnNodes,pieces:own});nodes.push(...turnNodes);
   }
-  renderedTurns.set(sessionKey,after);if(renderedTurns.size>8)renderedTurns.delete(renderedTurns.keys().next().value);
-  renderedPieces.set(sessionKey,piecesAfter);if(renderedPieces.size>8)renderedPieces.delete(renderedPieces.keys().next().value);
+  // Least recently drawn sessions go first: the one being read moves to the end on every refresh.
+  for(const [map,value] of [[renderedTurns,after],[renderedPieces,piecesAfter]]){map.delete(sessionKey);map.set(sessionKey,value);if(map.size>8)map.delete(map.keys().next().value);}
   return nodes;
  }
  function renderHistoryTurn(turn,item,startedAt,piece=(id,build)=>build()){
@@ -589,10 +592,10 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(!turn.parts.length)return nodes;
   const frag=document.createDocumentFragment();let group=[],process=false;
   const flush=()=>{if(!group.length)return;process=true;const steps=group;frag.append(piece(`${turnId}|steps|${JSON.stringify(steps.map(tool=>[tool.id,tool.done,tool.failed,(tool.output||'').length]))}`,()=>activityBlock({steps:steps.map(tool=>classifyStep({type:'tool_use',id:tool.id,name:tool.name,input:tool.input,output:tool.output,is_error:tool.failed,status:'completed'},'succeeded')),notes:[],t,onPreview:(step,path)=>preview.open(step,path)})));group=[];};
-  for(const part of turn.parts){if(part.kind==='tool'){group.push(part);continue;}flush();
+  for(const [index,part] of turn.parts.entries()){if(part.kind==='tool'){group.push(part);continue;}flush();
    // A background task finished while this turn ran: one quiet line in place, the reply goes on below it.
    if(part.kind==='notice'){const line=el('div','nt-system nt-turn-notice');line.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${part.task.slice(0,8)}`));if(part.timestamp)line.title=time(part.timestamp);frag.append(line);continue;}const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;
-   frag.append(piece(`${turnId}|text|${part.timestamp}|${text.length}`,()=>{const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));return md;}));}
+   frag.append(piece(`${turnId}|text|${index}|${part.timestamp}|${text.length}`,()=>{const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));return md;}));}
   flush();
   const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
   row.dataset.role='assistant';if(process)row.dataset.process='1';
@@ -603,26 +606,39 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed({historyChanged:true}),onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage:renderHistoryRow,renderMessages:renderHistory});
  /** Latest pages saved in this browser, as last saved (rows appended by refreshes are added to them). */
  const savedPages=new Map();
+ const SAVED_PAGE_CHARS=2*1024*1024;
+ function keepPage(k,saved){
+  // A copy grown past the limit (a long-running session) is dropped everywhere; the next open reads the latest page and saves that.
+  if(JSON.stringify(saved).length>SAVED_PAGE_CHARS){forgetPage(k);return;}
+  savedPages.delete(k);savedPages.set(k,saved);if(savedPages.size>30)savedPages.delete(savedPages.keys().next().value);void saveHistory(k,saved);
+ }
+ function forgetPage(k){savedPages.delete(k);void forgetHistory(k);}
  function rememberPage(item,page,{appended=false}={}){
   const k=key(item);
-  if(!appended){const {messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice}=page;const saved={messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice};savedPages.set(k,saved);void saveHistory(k,saved);return;}
+  // The same snapshot again (an older Worker answers every refresh with the full page): nothing to save.
+  if(!appended&&savedPages.get(k)?.historySnapshot===page.historySnapshot)return;
+  if(!appended){const {messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice}=page;keepPage(k,{sessionId:nativeId(item),messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice});return;}
   const saved=savedPages.get(k);if(!saved)return;
-  const known=new Set(saved.messages.map(m=>m.id)),next={...saved,messages:[...saved.messages,...page.messages.filter(m=>!known.has(m.id))],historySnapshot:page.historySnapshot,sessionConfiguration:mergeConfiguration(saved.sessionConfiguration,page.sessionConfiguration)};
-  savedPages.set(k,next);void saveHistory(k,next);
+  const known=new Set(saved.messages.map(m=>m.id));
+  keepPage(k,{...saved,messages:[...saved.messages,...page.messages.filter(m=>!known.has(m.id))],historySnapshot:page.historySnapshot,sessionConfiguration:mergeConfiguration(saved.sessionConfiguration,page.sessionConfiguration)});
  }
+ /** Errors that mean the saved snapshot no longer fits the history file. */
+ const staleCopy=error=>/changed|Invalid native history cursor/i.test(error?.message||'');
  async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
   const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];
-  const restart=()=>{timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));detailSignature='';};
+  const restart=()=>{timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));detailSignature=detailMeta='';};
   if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);}
   const id=nativeId(item),readable=id&&item.hasHistory!==false,current=()=>ticket===detailVersion&&active()&&key(selected)===key(item);
   /** Draw a page: a full one (opening, or a fallback) or rows appended since the last read (`delta`). */
   const present=(base,page,{quietly})=>{
    const delta=Boolean(page?.delta);
-   const value=readable?{...base,...page,...(delta?{sessionConfiguration:mergeConfiguration(base.sessionConfiguration,page.sessionConfiguration)}:{}),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:base;
+   const value=readable?{...base,...page,...(delta?{notice:undefined,sessionConfiguration:mergeConfiguration(base.sessionConfiguration,page.sessionConfiguration)}:{}),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:base;
    selected=value;timeline.readSucceeded();
-   // Nothing appended since the last read: keep everything as it is (only the snapshot moved on).
-   if(quietly&&delta&&!page.messages?.length)return;
-   const signature=JSON.stringify(value);if(quietly&&signature===detailSignature)return;detailSignature=signature;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
+   // What the session looks like apart from its rows: a refresh with no new rows still redraws when this changed
+   // (a rename, a new binding), and otherwise leaves everything as it is (only the snapshot moved on).
+   const meta=JSON.stringify({...value,messages:undefined,historySnapshot:undefined,nextCursor:undefined,hasMore:undefined,partial:undefined,delta:undefined});
+   if(quietly&&delta&&!page.messages?.length&&meta===detailMeta)return;
+   const signature=delta?`${meta}\n${JSON.stringify(page.messages.map(m=>m.id))}`:JSON.stringify(value);if(quietly&&signature===detailSignature)return;detailSignature=signature;detailMeta=meta;const top=scroll.scrollTop,atBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<40;
    const history=timeline.update({...value,...(!delta&&!value.messages?.length&&!value.notice?{notice:value.canReopen?'This session has not started. Open it to begin chatting.':!readable?'Native session ID has not been linked yet. Existing history is unchanged.':'No text preview is available for this session.'}:{})});
    const historyAt=Date.now();if(!scroll.contains(timeline.root))scroll.replaceChildren(timeline.root,takeover.feed);renderBranchOrigin(value);if(!content.contains(scroll))content.replaceChildren(scroll);
    takeover.attach(value,{readable,historyAt,history});
@@ -635,26 +651,30 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(!quiet){
     const saved=savedPages.get(key(item))||await cachedHistory(key(item));
     if(!current())return;
-    if(saved?.historySnapshot&&Array.isArray(saved.messages)){
+    // A copy is drawn only for the same native session (an entry can be relinked to another one).
+    if(saved?.historySnapshot&&Array.isArray(saved.messages)&&saved.sessionId===id){
      savedPages.set(key(item),saved);present(item,saved,{quietly:false});
      let page;
      try{page=await readPage(selected,null,saved.historySnapshot);}
      catch(error){
-      // The history was rewritten since the copy: forget it and read the latest page as usual.
-      if(!/changed/i.test(error.message)){if(current())timeline.showError(error);return;}
-      savedPages.delete(key(item));void forgetHistory(key(item));page=null;
+      // The history was rewritten since the copy: forget it and read the latest page as usual. Other errors (device offline)
+      // leave the copy on screen with the error under it.
+      if(!staleCopy(error)){if(current())timeline.showError(error);return;}
+      forgetPage(key(item));page=null;
      }
      if(!current())return;
      if(page?.delta){present(selected,page,{quietly:true});if(page.messages?.length)rememberPage(item,page,{appended:true});return;}
-     restart();
+     restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));
      if(!page){page=await readPage(item,null,null);if(!current())return;}
      present(item,page,{quietly:false});rememberPage(item,page);return;
     }
    }
    const page=await readPage(item,null,quiet?item.historySnapshot:null);if(!current())return;
+   // Too much was appended for one reply: the latest page replaces what is shown (joining it would leave a silent gap).
+   if(quiet&&page.deltaFallback){restart();present(item,page,{quietly:false});rememberPage(item,page);return;}
    present(item,page,{quietly:quiet});
    if(page.delta){if(page.messages?.length)rememberPage(item,page,{appended:true});}else rememberPage(item,page);
-  }catch(e){if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
+  }catch(e){if(staleCopy(e))forgetPage(key(item));if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
  }
  /** Full text of one prompt in the group chat's reading layer; nothing stays on the page when it is closed. */
  let promptDialog=null;
@@ -870,6 +890,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    mark('delete','running');
    await api(`${endpoint(value.nodeId)}/delete`,{method:'POST',json:{runtime:value.runtime,...(nativeId(value)?{sessionId:nativeId(value)}:{}),...(value.entryId?{entryId:value.entryId}:{})}});
    mark('delete','done');
+   forgetPage(key(value));
    if(selected&&key(selected)===key(value)){try{sessionStorage.removeItem(SELECTION_KEY);}catch{}resetDetail();}
    void load({quiet:true});
   }});
@@ -1080,7 +1101,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   // A block still being written is drawn again, but its file cards are moved over from its previous drawing (only from
   // blocks this redraw does not keep), so a picture in it does not reload while the text around it grows.
   const texts=new Set(all.filter(r=>r.kind!=='tool'&&r.kind!=='log'&&r.kind!=='error').map(r=>simplifiedCliOutput(stripAnsi(r.text||''))));
-  const donors=[...blocksBefore].filter(([text])=>!texts.has(text)).flatMap(([,node])=>[...node.querySelectorAll('.media-card')]);
+  const donors=[...blocksBefore].filter(([blockKey])=>!texts.has(blockKey.slice(blockKey.indexOf('\u0000')+1))).flatMap(([,node])=>[...node.querySelectorAll('.media-card')]),occurrences=new Map();
   const adopt=md=>{for(const card of md.querySelectorAll('.media-card')){const i=donors.findIndex(d=>d.title===card.title);if(i>=0)card.replaceWith(donors.splice(i,1)[0]);}};
   let group=[];
   const flush=()=>{if(!group.length)return;const steps=group.filter(r=>r.kind==='tool').map(r=>classifyStep(r.item,turn.status)),notes=group.filter(r=>r.kind==='log'||r.kind==='error');
@@ -1088,9 +1109,11 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   for(const row of all){
    if(row.kind==='tool'||row.kind==='log'||row.kind==='error'){group.push(row);continue;}
    flush();const text=simplifiedCliOutput(stripAnsi(row.text||''));if(!text.trim())continue;
-   let md=blocksBefore.get(text);blocksBefore.delete(text);
+   // The same text twice in one reply is two blocks: keyed by text and occurrence.
+   const seen=(occurrences.get(text)||0)+1;occurrences.set(text,seen);const blockKey=`${seen}\u0000${text}`;
+   let md=blocksBefore.get(blockKey);blocksBefore.delete(blockKey);
    if(!md){md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));adopt(md);}
-   blocksAfter.set(text,md);frag.append(md);
+   blocksAfter.set(blockKey,md);frag.append(md);
   }
   flush();
   if(turn.id){turnBlocks.delete(turn.id);turnBlocks.set(turn.id,blocksAfter);if(turnBlocks.size>64)turnBlocks.delete(turnBlocks.keys().next().value);}
@@ -1173,11 +1196,19 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);}else open.append(el('span','native-file-icon','\u{1F4C4}'));
    if(remove||!item.mime?.startsWith('image/')){const info=el('span','native-file-info');info.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));open.append(info);}
    if(remove){const x=closeIcon(button('',remove,'attachment-remove'),t('Remove attachment'));card.append(x);}return card;}
-  function detach(){current=null;turns=[];historyEl=null;historyAnchors.clear();feedSignature='';liveReplies.clear();feed.replaceChildren();shell.remove();clearInterval(poll);poll=null;revokeUrls();}
+  /**
+   * Undo what the feed did to history rows (placed rows and notes, hidden rows, a duration it overrode). History rows are
+   * reused across refreshes now, so these marks must not outlive the feed that made them.
+   */
+  function clearFeedMarks(root){if(!root)return;
+   for(const old of root.querySelectorAll('.native-turn-anchored,.nt-system-detail'))old.remove();
+   for(const row of root.querySelectorAll('[data-native-live-hidden]')){row.hidden=false;delete row.dataset.nativeLiveHidden;}
+   for(const row of root.querySelectorAll('[data-history-duration]')){if(row.dataset.historyDuration)row.dataset.duration=row.dataset.historyDuration;else delete row.dataset.duration;delete row.dataset.historyDuration;}}
+  function detach(){clearFeedMarks(historyEl);current=null;turns=[];historyEl=null;historyAnchors.clear();feedSignature='';liveReplies.clear();feed.replaceChildren();shell.remove();clearInterval(poll);poll=null;revokeUrls();}
   function attach(value,{readable,historyAt:at,history}){const same=current&&k()===`${value.nodeId}/${value.runtime}/${value.sessionId}`;current=value;historyAt=at;historyEl=history;if(!same){turns=[];historyAnchors.clear();feed.replaceChildren();}
    const worker=getData().workers?.find(w=>w.id===value.nodeId);supported=worker?.capabilities?.nativeTurns===3;
    const eligible=readable&&value.canResume!==false&&!value.canReopen&&Boolean(value.workspace);
-   if(!eligible){shell.remove();markLatestDuration();return;}
+   if(!eligible){shell.remove();clearFeedMarks(historyEl);feedSignature='';markLatestDuration();return;}
    if(shell.parentNode!==content)content.append(shell);render();void refresh();
   }
   /** Turns already in native history keep their process next to the matching reply; others render as their own rows. */
@@ -1195,8 +1226,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(historyChanged)markLatestDuration();
     return;}
    feedSignature=signature;liveReplies.clear();
-   feed.replaceChildren();for(const old of historyEl?.querySelectorAll('.native-turn-anchored')||[])old.remove();
-   for(const row of historyEl?.querySelectorAll('[data-native-live-hidden]')||[]){row.hidden=false;delete row.dataset.nativeLiveHidden;}
+   feed.replaceChildren();clearFeedMarks(historyEl);
    const rows=[...(historyEl?.querySelectorAll('.native-chat-row')||[])],used=new Set();
    // A finished page turn that no history row matched (older page, or the CLI never recorded it) is placed by time among the loaded rows,
    // never under the newest history. One that belongs to a history page not loaded yet is left to that page.
@@ -1251,7 +1281,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
       const extra=el('div','native-turn-anchored nt-extra');
       if(hasProcess(turn)&&anchor.dataset.process!=='1')extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
       if(turn.status!=='succeeded')extra.append(el('div','nt-error',`${t(turn.status==='interrupted'?'Interrupted':'Failed')}${turn.error?` \u00b7 ${t(turn.error)}`:''}`));
-      if(extra.childElementCount){const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}if(turn.endedAt)anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());continue;}
+      if(extra.childElementCount){const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}if(turn.endedAt){if(!('historyDuration' in anchor.dataset))anchor.dataset.historyDuration=anchor.dataset.duration||'';anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());}continue;}
     }
     const makeFiles=()=>{if(!turn.attachments?.length)return null;const files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));return files;};
     // A running turn whose prompt already reached the history anchors on that row: the history row stays, the feed adds only the live reply,

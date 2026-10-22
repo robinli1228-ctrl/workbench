@@ -279,7 +279,7 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{
  try{
   const info=await h.stat();if(!info.isFile())throw Error('Not a history file');
   const key=hash(JSON.stringify([runtime,id,file.path,info.dev,info.ino,info.birthtimeMs]));
-  let prior=null;
+  let prior=null,deltaFallback=false;
   const token=cursor||snapshot;if(cursor&&snapshot)throw Error('Invalid native history cursor');
   if(token){try{if(typeof token!=='string'||token.length>2048)throw Error();prior=JSON.parse(Buffer.from(token,'base64url'));if(!prior||typeof prior!=='object'||Array.isArray(prior))throw Error();}catch{throw Error('Invalid native history cursor');}}
   let size=prior?.size??info.size,end=prior?.end??size;
@@ -290,24 +290,25 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{
   // Quiet refresh must verify the previous snapshot, even when its last page had no older cursor.
   if(snapshot&&delta){
    // Only what was appended since the snapshot: from the start of the line that was still being written then (re-read whole
-   // now) to the end. Nothing new is an empty answer; a burst too large for one reply falls back to the latest page below.
-   const from=prior.size,to=info.size;
-   const start=to-from>2*limits.bytes?null:await lineStartAt(h,from,limits.lookbackChunk);
+   // now) to the end. Nothing new is an empty answer. More than one reply may carry (raw bytes, or rows heavier than a page:
+   // the Worker socket takes 1 MB) falls back to the latest page below, marked so the page replaces what it shows.
+   const from=prior.size,to=info.size,start=to-from>2*limits.bytes?null:await lineStartAt(h,from,limits.lookbackChunk);
+   const messages=[],rows=[];let weight=0;
    if(start!==null){
     const buffer=Buffer.alloc(to-start);if(buffer.length)await h.read(buffer,0,buffer.length,start);
-    const messages=[],rows=[];let pos=0;
-    while(pos<buffer.length){
-     const lf=buffer.indexOf(10,pos),lineEnd=lf<0?buffer.length:lf,line=buffer.subarray(pos,lineEnd).toString('utf8');
-     const parsed=jsonLines(line);rows.push(...parsed);
-     messages.push(...messagesFrom(parsed,runtime).map((m,index)=>({...m,id:`${id}:${start+pos}${index?`:${index}`:''}`,offset:start+pos})));
-     pos=lineEnd+1;
+    for(let pos=0;pos<buffer.length&&weight<=limits.bytes;){
+     const lf=buffer.indexOf(10,pos),lineEnd=lf<0?buffer.length:lf,parsed=jsonLines(buffer.subarray(pos,lineEnd).toString('utf8'));rows.push(...parsed);
+     const found=messagesFrom(parsed,runtime).map((m,index)=>({...m,id:`${id}:${start+pos}${index?`:${index}`:''}`,offset:start+pos}));
+     weight+=Buffer.byteLength(JSON.stringify(found));messages.push(...found);pos=lineEnd+1;
     }
+   }
+   if(start!==null&&weight<=limits.bytes){
     const tailNow=await tailAt(to),after=await stat(file.path);
     if(after.dev!==info.dev||after.ino!==info.ino||after.size<to)throw Error('Native history changed; reopen the session to read it again.');
-    const configuration=sessionConfiguration(rows,runtime);
     return {messages,historyPage:1,delta:true,historySnapshot:Buffer.from(JSON.stringify({v:1,key,size:to,end:to,tail:tailNow})).toString('base64url'),
-     ...(rows.length?{sessionConfiguration:configuration}:{})};
+     ...(rows.length?{sessionConfiguration:sessionConfiguration(rows,runtime)}:{})};
    }
+   deltaFallback=true;
   }
   if(snapshot){size=info.size;end=size;tail=await tailAt(size);}
   let next=end,scanned=0,configuration;const messages=[];
@@ -336,7 +337,7 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{
   const turnStartedAt=midTurn?await promptBefore(h,runtime,next,limits,{key,mark:tailAt}):null;
   const after=await stat(file.path);if(after.dev!==info.dev||after.ino!==info.ino||after.size<size)throw Error('Native history changed; reopen the session to read it again.');
   const encode=offset=>Buffer.from(JSON.stringify({v:1,key,size,end:offset,tail})).toString('base64url');
-  return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,...(turnStartedAt?{turnStartedAt}:{}),
+  return {messages,historyPage:1,historySnapshot:encode(size),...(deltaFallback?{deltaFallback:true}:{}),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,...(turnStartedAt?{turnStartedAt}:{}),
    ...(!messages.length&&next>0?{notice:'No displayable messages in this portion. Earlier history remains; click Load older history to continue.'}:{}),
    ...(!cursor?{sessionConfiguration:configuration||sessionConfiguration([],runtime)}:{})};
  }finally{await h.close();}

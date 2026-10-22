@@ -10,14 +10,16 @@ import {join} from 'node:path';
  * its size limit (least recently used first). With a copy, the bytes never cross the device link again, and the file
  * still opens while that device is offline.
  */
-export const MEDIA_CACHE_DEFAULTS=Object.freeze({limitBytes:2*1024**3,maxFileBytes:256*1024**2,prefetchBytes:64*1024**2,maxAgeMs:10*86400000});
+export const MEDIA_CACHE_DEFAULTS=Object.freeze({limitBytes:2*1024**3,maxFileBytes:256*1024**2,maxAgeMs:10*86400000});
 const KEY=/^[a-f0-9]{64}$/,PART=/^[a-f0-9]{64}\.[a-f0-9-]{36}\.part$/,TOUCH_MS=3600000;
 
 export class MediaCache {
   constructor({dir,clock=()=>Date.now(),...options}) {
     Object.assign(this,MEDIA_CACHE_DEFAULTS,options,{dir,clock});
-    this.ready=mkdir(dir,{recursive:true,mode:0o700});this.writing=new Set();this.touched=new Map();this.trimming=null;
+    this.ready=this.prepare();this.writing=new Set();this.touched=new Map();this.trimming=null;
   }
+  /** The folder exists (again, if it was removed while Home ran); a failure means no copies, never a crash. */
+  prepare() {return mkdir(this.dir,{recursive:true,mode:0o700}).then(()=>true,()=>false);}
   key(t) {return createHash('sha256').update(JSON.stringify([t.n,t.r,t.p,t.s,t.m,t.i,t.d])).digest('hex');}
   cacheable(t) {return Number.isSafeInteger(t?.s)&&t.s>0&&t.s<=this.maxFileBytes;}
   /** The path of a complete copy of this version, or null. Use keeps it young (at most one timestamp write an hour). */
@@ -37,7 +39,7 @@ export class MediaCache {
     if(!this.cacheable(t))return null;
     const key=this.key(t);if(this.writing.has(key))return null;
     this.writing.add(key);
-    try{await this.ready;}catch{this.writing.delete(key);return null;}
+    if(!await this.prepare()){this.writing.delete(key);return null;}
     const tmp=join(this.dir,`${key}.${randomUUID()}.part`),stream=createWriteStream(tmp,{mode:0o600});
     let count=0,failed=false,done=false;stream.on('error',()=>{failed=true;});
     return {
@@ -45,7 +47,8 @@ export class MediaCache {
       /** Keep the copy only when the relay finished and every byte arrived; otherwise leave nothing behind. */
       finish:async ok=>{
         if(done)return false;done=true;
-        await new Promise(resolveClose=>{stream.once('close',resolveClose);stream.end();});
+        // A stream that already failed has closed; waiting for its close again would never return.
+        if(!stream.closed)await new Promise(resolveClose=>{stream.once('close',resolveClose);stream.end();});
         this.writing.delete(key);
         if(ok&&!failed&&count===t.s){try{await rename(tmp,join(this.dir,key));this.scheduleTrim();return true;}catch{}}
         await unlink(tmp).catch(()=>{});return false;

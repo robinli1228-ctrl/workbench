@@ -114,10 +114,15 @@ test('a refresh with the last snapshot gets only the rows appended since, a half
   const again = await read();
   const ids = new Map(again.messages.map(m => [m.text, m.id]));
   for (const m of [...grew.messages, ...finished.messages]) assert.equal(m.id, ids.get(m.text));
-  // A burst larger than one reply falls back to the latest page.
+  // Rows heavier than one page (under the raw-byte limit) fall back to the latest page too, marked as such, and stay under the 1 MB socket.
+  appendFileSync(file, Array.from({ length: 130 }, (_, i) => row('assistant', 'y'.repeat(11000), 10 + (i % 50))).join('\n') + '\n');
+  const heavy = await read(finished.historySnapshot);
+  assert.equal(heavy.delta, undefined); assert.equal(heavy.deltaFallback, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(heavy)) < 1024 * 1024, 'the reply fits the Worker socket');
+  // A burst larger than one reply in raw bytes falls back as well.
   appendFileSync(file, Array.from({ length: 40 }, (_, i) => row('assistant', 'x'.repeat(50000), 10 + i)).join('\n') + '\n');
-  const burst = await read(finished.historySnapshot);
-  assert.equal(burst.delta, undefined); assert.ok(burst.messages.length > 0);
+  const burst = await read(heavy.historySnapshot);
+  assert.equal(burst.delta, undefined); assert.equal(burst.deltaFallback, true); assert.ok(burst.messages.length > 0);
 });
 
 test('a history page holds up to 45 prompts and 768 KB of rows, and its reply fits the 1 MB Worker socket', async t => {

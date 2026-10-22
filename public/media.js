@@ -32,19 +32,20 @@ const baseName=path=>String(path).split(/[\\/]/).at(-1)||path;
 
 const cache=new Map(),queue=[];let active=0;
 /**
- * Metadata reads share a small queue so long chats never crowd out state and message requests. A described file is
- * reused for 10 minutes (its link names one file version and stays valid for days, so the browser's copy is reused);
- * an unavailable answer only for 30 seconds, so a device coming back online shows up quickly.
+ * Metadata reads share a small queue so long chats never crowd out state and message requests. A description is reused
+ * for a minute (30 s when unavailable), so a file regenerated at the same path shows its new version soon; the link
+ * itself names one file version and stays the same all day, so re-describing does not re-download unchanged bytes.
+ * `maxAge` lets a caller (the viewer) ask for a fresher description.
  */
-const DESCRIBED_MS=10*60000,UNAVAILABLE_MS=30000;
-function describeQueued(context,path,{fresh=false}={}) {
+const DESCRIBED_MS=60000,UNAVAILABLE_MS=30000;
+function describeQueued(context,path,{fresh=false,maxAge=DESCRIBED_MS}={}) {
   const key=`${context.key}\n${path}`,cached=cache.get(key);
-  if(!fresh&&cached&&Date.now()-cached.at<(cached.available===false?UNAVAILABLE_MS:DESCRIBED_MS))return cached.promise;
+  if(!fresh&&cached&&Date.now()-cached.at<Math.min(maxAge,cached.available===false?UNAVAILABLE_MS:DESCRIBED_MS))return cached.promise;
   const entry={at:Date.now(),available:null};
   entry.promise=new Promise((resolve,reject)=>{
     queue.push({run:()=>context.describe(path),resolve,reject});
     const drain=()=>{while(active<2&&queue.length){const next=queue.shift();active++;Promise.resolve().then(next.run).then(next.resolve,next.reject).finally(()=>{active--;drain();});}};drain();
-  }).then(info=>{entry.available=Boolean(info?.available);return info;}).catch(error=>{cache.delete(key);throw error;});
+  }).then(info=>{entry.available=Boolean(info?.available);return info;}).catch(error=>{if(cache.get(key)===entry)cache.delete(key);throw error;});
   cache.set(key,entry);return entry.promise;
 }
 
@@ -105,8 +106,9 @@ function attachPreview(card,info,renew=null) {
   const box=el('span','media-card-preview');box.dataset.kind=info.kind;box.setAttribute('aria-hidden','true');
   const drop=()=>{box.remove();card.classList.remove('has-preview');};
   // The file may have changed since it was described (its old link then fails): describe it again once, then give up.
-  const retry=(node,suffix='')=>{let tried=false;node.addEventListener('error',()=>{if(tried||!renew){drop();return;}tried=true;
-    void renew().then(fresh=>{if(fresh?.available&&fresh.url&&fresh.url!==info.url){info.url=fresh.url;node.src=`${fresh.url}${suffix}`;}else drop();}).catch(drop);});};
+  // Each element keeps its own link: the description object is shared by every card of the same file.
+  const retry=(node,suffix='')=>{let tried=false,current=info.url;node.addEventListener('error',()=>{if(tried||!renew){drop();return;}tried=true;
+    void renew().then(fresh=>{if(fresh?.available&&fresh.url&&fresh.url!==current){current=fresh.url;node.src=`${fresh.url}${suffix}`;}else drop();}).catch(drop);});};
   const load=()=>{
     if(info.kind==='image'){const image=el('img');image.alt='';image.decoding='async';retry(image);image.src=info.url;box.append(image);return;}
     const video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='metadata';video.setAttribute('playsinline','');video.disablePictureInPicture=true;
@@ -184,8 +186,9 @@ export function openTextLightbox({name,size=null,at=null,url}){
 export async function openMediaViewer(path,context,{at=null}={}) {
   const v=lightbox({name:baseName(path),at}),{version,download,stage,overlay,status,title,bytes}=v;
   let info;
-  // The card's description is reused: its link is the one the thumbnail loaded, so the browser already has the bytes.
-  try{info=await describeQueued(context,path);}
+  // A description from the last 30 s is reused (the link the thumbnail just loaded); an older one is renewed, so a file
+  // regenerated at the same path or a device that went offline is noticed. Unchanged files keep their link either way.
+  try{info=await describeQueued(context,path,{maxAge:30000});}
   catch(error){if(version===viewerVersion){overlay.hidden=true;status.hidden=false;status.textContent=t('Unable to open: {message}',{message:error.message});}throw error;}
   if(version!==viewerVersion)return info;
   title.textContent=info.name||baseName(path);
@@ -206,7 +209,7 @@ function renderStage(stage,overlay,status,info,summary,path,context,version) {
     let reason='format';
     try{const response=await fetch(info.url,{headers:{Range:'bytes=0-0'}});reason=response.ok?'format':((await response.json().catch(()=>({}))).code||`HTTP ${response.status}`);}catch{reason='network';}
     if(version!==viewerVersion)return;
-    if(['media_ticket_invalid','file_changed'].includes(reason)&&!media.dataset.renewed){
+    if(['media_ticket_invalid','file_changed','source_offline'].includes(reason)&&!media.dataset.renewed){
       const fresh=await describeQueued(context,path,{fresh:true}).catch(()=>null);
       if(fresh?.available){media.dataset.renewed='1';info.url=fresh.url;media.src=fresh.url;overlay.hidden=false;return;}
     }

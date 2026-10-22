@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import {Writable} from 'node:stream';
 import {mkdtemp,mkdir,writeFile,readFile,rm,symlink,utimes,readdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -13,6 +14,8 @@ import {captureDirectorySnapshot} from '../src/source-sync-files.mjs';
 import {mediaPathMatches,mediaKindFromName,formatBytes} from '../public/media.js';
 
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+/** A response stand-in that discards bytes, for driving a relay directly. */
+const sink=()=>Object.assign(new Writable({write(chunk,encoding,callback){callback();}}),{writeHead(){},headersSent:false});
 const mp4Head=()=>Buffer.concat([Buffer.from([0,0,0,0x18]),Buffer.from('ftypisom'),Buffer.alloc(8)]);
 /** A deterministic file larger than the old 20 MB attachment and sync limits. */
 function bigVideo(size=25*1024*1024) {
@@ -28,10 +31,10 @@ async function harness({capable=true,cache=false}={}) {
   db.put('projects',{id:'p1',name:'media'});
   db.put('workers',{id:'srv',name:'Server',capabilities:{mediaStream:capable?1:0}});db.put('workers',{id:'mac',name:'Mac',capabilities:{mediaStream:1}});
   db.put('workspaces',{id:'p1:srv',projectId:'p1',nodeId:'srv',localRoot:source});db.put('workspaces',{id:'p1:mac',projectId:'p1',nodeId:'mac',localRoot:target});
-  let base='';
+  let base='',statShift=0;
   const query=async({nodeId},action,input)=>{
     if(!onlineNodes.has(nodeId))throw new Error('offline');
-    if(action==='media_stat')return statMedia({root:input.root,path:input.file});
+    if(action==='media_stat'){const info=await statMedia({root:input.root,path:input.file});return statShift?{...info,mtimeMs:info.mtimeMs+statShift}:info;}
     if(action==='media_hash')return hashMedia({root:input.root,path:input.file,version:input.version});
     if(action==='media_receive')return receiveMedia({url:base+input.path,size:input.size,sha256:input.sha256,name:input.name,transferId:input.transferId,workspace:input.workspace});
     if(action==='media_stream'){
@@ -52,7 +55,7 @@ async function harness({capable=true,cache=false}={}) {
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));base=`http://127.0.0.1:${server.address().port}`;
   const run={id:'r1',projectId:'p1',nodeId:'srv',workspace:source,projectRoot:source};
-  return {root,source,target,db,media,mediaCache,onlineNodes,base,run,close:async()=>{server.close();await rm(root,{recursive:true,force:true});}};
+  return {root,source,target,db,media,mediaCache,onlineNodes,base,run,shiftStat:ms=>{statShift=ms;},close:async()=>{server.close();await rm(root,{recursive:true,force:true});}};
 }
 
 test('media type comes from header bytes, not the file name', () => {
@@ -129,7 +132,8 @@ test('one file version keeps one link for the day, cached 10 days; a changed fil
     const source=()=>h.media.sourceForRun(h.run,'out/shot.mp4');
     const first=await h.media.describe(source()),again=await h.media.describe(source());
     assert.equal(again.url,first.url,'describing the same version twice yields the same link');
-    assert.ok(Date.parse(first.expiresAt)-Date.now()>=10*86400000,'the link outlives the 10-day browser cache');
+    const left=Date.parse(first.expiresAt)-Date.now();
+    assert.ok(left>86400000&&left<=2*86400000,'the link lasts through the next day, never 10 days: it is the only credential');
     const response=await fetch(h.base+first.url,{headers:{Range:'bytes=0-9'}});
     assert.equal(response.headers.get('cache-control'),'private, max-age=864000, immutable');await response.arrayBuffer();
     await utimes(path,new Date(),new Date(Date.now()+5000));
@@ -138,7 +142,7 @@ test('one file version keeps one link for the day, cached 10 days; a changed fil
 });
 
 test('Home keeps a full copy of a relayed file by version, serves it again without the device, and drops partial copies', async () => {
-  const h=await harness({cache:{prefetchBytes:2*1024*1024}});
+  const h=await harness({cache:true});
   const until=async check=>{for(let i=0;i<100&&!(await check());i++)await new Promise(r=>setTimeout(r,20));};
   try {
     const bytes=bigVideo(512*1024);await writeFile(join(h.source,'out','shot.mp4'),bytes);
@@ -151,15 +155,27 @@ test('Home keeps a full copy of a relayed file by version, serves it again witho
     assert.equal(offline.status,206,'the copy answers while the device is offline');
     assert.deepEqual(Buffer.from(await offline.arrayBuffer()),bytes.subarray(1000,2000));
     h.onlineNodes.add('srv');
-    // A range read of a small file fills the copy in the background.
+    // A range read is relayed and settles, and is not turned into a background download of the whole file.
     const clip=bigVideo(1024*1024);await writeFile(join(h.source,'out','clip.mp4'),clip);
     const clipInfo=await h.media.describe(h.media.sourceForRun(h.run,'out/clip.mp4')),clipTicket=h.media.verify(clipInfo.ticket);
-    await (await fetch(h.base+clipInfo.url,{headers:{Range:'bytes=0-99'}})).arrayBuffer();
-    await until(async()=>Boolean(await h.mediaCache.lookup(clipTicket)));
-    assert.ok(await h.mediaCache.lookup(clipTicket),'the background fill completed');
-    // An interrupted write leaves nothing behind.
+    const settled=h.media.relay(clipTicket,0,99,sink(),206,{},{});
+    assert.equal(await Promise.race([settled.then(()=>'settled'),new Promise(r=>setTimeout(()=>r('hung'),5000))]),'settled','a relay without a cache writer settles');
+    await new Promise(r=>setTimeout(r,300));assert.equal(await h.mediaCache.lookup(clipTicket),null,'no background copy of a range read');
+    // A file the device reports as changed at the end of the read is not kept.
+    const other=bigVideo(256*1024);await writeFile(join(h.source,'out','changing.mp4'),other);
+    const changing=await h.media.describe(h.media.sourceForRun(h.run,'out/changing.mp4'));
+    h.shiftStat(5000);await (await fetch(h.base+changing.url)).arrayBuffer();await new Promise(r=>setTimeout(r,300));h.shiftStat(0);
+    assert.equal(await h.mediaCache.lookup(h.media.verify(changing.ticket)),null,'a version that no longer matches leaves no copy');
+    // A removed device's files are not served from the copy.
+    h.db.put('removedDevices',{id:'srv'});h.onlineNodes.delete('srv');
+    assert.equal((await fetch(h.base+info.url,{headers:{Range:'bytes=0-9'}})).status,503);
+    h.db.remove('removedDevices','srv');h.onlineNodes.add('srv');
+    // An interrupted write, or one whose file stream failed, leaves nothing behind and does not hang.
     const w=await h.mediaCache.writer({n:'x',r:'/',p:'a',s:10,m:1,i:1,d:1});w.write(Buffer.alloc(4));assert.equal(await w.finish(true),false);
-    assert.deepEqual((await readdir(join(h.root,'home-cache'))).filter(n=>n.endsWith('.part')),[]);
+    const broken=await h.mediaCache.writer({n:'y',r:'/',p:'b',s:10,m:1,i:1,d:1});
+    await rm(join(h.root,'home-cache'),{recursive:true,force:true});broken.write(Buffer.alloc(10));
+    assert.equal(await Promise.race([broken.finish(true),new Promise(r=>setTimeout(()=>r('hung'),3000))]),false,'a failed stream finishes as not kept');
+    assert.ok(await h.mediaCache.writer({n:'z',r:'/',p:'c',s:1,m:1,i:1,d:1}),'the folder is made again for the next copy');
   } finally {await h.close();}
 });
 

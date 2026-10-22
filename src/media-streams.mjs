@@ -1,6 +1,5 @@
 import {randomUUID,randomBytes,createHmac,timingSafeEqual} from 'node:crypto';
 import {pipeline} from 'node:stream/promises';
-import {Writable} from 'node:stream';
 import {resolve,relative,isAbsolute,basename} from 'node:path';
 
 /**
@@ -9,7 +8,11 @@ import {resolve,relative,isAbsolute,basename} from 'node:path';
  * over a separate HTTP request per range (never the control WebSocket), and Home pipes them through without buffering.
  */
 export const MEDIA_TICKET_MS=15*60000;
-/** Browsers keep a file version this long. Card links for one version stay identical for a day, so the cache can hit. */
+/**
+ * Browsers keep a file version this long. A card link is the only credential for its bytes, so it is valid only to the end
+ * of the next day; within a day every link for one version is identical, so the browser's copy is reused, and the next
+ * day's new link is answered from Home's own copy, without the device.
+ */
 export const MEDIA_CACHE_MS=10*86400000;
 const DAY=86400000;
 export const MEDIA_CACHE_CONTROL=`private, max-age=${MEDIA_CACHE_MS/1000}, immutable`;
@@ -26,7 +29,7 @@ const beneath=(root,path)=>{const rel=relative(root,path);return !isAbsolute(rel
 export class MediaStreams {
   constructor({db,query,online,change=()=>{},secret=randomBytes(32),clock=()=>Date.now(),cache=null}) {
     Object.assign(this,{db,query,online,change,secret,clock,cache});
-    this.pending=new Map();this.slots=new Map();this.transfers=new Map();this.prefetching=new Set();
+    this.pending=new Map();this.slots=new Map();this.transfers=new Map();
   }
 
   sign(payload) {const body=b64(JSON.stringify(payload));return `${body}.${createHmac('sha256',this.secret).update(body).digest('base64url')}`;}
@@ -87,9 +90,9 @@ export class MediaStreams {
     try{info=await this.query({nodeId:source.nodeId,projectId:source.projectId},'media_stat',{...source.native,root:source.root,file:source.path},10000);}
     catch(error){const code=codeOf(error);if(['media_missing','media_not_file','invalid_media_path'].includes(code))return {available:false,reason:code,name,sourceNodeId:source.nodeId};throw error;}
     // Signed identity is a lookup key, not a directory grant; Home resolves the current binding for every query.
-    // Expiry is rounded up to the end of a day bucket: every describe of one file version on one day signs the same ticket,
-    // so the link (and the browser's cached bytes) stays the same; a changed file gets a new link through its version fields.
-    const payload={v:1,n:source.nodeId,r:source.root,p:info.relativePath,s:info.size,m:info.mtimeMs,i:info.ino,d:info.dev,t:info.mime,k:info.kind,nm:info.name,pr:source.projectId||null,ns:source.native||null,rq:source.path,x:(Math.floor(this.clock()/DAY)+1)*DAY+MEDIA_CACHE_MS};
+    // Expiry is the end of the next UTC day: every describe of one file version on one day signs the same ticket, so the
+    // link (and the browser's cached bytes) stays the same all day; a changed file gets a new link through its version fields.
+    const payload={v:1,n:source.nodeId,r:source.root,p:info.relativePath,s:info.size,m:info.mtimeMs,i:info.ino,d:info.dev,t:info.mime,k:info.kind,nm:info.name,pr:source.projectId||null,ns:source.native||null,rq:source.path,x:(Math.floor(this.clock()/DAY)+2)*DAY};
     const ticket=this.sign(payload),worker=this.db.get('workers',source.nodeId);
     const transfers=source.projectId?this.db.listProject('mediaTransfers',source.projectId).filter(t=>t.source?.nodeId===source.nodeId&&t.source.root===source.root&&t.source.path===info.relativePath)
       .map(t=>({id:t.id,nodeId:t.nodeId,status:t.status,received:t.received||0,size:t.size,path:t.path||null,error:t.error||null})):[];
@@ -114,7 +117,9 @@ export class MediaStreams {
     if(req.headers['sec-fetch-site']==='cross-site')return respond(res,403,{error:'Cross-site media request rejected'});
     const t=this.verify(token);if(!t)return respond(res,401,{error:'media_ticket_invalid',code:'media_ticket_invalid'});
     // Home's copy of this exact version answers first, so the bytes never cross the device link twice (and still open offline).
-    const cached=this.cache?await this.cache.lookup(t):null;
+    // A removed device's files are not served from the copy either.
+    const known=Boolean(this.db.get('workers',t.n))&&!this.db.get('removedDevices',t.n);
+    const cached=this.cache&&known?await this.cache.lookup(t):null;
     const reason=cached?null:this.usable(t.n);if(reason)return respond(res,STATUS[reason],{error:reason,code:reason});
     const size=t.s;let start=0,end=size-1,partial=false;
     const range=req.headers.range;
@@ -135,29 +140,28 @@ export class MediaStreams {
     if(req.method==='HEAD'||size===0){res.writeHead(status,headers);return res.end();}
     if(cached){res.writeHead(status,headers);return pipeline(this.cache.read(cached,start,end),res).catch(()=>res.destroy());}
     const tracked=this.progress.has(token)?{onBytes:count=>this.trackProgress(token,count)}:{};
-    // A whole-file read is copied as it passes; a range read of a small enough file fetches the whole file once in the background.
+    // A whole-file read (pictures, downloads, sends, a short video's first chunk) is copied as it passes. Range reads are
+    // not turned into background downloads: a video thumbnail's first range would otherwise pull the whole file over the
+    // device link and hold one of its few relay slots.
     const writer=this.cache&&start===0&&end===size-1?await this.cache.writer(t):null;
-    if(!writer&&this.cache&&partial&&size<=this.cache.prefetchBytes)void this.prefetch(t);
     return this.relay(t,start,end,res,status,headers,{...tracked,writer});
   }
 
-  /** Fill Home's copy of a file the viewer is reading in ranges: one full relay into the cache, nothing to the browser. */
-  async prefetch(t) {
-    const key=this.cache.key(t);if(this.prefetching.has(key)||await this.cache.lookup(t))return;
-    this.prefetching.add(key);
-    try{
-      const writer=await this.cache.writer(t);if(!writer)return;
-      const sink=new Writable({write(chunk,encoding,callback){callback();}});sink.writeHead=()=>{};
-      await this.relay(t,0,t.s-1,sink,200,{},{writer});
-    }finally{this.prefetching.delete(key);}
+  /** Whether the device still holds exactly this version; a copy is kept only then (a file rewritten mid-read is not). */
+  async unchanged(t) {
+    try{const info=await this.query({nodeId:t.n,projectId:t.pr},'media_stat',{...t.ns,root:t.r,file:t.p},10000);return info.size===t.s&&info.mtimeMs===t.m&&info.ino===t.i&&info.dev===t.d;}
+    catch{return false;}
   }
 
   async relay(t,start,end,res,status,headers,{onBytes,writer=null}={}) {
     let release;
-    try{release=await this.slot(t.n);}catch(error){void writer?.finish(false);return respond(res,STATUS[error.code]||503,{error:error.code,code:error.code},{'Retry-After':'2'});}
+    try{release=await this.slot(t.n);}catch(error){if(writer)void writer.finish(false);return respond(res,STATUS[error.code]||503,{error:error.code,code:error.code},{'Retry-After':'2'});}
     const id=randomUUID(),secret=randomBytes(24).toString('hex'),length=end-start+1;
     let settle;const done=new Promise(resolveDone=>{settle=resolveDone;});
-    const entry={id,secret,nodeId:t.n,length,status,headers,res,started:false,closed:false,onBytes,writer,complete:false,settle:()=>{clearTimeout(entry.timer);this.pending.delete(id);release();void writer?.finish(entry.complete).finally(settle);}};
+    const entry={id,secret,nodeId:t.n,length,status,headers,res,started:false,closed:false,onBytes,writer,complete:false,settle:()=>{clearTimeout(entry.timer);this.pending.delete(id);release();
+      if(!writer)return settle();
+      // Every byte arrived and the device still has this version: keep the copy; otherwise discard it.
+      void (entry.complete?this.unchanged(t):Promise.resolve(false)).then(ok=>writer.finish(ok),()=>writer.finish(false)).finally(settle);}};
     this.pending.set(id,entry);
     entry.timer=setTimeout(()=>this.fail(id,'media_timeout'),ARRIVAL_MS);
     res.on('close',()=>{entry.closed=true;if(!entry.started)this.fail(id,null);});
