@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const load = name => import(pathToFileURL(join(root, 'src', name)).href);
-const { NativeTurnsHome, NativeTurnRunner, applyNativeTurnEvent } = await load('native-turns.mjs');
+const { NativeTurnsHome, NativeTurnRunner, applyNativeTurnEvent, PAGE_INSTRUCTIONS, PAGE_INSTRUCTIONS_VERSION } = await load('native-turns.mjs');
 const { Store } = await load('store.mjs');
 const { nativeTurnArgs, NativeCliSession: CliPrintSession, NativeCodexSession, createNativeSession } = await load('native-turn-sessions.mjs');
 const { createHomeNativeTurns } = await load('native-turns-home.mjs');
@@ -135,6 +135,40 @@ test('a turn that ends during the blip is still named on reconnection, so Home s
   r2.post({ type: 'native_turn_event', id: 'x', event: { kind: 'status', status: 'succeeded' } });
   assert.equal(r2.outbox.length, 20000); assert.equal(r2.outbox[0].event.text, '1'); assert.equal(r2.outbox.at(-1).event.kind, 'status');
   r2.resume();
+});
+
+test('page instructions go once per session and version, like group-chat role instructions, and only to a Worker that uses them', t => {
+  const { db, sent, turns } = home(t);
+  db.put('workers', { id: 'n1', capabilities: { nativeTurns: 3, nativePageInstructions: 1 } });
+  const worker = db.get('workers', 'n1'), end = (id, status) => turns.receive('n1', { type: 'native_turn_event', id, event: { kind: 'status', status } });
+  const send = (n, extra = {}) => turns.create('n1', worker, { runtime: 'claude', sessionId: SID, clientTurnId: `client-00000${n}`, text: `ask ${n}`, ...extra });
+  // The first turn carries them; it fails before reaching the model, so the next one carries them again.
+  const first = send(1);
+  assert.deepEqual(sent.at(-1).instructions, { version: PAGE_INSTRUCTIONS_VERSION, text: PAGE_INSTRUCTIONS });
+  end(first.id, 'failed');
+  const second = send(2);
+  assert.ok(sent.at(-1).instructions, 'not delivered yet: sent again');
+  end(second.id, 'succeeded');
+  assert.equal(db.get('nativePageInstructions', `n1/claude/${SID}`).version, PAGE_INSTRUCTIONS_VERSION);
+  const third = send(3);
+  assert.equal(sent.at(-1).instructions, undefined, 'delivered: never again for this version');
+  end(third.id, 'succeeded');
+  // Grok has no question tool; an older Worker would drop them, so it gets none and nothing is recorded.
+  turns.create('n1', worker, { runtime: 'grok', sessionId: SID, clientTurnId: 'client-000004', text: 'hi' });
+  assert.equal(sent.at(-1).instructions, undefined);
+  db.put('workers', { id: 'n1', capabilities: { nativeTurns: 3 } });
+  turns.create('n1', db.get('workers', 'n1'), { runtime: 'codex', sessionId: SID, clientTurnId: 'client-000005', text: 'hi' });
+  assert.equal(sent.at(-1).instructions, undefined);
+});
+
+test('the Worker puts page instructions in front of the prompt, in a system-reminder block, and never on a control turn', async () => {
+  const prompts = [];
+  const runner = new NativeTurnRunner({ send() {}, resolveSession: async () => ({ workspace: '/tmp/demo' }),
+    createSession: options => ({ start: async prompt => { prompts.push(prompt); options.emit('status', { status: 'running', nativeSessionId: SID }); options.emit('status', { status: 'succeeded' }); }, stop: async () => {}, shutdown() {} }) });
+  await runner.start({ id: 'p1', runtime: 'grok', sessionId: SID, prompt: 'hello', instructions: { version: 'v1', text: 'Prefer cards.' } });
+  assert.equal(prompts[0], '<system-reminder>\nWorkbench page instructions, version v1:\nPrefer cards.\n</system-reminder>\n\nhello');
+  await runner.start({ id: 'p2', runtime: 'grok', sessionId: SID, prompt: '/compact', control: 'compact', instructions: { version: 'v1', text: 'Prefer cards.' } });
+  assert.equal(prompts[1], '/compact');
 });
 
 test('Worker runner resumes the history folder and stops a CLI that returns a different native ID', async () => {
