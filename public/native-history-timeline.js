@@ -25,7 +25,11 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
   rows.forEach((m,i)=>target.messages.set(m.id||String(i),m));
   // The oldest page read decides where the loaded rows begin; a refresh of the latest page never moves that start.
   if(!target.initialized||older)target.turnStartedAt=page.turnStartedAt||null;
-  const ordered=[...target.messages.values()].sort((a,b)=>(a.offset??0)-(b.offset??0));target.history.replaceChildren(...renderMessages(ordered,target.item,{turnStartedAt:target.turnStartedAt}));
+  const ordered=[...target.messages.values()].sort((a,b)=>(a.offset??0)-(b.offset??0)),nodes=renderMessages(ordered,target.item,{turnStartedAt:target.turnStartedAt});
+  // Unchanged turns come back as the same nodes; when nothing changed at all, the list is left alone (the feed's own
+  // anchored rows, day lines and notes stay where they are). Otherwise the list is swapped, reusing those nodes.
+  const owned=[...target.history.children].filter(node=>!node.matches('.native-turn-anchored,.nt-day,.nt-interruption-note'));
+  if(owned.length!==nodes.length||owned.some((node,i)=>node!==nodes[i]))target.history.replaceChildren(...nodes);
   if(page.notice||target.skippedError){const n=document.createElement('p');n.className=target.skippedError?'workspace-note chat-bubble is-error-card':'workspace-note';n.textContent=t(page.notice||target.skippedError);target.history.append(n);}
   if(!target.initialized||older){target.cursor=page.nextCursor||null;target.initialized=true;}highlightLatestChatCard(scroll);
  }

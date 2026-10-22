@@ -554,25 +554,46 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(m.role==='user'){row.dataset.text=promptKey(text);lastPromptAt=m.timestamp||null;}
    else if(lastPromptAt&&m.timestamp){const ms=Date.parse(m.timestamp)-Date.parse(lastPromptAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(lastPromptAt,Date.parse(m.timestamp));}
    return row;}
+ /**
+  * Rendered turns, per session, by a signature of everything they show. A refresh that only adds rows reuses the nodes of
+  * every turn it did not touch, so their pictures, open activity lists and scroll position stay as they are.
+  */
+ const renderedTurns=new Map(),renderedPieces=new Map();
+ const turnSignature=(turn,startedAt)=>JSON.stringify([turn.prompt?.id||null,turn.prompt?.text?.length||0,startedAt,turn.endedAt,
+  turn.parts.map(p=>p.kind==='tool'?[p.id,p.done,p.failed,(p.output||'').length]:p.kind==='notice'?['n',p.task,p.timestamp]:['t',p.timestamp,(p.text||'').length])]);
  /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
  function renderHistory(rows,item,{turnStartedAt=null}={}){
-  const nodes=[],isPrompt=row=>isHistoryPrompt(row.text);
+  const nodes=[],isPrompt=row=>isHistoryPrompt(row.text),sessionKey=key(item),before=renderedTurns.get(sessionKey)||new Map(),after=new Map();
+  // Inside a turn that did change (the one still running), its prompt, text blocks and activity groups that did not change
+  // are taken over from the turn's previous rendering, so a picture in a reply that is still growing is not reloaded.
+  const piecesBefore=renderedPieces.get(sessionKey)||new Map(),piecesAfter=new Map();
+  let own=null;const piece=(id,build)=>{const node=piecesBefore.get(id)||build();piecesBefore.delete(id);piecesAfter.set(id,node);own.set(id,node);return node;};
   for(const [index,turn] of historyTurns(rows,{isPrompt,noticeOf:row=>taskNotificationOf(row.text)}).entries()){
-   if(turn.prompt)nodes.push(renderHistoryRow(turn.prompt,item));
-   if(!turn.parts.length)continue;
-   const frag=document.createDocumentFragment();let group=[],process=false;
-   const flush=()=>{if(!group.length)return;process=true;frag.append(activityBlock({steps:group.map(tool=>classifyStep({type:'tool_use',id:tool.id,name:tool.name,input:tool.input,output:tool.output,is_error:tool.failed,status:'completed'},'succeeded')),notes:[],t,onPreview:(step,path)=>preview.open(step,path)}));group=[];};
-   for(const part of turn.parts){if(part.kind==='tool'){group.push(part);continue;}flush();
-    // A background task finished while this turn ran: one quiet line in place, the reply goes on below it.
-    if(part.kind==='notice'){const line=el('div','nt-system nt-turn-notice');line.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${part.task.slice(0,8)}`));if(part.timestamp)line.title=time(part.timestamp);frag.append(line);continue;}const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));frag.append(md);}
-   flush();
-   const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
-   row.dataset.role='assistant';if(process)row.dataset.process='1';
    // A turn whose prompt is on an older, unloaded page starts at the time the Worker looked back for (turnStartedAt).
-   const startedAt=turn.prompt?.timestamp||(index===0?turnStartedAt:null);
-   if(startedAt&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(startedAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(startedAt,Date.parse(turn.endedAt));}
-   nodes.push(row);
+   const startedAt=turn.prompt?.timestamp||(index===0?turnStartedAt:null),signature=turnSignature(turn,startedAt);
+   const kept=before.get(signature);
+   if(kept){after.set(signature,kept);for(const [id,node] of kept.pieces)piecesAfter.set(id,node);nodes.push(...kept.nodes);continue;}
+   own=new Map();const turnNodes=renderHistoryTurn(turn,item,startedAt,piece);after.set(signature,{nodes:turnNodes,pieces:own});nodes.push(...turnNodes);
   }
+  renderedTurns.set(sessionKey,after);if(renderedTurns.size>8)renderedTurns.delete(renderedTurns.keys().next().value);
+  renderedPieces.set(sessionKey,piecesAfter);if(renderedPieces.size>8)renderedPieces.delete(renderedPieces.keys().next().value);
+  return nodes;
+ }
+ function renderHistoryTurn(turn,item,startedAt,piece=(id,build)=>build()){
+  const nodes=[],first=turn.parts[0],turnId=turn.prompt?.id||`${first?.id||first?.timestamp||''}`;
+  if(turn.prompt)nodes.push(piece(`${turnId}|prompt|${turn.prompt.text?.length||0}`,()=>renderHistoryRow(turn.prompt,item)));
+  if(!turn.parts.length)return nodes;
+  const frag=document.createDocumentFragment();let group=[],process=false;
+  const flush=()=>{if(!group.length)return;process=true;const steps=group;frag.append(piece(`${turnId}|steps|${JSON.stringify(steps.map(tool=>[tool.id,tool.done,tool.failed,(tool.output||'').length]))}`,()=>activityBlock({steps:steps.map(tool=>classifyStep({type:'tool_use',id:tool.id,name:tool.name,input:tool.input,output:tool.output,is_error:tool.failed,status:'completed'},'succeeded')),notes:[],t,onPreview:(step,path)=>preview.open(step,path)})));group=[];};
+  for(const part of turn.parts){if(part.kind==='tool'){group.push(part);continue;}flush();
+   // A background task finished while this turn ran: one quiet line in place, the reply goes on below it.
+   if(part.kind==='notice'){const line=el('div','nt-system nt-turn-notice');line.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${part.task.slice(0,8)}`));if(part.timestamp)line.title=time(part.timestamp);frag.append(line);continue;}const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;
+   frag.append(piece(`${turnId}|text|${part.timestamp}|${text.length}`,()=>{const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));return md;}));}
+  flush();
+  const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
+  row.dataset.role='assistant';if(process)row.dataset.process='1';
+  if(startedAt&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(startedAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(startedAt,Date.parse(turn.endedAt));}
+  nodes.push(row);
   return nodes;
  }
  const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed({historyChanged:true}),onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage:renderHistoryRow,renderMessages:renderHistory});
@@ -1001,17 +1022,29 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   return activityBlock({steps,notes,t,live,open,onPreview:(step,path)=>preview.open(step,path),onToggle:isOpen=>{if(!live)isOpen?openProcesses.add(turn.id):openProcesses.delete(turn.id);}});
  }
  /** Keep prose and tools at their recorded positions, including the latest commentary while a tool is still running. */
+ /** Text blocks of page turns by their text: the once-a-second redraw of a live reply keeps finished blocks (and their pictures) as they are. */
+ const turnBlocks=new Map();
  function turnContent(turn,session,{live=false,open=false}={}){
   const frag=document.createDocumentFragment(),all=processRows(turn,{includeFinal:true});
+  const blocksBefore=turnBlocks.get(turn.id)||new Map(),blocksAfter=new Map();
+  // A block still being written is drawn again, but its file cards are moved over from its previous drawing (only from
+  // blocks this redraw does not keep), so a picture in it does not reload while the text around it grows.
+  const texts=new Set(all.filter(r=>r.kind!=='tool'&&r.kind!=='log'&&r.kind!=='error').map(r=>simplifiedCliOutput(stripAnsi(r.text||''))));
+  const donors=[...blocksBefore].filter(([text])=>!texts.has(text)).flatMap(([,node])=>[...node.querySelectorAll('.media-card')]);
+  const adopt=md=>{for(const card of md.querySelectorAll('.media-card')){const i=donors.findIndex(d=>d.title===card.title);if(i>=0)card.replaceWith(donors.splice(i,1)[0]);}};
   let group=[];
   const flush=()=>{if(!group.length)return;const steps=group.filter(r=>r.kind==='tool').map(r=>classifyStep(r.item,turn.status)),notes=group.filter(r=>r.kind==='log'||r.kind==='error');
    if(steps.length||notes.length)frag.append(activityBlock({steps,notes,t,live,open,onPreview:(step,path)=>preview.open(step,path),onToggle:isOpen=>{if(!live)isOpen?openProcesses.add(turn.id):openProcesses.delete(turn.id);}}));group=[];};
   for(const row of all){
    if(row.kind==='tool'||row.kind==='log'||row.kind==='error'){group.push(row);continue;}
    flush();const text=simplifiedCliOutput(stripAnsi(row.text||''));if(!text.trim())continue;
-   const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));frag.append(md);
+   let md=blocksBefore.get(text);blocksBefore.delete(text);
+   if(!md){md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));adopt(md);}
+   blocksAfter.set(text,md);frag.append(md);
   }
-  flush();return frag;
+  flush();
+  if(turn.id){turnBlocks.delete(turn.id);turnBlocks.set(turn.id,blocksAfter);if(turnBlocks.size>64)turnBlocks.delete(turnBlocks.keys().next().value);}
+  return frag;
  }
  /** The single working line of a live turn: pulse, elapsed time, what the CLI is doing right now, Stop. */
  function workingLine(turn,onStop){
