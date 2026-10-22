@@ -120,6 +120,21 @@ test('tickets pin one file version and expire; device state is reported, never g
   } finally {await old.close();}
 });
 
+test('one file version keeps one link for the day, cached 10 days; a changed file gets a new link', async () => {
+  const h=await harness();
+  try {
+    const path=join(h.source,'out','shot.mp4');await writeFile(path,bigVideo(64*1024));
+    const source=()=>h.media.sourceForRun(h.run,'out/shot.mp4');
+    const first=await h.media.describe(source()),again=await h.media.describe(source());
+    assert.equal(again.url,first.url,'describing the same version twice yields the same link');
+    assert.ok(Date.parse(first.expiresAt)-Date.now()>=10*86400000,'the link outlives the 10-day browser cache');
+    const response=await fetch(h.base+first.url,{headers:{Range:'bytes=0-9'}});
+    assert.equal(response.headers.get('cache-control'),'private, max-age=864000, immutable');await response.arrayBuffer();
+    await utimes(path,new Date(),new Date(Date.now()+5000));
+    assert.notEqual((await h.media.describe(source())).url,first.url,'a new version is a new link');
+  } finally {await h.close();}
+});
+
 test('a disguised file is served only as a download, never inline', async () => {
   const h=await harness();
   try {

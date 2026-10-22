@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Attachments } from './attachments.mjs';
+import { MEDIA_CACHE_CONTROL } from './media-streams.mjs';
 import { NativeTurnsHome, nativeTurnRows, turnIdPattern } from './native-turns.mjs';
 import { assertNativeSessionIdle } from './native-sessions.mjs';
 import { nativeTerminalProject, projectTerminalLock } from './terminal-resume.mjs';
@@ -50,7 +51,8 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
   const sideAsks=createHomeSideAsks({send,online,attachments,owner:NativeTurnsHome.owner,change});
   const sideSweep=setInterval(()=>sideAsks.sweep(),5*60000);sideSweep.unref?.();
   turns.recover();
-  const file=(res,{item,bytes},disposition=true)=>{res.writeHead(200,{'Content-Type':item.mime,'Content-Length':bytes.length,'Cache-Control':'private, no-store',
+  // Workers read with no-store; the browser keeps an attachment 10 days, since its ID never names other bytes.
+  const file=(res,{item,bytes},disposition=true,cache=false)=>{res.writeHead(200,{'Content-Type':item.mime,'Content-Length':bytes.length,'Cache-Control':cache?MEDIA_CACHE_CONTROL:'private, no-store',
     ...(disposition?{'Content-Disposition':`${item.mime.startsWith('image/')?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(item.name)}`}:{})});res.end(bytes);return true;};
   /** Returns true when the request belonged to the takeover API. Authentication has already been checked by home.mjs. */
   async function http(req,res,{pathname,url,json,body}) {
@@ -63,7 +65,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     const nodeId=decodeURIComponent(m[1]),worker=db.get('workers',nodeId);if(!worker)throw Error('Device is unavailable');
     const [,,area,a,b]=m;
     if(area==='attachments'&&req.method==='POST'&&!a){json(res,await attachments.upload(NativeTurnsHome.owner(nodeId),req),201);return true;}
-    if(area==='attachments'&&req.method==='GET'&&a&&!b)return file(res,await attachments.read(NativeTurnsHome.owner(nodeId),decodeURIComponent(a)));
+    if(area==='attachments'&&req.method==='GET'&&a&&!b)return file(res,await attachments.read(NativeTurnsHome.owner(nodeId),decodeURIComponent(a)),true,true);
     if(area==='attachments'&&req.method==='DELETE'&&a&&!b){
       const id=decodeURIComponent(a);attachments.resolve(NativeTurnsHome.owner(nodeId),[id]);
       // Remove the record synchronously before unlinking: concurrent sends can no longer bind this file.

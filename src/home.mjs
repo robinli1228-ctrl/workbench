@@ -32,7 +32,7 @@ import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
 import {recentProjectArtifacts} from './run-artifacts.mjs';
 import {ProjectFiles} from './project-files.mjs';
-import {MediaStreams} from './media-streams.mjs';
+import {MediaStreams,MEDIA_CACHE_CONTROL} from './media-streams.mjs';
 import {CrossDeviceRead} from './cross-device-read.mjs';
 import { RoleSteering } from './role-steering.mjs';
 import { collaborationQueueView } from './coordination-wait.mjs';
@@ -182,7 +182,12 @@ const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify
 const online = id => sockets.get(id)?.readyState === 1&&!reconnectingNodes.has(id);
 const sourceSync=new SourceSyncHome({db,data,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery});
 const projectFiles=new ProjectFiles({db,online,query:workerQuery});
-const mediaStreams=new MediaStreams({db,online,query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
+// The media ticket key survives restarts, so a file version keeps its link (and the browser its cached copy) across them.
+const mediaKeyFile=join(data,'media-ticket.key');
+let mediaSecret;try{mediaSecret=Buffer.from((await readFile(mediaKeyFile,'utf8')).trim(),'base64');}catch{}
+if(mediaSecret?.length!==32){mediaSecret=randomBytes(32);await writeFile(mediaKeyFile,mediaSecret.toString('base64'),{mode:0o600});}
+await chmod(mediaKeyFile,0o600);
+const mediaStreams=new MediaStreams({db,online,secret:mediaSecret,query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
 const crossDeviceRead=new CrossDeviceRead({db,online,query:workerQuery});
 const setup = new ProjectSetup(db, rooms, workerQuery, online, change);
 const credentials = new CredentialStore(join(data, 'credentials'));
@@ -622,7 +627,8 @@ const server = http.createServer(async (req, res) => {
           projectId=transfer.projectId;id=transferAttachment[2];
         }
         const { item, bytes } = await attachments.read(projectId, id);
-        res.writeHead(200, { 'Content-Type': item.mime, 'Content-Length': bytes.length, 'Cache-Control': 'private, no-store',
+        // An attachment never changes under its ID: the browser keeps it for 10 days instead of fetching it on every render (Workers still read no-store).
+        res.writeHead(200, { 'Content-Type': item.mime, 'Content-Length': bytes.length, 'Cache-Control': attachmentMatch ? MEDIA_CACHE_CONTROL : 'private, no-store',
           'Content-Disposition': `${item.mime.startsWith('image/') ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(item.name)}` });
         return res.end(bytes);
       }

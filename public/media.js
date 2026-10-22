@@ -31,15 +31,20 @@ const el=(tag,className='',text)=>{const node=document.createElement(tag);if(cla
 const baseName=path=>String(path).split(/[\\/]/).at(-1)||path;
 
 const cache=new Map(),queue=[];let active=0;
-/** Metadata reads share a small queue so long chats never crowd out state and message requests. */
+/**
+ * Metadata reads share a small queue so long chats never crowd out state and message requests. A described file is
+ * reused for 10 minutes (its link names one file version and stays valid for days, so the browser's copy is reused);
+ * an unavailable answer only for 30 seconds, so a device coming back online shows up quickly.
+ */
+const DESCRIBED_MS=10*60000,UNAVAILABLE_MS=30000;
 function describeQueued(context,path,{fresh=false}={}) {
   const key=`${context.key}\n${path}`,cached=cache.get(key);
-  if(!fresh&&cached&&Date.now()-cached.at<60000)return cached.promise;
-  const entry={at:Date.now()};
+  if(!fresh&&cached&&Date.now()-cached.at<(cached.available===false?UNAVAILABLE_MS:DESCRIBED_MS))return cached.promise;
+  const entry={at:Date.now(),available:null};
   entry.promise=new Promise((resolve,reject)=>{
     queue.push({run:()=>context.describe(path),resolve,reject});
     const drain=()=>{while(active<2&&queue.length){const next=queue.shift();active++;Promise.resolve().then(next.run).then(next.resolve,next.reject).finally(()=>{active--;drain();});}};drain();
-  }).catch(error=>{cache.delete(key);throw error;});
+  }).then(info=>{entry.available=Boolean(info?.available);return info;}).catch(error=>{cache.delete(key);throw error;});
   cache.set(key,entry);return entry.promise;
 }
 
@@ -84,7 +89,7 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
     if(!info.available){card.dataset.state=info.reason;meta.textContent=t(REASONS[info.reason]||'Unavailable');return;}
     card.dataset.state=info.copyOf?'copy':'ready';card.dataset.kind=info.kind;icon.textContent=ICON[info.kind]||ICON.file;
     meta.textContent=[formatBytes(info.size),info.copyOf?t('Local copy'):''].filter(Boolean).join(' · ');
-    if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info);
+    if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info,()=>describeQueued(context,path,{fresh:true}));
   };
   if(describe)void describeQueued(context,path).then(show).catch(()=>{});
   card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void openMediaViewer(path,context,{at:messageTime(card)}).then(show).catch(()=>{});});
@@ -95,14 +100,17 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
  * Thumbnail above the card's name: the image itself, or a video's first frame (metadata preload + a #t fragment, muted, no autoplay).
  * It streams through the same ticket URL as the viewer and only once the card is near the viewport; a failure falls back to the icon.
  */
-function attachPreview(card,info) {
+function attachPreview(card,info,renew=null) {
   if(card.querySelector('.media-card-preview'))return;
   const box=el('span','media-card-preview');box.dataset.kind=info.kind;box.setAttribute('aria-hidden','true');
   const drop=()=>{box.remove();card.classList.remove('has-preview');};
+  // The file may have changed since it was described (its old link then fails): describe it again once, then give up.
+  const retry=(node,suffix='')=>{let tried=false;node.addEventListener('error',()=>{if(tried||!renew){drop();return;}tried=true;
+    void renew().then(fresh=>{if(fresh?.available&&fresh.url&&fresh.url!==info.url){info.url=fresh.url;node.src=`${fresh.url}${suffix}`;}else drop();}).catch(drop);});};
   const load=()=>{
-    if(info.kind==='image'){const image=el('img');image.alt='';image.decoding='async';image.addEventListener('error',drop,{once:true});image.src=info.url;box.append(image);return;}
+    if(info.kind==='image'){const image=el('img');image.alt='';image.decoding='async';retry(image);image.src=info.url;box.append(image);return;}
     const video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='metadata';video.setAttribute('playsinline','');video.disablePictureInPicture=true;
-    video.addEventListener('error',drop,{once:true});video.src=`${info.url}#t=0.1`;box.append(video,el('span','media-card-play','\u25B6'));
+    retry(video,'#t=0.1');video.src=`${info.url}#t=0.1`;box.append(video,el('span','media-card-play','\u25B6'));
   };
   card.classList.add('has-preview');card.prepend(box);
   if('IntersectionObserver' in window){const watch=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){watch.disconnect();load();}},{rootMargin:'240px'});watch.observe(card);}
@@ -176,7 +184,8 @@ export function openTextLightbox({name,size=null,at=null,url}){
 export async function openMediaViewer(path,context,{at=null}={}) {
   const v=lightbox({name:baseName(path),at}),{version,download,stage,overlay,status,title,bytes}=v;
   let info;
-  try{info=await describeQueued(context,path,{fresh:true});}
+  // The card's description is reused: its link is the one the thumbnail loaded, so the browser already has the bytes.
+  try{info=await describeQueued(context,path);}
   catch(error){if(version===viewerVersion){overlay.hidden=true;status.hidden=false;status.textContent=t('Unable to open: {message}',{message:error.message});}throw error;}
   if(version!==viewerVersion)return info;
   title.textContent=info.name||baseName(path);
@@ -197,7 +206,7 @@ function renderStage(stage,overlay,status,info,summary,path,context,version) {
     let reason='format';
     try{const response=await fetch(info.url,{headers:{Range:'bytes=0-0'}});reason=response.ok?'format':((await response.json().catch(()=>({}))).code||`HTTP ${response.status}`);}catch{reason='network';}
     if(version!==viewerVersion)return;
-    if(reason==='media_ticket_invalid'&&!media.dataset.renewed){
+    if(['media_ticket_invalid','file_changed'].includes(reason)&&!media.dataset.renewed){
       const fresh=await describeQueued(context,path,{fresh:true}).catch(()=>null);
       if(fresh?.available){media.dataset.renewed='1';info.url=fresh.url;media.src=fresh.url;overlay.hidden=false;return;}
     }

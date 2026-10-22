@@ -8,6 +8,10 @@ import {resolve,relative,isAbsolute,basename} from 'node:path';
  * over a separate HTTP request per range (never the control WebSocket), and Home pipes them through without buffering.
  */
 export const MEDIA_TICKET_MS=15*60000;
+/** Browsers keep a file version this long. Card links for one version stay identical for a day, so the cache can hit. */
+export const MEDIA_CACHE_MS=10*86400000;
+const DAY=86400000;
+export const MEDIA_CACHE_CONTROL=`private, max-age=${MEDIA_CACHE_MS/1000}, immutable`;
 export const PREVIEW_CHUNK=8*1024*1024;
 const NODE_STREAMS=4,SLOT_WAIT_MS=20000,ARRIVAL_MS=20000,IDLE_MS=60000;
 const PLAYABLE=new Set(['video','audio','image','pdf']);
@@ -82,7 +86,9 @@ export class MediaStreams {
     try{info=await this.query({nodeId:source.nodeId,projectId:source.projectId},'media_stat',{...source.native,root:source.root,file:source.path},10000);}
     catch(error){const code=codeOf(error);if(['media_missing','media_not_file','invalid_media_path'].includes(code))return {available:false,reason:code,name,sourceNodeId:source.nodeId};throw error;}
     // Signed identity is a lookup key, not a directory grant; Home resolves the current binding for every query.
-    const payload={v:1,n:source.nodeId,r:source.root,p:info.relativePath,s:info.size,m:info.mtimeMs,i:info.ino,d:info.dev,t:info.mime,k:info.kind,nm:info.name,pr:source.projectId||null,ns:source.native||null,rq:source.path,x:this.clock()+MEDIA_TICKET_MS};
+    // Expiry is rounded up to the end of a day bucket: every describe of one file version on one day signs the same ticket,
+    // so the link (and the browser's cached bytes) stays the same; a changed file gets a new link through its version fields.
+    const payload={v:1,n:source.nodeId,r:source.root,p:info.relativePath,s:info.size,m:info.mtimeMs,i:info.ino,d:info.dev,t:info.mime,k:info.kind,nm:info.name,pr:source.projectId||null,ns:source.native||null,rq:source.path,x:(Math.floor(this.clock()/DAY)+1)*DAY+MEDIA_CACHE_MS};
     const ticket=this.sign(payload),worker=this.db.get('workers',source.nodeId);
     const transfers=source.projectId?this.db.listProject('mediaTransfers',source.projectId).filter(t=>t.source?.nodeId===source.nodeId&&t.source.root===source.root&&t.source.path===info.relativePath)
       .map(t=>({id:t.id,nodeId:t.nodeId,status:t.status,received:t.received||0,size:t.size,path:t.path||null,error:t.error||null})):[];
@@ -118,7 +124,7 @@ export class MediaStreams {
       partial=true;
     }
     const inline=!download&&PLAYABLE.has(t.k),filename=encodeURIComponent(t.nm||'file');
-    const headers={'Content-Type':inline?t.t:'application/octet-stream','Accept-Ranges':'bytes','Cache-Control':'private, max-age=600','X-Content-Type-Options':'nosniff',
+    const headers={'Content-Type':inline?t.t:'application/octet-stream','Accept-Ranges':'bytes','Cache-Control':MEDIA_CACHE_CONTROL,'X-Content-Type-Options':'nosniff',
       // Browsers will not render a PDF inside a sandboxed document; every other response is sandboxed in case it is opened directly.
       ...(inline&&t.k==='pdf'?{}:{'Content-Security-Policy':"sandbox; default-src 'none'"}),'Content-Disposition':`${inline?'inline':'attachment'}; filename*=UTF-8''${filename}`,'Content-Length':String(size?end-start+1:0),
       ...(partial?{'Content-Range':`bytes ${start}-${end}/${size}`}:{})};
