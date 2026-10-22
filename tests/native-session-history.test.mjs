@@ -51,6 +51,19 @@ test('tool calls and results come out of a Claude history as rows the page can p
   assert.equal(messages[3].output.length, 4001); assert.equal(messages[3].failed, false);
 });
 
+test('a compaction summary is flagged so the page folds it into a system line, also when an older Worker does not flag it', async () => {
+  const { isCompactSummary } = await import(pathToFileURL(join(root, 'public', 'history-prompt.js')).href);
+  const summary = 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary: …';
+  const messages = historyMessages([
+    { type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, timestamp: '2026-10-22T01:23:02Z', message: { role: 'user', content: summary } },
+    { type: 'user', timestamp: '2026-10-22T01:24:00Z', message: { role: 'user', content: '继续' } },
+  ], 'claude');
+  assert.deepEqual(messages.map(m => [m.text.slice(0, 4), m.compact === true]), [['This', true], ['继续', false]]);
+  assert.equal(isCompactSummary(summary), true);
+  assert.equal(isCompactSummary('继续', true), true);
+  assert.equal(isCompactSummary('Please explain: This session is being continued from a previous conversation that ran out of context.'), false);
+});
+
 test('Codex and Grok histories yield the same tool rows, with the command behind a Codex exec script', () => {
   const codex = historyMessages([
     { type: 'response_item', timestamp: 't1', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] } },
@@ -70,6 +83,46 @@ test('Codex and Grok histories yield the same tool rows, with the command behind
   ], 'grok');
   assert.deepEqual(grok.map(m => m.role), ['user', 'assistant', 'tool_call', 'tool_result']);
   assert.equal(grok[2].name, 'run_terminal_command'); assert.equal(grok[3].output, 'a b');
+});
+
+test('a refresh with the last snapshot gets only the rows appended since, a half-written line whole once finished', async t => {
+  const { appendFileSync } = await import('node:fs');
+  const home = mkdtempSync(join(tmpdir(), 'wb-claude-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const workspace = '/srv/work/delta', dir = join(home, 'projects', workspace.replace(/[^a-zA-Z0-9]/g, '-'));
+  mkdirSync(dir, { recursive: true });
+  const env = { HOME: home, CLAUDE_CONFIG_DIR: home }, record = { id: SID, runtime: 'claude', workspace }, file = join(dir, `${SID}.jsonl`);
+  const row = (role, text, i) => JSON.stringify({ type: role, uuid: `${role[0]}${i}`, timestamp: `2026-10-22T01:00:${String(i).padStart(2, '0')}.000Z`, cwd: workspace, message: { role, content: role === 'user' ? text : [{ type: 'text', text }] } });
+  writeFileSync(file, [row('user', 'first', 1), row('assistant', 'one', 2)].join('\n') + '\n');
+  const read = snapshot => readNativeSession('claude', SID, { env, record, historyPage: true, ...(snapshot ? { snapshot, delta: true } : {}) });
+  const full = await read();
+  assert.deepEqual(full.messages.map(m => m.text), ['first', 'one']); assert.equal(full.delta, undefined);
+  // Nothing new: an empty answer, not the page again.
+  const same = await read(full.historySnapshot);
+  assert.equal(same.delta, true); assert.deepEqual(same.messages, []);
+  // A reply appended, plus half of the next line still being written.
+  const next = row('assistant', 'two', 3), half = row('user', 'second', 4);
+  appendFileSync(file, next + '\n' + half.slice(0, 20));
+  const grew = await read(same.historySnapshot);
+  assert.deepEqual(grew.messages.map(m => m.text), ['two'], 'only the appended reply; the half line is not a row yet');
+  assert.ok(grew.messages[0].id.startsWith(`${SID}:`) && grew.messages[0].offset > full.messages[1].offset);
+  // The rest of that line arrives: it is read whole, from its own start.
+  appendFileSync(file, half.slice(20) + '\n' + row('assistant', 'three', 5) + '\n');
+  const finished = await read(grew.historySnapshot);
+  assert.deepEqual(finished.messages.map(m => m.text), ['second', 'three']);
+  // Ids match what a full read gives for the same rows, so the page can merge them.
+  const again = await read();
+  const ids = new Map(again.messages.map(m => [m.text, m.id]));
+  for (const m of [...grew.messages, ...finished.messages]) assert.equal(m.id, ids.get(m.text));
+  // Rows heavier than one page (under the raw-byte limit) fall back to the latest page too, marked as such, and stay under the 1 MB socket.
+  appendFileSync(file, Array.from({ length: 130 }, (_, i) => row('assistant', 'y'.repeat(11000), 10 + (i % 50))).join('\n') + '\n');
+  const heavy = await read(finished.historySnapshot);
+  assert.equal(heavy.delta, undefined); assert.equal(heavy.deltaFallback, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(heavy)) < 1024 * 1024, 'the reply fits the Worker socket');
+  // A burst larger than one reply in raw bytes falls back as well.
+  appendFileSync(file, Array.from({ length: 40 }, (_, i) => row('assistant', 'x'.repeat(50000), 10 + i)).join('\n') + '\n');
+  const burst = await read(heavy.historySnapshot);
+  assert.equal(burst.delta, undefined); assert.equal(burst.deltaFallback, true); assert.ok(burst.messages.length > 0);
 });
 
 test('a history page holds up to 45 prompts and 768 KB of rows, and its reply fits the 1 MB Worker socket', async t => {

@@ -857,7 +857,7 @@ async function query(m) {
       if(m.action!=='native_sessions'&&!runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false))throw Error('CLI is not available on this device');
       if(m.action==='native_sessions'){send({type:'reply',id:m.id,result:await listNativeSessions(runtime,{scope:input.scope||'created',registry:db.list('nativeCatalogEntries'),managedSessions:input.managedSessions||[],adoptedSessions:input.adoptedSessions||[],nodeId:identity.nodeId})});return;}
       const record=input.record||registeredNativeSession(db,runtime,input.sessionId);
-      if(m.action==='native_session'){send({type:'reply',id:m.id,result:await readNativeSession(runtime,input.sessionId,{record,historyPage:input.historyPage===true,cursor:input.cursor,snapshot:input.snapshot})});return;}
+      if(m.action==='native_session'){send({type:'reply',id:m.id,result:await readNativeSession(runtime,input.sessionId,{record,historyPage:input.historyPage===true,cursor:input.cursor,snapshot:input.snapshot,delta:input.delta===true})});return;}
       if(paused)throw Error('Remote execution is paused');
       const freshId=input.sessionId?null:input.freshSessionId||null;
       if(!input.sessionId&&['claude','grok'].includes(runtime)&&!freshId)throw Error('Upgrade Home to create an exact native session ID');

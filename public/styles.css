@@ -3668,8 +3668,8 @@ audio.side-preview-media { background: transparent; }
 .side-preview-empty p { margin: 0; }
 .side-preview-empty-icon svg { width: 30px; height: 30px; opacity: .55; }
 /* The entry buttons: beside Copy under replies and prompts, Download in the viewer, in the file sheet and output details. */
-.native-session-content .nt-reply-foot .nt-side { display: grid; place-items: center; width: 24px; height: 24px; min-height: 24px; margin-left: -6px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--nt-quiet, var(--muted)); }
-.native-session-content .nt-reply-foot .nt-side:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
+:is(.native-session-content, .native-ask-body) .nt-reply-foot .nt-side { display: grid; place-items: center; width: 24px; height: 24px; min-height: 24px; margin-left: -6px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--nt-quiet, var(--muted)); }
+:is(.native-session-content, .native-ask-body) .nt-reply-foot .nt-side:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
 .nt-reply-foot .nt-side svg { width: 14px; height: 14px; }
 #artifact-detail-dialog .dialog-heading h2 { margin-right: auto; }
 #artifact-detail-dialog .dialog-heading { gap: 6px; }
@@ -3714,8 +3714,6 @@ audio.side-preview-media { background: transparent; }
 /* Side question tab: the preview panel's frame with a chat inside and a composer at the bottom. */
 .native-session-sidebar .native-side-panel.is-ask { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .native-side-ask { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.native-ask-head { align-items: center; }
-.native-ask-head .side-preview-titles { padding-top: 0; }
 .native-ask-body { display: block; padding: 12px 16px 16px; }
 .native-ask-body > .side-preview-empty { margin-top: 18vh; }
 .native-ask-body .nt-row { margin-bottom: 14px; }
@@ -3729,7 +3727,103 @@ audio.side-preview-media { background: transparent; }
 .native-ask-restarted { margin: 0 0 12px; }
 .native-ask-note { margin: 0; padding: 6px 16px; color: var(--danger); font-size: 12.5px; }
 .native-ask-form { flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--card-hairline, var(--line)); background: #f8fafd; }
-.native-ask-form .chat-input-field { grid-template-columns: 36px auto minmax(0, 1fr) auto; align-items: center; }
-.native-ask-model { align-self: center; width: auto; max-width: 160px; height: 28px; min-height: 28px; margin: 0 2px 0 -2px; padding: 0 24px 0 8px; border-radius: 8px; font-size: 12px; }
+.native-ask-form .chat-input-field { display: flex; flex-direction: column; align-items: stretch; }
+.native-ask-form .chat-input-field textarea { width: 100%; min-height: 36px; padding: 10px 12px 2px; }
+.native-ask-tools { display: flex; align-items: center; gap: 2px; padding: 0 4px 4px; }
+.native-ask-tools-gap { flex: 1; }
+.native-ask-tools .native-attach { margin: 0; }
+/* Send is a bare icon like attach: no filled button. */
+.native-ask-tools .chat-send, .native-ask-tools .chat-send:hover:not(:disabled) { margin: 0; border: 0; background: transparent; box-shadow: none; color: var(--accent); }
+.native-ask-tools .chat-send:hover:not(:disabled) { background: var(--accent-tint, rgb(79 91 206 / 8%)); }
+.native-ask-tools .chat-send:disabled { background: transparent; color: var(--text-muted, #8a91a0); opacity: .5; }
+/* The model picker reads as plain text with a caret, not a field (beats the global select box rule). */
+body .native-ask-tools select.native-ask-model:not([multiple]):not([size]) { flex: 0 1 auto; width: auto; min-width: 0; max-width: calc(100% - 84px); height: 28px; min-height: 28px; padding: 0 18px 0 6px; border: 0; border-radius: 6px; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a91a0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 3px center / 12px; box-shadow: none; outline: none; color: var(--text-muted, #6b7280); font-size: 12.5px; line-height: 28px; appearance: none; -webkit-appearance: none; text-overflow: ellipsis; cursor: pointer; }
+body .native-ask-tools select.native-ask-model:not([multiple]):hover:not(:disabled) { background-color: #f1f3f7; color: var(--ink); }
+body .native-ask-tools select.native-ask-model:not([multiple]):focus-visible { outline: 0; box-shadow: var(--focus-ring); }
 .native-ask-file { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef0f4; font-size: 12px; }
 @media (max-width: 1000px) { #native-side-tab-ask { display: none !important; } }
+/* Context compaction in history: a quiet line; the summary unfolds below it. */
+.nt-compact { display: block; }
+.nt-compact > summary { display: flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; }
+.nt-compact > summary::-webkit-details-marker { display: none; }
+.nt-compact > summary::before, .nt-compact > summary::after { content: ""; flex: 1; height: 1px; background: var(--card-hairline, var(--line)); }
+.nt-compact-toggle { color: var(--accent); }
+.nt-compact-toggle.is-open, .nt-compact[open] .nt-compact-toggle:not(.is-open) { display: none; }
+.nt-compact[open] .nt-compact-toggle.is-open { display: inline; }
+.nt-compact-body { max-height: 420px; margin-top: 10px; padding: 12px 16px; overflow: auto; border: 1px solid var(--card-hairline, var(--line)); border-radius: 12px; background: #fff; color: var(--ink); font-size: 13px; }
+/* Files tab: project outputs take most of the height, files named in replies the rest. */
+#native-side-outputs > .native-outputs-card { flex: 2 1 0; }
+#native-side-outputs > .native-files-half:not(.native-outputs-card) { flex: 1 1 0; min-height: 140px; }
+/* Working folder dialog: the folder card without its own frame, crumbs and refresh on the head line. */
+.native-folder-dialog { width: min(560px, 92vw); }
+.native-folder-dialog .native-folder-card { max-height: min(62vh, 560px); overflow: auto; padding: 0; border: 0; box-shadow: none; }
+.native-folder-dialog .native-folder-card > .native-card-head:first-child { height: auto; min-height: 22px; margin: 0 0 8px; padding: 0 0 8px; }
+.native-folder-dialog .native-folder-crumbs { flex: 1; min-width: 0; margin: 0; }
+/* Every right-panel card has the same slim title bar, with or without an action icon. */
+.native-side-card { --card-head: 22px; }
+.native-side-card > .native-card-head:first-child, .native-side-card > h3:first-child { box-sizing: content-box; display: flex; align-items: center; height: var(--card-head); min-height: var(--card-head); margin: -4px calc(-1 * var(--card-pad)) 10px; padding: 0 var(--card-pad) 8px; }
+.native-side-card > .native-card-head .native-icon-action { width: 22px; min-width: 22px; height: 22px; min-height: 22px; padding: 3px; }
+.native-side-card > .native-card-head .native-card-action { min-height: 22px; height: 22px; padding: 0 9px; }
+#native-side-outputs > .native-files-half { padding-top: 14px; }
+/* Sessions / Group chats switch: a line icon before each label, in the label's colour. */
+.project-sidebar .navigation-mode button { display: inline-flex; align-items: center; gap: 5px; }
+.navigation-mode-icon { flex: none; width: 16px; height: 16px; }
+
+/* Icon consistency (2026-10-22): icons that sit side by side share one size and one colour. */
+/* Left heading: the Sessions / Group chats icons and the new-conversation icon are the same size. */
+.navigation-mode-icon, .project-sidebar .new-conversation-button svg { width: 18px; height: 18px; }
+/* Role card: the device icon and the live-execution button read as a pair. */
+.role-card-head .role-name-device, .role-card-head .role-live-scene { color: var(--text-muted); }
+.role-card-head .role-name-device { width: 22px; height: 24px; }
+.role-card-head .role-live-scene { display: inline-grid; place-items: center; width: 24px; height: 24px; min-height: 24px; padding: 0; }
+.role-card-head .role-name-device svg, .role-card-head .role-live-scene svg { width: 16px; height: 16px; }
+.role-card-head .role-live-scene:hover { color: var(--accent); }
+/* Group chat right panel: card-level actions are plain muted icons like the Sessions side cards (26px target, 16px glyph). */
+#node-sidebar :is(.artifact-section-heading .icon-button, .git-summary-head .chat-icon-btn, #source-sync-panel .source-sync-heading > button) { display: inline-grid; place-items: center; width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; box-shadow: none; color: var(--text-muted); }
+#node-sidebar :is(.artifact-section-heading .icon-button, .git-summary-head .chat-icon-btn, #source-sync-panel .source-sync-heading > button):hover:not(:disabled) { color: var(--accent); background: var(--accent-tint, #eef0ff); }
+#node-sidebar :is(.artifact-section-heading .icon-button, .git-summary-head .chat-icon-btn, #source-sync-panel .source-sync-heading > button) svg { width: 16px; height: 16px; }
+#node-sidebar .artifact-section-heading .pause-button.active { color: #92500a; background: #fff5e9; }
+/* Card titles: the repository card's title icon is muted like any heading, not a link colour. */
+.git-summary-icon { color: var(--text-muted); }
+.git-summary-icon svg { width: 16px; height: 16px; }
+/* Device icons in lists and quick-access chips are one size. */
+#inspector-resources .sidebar-device .device-glyph, #inspector-resources .sidebar-device .device-glyph svg { width: 18px; height: 18px; }
+@media (max-width: 1000px) {
+  .role-card-head .role-name-device, .role-card-head .role-live-scene { width: 44px; height: 44px; }
+  .role-card-head .role-name-device svg, .role-card-head .role-live-scene svg { width: 19px; height: 19px; }
+}
+/* Device icons (2026-10-22): one colour everywhere (status is the dot or badge beside it), 18px in lists, chips and
+   cards, 16px inline after a role name; the overview strip pairs it with the 20px agent icon. */
+.role-machine svg, .device-glyph svg { color: var(--text-muted); }
+#native-session-list .project-item.active .native-session-device svg { color: var(--accent); }
+.role-name-device[role="button"]:hover svg { color: var(--accent); }
+.device-glyph, .device-glyph svg { width: 18px; height: 18px; }
+/* The number of a cloud server sits in the body of the cloud. */
+.role-machine.is-cloud .role-device-number { top: calc(50% + 2px); left: 47%; }
+.role-machine .role-device-number { color: var(--text-muted); }
+#native-session-list .project-item.active .role-device-number { color: var(--accent); }
+/* Session ID line under the This page / iTerm switch: the ID in a quiet monospace pill, then copy ID and copy iTerm command. */
+.native-session-id-row { display: flex; align-items: center; gap: 2px; margin-top: 10px; }
+.native-session-id-value { flex: 1; min-width: 0; margin-right: 4px; padding: 5px 10px; border-radius: 8px; background: #f3f5f8; color: var(--text-muted); font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-session-id-row .native-icon-action { flex: none; width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 5px; border: 0; border-radius: 7px; background: transparent; box-shadow: none; color: var(--text-muted); }
+.native-session-id-row .native-icon-action:hover:not(:disabled) { color: var(--accent); background: var(--accent-tint, #eef0ff); }
+.native-session-id-row .native-icon-action:disabled { opacity: .45; }
+.native-session-id-row .native-icon-action svg { width: 16px; height: 16px; }
+/* A background-task notice inside a reply: the same quiet system line, aligned with the reply's own content. */
+.nt-turn .nt-turn-notice, .nt-body .nt-turn-notice { max-width: none; margin: 6px 0 10px; }
+/* Viewer: previous / next picture in the conversation, over the picture's left and right edges. */
+dialog.media-lightbox .media-nav { position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 40px; height: 40px; min-height: 40px; margin-top: -20px; padding: 0; border: 0; border-radius: 999px; background: rgb(15 23 42 / 45%); color: #fff; box-shadow: none; cursor: pointer; transition: background .15s; }
+dialog.media-lightbox .media-nav:hover { background: rgb(15 23 42 / 70%); }
+dialog.media-lightbox .media-nav:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+dialog.media-lightbox .media-nav svg { width: 22px; height: 22px; }
+dialog.media-lightbox .media-nav-prev { left: 10px; }
+dialog.media-lightbox .media-nav-next { right: 10px; }
+.media-lightbox-count { margin-left: 8px; color: var(--text-muted, #8a91a0); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* Reply foot: copy, open on the right, the time, then why the turn did not finish. The icon buttons are 24px (the generic
+   36px icon-button minimum made the spacing uneven); with a 4px gap and 5px of padding around each 14px icon, every step
+   you see (icon to icon, icon to time, time to note) is 14px. */
+:is(.native-session-content, .native-ask-body) .nt-agent .nt-reply-foot, .nt-reply-foot { gap: 4px; }
+.nt-reply-foot :is(.nt-copy, .nt-side) { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 5px; }
+:is(.native-session-content, .native-ask-body) .nt-reply-foot .nt-side { margin-left: 0; }
+.nt-reply-foot .nt-duration { margin-left: 5px; }
+.nt-reply-foot .nt-foot-status { margin-left: 10px; color: var(--danger, #c0263a); font-size: 12px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }

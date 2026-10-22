@@ -51,11 +51,12 @@ const call=(callId,name,input,at)=>({role:'tool_call',callId:String(callId||''),
 const result=(callId,output,failed,at)=>({role:'tool_result',callId:String(callId||''),output:clip(toolText(output),4000),failed:failed===true,timestamp:at});
 /** Conversation rows plus the tool calls and results between them; the page pairs them and shows each turn like a page turn. */
 function messagesFrom(rows,runtime){return rows.flatMap(row=>{
- const at=row.timestamp||null,out=[],say=(role,content)=>{const text=bodyText(content);if(text)out.push({role,text:text.slice(0,12000),timestamp:at});};
+ const at=row.timestamp||null,out=[],say=(role,content,extra)=>{const text=bodyText(content);if(text)out.push({role,text:text.slice(0,12000),timestamp:at,...extra});};
  if(runtime==='claude'){
   // Meta user rows are context Claude Code injects (image descriptions, command caveats), never something the user typed.
   const m=row.isSidechain===true||row.isMeta===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
-  say(m.role,m.content);
+  // A compaction summary is context Claude Code wrote, not a prompt: the page shows it as a folded system line.
+  say(m.role,m.content,row.isCompactSummary===true?{compact:true}:undefined);
   for(const b of Array.isArray(m.content)?m.content:[]){if(b?.type==='tool_use')out.push(call(b.id,b.name,b.input,at));else if(b?.type==='tool_result')out.push(result(b.tool_use_id,b.content,b.is_error,at));}
  }else if(runtime==='codex'){
   if(row.type!=='response_item')return [];const p=row.payload||{};
@@ -263,15 +264,22 @@ async function scanBack(h,runtime,offset,floor,limits){
  return undefined;
 }
 
+/** The offset of the line that contains `offset`: itself when a line ended just before it, null when no line start lies within `budget` bytes. */
+async function lineStartAt(h,offset,budget){
+ if(offset<=0)return 0;
+ const length=Math.min(offset,budget),chunk=Buffer.alloc(length);await h.read(chunk,0,length,offset-length);
+ if(chunk[length-1]===10)return offset;
+ const lf=chunk.lastIndexOf(10);return lf>=0?offset-length+lf+1:offset-length===0?0:null;
+}
 /** Read backwards at line boundaries, pinning the original tail while a live CLI appends.
  * Cursors select offsets only inside this exact vendor file; each page has bounded I/O and wire size. */
-async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
+async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{delta=false}={}){
  if(!inside(await realpath(file.root),await realpath(file.path)))throw Error('History outside CLI directory');
  const h=await open(file.path,constants.O_RDONLY|constants.O_NOFOLLOW),hash=value=>createHash('sha256').update(value).digest('hex');
  try{
   const info=await h.stat();if(!info.isFile())throw Error('Not a history file');
   const key=hash(JSON.stringify([runtime,id,file.path,info.dev,info.ino,info.birthtimeMs]));
-  let prior=null;
+  let prior=null,deltaFallback=false;
   const token=cursor||snapshot;if(cursor&&snapshot)throw Error('Invalid native history cursor');
   if(token){try{if(typeof token!=='string'||token.length>2048)throw Error();prior=JSON.parse(Buffer.from(token,'base64url'));if(!prior||typeof prior!=='object'||Array.isArray(prior))throw Error();}catch{throw Error('Invalid native history cursor');}}
   let size=prior?.size??info.size,end=prior?.end??size;
@@ -280,6 +288,28 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
   let tail=await tailAt(size);
   if(prior&&prior.tail!==tail)throw Error('Native history changed; reopen the session to read it again.');
   // Quiet refresh must verify the previous snapshot, even when its last page had no older cursor.
+  if(snapshot&&delta){
+   // Only what was appended since the snapshot: from the start of the line that was still being written then (re-read whole
+   // now) to the end. Nothing new is an empty answer. More than one reply may carry (raw bytes, or rows heavier than a page:
+   // the Worker socket takes 1 MB) falls back to the latest page below, marked so the page replaces what it shows.
+   const from=prior.size,to=info.size,start=to-from>2*limits.bytes?null:await lineStartAt(h,from,limits.lookbackChunk);
+   const messages=[],rows=[];let weight=0;
+   if(start!==null){
+    const buffer=Buffer.alloc(to-start);if(buffer.length)await h.read(buffer,0,buffer.length,start);
+    for(let pos=0;pos<buffer.length&&weight<=limits.bytes;){
+     const lf=buffer.indexOf(10,pos),lineEnd=lf<0?buffer.length:lf,parsed=jsonLines(buffer.subarray(pos,lineEnd).toString('utf8'));rows.push(...parsed);
+     const found=messagesFrom(parsed,runtime).map((m,index)=>({...m,id:`${id}:${start+pos}${index?`:${index}`:''}`,offset:start+pos}));
+     weight+=Buffer.byteLength(JSON.stringify(found));messages.push(...found);pos=lineEnd+1;
+    }
+   }
+   if(start!==null&&weight<=limits.bytes){
+    const tailNow=await tailAt(to),after=await stat(file.path);
+    if(after.dev!==info.dev||after.ino!==info.ino||after.size<to)throw Error('Native history changed; reopen the session to read it again.');
+    return {messages,historyPage:1,delta:true,historySnapshot:Buffer.from(JSON.stringify({v:1,key,size:to,end:to,tail:tailNow})).toString('base64url'),
+     ...(rows.length?{sessionConfiguration:sessionConfiguration(rows,runtime)}:{})};
+   }
+   deltaFallback=true;
+  }
   if(snapshot){size=info.size;end=size;tail=await tailAt(size);}
   let next=end,scanned=0,configuration;const messages=[];
   // Internal request blobs and large tool results can fill a window without adding a chat row. Cross only empty windows,
@@ -307,18 +337,18 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE){
   const turnStartedAt=midTurn?await promptBefore(h,runtime,next,limits,{key,mark:tailAt}):null;
   const after=await stat(file.path);if(after.dev!==info.dev||after.ino!==info.ino||after.size<size)throw Error('Native history changed; reopen the session to read it again.');
   const encode=offset=>Buffer.from(JSON.stringify({v:1,key,size,end:offset,tail})).toString('base64url');
-  return {messages,historyPage:1,historySnapshot:encode(size),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,...(turnStartedAt?{turnStartedAt}:{}),
+  return {messages,historyPage:1,historySnapshot:encode(size),...(deltaFallback?{deltaFallback:true}:{}),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,...(turnStartedAt?{turnStartedAt}:{}),
    ...(!messages.length&&next>0?{notice:'No displayable messages in this portion. Earlier history remains; click Load older history to continue.'}:{}),
    ...(!cursor?{sessionConfiguration:configuration||sessionConfiguration([],runtime)}:{})};
  }finally{await h.close();}
 }
 
 /** Resume and preview resolve an exact native ID on the selected device, never a filename from the client. */
-export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null,pageLimits=HISTORY_PAGE}={}){
+export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null,delta=false,pageLimits=HISTORY_PAGE}={}){
  if(!idPattern.test(id||''))throw Error('Invalid native session ID');
  const file=await registeredFile(runtime,id,env,record);if(!file)throw Error('Registered native session history is unavailable; no external histories were scanned');
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
- if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot,pageLimits)};
+ if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot,pageLimits,{delta:Boolean(snapshot&&delta)})};
  const window=await readWindow(file.path,file.root,true,524288),rows=jsonLines(window.text),messages=messagesFrom(rows,runtime);
  const texts=messages.filter(m=>m.role==='user'||m.role==='assistant'),from=texts.length>80?messages.indexOf(texts.at(-80)):0;
  return {...info,messages:messages.slice(from),sessionConfiguration:sessionConfiguration(rows,runtime),partial:window.partial||texts.length>80};

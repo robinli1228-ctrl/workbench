@@ -244,12 +244,13 @@ export function createPreviewSheet(host,t,{onSide=null,canSide=()=>Boolean(onSid
 }
 
 /** History rows grouped into turns: a prompt, then the prose and tool calls up to the next prompt. A tool result joins
- * its call by id; injected user rows (reminders, context) neither start a turn nor split one. */
-export function historyTurns(rows,{isPrompt=row=>row.role==='user'}={}){
+ * its call by id; injected user rows (reminders, context) neither start a turn nor split one. A user row that noticeOf
+ * names (a background task finishing) stays inside the running turn as a notice part. */
+export function historyTurns(rows,{isPrompt=row=>row.role==='user',noticeOf=()=>''}={}){
  const turns=[],calls=new Map();let turn=null;
  const open=()=>{turn={prompt:null,parts:[],endedAt:null};turns.push(turn);return turn;};
  for(const row of rows){
-  if(row.role==='user'){if(isPrompt(row)){turn=open();turn.prompt=row;}continue;}
+  if(row.role==='user'){if(isPrompt(row)){turn=open();turn.prompt=row;continue;}const notice=noticeOf(row);if(!notice)continue;if(!turn)turn=open();turn.parts.push({kind:'notice',task:notice,timestamp:row.timestamp||null});continue;}
   if(row.role==='tool_result'){const tool=calls.get(row.callId);if(tool){tool.output=row.output||'';tool.failed=row.failed===true;tool.done=true;}continue;}
   if(!turn)turn=open();
   if(row.role==='tool_call'){const tool={kind:'tool',id:row.callId,name:row.name,input:row.input,output:'',failed:false,done:false,timestamp:row.timestamp||null};calls.set(row.callId,tool);turn.parts.push(tool);}
