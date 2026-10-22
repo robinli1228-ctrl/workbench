@@ -8,6 +8,13 @@ import { tr } from './i18n.mjs';
  * process survives an interrupted turn. Managed group-chat Runs never construct these classes.
  */
 export const NATIVE_KEEPALIVE=new Set(['claude','agy']);
+/**
+ * A nudge, not a rule: the page shows the model's questions as cards with options, so when a choice is the user's it
+ * should prefer asking through its question tool to guessing or listing options as text. Given at launch, at system level
+ * (Claude: an appended system prompt; Codex: developer instructions), so it is never written into the conversation.
+ * One-shot turns, which cannot answer, do not get it.
+ */
+export const QUESTION_HINT='This session is driven from a Workbench page that shows AskUserQuestion / request_user_input as a card with options and a free-text field. When a requirement is unclear or a choice belongs to the user, prefer asking with that tool over guessing or listing the options as plain text. Keep questions short, with a few options and the recommended one marked.';
 
 /** Exact resume arguments; print/stream flags only, plus the model and effort the person chose on the Sessions page. Resident Claude/Agy read stream-json turns from stdin. */
 export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,model=null,effort=null}) {
@@ -16,7 +23,7 @@ export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,mod
   const chosen=(modelFlag,effortFlag)=>[...(model?[modelFlag,model]:[]),...(effort?[effortFlag,effort]:[])];
   // A resident Claude answers permission prompts over stdio: every tool is still allowed by the bypass mode, but AskUserQuestion
   // (which only exists with a prompt host) reaches the page as a question card. A one-shot turn cannot answer, so it keeps bypassing.
-  if(runtime==='claude')return keepAlive?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--resume',sessionId,...chosen('--model','--effort'),'--permission-mode','bypassPermissions','--permission-prompt-tool','stdio']
+  if(runtime==='claude')return keepAlive?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--resume',sessionId,...chosen('--model','--effort'),'--permission-mode','bypassPermissions','--permission-prompt-tool','stdio','--append-system-prompt',QUESTION_HINT]
     :['-p',prompt,'--output-format','stream-json','--verbose','--resume',sessionId,...chosen('--model','--effort'),'--dangerously-skip-permissions'];
   if(runtime==='grok')return ['--always-approve','--no-plan','--cwd',cwd,...chosen('-m','--reasoning-effort'),'--output-format','streaming-messages-json','--include-partial-messages','--permission-mode','bypassPermissions','--resume',sessionId,'-p',prompt];
   if(runtime==='agy')return ['--output-format','stream-json','--dangerously-skip-permissions','--mode','accept-edits',...chosen('--model','--effort'),'--conversation',sessionId,...(keepAlive?['--input-format','stream-json']:['--print',prompt])];
@@ -27,7 +34,7 @@ export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,mod
 export class NativeCodexSession extends CodexSession {
   constructor(options){super({...options,effort:options.effort??null});this.hold=false;this.control=options.control||null;this.questionsSupported=true;}
   /** request_user_input is off in Codex's default mode unless the client opts in; the page answers it, so a takeover does. */
-  launchArgs(){return ['-c','features.default_mode_request_user_input=true',...super.launchArgs()];}
+  launchArgs(){return ['-c','features.default_mode_request_user_input=true','-c',`developer_instructions=${JSON.stringify(QUESTION_HINT)}`,...super.launchArgs()];}
   async openThread() {
     if(this.threadId)return {id:this.threadId};
     const response=await this.request('thread/resume',{threadId:this.resumeSessionId,cwd:this.cwd,approvalPolicy:'never',sandbox:'workspace-write',...(this.model?{model:this.model}:{})});

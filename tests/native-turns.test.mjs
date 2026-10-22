@@ -281,7 +281,8 @@ test('a resident Claude stream-json process receives exact resume, keeps its pid
 const a=process.argv.slice(2);if(!a.includes('--input-format'))process.exit(3);const id=a[a.indexOf('--resume')+1];
 console.log(JSON.stringify({type:'system',session_id:id}));
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.type!=='user')return;
- const c=m.message.content,images=Array.isArray(c)?c.filter(b=>b.type==='image').length:0,text=Array.isArray(c)?c[0].text:c;
+ const c=m.message.content,images=Array.isArray(c)?c.filter(b=>b.type==='image').length:0,raw=Array.isArray(c)?c[0].text:c;
+ const text=raw;
  console.log(JSON.stringify({type:'assistant',message:{content:[{type:'tool_use',id:'tu'+text,name:'Read',input:{file:'x'}}]}}));
  console.log(JSON.stringify({type:'result',subtype:'success',session_id:id,result:'pid='+process.pid+' text='+text+' images='+images}));});
 `.replace('#!/usr/bin/env node\n', '#!/usr/bin/env node\nconst require=(await import("node:module")).createRequire(import.meta.url);\n'));
@@ -499,6 +500,7 @@ createInterface({input:process.stdin}).on('line',line=>{appendFileSync('${log}',
   const reply = events.filter(e => e.id === 'k1' && e.event?.kind === 'message').map(e => e.event.text).join('\n');
   assert.match(reply, /answers=\{"colour":\{"answers":\["Blue"\]\}\}/);
   const lines = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l));
-  assert.ok(lines[0].join(' ').includes('-c features.default_mode_request_user_input=true app-server'), 'the feature flag rides on the launch');
+  assert.ok(lines[0].join(' ').includes('-c features.default_mode_request_user_input=true'), 'the feature flag rides on the launch');
+  assert.ok(lines[0].some(arg => arg.startsWith('developer_instructions=') && arg.includes('request_user_input')), 'so does the nudge to ask through the card');
   assert.equal(lines.find(l => l.method === 'initialize').params.capabilities.experimentalApi, true);
 });
