@@ -80,7 +80,7 @@ export class SideClaudeSession extends NativeCliSession{
 
 /** Codex: fork the parent once (read-only sandbox, no approvals), then resume the fork for every later question. */
 export class SideCodexSession extends NativeCodexSession{
- constructor(options){super(options);this.forkFrom=options.forkFrom||null;}
+ constructor(options){super(options);this.forkFrom=options.forkFrom||null;this.questionsSupported=false;}
  launchArgs(){return super.launchArgs().filter((arg,i,all)=>!(arg==='features.default_mode_request_user_input=true'||all[i+1]==='features.default_mode_request_user_input=true'));}
  async openThread(){
   if(this.threadId)return {id:this.threadId};
