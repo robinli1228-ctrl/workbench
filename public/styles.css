@@ -3719,6 +3719,8 @@ audio.side-preview-media { background: transparent; }
 .native-ask-body .nt-row { margin-bottom: 14px; }
 .native-ask-body .nt-agent { display: block; text-align: left; }
 .native-ask-body .nt-agent .nt-body, .native-ask-body .nt-agent .nt-reply-foot { max-width: 100%; margin-left: 0; }
+/* The side column is narrow: a reply keeps only a slight indent under the name, not the avatar's width. */
+.native-ask-body .nt-agent .nt-body, .native-ask-body .nt-agent .nt-reply-foot, .native-ask-body .nt-duration { padding-left: 6px; }
 .native-ask-body .nt-agent .nt-byline { flex-wrap: nowrap; white-space: nowrap; justify-content: flex-start; margin-left: 0; }
 .native-ask-body .nt-user .nt-body, .native-ask-body .nt-user .nt-prompt-tools { max-width: 88%; }
 .native-ask-body .nt-working { margin-left: 0; justify-content: flex-start; }
@@ -3728,7 +3730,12 @@ audio.side-preview-media { background: transparent; }
 .native-ask-note { margin: 0; padding: 6px 16px; color: var(--danger); font-size: 12.5px; }
 .native-ask-form { flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--card-hairline, var(--line)); background: #f8fafd; }
 .native-ask-form .chat-input-field { display: flex; flex-direction: column; align-items: stretch; }
-.native-ask-form .chat-input-field textarea { width: 100%; min-height: 36px; padding: 10px 12px 2px; }
+/* Side question input: the model picker's type size, three lines tall, scrolling past about seven. */
+.native-ask-form .chat-input-field textarea { width: 100%; height: 70px; min-height: 70px; max-height: 150px; padding: 10px 12px 4px; font-size: 12.5px; line-height: 1.6; scrollbar-width: thin; }
+.native-ask-form .chat-input-field textarea::-webkit-scrollbar { display: block; width: 6px; }
+.native-ask-form .chat-input-field textarea::-webkit-scrollbar-thumb { border-radius: 3px; background: #d5d9e0; }
+/* iOS Safari zooms into a field typed in below 16px; there the text stays readable at 16px instead. */
+@supports (-webkit-touch-callout: none) { .native-ask-form .chat-input-field textarea { font-size: 16px; } }
 .native-ask-tools { display: flex; align-items: center; gap: 2px; padding: 0 4px 4px; }
 .native-ask-tools-gap { flex: 1; }
 .native-ask-tools .native-attach { margin: 0; }
