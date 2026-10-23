@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>org.workbench.remote-access</string>
+  <key>ProgramArguments</key><array><string>__NODE_BINARY__</string><string>__MAIN_FILE__</string><string>--config</string><string>__CONFIG_FILE__</string></array>
+  <key>WorkingDirectory</key><string>__RELEASE_DIR__</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>__LOG_DIR__/gateway.stdout.log</string>
+  <key>StandardErrorPath</key><string>__LOG_DIR__/gateway.stderr.log</string>
+</dict></plist>
