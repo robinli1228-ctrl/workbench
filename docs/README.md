@@ -2,6 +2,8 @@
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [design-runtime-quota-events](design-runtime-quota-events.md) | Passive Claude/Codex quota, snapshot ownership and freshness; unchanged UI | Implemented on the feature branch; isolated checks, not deployed |
+| [plan-runtime-quota-events](plan-runtime-quota-events.md) | Adapter events, Worker/Home snapshots and removal of extra quota queries | Local implementation; real-account acceptance and independent review pending |
 | [design-remote-access-settings](design-remote-access-settings.md) | Local-only Basic Settings controls for the independent browser relay | Approved; implemented in the feature branch, deployment separate |
 | [plan-remote-access-settings](plan-remote-access-settings.md) | Module packaging, local proof/bridge, compact UI, review and Home-only release | Approved; execution in progress |
 | [OPERATING-GUIDE](OPERATING-GUIDE.md) | Publishing, configuration, running single and multi-server setups, contributing, sanitization checklist | Current |

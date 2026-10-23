@@ -4,6 +4,7 @@ import { nativeSessionId } from './terminal-resume.mjs';
 import { tr } from './i18n.mjs';
 import { executionText } from './input-language.mjs';
 import { ClaudeContextUsage } from './context-usage.mjs';
+import { normalizeRuntimeQuota } from './runtime-quota.mjs';
 
 const MAX_TOOL_OUTPUT = 12000;
 
@@ -148,6 +149,11 @@ export class CliPrintSession {
     this.receive(m);
   }
   receive(raw) {
+    if(this.runtime==='claude'&&raw?.type==='rate_limit_event') {
+      if(raw.session_id!==(this.nativeSessionId||this.resumeSessionId))return;
+      const sample=normalizeRuntimeQuota('claude',raw);if(sample)this.emit('quota',sample);
+      return;
+    }
     if(this.done||this.stopping)return;
     if (!raw || typeof raw !== 'object') return;
     const sessionId = nativeSessionId(raw, this.runtime);
