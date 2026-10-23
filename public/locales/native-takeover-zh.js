@@ -395,7 +395,6 @@ export default {
  "Hide summary": "收起摘要",
  "Model for side questions": "侧问使用的模型",
  "Ask a quick question that does not interrupt the main session…": "问一个不打断主会话的小问题…",
- "Follow the session · {model}": "跟随主会话 · {model}",
  "Follow the session": "跟随主会话",
  "Ask a quick question that does not interrupt the main session. The answer stays here only, and is gone once you clear it or the main session moves on.": "问一个不打断主会话的小问题。回答只显示在这里，清空或主会话发出新问题后就不保留。",
  "The main session has a new prompt; side questions start over.": "主会话发出了新的提问，侧问已重新开始。",

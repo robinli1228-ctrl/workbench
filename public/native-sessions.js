@@ -971,7 +971,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const form=el('form','chat-composer native-takeover-form native-ask-form'),bar=el('div','chat-input-bar'),field=el('div','chat-input-field'),tray=el('div','chat-attachments native-takeover-tray');tray.hidden=true;
   const attach=el('button','native-attach');attach.type='button';attach.title=t('Upload an image or file');attach.setAttribute('aria-label',t('Upload file'));attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
   const model=el('select','native-ask-model');model.setAttribute('aria-label',t('Model for side questions'));
-  const input=el('textarea');input.rows=1;input.placeholder=t('Ask a quick question that does not interrupt the main session…');input.setAttribute('aria-label',t('Side question'));
+  const input=el('textarea');input.rows=3;input.placeholder=t('Ask a quick question that does not interrupt the main session…');input.setAttribute('aria-label',t('Side question'));
   const send=el('button','primary chat-send');send.type='submit';setActionIcon(send,'send',t('Send'));
   const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
   // Text on top, a tool row under it: attach and model on the left, send on the right.
@@ -984,7 +984,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   function available(value){const worker=getData().workers?.find(w=>w.id===value?.nodeId);return Boolean(value&&['claude','codex'].includes(value.runtime)&&worker?.capabilities?.nativeSideAsk===1&&nativeId(value)&&value.workspace);}
   function fillModels(){
    const worker=getData().workers?.find(w=>w.id===session?.nodeId),runtime=worker?.runtimes?.find(r=>r.type===session?.runtime),main=takeover.settings().model||session?.sessionConfiguration?.model||'';
-   const keep=model.value;model.replaceChildren();const follow=el('option','',main?t('Follow the session · {model}',{model:main}):t('Follow the session'));follow.value='';model.append(follow);
+   const keep=model.value;model.replaceChildren();const follow=el('option','',main||t('Follow the session'));follow.value='';model.append(follow);
    for(const m of runtime?.models||[]){if(m.id===main)continue;const o=el('option','',m.name||m.id);o.value=m.id;model.append(o);}
    model.value=[...model.options].some(o=>o.value===keep)?keep:'';
   }
@@ -1051,7 +1051,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
     catch(error){if(current())setNote(error.message);}finally{if(current()){uploads--;render();}}}
   }
   form.addEventListener('submit',e=>{e.preventDefault();void ask();});
-  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;render();});
+  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=`${Math.min(150,Math.max(70,input.scrollHeight))}px`;render();});
   input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!send.disabled){e.preventDefault();void ask();}});
   input.addEventListener('paste',e=>{const list=[...(e.clipboardData?.files||[])];if(list.length){e.preventDefault();void upload(list);}});
   attach.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
