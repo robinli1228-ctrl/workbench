@@ -1,6 +1,6 @@
 # Same-conversation Agent switching
 
-Status: design for review; not implemented or deployed.
+Status: approved by the user on 2026-10-23; implementation plan pending review. Not implemented or deployed.
 
 ## Agreed outcome
 
