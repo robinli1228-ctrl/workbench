@@ -215,6 +215,29 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
  return box;
 }
 
+/** The turn's subagents and background shells: what each is, what it is doing now, whether it finished and how long it ran
+ * (counting up while it runs). A task the record still calls running after its turn ended was stopped with it. */
+export function taskBlock(turn,t,{live=false}={}){
+ const tasks=turn?.tasks||[];if(!tasks.length)return null;
+ const status=x=>x.status==='running'&&!live?'stopped':x.status,running=tasks.filter(x=>status(x)==='running').length;
+ const agents=tasks.filter(x=>x.kind!=='shell').length,shells=tasks.length-agents;
+ const box=el('div','nt-tasks'),head=el('div','nt-tasks-head');
+ head.append(stepIcon('agent'),el('span','nt-tasks-title',[agents?t(agents===1?'1 subagent':'{n} subagents',{n:agents}):'',shells?t(shells===1?'1 background command':'{n} background commands',{n:shells}):''].filter(Boolean).join(' · ')));
+ head.append(el('span',`nt-tasks-count${running?' is-running':''}`,running?t('{n} running',{n:running}):t('All finished')));
+ box.append(head);
+ for(const x of tasks){
+  const state=status(x),row=el('div',`nt-task is-${state}`),name=el('span','nt-task-name',x.description||t(x.kind==='shell'?'Background command':'Subagent'));name.title=x.description||'';
+  row.append(stepIcon(x.kind==='shell'?'command':'agent'),name);
+  if(x.agentType){const type=el('span','nt-task-type',x.agentType);type.translate=false;row.append(type);}
+  if(state==='running'&&x.activity){const now=el('span','nt-task-activity',x.activity);now.title=x.activity;row.append(now);}
+  const took=state==='running'?elapsedText(x.startedAt):Number.isFinite(x.durationMs)?elapsedText(0,x.durationMs):x.endedAt?elapsedText(x.startedAt,new Date(x.endedAt).getTime()):'';
+  const label=t(state==='running'?'Running':state==='completed'?'Finished':state==='failed'?'Failed':'Stopped');
+  const end=el('span','nt-task-state');if(state==='running')end.append(el('span','nt-pulse'));end.append(el('span','',took?`${label} \u00b7 ${took}`:label));row.append(end);
+  box.append(row);
+ }
+ return box;
+}
+
 /** A sheet over the transcript column that shows one file: a transcript step (latest edit as a diff, content read or written) or the file as it is on the device. */
 /** The file sheet over the transcript. With onSide (Sessions page, desktop), "Open on the right" moves what it shows into the right-side Preview tab. */
 export function createPreviewSheet(host,t,{onSide=null,canSide=()=>Boolean(onSide)}={}){

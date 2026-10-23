@@ -66,6 +66,7 @@ export class NativeCliSession extends CliPrintSession {
     if(this.keepAlive&&this.runtime==='claude'&&message&&typeof message==='object'){
       // The live background-task list is kept between turns too, so a later turn knows what is still running.
       if(message.type==='system'&&message.subtype==='background_tasks_changed'&&Array.isArray(message.tasks))this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
+      if(message.type==='system'&&String(message.subtype||'').startsWith('task_'))this.task(message);
       // Claude echoes a stdin message (--replay-user-messages) when it starts on it. Until this turn's echo, what it says
       // answers something else it queued first (a background task's completion notice): that output and its result are not
       // this turn's, so they neither show in it nor end it.
@@ -75,6 +76,17 @@ export class NativeCliSession extends CliPrintSession {
     // Native Claude interrupts a turn without killing its resident process; only its owner's result confirms that boundary.
     if(!this.done&&this.stopping&&!this.closing&&this.keepAlive&&this.runtime==='claude'&&message?.type==='result'&&!message.parent_tool_use_id)return this.finish('interrupted');
     this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;}
+  }
+  /** A subagent or background shell of this turn for the page: start, what it is doing now (at most every 5s), end. An end
+   * without a start here (a task of an earlier, killed process) is not reported. */
+  task(m){
+    const id=m.task_id;if(!id)return;const tasks=this.tasks||=new Map(),known=tasks.get(id),now=Date.now();
+    if(m.subtype==='task_started'){tasks.set(id,{at:now,shown:0});return this.emit('task',{id,status:'running',kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80)});}
+    if(!known)return;
+    if(m.subtype==='task_progress'){if(now-known.shown<5000)return;known.shown=now;return this.emit('task',{id,status:'running',activity:String(m.description||'').slice(0,200),toolUses:Number.isFinite(m.usage?.tool_uses)?m.usage.tool_uses:undefined});}
+    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
+    if(!status||['pending','running'].includes(status))return;
+    tasks.delete(id);this.emit('task',{id,status:['completed','failed'].includes(status)?status:'stopped',durationMs:now-known.at});
   }
   /** Claude's stdio permission host: AskUserQuestion becomes a question for the page; every other prompt is allowed as the bypass mode would. */
   control(message){

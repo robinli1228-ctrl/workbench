@@ -570,3 +570,27 @@ createInterface({input:process.stdin}).on('line',line=>{appendFileSync('${log}',
   assert.ok(lines[0].join(' ').includes('-c features.default_mode_request_user_input=true'), 'the feature flag rides on the launch');
   assert.equal(lines.find(l => l.method === 'initialize').params.capabilities.experimentalApi, true);
 });
+
+test('a turn lists its subagents: what each does now, how it ended and how long it ran; an end without a start is not shown', () => {
+  const out = [], session = new CliPrintSession({ cwd: tmpdir(), runtime: 'claude', keepAlive: true, resumeSessionId: SID, emit: (type, payload) => out.push({ type, payload }) });
+  const sys = (subtype, rest) => session.receive({ type: 'system', subtype, session_id: SID, ...rest });
+  sys('task_notification', { task_id: 'old', status: 'completed' });
+  sys('task_started', { task_id: 'a1', task_type: 'local_agent', description: 'Review the change', subagent_type: 'general-purpose' });
+  sys('task_started', { task_id: 'b1', task_type: 'local_bash', description: 'npm test' });
+  sys('task_progress', { task_id: 'a1', description: 'Reading src/app.mjs', usage: { tool_uses: 3 } });
+  sys('task_progress', { task_id: 'a1', description: 'Too soon to report' });
+  sys('task_notification', { task_id: 'a1', status: 'completed' });
+  sys('task_updated', { task_id: 'a1', patch: { status: 'completed' } });
+  const tasks = out.filter(e => e.type === 'task').map(e => e.payload);
+  assert.deepEqual(tasks.map(x => [x.id, x.status]), [['a1', 'running'], ['b1', 'running'], ['a1', 'running'], ['a1', 'completed']]);
+  assert.ok(Number.isFinite(tasks.at(-1).durationMs));
+  let turn = { id: 't', status: 'running', events: [] };
+  for (const task of tasks) turn = applyNativeTurnEvent(turn, { kind: 'task', task });
+  assert.deepEqual(turn.tasks.map(x => [x.id, x.kind, x.status]), [['a1', 'agent', 'completed'], ['b1', 'shell', 'running']]);
+  assert.equal(turn.tasks[0].activity, 'Reading src/app.mjs');
+  assert.equal(turn.tasks[0].toolUses, 3);
+  assert.equal(turn.tasks[0].agentType, 'general-purpose');
+  turn = applyNativeTurnEvent(turn, { kind: 'status', status: 'interrupted' });
+  assert.deepEqual(turn.tasks.map(x => x.status), ['completed', 'stopped']);
+  assert.ok(turn.tasks[1].endedAt);
+});
