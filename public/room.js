@@ -634,12 +634,13 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   }
   // Step verbs ("Read", "Ran") share the Sessions page's own translations.
   const stepT=(text,params)=>{const own=getLanguage()==='zh'?stepZh[text]:undefined;return own===undefined?t(text,params):own;};
-  /** What a running role is doing right now, from its live events: the tool still in progress, else '' (thinking or writing). */
+  /** What a running role is doing right now, from its live events: the latest tool still in progress, else '' (thinking or
+   * writing). A tool's later events (its result) carry the same id, so a finished tool no longer counts. */
   function liveStep(events) {
-    for(let i=events.length-1;i>=0;i--){const e=events[i];
-      if(e.type==='tool'&&e.payload?.item){if(e.payload.item.status!=='inProgress')return '';const {verb,target}=stepTitle(classifyStep(e.payload.item,'running'),stepT);return `${verb} ${target}`.trim();}
-      if(e.type==='text'||e.type==='message')return '';}
-    return '';
+    const tools=new Map();
+    for(const e of events)if(e.type==='tool'&&e.payload?.item?.id){const prior=tools.get(e.payload.item.id);tools.delete(e.payload.item.id);tools.set(e.payload.item.id,{...prior,...e.payload.item,name:e.payload.item.name||prior?.name,input:e.payload.item.input??prior?.input,arguments:e.payload.item.arguments??prior?.arguments});}
+    const running=[...tools.values()].reverse().find(item=>item.status==='inProgress');
+    if(!running)return '';const {verb,target}=stepTitle(classifyStep(running,'running'),stepT);return `${verb} ${target}`.trim();
   }
 
   async function pullLive(runId) {
