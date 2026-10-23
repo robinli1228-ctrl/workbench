@@ -641,7 +641,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     for(const e of events)if(e.type==='tool'&&e.payload?.item?.id){const prior=tools.get(e.payload.item.id);tools.delete(e.payload.item.id);tools.set(e.payload.item.id,{...prior,...e.payload.item,name:e.payload.item.name||prior?.name,input:e.payload.item.input??prior?.input,arguments:e.payload.item.arguments??prior?.arguments});}
     // Claude's tool_use carries no status until its result arrives; Codex and others mark inProgress.
     const running=[...tools.values()].reverse().find(item=>!['completed','failed'].includes(item.status));
-    if(!running)return '';const {verb,target}=stepTitle(classifyStep(running,'running'),stepT);return `${verb} ${target}`.trim();
+    if(!running)return '';const {verb,target}=stepTitle(classifyStep(running,'running'),stepT),text=`${verb} ${target}`.trim();return text.length>36?`${text.slice(0,35)}…`:text;
   }
 
   async function pullLive(runId) {
