@@ -16,7 +16,7 @@ import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,same
 import {stripAnsi} from './run-log-data.js';
 import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSummary} from './history-prompt.js';
 import {cachedHistory,saveHistory,forgetHistory} from './history-cache.js';
-import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
+import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -1126,14 +1126,15 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    blocksAfter.set(blockKey,md);frag.append(md);
   }
   flush();
+  const tasks=taskBlock(turn,t,{live});if(tasks)frag.append(tasks);
   if(turn.id){turnBlocks.delete(turn.id);turnBlocks.set(turn.id,blocksAfter);if(turnBlocks.size>64)turnBlocks.delete(turnBlocks.keys().next().value);}
   return frag;
  }
  /** The single working line of a live turn: pulse, elapsed time, what the CLI is doing right now, Stop. */
  function workingLine(turn,onStop){
   const line=el('div','nt-working');const pulse=el('span','nt-pulse');pulse.setAttribute('aria-hidden','true');
-  const {steps}=stepsOf(turn),running=[...steps].reverse().find(s=>s.running),now=running?stepTitle(running,t):null;
-  const hint=turn.disconnectedAt?t('Device connection lost; waiting for it to return\u2026'):turn.status==='queued'?t('Waiting for the device\u2026'):turn.status==='stopping'?t('Stopping\u2026'):turn.question&&!turn.question.answered?t('Waiting for your answer\u2026'):turn.status==='starting'||!turn.phase?t('Starting the CLI\u2026'):now?`${now.verb} ${now.target}`.trim():turn.phase==='replying'?t('Replying\u2026'):t('Working\u2026');
+  const {steps}=stepsOf(turn),running=[...steps].reverse().find(s=>s.running),now=running?stepTitle(running,t):null,tasks=(turn.tasks||[]).filter(x=>x.status==='running').length;
+  const hint=turn.disconnectedAt?t('Device connection lost; waiting for it to return\u2026'):turn.status==='queued'?t('Waiting for the device\u2026'):turn.status==='stopping'?t('Stopping\u2026'):turn.question&&!turn.question.answered?t('Waiting for your answer\u2026'):turn.status==='starting'||!turn.phase?t('Starting the CLI\u2026'):now?`${now.verb} ${now.target}`.trim():tasks?t(tasks===1?'Waiting for 1 background task\u2026':'Waiting for {n} background tasks\u2026',{n:tasks}):turn.phase==='replying'?t('Replying\u2026'):t('Working\u2026');
   line.append(pulse,el('span','nt-working-time',elapsedText(turn.createdAt)),el('span','nt-working-hint',hint));if(onStop)line.append(button('Stop',onStop,'secondary compact nt-stop'));return line;
  }
  /** Takeover reuses the group-chat composer behaviour: Enter sends, Shift+Enter breaks lines, paste/drag/attach uploads files. An unconfirmed send keeps Send disabled while the same message ID is looked up; only a confirmed absence allows a retry with that ID. */
@@ -1289,6 +1290,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
        const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content});reply.dataset.role='assistant';reply.classList.add('native-turn-anchored');footNote(reply,endNote(turn));if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());anchor.after(reply);continue;}
       const extra=el('div','native-turn-anchored nt-extra');
       if(hasProcess(turn)&&anchor.dataset.process!=='1')extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
+      {const tasks=taskBlock(turn,t);if(tasks)extra.append(tasks);}
       footNote(anchor,endNote(turn),{anchored:true});
       if(extra.childElementCount){const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}if(turn.endedAt){if(!('historyDuration' in anchor.dataset))anchor.dataset.historyDuration=anchor.dataset.duration||'';anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());}continue;}
     }
