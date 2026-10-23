@@ -1,6 +1,7 @@
 /** Page-local Chinese strings for the native-session takeover. Kept out of locales/zh.js so other pages' translations are unchanged. */
 export default {
  "Switch Agent": "切换 Agent",
+ "Current Agent": "当前 Agent",
  "Switching Agent…": "正在切换 Agent…",
  "Agent switched": "已切换 Agent",
  "Agent switch failed": "Agent 切换失败",

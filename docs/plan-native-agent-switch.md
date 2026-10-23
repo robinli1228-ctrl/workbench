@@ -66,7 +66,7 @@
 - [ ] Implement bounded context/reader and first-input binding. Instruct the successor to read applicable AGENTS.md and inspect current task-relevant files; original records are quoted data, not new authority. Surface missing/inaccessible attachments truthfully; never claim every byte was transferred.
 - [ ] Run all three focused suites plus the project's full `npm test` and syntax checks; commit after GREEN. Do not claim real adapter support from fake-CLI tests.
 
-## Task 3: Existing-label dropdown and one persistent transcript
+## Task 3: Existing-label switch icon and Agent picker dialog and one persistent transcript
 
 **Files:** Create `public/native-agent-switch.js`; modify `public/native-sessions.js`, `public/native-session-groups.js`, `public/native-history-timeline.js`, `public/history-prompt.js`, `public/styles.css`, `public/locales/native-takeover-zh.js`, `public/sw.js`, the static allowlist in `src/home.mjs`, and `package.json`. Tests: `.local/native-agent-switch-20261023/browser.mjs` and focused grouping tests.
 
@@ -93,4 +93,4 @@
 
 ## Plan review
 
-Self-review maps the approved behaviour to all four tasks. The five failure classes above each have explicit tests; no automatic summarization, cross-device migration, vendor transcript conversion or concurrent execution was added. Recommended execution is inline implementation with one final independent review because these parts share one state/identity contract. Await user review of this plan and execution choice before product edits.
+Self-review maps the approved behaviour to all four tasks. The five failure classes above each have explicit tests; no automatic summarization, cross-device migration, vendor transcript conversion or concurrent execution was added. Recommended execution is inline implementation with one final independent review because these parts share one state/identity contract. User approved inline execution; subsequent UI amendment replaces the inline dropdown with a switch icon and Agent picker dialog.

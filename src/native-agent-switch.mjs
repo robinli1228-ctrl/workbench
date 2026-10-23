@@ -1,5 +1,6 @@
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {nativeSessionProjectIds} from './terminal-resume.mjs';
+import {nativeTurnRows} from './native-turns.mjs';
 
 const stamp=()=>new Date().toISOString();
 const uuid=/^[a-f0-9-]{36}$/;
@@ -55,7 +56,16 @@ export class NativeAgentSwitches{
   if(!this.online(nodeId))return this.view(op);
   const promise=this.advance(op).finally(()=>this.inflight.delete(id));this.inflight.set(id,promise);return promise;
  }
- payload(op){const c=this.db.get('nativeConversations',op.conversationId);return {operationId:op.id,conversationId:c.id,revision:op.revision,source:op.source,...op.source,targetRuntime:op.targetRuntime,workspace:c.workspace,title:c.title,segments:c.segments};}
+ payload(op){const c=this.db.get('nativeConversations',op.conversationId),recentMessages=[];let bytes=0;
+  // Binary histories cannot supply text. Keep bounded original Home receipts as a labelled fallback, not a summary.
+  for(const segment of c.segments.slice(-4).reverse())for(const turn of nativeTurnRows(this.db,{nodeId:op.nodeId,runtime:segment.runtime,sessionId:segment.sessionId,limit:16})){
+   const fields={segmentId:segment.id,runtime:segment.runtime,sessionId:segment.sessionId,timestamp:turn.createdAt};
+   const rows=[{...fields,recordId:`${turn.id}:prompt`,role:'user',text:turn.prompt||''},{...fields,recordId:`${turn.id}:reply`,role:'assistant',text:turn.text||''},
+    ...(turn.events||[]).filter(e=>e.type==='tool').slice(-8).map((e,i)=>({...fields,recordId:`${turn.id}:tool:${i}`,role:'tool_result',output:JSON.stringify(e.payload||e.item||{}),timestamp:e.createdAt||turn.createdAt}))];
+   for(const row of rows){row.text=row.text?.slice(-6000);row.output=row.output?.slice(-4000);const size=Buffer.byteLength(JSON.stringify(row));if(bytes+size>32*1024)continue;bytes+=size;recentMessages.push(row);}
+  }
+  recentMessages.sort((a,b)=>String(a.timestamp).localeCompare(String(b.timestamp)));
+  return {operationId:op.id,conversationId:c.id,revision:op.revision,source:op.source,...op.source,targetRuntime:op.targetRuntime,workspace:c.workspace,title:c.title,segments:c.segments,recentMessages};}
  async query(op,action,extra={}){return this.workerQuery({nodeId:op.nodeId},`native_agent_switch_${action}`,{...this.payload(op),...extra},30000);}
  async advance(op){
   try{
@@ -108,6 +118,26 @@ export class NativeAgentSwitches{
  decorateCatalog(nodeId,items){const conversations=this.db.list('nativeConversations').filter(c=>c.nodeId===nodeId);return items.map(item=>{
   const c=conversations.find(c=>c.segments.some(s=>same(s,{runtime:item.runtime,sessionId:item.sessionId||item.id})));return c?{...item,conversationBinding:c}:item;
  });}
+ /** Binary native formats retain readable page turns in Home; page by row identity, never a full history scan. */
+ historyPage(identity,{cursor=null}={}){
+  if(!this.conversation(identity))return null;
+  const prefix=`home-turns:${createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0,16)}:`;
+  if(cursor&&(!cursor.startsWith(prefix)||!/^\d+$/.test(cursor.slice(prefix.length))))throw Error('Invalid conversation history cursor');
+  const rows=this.db.db.prepare("SELECT rowid,data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.runtime')=? AND json_extract(data,'$.sessionId')=? AND rowid<? ORDER BY rowid DESC LIMIT 16").all(identity.nodeId,identity.runtime,identity.sessionId,cursor?Number(cursor.slice(prefix.length)):Number.MAX_SAFE_INTEGER);
+  const included=[];let bytes=0;
+  for(const row of rows.slice(0,15)){if(included.length&&bytes+Buffer.byteLength(row.data)>1500000)break;included.push(row);bytes+=Buffer.byteLength(row.data);}
+  const messages=[];
+  for(const {rowid,data} of included.toReversed()){
+   const turn=JSON.parse(data),timestamp=turn.createdAt,add=(suffix,value)=>messages.push({id:`home:${turn.id}:${suffix}`,offset:rowid,timestamp,...value});
+   if(turn.prompt&&!turn.control)add('prompt',{role:'user',text:turn.prompt,attachments:turn.attachments||[]});
+   const tools=new Map();for(const event of turn.events||[])if(event.type==='tool'){const item=event.payload?.item;if(item)tools.set(item.id||`event-${event.seq}`,{item,event});}
+   for(const [id,{item,event}] of tools){add(`tool:${id}`,{role:'tool_call',callId:id,name:item.name||item.type||'Tool',input:item.input||{command:item.command||event.payload.text},timestamp:event.createdAt||timestamp});
+    const output=item.output??item.aggregatedOutput;if(output!=null)add(`result:${id}`,{role:'tool_result',callId:id,output:typeof output==='string'?output:JSON.stringify(output),failed:item.is_error===true||Boolean(item.exitCode),timestamp:event.createdAt||timestamp});}
+   if(turn.text||turn.error)add('reply',{role:'assistant',text:[turn.text,turn.error].filter(Boolean).join('\n'),timestamp:turn.endedAt||timestamp});
+  }
+  const hasMore=rows.length>included.length;
+  return {messages,historyPage:1,historySnapshot:`${prefix}${rows[0]?.rowid||0}:${createHash('sha256').update(included.map(r=>r.data).join('')).digest('hex').slice(0,16)}`,hasMore,nextCursor:hasMore?`${prefix}${included.at(-1).rowid}`:null,partial:hasMore};
+ }
  /** Delivery is per target segment, not per prompt text or source runtime. */
  handoffFor(identity){const c=this.conversation(identity),s=c?.segments.find(s=>s.id===c.currentSegmentId);
   return s?.contextId&&same(s,identity)&&!this.db.get('nativeHandoffDeliveries',`${identity.nodeId}/${s.contextId}/${s.sessionId}`)?{id:s.contextId,hash:s.contextHash,switchId:s.switchId}:null;}

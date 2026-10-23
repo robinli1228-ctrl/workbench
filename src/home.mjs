@@ -701,6 +701,7 @@ const server = http.createServer(async (req, res) => {
         const projectId=record.roleBinding?.projectId||binding?.projectId||null;
         const common={workspace:record.workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null,stopAt:binding?.localRoot||null,projectId},scope={nodeId,projectId};
         if(req.method==='GET')return json(res,await workerQuery(scope,'native_agents_md',common,15000));
+        nativeTurns.switches.assertExecutable({nodeId,runtime,sessionId:record.sessionId});
         const b=await body(req);
         return json(res,await workerQuery(scope,'native_agents_md_write',{...common,path:typeof b.path==='string'?b.path:null,content:b.content,expectedModifiedAt:typeof b.expectedModifiedAt==='string'?b.expectedModifiedAt:null,create:b.create===true,createDir:binding?.localRoot||null},20000));
       }
@@ -711,6 +712,7 @@ const server = http.createServer(async (req, res) => {
         const nodeId=decodeURIComponent(nativeBranch[1]),worker=db.get('workers',nodeId),check=req.method==='GET';
         const b=check?{runtime:url.searchParams.get('runtime'),sessionId:url.searchParams.get('sessionId'),entryId:url.searchParams.get('entryId')}:await body(req);
         const runtime=b.runtime,sessionId=typeof b.sessionId==='string'&&b.sessionId?b.sessionId:null;
+        if(!check)nativeTurns.switches.assertExecutable({nodeId,runtime,sessionId});
         const entry=typeof b.entryId==='string'&&b.entryId?db.get('nativeCatalogEntries',b.entryId):sessionId?nativeCatalogRecords(nodeId,runtime).find(r=>r.sessionId===sessionId):null;
         if(entry&&(entry.nodeId!==nodeId||entry.runtime!==runtime||sessionId&&entry.sessionId&&entry.sessionId!==sessionId))throw Error('Session identity does not match its Workbench entry');
         const refuse=reason=>{if(check)return json(res,{ok:false,reason});throw Error(reason);};
@@ -795,7 +797,10 @@ const server = http.createServer(async (req, res) => {
           const paged=Boolean(sessionId&&url.searchParams.get('historyPage')==='1'),cursor=url.searchParams.get('cursor'),historySnapshot=url.searchParams.get('snapshot'),delta=Boolean(historySnapshot&&url.searchParams.get('delta')==='1');
           if((cursor||historySnapshot)&&(!paged||cursor?.length>2048||historySnapshot?.length>2048||cursor&&historySnapshot))throw Error('Invalid native history cursor');
           if(paged&&worker.capabilities?.nativeHistoryPages!==1)throw Error('Upgrade this Worker to load older native history.');
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:historySnapshot,...(delta?{delta:true}:{})}:{})},30000);
+          if(sessionId&&cursor?.startsWith('home-turns:')){const stored=nativeTurns.switches.historyPage({nodeId,runtime,sessionId},{cursor});if(!stored)throw Error('Conversation history is unavailable');return json(res,stored);}
+          const nativeSnapshot=historySnapshot?.startsWith('home-turns:')?null:historySnapshot;
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:nativeSnapshot,...(delta&&nativeSnapshot?{delta:true}:{})}:{})},30000);
+          if(sessionId&&result.previewAvailable===false){const stored=nativeTurns.switches.historyPage({nodeId,runtime,sessionId});if(stored)return json(res,{...result,...stored,workspace:record.workspace,notice:undefined});}
           if(!sessionId&&scope==='group'){
             const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));
             return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});

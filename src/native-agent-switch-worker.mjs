@@ -9,6 +9,14 @@ const same=(a,b)=>a?.runtime===b?.runtime&&a?.sessionId===b?.sessionId;
 const held=s=>s&&!['released','cancelled'].includes(s.status);
 const inside=(a,b)=>{const r=relative(a,b);return !r||r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
 export const nativeSwitchOverlap=(a,b)=>typeof a==='string'&&typeof b==='string'&&(inside(a,b)||inside(b,a));
+/** Binary vendor histories may omit cwd; only our committed creation receipt can supply that missing fact. */
+export function nativeAgentSessionWorkspace(db,{runtime,sessionId,historyWorkspace}){
+ const op=db.list('workerNativeAgentSwitches').find(s=>s.published&&same(s.target,{runtime,sessionId}));
+ if(!op)return historyWorkspace||null;
+ const entry=db.get('nativeCatalogEntries',op.target.entryId);
+ if(!same(entry,{runtime,sessionId})||entry.workspace!==op.workspace||historyWorkspace&&historyWorkspace!==op.workspace)throw Error('Successor working directory changed');
+ return op.workspace;
+}
 /** All launch paths share this barrier; the switch's own prepared lease alone is exempt. */
 export function assertNativeSwitchAccess(db,{runtime,sessionId,workspace,claimId}){
  for(const op of db.list('workerNativeAgentSwitches')){
@@ -55,7 +63,7 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
   if(proof.processState!=='released')return view(op);
   const entry=db.get('nativeCatalogEntries',op.leaseId);
   if(lease.exitCode!==0||!entry?.sessionId)return view(save(op,{stage:'failed',error:lease.helloError||'Target Agent did not create a native history'}));
-  const context=op.context||await makeContext({db,conversation:{id:op.conversationId,workspace:op.workspace},segments:op.segments,dataDir:data});
+  const context=op.context||await makeContext({db,conversation:{id:op.conversationId,workspace:op.workspace},segments:op.segments,recentMessages:op.recentMessages||[],dataDir:data});
   return view(save(op,{stage:'ready',context,target:{runtime:op.targetRuntime,sessionId:entry.sessionId,entryId:entry.id}}));
  }
  async function handle(action,input){

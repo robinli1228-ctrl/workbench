@@ -2,6 +2,8 @@ English | [简体中文](README.zh-CN.md)
 
 # Agent Collaboration Workbench
 
+Development branch: independent Sessions support same-device, same-folder Agent switching from a small action beside the Agent name. The picker preserves one conversation, original execution segments and unsent drafts. Switching requires idle execution and an empty queue; the next user message carries bounded factual history, not an invented summary. This feature requires matching Home/Worker support and is not deployed. See [scope and acceptance](docs/design-native-agent-switch.md).
+
 A self-hosted project group chat for the AI coding CLIs and subscriptions you already use. Codex, Claude Code, Grok Build and Antigravity run as configurable roles on your Mac or servers; Home owns records and coordination, while Workers drive the real native CLIs.
 
 > Development preview (`0.4.0`), for a single trusted operator or a small trusted team. Workbench does not proxy model APIs or replace native instructions, login or tools.

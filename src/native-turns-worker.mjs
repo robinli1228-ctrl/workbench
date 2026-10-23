@@ -6,6 +6,7 @@ import { createNativeSession } from './native-turn-sessions.mjs';
 import { readNativeSession, registeredNativeSession, assertNativeSessionIdle } from './native-sessions.mjs';
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { nativeTerminalProject, projectTerminalLock, terminalProcessIdentity, processIdentityKey, checkTerminalSession, stopTerminalSession } from './terminal-resume.mjs';
+import {nativeAgentSessionWorkspace} from './native-agent-switch-worker.mjs';
 
 const LIMIT=20*1024*1024,COUNT=6,uuid=/^[a-f0-9-]{36}$/;
 
@@ -95,8 +96,10 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
       return {files,images,env,handoffText};
     },
     resolveSession:async(runtime,sessionId,{message:m})=>{
-      const history=await readNativeSession(runtime,sessionId,{record:m.record||registeredNativeSession(db,runtime,sessionId)});if(!history.workspace)return {workspace:null};
-      const workspace=await projectRoot(history.workspace),projects=[];
+      const history=await readNativeSession(runtime,sessionId,{record:m.record||registeredNativeSession(db,runtime,sessionId)});
+      const savedWorkspace=nativeAgentSessionWorkspace(db,{runtime,sessionId,historyWorkspace:history.workspace});if(!savedWorkspace)return {workspace:null};
+      const workspace=await projectRoot(savedWorkspace),projects=[];
+      if(workspace!==savedWorkspace)throw Error('Successor working directory changed');
       const inside=(a,b)=>{const r=relative(a,b);return !r||r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
       for(const binding of m.bindings||[]){const root=await realpath(binding.localRoot).catch(()=>null);if(root&&(inside(root,workspace)||inside(workspace,root)))projects.push(binding.projectId);}
       const owner=nativeTerminalProject(db,{nodeId,runtime,sessionId,folderProjectIds:projects,managedProjectIds:m.managedProjectIds||[]});

@@ -20,19 +20,21 @@ function visible(row){
  return result;
 }
 /** A private manifest scopes subsequent reads to this conversation; it never alters vendor histories. */
-export async function createNativeAgentContext({conversation,segments,dataDir,readNativeSession=readHistory}){
+export async function createNativeAgentContext({conversation,segments,recentMessages=[],dataDir,readNativeSession=readHistory}){
  const id=randomUUID(),root=join(dataDir,'native-agent-context');await mkdir(root,{recursive:true,mode:0o700});
- const manifest={id,conversationId:conversation.id,workspace:conversation.workspace,segments:segments.map(s=>({id:s.id,runtime:s.runtime,sessionId:s.sessionId,entryId:s.entryId||null,workspace:conversation.workspace}))};
+ const manifest={id,conversationId:conversation.id,workspace:conversation.workspace,segments:segments.map(s=>({id:s.id,runtime:s.runtime,sessionId:s.sessionId,entryId:s.entryId||null,workspace:conversation.workspace})),recentMessages};
  const bytes=Buffer.from(JSON.stringify(manifest)),hash=digest(bytes),manifestPath=join(root,`${id}.json`),handle=await open(manifestPath,'wx',0o600);
  try{await handle.writeFile(bytes);}finally{await handle.close();}
  const records=[];let truncated=segments.length>4,messages=0,tools=0;
  for(const segment of manifest.segments.slice(-4).reverse()){
   try{
    const page=await readNativeSession(segment.runtime,segment.sessionId,{record:segment,historyPage:true});truncated ||= Boolean(page.hasMore);
-   for(const [index,row] of (page.messages||[]).entries().toArray().reverse()){
+   const rows=page.messages?.length?page.messages:recentMessages.filter(row=>row.segmentId===segment.id&&row.runtime===segment.runtime&&row.sessionId===segment.sessionId);
+   if(!page.messages?.length)truncated=true;
+   for(const [index,row] of rows.entries().toArray().reverse()){
     const record=visible(row);if(!record)continue;const tool=record.role.startsWith('tool_');
     if(tool?tools>=32:messages>=32){truncated=true;continue;}if(tool)tools++;else messages++;
-    records.unshift({segmentId:segment.id,runtime:segment.runtime,sessionId:segment.sessionId,recordIndex:index,cursor:page.cursor||null,...record});
+    records.unshift({segmentId:segment.id,runtime:segment.runtime,sessionId:segment.sessionId,recordId:row.recordId||row.id||null,recordIndex:index,cursor:page.cursor||null,...record});
    }
   }catch(error){records.unshift({segmentId:segment.id,unavailable:error.message});truncated=true;}
  }
@@ -51,7 +53,8 @@ export async function readNativeAgentContext(manifestPath,{hash,segmentId,cursor
  const bytes=await readFile(manifestPath);if(digest(bytes)!==hash)throw Error('Context manifest hash changed');
  const manifest=JSON.parse(bytes),segment=manifest.segments?.find(s=>s.id===segmentId);if(!segment)throw Error('Segment does not belong to this conversation');
  const page=await readNativeSession(segment.runtime,segment.sessionId,{record:segment,historyPage:true,cursor});
- const value={segmentId,runtime:segment.runtime,sessionId:segment.sessionId,hasMore:page.hasMore,nextCursor:page.nextCursor||null,messages:(page.messages||[]).map(visible).filter(Boolean),truncated:false};
+ const rows=page.messages?.length?page.messages:manifest.recentMessages?.filter(row=>row.segmentId===segmentId)||[];
+ const value={segmentId,runtime:segment.runtime,sessionId:segment.sessionId,hasMore:page.hasMore,nextCursor:page.nextCursor||null,messages:rows.map(visible).filter(Boolean),truncated:!page.messages?.length};
  // Preserve the native next cursor. Explicitly mark records omitted to keep the response bounded.
  while(Buffer.byteLength(JSON.stringify(value))>256*1024&&value.messages.length){value.messages.pop();value.truncated=true;}
  return value;

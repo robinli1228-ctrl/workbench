@@ -3907,7 +3907,12 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .native-history-latest { color: #6b7080; }
 .native-history-latest::before { content: ''; position: absolute; left: -1px; top: 7px; bottom: 7px; width: 1px; background: #e4e7ee; }
 .native-identity .native-agent-selector{position:relative;min-width:0;gap:6px;flex-direction:row;flex-wrap:nowrap;max-width:65%}
-.native-identity .native-agent-selector select{font:inherit;font-weight:600;color:inherit;background:transparent;border:0;border-radius:9px;min-width:0;max-width:130px;width:auto;padding:5px 20px 5px 4px;cursor:pointer}
-.native-agent-selector select:focus-visible{outline:2px solid #6366f1;outline-offset:2px}
-.native-agent-selector select:disabled{cursor:default;opacity:.65}
+.native-agent-switch-button{width:26px;height:26px;padding:4px;flex:none}
+.native-identity .native-agent-switch-button svg{width:16px;height:16px}
+.native-agent-dialog{max-width:360px;width:calc(100% - 32px)}
+.native-agent-options{display:grid;gap:8px;padding:8px 0}
+.native-agent-option{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel,#fff);color:var(--ink);font:inherit;text-align:left}
+.native-agent-option .role-icon,.native-agent-option img,.native-agent-option svg{width:24px;height:24px;flex:none}
+.native-agent-option:not(:disabled):hover{background:rgba(99,102,241,.06);border-color:#a5a7ee}
+.native-agent-option:disabled{opacity:.5;cursor:default}
 .native-agent-switch-status{position:absolute;top:100%;right:0;font-size:11px;font-weight:400;color:#73768a;white-space:nowrap}
