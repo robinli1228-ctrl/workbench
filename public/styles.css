@@ -3719,6 +3719,8 @@ audio.side-preview-media { background: transparent; }
 .native-ask-body .nt-row { margin-bottom: 14px; }
 .native-ask-body .nt-agent { display: block; text-align: left; }
 .native-ask-body .nt-agent .nt-body, .native-ask-body .nt-agent .nt-reply-foot { max-width: 100%; margin-left: 0; }
+/* The side column is narrow: a reply keeps only a slight indent under the name, not the avatar's width. */
+.native-ask-body .nt-agent .nt-body, .native-ask-body .nt-agent .nt-reply-foot, .native-ask-body .nt-duration { padding-left: 6px; }
 .native-ask-body .nt-agent .nt-byline { flex-wrap: nowrap; white-space: nowrap; justify-content: flex-start; margin-left: 0; }
 .native-ask-body .nt-user .nt-body, .native-ask-body .nt-user .nt-prompt-tools { max-width: 88%; }
 .native-ask-body .nt-working { margin-left: 0; justify-content: flex-start; }
@@ -3728,7 +3730,12 @@ audio.side-preview-media { background: transparent; }
 .native-ask-note { margin: 0; padding: 6px 16px; color: var(--danger); font-size: 12.5px; }
 .native-ask-form { flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--card-hairline, var(--line)); background: #f8fafd; }
 .native-ask-form .chat-input-field { display: flex; flex-direction: column; align-items: stretch; }
-.native-ask-form .chat-input-field textarea { width: 100%; min-height: 36px; padding: 10px 12px 2px; }
+/* Side question input: the model picker's type size, three lines tall, scrolling past about seven. */
+.native-ask-form .chat-input-field textarea { flex: none; width: 100%; height: 70px; min-height: 70px; max-height: 150px; padding: 10px 12px 4px; font-size: 12.5px; line-height: 1.6; scrollbar-width: thin; }
+.native-ask-form .chat-input-field textarea::-webkit-scrollbar { display: block; width: 6px; }
+.native-ask-form .chat-input-field textarea::-webkit-scrollbar-thumb { border-radius: 3px; background: #d5d9e0; }
+/* iOS Safari zooms into a field typed in below 16px; there the text stays readable at 16px instead. */
+@supports (-webkit-touch-callout: none) { .native-ask-form .chat-input-field textarea { font-size: 16px; } }
 .native-ask-tools { display: flex; align-items: center; gap: 2px; padding: 0 4px 4px; }
 .native-ask-tools-gap { flex: 1; }
 .native-ask-tools .native-attach { margin: 0; }
@@ -3838,3 +3845,64 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .remote-access-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
 .remote-access-settings [data-relay-link] { overflow-wrap:anywhere; }
 @media(max-width:600px) { .remote-access-settings label { min-width:100%; } }
+/* File glyph: a page with a folded corner and the extension on a coloured label. */
+.file-glyph { display: grid; place-items: center; flex: none; }
+.file-glyph svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.file-glyph .file-glyph-page { fill: #fff; stroke: #cbd2dc; stroke-width: 1.4; }
+.file-glyph .file-glyph-fold { fill: #eef1f5; stroke: #cbd2dc; stroke-width: 1.4; stroke-linejoin: round; }
+.file-glyph .file-glyph-label { fill: var(--file-glyph, #64748b); }
+.file-glyph text { fill: #fff; font: 700 7.6px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .02em; }
+.file-glyph[data-type="text"] { --file-glyph: #2563eb; }
+.file-glyph[data-type="code"] { --file-glyph: #7c3aed; }
+.file-glyph[data-type="archive"] { --file-glyph: #d97706; }
+.file-glyph[data-type="pdf"] { --file-glyph: #dc2626; }
+.file-glyph[data-type="sheet"] { --file-glyph: #16a34a; }
+.file-glyph[data-type="doc"] { --file-glyph: #1d4ed8; }
+.file-glyph[data-type="slides"] { --file-glyph: #ea580c; }
+.file-glyph[data-type="image"] { --file-glyph: #0f766e; }
+.file-glyph[data-type="media"] { --file-glyph: #be185d; }
+/* A sent file in a Sessions message: the glyph, then name and size beside it (the button holds both; the card is one block). */
+.native-turn-files .attachment-file-card { display: block; width: 236px; max-width: 100%; padding: 8px 12px 8px 9px; border: 1px solid #dfe4ec; border-radius: 12px; background: #fff; }
+.native-turn-files .attachment-file-card .attachment-open { display: grid; grid-template-columns: 34px minmax(0, 1fr); grid-template-rows: auto; align-items: center; gap: 10px; width: 100%; padding: 0; text-align: left; cursor: pointer; }
+.native-turn-files .attachment-file-card .native-file-info > :is(.attachment-name, small) { grid-column: 1; grid-row: auto; }
+.native-turn-files .attachment-file-card .file-glyph { width: 34px; height: 38px; }
+.native-turn-files .attachment-file-card .native-file-info { display: grid; gap: 2px; min-width: 0; }
+.native-turn-files .attachment-file-card .attachment-name { overflow: hidden; color: var(--ink); font-size: 13px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.native-turn-files .attachment-file-card small { color: var(--muted); font-size: 11.5px; line-height: 16px; }
+.native-turn-files .attachment-file-card:hover { border-color: #c8d2e0; background: #fafbfd; }
+/* The composer tray shows the same glyph, a size smaller, without the grey tile other file icons sit on. */
+:is(#chat-attachments, .native-takeover-tray) .attachment-open > :is(.native-file-icon, .attachment-file-icon).file-glyph { width: 32px; height: 38px; margin: 0 4px; border-radius: 0; background: none; }
+:is(#chat-attachments, .native-takeover-tray) .attachment-open > :is(.native-file-icon, .attachment-file-icon).file-glyph svg { width: 100%; height: 100%; }
+/* A file in a group-chat message: the glyph over two rows, name above size, the send-to-device button at the top right. */
+#chat-feed .attachment-file-card { width: 240px; }
+#chat-feed .attachment-file-card .attachment-open { grid-template-columns: 34px minmax(0, 1fr) 24px; grid-template-rows: 19px 19px; column-gap: 10px; row-gap: 1px; padding: 8px 9px; }
+#chat-feed .attachment-file-card .attachment-open > .file-glyph { grid-column: 1; grid-row: 1 / -1; width: 34px; height: 38px; }
+#chat-feed .attachment-file-card .attachment-name { grid-column: 2; grid-row: 1; align-self: end; overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+#chat-feed .attachment-file-card .attachment-open small { grid-column: 2; grid-row: 2; align-self: start; color: var(--muted); font-size: 11.5px; }
+#chat-feed .attachment-file-card > .chat-icon-btn { top: 50%; margin-top: -11px; }
+
+/* Subagents and background shells of a turn: one row each with what it is, what it is doing now, and how long it ran. */
+.nt-tasks { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; max-width: 640px; padding: 6px 10px; border: 1px solid #eceef2; border-radius: 8px; background: #fafbfc; font-size: 13px; }
+.nt-tasks-head { display: flex; align-items: center; gap: 7px; padding: 1px 0 3px; color: #6b7080; font-size: 12.5px; }
+.nt-tasks-count { margin-left: auto; color: #9da2ab; font-variant-numeric: tabular-nums; }
+.nt-tasks-count.is-running { color: #15803d; }
+.nt-task { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 24px; color: #4b505b; }
+.nt-task > .nt-icon, .nt-tasks-head > .nt-icon { width: 15px; height: 15px; flex: 0 0 15px; }
+.nt-task-name { min-width: 3em; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-task-type { flex: none; padding: 0 6px; border-radius: 4px; background: #eef0f4; color: #6b7080; font-size: 11.5px; line-height: 18px; }
+.nt-task-activity { min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9da2ab; font-size: 12.5px; }
+.nt-task-state { display: inline-flex; align-items: center; gap: 6px; flex: none; margin-left: auto; color: #9da2ab; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.nt-task.is-running .nt-task-state { color: #15803d; }
+.nt-task.is-failed .nt-task-state { color: var(--danger); }
+.nt-task-state .nt-pulse { width: 6px; height: 6px; }
+
+/* Top of a transcript: one capsule, "load older" with a history mark on the left, "latest" with a down arrow on the right. */
+.native-history-actions { display: inline-flex; align-items: center; gap: 1px; margin: 4px auto; padding: 3px; border: 1px solid #e4e7ee; border-radius: 999px; background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 5%); }
+.native-history-actions[hidden] { display: none; }
+.native-history-actions button { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 28px; min-height: 28px; padding: 0 13px; border: 0; border-radius: 999px; background: transparent; box-shadow: none; color: #4b505b; font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; }
+.native-history-actions button:hover:not(:disabled) { background: #f1f3f7; color: var(--ink); }
+.native-history-actions button:disabled { opacity: .6; }
+.native-history-actions svg { width: 15px; height: 15px; flex: none; }
+.native-history-older svg { color: var(--accent); }
+.native-history-latest { color: #6b7080; }
+.native-history-latest::before { content: ''; position: absolute; left: -1px; top: 7px; bottom: 7px; width: 1px; background: #e4e7ee; }

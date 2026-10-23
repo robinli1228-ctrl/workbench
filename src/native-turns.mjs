@@ -74,6 +74,17 @@ export function applyNativeTurnEvent(turn,event){
  if(event.kind==='question'&&event.id&&Array.isArray(event.questions)&&event.questions.length){next.question={id:String(event.id),questions:event.questions.slice(0,8),askedAt:now()};next.status='waiting_user';next.phase='waiting';}
  if(event.kind==='question_resolved'){if(next.question&&(!event.id||next.question.id===String(event.id))){delete next.question;if(next.status==='waiting_user')next.status='running';if(next.phase==='waiting')next.phase='working';}}
  if(event.kind==='tool'&&event.item){push('tool',{text:clip(String(event.text||'')),item:boundedItem(event.item)});next.phase=['completed','failed'].includes(event.item.status)?'working':'tool';next.toolName=String(event.item.name||event.item.command||event.item.tool||event.item.title||event.item.type||event.text||'').slice(0,200);}
+ // Subagents and background shells of the turn sit on it (not in its event list): start on Home's clock, as the turn's own time is,
+ // the run time measured on the device; later events of one task fill in what it is doing now and how it ended.
+ if(event.kind==='task'&&event.task?.id){
+  const tk=event.task,id=String(tk.id).slice(0,80),tasks=[...(next.tasks||[])],i=tasks.findIndex(x=>x.id===id),str=(v,n)=>typeof v==='string'?v.slice(0,n):undefined;
+  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',status:'running',startedAt:now()});
+  else if(i>=0&&tasks[i].status==='running'){const x={...tasks[i]};
+   if(typeof tk.activity==='string')x.activity=str(tk.activity,200);if(Number.isFinite(tk.toolUses))x.toolUses=tk.toolUses;
+   if(['completed','failed','stopped'].includes(tk.status)){x.status=tk.status;x.endedAt=now();if(Number.isFinite(tk.durationMs)&&tk.durationMs>=0)x.durationMs=tk.durationMs;}
+   tasks[i]=x;}
+  next.tasks=tasks.slice(-20);
+ }
  if(event.kind==='log'&&typeof event.text==='string'){push('log',{text:clip(event.text)});if(event.thinking)next.phase='thinking';}
  if(event.kind==='status'){
   // Input acceptance is independent of the task outcome; a later failure cannot undo delivery.
@@ -85,15 +96,17 @@ export function applyNativeTurnEvent(turn,event){
   if(event.status&&event.status!=='waiting_user'&&next.question)delete next.question;
   if(event.resident!==undefined)next.resident=Boolean(event.resident);
   if(event.error){next.error=String(event.error).slice(0,2000);push('error',{text:next.error});}
-  if(['succeeded','failed','interrupted'].includes(next.status)){next.endedAt=next.endedAt||now();next.phase=null;}
+  if(['succeeded','failed','interrupted'].includes(next.status)){next.endedAt=next.endedAt||now();next.phase=null;
+   // A parent ending is not evidence that its background child completed or stopped. Freeze the observation, not the outcome.
+   if(next.tasks?.some(x=>x.status==='running'))next.tasks=next.tasks.map(x=>x.status==='running'?{...x,status:'unknown',endedAt:next.endedAt}:x);}
  }
  let bytes=2;next.events=[];for(let i=events.length-1;i>=0;i--){const size=Buffer.byteLength(JSON.stringify(events[i]))+1;if(bytes+size>MAX_EVENT_BYTES)break;bytes+=size;next.events.unshift(events[i]);}return next;
 }
 
 export function nativeTurnView(turn){
- const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question,disconnectedAt}=turn;
+ const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question,disconnectedAt,tasks}=turn;
  return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
-  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{})};
+  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{}),...(tasks?.length?{tasks}:{})};
 }
 
 /** Home side: validation, idempotent creation, occupancy checks, attachment binding and event intake. */
@@ -434,6 +447,7 @@ export class NativeTurnRunner{
     else if(type==='context_usage'&&p&&typeof p==='object')this.event(m.id,{kind:'context_usage',sample:p});
     else if(type==='question'&&p.id&&Array.isArray(p.questions))this.event(m.id,{kind:'question',id:String(p.id),questions:p.questions});
     else if(type==='question_resolved')this.event(m.id,{kind:'question_resolved',id:p.id==null?null:String(p.id)});
+    else if(type==='task'&&p.id)this.event(m.id,{kind:'task',task:p});
    };
    // Model/effort from the Sessions page: flags at spawn for Claude/Agy (Claude later changes them in place), per turn for Codex and Grok.
    const resident=NATIVE_RESIDENT_RUNTIMES.has(m.runtime),inputs={attachments:files,inputImages:images,model:typeof m.model==='string'&&m.model?m.model:null,effort:typeof m.effort==='string'&&m.effort?m.effort:null,control:m.control||null,...(env?{env}:{})};

@@ -1,6 +1,7 @@
 import { CodexSession } from './codex.mjs';
 import { CliPrintSession } from './cli-print-session.mjs';
 import { tr } from './i18n.mjs';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Session-page takeover adapters. They extend the shared managed adapters without changing them:
@@ -16,7 +17,7 @@ export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,mod
   const chosen=(modelFlag,effortFlag)=>[...(model?[modelFlag,model]:[]),...(effort?[effortFlag,effort]:[])];
   // A resident Claude answers permission prompts over stdio: every tool is still allowed by the bypass mode, but AskUserQuestion
   // (which only exists with a prompt host) reaches the page as a question card. A one-shot turn cannot answer, so it keeps bypassing.
-  if(runtime==='claude')return keepAlive?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--resume',sessionId,...chosen('--model','--effort'),'--permission-mode','bypassPermissions','--permission-prompt-tool','stdio']
+  if(runtime==='claude')return keepAlive?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--resume',sessionId,...chosen('--model','--effort'),'--permission-mode','bypassPermissions','--permission-prompt-tool','stdio','--replay-user-messages']
     :['-p',prompt,'--output-format','stream-json','--verbose','--resume',sessionId,...chosen('--model','--effort'),'--dangerously-skip-permissions'];
   if(runtime==='grok')return ['--always-approve','--no-plan','--cwd',cwd,...chosen('-m','--reasoning-effort'),'--output-format','streaming-messages-json','--include-partial-messages','--permission-mode','bypassPermissions','--resume',sessionId,'-p',prompt];
   if(runtime==='agy')return ['--output-format','stream-json','--dangerously-skip-permissions','--mode','accept-edits',...chosen('--model','--effort'),'--conversation',sessionId,...(keepAlive?['--input-format','stream-json']:['--print',prompt])];
@@ -53,7 +54,7 @@ export class NativeCodexSession extends CodexSession {
 
 /** Claude/Agy resident stream-json input, Grok one process per turn. Claude gets images as base64 content blocks. */
 export class NativeCliSession extends CliPrintSession {
-  constructor(options){super(options);this.inputImages=options.inputImages||[];this.closing=false;this.question=null;this.initialized=false;}
+  constructor(options){super(options);this.inputImages=options.inputImages||[];this.closing=false;this.question=null;this.initialized=false;this.awaitingEcho=false;}
   args(prompt){return nativeTurnArgs(this.runtime,{cwd:this.cwd,sessionId:this.resumeSessionId,prompt,keepAlive:this.keepAlive,model:this.model,effort:this.effort});}
   get questionsSupported(){return this.keepAlive&&this.runtime==='claude';}
   /** Only a completed native result may keep the CLI; broken transport shutdown must still retire it. */
@@ -63,9 +64,33 @@ export class NativeCliSession extends CliPrintSession {
       if(message.type==='control_request')return this.control(message);
       if(message.type==='control_cancel_request'){if(this.question?.requestId===message.request_id){const {id}=this.question;this.question=null;this.emit('question_resolved',{id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});}return;}
     }
+    if(this.keepAlive&&this.runtime==='claude'&&message&&typeof message==='object'){
+      // The live background-task list is kept between turns too, so a later turn knows what is still running.
+      if(message.type==='system'&&message.subtype==='background_tasks_changed'&&Array.isArray(message.tasks))this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
+      if(!this.done&&!this.awaitingEcho&&message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id)this.task(message);
+      // Claude echoes a stdin message (--replay-user-messages) when it starts on it. Until this turn's echo, what it says
+      // answers something else it queued first (a background task's completion notice): that output and its result are not
+      // this turn's, so they neither show in it nor end it.
+      if(message.type==='user'&&message.isReplay){
+        if(message.uuid===this.inputUuid&&!message.parent_tool_use_id&&message.session_id===(this.nativeSessionId||this.resumeSessionId))this.awaitingEcho=false;
+        return;
+      }
+      if(this.awaitingEcho&&!this.stopping&&message.type!=='system')return;
+    }
     // Native Claude interrupts a turn without killing its resident process; only its owner's result confirms that boundary.
     if(!this.done&&this.stopping&&!this.closing&&this.keepAlive&&this.runtime==='claude'&&message?.type==='result'&&!message.parent_tool_use_id)return this.finish('interrupted');
     this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;}
+  }
+  /** A subagent or background shell of this turn for the page: start, what it is doing now (at most every 5s), end. An end
+   * without a start here (a task of an earlier, killed process) is not reported. */
+  task(m){
+    const id=m.task_id;if(!id)return;const tasks=this.tasks||=new Map(),known=tasks.get(id),now=Date.now();
+    if(m.subtype==='task_started'){tasks.set(id,{at:now,shown:0});return this.emit('task',{id,status:'running',kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80)});}
+    if(!known)return;
+    if(m.subtype==='task_progress'){if(now-known.shown<5000)return;known.shown=now;return this.emit('task',{id,status:'running',activity:String(m.description||'').slice(0,200),toolUses:Number.isFinite(m.usage?.tool_uses)?m.usage.tool_uses:undefined});}
+    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
+    if(!status||['pending','running'].includes(status))return;
+    tasks.delete(id);this.emit('task',{id,status:['completed','failed'].includes(status)?status:'stopped',durationMs:now-known.at});
   }
   /** Claude's stdio permission host: AskUserQuestion becomes a question for the page; every other prompt is allowed as the bypass mode would. */
   control(message){
@@ -93,6 +118,12 @@ export class NativeCliSession extends CliPrintSession {
     const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text:prompt},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
     const message=this.runtime==='agy'?{event:'user',message:{role:'user',content}}:{type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
     this.inputAttempted=true;
+    // A prompt waits for its own echo before output counts as its own; a slash command is handled locally and not echoed.
+    this.awaitingEcho=this.keepAlive&&this.runtime==='claude'&&!String(prompt).trimStart().startsWith('/');
+    // Queued background notices are replayed too; UUID identity, not text, binds even repeated prompts to this input.
+    if(this.awaitingEcho)message.uuid=this.inputUuid=randomUUID();else this.inputUuid=null;
+    // Process-wide backgroundTasks still gates completion; this map only owns the current turn's visible tasks.
+    this.tasks=new Map();
     this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error)this.emit('status',{inputDeliveryState:'accepted'});});
   }
   /** Resident Claude interrupts only the current turn through the stream-json control channel; others end the process. */

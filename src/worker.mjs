@@ -854,7 +854,10 @@ async function query(m) {
     }
     if(['native_sessions','native_session','native_terminal_preview','native_terminal_prepare'].includes(m.action)) {
       const input=m.path||{},runtime=input.runtime;
-      if(m.action!=='native_sessions'&&!runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false))throw Error('CLI is not available on this device');
+      // Reading history and opening iTerm need the CLI installed, not signed in: a signed-out CLI opens in iTerm, where the
+      // person signs in. Running it from the page still requires a ready CLI.
+      const installed=runtimes.some(r=>r.type===runtime&&r.installed&&r.supported!==false),ready=runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false);
+      if(m.action!=='native_sessions'&&!ready&&!(installed&&['native_session','native_terminal_preview','native_terminal_prepare'].includes(m.action)))throw Error(installed?'CLI is not signed in on this device':'CLI is not available on this device');
       if(m.action==='native_sessions'){send({type:'reply',id:m.id,result:await listNativeSessions(runtime,{scope:input.scope||'created',registry:db.list('nativeCatalogEntries'),managedSessions:input.managedSessions||[],adoptedSessions:input.adoptedSessions||[],nodeId:identity.nodeId})});return;}
       const record=input.record||registeredNativeSession(db,runtime,input.sessionId);
       if(m.action==='native_session'){send({type:'reply',id:m.id,result:await readNativeSession(runtime,input.sessionId,{record,historyPage:input.historyPage===true,cursor:input.cursor,snapshot:input.snapshot,delta:input.delta===true})});return;}

@@ -12,6 +12,19 @@ const STOP='\\s`<>"\'，。；：！？、()\\[\\]';
 const PATTERN=new RegExp(`(?:\\/|\\.\\.?\\/)?(?:[^${STOP}\\/]+\\/)*[^${STOP}\\/]+\\.(?:${EXT})(?=$|[\\s，。；：！？、()\\[\\]])`,'gi');
 const EXACT=new RegExp(`^[^${STOP}]+\\.(?:${EXT})$`,'i');
 const ICON={video:'▶',audio:'♪',image:'▣',pdf:'PDF',file:'⬇'};
+/** File types by extension, for the colour of a file glyph's label. */
+const FILE_TYPES=[['text',/^(md|markdown|txt|log|rtf)$/],['code',/^(js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|sql|json|yaml|yml|toml|xml|html|css|scss|vue)$/],
+ ['archive',/^(zip|tar|gz|tgz|bz2|xz|7z|rar)$/],['pdf',/^pdf$/],['sheet',/^(csv|tsv|xls|xlsx|numbers)$/],['doc',/^(doc|docx|pages|odt)$/],['slides',/^(ppt|pptx|key|odp)$/],['image',/^(png|jpe?g|gif|webp|svg|heic|bmp)$/],['media',/^(mp4|mov|webm|mkv|mp3|wav|m4a|flac)$/]];
+/**
+ * A file as a page with a folded corner and its extension on a coloured label (MD, ZIP, PDF…), so a sent or attached file
+ * reads at a glance; the colour follows the kind of file (text, code, archive, PDF, sheet…).
+ */
+export function fileGlyph(name='',className='native-file-icon'){
+  const ext=(String(name).match(/\.([a-z0-9]{1,8})$/i)?.[1]||'').toLowerCase(),type=FILE_TYPES.find(([,re])=>re.test(ext))?.[0]||'other';
+  const label=(ext||'FILE').slice(0,4).toUpperCase(),node=el('span',`${className} file-glyph`);node.dataset.type=type;node.setAttribute('aria-hidden','true');
+  node.innerHTML=`<svg viewBox="0 0 36 40" xmlns="http://www.w3.org/2000/svg"><path class="file-glyph-page" d="M7 1.5h15.5L32.5 11.5V36a2.5 2.5 0 0 1-2.5 2.5H7A2.5 2.5 0 0 1 4.5 36V4A2.5 2.5 0 0 1 7 1.5z"/><path class="file-glyph-fold" d="M22.5 1.5V9a2.5 2.5 0 0 0 2.5 2.5h7.5"/><rect class="file-glyph-label" x="1" y="21" width="${label.length>3?30:26}" height="12" rx="2.5"/><text x="${label.length>3?16:14}" y="30" text-anchor="middle">${label}</text></svg>`;
+  return node;
+}
 const REASONS={source_offline:'Source device offline',worker_upgrade:'Device needs a Worker upgrade',media_missing:'File not found',media_not_file:'Not a file',invalid_media_path:'Path is outside the allowed folders'};
 
 export function mediaKindFromName(name) {

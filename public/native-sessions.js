@@ -8,7 +8,7 @@ import {groupNativeSessions,readNativeSessionPages} from './native-session-group
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
-import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,openTextLightbox,formatBytes,copyAction,markImageOpener} from './media.js';
+import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,openTextLightbox,formatBytes,copyAction,markImageOpener,fileGlyph} from './media.js';
 import {createSidePreview,setSidePreviewOpener,sideButton,canOpenSide,openSide} from './side-preview.js';
 import {pastesAsFile,pastedTextName,isTextName} from './pasted-text.js';
 import {liveSceneRows} from './live-scene.js';
@@ -16,7 +16,7 @@ import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,same
 import {stripAnsi} from './run-log-data.js';
 import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSummary} from './history-prompt.js';
 import {cachedHistory,saveHistory,forgetHistory} from './history-cache.js';
-import {classifyStep,activityBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
+import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -971,7 +971,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const form=el('form','chat-composer native-takeover-form native-ask-form'),bar=el('div','chat-input-bar'),field=el('div','chat-input-field'),tray=el('div','chat-attachments native-takeover-tray');tray.hidden=true;
   const attach=el('button','native-attach');attach.type='button';attach.title=t('Upload an image or file');attach.setAttribute('aria-label',t('Upload file'));attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
   const model=el('select','native-ask-model');model.setAttribute('aria-label',t('Model for side questions'));
-  const input=el('textarea');input.rows=1;input.placeholder=t('Ask a quick question that does not interrupt the main session…');input.setAttribute('aria-label',t('Side question'));
+  const input=el('textarea');input.rows=3;input.placeholder=t('Ask a quick question that does not interrupt the main session…');input.setAttribute('aria-label',t('Side question'));
   const send=el('button','primary chat-send');send.type='submit';setActionIcon(send,'send',t('Send'));
   const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
   // Text on top, a tool row under it: attach and model on the left, send on the right.
@@ -984,7 +984,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   function available(value){const worker=getData().workers?.find(w=>w.id===value?.nodeId);return Boolean(value&&['claude','codex'].includes(value.runtime)&&worker?.capabilities?.nativeSideAsk===1&&nativeId(value)&&value.workspace);}
   function fillModels(){
    const worker=getData().workers?.find(w=>w.id===session?.nodeId),runtime=worker?.runtimes?.find(r=>r.type===session?.runtime),main=takeover.settings().model||session?.sessionConfiguration?.model||'';
-   const keep=model.value;model.replaceChildren();const follow=el('option','',main?t('Follow the session · {model}',{model:main}):t('Follow the session'));follow.value='';model.append(follow);
+   const keep=model.value;model.replaceChildren();const follow=el('option','',main||t('Follow the session'));follow.value='';model.append(follow);
    for(const m of runtime?.models||[]){if(m.id===main)continue;const o=el('option','',m.name||m.id);o.value=m.id;model.append(o);}
    model.value=[...model.options].some(o=>o.value===keep)?keep:'';
   }
@@ -1051,7 +1051,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
     catch(error){if(current())setNote(error.message);}finally{if(current()){uploads--;render();}}}
   }
   form.addEventListener('submit',e=>{e.preventDefault();void ask();});
-  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;render();});
+  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=`${Math.min(150,Math.max(70,input.scrollHeight))}px`;render();});
   input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!send.disabled){e.preventDefault();void ask();}});
   input.addEventListener('paste',e=>{const list=[...(e.clipboardData?.files||[])];if(list.length){e.preventDefault();void upload(list);}});
   attach.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
@@ -1126,14 +1126,15 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    blocksAfter.set(blockKey,md);frag.append(md);
   }
   flush();
+  const tasks=taskBlock(turn,t,{live});if(tasks)frag.append(tasks);
   if(turn.id){turnBlocks.delete(turn.id);turnBlocks.set(turn.id,blocksAfter);if(turnBlocks.size>64)turnBlocks.delete(turnBlocks.keys().next().value);}
   return frag;
  }
  /** The single working line of a live turn: pulse, elapsed time, what the CLI is doing right now, Stop. */
  function workingLine(turn,onStop){
   const line=el('div','nt-working');const pulse=el('span','nt-pulse');pulse.setAttribute('aria-hidden','true');
-  const {steps}=stepsOf(turn),running=[...steps].reverse().find(s=>s.running),now=running?stepTitle(running,t):null;
-  const hint=turn.disconnectedAt?t('Device connection lost; waiting for it to return\u2026'):turn.status==='queued'?t('Waiting for the device\u2026'):turn.status==='stopping'?t('Stopping\u2026'):turn.question&&!turn.question.answered?t('Waiting for your answer\u2026'):turn.status==='starting'||!turn.phase?t('Starting the CLI\u2026'):now?`${now.verb} ${now.target}`.trim():turn.phase==='replying'?t('Replying\u2026'):t('Working\u2026');
+  const {steps}=stepsOf(turn),running=[...steps].reverse().find(s=>s.running),now=running?stepTitle(running,t):null,tasks=(turn.tasks||[]).filter(x=>x.status==='running').length;
+  const hint=turn.disconnectedAt?t('Device connection lost; waiting for it to return\u2026'):turn.status==='queued'?t('Waiting for the device\u2026'):turn.status==='stopping'?t('Stopping\u2026'):turn.question&&!turn.question.answered?t('Waiting for your answer\u2026'):turn.status==='starting'||!turn.phase?t('Starting the CLI\u2026'):now?`${now.verb} ${now.target}`.trim():tasks?t(tasks===1?'Waiting for 1 background task\u2026':'Waiting for {n} background tasks\u2026',{n:tasks}):turn.phase==='replying'?t('Replying\u2026'):t('Working\u2026');
   line.append(pulse,el('span','nt-working-time',elapsedText(turn.createdAt)),el('span','nt-working-hint',hint));if(onStop)line.append(button('Stop',onStop,'secondary compact nt-stop'));return line;
  }
  /** Takeover reuses the group-chat composer behaviour: Enter sends, Shift+Enter breaks lines, paste/drag/attach uploads files. An unconfirmed send keeps Send disabled while the same message ID is looked up; only a confirmed absence allows a retry with that ID. */
@@ -1197,13 +1198,13 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     // Match group-chat draft tiles: image preview with a corner remove control, details for other files.
     const open=el('button','attachment-open');open.type='button';open.addEventListener('click',()=>previewAttachment(item));
     if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);}
-    else{const icon=el('span','native-file-icon');icon.innerHTML=UI_ICON.original;open.append(icon);}
+    else open.append(fileGlyph(item.name));
     open.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));
     card.append(open,closeIcon(button('',remove,'attachment-remove'),t('Remove attachment')));return card;
    }
    // A sent attachment opens in the preview on click (image full size, file details).
    const open=el('button','attachment-open');open.type='button';open.title=item.name;open.addEventListener('click',()=>previewAttachment(item,open));card.append(open);
-   if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);markImageOpener(open);}else open.append(el('span','native-file-icon','\u{1F4C4}'));
+   if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);markImageOpener(open);}else open.append(fileGlyph(item.name));
    if(remove||!item.mime?.startsWith('image/')){const info=el('span','native-file-info');info.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));open.append(info);}
    if(remove){const x=closeIcon(button('',remove,'attachment-remove'),t('Remove attachment'));card.append(x);}return card;}
   /**
@@ -1289,6 +1290,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
        const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content});reply.dataset.role='assistant';reply.classList.add('native-turn-anchored');footNote(reply,endNote(turn));if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());anchor.after(reply);continue;}
       const extra=el('div','native-turn-anchored nt-extra');
       if(hasProcess(turn)&&anchor.dataset.process!=='1')extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
+      {const tasks=taskBlock(turn,t);if(tasks)extra.append(tasks);}
       footNote(anchor,endNote(turn),{anchored:true});
       if(extra.childElementCount){const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}if(turn.endedAt){if(!('historyDuration' in anchor.dataset))anchor.dataset.historyDuration=anchor.dataset.duration||'';anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());}continue;}
     }

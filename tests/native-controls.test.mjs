@@ -14,9 +14,9 @@ const SID = '00000000-1111-4222-8333-444444444444';
 
 test('chosen model and effort become CLI flags; nothing is added when they are unset', () => {
   assert.deepEqual(nativeTurnArgs('claude', { sessionId: SID, keepAlive: true, model: 'claude-haiku-5-5', effort: 'low' }),
-    ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--resume', SID, '--model', 'claude-haiku-5-5', '--effort', 'low', '--permission-mode', 'bypassPermissions', '--permission-prompt-tool', 'stdio']);
+    ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--resume', SID, '--model', 'claude-haiku-5-5', '--effort', 'low', '--permission-mode', 'bypassPermissions', '--permission-prompt-tool', 'stdio', '--replay-user-messages']);
   assert.deepEqual(nativeTurnArgs('claude', { sessionId: SID, keepAlive: true }),
-    ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--resume', SID, '--permission-mode', 'bypassPermissions', '--permission-prompt-tool', 'stdio']);
+    ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--resume', SID, '--permission-mode', 'bypassPermissions', '--permission-prompt-tool', 'stdio', '--replay-user-messages']);
   // A one-shot turn has nobody to answer a prompt, so it keeps bypassing them. No launch flag carries instructions.
   assert.ok(!nativeTurnArgs('claude', { sessionId: SID, keepAlive: true }).includes('--append-system-prompt'));
   assert.ok(!new NativeCodexSession({ cwd: '/w', resumeSessionId: SID, emit() {} }).launchArgs().some(arg => arg.startsWith('developer_instructions=')));

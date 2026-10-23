@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v173-remote-access-settings-20261023';
+const CACHE = 'agent-workbench-static-v174-pr178-184-20261023';
 const STATIC = [
   '/remote-access-settings.js',
   '/group-conversations.js',

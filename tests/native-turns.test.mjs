@@ -308,6 +308,36 @@ test('turn events retain tools, intermediate messages, errors and phases in orde
   assert.equal(applyNativeTurnEvent(turn, { kind: 'text', text: 'late' }), turn);
 });
 
+test('a resident Claude turn ends with its own result, not one Claude gave a background notice it handled first', async t => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'wb-native-echo-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bin = join(dir, 'claude');
+  // Like Claude after a background task finished: the queued completion notice is answered (with its own result) before
+  // the person's message, whose echo then marks where its own reply starts.
+  writeFileSync(bin, `#!/usr/bin/env node
+const a=process.argv.slice(2);const id=a[a.indexOf('--resume')+1];const out=m=>console.log(JSON.stringify(m));
+out({type:'system',session_id:id});
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.type!=='user')return;
+ out({type:'system',subtype:'background_tasks_changed',tasks:[]});
+ out({type:'assistant',message:{content:[{type:'text',text:'NOTICE'}]}});out({type:'result',subtype:'success',session_id:id,result:'NOTICE'});
+ setTimeout(()=>{if(a.includes('--replay-user-messages'))out({type:'user',isReplay:true,uuid:m.uuid,message:m.message,session_id:id});
+  out({type:'assistant',message:{content:[{type:'text',text:'answer to '+m.message.content}]}});out({type:'result',subtype:'success',session_id:id,result:'answer to '+m.message.content});},150);});
+`.replace('#!/usr/bin/env node\n', '#!/usr/bin/env node\nconst require=(await import("node:module")).createRequire(import.meta.url);\n'));
+  writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
+  chmodSync(bin, 0o755);
+  const prior = process.env.CLAUDE_BIN; process.env.CLAUDE_BIN = bin; t.after(() => { if (prior === undefined) delete process.env.CLAUDE_BIN; else process.env.CLAUDE_BIN = prior; });
+  const events = [];
+  const runner = new NativeTurnRunner({ send: m => events.push(m), resolveSession: async () => ({ workspace: dir }),
+    createSession: ({ runtime, cwd, resumeSessionId, emit, keepAlive }) => new CliPrintSession({ cwd, runtime, emit, resumeSessionId, env: process.env, keepAlive }) });
+  t.after(() => runner.stopAll());
+  const ended = id => new Promise(resolve => { const timer = setInterval(() => { const e = events.find(x => x.id === id && ['succeeded', 'failed'].includes(x.event?.status)); if (e) { clearInterval(timer); resolve(e); } }, 20); });
+  await runner.start({ id: 'e1', runtime: 'claude', sessionId: SID, prompt: 'continue' });
+  assert.equal((await ended('e1')).event.status, 'succeeded');
+  const texts = events.filter(e => e.id === 'e1' && ['message', 'text'].includes(e.event?.kind)).map(e => e.event.text).join('|');
+  assert.match(texts, /answer to continue/, 'the turn ran to its own reply');
+  assert.doesNotMatch(texts, /NOTICE/, "the notice's reply is not shown as this turn's");
+});
+
 test('a resident Claude stream-json process receives exact resume, keeps its pid across turns and gets images as content blocks', async t => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'wb-native-resident-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -316,6 +346,7 @@ test('a resident Claude stream-json process receives exact resume, keeps its pid
 const a=process.argv.slice(2);if(!a.includes('--input-format'))process.exit(3);const id=a[a.indexOf('--resume')+1];
 console.log(JSON.stringify({type:'system',session_id:id}));
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.type!=='user')return;
+ if(a.includes('--replay-user-messages'))console.log(JSON.stringify({type:'user',isReplay:true,uuid:m.uuid,message:m.message,session_id:id}));
  const c=m.message.content,images=Array.isArray(c)?c.filter(b=>b.type==='image').length:0,raw=Array.isArray(c)?c[0].text:c;
  const text=raw;
  console.log(JSON.stringify({type:'assistant',message:{content:[{type:'tool_use',id:'tu'+text,name:'Read',input:{file:'x'}}]}}));
@@ -476,6 +507,7 @@ console.log(JSON.stringify({type:'system',session_id:id}));
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{fs.appendFileSync('${log}',line+'\\n');const m=JSON.parse(line);
  if(m.type==='control_request'&&m.request.subtype==='initialize'){console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{commands:[]}}}));return;}
  if(m.type==='user'){
+  if(a.includes('--replay-user-messages'))console.log(JSON.stringify({type:'user',isReplay:true,uuid:m.uuid,message:m.message,session_id:id}));
   console.log(JSON.stringify({type:'control_request',request_id:'perm-bash',request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'ls'},tool_use_id:'tu-bash'}}));
   console.log(JSON.stringify({type:'control_request',request_id:'perm-ask',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions:[{question:'Which colour?',header:'Colour',options:[{label:'Red',description:'r'},{label:'Blue',description:'b'}],multiSelect:false}]},tool_use_id:'tu-ask',requires_user_interaction:true}}));
   return;}
@@ -537,4 +569,28 @@ createInterface({input:process.stdin}).on('line',line=>{appendFileSync('${log}',
   const lines = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l));
   assert.ok(lines[0].join(' ').includes('-c features.default_mode_request_user_input=true'), 'the feature flag rides on the launch');
   assert.equal(lines.find(l => l.method === 'initialize').params.capabilities.experimentalApi, true);
+});
+
+test('a turn lists its subagents: what each does now, how it ended and how long it ran; an end without a start is not shown', () => {
+  const out = [], session = new CliPrintSession({ cwd: tmpdir(), runtime: 'claude', keepAlive: true, resumeSessionId: SID, emit: (type, payload) => out.push({ type, payload }) });
+  const sys = (subtype, rest) => session.receive({ type: 'system', subtype, session_id: SID, ...rest });
+  sys('task_notification', { task_id: 'old', status: 'completed' });
+  sys('task_started', { task_id: 'a1', task_type: 'local_agent', description: 'Review the change', subagent_type: 'general-purpose' });
+  sys('task_started', { task_id: 'b1', task_type: 'local_bash', description: 'npm test' });
+  sys('task_progress', { task_id: 'a1', description: 'Reading src/app.mjs', usage: { tool_uses: 3 } });
+  sys('task_progress', { task_id: 'a1', description: 'Too soon to report' });
+  sys('task_notification', { task_id: 'a1', status: 'completed' });
+  sys('task_updated', { task_id: 'a1', patch: { status: 'completed' } });
+  const tasks = out.filter(e => e.type === 'task').map(e => e.payload);
+  assert.deepEqual(tasks.map(x => [x.id, x.status]), [['a1', 'running'], ['b1', 'running'], ['a1', 'running'], ['a1', 'completed']]);
+  assert.ok(Number.isFinite(tasks.at(-1).durationMs));
+  let turn = { id: 't', status: 'running', events: [] };
+  for (const task of tasks) turn = applyNativeTurnEvent(turn, { kind: 'task', task });
+  assert.deepEqual(turn.tasks.map(x => [x.id, x.kind, x.status]), [['a1', 'agent', 'completed'], ['b1', 'shell', 'running']]);
+  assert.equal(turn.tasks[0].activity, 'Reading src/app.mjs');
+  assert.equal(turn.tasks[0].toolUses, 3);
+  assert.equal(turn.tasks[0].agentType, 'general-purpose');
+  turn = applyNativeTurnEvent(turn, { kind: 'status', status: 'interrupted' });
+  assert.deepEqual(turn.tasks.map(x => x.status), ['completed', 'unknown']);
+  assert.ok(turn.tasks[1].endedAt);
 });
