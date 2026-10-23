@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v176-role-card-stages';
+const CACHE = 'agent-workbench-static-v177-role-card-stages';
 const STATIC = [
   '/remote-access-settings.js',
   '/group-conversations.js',
