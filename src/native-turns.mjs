@@ -78,7 +78,7 @@ export function applyNativeTurnEvent(turn,event){
  // the run time measured on the device; later events of one task fill in what it is doing now and how it ended.
  if(event.kind==='task'&&event.task?.id){
   const tk=event.task,id=String(tk.id).slice(0,80),tasks=[...(next.tasks||[])],i=tasks.findIndex(x=>x.id===id),str=(v,n)=>typeof v==='string'?v.slice(0,n):undefined;
-  if(i<0&&tk.status==='running')tasks.push({id,kind:tk.kind==='shell'?'shell':'agent',description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',status:'running',startedAt:now()});
+  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',status:'running',startedAt:now()});
   else if(i>=0&&tasks[i].status==='running'){const x={...tasks[i]};
    if(typeof tk.activity==='string')x.activity=str(tk.activity,200);if(Number.isFinite(tk.toolUses))x.toolUses=tk.toolUses;
    if(['completed','failed','stopped'].includes(tk.status)){x.status=tk.status;x.endedAt=now();if(Number.isFinite(tk.durationMs)&&tk.durationMs>=0)x.durationMs=tk.durationMs;}
@@ -97,8 +97,8 @@ export function applyNativeTurnEvent(turn,event){
   if(event.resident!==undefined)next.resident=Boolean(event.resident);
   if(event.error){next.error=String(event.error).slice(0,2000);push('error',{text:next.error});}
   if(['succeeded','failed','interrupted'].includes(next.status)){next.endedAt=next.endedAt||now();next.phase=null;
-   // The CLI ends a turn only after its background work; a task still marked running missed its end (or was stopped with the turn).
-   if(next.tasks?.some(x=>x.status==='running'))next.tasks=next.tasks.map(x=>x.status==='running'?{...x,status:next.status==='succeeded'?'completed':'stopped',endedAt:next.endedAt}:x);}
+   // A parent ending is not evidence that its background child completed or stopped. Freeze the observation, not the outcome.
+   if(next.tasks?.some(x=>x.status==='running'))next.tasks=next.tasks.map(x=>x.status==='running'?{...x,status:'unknown',endedAt:next.endedAt}:x);}
  }
  let bytes=2;next.events=[];for(let i=events.length-1;i>=0;i--){const size=Buffer.byteLength(JSON.stringify(events[i]))+1;if(bytes+size>MAX_EVENT_BYTES)break;bytes+=size;next.events.unshift(events[i]);}return next;
 }

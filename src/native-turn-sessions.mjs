@@ -1,6 +1,7 @@
 import { CodexSession } from './codex.mjs';
 import { CliPrintSession } from './cli-print-session.mjs';
 import { tr } from './i18n.mjs';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Session-page takeover adapters. They extend the shared managed adapters without changing them:
@@ -66,11 +67,14 @@ export class NativeCliSession extends CliPrintSession {
     if(this.keepAlive&&this.runtime==='claude'&&message&&typeof message==='object'){
       // The live background-task list is kept between turns too, so a later turn knows what is still running.
       if(message.type==='system'&&message.subtype==='background_tasks_changed'&&Array.isArray(message.tasks))this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
-      if(message.type==='system'&&String(message.subtype||'').startsWith('task_'))this.task(message);
+      if(!this.done&&!this.awaitingEcho&&message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id)this.task(message);
       // Claude echoes a stdin message (--replay-user-messages) when it starts on it. Until this turn's echo, what it says
       // answers something else it queued first (a background task's completion notice): that output and its result are not
       // this turn's, so they neither show in it nor end it.
-      if(message.type==='user'&&message.isReplay){this.awaitingEcho=false;return;}
+      if(message.type==='user'&&message.isReplay){
+        if(message.uuid===this.inputUuid&&!message.parent_tool_use_id&&message.session_id===(this.nativeSessionId||this.resumeSessionId))this.awaitingEcho=false;
+        return;
+      }
       if(this.awaitingEcho&&!this.stopping&&message.type!=='system')return;
     }
     // Native Claude interrupts a turn without killing its resident process; only its owner's result confirms that boundary.
@@ -116,6 +120,10 @@ export class NativeCliSession extends CliPrintSession {
     this.inputAttempted=true;
     // A prompt waits for its own echo before output counts as its own; a slash command is handled locally and not echoed.
     this.awaitingEcho=this.keepAlive&&this.runtime==='claude'&&!String(prompt).trimStart().startsWith('/');
+    // Queued background notices are replayed too; UUID identity, not text, binds even repeated prompts to this input.
+    if(this.awaitingEcho)message.uuid=this.inputUuid=randomUUID();else this.inputUuid=null;
+    // Process-wide backgroundTasks still gates completion; this map only owns the current turn's visible tasks.
+    this.tasks=new Map();
     this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error)this.emit('status',{inputDeliveryState:'accepted'});});
   }
   /** Resident Claude interrupts only the current turn through the stream-json control channel; others end the process. */

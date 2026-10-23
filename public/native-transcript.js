@@ -219,11 +219,11 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
  * (counting up while it runs). A task the record still calls running after its turn ended was stopped with it. */
 export function taskBlock(turn,t,{live=false}={}){
  const tasks=turn?.tasks||[];if(!tasks.length)return null;
- const status=x=>x.status==='running'&&!live?'stopped':x.status,running=tasks.filter(x=>status(x)==='running').length;
+ const status=x=>x.status==='running'&&!live?'unknown':x.status,running=tasks.filter(x=>status(x)==='running').length;
  const agents=tasks.filter(x=>x.kind!=='shell').length,shells=tasks.length-agents;
  const box=el('div','nt-tasks'),head=el('div','nt-tasks-head');
  head.append(stepIcon('agent'),el('span','nt-tasks-title',[agents?t(agents===1?'1 subagent':'{n} subagents',{n:agents}):'',shells?t(shells===1?'1 background command':'{n} background commands',{n:shells}):''].filter(Boolean).join(' · ')));
- head.append(el('span',`nt-tasks-count${running?' is-running':''}`,running?t('{n} running',{n:running}):t('All finished')));
+ head.append(el('span',`nt-tasks-count${running?' is-running':''}`,running?t('{n} running',{n:running}):t(tasks.some(x=>status(x)==='unknown')?'Status unknown':'All finished')));
  box.append(head);
  for(const x of tasks){
   const state=status(x),row=el('div',`nt-task is-${state}`),name=el('span','nt-task-name',x.description||t(x.kind==='shell'?'Background command':'Subagent'));name.title=x.description||'';
@@ -233,7 +233,7 @@ export function taskBlock(turn,t,{live=false}={}){
   const activity=String(x.activity||'').replace(/^Running\s+/,'');
   if(state==='running'&&activity){const now=el('span','nt-task-activity',activity);now.title=activity;row.append(now);}
   const took=state==='running'?elapsedText(x.startedAt):Number.isFinite(x.durationMs)?elapsedText(0,x.durationMs):x.endedAt?elapsedText(x.startedAt,new Date(x.endedAt).getTime()):'';
-  const label=t(state==='running'?'Running':state==='completed'?'Finished':state==='failed'?'Failed':'Stopped');
+  const label=t(state==='running'?'Running':state==='completed'?'Finished':state==='failed'?'Failed':state==='unknown'?'Status unknown':'Stopped');
   const end=el('span','nt-task-state');if(state==='running')end.append(el('span','nt-pulse'));end.append(el('span','',took?`${label} \u00b7 ${took}`:label));row.append(end);
   box.append(row);
  }

@@ -320,7 +320,7 @@ out({type:'system',session_id:id});
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.type!=='user')return;
  out({type:'system',subtype:'background_tasks_changed',tasks:[]});
  out({type:'assistant',message:{content:[{type:'text',text:'NOTICE'}]}});out({type:'result',subtype:'success',session_id:id,result:'NOTICE'});
- setTimeout(()=>{if(a.includes('--replay-user-messages'))out({type:'user',isReplay:true,message:m.message,session_id:id});
+ setTimeout(()=>{if(a.includes('--replay-user-messages'))out({type:'user',isReplay:true,uuid:m.uuid,message:m.message,session_id:id});
   out({type:'assistant',message:{content:[{type:'text',text:'answer to '+m.message.content}]}});out({type:'result',subtype:'success',session_id:id,result:'answer to '+m.message.content});},150);});
 `.replace('#!/usr/bin/env node\n', '#!/usr/bin/env node\nconst require=(await import("node:module")).createRequire(import.meta.url);\n'));
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
@@ -346,7 +346,7 @@ test('a resident Claude stream-json process receives exact resume, keeps its pid
 const a=process.argv.slice(2);if(!a.includes('--input-format'))process.exit(3);const id=a[a.indexOf('--resume')+1];
 console.log(JSON.stringify({type:'system',session_id:id}));
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.type!=='user')return;
- if(a.includes('--replay-user-messages'))console.log(JSON.stringify({type:'user',isReplay:true,message:m.message,session_id:id}));
+ if(a.includes('--replay-user-messages'))console.log(JSON.stringify({type:'user',isReplay:true,uuid:m.uuid,message:m.message,session_id:id}));
  const c=m.message.content,images=Array.isArray(c)?c.filter(b=>b.type==='image').length:0,raw=Array.isArray(c)?c[0].text:c;
  const text=raw;
  console.log(JSON.stringify({type:'assistant',message:{content:[{type:'tool_use',id:'tu'+text,name:'Read',input:{file:'x'}}]}}));
@@ -507,7 +507,7 @@ console.log(JSON.stringify({type:'system',session_id:id}));
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{fs.appendFileSync('${log}',line+'\\n');const m=JSON.parse(line);
  if(m.type==='control_request'&&m.request.subtype==='initialize'){console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{commands:[]}}}));return;}
  if(m.type==='user'){
-  if(a.includes('--replay-user-messages'))console.log(JSON.stringify({type:'user',isReplay:true,message:m.message,session_id:id}));
+  if(a.includes('--replay-user-messages'))console.log(JSON.stringify({type:'user',isReplay:true,uuid:m.uuid,message:m.message,session_id:id}));
   console.log(JSON.stringify({type:'control_request',request_id:'perm-bash',request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'ls'},tool_use_id:'tu-bash'}}));
   console.log(JSON.stringify({type:'control_request',request_id:'perm-ask',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions:[{question:'Which colour?',header:'Colour',options:[{label:'Red',description:'r'},{label:'Blue',description:'b'}],multiSelect:false}]},tool_use_id:'tu-ask',requires_user_interaction:true}}));
   return;}
@@ -591,6 +591,6 @@ test('a turn lists its subagents: what each does now, how it ended and how long 
   assert.equal(turn.tasks[0].toolUses, 3);
   assert.equal(turn.tasks[0].agentType, 'general-purpose');
   turn = applyNativeTurnEvent(turn, { kind: 'status', status: 'interrupted' });
-  assert.deepEqual(turn.tasks.map(x => x.status), ['completed', 'stopped']);
+  assert.deepEqual(turn.tasks.map(x => x.status), ['completed', 'unknown']);
   assert.ok(turn.tasks[1].endedAt);
 });
