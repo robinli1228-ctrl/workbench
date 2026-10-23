@@ -425,4 +425,6 @@ export default {
  "Stopped": "已停止",
  "Waiting for 1 background task\u2026": "等待 1 个后台任务完成\u2026",
  "Waiting for {n} background tasks\u2026": "等待 {n} 个后台任务完成\u2026",
+ "Latest": "最新",
+ "Go to the latest messages": "跳到最新消息",
 };
