@@ -1,5 +1,6 @@
 import {createHomeNativeTurns} from './native-turns-home.mjs';
 import {mergeRuntimeQuota,expireRuntimeQuota} from './runtime-quota.mjs';
+import {roleCompactionDue,requestRoleCompaction,recordRoleCompaction} from './role-compaction.mjs';
 import {createRemoteAccessSettings} from './remote-access-settings.mjs';
 import http from 'node:http';
 import { sendBufferedResponse } from './http-response.mjs';
@@ -1597,6 +1598,7 @@ wss.on('connection', ws => {
         if(usage.active+usage.organizer+usage.terminal<Math.min(desiredCapacity,appliedCapacity))for(const c of db.list('commands').filter(c=>c.nodeId===nodeId&&!c.acked&&c.capacityDeferred))db.put('commands',{...c,lastSentAt:null});
         dispatch(nodeId);scheduleChat();change();
       }
+      if(m.type==='role_session_compacted'){if(recordRoleCompaction(db,nodeId,m))change();}
       if(m.type==='warm_sessions') {
         db.put('workers',{...db.get('workers',nodeId),warmSessions:Array.isArray(m.sessions)?m.sessions.slice(0,64):[]});change();
       }
@@ -1643,6 +1645,8 @@ wss.on('connection', ws => {
           if (m.event.type === 'delivery') deliveries.accept(current.id, m.event.payload);
           if(!discussions.finishRun(current.id).handled)calls.finish(current.id);
           rooms.complete(current);
+          // A role whose work has ended with a large context gets it compacted in its retained process, off the reply path.
+          if(m.event.type==='status'&&roleCompactionDue(db,db.get('runs',current.id),{online}))requestRoleCompaction(db,db.get('runs',current.id),payload=>send(ws,payload));
         });
         send(ws, { type: 'ack', id: m.event.id });
         if(['message','tool','usage','context_usage'].includes(m.event.type))outputChanged();else change();

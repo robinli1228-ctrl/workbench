@@ -22,6 +22,13 @@ export class WarmSessions {
     if(entry.fingerprint!==fingerprint || !this.alive(entry.session)) {await this.drop(key);return null;}
     clearTimeout(entry.timer);entry.session.proc.removeListener('exit',entry.onExit);this.entries.delete(key);this.changed();return entry.session;
   }
+  /** Hand an idle process out for maintenance (a compaction) and back via keep(); it is not retired meanwhile. */
+  borrow(key) {
+    const entry=this.entries.get(key);
+    if(!entry||entry.closing||!this.alive(entry.session))return null;
+    clearTimeout(entry.timer);entry.session.proc.removeListener('exit',entry.onExit);this.entries.delete(key);this.changed();
+    return {session:entry.session,fingerprint:entry.fingerprint,metadata:entry.metadata};
+  }
   keep(key,fingerprint,session,metadata) {
     if(!key || !session.done || !this.alive(session))return false;
     const entry={session,fingerprint,metadata,idleUntil:new Date(Date.now()+this.idleMs).toISOString()};
