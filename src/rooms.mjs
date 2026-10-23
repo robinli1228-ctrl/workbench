@@ -404,6 +404,22 @@ export class Rooms {
     });
   }
 
+  /** Queued chat messages of one group conversation, as the queue above its composer lists them. */
+  queuedChatTasks(projectId,conversationId) {
+    return this.db.chatTasks(['ready']).filter(t=>t.projectId===projectId&&conversationIdOf(t)===conversationId&&!t.currentRunId);
+  }
+  /** Pause keeps a conversation's queued messages after the running replies end (Steer now still goes ahead); like the Sessions
+   * queue it only exists while something waits, so pausing an empty queue does nothing and an emptied queue un-pauses itself. */
+  setQueuePaused(projectId,{paused,conversationId}={}) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
+    if(typeof paused!=='boolean')throw new Error(tr('rooms.queuePauseInvalid'));
+    return this.db.transaction(()=>{
+      if(paused&&this.queuedChatTasks(projectId,conversationId).length)this.db.put('chatQueuePauses',{id:conversationId,projectId,conversationId,paused:true,updatedAt:new Date().toISOString()});
+      else this.db.remove('chatQueuePauses',conversationId);
+      return {paused:Boolean(this.db.get('chatQueuePauses',conversationId))};
+    });
+  }
+
   /** Recall one human message atomically, including its queued recipients; never stop a Run or rewrite the original. */
   editQueuedMessage(projectId,taskId,{commandId,conversationId}={}) {
     conversationId=resolveConversationId(this.db,projectId,conversationId);
@@ -433,6 +449,9 @@ export class Rooms {
     const nodes = new Set(), recoveryChecks = new Set(); let changed = false;
     const discussions=new RoleDiscussions(this.db,{online:isReady});changed=discussions.recover().changed;
     const candidates=[...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()];
+    // A paused queue that has emptied (sent, recalled or cancelled) un-pauses itself.
+    const paused=new Set();
+    for(const pause of this.db.list('chatQueuePauses')){if(candidates.some(t=>!t.currentRunId&&t.projectId===pause.projectId&&conversationIdOf(t)===pause.conversationId))paused.add(pause.conversationId);else{this.db.remove('chatQueuePauses',pause.id);changed=true;}}
     const collaboration=collaborationQueueView(this.db);
     // After a stalled collaboration is released, the human's own queued messages go ahead of other ordinary work.
     for (let task of orderRoleQueue(candidates,id=>this.db.get('roleQueueTurns',id)?.priorityUsed,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed)) {
@@ -444,6 +463,7 @@ export class Rooms {
       const collaborationCheck=collaboration.forTask(collaborationTask);
       const active = this.db.activeRuns();
       const reason = this.db.get('settings', 'main')?.paused ? tr('rooms.remoteExecutionPaused')
+        : !discussion&&!task.steering&&paused.has(conversationIdOf(task)) ? tr('rooms.queuePaused')
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)

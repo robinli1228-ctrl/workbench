@@ -1113,6 +1113,8 @@ repository.clone=true 仅在目标不存在时克隆；false 检查已有仓库�
   'rooms.historyCursorNotFound': '历史消息游标不存在',
   'rooms.onlyGroupChatAssignmentsHave': '只能取消尚未开始的群聊指派',
   'rooms.queueOrderMismatch': '队列已变化，请刷新后重新排序',
+  'rooms.queuePaused': '队列已暂停，继续后才会发送',
+  'rooms.queuePauseInvalid': '暂停参数必须是 true 或 false',
   'rooms.remoteExecutionPaused': '远程执行已暂停',
   'rooms.organizingConversation': '正在整理会话',
   'rooms.projectUnderManualTerminalTakeover': '本项目正在终端人工接管，请先归还平台',

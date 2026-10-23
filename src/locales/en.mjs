@@ -1113,6 +1113,8 @@ Assistance results (context only):
   'rooms.historyCursorNotFound': 'History cursor not found',
   'rooms.onlyGroupChatAssignmentsHave': 'Only group-chat assignments that have not started can be cancelled',
   'rooms.queueOrderMismatch': 'The queue changed; refresh and try reordering again',
+  'rooms.queuePaused': 'The queue is paused; resume it to send these messages',
+  'rooms.queuePauseInvalid': 'Pause takes true or false',
   'rooms.remoteExecutionPaused': 'Remote execution is paused',
   'rooms.organizingConversation': 'Organizing the conversation',
   'rooms.projectUnderManualTerminalTakeover': 'This project is under manual terminal takeover; return it to the platform first',

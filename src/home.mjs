@@ -371,7 +371,7 @@ function snapshot(scope=null) {
   }
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
+  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,queuePause:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -386,6 +386,7 @@ function snapshot(scope=null) {
     promptDefaults: { platformPrompt: defaultPlatformPrompt(), supervisorPrompt: defaultSupervisorPrompt() },
     roleTemplates: listRoleTemplates(db), supervisors: db.list('supervisorConfigs'),
     executionPlans: db.list('executionPlans').map(({fingerprint,...p})=>p),
+    chatQueuePauses:db.list('chatQueuePauses'),
     roleSessions:db.list('roleSessions').filter(session=>!session.historyClearedAt).map(({nativeSession,...session})=>session),
     // Sidebar decoration only needs active native identities, never complete tool logs.
     nativeTurnExecutions:db.db.prepare("SELECT id,json_extract(data,'$.nodeId') AS nodeId,json_extract(data,'$.runtime') AS runtime,json_extract(data,'$.sessionId') AS sessionId,json_extract(data,'$.status') AS status FROM records INDEXED BY native_turn_active WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('starting','running','stopping')").all(),
@@ -1290,6 +1291,9 @@ const server = http.createServer(async (req, res) => {
         // A non-destructive yield stops nothing; only a replacing steer has runs to wait for.
         for(const id of result.waitForRunIds||[])dispatch(db.get('runs',id).nodeId);
         scheduleChat();change();return json(res,result);
+      }
+      if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/queue\/pause$/)) && req.method === 'POST') {
+        const r = rooms.setQueuePaused(m[1], await body(req)); scheduleChat(); change(); return json(res, r);
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/queue\/order$/)) && req.method === 'POST') {
         const r = rooms.reorderQueue(m[1], await body(req)); scheduleChat(); change(); return json(res, r);
