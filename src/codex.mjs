@@ -5,6 +5,7 @@ import { tr } from './i18n.mjs';
 import { executionText } from './input-language.mjs';
 import { contextSample } from './context-usage.mjs';
 import { codexPermissionOptions } from './role-permissions.mjs';
+import { normalizeRuntimeQuota } from './runtime-quota.mjs';
 
 const git = promisify(execFile);
 const MAX_TOOL_OUTPUT = 12000;
@@ -218,6 +219,11 @@ export class CodexSession {
       return;
     }
     const p = m.params || {};
+    if(m.method==='account/updated'){this.emit('quota',{invalidated:true});return;}
+    if(m.method==='account/rateLimits/updated') {
+      const sample=normalizeRuntimeQuota('codex',m);if(sample)this.emit('quota',sample);
+      return;
+    }
     if(this.done)return;
     if (m.method === 'item/agentMessage/delta') {
       this.textBuffer += p.delta || '';

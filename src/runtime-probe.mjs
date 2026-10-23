@@ -1,10 +1,16 @@
 import { spawn, execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
-import {randomUUID} from 'node:crypto';
-import {probeHistoryRoots,removeProbeHistory} from './claude-quota-history.mjs';
+import {randomUUID,createHash} from 'node:crypto';
+import {mergeRuntimeQuota} from './runtime-quota.mjs';
 import { tr } from './i18n.mjs';
 const exec = promisify(execFile);
+const quotaIdentitySalt=randomUUID();
+/** Report an opaque identity scoped to this Worker lifetime, never an email, account ID or token. */
+function quotaIdentity(type,account) {
+  const id=account?.email||account?.emailAddress||account?.accountId;
+  return typeof id==='string'&&id?createHash('sha256').update(JSON.stringify([quotaIdentitySalt,type,id,account.organizationId||account.orgId||null])).digest('hex'):null;
+}
 
 /** A single no-inference probe: reads only the version, login state, and model catalog, and creates no Thread/Turn. */
 export async function inspectCodex() {
@@ -32,11 +38,8 @@ export async function inspectCodex() {
     proc.stdin.write(`${JSON.stringify({ method: 'initialized' })}\n`);
     const auth = await call('account/read', { refreshToken: false });
     result.authReady = !!auth.account || auth.requiresOpenaiAuth === false;
+    result.quotaIdentity=quotaIdentity('codex',auth.account);
     result.authType = auth.account?.type || (auth.requiresOpenaiAuth === false ? 'provider' : 'none');
-    try {
-      const limits = await call('account/rateLimits/read', {});
-      Object.assign(result, normalizeCodexQuota(limits));
-    } catch { /* When an older Codex has no quota interface, the model probe is still kept */ }
     let cursor = null; const seen = new Set();
     do {
       const page = await call('model/list', { limit: 100, ...(cursor ? { cursor } : {}) });
@@ -71,47 +74,6 @@ function looksLoggedOut(text) { return /not logged in|not authenticated|please (
 function finiteNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function isoFromEpoch(value) {
-  const seconds = finiteNumber(value);
-  if (seconds == null) return undefined;
-  const date = new Date(seconds * 1000);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
-}
-
-function rateLimitBucket(bucket) {
-  const usedPercent = finiteNumber(bucket?.usedPercent);
-  if (usedPercent == null) return null;
-  return {
-    usedPercent,
-    remainingPercent: Math.max(0, 100 - usedPercent),
-    resetsAt: isoFromEpoch(bucket.resetsAt),
-    windowDurationMins: finiteNumber(bucket.windowDurationMins),
-  };
-}
-
-function normalizeCodexQuota(response) {
-  const limits = response?.rateLimits || response?.rateLimitsByLimitId?.codex;
-  if (!limits) return { quota: null, quotaStatus: 'unavailable' };
-  const buckets = [limits.primary, limits.secondary].map(rateLimitBucket).filter(Boolean);
-  const fiveHour = buckets.find(item => item.windowDurationMins === 300) || null;
-  const weekly = buckets.find(item => item.windowDurationMins === 10080) || null;
-  const credits = limits.credits ? {
-    balance: finiteNumber(limits.credits.balance) ?? limits.credits.balance ?? null,
-    hasCredits: limits.credits.hasCredits === true,
-    unlimited: limits.credits.unlimited === true,
-  } : null;
-  if (!fiveHour && !weekly && !credits) return { quota: null, quotaStatus: 'unavailable' };
-  return {
-    quota: {
-      fiveHour,
-      weekly,
-      credits,
-      remainingPercent: fiveHour?.remainingPercent ?? weekly?.remainingPercent,
-    },
-    quotaStatus: 'ok',
-  };
 }
 
 /** The grok models output is a human-readable list; take the model IDs marked with * or -. */
@@ -363,6 +325,7 @@ export async function inspectClaude() {
     } catch {}
     if (parsed && typeof parsed === 'object') {
       authReady = parsed.loggedIn === true || parsed.authenticated === true;
+      result.quotaIdentity=authReady?quotaIdentity('claude',parsed):null;
       if (parsed.subscriptionType) result.authType = String(parsed.subscriptionType);
       else if (parsed.authMethod) result.authType = String(parsed.authMethod);
     } else {
@@ -382,7 +345,7 @@ export async function inspectClaude() {
     { id: 'opus', name: 'Opus', effort: null, efforts: [] },
     { id: 'haiku', name: 'Haiku', effort: null, efforts: [] },
   ];
-  const [nativeModels, quota] = await Promise.all([authReady ? probeClaudeModels(bin) : [], probeClaudeQuota(bin)]);
+  const nativeModels = authReady ? await probeClaudeModels(bin) : [];
   // An empty successful catalog is authoritative; only an unavailable probe keeps legacy aliases.
   const seen = new Set();
   const catalog = nativeModels?.filter(m => {
@@ -402,99 +365,11 @@ export async function inspectClaude() {
   result.models = models;
   result.authReady = authReady;
   result.available = authReady && models.length > 0;
-  Object.assign(result, quota);
   result.reason = !result.installed ? result.reason
     : !authReady ? tr('runtimeProbe.signInWithClaudeOn2')
     : !models.length ? tr('runtimeProbe.cliReturnedNoAvailableModels3')
     : '';
   return result;
-}
-
-function stripAnsi(text) {
-  return String(text || '').replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\r/g, '');
-}
-
-/** Parse the human-readable output of `claude /usage` (session=5h, week=weekly). */
-function parseClaudeUsageText(text) {
-  let raw = stripAnsi(text);
-  const jsonLine = raw.trim().split('\n').filter(Boolean).at(-1);
-  if (jsonLine && jsonLine.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(jsonLine);
-      if (parsed?.result) raw = `${raw}\n${parsed.result}`;
-    } catch { /* When it is not JSON, parse it as plain text */ }
-  }
-  const packUsed = (re) => {
-    const m = raw.match(re);
-    if (!m) return null;
-    const used = Number(m[1]);
-    if (!Number.isFinite(used)) return null;
-    const rest = m[2] || '';
-    const reset = rest.match(/resets?\s+(.+?)\s*$/i);
-    return { usedPercent: used, remainingPercent: Math.max(0, 100 - used), resetsAt: reset ? reset[1].trim() : undefined };
-  };
-  const fiveHour = packUsed(/Current session:\s*(\d+(?:\.\d+)?)%\s*used([^\n]*)/i)
-    || packUsed(/5\s*h(?:our)?[^\n]{0,40}?(\d+(?:\.\d+)?)%\s*used([^\n]*)/i);
-  const weekly = packUsed(/Current week(?:\s*\([^)]*\))?\s*:\s*(\d+(?:\.\d+)?)%\s*used([^\n]*)/i)
-    || packUsed(/week[^\n]{0,40}?(\d+(?:\.\d+)?)%\s*used([^\n]*)/i);
-  if (!fiveHour && !weekly) return null;
-  return { fiveHour, weekly };
-}
-
-/** Keep disposable quota queries out of native history without changing the environment of managed conversations. */
-function claudeQuotaEnv() {
-  return { ...process.env, CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1' };
-}
-
-/** Run `claude /usage`: stdin closed, about a 10s timeout; do not use -p (it spends quota). */
-export function runClaudeUsage(bin,extraArgs=[]) {
-  return new Promise((resolve, reject) => {
-    const sessionId=randomUUID(),env=claudeQuotaEnv();
-    const child = spawn(bin, ['--session-id',sessionId,'/usage',...extraArgs], { stdio: ['ignore', 'pipe', 'pipe'], env });
-    // Wait briefly for a wrapper to exec its real CLI before resolving that child's effective history root.
-    const roots=new Promise(done=>setTimeout(done,250)).then(()=>probeHistoryRoots(child.exitCode===null&&child.signalCode===null?child.pid:null,env));
-    let stdout = '', stderr = '', failure=null;
-    const timer = setTimeout(() => {
-      failure=new Error('claude /usage timeout');
-      try { child.kill('SIGKILL'); } catch {}
-    }, 10000);
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', error => {failure=error;});
-    child.on('close', async () => {
-      clearTimeout(timer);
-      // Process closure, not timeout alone, proves our unique session is no longer being written.
-      try{const result=await removeProbeHistory(await roots,sessionId);if(result.preserved.length)console.warn('Claude quota probe history retained: content or file identity could not be verified');}
-      catch{console.warn('Claude quota probe history cleanup could not be verified');}
-      if(failure){failure.stdout=stdout;failure.stderr=stderr;reject(failure);}else resolve({stdout,stderr});
-    });
-  });
-}
-
-async function probeClaudeQuota(bin) {
-  const empty = { quota: null, quotaStatus: 'unavailable' };
-  const packOk = (parsed) => ({
-    quota: {
-      fiveHour: parsed.fiveHour || null,
-      weekly: parsed.weekly || null,
-      remainingPercent: parsed.fiveHour?.remainingPercent ?? parsed.weekly?.remainingPercent,
-    },
-    quotaStatus: 'ok',
-  });
-  try {
-    const { stdout, stderr } = await runClaudeUsage(bin);
-    const parsed = parseClaudeUsageText(`${stdout}\n${stderr}`);
-    if (parsed) return packOk(parsed);
-  } catch (e) {
-    const parsed = parseClaudeUsageText(`${e.stdout || ''}\n${e.stderr || ''}`);
-    if (parsed) return packOk(parsed);
-  }
-  try {
-    const json = await runClaudeUsage(bin,['--output-format','json']);
-    const parsed = parseClaudeUsageText(`${json.stdout}\n${json.stderr}`);
-    if (parsed) return packOk(parsed);
-  } catch { /* If the json probe fails, stay unavailable */ }
-  return empty;
 }
 
 export const RUNTIME_TRANSIENT_LIMIT = 2;
@@ -515,7 +390,7 @@ export function mergeRuntimeReports(previous, next, failures = {}) {
     const last = (Array.isArray(previous) ? previous : []).find(item => item?.type === report.type);
     if (count < RUNTIME_TRANSIENT_LIMIT && last?.available && !last.probeWarning && last.version === report.version) return { ...last, probeWarning: warning };
     return { ...report, probeWarning: warning };
-  });
+  }).map(report=>mergeRuntimeQuota((previous||[]).find(r=>r.type===report.type),report));
   const worst = Math.max(0, ...Object.values(counts));
   return { runtimes, failures: counts, retryMs: worst ? RUNTIME_RETRY_MS[Math.min(worst, RUNTIME_RETRY_MS.length) - 1] : null };
 }

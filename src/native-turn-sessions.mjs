@@ -59,6 +59,7 @@ export class NativeCliSession extends CliPrintSession {
   get questionsSupported(){return this.keepAlive&&this.runtime==='claude';}
   /** Only a completed native result may keep the CLI; broken transport shutdown must still retire it. */
   receive(message){
+    if(message?.type==='rate_limit_event')return super.receive(message);
     if(this.questionsSupported&&message&&typeof message==='object'){
       if(message.type==='control_response')return;
       if(message.type==='control_request')return this.control(message);

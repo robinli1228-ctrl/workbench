@@ -41,7 +41,7 @@ The project does not ship any account. Everything is configured at runtime on yo
 
 ### 3.1 CLIs and models
 
-Install and log in to the CLIs you want to use on each machine that runs a Worker (`codex`, `claude`, `grok`, `agy`). The Worker probes each CLI at startup and every 5 minutes (version, login state, model catalog, and quota where available) without sending model requests. The model choices in the UI always come from that device's CLI catalog.
+Install and log in to the CLIs you want to use on each machine that runs a Worker (`codex`, `claude`, `grok`, `agy`). The Worker probes each CLI at startup and every 5 minutes (version, login state and model catalog) without sending model requests. Claude/Codex quota comes from normal managed conversations instead of additional quota queries; Grok/Agy quota checks retain their existing behavior. A missing or stale passive sample does not cause an extra model turn. The model choices in the UI always come from that device's CLI catalog.
 
 If a CLI is not on the Worker's `PATH`, point to it:
 

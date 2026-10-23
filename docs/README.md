@@ -2,6 +2,8 @@
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [design-runtime-quota-events](design-runtime-quota-events.md) | Passive Claude/Codex quota, snapshot ownership and freshness; unchanged UI | Implemented on the feature branch; isolated checks, not deployed |
+| [plan-runtime-quota-events](plan-runtime-quota-events.md) | Adapter events, Worker/Home snapshots and removal of extra quota queries | Local implementation; real-account acceptance and independent review pending |
 | [design-remote-access-settings](design-remote-access-settings.md) | Local-only Basic Settings controls for the independent browser relay | Approved; implemented in the feature branch, deployment separate |
 | [plan-remote-access-settings](plan-remote-access-settings.md) | Module packaging, local proof/bridge, compact UI, review and Home-only release | Approved; execution in progress |
 | [OPERATING-GUIDE](OPERATING-GUIDE.md) | Publishing, configuration, running single and multi-server setups, contributing, sanitization checklist | Current |
@@ -31,6 +33,8 @@
 | [plan-cross-device-execution-p1](plan-cross-device-execution-p1.md) | First Q/F increment: registered sources, safe file replies and durable request replay | P1 implemented with independent review and isolated actual Mac/Linux/browser checks; integrated into the publication branch. Production deployment and enablement remain separate |
 | [design-cli-session-recovery](design-cli-session-recovery.md) | Verified idle reclaim, human confirmation and same-native-session recovery | Implemented; independent, isolated and release verification |
 | [design-native-session-browser](design-native-session-browser.md) | Group chats / Sessions navigation, read-only native histories and iTerm/SSH entry | Feature-branch implementation; not deployed; binary-history and GUI acceptance limits recorded |
+| [design-native-agent-switch](design-native-agent-switch.md) | Agent switch icon and Agent picker dialog with one conversation, original history and same-directory context handoff | Approved design; local implementation under acceptance, not deployed |
+| [plan-native-agent-switch](plan-native-agent-switch.md) | Safety, factual context delivery, switch icon and Agent picker dialog/timeline integration and real adapter acceptance | Approved inline plan; local acceptance in progress; no production changes |
 | [session-queue-v3](design/session-queue-v3.md) | Authoritative conversation collaboration and external CLI queue contract | Approved V3; opt-in implementation |
 | [session-queue-v3-acceptance](design/session-queue-v3-acceptance.md) | Repair verification, runtime results and remaining drill limits | Isolated-tested and release-verified; no automatic project activation |
 | [session-queue-v3-audit](design/session-queue-v3-audit.md) / [merge-order](design/session-queue-v3-merge-order.md) | Historical phased audit and merge sequence | Archived; not implementation guidance |

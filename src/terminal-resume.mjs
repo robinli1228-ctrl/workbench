@@ -226,6 +226,23 @@ function terminalProcesses(session,dbPath) {
   return {owned:[...new Map(owned.map(p=>[p.pid,p])).values()],unknown};
 }
 
+/** Read-only proof before an automatic idle release; unknown or non-driver descendants are busy. */
+export function idleNativeDriver(session){
+ const root=terminalProcessIdentity(session?.childPid);
+ if(!root||root.unknown||root.zombie||!sameProcess(root,session.childIdentity))return false;
+ let rows;try{rows=execFileSync('ps',['-axo','pid=,ppid='],{encoding:'utf8',timeout:3000,maxBuffer:1024*1024}).trim().split('\n').map(line=>line.trim().split(/\s+/).map(Number));}catch{return false;}
+ const children=rows.filter(([,parent])=>parent===root.pid);
+ if(!children.length)return true;
+ // The npm Codex launcher has exactly one native app-server child. That child is the driver, not a tool.
+ const args=session.driverArgs;
+ if(session.runtime!=='codex'||children.length!==1||!Array.isArray(args)||!args.includes('app-server')||!args.includes('stdio://'))return false;
+ const suffix=' '+args.join(' ');
+ if(!root.command?.endsWith(suffix)||!/(?:^|\/)codex(?:\.js)?$/.test(root.command.slice(0,-suffix.length)))return false;
+ const child=terminalProcessIdentity(children[0][0]);
+ if(!child||child.unknown||child.zombie||child.uid!==root.uid||child.ppid!==root.pid||!child.command?.endsWith(suffix)||!/^\S*\/codex$/.test(child.command.slice(0,-suffix.length)))return false;
+ return !rows.some(([,parent])=>parent===child.pid);
+}
+
 /** Revoke unused/dead links in the same transaction as native claiming; late preparation cannot resurrect the lease. */
 export function checkTerminalSession(db,binding,dbPath,{automatic=false}={}) {
   return db.transaction(()=>{
@@ -357,7 +374,7 @@ async function runTerminal(dbPath,id) {
   console.log(session.kind==='new'||session.kind==='native'&&!session.nativeSession.id?tr('roleTerminal.startingNew',{workspace:session.workspace}):tr('terminalResume.resumingOriginalSessionDirectoryPlatform', { id: session.nativeSession.id, workspace: session.workspace }));
   const env={...session.privateEnv};
   for(const key of ['TERM','COLORTERM','TERM_PROGRAM','TERM_PROGRAM_VERSION'])if(process.env[key])env[key]=process.env[key];
-  if(hello)args=nativeHelloArgs(session.nativeSession.runtime,args);
+  if(hello)args=nativeHelloArgs(session.nativeSession.runtime,args,session.nativeSwitchId?'Create this empty session for a Workbench Agent switch. Reply READY only. Do not use tools, read or modify files, or begin any task. Wait for the next user message.':'Hi');
   const child=spawn(session.nativeSession.binary,args,{cwd:session.workspace,env,stdio:hello?['ignore','pipe','pipe']:'inherit'});
   let reportedId=null,stderr='';
   if(hello){

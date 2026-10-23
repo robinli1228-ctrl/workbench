@@ -1,5 +1,15 @@
 /** Page-local Chinese strings for the native-session takeover. Kept out of locales/zh.js so other pages' translations are unchanged. */
 export default {
+ "Switch Agent": "切换 Agent",
+ "Current Agent": "当前 Agent",
+ "Switching Agent…": "正在切换 Agent…",
+ "Agent switched": "已切换 Agent",
+ "Agent switch failed": "Agent 切换失败",
+ "Check status": "核对状态",
+ "Unavailable": "不可用",
+ "Upgrade this Worker to switch Agent": "升级此设备的 Worker 后可切换 Agent",
+ "Use the group role controls to switch this Agent": "此会话由群聊角色管理，请在角色设置中切换",
+ "Finish replies, questions and queued messages before switching Agent": "请先处理完当前回复、问题和排队消息，再切换 Agent",
  "No displayable messages in this portion. Earlier history remains; click Load older history to continue.": "已继续向前查找，这一段暂无可显示的消息。还有更早的历史，请再次点击「加载更早的历史」。",
  "Native session catalogue changed; refresh and try again.": "会话目录正在变化，请刷新后重试。",
  "Session history ({count})": "历史会话（{count}）",

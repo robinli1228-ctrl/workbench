@@ -28,10 +28,12 @@ import {createWorkerNativeTurns,receiveTurnFiles} from './native-turns-worker.mj
 import {SideAsks} from './native-side-ask.mjs';
 import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {listNativeSessions,readNativeSession,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
+import {createWorkerNativeAgentSwitch,assertNativeSwitchAccess,nativeAgentSourceBusy} from './native-agent-switch-worker.mjs';
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
 import { inspectRuntimes, runtimeIssue, mergeRuntimeReports } from './runtime-probe.mjs';
+import {applyRuntimeQuota} from './runtime-quota.mjs';
 import { writeHandoff } from './wb-tools.mjs';
 import {handoffReadPaths} from './handoff-paths.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
@@ -114,6 +116,12 @@ function scheduleRuntimeRetry(ms) {
   if (ms) { runtimeRetry = setTimeout(() => { runtimeRetry = null; if (ws?.readyState === 1 && registered) void refreshRuntimes(); else runtimeRetryDue = true; }, ms); runtimeRetry.unref?.(); }
 }
 const send = m => { if (ws?.readyState === 1) ws.send(JSON.stringify(m)); };
+let quotaReportTimer=null;
+/** Coalesce passive device snapshots; reconnect registration carries the latest values without altering sample time. */
+function receiveRuntimeQuota(type,sample,quotaIdentity) {
+  runtimes=applyRuntimeQuota(runtimes,type,sample,quotaIdentity);
+  if(!quotaReportTimer){quotaReportTimer=setTimeout(()=>{quotaReportTimer=null;send({type:'runtime_report',runtimes});},1000);quotaReportTimer.unref();}
+}
 const configurationQueries=new Map();
 /** This control-channel query is not an agent tool: Home resolves the sender from the registered Worker and Run. */
 function currentExecutionConfiguration(runId) {
@@ -144,7 +152,14 @@ let sideAsks=null;
 function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalSlots(db,identity.nodeId)+(sideAsks?.size||0);}
 /** Session-page takeover hook (src/native-turns-worker.mjs); idle unless a native session is taken over. */
 nativeTurns=createWorkerNativeTurns({db,send:m=>send(m),data,homeHttp:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,projectRoot:path=>projectRoot(path),
-  isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots())});
+  isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots()),onQuota:receiveRuntimeQuota});
+const nativeAgentSwitches=createWorkerNativeAgentSwitch({db,nodeId:identity.nodeId,data,projectRoot,runtimes:()=>runtimes,isPaused:()=>paused||quitting,
+ sourceBusy:source=>nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}),
+ releaseIdle:async source=>{if(nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}))throw Error('Source Agent still has work or process state is unknown');const resident=nativeTurns.resident.get(`${source.runtime}/${source.sessionId}`);if(resident)await nativeTurns.releaseLease(source.runtime,source.sessionId,resident.message.leaseId);},
+ query:async(action,path)=>{let response;await query({action,path,id:randomUUID()},message=>{response=message;});if(!response||response.error)throw Error(response?.error||'Native preparation returned no receipt');return response.result;},
+ check:claim=>checkTerminalSession(db,{id:claim.id,nodeId:identity.nodeId,projectId:claim.projectId},join(data,'worker.sqlite'),{automatic:true}),
+ prepareGrant:op=>folderAccess.local?folderAccess.prepare({operationId:op.id,scope:`native:${op.leaseId}`,path:op.workspace}):null,
+ cancelGrant:op=>folderAccess.local?folderAccess.cancel({id:`${identity.nodeId}:${op.id}`,scope:`native:${op.leaseId}`}):null});
 function reportCapacity(){send({type:'capacity_state',capacity,usage:{active:sessions.size,retained:warmSessions.snapshot().length,organizer:organizerRunning,terminal:reservedTerminalSlots(db,identity.nodeId)}});}
 const terminalStops=new Map();
 async function applyCapacity(value) {
@@ -165,6 +180,7 @@ const sourceSync=new SourceSyncClient({db,data,home:homeUrl.replace(/^ws/i,'http
   resolveBinding:command=>folderAccess.run(command.folderAccess?{...command.folderAccess,scope:`project:${command.projectId}`}:folderAccess.context.getStore(),async()=>{
     if(command.nodeId!==identity.nodeId)throw syncError('receipt_owner_mismatch');
     const root=await projectRoot(command.root);
+    assertNativeSwitchAccess(db,{workspace:root});
     if(command.sourceRunId){const source=db.get('runs',command.sourceRunId),repo=source?.repositories?.find(r=>r.id===command.repositoryId);
       if(source?.projectId!==command.projectId||!repo||await projectRoot(repo.localRoot)!==root)throw syncError('binding_changed');}
     return recordSourceBinding(db,command,root);
@@ -208,6 +224,7 @@ function folderEnvelope(m){
 /** Writable space must stay under configured or identity-scoped roots; Git uses a worktree at a fixed baseline. */
 async function workspace(project, run) {
   const root = await projectRoot(run.projectRoot ?? project.root);
+  assertNativeSwitchAccess(db,{workspace:root});
   if (run.execution?.isolated) return prepareExecutionWorkspace(root,run,run.repositories||[]);
   if (run.projectScope) return { folder:root, baseCommit:null };
   const folder = join(root, '.worktrees', `run-${run.id}`);
@@ -437,6 +454,7 @@ async function command(m) {
         minimalInstructions:Boolean(executionConfiguration),instructionMessage:instructions.instructions,configurationUpdate:instructions.configurationUpdate||'',
         roleInstructions,
         roleName: m.run.roleSnapshot?.name, env: wbEnv, emit: (type, p) => {
+        if(type==='quota')return receiveRuntimeQuota(runtimeType,p,session?.quotaIdentity);
         if(type==='status'&&p.nativeSessionId&&m.run.resumeNativeSessionId&&p.nativeSessionId!==m.run.resumeNativeSessionId) {
           p={status:'failed',error:tr('worker.afterResumingRuntimeReturnedDifferent')};
           void session.stop();
@@ -476,7 +494,7 @@ async function command(m) {
       if(session && !warmSessions.alive(session)){await afterProcessExit(session.proc,()=>{});session=null;}
       const sessionReuse=session?'process':m.run.resumeNativeSessionId?'resume':'new';
       if(session)instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,processReused:true,components});
-      if(session)session.reuse(options);else session=new Session(options);
+      if(session)session.reuse(options);else {session=new Session(options);session.quotaIdentity=runtimes.find(r=>r.type===runtimeType)?.quotaIdentity;}
       sessions.set(c.runId, session);
       emit(c.runId,'status',{sessionReuse,instructionFingerprint:instructions.fingerprint,instructionsInheritedFrom:instructions.inheritedFrom,
         ...(executionConfiguration?{instructionVersions:executionConfiguration.versions,instructionComponents:instructions.components,configurationState:'starting',...(instructions.configurationEventProtocol?{configurationEventProtocol:instructions.configurationEventProtocol}:{})}:{})});
@@ -588,7 +606,8 @@ async function command(m) {
   send({ type: 'command_ack', id: c.id });
 }
 /** Only serves plain text files inside registered workspaces and does not follow symlinks that escape them. */
-async function query(m) {
+async function query(m,emit=send) {
+  const send=emit;
   // The Data page: what this Worker's store holds and what the policy lets go; cleanup runs the same pass as the daily one.
   if(m.action==='data_stats'||m.action==='data_cleanup'){
     try{if(m.path?.policy)retention=normalizeRetention(m.path.policy);
@@ -602,6 +621,7 @@ async function query(m) {
   const guarded=['source_inspect','source_read','read_query','project_file','file','document','collaboration_documents'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
+    if(m.action.startsWith('native_agent_switch_')){send({type:'reply',id:m.id,result:await nativeAgentSwitches.handle(m.action,m.path)});return;}
     if(m.action==='folder_grant_prepare'){
       if(paused)throw Error('Remote execution is paused');
       const candidate=await realpath(m.path?.path);
@@ -858,7 +878,7 @@ async function query(m) {
       // person signs in. Running it from the page still requires a ready CLI.
       const installed=runtimes.some(r=>r.type===runtime&&r.installed&&r.supported!==false),ready=runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false);
       if(m.action!=='native_sessions'&&!ready&&!(installed&&['native_session','native_terminal_preview','native_terminal_prepare'].includes(m.action)))throw Error(installed?'CLI is not signed in on this device':'CLI is not available on this device');
-      if(m.action==='native_sessions'){send({type:'reply',id:m.id,result:await listNativeSessions(runtime,{scope:input.scope||'created',registry:db.list('nativeCatalogEntries'),managedSessions:input.managedSessions||[],adoptedSessions:input.adoptedSessions||[],nodeId:identity.nodeId})});return;}
+      if(m.action==='native_sessions'){const staged=new Set(db.list('workerNativeAgentSwitches').filter(op=>!op.published).map(op=>op.leaseId));send({type:'reply',id:m.id,result:await listNativeSessions(runtime,{scope:input.scope||'created',registry:db.list('nativeCatalogEntries').filter(e=>!staged.has(e.id)),managedSessions:input.managedSessions||[],adoptedSessions:input.adoptedSessions||[],nodeId:identity.nodeId})});return;}
       const record=input.record||registeredNativeSession(db,runtime,input.sessionId);
       if(m.action==='native_session'){send({type:'reply',id:m.id,result:await readNativeSession(runtime,input.sessionId,{record,historyPage:input.historyPage===true,cursor:input.cursor,snapshot:input.snapshot,delta:input.delta===true})});return;}
       if(paused)throw Error('Remote execution is paused');
@@ -874,7 +894,7 @@ async function query(m) {
       for(const binding of input.bindings||[]){const root=await realpath(binding.localRoot).catch(()=>null);if(root&&(inside(root,workspace)||inside(workspace,root)))projectIds.add(binding.projectId);}
       const owner=nativeTerminalProject(db,{nodeId:identity.nodeId,runtime,sessionId:input.sessionId,folderProjectIds:[...projectIds],managedProjectIds:input.managedProjectIds||[]});
       const projectId=owner||input.projectId;
-      const assertIdle=()=>assertNativeSessionIdle(db,{nodeId:identity.nodeId,runtime,sessionId:input.sessionId,workspace,projectId});
+      const assertIdle=()=>assertNativeSessionIdle(db,{nodeId:identity.nodeId,runtime,sessionId:input.sessionId,workspace,projectId,claimId:input.id});
       assertIdle();
       if(m.action==='native_terminal_preview'){send({type:'reply',id:m.id,result:{workspace,projectId:owner,runtime,sessionId:input.sessionId||null}});return;}
       if(typeof input.id!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(input.id)||!input.projectId||input.nodeId!==identity.nodeId||projectId!==input.projectId)throw Error('Terminal binding changed; refresh and try again');
@@ -1151,7 +1171,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -1219,6 +1239,7 @@ const outboxTimer=setInterval(flushOutbox,1000);outboxTimer.unref();
 sideAsks=new SideAsks({db,send,data,env:process.env,
   canStart:m=>{
     if(paused||quitting)throw new Error('Remote execution is paused');
+    const source=registeredNativeSession(db,m.runtime,m.sessionId);assertNativeSwitchAccess(db,{runtime:m.runtime,sessionId:m.sessionId,workspace:source?.workspace});
     if(!runtimes.some(r=>r.type===m.runtime&&r.available&&r.supported!==false))throw new Error('CLI is not available on this device');
     if(occupiedSlots()>=capacity)throw new Error('Device CLI capacity is full; try the side question again shortly');
   },

@@ -5,6 +5,7 @@ import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON,quo
 import {usableBucket,parseQuotaResetDate} from './quota-state.js';
 import {createListOrder} from './list-order.js';
 import {groupNativeSessions,readNativeSessionPages} from './native-session-groups.js';
+import {createNativeAgentSwitchUI} from './native-agent-switch.js';
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
@@ -336,19 +337,18 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
   const copyCommand=side.querySelector('.native-copy-command');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
   const paused=Boolean(data.settings?.paused);
-  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,paused,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item)]);
+  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,paused,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item),item.conversationBinding,agentSwitchUI.busy(item),takeover.switchBusy(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
   sideBadge.hidden=true;
   if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren();
   // Who and where, in one strip: the device with its machine icon, the CLI with its agent icon.
   const roster=data.workers||[],cloudNumber=new Map(roster.filter(w=>workerKind(w)==='cloud').map((w,index)=>[w.id,index+1])).get(item.nodeId);
-  const identity=el('div','native-identity'),deviceChip=el('span','native-identity-item'),toolChip=el('span','native-identity-item');
+  const identity=el('div','native-identity'),deviceChip=el('span','native-identity-item');
   if(worker)deviceChip.append(machineIconEl(worker,cloudNumber));const deviceName=el('span','native-identity-name',workerName(item.nodeId));deviceName.translate=false;deviceChip.append(deviceName);deviceChip.title=`${t('Device')} · ${workerName(item.nodeId)}`;
-  toolChip.append(agentIconEl(item.runtime),el('span','native-identity-name',names[item.runtime]||item.runtime));toolChip.title=`${t('Agent tool')} · ${names[item.runtime]||item.runtime}`;
-  identity.append(deviceChip,toolChip);panel.append(identity);
+  identity.append(deviceChip,agentSwitchUI.render({item,worker,busy:paused||takeover.switchBusy(item)||!['page','idle'].includes(state)}));panel.append(identity);
   // One row: the two-way switch and, as an icon, the one action the state allows. Moving the switch opens the hand-over dialog.
   const row=el('div','native-connect-row'),seg=el('div','native-mode-switch');seg.setAttribute('role','group');seg.setAttribute('aria-label',t('Where the session runs'));
-  const switchable=!paused&&online&&canTakeover&&!switchingTo&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
+  const switchable=!paused&&online&&canTakeover&&!switchingTo&&!agentSwitchUI.busy(item)&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
   const move=value=>{if(value==='terminal'||mode==='terminal')openHandover(item,value,{claim,worker});else void switchMode(item,value);};
   const modeButton=(value,title)=>{const b=el('button',`native-mode${mode===value?' is-on':''}${switchingTo===value?' is-pending':''}`);b.type='button';b.append(el('span','native-mode-title',title));b.disabled=!switchable||mode===value;b.setAttribute('aria-pressed',String(mode===value));b.addEventListener('click',()=>move(value));return b;};
   seg.append(modeButton('page',t('This page')),modeButton('terminal','iTerm'));row.append(seg);
@@ -486,7 +486,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(listOrder.active())return;
   const activity=getData().sidebarExecutions||[];
   const isRunning=item=>Boolean(nativeId(item))&&activity.some(run=>run.nodeId===item.nodeId&&run.runtime===item.runtime&&run.sessionId===nativeId(item));
-  const roster=getData().workers||[],ordered=listOrder.ordered(groupNativeSessions(items),group=>key(group.latest)),signature=JSON.stringify([key(selected),ordered,activity,roster.map(w=>[w.id,w.name,w.platform,w.nodeKind])]);
+  const roster=getData().workers||[],ordered=listOrder.ordered(groupNativeSessions(items),group=>group.id.startsWith('conversation:')?group.id:key(group.latest)),signature=JSON.stringify([key(selected),ordered,activity,roster.map(w=>[w.id,w.name,w.platform,w.nodeKind])]);
   if(signature===listSignature)return;listSignature=signature;
   const byId=new Map(roster.map(w=>[w.id,w])),cloudNumbers=new Map(roster.filter(w=>workerKind(w)==='cloud').map((w,index)=>[w.id,index+1]));
   const scroll=list.scrollTop;list.replaceChildren();
@@ -502,6 +502,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   };
   for(const group of ordered){
    const entry=row(group.latest,true);
+   if(group.id.startsWith('conversation:'))entry.dataset.orderId=group.id;
    if(group.history.some(item=>key(item)===key(selected)))entry.classList.add('active');
    if(group.history.some(isRunning)){entry.classList.add('is-running');entry.title+=` · ${t('An older session is running')}`;}
    if(entry.classList.contains('active'))entry.setAttribute('aria-current','true');
@@ -522,7 +523,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   // back to its top row. A selection already made is never replaced, and a partial catalogue never pre-empts the remembered one.
   const autoSelect=(settled=false)=>{if(selected||dialog.open||!items.length||ticket!==version)return;
    let wanted=null;try{wanted=sessionStorage.getItem(SELECTION_KEY);}catch{}
-   const next=(wanted&&items.find(item=>key(item)===wanted))||(settled?listOrder.ordered(groupNativeSessions(items),group=>key(group.latest))[0]?.latest:null);
+   const next=(wanted&&items.find(item=>key(item)===wanted))||(settled?listOrder.ordered(groupNativeSessions(items),group=>group.id.startsWith('conversation:')?group.id:key(group.latest))[0]?.latest:null);
    if(next)void read(next);};
   await Promise.all(Array.from({length:Math.min(2,jobs.length)},async()=>{while(index<jobs.length&&ticket===version&&active()){const job=jobs[index++];try{const result=await readNativeSessionPages((offset,revision)=>api(`${endpoint(job.nodeId)}?${new URLSearchParams({runtime:job.runtime,scope:job.scope,offset:String(offset),revision})}`),()=>ticket===version&&active());if(ticket!==version||!active())return;results.push(...result.items.map(item=>({...item,nodeId:job.nodeId})));partial||=result.partial;items=ordered([...previous,...results]);updateLineage();renderList();autoSelect();}catch(e){failedJobs.add(`${job.nodeId}/${job.runtime}/${job.scope}`);errors.push(`${workerName(job.nodeId)}: ${t(e.message)}`);}}}));
   if(ticket!==version||!active())return;loading=false;
@@ -603,7 +604,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   nodes.push(row);
   return nodes;
  }
- const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed({historyChanged:true}),onLatest:()=>{if(selected)void read(selected);},label:item=>`${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage:renderHistoryRow,renderMessages:renderHistory});
+ const timeline=createNativeHistoryTimeline({scroll,readPage,t,onHistoryChange:()=>takeover.renderFeed({historyChanged:true}),onLatest:()=>{if(selected)void read(selected);},label:item=>`${item.conversationBinding?.segments.some(s=>s.runtime===item.runtime&&s.sessionId===nativeId(item)&&s.switchId)?t('Agent switched')+' · ':''}${time(item.createdAt||item.modifiedAt)} · ${names[item.runtime]} · ${workerName(item.nodeId)} · ${(nativeId(item)||'').slice(0,8)}`,renderMessage:renderHistoryRow,renderMessages:renderHistory});
  /** Latest pages saved in this browser, as last saved (rows appended by refreshes are added to them). */
  const savedPages=new Map();
  const SAVED_PAGE_CHARS=2*1024*1024;
@@ -624,7 +625,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  }
  /** Errors that mean the saved snapshot no longer fits the history file. */
  const staleCopy=error=>/changed|Invalid native history cursor/i.test(error?.message||'');
- async function read(item,{quiet=false}={}){const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
+ async function read(item,{quiet=false}={}){if(item.conversationBinding){const group=groupNativeSessions(items).find(g=>g.id===`conversation:${item.conversationBinding.id}`);if(group)item=group.latest;}
+  const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
   const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];
   const restart=()=>{timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));detailSignature=detailMeta='';};
   if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);}
@@ -1064,6 +1066,16 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   };
  }
  const takeover=createTakeover();
+ const agentSwitchUI=createNativeAgentSwitchUI({api,t,getState:()=>({busy:!selected||takeover.switchBusy(selected)}),
+  onChange:()=>{if(selected){const panel=sidePanels.overview.querySelector('[data-native-controls]');if(panel)delete panel.dataset.signature;takeover.render();renderSessionControls(selected);}},
+  onError:message=>{controlFeedback={key:key(selected),text:t(message)};note.textContent=t(message);},
+  onCommitted:async({source,conversation,current,segments})=>{
+   const viewing=selected&&(key(selected)===key(source)||selected.conversationBinding?.id===conversation.id);
+   const related=s=>s.nodeId===conversation.nodeId&&segments.some(p=>p.runtime===s.runtime&&p.sessionId===(s.sessionId||s.id));
+   items=items.map(s=>related(s)?{...s,conversationBinding:conversation}:s);
+   for(const s of segments)if(!items.some(i=>i.nodeId===conversation.nodeId&&i.runtime===s.runtime&&i.sessionId===s.sessionId))items.push({id:s.entryId||s.sessionId,...s,nodeId:conversation.nodeId,title:conversation.title,workspace:conversation.workspace,origin:'dialog',hasHistory:true,canResume:s.id===current.id,conversationBinding:conversation});
+   const group=groupNativeSessions(items).find(g=>g.id===`conversation:${conversation.id}`);takeover.bindConversation(group.latest);listSignature='';renderList();if(viewing)await read(group.latest);
+  }});
  const sideAsk=createSideAsk();sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);sideAsk.clear.hidden=sideTab!=='ask';sideHeader.append(sideAsk.clear);
  const folderOpen=iconButton('folder','Working folder',()=>openFolder(),'native-folder-open');folderOpen.hidden=sideTab!=='outputs';sideHeader.append(folderOpen);
  // Sessions opened on this page with "Allow all": once the headless first turn has produced history, chat here without a separate takeover confirmation.
@@ -1141,12 +1153,20 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  function createTakeover(){
   const stored=(name,fallback)=>{try{return JSON.parse(sessionStorage.getItem(name)||JSON.stringify(fallback));}catch{return fallback;}};
   const consentKey='agent-workbench.native-takeover-v3-consent',on=new Set(stored(consentKey,[])),drafts=stored('agent-workbench.native-takeover-drafts',{}),operations=new Map();
+  const draftKeys=new Map(),draftId=id=>draftKeys.get(id)||id;
   const returnedKey='agent-workbench.native-returned-chat',returned=new Set(stored(returnedKey,[]));
   const save=()=>{try{sessionStorage.setItem(consentKey,JSON.stringify([...on]));sessionStorage.setItem(returnedKey,JSON.stringify([...returned]));sessionStorage.setItem('agent-workbench.native-takeover-drafts',JSON.stringify(drafts));}catch{}};
   const feed=el('div','native-takeover-feed'),shell=el('div','chat-composer-shell native-session-footer'),urls=new Map(),historyAnchors=new Map();
   let current=null,turns=[],poll=null,historyAt=0,historyEl=null,supported=true,fetchTicket=0,residentState='closed',settings={model:null,effort:null},controls=false;
   const sessionKey=value=>value?`${value.nodeId}/${value.runtime}/${value.sessionId}`:'';
   const k=()=>sessionKey(current);
+  /** Draft identity follows the conversation; execution receipts continue using exact native segment identities. */
+  function bindConversation(value){const c=value?.conversationBinding;if(!c)return;const target=`conversation:${c.id}`;
+   const hasContent=d=>Boolean(d&&(d.text||d.attachments?.length||d.pending));
+   for(const s of [...c.segments].reverse()){const id=`${c.nodeId}/${s.runtime}/${s.sessionId}`;draftKeys.set(id,target);
+    if(id!==target&&hasContent(drafts[id])&&!hasContent(drafts[target])){drafts[target]=drafts[id];delete drafts[id];}
+    if(on.has(id))on.add(sessionKey(value));if(returned.has(id))returned.add(sessionKey(value));}
+   save();}
   const isOn=value=>on.has(sessionKey(value));
   // 归还只开启输入界面，不授予工具执行权限；仍由发送时确认和后端占用检查决定能否执行。
   const canChat=value=>returned.has(sessionKey(value))&&getData().workers?.find(w=>w.id===value?.nodeId)?.capabilities?.nativeTurns===3;
@@ -1161,23 +1181,23 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const sendState=(d,op)=>sendStateOf(d,Boolean(op?.sending));
   let checkedAt=0;
   /** Clear only what the confirmed send carried; text typed afterwards stays. */
-  function settleTurn(id,sent){const d=drafts[id];if(!d)return;
-   if((d.text||'')===(sent.text||'')){drafts[id]={text:'',attachments:[]};if(k()===id)input.value='';}
+  function settleTurn(id,sent){const d=drafts[draftId(id)];if(!d)return;
+   if((d.text||'')===(sent.text||'')){drafts[draftId(id)]={text:'',attachments:[]};if(k()===id)input.value='';}
    else{const carried=new Set(sent.attachmentIds||[]);delete d.pending;delete d.sendState;d.attachments=(d.attachments||[]).filter(a=>!carried.has(a.id));}
    operation(id).message='';save();}
   /** Exact read-only receipt for the frozen clientTurnId in this session; only a confirmed absence re-enables Send. */
-  async function verifyTurn(id){const d=drafts[id],op=operation(id),value=current;if(!d?.pending||op.sending||op.verifying||d.sendState==='failed'||!value||k()!==id)return;
+  async function verifyTurn(id){const d=drafts[draftId(id)],op=operation(id),value=current;if(!d?.pending||op.sending||op.verifying||d.sendState==='failed'||!value||k()!==id)return;
    op.verifying=true;checkedAt=Date.now();const sent=d.pending;render();
    try{const receipt=await api(`${endpoint(value.nodeId)}/turns?${new URLSearchParams({runtime:value.runtime,sessionId:value.sessionId,clientTurnId:sent.clientTurnId})}`);
-    if(drafts[id]?.pending?.clientTurnId!==sent.clientTurnId)return;
-    if(receipt?.exists===true)settleTurn(id,sent);else if(receipt?.exists===false)drafts[id].sendState='failed';}
+    if(drafts[draftId(id)]?.pending?.clientTurnId!==sent.clientTurnId)return;
+    if(receipt?.exists===true)settleTurn(id,sent);else if(receipt?.exists===false)drafts[draftId(id)].sendState='failed';}
    catch(error){
     // An unreachable Home or 401/403/429 says nothing about the original POST: stay unknown and look again later.
-    if(drafts[id]?.pending?.clientTurnId===sent.clientTurnId)drafts[id].sendState=lookupFailureState(error);op.message=t(error.message);}
+    if(drafts[draftId(id)]?.pending?.clientTurnId===sent.clientTurnId)drafts[draftId(id)].sendState=lookupFailureState(error);op.message=t(error.message);}
    finally{op.verifying=false;save();if(current&&k()===id)render();}}
   /** Redraws from the existing state refresh re-check an unknown send at most every few seconds; no new polling. */
-  function recheck(){if(!current)return;const d=drafts[k()];if(!d?.pending||d.sendState==='failed'||operation().sending||Date.now()-checkedAt<5000)return;void verifyTurn(k());}
-  const draft=(id=k())=>drafts[id]||={text:'',attachments:[]};
+  function recheck(){if(!current)return;const d=drafts[draftId(k())];if(!d?.pending||d.sendState==='failed'||operation().sending||Date.now()-checkedAt<5000)return;void verifyTurn(k());}
+  const draft=(id=k())=>drafts[draftId(id)]||={text:'',attachments:[]};
   const fileUrl=(nodeId,item)=>{const id=`${nodeId}:${item.id}`;if(!urls.has(id))urls.set(id,api(`${endpoint(nodeId)}/attachments/${encodeURIComponent(item.id)}`,{blob:true}).then(blob=>URL.createObjectURL(blob)).catch(e=>{urls.delete(id);throw e;}));return urls.get(id);};
   const revokeAttachment=(nodeId,id)=>{const key=`${nodeId}:${id}`,pending=urls.get(key);urls.delete(key);if(pending)void Promise.resolve(pending).then(url=>URL.revokeObjectURL(url)).catch(()=>{});};
   const revokeUrls=()=>{for(const id of [...urls.keys()]){const split=id.indexOf(':');revokeAttachment(id.slice(0,split),id.slice(split+1));}};
@@ -1216,7 +1236,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    for(const row of root.querySelectorAll('[data-native-live-hidden]')){row.hidden=false;delete row.dataset.nativeLiveHidden;}
    for(const row of root.querySelectorAll('[data-history-duration]')){if(row.dataset.historyDuration)row.dataset.duration=row.dataset.historyDuration;else delete row.dataset.duration;delete row.dataset.historyDuration;}}
   function detach(){clearFeedMarks(historyEl);current=null;turns=[];historyEl=null;historyAnchors.clear();feedSignature='';liveReplies.clear();feed.replaceChildren();shell.remove();clearInterval(poll);poll=null;revokeUrls();}
-  function attach(value,{readable,historyAt:at,history}){const same=current&&k()===`${value.nodeId}/${value.runtime}/${value.sessionId}`;current=value;historyAt=at;historyEl=history;if(!same){turns=[];historyAnchors.clear();feed.replaceChildren();}
+  function attach(value,{readable,historyAt:at,history}){bindConversation(value);const same=current&&k()===`${value.nodeId}/${value.runtime}/${value.sessionId}`;current=value;historyAt=at;historyEl=history;if(!same){turns=[];historyAnchors.clear();feed.replaceChildren();}
    const worker=getData().workers?.find(w=>w.id===value.nodeId);supported=worker?.capabilities?.nativeTurns===3;
    const eligible=readable&&value.canResume!==false&&!value.canReopen&&Boolean(value.workspace);
    if(!eligible){shell.remove();clearFeedMarks(historyEl);feedSignature='';markLatestDuration();return;}
@@ -1413,7 +1433,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
    syncSendButton();renderQueue();renderAsk();
    // Disabling the textarea while a send is in flight drops focus; give it back once typing is possible again.
-   const locked=op.sending||op.releasing||op.editing||Boolean(d.pending);if(locked&&!input.disabled&&[input,sendButton].includes(document.activeElement))refocus=true;
+   const locked=op.sending||op.releasing||op.editing||Boolean(d.pending)||agentSwitchUI.busy(value);if(locked&&!input.disabled&&[input,sendButton].includes(document.activeElement))refocus=true;
    input.disabled=locked;attachButton.disabled=locked;
    if(!shell.contains(form))shell.replaceChildren(queue,ask,form);resize();
    if(refocus&&!locked){refocus=false;if(document.activeElement===document.body||document.activeElement===sendButton)input.focus({preventScroll:true});}
@@ -1453,7 +1473,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const resize=()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;};
   input.addEventListener('input',()=>{draft().text=input.value;save();resize();syncSendButton();});
   input.addEventListener('keydown',e=>{if(window.matchMedia('(max-width: 1000px)').matches)return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!sendButton.disabled){e.preventDefault();input.form?.requestSubmit();}});
-  async function submit(){if(!current)return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.editing||op.uploads)return;
+  async function submit(){if(!current||agentSwitchUI.busy(current))return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.editing||op.uploads)return;
    // An in-flight or unknown send is only looked up again (click, double click, Enter); it is never resent with a new ID.
    if(d.pending&&d.sendState!=='failed'){void verifyTurn(id);return;}
    if(!d.pending&&!input.value.trim()&&!d.attachments?.length)return;op.message='';
@@ -1462,11 +1482,11 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
     d.pending={clientTurnId:sameSend(d.rejected?.payload,payload)?d.rejected.clientTurnId:crypto.randomUUID(),...payload};}
    delete d.rejected;d.sendState='sending';const sent=d.pending;save();op.sending=true;render();
-   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});if(!d.pending?.control)sideAsk.mainPrompted(value);drafts[id]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
+   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});if(!d.pending?.control)sideAsk.mainPrompted(value);drafts[draftId(id)]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
    catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;}op.message=t(error.message);}
-   finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[id]?.pending&&drafts[id].sendState==='checking')void verifyTurn(id);}}}
+   finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[draftId(id)]?.pending&&drafts[draftId(id)].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}
-  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;controls=result.controls===true;settings=result.settings||{model:null,effort:null};residentState=result.process||'closed';turns=result.items||[];queueState=result.queue||null;{const d=drafts[id];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
+  async function refresh(){if(!current)return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;controls=result.controls===true;settings=result.settings||{model:null,effort:null};residentState=result.process||'closed';turns=result.items||[];queueState=result.queue||null;{const d=drafts[draftId(id)];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){op.message=t(error.message);render();schedule();}}
   function schedule(){clearInterval(poll);poll=null;if(current&&(activeTurn()||turns.some(x=>x.status==='waiting')||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
   /** Start chatting here without an extra permission prompt; terminal handover keeps its separate ownership checks. */
   function enable(value,{focus=true}={}){if(!value?.sessionId)return false;const id=sessionKey(value);if(!on.has(id)){on.add(id);save();}if(current&&k()===id){render();renderSide(value,value.sessionId,true);if(focus)input.focus();}return true;}
@@ -1476,7 +1496,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   function contextSample(){for(const turn of [...turns].reverse())if(turn.contextUsage)return turn.contextUsage;return null;}
   async function saveSetting(field,value,extra={}){if(!current)return null;const id=k(),op=operation(id);op.message='';try{const result=await api(`${endpoint(current.nodeId)}/settings`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,[field]:value||null,...extra}});settings={...settings,model:result.model||null,effort:result.effort||null,hostingAccountId:result.hostingAccountId||null,repoUrl:result.repoUrl||null};await refresh();return result;}catch(error){op.message=t(error.message);render();renderSide(current,current.sessionId,true);return null;}}
   async function compact(){if(!current||activeTurn())return;const id=k(),op=operation(id);op.message='';try{const turn=await api(`${turnsUrl()}`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,allowAll:true,clientTurnId:crypto.randomUUID(),control:'compact'}});turns=[...turns.filter(x=>x.id!==turn.id),turn];render();schedule();}catch(error){op.message=t(error.message);render();}}
-  return {feed,attach,detach,isOn,enable,adopt:value=>{if(!value?.sessionId)return;on.add(sessionKey(value));save();},canChat,renderFeed,returned:markReturned,isReleasing,releaseDisabled,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh,recheck,
+  return {feed,attach,detach,isOn,enable,bindConversation,render,switchBusy:value=>{const id=sessionKey(value),op=operation(id);return releaseDisabled(value)||Boolean(drafts[draftId(id)]?.pending)||Boolean(op.verifying)||Boolean(id===k()&&turns.some(x=>x.status==='waiting'));},adopt:value=>{if(!value?.sessionId)return;on.add(sessionKey(value));save();},canChat,renderFeed,returned:markReturned,isReleasing,releaseDisabled,feedback:value=>operation(sessionKey(value)).message,release:endTakeover,refresh,recheck,
    files,contextSample,settings:()=>settings,controls:()=>controls,busy:()=>Boolean(activeTurn()),saveSetting,compact,turns:()=>turns};
  }
  const dialog=el('dialog','settings-edit-dialog native-session-dialog');dialog.id='native-session-dialog';document.body.append(dialog);

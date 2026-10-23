@@ -2,6 +2,8 @@ English | [简体中文](README.zh-CN.md)
 
 # Agent Collaboration Workbench
 
+Development branch: independent Sessions support same-device, same-folder Agent switching from a small action beside the Agent name. The picker preserves one conversation, original execution segments and unsent drafts. Switching requires idle execution and an empty queue; the next user message carries bounded factual history, not an invented summary. This feature requires matching Home/Worker support and is not deployed. See [scope and acceptance](docs/design-native-agent-switch.md).
+
 A self-hosted project group chat for the AI coding CLIs and subscriptions you already use. Codex, Claude Code, Grok Build and Antigravity run as configurable roles on your Mac or servers; Home owns records and coordination, while Workers drive the real native CLIs.
 
 > Development preview (`0.4.0`), for a single trusted operator or a small trusted team. Workbench does not proxy model APIs or replace native instructions, login or tools.
@@ -110,7 +112,7 @@ Role cards include a small number-free context-used ring after the model name, s
 
 All role cards, including the supervisor and inactive roles, use a left-aligned model-mark watermark at eight times the 22px foreground icon size and 96% transparency. The decoration is clipped to the card, excluded from accessibility and pointer interaction, and does not dim the foreground text or buttons. Unconfigured roles use the existing generic Agent mark.
 
-Quota checks do not submit model turns. Codex and Grok use account-status interfaces; Agy uses its built-in usage/credit commands. Both Claude quota-query paths retain `/usage` and set `CLAUDE_CODE_SKIP_PROMPT_HISTORY=1` for the probe subprocess, but do not assume that flag suppresses all native transcripts. Each query has a fresh session UUID; after its process closes, only that UUID's verified pure-query transcript is removed from the resolved CLI history roots. Mixed, malformed or changed records are preserved. Normal conversation history remains enabled, and older records are not automatically swept. Missing quota values stay unavailable rather than being guessed.
+Claude and Codex quota now comes passively from their normal managed group-chat and session connections. Claude reports optional five-hour/week windows in `rate_limit_event`; Codex reports `account/rateLimits/updated`. Worker runtime detection no longer runs Claude `/usage` or Codex `account/rateLimits/read`. Installation, sign-in and model discovery still run; Grok account-status and Agy usage/credit checks are unchanged. Samples retain their own observation time, expire per window after reset or ten minutes without a new sample, and never infer a full balance. A changed or unknown account identity cannot reuse another account's quota. Interactive external terminals are not scanned. Missing fields stay unknown; no model turn is started to obtain quota and no credentials or history are changed. This reduces extra quota probing; it does not remove native authentication renewal or establish a fix for authentication failures.
 
 Claude model choices use the CLI's returned catalog, including Fable when advertised. An explicit device `CLAUDE_MODEL_ID` still restricts third-party providers such as MiMo; existing role selections are not migrated. Fable selectors warn that non-interactive Claude Code may bill paid usage credits without another confirmation. Discovery does not invoke inference or enable credit purchases; account billing and actual model access are separate checks.
 

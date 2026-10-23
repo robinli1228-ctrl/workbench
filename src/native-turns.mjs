@@ -129,6 +129,7 @@ export class NativeTurnsHome{
   */
  saveSettings(nodeId,worker,body){
   const {runtime,sessionId}=body||{};
+  this.assertExecutable?.({nodeId,runtime,sessionId});
   if(!NATIVE_TURN_RUNTIMES.includes(runtime))throw Error('Unsupported CLI');
   if(!idPattern.test(sessionId||''))throw Error('Invalid native session ID');
   const field='model' in body?'model':'effort' in body?'effort':'hostingAccountId' in body?'hostingAccountId':null;if(!field)throw Error('Nothing to change');
@@ -159,6 +160,7 @@ export class NativeTurnsHome{
  }
  create(nodeId,worker,body,{gitCredential=null}={}){
   const {runtime,sessionId,clientTurnId,attachmentIds=[]}=body||{};let {text='',control=null}=body||{};
+  this.assertExecutable?.({nodeId,runtime,sessionId});
   if(!NATIVE_TURN_RUNTIMES.includes(runtime))throw Error('Unsupported CLI');
   if(!idPattern.test(sessionId||''))throw Error('Invalid native session ID');
   if(!turnIdPattern.test(clientTurnId||''))throw Error('Invalid takeover message ID');
@@ -180,9 +182,11 @@ export class NativeTurnsHome{
  /** Reserve the resident process and hand the turn to the Worker; the only place a turn leaves the queue. */
  dispatch(turn,{gitCredential=null}={}){
   const {nodeId,runtime,sessionId}=turn,key=sessionKey(nodeId,runtime,sessionId),previous=this.db.get('nativeTakeovers',key);
+  this.assertExecutable?.({nodeId,runtime,sessionId});
   const lease=this.leases?.reserve({nodeId,runtime,sessionId,previous});
   if(!this.leases)this.assertIdle({runtime,sessionId});
-  const started={...turn,status:'queued',phase:'queued',updatedAt:now()};
+  const handoff=turn.control?null:this.handoffFor?.({nodeId,runtime,sessionId});
+  const started={...turn,status:'queued',phase:'queued',updatedAt:now(),...(handoff?{handoffId:handoff.id}:{})};
   this.db.put('nativeTurns',started);
   this.db.put('nativeTakeovers',{id:key,nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
   const settings=this.settings(nodeId,runtime,sessionId);
@@ -192,7 +196,7 @@ export class NativeTurnsHome{
   const capable=this.db.get('workers',nodeId)?.capabilities?.nativePageInstructions===1;
   const instructions=capable&&!delivered&&!turn.control&&PAGE_INSTRUCTION_RUNTIMES.has(runtime)?{version:PAGE_INSTRUCTIONS_VERSION,text:PAGE_INSTRUCTIONS}:null;
   if(instructions)this.db.put('nativeTurns',{...started,instructionsVersion:instructions.version});
-  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:turn.prompt,...(instructions?{instructions}:{}),attachments:turn.attachments||[],...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(turn.control?{control:turn.control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
+  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:turn.prompt,...(instructions?{instructions}:{}),...(handoff?{handoff}:{}),attachments:turn.attachments||[],...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(turn.control?{control:turn.control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
   this.change();return started;
  }
  /** Queued turns of one session: a steered message first, then in the order the user arranged (by default, the order they were sent). */
@@ -313,6 +317,7 @@ export class NativeTurnsHome{
   if(m.type==='native_takeover_lease'){this.leases?.update(nodeId,m);this.change();return true;}
   const turn=this.db.get('nativeTurns',m.id);if(!turn||turn.nodeId!==nodeId)return false;
   const next=applyNativeTurnEvent(turn,m.event);if(next!==turn)this.db.put('nativeTurns',next);
+  if(next.handoffId&&next.inputDeliveryState==='accepted')this.db.put('nativeHandoffDeliveries',{id:`${nodeId}/${next.handoffId}/${turn.sessionId}`,nodeId,runtime:turn.runtime,sessionId:turn.sessionId,handoffId:next.handoffId,deliveredAt:now()});
   // Only explicit input acceptance proves delivery: interruption can also happen before any input is sent.
   if(next.instructionsVersion===PAGE_INSTRUCTIONS_VERSION&&next.inputDeliveryState==='accepted'&&turn.inputDeliveryState!=='accepted'){const key=sessionKey(nodeId,turn.runtime,turn.sessionId);this.db.put('nativePageInstructions',{id:key,nodeId,runtime:turn.runtime,sessionId:turn.sessionId,version:next.instructionsVersion,deliveredAt:now()});}
   if(next.status!==turn.status){if(!ACTIVE.has(next.status)&&next.status!=='stopping'){
@@ -376,7 +381,7 @@ const alive=session=>Boolean(session?.proc&&session.proc.exitCode===null&&sessio
 
 /** Worker side: one resident CLI per taken-over session (where supported), exact resume in the history's original folder. */
 export class NativeTurnRunner{
- constructor({send,createSession,resolveSession,canStart,prepareInputs=async()=>({files:[],images:[]}),cleanup=null,idleMs=NATIVE_IDLE_MS,leases=null}){Object.assign(this,{send,createSession,resolveSession,canStart,prepareInputs,cleanup,idleMs,leases});this.turns=new Map();this.resident=new Map();this.closing=new Map();this.outbox=null;this.graceTimer=null;}
+ constructor({send,createSession,resolveSession,canStart,prepareInputs=async()=>({files:[],images:[]}),cleanup=null,idleMs=NATIVE_IDLE_MS,leases=null,onQuota=()=>{}}){Object.assign(this,{send,createSession,resolveSession,canStart,prepareInputs,cleanup,idleMs,leases,onQuota});this.turns=new Map();this.resident=new Map();this.closing=new Map();this.outbox=null;this.graceTimer=null;}
  /** Messages to Home go out at once while connected and wait in order while Home is away (see suspend/resume). */
  post(m){
   if(!this.outbox)return this.send(m);
@@ -427,12 +432,14 @@ export class NativeTurnRunner{
    if(state.stopRequested)return end('interrupted');
    this.leases?.validate(m);
    this.event(m.id,{kind:'status',status:'starting'});
-   const {files=[],images=[],env=null}=await this.prepareInputs(m,workspace);
+   const {files=[],images=[],env=null,handoffText=null}=await this.prepareInputs(m,workspace);
    if(state.stopRequested)return end('interrupted');
    if(images.length&&!NATIVE_IMAGE_RUNTIMES.has(m.runtime))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');
    const others=files.filter(f=>!(m.runtime==='codex'&&f.mime?.startsWith('image/'))&&!(m.runtime==='claude'&&f.mime?.startsWith('image/')));
-   const prompt=withPageInstructions([m.prompt,others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n'),m.control?null:m.instructions);
+   const body=[m.prompt,others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
+   const prompt=withPageInstructions(!m.control&&handoffText?`<system-reminder>\nWorkbench Agent handoff:\n${handoffText.replaceAll('<','\\u003c')}\n</system-reminder>\n\n${body}`:body,m.control?null:m.instructions);
    const emit=(type,p={})=>{
+    if(type==='quota')return this.onQuota(m.runtime,p,state.session?.quotaIdentity);
     if(ended)return;
     if(type==='status'&&p.nativeSessionId&&p.nativeSessionId!==m.sessionId){void state.session?.stop();return end('mismatch','The CLI resumed a different native session; stopped');}
     // Delivery receipts need not carry a status; forward them before settling a terminal event.

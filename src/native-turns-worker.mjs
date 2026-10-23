@@ -6,6 +6,7 @@ import { createNativeSession } from './native-turn-sessions.mjs';
 import { readNativeSession, registeredNativeSession, assertNativeSessionIdle } from './native-sessions.mjs';
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { nativeTerminalProject, projectTerminalLock, terminalProcessIdentity, processIdentityKey, checkTerminalSession, stopTerminalSession } from './terminal-resume.mjs';
+import {nativeAgentSessionWorkspace} from './native-agent-switch-worker.mjs';
 
 const LIMIT=20*1024*1024,COUNT=6,uuid=/^[a-f0-9-]{36}$/;
 
@@ -32,7 +33,7 @@ export async function receiveTurnFiles({items=[],turnId,root,home,token,fetchImp
 }
 
 /** The Worker's only takeover entry: worker.mjs passes its state accessors and routes four message types here. */
-export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot,isPaused,runtimes,capacity,occupiedSlots,nodeId,changed=()=>{},trim=async()=>{}}) {
+export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot,isPaused,runtimes,capacity,occupiedSlots,nodeId,changed=()=>{},trim=async()=>{},onQuota=()=>{}}) {
   const dbPath=join(data,'worker.sqlite'),retiring=new Map(),observed=new WeakSet();let runner;
   const held=s=>s&&!['released','cancelled'].includes(s.status);
   const report=s=>{send({type:'native_takeover_lease',leaseId:s.id,runtime:s.runtime,sessionId:s.sessionId,projectId:s.projectId,workspace:s.workspace,status:s.status});changed();};
@@ -57,7 +58,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
     started(m,proc){
       const s=db.get('terminalSessions',m.leaseId);if(!s||!proc?.pid)return;
       const identity=processIdentityKey(terminalProcessIdentity(proc.pid));
-      db.put('terminalSessions',{...s,status:'active',childPid:proc.pid,childIdentity:identity,startedAt:s.startedAt||new Date().toISOString()});
+      db.put('terminalSessions',{...s,status:'active',childPid:proc.pid,childIdentity:identity,driverArgs:proc.spawnargs?.slice(1)||null,startedAt:s.startedAt||new Date().toISOString()});
       if(!identity){proc.kill('SIGTERM');throw Error('Unable to verify the takeover process identity');}
       report(db.get('terminalSessions',s.id));
       if(!observed.has(proc)){observed.add(proc);proc.once('exit',()=>{void runner.close(`${m.runtime}/${m.sessionId}`,'exited');});}
@@ -76,23 +77,29 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
     }
   };
   runner=new NativeTurnRunner({
-    send,leases,
+    send,leases,onQuota,
     canStart:(m,{reusing})=>{
       if(isPaused())throw Error('Remote execution is paused');
       if(!runtimes().some(r=>r.type===m.runtime&&r.available&&r.supported!==false))throw Error('CLI is not available on this device');
       if(!reusing&&occupiedSlots()>=capacity())throw Error('Device CLI capacity is full');
     },
     prepareInputs:async m=>{
+      let handoffText=null;
+      if(m.handoff&&!m.control){const op=db.get('workerNativeAgentSwitches',m.handoff.switchId);
+        if(!op?.published||op.target?.runtime!==m.runtime||op.target?.sessionId!==m.sessionId||op.context?.id!==m.handoff.id||op.context?.hash!==m.handoff.hash)throw Error('Agent handoff does not match this session');
+        handoffText=op.context.excerpt;}
       const files=await receiveTurnFiles({items:m.attachments||[],turnId:m.id,root:join(data,'native-turn-files'),home:homeHttp,token});
       const images=m.runtime==='claude'?await Promise.all(files.filter(f=>f.mime.startsWith('image/')).map(async f=>({mime:f.mime,data:(await readFile(f.path)).toString('base64')}))):[];
       // One private gitconfig per session, rewritten every turn: a resident CLI picks up a newly bound account without restarting.
       const credential=m.gitCredential?.token?m.gitCredential:null;
       const env=await runtimeGitEnvironment({directory:join(data,'git-auth'),key:nativeGitConfigKey(m.runtime,m.sessionId),repositories:credential?[{id:'session',repoUrl:credential.repoUrl}]:[],credentials:credential?{session:credential}:{}});
-      return {files,images,env};
+      return {files,images,env,handoffText};
     },
     resolveSession:async(runtime,sessionId,{message:m})=>{
-      const history=await readNativeSession(runtime,sessionId,{record:m.record||registeredNativeSession(db,runtime,sessionId)});if(!history.workspace)return {workspace:null};
-      const workspace=await projectRoot(history.workspace),projects=[];
+      const history=await readNativeSession(runtime,sessionId,{record:m.record||registeredNativeSession(db,runtime,sessionId)});
+      const savedWorkspace=nativeAgentSessionWorkspace(db,{runtime,sessionId,historyWorkspace:history.workspace});if(!savedWorkspace)return {workspace:null};
+      const workspace=await projectRoot(savedWorkspace),projects=[];
+      if(workspace!==savedWorkspace)throw Error('Successor working directory changed');
       const inside=(a,b)=>{const r=relative(a,b);return !r||r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
       for(const binding of m.bindings||[]){const root=await realpath(binding.localRoot).catch(()=>null);if(root&&(inside(root,workspace)||inside(workspace,root)))projects.push(binding.projectId);}
       const owner=nativeTerminalProject(db,{nodeId,runtime,sessionId,folderProjectIds:projects,managedProjectIds:m.managedProjectIds||[]});
@@ -101,7 +108,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
       await trim();return {workspace};
     },
     cleanup:id=>uuid.test(id)?rm(join(data,'native-turn-files',id),{recursive:true,force:true}):null,
-    createSession:options=>createNativeSession(options)
+    createSession:options=>Object.assign(createNativeSession(options),{quotaIdentity:runtimes().find(r=>r.type===options.runtime)?.quotaIdentity})
   });
   /** Preparing leases belong to this Runner until preparation settles; generic terminal expiry must not revoke them. */
   runner.check=binding=>{
