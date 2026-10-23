@@ -174,6 +174,37 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
   }).sort((a,b)=>String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
 }
 
+/**
+ * A cross-device Git delivery waits for the person to confirm its push: until then the roles on other devices cannot get
+ * the commit and the plan stops. The confirmation sits above the composer, where it is seen, not only in the run details.
+ * It pushes only this commit to its own delivery branch; nothing is merged or deployed.
+ */
+function createDeliveryPrompts({api,refreshState,create,setError,openTask}) {
+  const panel=create('section','delivery-prompts');panel.hidden=true;panel.setAttribute('aria-live','polite');
+  document.querySelector('#message-queue')?.before(panel);
+  const pending=new Set();let signature='';
+  return {update(data,projectId,conversationId){
+    const runs=new Map((data.runs||[]).map(run=>[run.id,run]));
+    const waiting=(data.deliveries||[]).filter(d=>{const run=runs.get(d.sourceRunId);
+      return d.projectId===projectId&&!d.approvedAt&&['waiting_source','awaiting_approval'].includes(d.status)&&(run?.conversationId||run?.projectId||projectId)===conversationId;});
+    const next=JSON.stringify([projectId,conversationId,waiting.map(d=>[d.id,d.status]),[...pending]]);if(next===signature)return;signature=next;
+    panel.replaceChildren();panel.hidden=!waiting.length;
+    for(const d of waiting){
+      const run=runs.get(d.sourceRunId),role=run?.roleSnapshot?.name||t('Role'),card=create('div','delivery-prompt');
+      const head=create('div','delivery-prompt-head');head.append(create('strong','',t('Your confirmation is needed: push for review')),create('span','delivery-prompt-state',t(d.status==='awaiting_approval'?'Awaiting push confirmation':'Waiting for the source run to finish')));
+      const what=create('p','delivery-prompt-text',t('@{role} asks to push commit {commit} to its delivery branch so roles on other devices can review or test it. Only that branch is pushed; nothing is merged or deployed.',{role,commit:String(d.commit||'').slice(0,8)}));what.translate=false;
+      const summary=String(d.summary||'').split('\n')[0].slice(0,200),detail=summary?create('p','delivery-prompt-summary',summary):null;if(detail){detail.title=d.summary;detail.translate=false;}
+      const actions=create('div','delivery-prompt-actions'),approve=create('button','primary compact',t('Confirm push'));approve.type='button';approve.disabled=pending.has(d.id);
+      approve.addEventListener('click',async()=>{pending.add(d.id);approve.disabled=true;
+        try{await api(`/api/projects/${encodeURIComponent(d.projectId)}/deliveries/${encodeURIComponent(d.id)}/approve`,{method:'POST',json:{}});await refreshState({quiet:true});}
+        catch(error){setError(error.message);}finally{pending.delete(d.id);signature='';}});
+      actions.append(approve);
+      if(run){const view=create('button','secondary compact',t('Details'));view.type='button';view.addEventListener('click',()=>openTask(run.taskId,run.id));actions.append(view);}
+      card.append(head,what,...(detail?[detail]:[]),actions);panel.append(card);
+    }
+  }};
+}
+
 /** Show existing dispatches without creating a separate queue; request retries reuse the ID to avoid repeated interruptions. */
 function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
@@ -283,6 +314,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   const historyViewer=createHistoryViewer({api});
   const cliRecoveryUI=createCliRecoveryUI({api,refreshState,getData:()=>data,create});
   const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued});
+  const deliveryPrompts=createDeliveryPrompts({api,refreshState,create,setError,openTask});
   const feed = document.querySelector('#chat-feed');
   // Configuration, plans and messages share one scroll area so status cards do not permanently crowd out the body.
   const scroller = document.querySelector('#chat-scroll');
@@ -1149,7 +1181,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       if (projectId) input.value = draft().text || '';
     }
     if (!projectId) return;
-    messageQueue.update(data,projectId);composer(); renderMessages();
+    messageQueue.update(data,projectId);deliveryPrompts.update(data,projectId,conversationId);composer(); renderMessages();
     if (draft().pending && sendState(draft()) !== 'failed') void verifyPending(scopeId);
     for (const run of (data.runs || []).filter(r => r.projectId === projectId && ['starting', 'running', 'waiting_user', 'stopping'].includes(r.status))) {
       void pullLive(run.id);

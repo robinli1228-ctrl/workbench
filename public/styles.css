@@ -3916,3 +3916,15 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .native-agent-option:not(:disabled):hover{background:rgba(99,102,241,.06);border-color:#a5a7ee}
 .native-agent-option:disabled{opacity:.5;cursor:default}
 .native-agent-switch-status{position:absolute;top:100%;right:0;font-size:11px;font-weight:400;color:#73768a;white-space:nowrap}
+
+/* Push confirmation for a cross-device delivery, above the queue: amber, so a stalled plan's one missing click is seen. */
+.delivery-prompts { display: grid; gap: 6px; margin: 0 16px 8px; }
+.delivery-prompts[hidden] { display: none; }
+.delivery-prompt { display: grid; gap: 6px; padding: 10px 14px; border: 1px solid #f3d9a8; border-radius: var(--r-lg, 14px); background: #fffaf0; box-shadow: var(--elev-float); font-size: 13px; }
+.delivery-prompt-head { display: flex; align-items: center; gap: 8px; }
+.delivery-prompt-head strong { color: #92400e; font-size: 13.5px; }
+.delivery-prompt-state { margin-left: auto; color: #b45309; font-size: 12px; }
+.delivery-prompt-text { margin: 0; color: var(--ink); line-height: 1.55; }
+.delivery-prompt-summary { margin: 0; color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delivery-prompt-actions { display: flex; gap: 8px; }
+@media (max-width: 760px) { .delivery-prompts { margin-inline: 8px; } }
