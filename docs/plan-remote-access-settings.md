@@ -13,8 +13,8 @@
 ## Global Constraints
 
 - Preserve histories, passwords, dedicated keys, current relay configuration, task execution and all existing SSH forwards.
-- Only local Home may be updated/restarted in this delivery. Neither Worker nor the current independent gateway is restarted as a side effect.
-- Existing gateway compatibility is mandatory: local-management proof must fail through it even before the new module's explicit route denial is deployed.
+- Update/restart only local Home and the independent gateway under the user's explicit supplemental authorization for the atomic configuration fix. Neither Worker nor unrelated SSH forwarding is restarted.
+- Existing gateway compatibility is mandatory: local-management proof must fail through it before the new module's explicit route denial is deployed; configuration editing requires the atomic-patch capability, with no unsafe fallback.
 - Browser login remains fixed fifteen days. Local management proof is separate, short-lived and never returned in JSON.
 - Normal UI shows relay address, password and enable/disable only. Advanced fields are collapsed; local paths and token/key contents are not browser settings.
 - Private installation locator uses `REMOTE_ACCESS_CONFIG` in Home's local launcher; default is `<DATA_DIR>/remote-access/config.json`. Do not scan personal directories or guess a different installation.
@@ -81,9 +81,9 @@ Routes under `/api/settings/remote-access`:
 - [ ] Obtain one independent whole-change review; fix confirmed Important/Critical findings with red-to-green regressions and rerun affected/all checks. Review secret/proxy boundaries and repository publication hygiene specifically.
 - [ ] Scan the candidate diff and copied files for personal addresses, account names, absolute private paths and secret material. Push a new feature branch and create/attach one Workbench PR; do not include unrelated open PRs or the standalone Git history.
 - [ ] Recheck actual Home process identity, active Runs/native turns, queues and existing Workers/tunnels. If a restart would interrupt work, wait; do not terminate active CLI sessions.
-- [ ] Back up actual Home database/configuration/launcher and existing changes. Package the exact PR candidate in an independent release directory and set the private `REMOTE_ACCESS_CONFIG` locator locally. Keep relay and Worker processes unchanged.
+- [ ] Back up actual Home database/configuration/launcher, independent relay configuration/state/launcher, and existing changes. Package the exact approved source in an independent release directory and set the private `REMOTE_ACCESS_CONFIG` locator locally. Update only the independent relay service to the atomic-patch implementation under supplemental authorization; keep Worker processes and unrelated forwards unchanged.
 - [ ] Merge the verified PR into main, verify remote ancestry and package the resulting main version. Update and restart only local Home under the user's authorization. Verify exact source version/file hashes, health, Worker reconnect, live Basic Settings, preservation of private values and local-only administration.
 
 ## Execution method and remaining approval
 
-Approved: inline implementation in this chat, with one independent reviewer at the end, reusing existing evidence rather than dispatching each task. The user additionally authorized merging the verified PR into main before the local Home update. Workers and the existing gateway runtime are unchanged.
+Approved: inline implementation in this chat with one independent reviewer at the end. The user additionally authorized merging the verified PR into main and updating/restarting the independent gateway to fix atomic field editing. Home waits for a safe task window; both Workers and unrelated SSH forwards remain unchanged.
