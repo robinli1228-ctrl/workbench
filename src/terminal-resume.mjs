@@ -357,7 +357,7 @@ async function runTerminal(dbPath,id) {
   console.log(session.kind==='new'||session.kind==='native'&&!session.nativeSession.id?tr('roleTerminal.startingNew',{workspace:session.workspace}):tr('terminalResume.resumingOriginalSessionDirectoryPlatform', { id: session.nativeSession.id, workspace: session.workspace }));
   const env={...session.privateEnv};
   for(const key of ['TERM','COLORTERM','TERM_PROGRAM','TERM_PROGRAM_VERSION'])if(process.env[key])env[key]=process.env[key];
-  if(hello)args=nativeHelloArgs(session.nativeSession.runtime,args);
+  if(hello)args=nativeHelloArgs(session.nativeSession.runtime,args,session.nativeSwitchId?'Create this empty session for a Workbench Agent switch. Reply READY only. Do not use tools, read or modify files, or begin any task. Wait for the next user message.':'Hi');
   const child=spawn(session.nativeSession.binary,args,{cwd:session.workspace,env,stdio:hello?['ignore','pipe','pipe']:'inherit'});
   let reportedId=null,stderr='';
   if(hello){

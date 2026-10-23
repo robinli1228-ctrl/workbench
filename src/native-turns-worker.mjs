@@ -83,12 +83,16 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
       if(!reusing&&occupiedSlots()>=capacity())throw Error('Device CLI capacity is full');
     },
     prepareInputs:async m=>{
+      let handoffText=null;
+      if(m.handoff&&!m.control){const op=db.get('workerNativeAgentSwitches',m.handoff.switchId);
+        if(!op?.published||op.target?.runtime!==m.runtime||op.target?.sessionId!==m.sessionId||op.context?.id!==m.handoff.id||op.context?.hash!==m.handoff.hash)throw Error('Agent handoff does not match this session');
+        handoffText=op.context.excerpt;}
       const files=await receiveTurnFiles({items:m.attachments||[],turnId:m.id,root:join(data,'native-turn-files'),home:homeHttp,token});
       const images=m.runtime==='claude'?await Promise.all(files.filter(f=>f.mime.startsWith('image/')).map(async f=>({mime:f.mime,data:(await readFile(f.path)).toString('base64')}))):[];
       // One private gitconfig per session, rewritten every turn: a resident CLI picks up a newly bound account without restarting.
       const credential=m.gitCredential?.token?m.gitCredential:null;
       const env=await runtimeGitEnvironment({directory:join(data,'git-auth'),key:nativeGitConfigKey(m.runtime,m.sessionId),repositories:credential?[{id:'session',repoUrl:credential.repoUrl}]:[],credentials:credential?{session:credential}:{}});
-      return {files,images,env};
+      return {files,images,env,handoffText};
     },
     resolveSession:async(runtime,sessionId,{message:m})=>{
       const history=await readNativeSession(runtime,sessionId,{record:m.record||registeredNativeSession(db,runtime,sessionId)});if(!history.workspace)return {workspace:null};

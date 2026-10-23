@@ -52,6 +52,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
   const sideAsks=createHomeSideAsks({send,online,attachments,owner:NativeTurnsHome.owner,change});
   const switches=new NativeAgentSwitches({db,online,workerQuery,turns,sideAsks,change,sessionRecord});
   turns.assertExecutable=identity=>switches.assertExecutable(identity);
+  turns.handoffFor=identity=>switches.handoffFor(identity);
   switches.recover();
   const sideSweep=setInterval(()=>sideAsks.sweep(),5*60000);sideSweep.unref?.();
   turns.recover();

@@ -55,7 +55,7 @@ export class NativeAgentSwitches{
   if(!this.online(nodeId))return this.view(op);
   const promise=this.advance(op).finally(()=>this.inflight.delete(id));this.inflight.set(id,promise);return promise;
  }
- payload(op){const c=this.db.get('nativeConversations',op.conversationId);return {operationId:op.id,conversationId:c.id,revision:op.revision,source:op.source,targetRuntime:op.targetRuntime,workspace:c.workspace,title:c.title,segments:c.segments};}
+ payload(op){const c=this.db.get('nativeConversations',op.conversationId);return {operationId:op.id,conversationId:c.id,revision:op.revision,source:op.source,...op.source,targetRuntime:op.targetRuntime,workspace:c.workspace,title:c.title,segments:c.segments};}
  async query(op,action,extra={}){return this.workerQuery({nodeId:op.nodeId},`native_agent_switch_${action}`,{...this.payload(op),...extra},30000);}
  async advance(op){
   try{
@@ -92,10 +92,11 @@ export class NativeAgentSwitches{
    const c=this.db.get('nativeConversations',op.conversationId),target=result.target;
    if(c.revision!==op.revision||c.pendingSwitchId!==op.id||result.workspace!==c.workspace||target?.runtime!==op.targetRuntime||!target.sessionId||!target.entryId)throw Error('Target preparation does not match the conversation');
    this.assertIdle(op.nodeId,op.source);
-   const segment={id:randomUUID(),...target,createdAt:stamp(),switchId:op.id,contextId:result.contextId||op.id};
+   const segment={id:randomUUID(),...target,createdAt:stamp(),switchId:op.id,contextId:result.contextId||op.id,contextHash:result.contextHash};
    this.db.transaction(()=>{
     this.db.put('nativeConversations',{...c,revision:c.revision+1,currentSegmentId:segment.id,segments:[...c.segments,segment],pendingSwitchId:null});
     this.db.put('nativeCatalogEntries',{id:target.entryId,nodeId:op.nodeId,...target,workspace:c.workspace,title:c.title,origin:'dialog',status:'ready',hasHistory:true,previewAvailable:true,createdAt:segment.createdAt});
+    if(result.folderGrant){const scope=`native:${target.entryId}`,grant=result.folderGrant;if(grant.nodeId!==op.nodeId||grant.root!==c.workspace||grant.scope!==scope)throw Error('Target folder grant changed');this.db.put('folderGrants',{id:`${op.nodeId}:${scope}`,nodeId:op.nodeId,scope,status:'active',grant});}
     this.update(op,{stage:'committed',target,contextId:segment.contextId,error:null});
    });
    await this.publish(this.db.get('nativeAgentSwitches',op.id));
@@ -107,6 +108,9 @@ export class NativeAgentSwitches{
  decorateCatalog(nodeId,items){const conversations=this.db.list('nativeConversations').filter(c=>c.nodeId===nodeId);return items.map(item=>{
   const c=conversations.find(c=>c.segments.some(s=>same(s,{runtime:item.runtime,sessionId:item.sessionId||item.id})));return c?{...item,conversationBinding:c}:item;
  });}
+ /** Delivery is per target segment, not per prompt text or source runtime. */
+ handoffFor(identity){const c=this.conversation(identity),s=c?.segments.find(s=>s.id===c.currentSegmentId);
+  return s?.contextId&&same(s,identity)&&!this.db.get('nativeHandoffDeliveries',`${identity.nodeId}/${s.contextId}/${s.sessionId}`)?{id:s.contextId,hash:s.contextHash,switchId:s.switchId}:null;}
  /** Recovery preserves uncertainty; the next scoped status request reconciles through the Worker. */
  recover(){for(const op of this.db.list('nativeAgentSwitches'))if(op.stage==='preparing')this.update(op,{stage:'reconciling'});}
 }
