@@ -3838,3 +3838,14 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .remote-access-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
 .remote-access-settings [data-relay-link] { overflow-wrap:anywhere; }
 @media(max-width:600px) { .remote-access-settings label { min-width:100%; } }
+
+/* Top of a transcript: one capsule, "load older" with a history mark on the left, "latest" with a down arrow on the right. */
+.native-history-actions { display: inline-flex; align-items: center; gap: 1px; margin: 4px auto; padding: 3px; border: 1px solid #e4e7ee; border-radius: 999px; background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 5%); }
+.native-history-actions[hidden] { display: none; }
+.native-history-actions button { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 28px; min-height: 28px; padding: 0 13px; border: 0; border-radius: 999px; background: transparent; box-shadow: none; color: #4b505b; font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; }
+.native-history-actions button:hover:not(:disabled) { background: #f1f3f7; color: var(--ink); }
+.native-history-actions button:disabled { opacity: .6; }
+.native-history-actions svg { width: 15px; height: 15px; flex: none; }
+.native-history-older svg { color: var(--accent); }
+.native-history-latest { color: #6b7080; }
+.native-history-latest::before { content: ''; position: absolute; left: -1px; top: 7px; bottom: 7px; width: 1px; background: #e4e7ee; }

@@ -1,8 +1,16 @@
 import {highlightLatestChatCard} from './chat-card-state.js';
+import {UI_ICON} from './role-icons.js';
 /** A read-only timeline: older pages never replace the selected native session or its controls. */
 export function createNativeHistoryTimeline({scroll,readPage,renderMessage,renderMessages=(rows,item)=>rows.map(m=>renderMessage(m,item)),label,t,onLatest,onHistoryChange=()=>{}}){
  const root=document.createElement('div'),bar=document.createElement('div'),more=document.createElement('button'),note=document.createElement('p'),latest=document.createElement('button'),skip=document.createElement('button');
- root.className='native-history-timeline';bar.className='native-history-loader';more.type=latest.type='button';more.className=latest.className='secondary';note.className='workspace-note';note.setAttribute('role','status');latest.textContent=t('Refresh latest history');latest.hidden=true;latest.onclick=onLatest;bar.append(more,note,latest);
+ root.className='native-history-timeline';bar.className='native-history-loader';more.type=latest.type='button';more.className=latest.className='secondary';note.className='workspace-note';note.setAttribute('role','status');latest.textContent=t('Refresh latest history');latest.hidden=true;latest.onclick=onLatest;
+ // One capsule at the top of the transcript: a history mark with "load older" on the left, "latest" (to the bottom) on the right.
+ const actions=document.createElement('div'),moreText=document.createElement('span'),jump=document.createElement('button'),icon=(button,name)=>{button.insertAdjacentHTML('afterbegin',UI_ICON[name]);button.querySelector('svg').setAttribute('aria-hidden','true');};
+ actions.className='native-history-actions';more.className='native-history-older';more.append(moreText);icon(more,'history');
+ jump.type='button';jump.className='native-history-latest';jump.title=t('Go to the latest messages');jump.append(Object.assign(document.createElement('span'),{textContent:t('Latest')}));icon(jump,'follow');jump.querySelector('svg').before(jump.querySelector('span'));
+ // Newer rows not drawn yet (or a failed read) are fetched first; the transcript then sits at its end.
+ jump.onclick=()=>{if(newerAvailable||readError)onLatest?.();scroll.scrollTo({top:scroll.scrollHeight,behavior:'smooth'});};
+ actions.append(more,jump);bar.append(actions,note,latest);
  skip.type='button';skip.className='secondary';skip.textContent=t('Continue to earlier session');skip.hidden=true;bar.append(skip);
  let generation=0,chain=[],sections=[],busy=false,failed=null,readError=null,olderNotice=null,newerAvailable=false;
  const identity=item=>JSON.stringify([item.nodeId,item.runtime,item.sessionId||item.id]);
@@ -14,7 +22,7 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
  function renderNote(){const error=failed?`${label(failed.section.item)}: ${t(failed.error)}`:readError;note.className=error?'workspace-note chat-bubble is-error-card':'workspace-note';note.textContent=error||olderNotice||(newerAvailable?t('Newer messages are available. Refresh latest history to read them.'):'');latest.hidden=!readError&&!newerAvailable;}
  /** 内容未变时也独立清除读取错误，不重建历史节点或重置分页。 */
  function readSucceeded(){readError=null;renderNote();}
- function controls(){renderNote();const hasMore=Boolean(sections[0]?.initialized&&nextPage());more.hidden=!hasMore;more.disabled=busy;more.textContent=t(busy?'Loading…':'Load older history');skip.hidden=!failed||!chain.slice(chain.findIndex(item=>identity(item)===identity(failed.section.item))+1).some(item=>{const loaded=sections.find(s=>identity(s.item)===identity(item));return !loaded||loaded.cursor;});skip.disabled=busy;}
+ function controls(){renderNote();const hasMore=Boolean(sections[0]?.initialized&&nextPage());actions.hidden=!hasMore;more.disabled=busy;moreText.textContent=t(busy?'Loading…':'Load older history');skip.hidden=!failed||!chain.slice(chain.findIndex(item=>identity(item)===identity(failed.section.item))+1).some(item=>{const loaded=sections.find(s=>identity(s.item)===identity(item));return !loaded||loaded.cursor;});skip.disabled=busy;}
  function merge(target,page,{older=false}={}){
   const rows=page.messages||[],prior=[...target.messages.values()];
   // Empty progress pages advance the cursor without rebuilding the rows the user is reading.

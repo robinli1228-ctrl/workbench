@@ -414,4 +414,6 @@ export default {
  "My message": "我的消息",
  "Close preview": "关闭预览",
  "Use \u201cOpen on the right\u201d beside Copy on a message, or beside Download in a picture or file preview. It stays here while you read the chat or switch sessions.": "在消息的复制旁，或图片、文件预览的下载旁点「在右侧打开」。内容会固定在这里，看对话或切换会话时都不会消失，方便对照。",
+ "Latest": "最新",
+ "Go to the latest messages": "跳到最新消息",
 };
