@@ -110,6 +110,35 @@ Use different `PORT`, `DATA_DIR` and `WORKER_DATA_DIR` values to run a second, i
 
 Run one Worker per machine. Restarting a Worker keeps its identity, so do not wipe its data directory. Set `NODE_KIND=local` or `cloud` if the automatic choice (Linux means cloud) is wrong for your machine.
 
+### 4.2.1 Home-managed SSH tunnel configuration and recovery
+
+The optional Home-managed reverse tunnel connects a server-side loopback port back to the Home listener. The Worker uses that server-side port in `HOME_URL`. Use the registered device's actual mapping, not a port copied from another installation. Keep the reverse listener loopback-only; do not expose the Home or Worker token to the public network.
+
+The tunnel uses the SSH client configuration of the operating-system user running Home. On a bandwidth-limited connection carrying large text history or synchronization metadata, SSH compression can reduce traffic. It is optional, costs CPU, and is not a fix for packet loss or a guarantee of faster media transfers. Back up the existing private SSH configuration, then add only this setting to the matching host block:
+
+```sshconfig
+Host xxxxx
+    Compression yes
+```
+
+Use the exact host name or address that Home passes to SSH. Keep the existing user, key, port, host-key checks, ProxyCommand and network-interface routing unchanged. Do not replace the entire configuration or copy another machine's interface name. SSH generally uses the first obtained value for each option; a prior matching block or command-line override can take precedence. Check the effective configuration as the Home service user, without opening a connection:
+
+```sh
+ssh -G xxxxx@xxxxx | awk '$1 == "compression" { print }'
+```
+
+Expect `compression yes`. This setting applies to **new SSH connections matching that host**, not just Workbench; it does not change already-established tunnels. A multiplexed connection may reuse an older master, so checking configuration alone is not proof that a live transport uses it. Do not stop an unrelated SSH master or shared connection to force the change.
+
+For a slow or timed-out managed channel:
+
+1. Compare a local Home `/healthz` request with the same endpoint through the server's configured loopback forward. A Worker heartbeat or listening port alone does not prove history and synchronization requests work. Inspect transfer load, retransmissions and queued bytes before attributing the problem to Home or restarting services; large payloads share the SSH transport and can delay small requests.
+2. Before reconnecting, check Runs, native turns, queue execution, terminal/retained CLI ownership and synchronization write reservations on both ends. A hidden conversation, low CPU or an old completion record is not proof of idleness. New requests require a fresh check. If a user explicitly authorizes stopping a specific request, use its supported release/stop operation, retain history/files and confirm actual process exit; record interruption, not success.
+3. Prefer **Reconnect Home** in device details for a Home-managed tunnel. It refuses busy or unverifiable devices and replaces only its owned reverse tunnel. A refusal is not recovery: do not clear database state, disable synchronization or force-kill processes to pass the gate. Any separately authorized operator recovery must verify the exact SSH PID, owner, parent, start identity, destination and complete forwarding arguments, plus independent remote activity evidence. Never use a broad SSH kill or touch a connection carrying other forwards.
+4. If an authorized maintenance procedure temporarily pauses admission, preserve and restore its original value, including on failure. Retain databases, native histories, saved files and conflict copies. A tunnel-only adjustment does not require restarting Home or either Worker, changing disabled legacy services or rebuilding unrelated desktop/browser-relay forwards.
+5. Verify a new Worker connection/heartbeat, repeated forwarded health requests, real remote history and an older-history page. Verify synchronization in **both** directions through the existing pipeline using small, approved files in an enabled scope and compare hashes; do not copy directly to the destination to make the check pass. Confirm unaffected service/forward identities, measure CPU/memory and record remaining latency. Keep environment-specific evidence privately under `.local/`, not in this guide.
+
+To roll back compression, restore the previous value in that host block (or remove only the newly added setting), recheck `ssh -G`, and reconnect only the owned tunnel at another verified safe window. Leave unrelated configuration and forwarding intact. Compression can relieve transfer pressure; large history pages may remain slow and concurrent heavy traffic may still time out.
+
 ### 4.3 Release identity
 
 Configuration Information compares running software with the repository's GitHub `main`, not a project's working directory. Git deployments report the source checkout's startup HEAD and whether runtime paths have local changes. Keep release directories immutable while their processes are running; version observation is a startup snapshot, not continuous filesystem verification.
