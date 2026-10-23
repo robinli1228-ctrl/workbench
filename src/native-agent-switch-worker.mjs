@@ -68,7 +68,11 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
   }
   if(op.stage==='failed')return view(op);
   const lease=db.get('terminalSessions',op.leaseId);
-  if(!lease)return view(op); // A missing receipt is not proof that a launch never happened.
+  if(!lease){
+   // After restart no preparation can continue; the persisted start marker distinguishes an unstarted intent from an unknown launch.
+   if(!inflight.has(op.id)&&!op.startRequested)return view(fail(op,'Preparation interrupted before target launch'));
+   return view(op);
+  }
   const proof=check(lease);
   if(proof.processState!=='released')return view(op);
   const entry=db.get('nativeCatalogEntries',op.leaseId);
