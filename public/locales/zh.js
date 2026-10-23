@@ -200,6 +200,7 @@ export default {
   'Device is offline': '设备离线，请先连接设备。',
   'Upgrade this Worker to browse native sessions': '请先升级此设备的 Worker，再浏览原生会话。',
   'CLI is not available on this device': '此设备上的 CLI 不可用。',
+  'CLI is not signed in on this device': '此设备上的 CLI 尚未登录，请先在 iTerm 中登录。',
   'Resume must use the original working folder': '恢复会话必须使用原来的工作文件夹。',
   'This session or folder is still used by a managed CLI; finish it before opening a terminal': '此会话或目录仍被运行中的 CLI 占用，请结束原执行后再打开终端。',
   'Session is occupied; no second CLI was started': '会话已被占用，没有启动第二个 CLI。',
