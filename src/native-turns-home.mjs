@@ -8,13 +8,14 @@ import { assertNativeSessionIdle } from './native-sessions.mjs';
 import { nativeTerminalProject, projectTerminalLock } from './terminal-resume.mjs';
 import {folderAccessFor,nativeFolderAccess} from './folder-access.mjs';
 import {createHomeSideAsks} from './native-side-ask-home.mjs';
+import {NativeAgentSwitches} from './native-agent-switch.mjs';
 
 /**
  * Home's only takeover entry. home.mjs forwards HTTP requests, two Worker message types and disconnects here.
  * Takeover files reuse the Attachments storage/validation code but live in their own directory and record kind,
  * while project/native ownership and capacity use the existing shared terminal leases.
  */
-export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>false,sessionRecord,gitCredential=async()=>null}) {
+export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>false,sessionRecord,workerQuery,gitCredential=async()=>null}) {
   const ownDb=Object.create(db,{
     get:{value:(kind,id)=>kind==='projects'&&String(id).startsWith('native:')?{id}:db.get(kind==='attachments'?'nativeTurnAttachments':kind,id)},
     put:{value:(kind,value)=>db.put(kind==='attachments'?'nativeTurnAttachments':kind,value)}
@@ -49,6 +50,9 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
   const turns=new NativeTurnsHome({db,attachments,send,online,change,leases,gitCredential});
   // Side questions: memory only; their files come from the same per-device attachment store as takeover turns.
   const sideAsks=createHomeSideAsks({send,online,attachments,owner:NativeTurnsHome.owner,change});
+  const switches=new NativeAgentSwitches({db,online,workerQuery,turns,sideAsks,change,sessionRecord});
+  turns.assertExecutable=identity=>switches.assertExecutable(identity);
+  switches.recover();
   const sideSweep=setInterval(()=>sideAsks.sweep(),5*60000);sideSweep.unref?.();
   turns.recover();
   // Workers read with no-store; the browser keeps an attachment 10 days, since its ID never names other bytes.
@@ -56,6 +60,11 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     ...(disposition?{'Content-Disposition':`${item.mime.startsWith('image/')?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(item.name)}`}:{})});res.end(bytes);return true;};
   /** Returns true when the request belonged to the takeover API. Authentication has already been checked by home.mjs. */
   async function http(req,res,{pathname,url,json,body}) {
+    const switching=pathname.match(/^\/api\/native-sessions\/([^/]+)\/agent-switch(?:\/([^/]+))?$/);
+    if(switching){const nodeId=decodeURIComponent(switching[1]);
+      if(req.method==='POST'&&!switching[2])json(res,await switches.begin(nodeId,await body(req)));
+      else if(req.method==='GET'&&switching[2])json(res,await switches.get(nodeId,decodeURIComponent(switching[2])));
+      else throw Error('Invalid Agent switch action');return true;}
     let m=pathname.match(/^\/api\/agent\/native-turns\/([^/]+)\/([^/]+)$/);
     if(m&&req.method==='GET'){const {owner,id}=turns.attachmentFor(m[1],m[2]);return file(res,await attachments.read(owner,id),false);}
     m=pathname.match(/^\/api\/agent\/side-asks\/([^/]+)\/([^/]+)$/);
@@ -88,7 +97,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       // A new prompt in the main session: its side question ends, the next one starts from the new state.
       if(!input.control)sideAsks.closeFor(nodeId,input.runtime,input.sessionId);json(res,created,201);return true;}
     // Side question: ask (creates one, or continues ?sideId), read it while it is answered, clear it.
-    if(area==='side'&&!a&&req.method==='POST'){json(res,sideAsks.ask(nodeId,worker,await body(req)),201);return true;}
+    if(area==='side'&&!a&&req.method==='POST'){const input=await body(req);switches.assertExecutable({nodeId,...input});json(res,sideAsks.ask(nodeId,worker,input),201);return true;}
     if(area==='side'&&a&&!b&&req.method==='GET'){json(res,sideAsks.get(decodeURIComponent(a)));return true;}
     if(area==='side'&&a&&!b&&req.method==='DELETE'){json(res,sideAsks.stop(decodeURIComponent(a)));return true;}
     if(area==='turns'&&a&&b==='stop'&&req.method==='POST'){json(res,turns.stop(nodeId,decodeURIComponent(a)));return true;}
@@ -99,7 +108,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     if(area==='turns'&&a==='queue'&&!b&&req.method==='POST'){json(res,turns.setQueue(nodeId,await body(req)));return true;}
     throw Error('Invalid session action');
   }
-  return {turns,http,gitCredentialFor:(nodeId,runtime,sessionId)=>gitCredential(turns.settings(nodeId,runtime,sessionId)),
+  return {turns,http,switches,gitCredentialFor:(nodeId,runtime,sessionId)=>gitCredential(turns.settings(nodeId,runtime,sessionId)),
     message:(nodeId,m)=>['side_ask_event','side_ask_closed'].includes(m.type)?sideAsks.receive(nodeId,m):['native_turn_event','native_takeover_closed','native_takeover_lease'].includes(m.type)?(turns.receive(nodeId,m),true):false,sideAsks,
     disconnected:nodeId=>{turns.disconnected(nodeId);sideAsks.disconnected(nodeId);},reconnected:(nodeId,turnIds)=>turns.reconnected(nodeId,turnIds)};
 }

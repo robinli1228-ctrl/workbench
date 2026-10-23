@@ -168,7 +168,7 @@ const reconnectingNodes = new Set();
 /** Sessions-page takeover hook (src/native-turns-home.mjs). */
 const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>{if(!reconnectingNodes.has(nodeId))send(sockets.get(nodeId),{...payload,language:getLanguage()});},online:id=>sockets.get(id)?.readyState===1&&!reconnectingNodes.has(id),change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession,
   // A session-bound hosting account becomes the Basic-auth header for that repository only; nothing is resolved without an explicit binding.
-  gitCredential:async settings=>{if(!settings?.hostingAccountId||!settings.repoUrl)return null;const auth=await hosting.auth(settings.hostingAccountId,settings.repoUrl);return auth?{...auth,repoUrl:settings.repoUrl}:null;}});
+  workerQuery,gitCredential:async settings=>{if(!settings?.hostingAccountId||!settings.repoUrl)return null;const auth=await hosting.auth(settings.hostingAccountId,settings.repoUrl);return auth?{...auth,repoUrl:settings.repoUrl}:null;}});
 const viewers = new Set();
 const queries = new Map();
 const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
@@ -782,7 +782,7 @@ const server = http.createServer(async (req, res) => {
           if(sessionId&&!record)throw Error('Session is not registered with Workbench');
           if(!online(nodeId)){
             // Offline All can show cached independent entries, but must not imply complete native history.
-            if(!sessionId&&['created','all'].includes(scope))return json(res,{items:nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem),partial:scope==='all',offline:true});
+            if(!sessionId&&['created','all'].includes(scope))return json(res,{items:nativeTurns.switches.decorateCatalog(nodeId,nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem)),partial:scope==='all',offline:true});
             throw Error('Device is offline');
           }
           // Page authoritative cross-project bindings before the Worker catalogue's limit and WebSocket envelope.
@@ -801,7 +801,8 @@ const server = http.createServer(async (req, res) => {
             return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});
           }
           if(!sessionId&&['created','all'].includes(scope))cacheNativeCatalog(result.items,nodeId,runtime);
-          if(!sessionId&&scope==='created'){const merged=new Map(nativeCatalogRecords(nodeId,runtime).map(entry=>[entry.id,nativeCatalogItem(entry)]));for(const item of result.items||[])merged.set(item.entryId||item.id,item);return json(res,{...result,items:[...merged.values()]});}
+          if(!sessionId&&scope==='created'){const merged=new Map(nativeCatalogRecords(nodeId,runtime).map(entry=>[entry.id,nativeCatalogItem(entry)]));for(const item of result.items||[])merged.set(item.entryId||item.id,item);return json(res,{...result,items:nativeTurns.switches.decorateCatalog(nodeId,[...merged.values()])});}
+          if(!sessionId&&result.items)result.items=nativeTurns.switches.decorateCatalog(nodeId,result.items);
           return json(res,result);
         }
         if(!online(nodeId))throw Error('Device is offline');
@@ -824,6 +825,7 @@ const server = http.createServer(async (req, res) => {
         if(b.action==='start'){
           const claim=db.get('terminalSessions',b.operationId);
           if(claim?.kind!=='native'||claim.nodeId!==nodeId||claim.status!=='prepared')throw Error('Terminal request is already used or changed');
+          nativeTurns.switches.assertExecutable({nodeId,runtime:claim.runtime,sessionId:claim.sessionId});
           if(worker.capabilities?.nativePageOpen!==1)throw Error('Upgrade this Worker to open sessions on this page');
           const started=await workerQuery(claim,'native_terminal_start',{id:claim.id},20000);
           db.transaction(()=>{const current=db.get('terminalSessions',claim.id);if(current?.status==='prepared')db.put('terminalSessions',{...current,status:'active',openedOn:'page',startedAt:new Date().toISOString()});});
@@ -831,6 +833,7 @@ const server = http.createServer(async (req, res) => {
         }
         if(worker.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
         const historyRecord=b.sessionId?ownedNativeSession(nodeId,b.runtime,b.sessionId):null;
+        nativeTurns.switches.assertExecutable({nodeId,runtime:b.runtime,sessionId:b.sessionId});
         if(b.sessionId&&!historyRecord)throw Error('Session is not registered with Workbench');
         if(worker.capabilities?.nativeTakeover!==1)throw Error('Upgrade this Worker to safely take over native sessions');
         if(typeof b.operationId!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(b.operationId)||typeof b.allowAll!=='boolean')throw Error('Invalid terminal request');

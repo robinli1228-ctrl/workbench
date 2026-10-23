@@ -69,5 +69,6 @@ export function createHomeSideAsks({send,online,attachments=null,owner=nodeId=>n
  function sweep(){const now=clock();for(const side of [...sides.values()]){if(now-Date.parse(side.lastUsedAt)>=limits.idleMs)close(side.id,'idle');else if(now-Date.parse(side.createdAt)>=limits.maxAgeMs)close(side.id,'expired');}}
  /** A Worker that goes away takes its side sessions with it. */
  function disconnected(nodeId){for(const side of [...sides.values()])if(side.nodeId===nodeId)close(side.id,'device_disconnected',{tell:false});}
- return {ask,get,stop,close,closeFor,receive,attachmentFor,sweep,disconnected,size:()=>sides.size};
+ return {ask,get,stop,close,closeFor,receive,attachmentFor,sweep,disconnected,size:()=>sides.size,
+  busy:(nodeId,runtime,sessionId)=>[...sides.values()].some(s=>s.nodeId===nodeId&&s.runtime===runtime&&s.sessionId===sessionId&&s.questions.some(q=>!['succeeded','failed','interrupted','cancelled','stopped'].includes(q.status)))};
 }

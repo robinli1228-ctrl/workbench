@@ -129,6 +129,7 @@ export class NativeTurnsHome{
   */
  saveSettings(nodeId,worker,body){
   const {runtime,sessionId}=body||{};
+  this.assertExecutable?.({nodeId,runtime,sessionId});
   if(!NATIVE_TURN_RUNTIMES.includes(runtime))throw Error('Unsupported CLI');
   if(!idPattern.test(sessionId||''))throw Error('Invalid native session ID');
   const field='model' in body?'model':'effort' in body?'effort':'hostingAccountId' in body?'hostingAccountId':null;if(!field)throw Error('Nothing to change');
@@ -159,6 +160,7 @@ export class NativeTurnsHome{
  }
  create(nodeId,worker,body,{gitCredential=null}={}){
   const {runtime,sessionId,clientTurnId,attachmentIds=[]}=body||{};let {text='',control=null}=body||{};
+  this.assertExecutable?.({nodeId,runtime,sessionId});
   if(!NATIVE_TURN_RUNTIMES.includes(runtime))throw Error('Unsupported CLI');
   if(!idPattern.test(sessionId||''))throw Error('Invalid native session ID');
   if(!turnIdPattern.test(clientTurnId||''))throw Error('Invalid takeover message ID');
@@ -180,6 +182,7 @@ export class NativeTurnsHome{
  /** Reserve the resident process and hand the turn to the Worker; the only place a turn leaves the queue. */
  dispatch(turn,{gitCredential=null}={}){
   const {nodeId,runtime,sessionId}=turn,key=sessionKey(nodeId,runtime,sessionId),previous=this.db.get('nativeTakeovers',key);
+  this.assertExecutable?.({nodeId,runtime,sessionId});
   const lease=this.leases?.reserve({nodeId,runtime,sessionId,previous});
   if(!this.leases)this.assertIdle({runtime,sessionId});
   const started={...turn,status:'queued',phase:'queued',updatedAt:now()};
