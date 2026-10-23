@@ -33,7 +33,7 @@ export async function receiveTurnFiles({items=[],turnId,root,home,token,fetchImp
 }
 
 /** The Worker's only takeover entry: worker.mjs passes its state accessors and routes four message types here. */
-export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot,isPaused,runtimes,capacity,occupiedSlots,nodeId,changed=()=>{},trim=async()=>{}}) {
+export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot,isPaused,runtimes,capacity,occupiedSlots,nodeId,changed=()=>{},trim=async()=>{},onQuota=()=>{}}) {
   const dbPath=join(data,'worker.sqlite'),retiring=new Map(),observed=new WeakSet();let runner;
   const held=s=>s&&!['released','cancelled'].includes(s.status);
   const report=s=>{send({type:'native_takeover_lease',leaseId:s.id,runtime:s.runtime,sessionId:s.sessionId,projectId:s.projectId,workspace:s.workspace,status:s.status});changed();};
@@ -77,7 +77,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
     }
   };
   runner=new NativeTurnRunner({
-    send,leases,
+    send,leases,onQuota,
     canStart:(m,{reusing})=>{
       if(isPaused())throw Error('Remote execution is paused');
       if(!runtimes().some(r=>r.type===m.runtime&&r.available&&r.supported!==false))throw Error('CLI is not available on this device');
@@ -108,7 +108,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
       await trim();return {workspace};
     },
     cleanup:id=>uuid.test(id)?rm(join(data,'native-turn-files',id),{recursive:true,force:true}):null,
-    createSession:options=>createNativeSession(options)
+    createSession:options=>Object.assign(createNativeSession(options),{quotaIdentity:runtimes().find(r=>r.type===options.runtime)?.quotaIdentity})
   });
   /** Preparing leases belong to this Runner until preparation settles; generic terminal expiry must not revoke them. */
   runner.check=binding=>{

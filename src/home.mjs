@@ -1,4 +1,5 @@
 import {createHomeNativeTurns} from './native-turns-home.mjs';
+import {mergeRuntimeQuota,expireRuntimeQuota} from './runtime-quota.mjs';
 import {createRemoteAccessSettings} from './remote-access-settings.mjs';
 import http from 'node:http';
 import { sendBufferedResponse } from './http-response.mjs';
@@ -1607,6 +1608,7 @@ wss.on('connection', ws => {
         const prev = db.get('workers', nodeId)?.runtimes || [];
         const runtimes = (m.runtimes || []).map(rt => {
           const old = prev.find(p => p.type === rt.type);
+          if(rt.quotaSource==='session')return mergeRuntimeQuota(old,rt);
           const hasQuota = rt.quota && typeof rt.quota === 'object' && (rt.quota.fiveHour || rt.quota.weekly || rt.quota.groups || rt.quota.credits || rt.quota.remainingPercent != null);
           if (hasQuota) return rt;
           if (old?.quota && (old.quota.fiveHour || old.quota.weekly || old.quota.groups || old.quota.credits)) {
@@ -1666,6 +1668,12 @@ wss.on('connection', ws => {
   });
 });
 const heartbeat = setInterval(() => {
+  let quotaChanged=false;
+  for(const worker of db.list('workers')) {
+    const runtimes=(worker.runtimes||[]).map(r=>expireRuntimeQuota(r));
+    if(runtimes.some((r,i)=>r!==worker.runtimes[i])){db.put('workers',{...worker,runtimes});quotaChanged=true;}
+  }
+  if(quotaChanged)change();
   // Three silent intervals (45 s) end a connection, not one: on a 170 ms, lossy tunnel one pong is easily late.
   for (const ws of wss.clients) { if (!ws.alive && ++ws.missed >= 3) { ws.terminate(); continue; } if (ws.alive) ws.missed = 0; ws.alive = false; ws.ping(); }
   for (const r of viewers) r.write(': keepalive\n\n');

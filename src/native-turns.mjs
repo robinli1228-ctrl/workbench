@@ -381,7 +381,7 @@ const alive=session=>Boolean(session?.proc&&session.proc.exitCode===null&&sessio
 
 /** Worker side: one resident CLI per taken-over session (where supported), exact resume in the history's original folder. */
 export class NativeTurnRunner{
- constructor({send,createSession,resolveSession,canStart,prepareInputs=async()=>({files:[],images:[]}),cleanup=null,idleMs=NATIVE_IDLE_MS,leases=null}){Object.assign(this,{send,createSession,resolveSession,canStart,prepareInputs,cleanup,idleMs,leases});this.turns=new Map();this.resident=new Map();this.closing=new Map();this.outbox=null;this.graceTimer=null;}
+ constructor({send,createSession,resolveSession,canStart,prepareInputs=async()=>({files:[],images:[]}),cleanup=null,idleMs=NATIVE_IDLE_MS,leases=null,onQuota=()=>{}}){Object.assign(this,{send,createSession,resolveSession,canStart,prepareInputs,cleanup,idleMs,leases,onQuota});this.turns=new Map();this.resident=new Map();this.closing=new Map();this.outbox=null;this.graceTimer=null;}
  /** Messages to Home go out at once while connected and wait in order while Home is away (see suspend/resume). */
  post(m){
   if(!this.outbox)return this.send(m);
@@ -439,6 +439,7 @@ export class NativeTurnRunner{
    const body=[m.prompt,others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
    const prompt=withPageInstructions(!m.control&&handoffText?`<system-reminder>\nWorkbench Agent handoff:\n${handoffText.replaceAll('<','\\u003c')}\n</system-reminder>\n\n${body}`:body,m.control?null:m.instructions);
    const emit=(type,p={})=>{
+    if(type==='quota')return this.onQuota(m.runtime,p,state.session?.quotaIdentity);
     if(ended)return;
     if(type==='status'&&p.nativeSessionId&&p.nativeSessionId!==m.sessionId){void state.session?.stop();return end('mismatch','The CLI resumed a different native session; stopped');}
     // Delivery receipts need not carry a status; forward them before settling a terminal event.

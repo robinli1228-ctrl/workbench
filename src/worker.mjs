@@ -33,6 +33,7 @@ import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
 import { inspectRuntimes, runtimeIssue, mergeRuntimeReports } from './runtime-probe.mjs';
+import {applyRuntimeQuota} from './runtime-quota.mjs';
 import { writeHandoff } from './wb-tools.mjs';
 import {handoffReadPaths} from './handoff-paths.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
@@ -115,6 +116,12 @@ function scheduleRuntimeRetry(ms) {
   if (ms) { runtimeRetry = setTimeout(() => { runtimeRetry = null; if (ws?.readyState === 1 && registered) void refreshRuntimes(); else runtimeRetryDue = true; }, ms); runtimeRetry.unref?.(); }
 }
 const send = m => { if (ws?.readyState === 1) ws.send(JSON.stringify(m)); };
+let quotaReportTimer=null;
+/** Coalesce passive device snapshots; reconnect registration carries the latest values without altering sample time. */
+function receiveRuntimeQuota(type,sample,quotaIdentity) {
+  runtimes=applyRuntimeQuota(runtimes,type,sample,quotaIdentity);
+  if(!quotaReportTimer){quotaReportTimer=setTimeout(()=>{quotaReportTimer=null;send({type:'runtime_report',runtimes});},1000);quotaReportTimer.unref();}
+}
 const configurationQueries=new Map();
 /** This control-channel query is not an agent tool: Home resolves the sender from the registered Worker and Run. */
 function currentExecutionConfiguration(runId) {
@@ -145,7 +152,7 @@ let sideAsks=null;
 function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalSlots(db,identity.nodeId)+(sideAsks?.size||0);}
 /** Session-page takeover hook (src/native-turns-worker.mjs); idle unless a native session is taken over. */
 nativeTurns=createWorkerNativeTurns({db,send:m=>send(m),data,homeHttp:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,projectRoot:path=>projectRoot(path),
-  isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots())});
+  isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots()),onQuota:receiveRuntimeQuota});
 const nativeAgentSwitches=createWorkerNativeAgentSwitch({db,nodeId:identity.nodeId,data,projectRoot,runtimes:()=>runtimes,isPaused:()=>paused||quitting,
  sourceBusy:source=>nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}),
  releaseIdle:async source=>{if(nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}))throw Error('Source Agent still has work or process state is unknown');const resident=nativeTurns.resident.get(`${source.runtime}/${source.sessionId}`);if(resident)await nativeTurns.releaseLease(source.runtime,source.sessionId,resident.message.leaseId);},
@@ -447,6 +454,7 @@ async function command(m) {
         minimalInstructions:Boolean(executionConfiguration),instructionMessage:instructions.instructions,configurationUpdate:instructions.configurationUpdate||'',
         roleInstructions,
         roleName: m.run.roleSnapshot?.name, env: wbEnv, emit: (type, p) => {
+        if(type==='quota')return receiveRuntimeQuota(runtimeType,p,session?.quotaIdentity);
         if(type==='status'&&p.nativeSessionId&&m.run.resumeNativeSessionId&&p.nativeSessionId!==m.run.resumeNativeSessionId) {
           p={status:'failed',error:tr('worker.afterResumingRuntimeReturnedDifferent')};
           void session.stop();
@@ -486,7 +494,7 @@ async function command(m) {
       if(session && !warmSessions.alive(session)){await afterProcessExit(session.proc,()=>{});session=null;}
       const sessionReuse=session?'process':m.run.resumeNativeSessionId?'resume':'new';
       if(session)instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,processReused:true,components});
-      if(session)session.reuse(options);else session=new Session(options);
+      if(session)session.reuse(options);else {session=new Session(options);session.quotaIdentity=runtimes.find(r=>r.type===runtimeType)?.quotaIdentity;}
       sessions.set(c.runId, session);
       emit(c.runId,'status',{sessionReuse,instructionFingerprint:instructions.fingerprint,instructionsInheritedFrom:instructions.inheritedFrom,
         ...(executionConfiguration?{instructionVersions:executionConfiguration.versions,instructionComponents:instructions.components,configurationState:'starting',...(instructions.configurationEventProtocol?{configurationEventProtocol:instructions.configurationEventProtocol}:{})}:{})});
