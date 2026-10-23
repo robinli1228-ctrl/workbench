@@ -30,7 +30,7 @@ export function createLifecycle({ tunnel, persistEnabled }) {
     }),
     stop: () => enqueue(stop),
     test: () => enqueue(() => tunnel.test()),
-    configure: save => enqueue(async () => { await stop(); await save(); }),
+    configure: (save, prepare = async () => {}) => enqueue(async () => { await prepare(); await stop(); await save(); }),
     restore: () => enqueue(() => tunnel.start()),
     shutdown: () => {
       closing = true;

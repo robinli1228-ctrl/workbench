@@ -27,8 +27,20 @@ export function createAdmin({ configFile, auth, tunnel, adminKey, onConfigSaved 
         return res.end(url.pathname === '/' ? page : script);
       }
       if (!authorized(req.headers.authorization, adminKey)) return json(res, 401, { error: '管理凭据已失效，请在 Mac 上重新打开设置页' });
-      if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, { passwordConfigured: auth.configured(), tunnel: tunnel.status() });
+      if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, { passwordConfigured: auth.configured(), tunnel: tunnel.status(), capabilities: { configPatch: 1 } });
       if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, await loadConfig(configFile));
+      if (req.method === 'POST' && url.pathname === '/api/config-patch') {
+        const patch = await readJson(req, 16384);
+        if (Object.keys(patch).some(key => !['publicOrigin','homeUrl','tokenFile','ssh'].includes(key)) || (Object.hasOwn(patch,'ssh') && (!patch.ssh || typeof patch.ssh !== 'object' || Array.isArray(patch.ssh) || Object.keys(patch.ssh).some(key => !['host','port','user','keyFile','remotePort'].includes(key))))) return json(res, 400, { error: '配置字段不支持' });
+        let next;
+        // Read/merge/validate inside the same queue used by every settings surface, before stopping a valid connection.
+        await tunnel.configure(async () => { await saveConfig(configFile, next); await onConfigSaved(next); }, async () => {
+          const current = await loadConfig(configFile);
+          try { next = validateConfig({ ...current, ...patch, ssh: { ...current.ssh, ...patch.ssh } }); }
+          catch { throw Object.assign(new Error('配置格式不正确'), { status: 400 }); }
+        });
+        return json(res, 200, { ok: true, message: '配置已保存，旧远程连接已停用；测试通过后可重新启用' });
+      }
       if (req.method === 'POST' && url.pathname === '/api/config') {
         const body = await readJson(req, 16384);
         let next;

@@ -4,6 +4,8 @@ let key = fragment.get('key');
 if (key) { sessionStorage.setItem('relay-admin', key); history.replaceState(null, '', location.pathname); }
 else key = sessionStorage.getItem('relay-admin');
 let config;
+const configDirty = new Set();
+document.querySelector('#config').addEventListener('input', event => { if (event.target.name) configDirty.add(event.target.name); });
 
 async function api(route, body, method = body === undefined ? 'GET' : 'POST') {
   const response = await fetch(route, { method, cache: 'no-store', headers: { authorization: `Bearer ${key || ''}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -33,7 +35,19 @@ document.querySelector('#config').addEventListener('submit', event => {
     const values = Object.fromEntries(new FormData(form));
     const next = { ...config, publicOrigin: values.publicOrigin, homeUrl: values.homeUrl, tokenFile: values.tokenFile,
       ssh: { host: values.host, port: Number(values.port), user: values.user, keyFile: values.keyFile, remotePort: Number(values.remotePort) } };
-    const result = await api('/api/config', next); config = next; notice.textContent = result.message;
+    const patch = {}, ssh = {};
+    const submitted = [...configDirty];
+    for (const name of submitted) {
+      if (['publicOrigin','homeUrl','tokenFile'].includes(name)) patch[name] = next[name];
+      else if (Object.hasOwn(next.ssh, name)) ssh[name] = next.ssh[name];
+    }
+    if (Object.keys(ssh).length) patch.ssh = ssh;
+    const result = await api('/api/config-patch', patch);
+    for (const name of submitted) if (form.elements[name].value === values[name]) configDirty.delete(name);
+    config = await api('/api/config'); notice.textContent = result.message;
+    for (const [name, value] of Object.entries({ ...config, ...config.ssh })) {
+      const input = form.elements.namedItem(name); if (input && !configDirty.has(name)) input.value = value;
+    }
     document.querySelector('#visit').href = config.publicOrigin;
   });
 });

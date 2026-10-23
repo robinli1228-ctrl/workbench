@@ -6,6 +6,7 @@
 export default {
   'REMOTE ACCESS':'远程访问',
   'Remote Access':'远程访问',
+  'Update the remote access service before editing server settings.':'请先更新独立中转服务，再修改服务器设置。',
   'Loading remote access status…':'正在读取远程访问状态…',
   'Relay server IP or address':'中转服务器 IP／地址',
   'Advanced settings':'高级设置',

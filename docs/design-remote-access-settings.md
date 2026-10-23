@@ -18,6 +18,8 @@ Reuse the verified gateway behavior: browser-only relay, fixed fifteen-day sessi
 
 The existing standalone management page may remain as a local recovery entry. The primary settings surface becomes the Workbench card; both use the same private configuration and lifecycle, not two independent stores.
 
+Field editing requires the independent service's `configPatch: 1` capability. Both UI surfaces send only changed fields to `/api/config-patch`; the service reads, merges and validates inside its shared lifecycle queue before stopping/writing. An older service remains usable for status/password/start/stop, but configuration editing fails closed with an upgrade message. It must not fall back to sending a stale complete snapshot. Updating the running independent service is a separate release action requiring matching authorization.
+
 ## Local-only administration
 
 Public access to Workbench does not grant permission to change the Mac's relay, password or key paths. The new gateway must deny the Home remote-access administration routes explicitly. Home must also enforce a local-management proof, not just the API token or loopback source: an SSH proxy is itself a loopback client.

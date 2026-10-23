@@ -1,6 +1,6 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { loadConfig, validateConfig } from '../modules/remote-access/src/config.mjs';
+import { loadConfig } from '../modules/remote-access/src/config.mjs';
 import { readPrivateJson } from '../modules/remote-access/src/private-json.mjs';
 import { readJson, json } from '../modules/remote-access/src/http-utils.mjs';
 
@@ -72,7 +72,7 @@ export function createRemoteAccessSettings({ configFile, homeOrigin, now = Date.
       if (route === '/status' && req.method === 'GET') {
         try {
           const config = await loadConfig(configFile), state = await call(config, 'status');
-          json(res, 200, { available: true, passwordConfigured: state.passwordConfigured === true,
+          json(res, 200, { available: true, configurationEditable: state.capabilities?.configPatch === 1, passwordConfigured: state.passwordConfigured === true,
             tunnel: { enabled: state.tunnel?.enabled === true, phase: String(state.tunnel?.phase || 'unknown') },
             host: config.ssh.host, publicOrigin: config.publicOrigin, user: config.ssh.user, port: config.ssh.port });
         } catch { json(res, 200, { available: false, error: 'Remote access service is not configured or is unavailable.' }); }
@@ -85,11 +85,13 @@ export function createRemoteAccessSettings({ configFile, homeOrigin, now = Date.
         await serialize(async () => {
           const config = await loadConfig(configFile);
           if (!Object.keys(patch).length) return;
-          const next = { ...config, ssh: { ...config.ssh } };
-          for (const key of ['host', 'user', 'port']) if (Object.hasOwn(patch, key)) next.ssh[key] = patch[key];
-          if (Object.hasOwn(patch, 'publicOrigin')) next.publicOrigin = patch.publicOrigin;
-          try { validateConfig(next); } catch { throw failure('Check the relay address, domain and SSH settings.', 400); }
-          await call(config, 'config', next);
+          const status = await call(config, 'status');
+          if (status.capabilities?.configPatch !== 1) throw failure('Update the remote access service before editing server settings.', 409);
+          const change = {}, ssh = {};
+          for (const key of ['host', 'user', 'port']) if (Object.hasOwn(patch, key)) ssh[key] = patch[key];
+          if (Object.keys(ssh).length) change.ssh = ssh;
+          if (Object.hasOwn(patch, 'publicOrigin')) change.publicOrigin = patch.publicOrigin;
+          await call(config, 'config-patch', change);
         });
         json(res, 200, { ok: true, message: 'Settings saved. Re-enable remote access when ready.' }); return true;
       }
@@ -105,8 +107,8 @@ export function createRemoteAccessSettings({ configFile, homeOrigin, now = Date.
       }
       json(res, 404, { error: 'Unknown remote access operation.' });
     } catch (error) {
-      const status = [400, 413, 503].includes(error.status) ? error.status : 503;
-      json(res, status, { error: error.status === 400 ? error.message : status === 413 ? 'Settings are too large.' : 'Remote access operation failed; check the local service before retrying.' });
+      const status = [400, 409, 413, 503].includes(error.status) ? error.status : 503;
+      json(res, status, { error: [400,409].includes(error.status) ? error.message : status === 413 ? 'Settings are too large.' : 'Remote access operation failed; check the local service before retrying.' });
     }
     return true;
   }

@@ -26,6 +26,7 @@ node src/cli.mjs open-settings --config xxxxx
 - The gateway strips client credentials and Home cookies, injects the Home token only in its process, and blocks Worker and local relay-management routes.
 - Uploads, downloads and SSE stream with backpressure. Disconnection never automatically replays a write. Home retains history and attachments; the gateway has no second history store.
 - Configuration, test and start/stop share one lifecycle queue. Failed state persistence rolls back a start and cannot prevent stopping the owned tunnel.
+- Both normal settings surfaces send changed fields through the atomic `config-patch` API. Home requires the `configPatch: 1` capability to edit configuration; older services show an upgrade notice instead of accepting an unsafe full-snapshot fallback.
 - Domain/SSH changes stop only the owned connection. Listener/state-directory changes require restarting this module only.
 - Actual settings, private keys, sessions, logs and screenshots stay outside Git. Never import the standalone installation's private Git history.
 

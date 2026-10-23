@@ -15,6 +15,8 @@ export function createRemoteAccessSettingsUI({root,api}) {
   function paint(){
     const available=local&&state?.available;
     for(const field of root.querySelectorAll('input,button'))field.disabled=busy||!available;
+    for(const field of config.querySelectorAll('input,button'))field.disabled=busy||!available||state.configurationEditable===false;
+    root.querySelector('[data-relay-upgrade]').hidden=!available||state.configurationEditable!==false;
     root.querySelector('[data-relay-refresh]').disabled=busy||!local;
     toggle.textContent=t(state?.tunnel?.enabled?'Disable remote access':'Enable remote access');
     toggle.setAttribute('aria-pressed',String(state?.tunnel?.enabled===true));
