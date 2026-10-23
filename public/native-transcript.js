@@ -229,7 +229,9 @@ export function taskBlock(turn,t,{live=false}={}){
   const state=status(x),row=el('div',`nt-task is-${state}`),name=el('span','nt-task-name',x.description||t(x.kind==='shell'?'Background command':'Subagent'));name.title=x.description||'';
   row.append(stepIcon(x.kind==='shell'?'command':'agent'),name);
   if(x.agentType){const type=el('span','nt-task-type',x.agentType);type.translate=false;row.append(type);}
-  if(state==='running'&&x.activity){const now=el('span','nt-task-activity',x.activity);now.title=x.activity;row.append(now);}
+  // Claude words progress as "Running <step>"; the state at the end already says it runs.
+  const activity=String(x.activity||'').replace(/^Running\s+/,'');
+  if(state==='running'&&activity){const now=el('span','nt-task-activity',activity);now.title=activity;row.append(now);}
   const took=state==='running'?elapsedText(x.startedAt):Number.isFinite(x.durationMs)?elapsedText(0,x.durationMs):x.endedAt?elapsedText(x.startedAt,new Date(x.endedAt).getTime()):'';
   const label=t(state==='running'?'Running':state==='completed'?'Finished':state==='failed'?'Failed':'Stopped');
   const end=el('span','nt-task-state');if(state==='running')end.append(el('span','nt-pulse'));end.append(el('span','',took?`${label} \u00b7 ${took}`:label));row.append(end);
