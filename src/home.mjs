@@ -1522,6 +1522,7 @@ const server = http.createServer(async (req, res) => {
     files['/i18n.js']='i18n.js';
     files['/output-language.js']='output-language.js';
     files['/native-sessions.js']='native-sessions.js';
+    files['/native-agent-switch.js']='native-agent-switch.js';
     files['/native-transcript.js']='native-transcript.js';
     files['/media.js']='media.js';
     files['/pasted-text.js']='pasted-text.js';

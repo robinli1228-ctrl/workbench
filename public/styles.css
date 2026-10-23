@@ -3906,3 +3906,8 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .native-history-older svg { color: var(--accent); }
 .native-history-latest { color: #6b7080; }
 .native-history-latest::before { content: ''; position: absolute; left: -1px; top: 7px; bottom: 7px; width: 1px; background: #e4e7ee; }
+.native-identity .native-agent-selector{position:relative;min-width:0;gap:6px;flex-direction:row;flex-wrap:nowrap;max-width:65%}
+.native-identity .native-agent-selector select{font:inherit;font-weight:600;color:inherit;background:transparent;border:0;border-radius:9px;min-width:0;max-width:130px;width:auto;padding:5px 20px 5px 4px;cursor:pointer}
+.native-agent-selector select:focus-visible{outline:2px solid #6366f1;outline-offset:2px}
+.native-agent-selector select:disabled{cursor:default;opacity:.65}
+.native-agent-switch-status{position:absolute;top:100%;right:0;font-size:11px;font-weight:400;color:#73768a;white-space:nowrap}

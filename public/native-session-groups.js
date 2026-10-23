@@ -19,11 +19,18 @@ export function groupNativeSessions(items, roleSessions) {
     const owners = new Set(matches.map(s => JSON.stringify([s.projectId, s.groupConversationId||s.projectId, s.roleId])));
     // Never infer ownership from titles or combine ambiguous native identities.
     const binding = owners.size === 1 ? [...matches].sort((a, b) => newest({binding: a, item}, {binding: b, item}))[0] : null;
-    const groupId = binding ? `role:${JSON.stringify([binding.projectId, binding.groupConversationId||binding.projectId, binding.roleId])}` : `native:${identity(item.nodeId, item.runtime, item.entryId || item.id)}`;
+    const c=item.conversationBinding,associated=!binding&&c?.nodeId===item.nodeId&&c.segments?.some(s=>s.runtime===item.runtime&&s.sessionId===(item.sessionId||item.id));
+    const groupId = associated?`conversation:${c.id}`:binding ? `role:${JSON.stringify([binding.projectId, binding.groupConversationId||binding.projectId, binding.roleId])}` : `native:${identity(item.nodeId, item.runtime, item.entryId || item.id)}`;
     if (!groups.has(groupId)) groups.set(groupId, []);
     groups.get(groupId).push({item, binding});
   }
   return [...groups].map(([id, rows]) => {
+    if(id.startsWith('conversation:')){
+      const c=rows.map(r=>r.item.conversationBinding).sort((a,b)=>b.revision-a.revision)[0];
+      const segments=c.segments.map(s=>({...rows.find(r=>r.item.runtime===s.runtime&&(r.item.sessionId||r.item.id)===s.sessionId)?.item,
+        id:s.entryId||s.sessionId,entryId:s.entryId,sessionId:s.sessionId,runtime:s.runtime,nodeId:c.nodeId,workspace:c.workspace,title:c.title,origin:'dialog',createdAt:s.createdAt,hasHistory:true,canResume:s.id===c.currentSegmentId,conversationBinding:c}));
+      return {id,latest:segments.find(s=>c.segments.find(p=>p.id===c.currentSegmentId)?.sessionId===s.sessionId&&c.segments.find(p=>p.id===c.currentSegmentId)?.runtime===s.runtime),history:segments.filter(s=>!s.canResume).reverse()};
+    }
     rows.sort(newest);
     return {id, latest: rows[0].item, history: rows.slice(1).map(row => row.item)};
   });

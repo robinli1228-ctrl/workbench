@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v174-pr178-184-20261023';
+const CACHE = 'agent-workbench-static-v175-native-agent-switch';
 const STATIC = [
   '/remote-access-settings.js',
   '/group-conversations.js',
@@ -8,6 +8,7 @@ const STATIC = [
   '/project-team-copy.js',
   '/create-folder.js',
   '/native-session-groups.js',
+  '/native-agent-switch.js',
   '/native-history-timeline.js',
   '/native-transcript.js',
   '/pasted-text.js',
