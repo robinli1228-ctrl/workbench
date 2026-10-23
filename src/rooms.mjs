@@ -478,6 +478,8 @@ export class Rooms {
         // The caller hears about a block once per episode: at once when a person must act, after the wake window otherwise.
         if(blockedKind&&task.requestId&&(blockedKind==='role_disabled'||Date.now()-Date.parse(blockedSince)>=BLOCKED_NOTICE_MS))
           registerCallOutcome(this.db,this.db.get('coordinationRequests',task.requestId),{outcome:'blocked',reason,episode:`${blockedKind}:${blockedSince}`});
+        // The second-long check of the role's previous CLI before a start is not a wait: the message stays "about to start".
+        if (reason===tr('cliRecovery.checking') && !record?.waitingReason) continue;
         if (record?.waitingReason !== reason || (!discussion && ((record?.blockedKind||null)!==blockedKind || (record?.blockedSince||null)!==blockedSince))) {
           this.db.put(discussion?kind:'tasks', { ...record, waitingReason: reason, ...(discussion?{}:{blockedKind,blockedSince}) }); changed = true;
         }
