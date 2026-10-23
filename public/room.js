@@ -2,7 +2,7 @@ import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
-import { linkMedia, openImageLightbox, markImageOpener } from './media.js';
+import { linkMedia, openImageLightbox, markImageOpener, fileGlyph } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
 import {setChatCardState,highlightLatestChatCard} from './chat-card-state.js';
@@ -358,8 +358,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if (item.mime.startsWith('image/')) {
       const thumb = create('img'); thumb.alt = item.name; open.append(thumb); if (!removable) markImageOpener(open);
       void attachmentUrl(item).then(url=>{thumb.src=url;}).catch(()=>{thumb.alt='Preview failed to load; click to retry';});
-    } else if (removable) { const icon = create('span','attachment-file-icon'); icon.innerHTML = UI_ICON.original; open.append(icon); }
-    else open.append(create('span','attachment-file-icon','▤'));
+    } else open.append(fileGlyph(item.name, 'attachment-file-icon'));
     open.append(create('span','attachment-name',item.name),create('small','',item.size<1024?`${item.size} B`:`${(item.size/1024).toFixed(1)} KB`));
     card.append(open);
     if (!removable) card.append(iconAction('transfer', 'Send to device', () => openAttachmentTransfer(item)));
@@ -451,8 +450,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     card.title = entry.name;
     const busy = textUploads.has(entry.id);
     const open = button('', () => previewText(entry.text, entry.name), 'attachment-open');
-    const icon = create('span', 'attachment-file-icon'); icon.innerHTML = UI_ICON.original;
-    open.append(icon, create('span', 'attachment-name', entry.name), create('small', '', busy ? 'Uploading…' : entry.error ? 'Upload failed; original text kept' : 'Pending upload'));
+    open.append(fileGlyph(entry.name, 'attachment-file-icon'), create('span', 'attachment-name', entry.name), create('small', '', busy ? 'Uploading…' : entry.error ? 'Upload failed; original text kept' : 'Pending upload'));
     card.append(open);
     if (!busy) {
       card.append(iconAction('refresh',entry.error ? 'Retry upload' : 'Upload', () => { void uploadTextFile(entry, ownerId); }));

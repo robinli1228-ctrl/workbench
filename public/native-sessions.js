@@ -8,7 +8,7 @@ import {groupNativeSessions,readNativeSessionPages} from './native-session-group
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
 import {renderMarkdown} from './markdown.js';
-import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,openTextLightbox,formatBytes,copyAction,markImageOpener} from './media.js';
+import {linkMedia,mediaCard,mediaPathMatches,mediaKindFromName,openMediaViewer,openImageLightbox,openTextLightbox,formatBytes,copyAction,markImageOpener,fileGlyph} from './media.js';
 import {createSidePreview,setSidePreviewOpener,sideButton,canOpenSide,openSide} from './side-preview.js';
 import {pastesAsFile,pastedTextName,isTextName} from './pasted-text.js';
 import {liveSceneRows} from './live-scene.js';
@@ -1197,13 +1197,13 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     // Match group-chat draft tiles: image preview with a corner remove control, details for other files.
     const open=el('button','attachment-open');open.type='button';open.addEventListener('click',()=>previewAttachment(item));
     if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);}
-    else{const icon=el('span','native-file-icon');icon.innerHTML=UI_ICON.original;open.append(icon);}
+    else open.append(fileGlyph(item.name));
     open.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));
     card.append(open,closeIcon(button('',remove,'attachment-remove'),t('Remove attachment')));return card;
    }
    // A sent attachment opens in the preview on click (image full size, file details).
    const open=el('button','attachment-open');open.type='button';open.title=item.name;open.addEventListener('click',()=>previewAttachment(item,open));card.append(open);
-   if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);markImageOpener(open);}else open.append(el('span','native-file-icon','\u{1F4C4}'));
+   if(item.mime?.startsWith('image/')){const img=el('img');img.alt=item.name;void fileUrl(current.nodeId,item).then(url=>{img.src=url;}).catch(()=>{});open.append(img);markImageOpener(open);}else open.append(fileGlyph(item.name));
    if(remove||!item.mime?.startsWith('image/')){const info=el('span','native-file-info');info.append(el('span','attachment-name',item.name),el('small','',sizeText(item.size)));open.append(info);}
    if(remove){const x=closeIcon(button('',remove,'attachment-remove'),t('Remove attachment'));card.append(x);}return card;}
   /**
