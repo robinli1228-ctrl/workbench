@@ -408,6 +408,26 @@
 
             <section class="settings-panel" data-settings-panel="general" id="settings-general-panel" hidden>
               <div class="settings-panel-heading"><h3>Basic Settings</h3><p>Manage language, browser access, notifications and remote execution in one place.</p></div>
+              <section class="settings-overview-card remote-access-settings" id="remote-access-settings" aria-labelledby="remote-access-title">
+                <span class="settings-kicker">REMOTE ACCESS</span><h4 id="remote-access-title">Remote Access</h4>
+                <p data-relay-status role="status">Loading remote access status…</p>
+                <form data-relay-config>
+                  <label>Relay server IP or address<input name="host" autocomplete="off" required></label>
+                  <details><summary>Advanced settings</summary><div class="remote-access-advanced">
+                    <label>Public HTTPS address<input name="publicOrigin" type="url" autocomplete="off"></label>
+                    <label>SSH user<input name="user" autocomplete="off"></label>
+                    <label>SSH port<input name="port" type="number" min="1" max="65535"></label>
+                  </div></details>
+                  <button class="secondary compact" type="submit">Save server settings</button>
+                </form>
+                <form data-relay-password>
+                  <label>New access password<input name="password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required></label>
+                  <button class="secondary compact" type="submit">Set password</button>
+                </form>
+                <p class="workspace-note">Home connection and keys are managed automatically. Browser login lasts 15 days. Changing a server does not install it.</p>
+                <div class="remote-access-actions"><button class="primary compact" type="button" data-relay-toggle aria-pressed="false">Enable remote access</button><button class="secondary compact" type="button" data-relay-test>Test connection</button><button class="secondary compact" type="button" data-relay-refresh>Refresh status</button></div>
+                <a data-relay-link target="_blank" rel="noreferrer" hidden></a><p data-relay-notice class="workspace-note" role="status" aria-live="polite"></p>
+              </section>
               <div class="connection-settings-grid">
                 <section class="settings-overview-card language-setting" aria-labelledby="language-section-title">
                   <span class="settings-kicker">INTERFACE</span><h4 id="language-section-title">Language</h4>

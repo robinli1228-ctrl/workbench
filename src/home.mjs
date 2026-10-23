@@ -1526,6 +1526,7 @@ const server = http.createServer(async (req, res) => {
     files['/history-prompt.js']='history-prompt.js';
     files['/history-cache.js']='history-cache.js';
     files['/data-settings.js']='data-settings.js';
+    files['/remote-access-settings.js']='remote-access-settings.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';

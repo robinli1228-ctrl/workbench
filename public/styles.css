@@ -3827,3 +3827,14 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 :is(.native-session-content, .native-ask-body) .nt-reply-foot .nt-side { margin-left: 0; }
 .nt-reply-foot .nt-duration { margin-left: 5px; }
 .nt-reply-foot .nt-foot-status { margin-left: 10px; color: var(--danger, #c0263a); font-size: 12px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* Remote access keeps local connection details out of the normal settings form. */
+.remote-access-settings { margin-bottom:16px; }
+.remote-access-settings form { display:flex; align-items:end; gap:12px; flex-wrap:wrap; margin:14px 0; }
+.remote-access-settings label { display:grid; gap:6px; flex:1; min-width:180px; }
+.remote-access-settings input { width:100%; min-width:0; }
+.remote-access-settings details { flex-basis:100%; }
+.remote-access-settings summary { cursor:pointer; color:var(--muted); }
+.remote-access-advanced { display:flex; flex-wrap:wrap; gap:12px; margin:12px 0; }
+.remote-access-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.remote-access-settings [data-relay-link] { overflow-wrap:anywhere; }
+@media(max-width:600px) { .remote-access-settings label { min-width:100%; } }

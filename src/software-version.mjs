@@ -6,10 +6,10 @@ import {promisify} from 'node:util';
 import {createHash} from 'node:crypto';
 
 const exec=promisify(execFile);
-const paths=['src','public','bin','package.json','package-lock.json'];
+const paths=['src','public','bin','modules/remote-access','package.json','package-lock.json'];
 const sha=/^[0-9a-f]{40}$/;
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-const sourcePath=name=>typeof name==='string'&&!name.includes('\\')&&!name.split('/').some(p=>!p||p==='.'||p==='..')&&(/^(src|public|bin)\//.test(name)||['package.json','package-lock.json'].includes(name));
+const sourcePath=name=>typeof name==='string'&&!name.includes('\\')&&!name.split('/').some(p=>!p||p==='.'||p==='..')&&(/^(src|public|bin)\//.test(name)||name.startsWith('modules/remote-access/')||['package.json','package-lock.json'].includes(name));
 const git=async(root,args)=>(await exec('git',args,{cwd:root,timeout:5000,maxBuffer:1024*1024,env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}})).stdout.trim();
 
 /** Archive verification includes added files; old release leftovers must not masquerade as the stamped build. */
