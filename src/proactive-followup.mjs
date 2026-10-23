@@ -126,13 +126,24 @@ export class ProactiveFollowup {
     }
     return task;
   }
+  /** Work still under way in this conversation (a running reply, a queued message, a role waiting on a discussion) is not
+   * silence: a role can work for longer than the silence window without posting anything. */
+  busy(state){
+    const here=record=>record.projectId===state.projectId&&conversationIdOf(record)===conversationIdOf(state);
+    return this.db.activeRuns().some(here)
+      ||this.db.chatTasks(['ready','in_progress']).some(task=>here(task)&&!task.proactiveInitial)
+      ||this.db.tasksWaitingForDiscussion().some(here);
+  }
   /** Register once per anchor; the normal scheduler still owns the actual CLI execution. */
   tick(){
     let changed=false;
     for(const snapshot of this.db.list('proactiveFollowups'))if(snapshot.enabled){
       this.db.transaction(()=>{
         let state=this.observe(snapshot.projectId,conversationIdOf(snapshot));
-        if(state.anchorMessageId&&Date.parse(state.dueAt)<=this.clock().getTime()&&!state.requestId){
+        // While work goes on the window restarts, so it is counted from when the conversation actually went quiet.
+        if(state.anchorMessageId&&Date.parse(state.dueAt)<=this.clock().getTime()&&!state.requestId&&this.busy(state))
+          state=this.db.put('proactiveFollowups',{...state,dueAt:new Date(this.clock().getTime()+state.silenceMinutes*60000).toISOString()});
+        else if(state.anchorMessageId&&Date.parse(state.dueAt)<=this.clock().getTime()&&!state.requestId){
           const role=this.db.get('roles',this.db.get('projects',state.projectId)?.supervisorRoleId||'');
           if(!role?.enabled||role.archivedAt||!isRoleConfigured(role))state=this.db.put('proactiveFollowups',{...state,waitingReason:tr('followup.noSupervisor')});
           else {
