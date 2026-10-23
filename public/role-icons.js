@@ -156,6 +156,9 @@ function currentRuntimeActivity(role,worker,check,after) {
   if(!checked||Date.now()-checked>600000||checked>Date.now()+60000)return {tone:'waiting',label:'To check',detail:'CLI check is stale or incomplete; please refresh'};
   if(!report.available)return {tone:'blocked',label:'CLI unavailable',detail:report.reason||'CLI failed the check; verify sign-in or configuration'};
   if(!report.models?.some(m=>m.id===role.model))return {tone:'blocked',label:'Model unavailable',detail:'The current model is not in this device\'s CLI model list; please reconfigure'};
+  // A used-up quota window keeps the role from being given work until it resets (Home refuses new messages to it too).
+  const spent=!report.quotaInvalidated&&['fiveHour','weekly'].map(key=>report.quota?.[key]).find(w=>w&&Number.isFinite(w.remainingPercent)&&w.remainingPercent<=0&&Date.parse(w.resetsAt)>Date.now());
+  if(spent)return {tone:'blocked',label:'Quota used up',detail:t('Quota used up; resets around {time}',{time:new Date(spent.resetsAt).toLocaleString(getLanguage()==='zh'?'zh-CN':'en-US',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false})})};
   return {tone:'idle',label:'Available',detail:'CLI check passed · waiting for tasks (no model inference invoked)'};
 }
 

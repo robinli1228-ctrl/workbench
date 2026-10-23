@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { terminal } from './store.mjs';
 import {reservedTerminalSlots} from './device-capacity.mjs';
 import { runtimeIssue } from './runtime-probe.mjs';
+import { cliUnavailable, cliFailureText } from './cli-availability.mjs';
 import { listRoleTemplates } from './role-templates.mjs';
 import { isRoleConfigured, isSupervisorName, isBroadcastName } from './default-roles.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -237,6 +238,9 @@ export class Rooms {
           if (!isRoleConfigured(role)) throw new Error(tr('rooms.roleHasNoDeviceCli', { name }));
           if (!role.enabled) throw new Error(tr('rooms.roleDisabled', { name }));
           if (!roleWorkspace(this.db, projectId, role.nodeId, role.repositoryId)) throw new Error(tr('rooms.roleHasNoRepositoryDirectory', { name }));
+          // A CLI that cannot work now (signed out, quota used up, model gone) is named at once instead of queueing silently.
+          const unavailable=!scheduledJobId&&cliUnavailable(this.db.get('workers',role.nodeId),role.runtime,role.model);
+          if (unavailable) throw new Error(tr('rooms.roleCliUnavailable', { name: role.name, reason: unavailable }));
           selected.set(role.id,role);
           if(selected.size>4)throw new Error(tr('rooms.messageCanMentionAtMost'));
         }
@@ -535,7 +539,7 @@ export class Rooms {
       const quiet=privateFollowup(this.db,run)||handoffOnly(run,report);
       if(quiet&&!question)return;
       const text = quiet||(run.explicitPublish||run.handoffWait&&question)&&run.status==='succeeded'?question:run.status === 'succeeded' ? (run.result || question || tr('rooms.runHasEndedRuntimeReturned'))
-        : tr('rooms.text', { p1: run.status === 'interrupted' ? tr('rooms.runStopped') : tr('rooms.runFailed'), p2: run.error || tr('rooms.seeRunDetails'), p3: !run.explicitPublish && run.result ? tr('rooms.existingOutput', { result: run.result }) : '' });
+        : tr('rooms.text', { p1: run.status === 'interrupted' ? tr('rooms.runStopped') : tr('rooms.runFailed'), p2: cliFailureText(run.error) || tr('rooms.seeRunDetails'), p3: !run.explicitPublish && run.result ? tr('rooms.existingOutput', { result: run.result }) : '' });
       const source=this.replySourceFor(run);
       this.db.put('roomMessages', { id, projectId: run.projectId, conversationId:conversationIdOf(run), sender: 'agent', senderName: run.roleSnapshot.name,
         ...(run.explicitPublish?{kind:question?'user_question':'technical_notice'}:{}),
