@@ -9,10 +9,11 @@ export function warmSessionFingerprint({folder,runtimeType,model,effort,roleName
 /** Only cache processes of completed turns; active Runs are still managed by the Worker's existing concurrency table. */
 export class WarmSessions {
   constructor({idleMs=900000,max=4,changed=()=>{},retired=()=>{}}={}) {
-    this.idleMs=idleMs; this.max=max; this.changed=changed; this.retired=retired; this.entries=new Map();
+    this.idleMs=idleMs; this.max=max; this.changed=changed; this.retired=retired; this.entries=new Map(); this.borrowed=new Map();
   }
   alive(session) { return Boolean(session?.proc && !session.proc.killed && session.proc.exitCode===null && session.proc.signalCode===null); }
-  owns(pid) { return [...this.entries.values()].some(e=>e.session.proc?.pid===pid); }
+  /** A borrowed process (in maintenance, e.g. a compaction) is still this cache's: recovery must not reclaim it. */
+  owns(pid) { return [...this.entries.values(),...this.borrowed.values()].some(e=>e.session.proc?.pid===pid); }
   snapshot() { return [...this.entries].filter(([,e])=>this.alive(e.session)).map(([id,e])=>({id,...e.metadata,idleUntil:e.idleUntil})); }
   /** On a configuration change the old process must be confirmed exited before a new driver of the same native session may start. */
   async take(key,fingerprint) {
@@ -26,8 +27,16 @@ export class WarmSessions {
   borrow(key) {
     const entry=this.entries.get(key);
     if(!entry||entry.closing||!this.alive(entry.session))return null;
-    clearTimeout(entry.timer);entry.session.proc.removeListener('exit',entry.onExit);this.entries.delete(key);this.changed();
-    return {session:entry.session,fingerprint:entry.fingerprint,metadata:entry.metadata};
+    clearTimeout(entry.timer);entry.session.proc.removeListener('exit',entry.onExit);this.entries.delete(key);
+    const lent={session:entry.session,fingerprint:entry.fingerprint,metadata:entry.metadata};this.borrowed.set(key,lent);this.changed();
+    return lent;
+  }
+  /** Take a borrowed process back: kept warm again, or closed and retired (its Run then shows the process as gone). */
+  async giveBack(key,{keep=false}={}) {
+    const lent=this.borrowed.get(key);if(!lent)return false;
+    this.borrowed.delete(key);
+    if(keep&&this.keep(key,lent.fingerprint,lent.session,lent.metadata))return true;
+    await this.closeEntry(key,{...lent,timer:null,onExit:null});return false;
   }
   keep(key,fingerprint,session,metadata) {
     if(!key || !session.done || !this.alive(session))return false;
@@ -61,12 +70,12 @@ export class WarmSessions {
       });
     }
     if(this.entries.get(key)===entry)this.entries.delete(key);
-    proc?.removeListener('exit',entry.onExit);
+    if(entry.onExit)proc?.removeListener('exit',entry.onExit);
     this.retireEntry(entry);
     this.changed();
   }
   /** Report exit once; taking a driver for reuse does not retire it. */
   retireEntry(entry){if(entry.retirementNotified)return;entry.retirementNotified=true;this.retired(entry.metadata,entry.session.proc?.pid);}
   async closeProject(projectId) {for(const [key,e] of this.entries)if(e.metadata.projectId===projectId)await this.drop(key);}
-  async closeAll() {await Promise.all([...this.entries.keys()].map(key=>this.drop(key)));}
+  async closeAll() {await Promise.all([...[...this.entries.keys()].map(key=>this.drop(key)),...[...this.borrowed.keys()].map(key=>this.giveBack(key))]);}
 }

@@ -160,19 +160,21 @@ function compactRoleSession(m) {
   const job=(async()=>{
     const entry=warmSessions.borrow(key);
     if(!entry)return {ok:false,error:'not_retained'};
-    const {session,fingerprint,metadata}=entry;let usage=null;
+    const {session}=entry;let usage=null;
     const outcome=await new Promise(resolve=>{
       const timer=setTimeout(()=>resolve({status:'failed',error:'timeout'}),10*60000);timer.unref?.();
       const done=p=>{clearTimeout(timer);resolve(p);};
       try {
+        // The role's own thread: a Codex process whose last Run started the thread holds it as threadId, not resumeSessionId.
         session.reuse({emit:(type,p={})=>{if(type==='context_usage')usage=p;if(type==='status'&&['succeeded','failed','interrupted','reconciling'].includes(p.status))done(p);},
-          beforeInput:null,onProcess:null,control:'compact',maintenance:true,attachments:[],inputImages:[],configurationUpdate:null});
+          beforeInput:null,onProcess:null,control:'compact',maintenance:true,attachments:[],inputImages:[],configurationUpdate:null,
+          resumeSessionId:session.threadId||session.nativeSessionId||session.resumeSessionId});
         void Promise.resolve(session.start('/compact')).catch(error=>done({status:'failed',error:error.message}));
       } catch(error) {done({status:'failed',error:error.message});}
     });
     session.control=null;
-    const kept=outcome.status==='succeeded'&&!paused&&!quitting&&warmSessions.keep(key,fingerprint,session,metadata);
-    if(!kept){session.shutdown();await afterProcessExit(session.proc,()=>{});}
+    // Kept warm again after a good compaction; otherwise closed and retired like any idle process.
+    await warmSessions.giveBack(key,{keep:outcome.status==='succeeded'&&!paused&&!quitting});
     return {ok:outcome.status==='succeeded',error:outcome.error||null,usedTokens:Number.isFinite(usage?.usedTokens)?usage.usedTokens:null};
   })().catch(error=>({ok:false,error:error.message})).then(result=>{compacting.delete(key);reportCapacity();send({type:'role_session_compacted',roleSessionId:key,afterRunId:m.afterRunId||null,...result});});
   compacting.set(key,job);reportCapacity();
@@ -324,6 +326,8 @@ async function command(m) {
       if (m.run.requestId) validateLaunch({ request: m.request, roleSnapshot: m.run.roleSnapshot, delivery: m.delivery, currentPlanVersion: m.run.planVersion });
       const issue = runtimeIssue({ capabilities: { runtimeDiscovery: true }, runtimes }, m.run.roleSnapshot?.runtime || 'codex', m.task.model);
       if (issue) throw new Error(issue);
+      // A compaction of this role's session finishes before its process is checked or reused.
+      if(compacting.has(m.run.roleSessionId))await compacting.get(m.run.roleSessionId);
       await checkNativeDriver(m);
       if(reservation.stopRequested){emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.taskHadNotStartedWas')});return;}
       if (db.list('runs').some(r => r.id !== c.runId && r.status === 'reconciling')) throw new Error(tr('worker.workerFullHasProcessesAwaiting'));
@@ -509,8 +513,6 @@ async function command(m) {
           void (retained?complete():afterProcessExit(session.proc,complete));
         } else {const event=emit(c.runId,type,p);if(type==='tool')provenance?.observe(event);}
       } };
-      // A compaction of this role's session finishes first; its process then serves this Run.
-      if(compacting.has(m.run.roleSessionId))await compacting.get(m.run.roleSessionId);
       session=keepAlive?await warmSessions.take(m.run.roleSessionId,fingerprint):null;
       reservation.session=session;
       await warmSessions.trim(occupiedSlots());
