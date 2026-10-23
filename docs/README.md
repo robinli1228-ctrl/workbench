@@ -2,6 +2,8 @@
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [design-remote-access-settings](design-remote-access-settings.md) | Local-only Basic Settings controls for the independent browser relay | Approved; implemented in the feature branch, deployment separate |
+| [plan-remote-access-settings](plan-remote-access-settings.md) | Module packaging, local proof/bridge, compact UI, review and Home-only release | Approved; execution in progress |
 | [OPERATING-GUIDE](OPERATING-GUIDE.md) | Publishing, configuration, running single and multi-server setups, contributing, sanitization checklist | Current |
 | [ARCHITECTURE](ARCHITECTURE.md) | Current code architecture, interfaces, data and implementation boundaries | Current. Describes only what the code does |
 | [PROGRESS](PROGRESS.md) | Append-only development changes and verification milestones | Current; does not imply public release or deployment |

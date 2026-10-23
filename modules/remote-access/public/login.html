@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workbench 远程访问</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#f5f6fb;color:#263047;font:16px/1.6 system-ui,sans-serif;padding:24px}main{width:min(100%,390px);padding:32px;background:white;border:1px solid #e3e6ef;border-radius:14px;box-shadow:0 12px 36px #24334d0a}h1{font-size:23px;margin:0 0 8px}p{color:#657089;margin:0 0 24px;font-size:14px}label{display:block;font-size:14px;margin-bottom:8px}input,button,a{font:inherit}input{width:100%;padding:12px;border:1px solid #cbd1e0;border-radius:8px}input:focus{outline:2px solid #c7cbff;border-color:#646de4}button{width:100%;margin-top:16px;padding:11px;border:0;border-radius:8px;background:#555dd6;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:wait}#status{min-height:24px;margin-top:12px;color:#a83c45;font-size:14px}a{color:#505acb}.secondary{background:#eef0fa;color:#465173}[hidden]{display:none!important}
+</style>
+<main>
+  <h1>Workbench 远程访问</h1>
+  <p>使用在 Mac 上设置的访问密码。登录固定有效 15 天。</p>
+  <form id="login-form">
+    <label for="password">访问密码</label>
+    <input id="password" type="password" autocomplete="current-password" required maxlength="1024" autofocus>
+    <button id="login-button" type="submit">登录</button>
+  </form>
+  <section id="signed-in" hidden><a href="/">返回 Workbench</a><button id="logout-button" class="secondary" type="button">退出当前登录</button></section>
+  <div id="status" role="status" aria-live="polite"></div>
+</main>
+<script src="/_access/login.js" defer></script>
+</html>

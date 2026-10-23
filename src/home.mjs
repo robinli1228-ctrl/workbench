@@ -1,4 +1,5 @@
 import {createHomeNativeTurns} from './native-turns-home.mjs';
+import {createRemoteAccessSettings} from './remote-access-settings.mjs';
 import http from 'node:http';
 import { sendBufferedResponse } from './http-response.mjs';
 import { readFile, mkdir, writeFile, chmod } from 'node:fs/promises';
@@ -83,6 +84,7 @@ initLanguage(data); // load the saved language (data/language.json) before any t
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 4317);
 const apiToken = process.env.API_TOKEN || '';
+const remoteAccessSettings=createRemoteAccessSettings({configFile:resolve(process.env.REMOTE_ACCESS_CONFIG||join(data,'remote-access','config.json')),homeOrigin:`http://${host==='::1'?'[::1]':host}:${port}`});
 if (!['127.0.0.1', 'localhost', '::1'].includes(host) && !apiToken) throw new Error(tr('home.nonLoopbackListeningRequiresApi'));
 await mkdir(data, { recursive: true, mode: 0o700 });
 let workerToken = process.env.WORKER_TOKEN;
@@ -575,6 +577,7 @@ const server = http.createServer(async (req, res) => {
         if (!workerOk) return json(res, { error: tr('home.agentToolsOnlyAllowedThrough') }, 401);
       } else if (apiToken && !userOk) return json(res, { error: tr('home.accessTokenRequired') }, 401);
       if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) return json(res, { error: tr('home.crossSiteRequestRejected') }, 403);
+      if(await remoteAccessSettings.handle(req,res,pathname))return;
       if(pathname==='/api/platform/version'&&req.method==='GET')return json(res,{instances:softwareInventory()});
       // The complete setup guide from docs/, for reading on the page or copying to an AI assistant; no state involved.
       if(pathname==='/api/platform/setup-guide'&&req.method==='GET'){const language=url.searchParams.get('lang')==='zh'?'zh':'en',file=new URL(`../docs/${language==='zh'?'SETUP-GUIDE.zh-CN.md':'SETUP-GUIDE.md'}`,import.meta.url);
@@ -1523,6 +1526,7 @@ const server = http.createServer(async (req, res) => {
     files['/history-prompt.js']='history-prompt.js';
     files['/history-cache.js']='history-cache.js';
     files['/data-settings.js']='data-settings.js';
+    files['/remote-access-settings.js']='remote-access-settings.js';
     files['/native-history-timeline.js']='native-history-timeline.js';
     files['/native-session-groups.js']='native-session-groups.js';
     files['/create-folder.js']='create-folder.js';

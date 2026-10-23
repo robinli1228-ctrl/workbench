@@ -14,6 +14,16 @@ The supervisor chooses its own implementation methods and pursues missing capabi
 
 ## Runtime structure
 
+### Optional independent remote access
+
+`modules/remote-access/` packages the separate loopback gateway, password/session store, local administration service and dedicated SSH tunnel lifecycle. It is not started by importing Home and does not share the task scheduler. `src/remote-access-settings.mjs` bridges only a fixed local administration allow-list; its private configuration path comes from `REMOTE_ACCESS_CONFIG` or `DATA_DIR/remote-access/config.json`. The Basic Settings card in `public/remote-access-settings.js` fetches status on entry/actions only, patches explicitly changed fields and preserves hidden values and drafts.
+
+Home API authentication is still required. Relay administration additionally requires exact local Host/Origin, a loopback peer and a fifteen-minute HttpOnly SameSite=Strict proof cookie scoped to `/api/settings/remote-access`. Proofs are bounded to 64 and pruned on requests. They are not returned in JSON. The older standalone gateway strips Cookie and Set-Cookie, so it cannot acquire/forward the proof; the packaged gateway also rejects this management prefix. Public browser login remains a separate fixed fifteen-day session. Private credentials/paths are excluded from management status, general state and browser storage. Missing services fail closed without spawning replacements. See [the contract](design-remote-access-settings.md).
+
+Release provenance includes `modules/remote-access` alongside the existing runtime paths, detecting added, changed and missing module files. Packaging the optional module does not update or restart a running independent gateway or Worker.
+
+Server-field edits require the local service's `configPatch: 1` capability. Home and the recovery UI send changed fields to `/api/config-patch`; validation and read/merge/write happen in the service's shared lifecycle queue, preventing a delayed Home save from overwriting a recovery-page update. Old services expose a read-only configuration card with an explicit upgrade notice; there is no full-snapshot save fallback. Existing password and enable/disable operations retain their compatibility.
+
 Group-conversation branching and team copying are entered from two non-submit buttons in the project's basic settings. Branching captures the selected project/chat before opening the existing title form; copying opens the existing configuration preview. The main toolbar and sidebar no longer expose the separate group-actions menu. Opening either action does not save the settings form; successful creation navigates to the created chat/project.
 
 Role cards separate current execution/availability from historical outcomes. Active or unsettled Runs and pending collaboration take precedence; idle roles use fresh device/CLI/model checks, with stale evidence shown as requiring a check. The latest failed task is a separate history link, including admission failures without a Run. Refreshing availability never rewrites Run status or report verdicts. This is a browser projection, not model-inference verification or automatic task recovery.

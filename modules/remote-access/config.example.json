@@ -1,0 +1,15 @@
+{
+  "publicOrigin": "https://relay.example.com",
+  "homeUrl": "http://127.0.0.1:4320",
+  "tokenFile": "/path/to/private/home-api-token",
+  "stateDir": "/path/to/private/relay-state",
+  "gatewayPort": 4321,
+  "adminPort": 4322,
+  "ssh": {
+    "host": "relay.example.com",
+    "port": 22,
+    "user": "relay",
+    "keyFile": "/path/to/private/relay-key",
+    "remotePort": 14321
+  }
+}

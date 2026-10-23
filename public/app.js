@@ -1,4 +1,5 @@
 import {createDataSettingsUI} from './data-settings.js';
+import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
 import { t, getLanguage, setLanguage, onLanguageChange, syncLanguageWithBackend, dateLocale } from './i18n.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {createNativeSessionUI} from './native-sessions.js';
@@ -276,6 +277,7 @@ function viewportHeight() { document.documentElement.style.setProperty('--app-he
 window.visualViewport?.addEventListener('resize', viewportHeight); window.addEventListener('resize', viewportHeight); viewportHeight();
 document.querySelector('#pick-binding-folder').addEventListener('click', () => projectsUI.openBinding(app.bindingTarget?.nodeId));
 
+const remoteAccessUI=createRemoteAccessSettingsUI({root:document.querySelector('#remote-access-settings'),api});
 function openSettings(value = 'devices') {
   let tab = normalizeSettingsTab(value);
   if (tab === 'project' && !projectsUI.prepareSettings()) tab = 'devices';
@@ -287,6 +289,7 @@ function openSettings(value = 'devices') {
   platformUI.refresh(); spacesUI.refresh(); tokenUI.refresh();
   if (tab === 'usage') tokenUI.show();
   if (tab === 'data') dataUI.show();
+  if (tab === 'general') void remoteAccessUI.refresh();
   if (tab === 'timers') schedulesUI.show();
   if (tab === 'prompts') renderPlatformPrompts();
   mobilePanel('chat');

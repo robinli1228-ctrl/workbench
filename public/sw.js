@@ -1,5 +1,6 @@
-const CACHE = 'agent-workbench-static-v172-history-cache-20261022';
+const CACHE = 'agent-workbench-static-v173-remote-access-settings-20261023';
 const STATIC = [
+  '/remote-access-settings.js',
   '/group-conversations.js',
   '/model-usage.js',
   '/quota-state.js',
