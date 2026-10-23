@@ -97,7 +97,8 @@ export class RoleCalls {
       if (role.archivedAt || !role.enabled || !isRoleConfigured(role)) throw new Error(tr('roleCalls.targetRoleNotConfiguredDisabled'));
       if (!roleWorkspace(this.db, input.projectId, role.nodeId, role.repositoryId)) throw new Error(tr('roleCalls.targetRoleHasNoRepository'));
       // A new call to a role whose CLI cannot work now fails at once, so the caller (often the supervisor) picks another role.
-      if (normalized.kind!=='continuation') { const unavailable=cliUnavailable(this.db.get('workers',role.nodeId),role.runtime,role.model); if (unavailable) throw new Error(tr('roleCalls.targetRoleCliUnavailable', { name: role.name, reason: unavailable })); }
+      // Plan stages are created up front and run later; their roles are checked when they actually start.
+      if (normalized.kind!=='continuation'&&!input.planId) { const unavailable=cliUnavailable(this.db.get('workers',role.nodeId),role.runtime,role.model); if (unavailable) throw new Error(tr('roleCalls.targetRoleCliUnavailable', { name: role.name, reason: unavailable })); }
       for (const id of [normalized.parentRequestId, normalized.continuationOf].filter(Boolean)) {
         if (this.db.get('coordinationRequests', id)?.projectId !== input.projectId) throw new Error(tr('roleCalls.sourceCallDoesNotBelong'));
       }
