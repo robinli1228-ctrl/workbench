@@ -13,7 +13,7 @@ const clip=(value,max)=>{const bytes=Buffer.from(String(value??''));return bytes
 function visible(row){
  if(!['user','assistant','tool_call','tool_result'].includes(row.role))return null;
  const result={role:row.role,timestamp:row.timestamp||null};
- for(const key of ['text','name','callId','input','output','failed','attachments'])if(row[key]!==undefined){
+ for(const key of ['id','recordId','offset','text','name','callId','input','output','failed','attachments'])if(row[key]!==undefined){
   const value=key==='text'&&row.role==='user'?cleanUserText(row.text):row[key];
   result[key]=typeof value==='boolean'?value:clip(typeof value==='object'?safeJSON(value):value,6000);
  }
@@ -52,11 +52,22 @@ export async function createNativeAgentContext({conversation,segments,recentMess
 export async function readNativeAgentContext(manifestPath,{hash,segmentId,cursor=null},readNativeSession=readHistory){
  const bytes=await readFile(manifestPath);if(digest(bytes)!==hash)throw Error('Context manifest hash changed');
  const manifest=JSON.parse(bytes),segment=manifest.segments?.find(s=>s.id===segmentId);if(!segment)throw Error('Segment does not belong to this conversation');
- const page=await readNativeSession(segment.runtime,segment.sessionId,{record:segment,historyPage:true,cursor});
+ let offset=0,pageHash=null,nativeCursor=cursor;
+ if(cursor?.startsWith('context-page:')){
+  let continuation;try{if(cursor.length>8192)throw Error();continuation=JSON.parse(Buffer.from(cursor.slice(13),'base64url').toString());}catch{throw Error('Invalid context continuation');}
+  if(continuation.segmentId!==segmentId||!Number.isSafeInteger(continuation.offset)||continuation.offset<1||typeof continuation.hash!=='string'||continuation.cursor!==null&&typeof continuation.cursor!=='string')throw Error('Invalid context continuation');
+  offset=continuation.offset;pageHash=continuation.hash;nativeCursor=continuation.cursor;
+ }
+ const page=await readNativeSession(segment.runtime,segment.sessionId,{record:segment,historyPage:true,cursor:nativeCursor});
  const rows=page.messages?.length?page.messages:manifest.recentMessages?.filter(row=>row.segmentId===segmentId)||[];
- const value={segmentId,runtime:segment.runtime,sessionId:segment.sessionId,hasMore:page.hasMore,nextCursor:page.nextCursor||null,messages:rows.map(visible).filter(Boolean),truncated:!page.messages?.length};
- // Preserve the native next cursor. Explicitly mark records omitted to keep the response bounded.
- while(Buffer.byteLength(JSON.stringify(value))>256*1024&&value.messages.length){value.messages.pop();value.truncated=true;}
+ const records=rows.map(visible).filter(Boolean),currentHash=digest(JSON.stringify(records));
+ if(pageHash&&pageHash!==currentHash||offset>records.length)throw Error('Context page changed; restart this page read');
+ const value={segmentId,runtime:segment.runtime,sessionId:segment.sessionId,hasMore:false,nextCursor:null,messages:[],truncated:!page.messages?.length};
+ let next=offset,pageBytes=0;
+ for(;next<records.length;next++){const size=Buffer.byteLength(JSON.stringify(records[next]));if(pageBytes+size>248*1024)break;value.messages.push(records[next]);pageBytes+=size;}
+ if(next<records.length){if(next===offset)throw Error('Context record exceeds page budget');value.nextCursor='context-page:'+Buffer.from(JSON.stringify({segmentId,cursor:nativeCursor||null,offset:next,hash:currentHash})).toString('base64url');}
+ else value.nextCursor=page.nextCursor||null;
+ value.hasMore=Boolean(value.nextCursor);value.truncated ||= next<records.length;
  return value;
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){

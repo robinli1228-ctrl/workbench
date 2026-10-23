@@ -4,21 +4,21 @@ const names={claude:'Claude Code',codex:'Codex',grok:'Grok',agy:'Agy'};
 const identity=item=>`${item.nodeId}/${item.runtime}/${item.sessionId||item.id}`;
 /** Small selector at the existing Agent label. Only an explicit choice begins an idempotent switch. */
 export function createNativeAgentSwitchUI({api,getState,onCommitted,onError,t=text=>text,onChange=()=>{}}){
- const pending=new Map();let timer=null,disposed=false;
+ const pending=new Map();let disposed=false;
  const dialog=document.createElement('dialog');dialog.className='settings-edit-dialog native-agent-dialog';dialog.setAttribute('aria-label',t('Switch Agent'));document.body.append(dialog);
  const busy=item=>pending.has(identity(item))||Boolean(item.conversationBinding?.pendingSwitchId);
  function remember(id,value){try{sessionStorage.setItem(`workbench.agent-switch.${id}`,JSON.stringify(value));}catch{}}
  async function apply(entry,result){
   if(result.conversation)entry.conversation=result.conversation;
   if(result.operation?.stage==='committed'){
-   pending.delete(identity(entry.source));remember(identity(entry.source),null);
+   clearTimeout(entry.timer);pending.delete(identity(entry.source));remember(identity(entry.source),null);
    const c=result.conversation;await onCommitted({source:entry.source,conversation:c,current:c.segments.find(s=>s.id===c.currentSegmentId),segments:c.segments});
   }else if(result.operation?.stage==='failed'){
-   pending.delete(identity(entry.source));remember(identity(entry.source),null);onError(result.operation.error||'Agent switch failed');
+   clearTimeout(entry.timer);pending.delete(identity(entry.source));remember(identity(entry.source),null);onError(result.operation.error||'Agent switch failed');
   }else{entry.message=result.operation?.error||'Switching Agent…';schedule(entry);}
   onChange();
  }
- function schedule(entry){clearTimeout(timer);if(disposed||entry.polls>=60)return;timer=setTimeout(()=>void poll(entry),1000);}
+ function schedule(entry){clearTimeout(entry.timer);if(disposed||entry.polls>=60)return;entry.timer=setTimeout(()=>void poll(entry),1000);}
  async function poll(entry){if(disposed||!pending.has(identity(entry.source)))return;entry.polls++;
   try{await apply(entry,await api(`/api/native-sessions/${encodeURIComponent(entry.source.nodeId)}/agent-switch/${encodeURIComponent(entry.id)}`));}
   catch(error){entry.message=error.message;schedule(entry);onChange();}}
@@ -58,5 +58,5 @@ export function createNativeAgentSwitchUI({api,getState,onCommitted,onError,t=te
    if(entry.polls>=60){const retry=document.createElement('button');retry.type='button';retry.textContent=t('Check status');retry.onclick=()=>{entry.polls=0;void poll(entry);};root.append(retry);}}
   return root;
  }
- return {render,busy,dispose(){disposed=true;clearTimeout(timer);dialog.close();dialog.remove();}};
+ return {render,busy,dispose(){disposed=true;for(const entry of pending.values())clearTimeout(entry.timer);dialog.close();dialog.remove();}};
 }

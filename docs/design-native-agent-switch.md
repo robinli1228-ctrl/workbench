@@ -1,10 +1,10 @@
 # Same-conversation Agent switching
 
-Status: approved by the user on 2026-10-23; implementation plan approved for inline execution. Local implementation and verification in progress; not deployed. UI amended by the user to an icon opening a picker dialog (no inline dropdown).
+Status: approved for inline implementation on 2026-10-23; implemented locally, not deployed. The user amended the entry to an icon opening an Agent picker dialog, without an inline dropdown. Current acceptance and limits are below.
 
 ## Agreed outcome
 
-The Sessions page keeps one conversation and its chronological chat and execution history while the human changes the executing Agent. The entry is the existing Agent icon and name in Overview: clicking it opens a switch icon and Agent picker dialog. No extra main-page entry or configuration wizard. First version stays on the same device and the exact same working directory. Existing files, uncommitted changes, attachments and vendor histories remain untouched.
+The Sessions page keeps one conversation and its chronological chat and execution history while the human changes the executing Agent. The existing Agent icon and name remain in Overview; a small switch action after the name opens the Agent picker dialog. No extra main-page entry or configuration wizard. First version stays on the same device and the exact same working directory. Existing files, uncommitted changes, attachments and vendor histories remain untouched.
 
 ## Approach
 
@@ -50,3 +50,11 @@ Persist progress across browser refresh and recover uncertain operations without
 6. Verify the switch icon and Agent picker dialog and retained transcript in a real browser, plus each supported real CLI transition. Simulated/runtime-unit checks alone do not establish cross-Agent acceptance.
 
 Delivery is local implementation and verification only. No push, merge, deployment or restart is included in the current request. Exact code interfaces and context budgets belong in the implementation plan after design approval.
+
+## Local acceptance and remaining limits
+
+- Original suite: 225 passing tests; focused feature/review regressions: 34 passing tests. Real Edge covers the picker, retained conversation/draft/attachment, older history, empty-queue guard, late response and simultaneous operation polling.
+- An isolated actual Home/Worker with Codex and Agy completed a round trip, carried the original discussion fact and read AGENTS.md plus an unchanged test file. A separate actual-page replay verified binary Agy history from Home records and rejected historical-segment mutations.
+- Independent review identified four Important findings. One author fix pass added RED/GREEN regressions for background process protection, durable failed-preparation tombstones, lossless bounded page continuation and per-operation timers. No second-review pass is claimed.
+- A resident driver with unknown/MCP/background descendants is not automatically released. Finish/return it normally before switching; the feature does not stop those descendants. Unresolved device maintenance also delays switching.
+- Claude's real transition remains blocked by the account's on-hold response. Grok's real transition is not covered. No all-runtime or server-device acceptance is claimed.

@@ -79,7 +79,7 @@ export class NativeAgentSwitches{
     this.assertIdle(op.nodeId,op.source);
     if(this.turns.process(op.nodeId,op.source.runtime,op.source.sessionId)){
      // Preflight verified that this is an idle, page-owned process. The existing release owns its children.
-     this.turns.release(op.nodeId,op.source);return this.view(op);
+     await this.query(op,'release');return this.view(op);
     }
     op=this.update(op,{stage:'preparing'});
     const result=await this.query(op,'prepare');return await this.accept(op,result);
@@ -96,6 +96,7 @@ export class NativeAgentSwitches{
   }
  }
  async accept(op,result){
+  if(result.stage==='missing')return this.accept(op,await this.query(op,'abort'));
   if(result.stage==='failed'&&result.settled===true){
    this.db.transaction(()=>{this.update(op,{stage:'failed',error:result.error||'Target preparation failed'});const c=this.db.get('nativeConversations',op.conversationId);this.db.put('nativeConversations',{...c,pendingSwitchId:null});});
   }else if(result.stage==='ready'){

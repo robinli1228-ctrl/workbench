@@ -3909,7 +3909,7 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .native-identity .native-agent-selector{position:relative;min-width:0;gap:6px;flex-direction:row;flex-wrap:nowrap;max-width:65%}
 .native-agent-switch-button{width:26px;height:26px;padding:4px;flex:none}
 .native-identity .native-agent-switch-button svg{width:16px;height:16px}
-.native-agent-dialog{max-width:360px;width:calc(100% - 32px)}
+.native-agent-dialog{max-width:360px;width:min(360px,calc(100vw - 32px))}
 .native-agent-options{display:grid;gap:8px;padding:8px 0}
 .native-agent-option{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel,#fff);color:var(--ink);font:inherit;text-align:left}
 .native-agent-option .role-icon,.native-agent-option img,.native-agent-option svg{width:24px;height:24px;flex:none}

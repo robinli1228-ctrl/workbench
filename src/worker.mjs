@@ -28,7 +28,7 @@ import {createWorkerNativeTurns,receiveTurnFiles} from './native-turns-worker.mj
 import {SideAsks} from './native-side-ask.mjs';
 import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {listNativeSessions,readNativeSession,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
-import {createWorkerNativeAgentSwitch,assertNativeSwitchAccess} from './native-agent-switch-worker.mjs';
+import {createWorkerNativeAgentSwitch,assertNativeSwitchAccess,nativeAgentSourceBusy} from './native-agent-switch-worker.mjs';
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
@@ -147,12 +147,12 @@ function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalS
 nativeTurns=createWorkerNativeTurns({db,send:m=>send(m),data,homeHttp:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,projectRoot:path=>projectRoot(path),
   isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots())});
 const nativeAgentSwitches=createWorkerNativeAgentSwitch({db,nodeId:identity.nodeId,data,projectRoot,runtimes:()=>runtimes,isPaused:()=>paused||quitting,
- sourceBusy:source=>{const key=`${source.runtime}/${source.sessionId}`,resident=nativeTurns.resident.get(key);
-  const unowned=db.list('terminalSessions').some(s=>s.kind==='native-turn'&&s.runtime===source.runtime&&s.sessionId===source.sessionId&&!['released','cancelled'].includes(s.status)&&(!resident||resident.message.leaseId!==s.id));
-  return unowned||[...nativeTurns.turns.values()].some(t=>t.key===key)||Boolean(resident&&(resident.busy||resident.closing||resident.session.done!==true))||Boolean(sideAsks?.size);},
+ sourceBusy:source=>nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}),
+ releaseIdle:async source=>{if(nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}))throw Error('Source Agent still has work or process state is unknown');const resident=nativeTurns.resident.get(`${source.runtime}/${source.sessionId}`);if(resident)await nativeTurns.releaseLease(source.runtime,source.sessionId,resident.message.leaseId);},
  query:async(action,path)=>{let response;await query({action,path,id:randomUUID()},message=>{response=message;});if(!response||response.error)throw Error(response?.error||'Native preparation returned no receipt');return response.result;},
  check:claim=>checkTerminalSession(db,{id:claim.id,nodeId:identity.nodeId,projectId:claim.projectId},join(data,'worker.sqlite'),{automatic:true}),
- prepareGrant:op=>folderAccess.local?folderAccess.prepare({operationId:op.id,scope:`native:${op.leaseId}`,path:op.workspace}):null});
+ prepareGrant:op=>folderAccess.local?folderAccess.prepare({operationId:op.id,scope:`native:${op.leaseId}`,path:op.workspace}):null,
+ cancelGrant:op=>folderAccess.local?folderAccess.cancel({id:`${identity.nodeId}:${op.id}`,scope:`native:${op.leaseId}`}):null});
 function reportCapacity(){send({type:'capacity_state',capacity,usage:{active:sessions.size,retained:warmSessions.snapshot().length,organizer:organizerRunning,terminal:reservedTerminalSlots(db,identity.nodeId)}});}
 const terminalStops=new Map();
 async function applyCapacity(value) {

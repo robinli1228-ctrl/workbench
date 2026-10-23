@@ -58,7 +58,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
     started(m,proc){
       const s=db.get('terminalSessions',m.leaseId);if(!s||!proc?.pid)return;
       const identity=processIdentityKey(terminalProcessIdentity(proc.pid));
-      db.put('terminalSessions',{...s,status:'active',childPid:proc.pid,childIdentity:identity,startedAt:s.startedAt||new Date().toISOString()});
+      db.put('terminalSessions',{...s,status:'active',childPid:proc.pid,childIdentity:identity,driverArgs:proc.spawnargs?.slice(1)||null,startedAt:s.startedAt||new Date().toISOString()});
       if(!identity){proc.kill('SIGTERM');throw Error('Unable to verify the takeover process identity');}
       report(db.get('terminalSessions',s.id));
       if(!observed.has(proc)){observed.add(proc);proc.once('exit',()=>{void runner.close(`${m.runtime}/${m.sessionId}`,'exited');});}

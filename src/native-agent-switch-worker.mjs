@@ -2,13 +2,22 @@ import {realpath} from 'node:fs/promises';
 import {relative,isAbsolute} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {registeredNativeSession} from './native-sessions.mjs';
-import {nativeSessionProjectIds,managedRunProcessState} from './terminal-resume.mjs';
+import {nativeSessionProjectIds,managedRunProcessState,idleNativeDriver} from './terminal-resume.mjs';
 import {createNativeAgentContext} from './native-agent-context.mjs';
 
 const same=(a,b)=>a?.runtime===b?.runtime&&a?.sessionId===b?.sessionId;
 const held=s=>s&&!['released','cancelled'].includes(s.status);
 const inside=(a,b)=>{const r=relative(a,b);return !r||r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
 export const nativeSwitchOverlap=(a,b)=>typeof a==='string'&&typeof b==='string'&&(inside(a,b)||inside(b,a));
+/** Model completion is not process idleness: retained background tasks and descendants must also be settled. */
+export function nativeAgentSourceBusy({db,runner,source,sideBusy=false,inspect=idleNativeDriver}){
+ const key=`${source.runtime}/${source.sessionId}`,resident=runner.resident.get(key);
+ const leases=db.list('terminalSessions').filter(s=>s.kind==='native-turn'&&same(s,source)&&held(s));
+ if(sideBusy||[...runner.turns.values()].some(t=>t.key===key))return true;
+ if(resident&&(resident.busy||resident.closing||resident.session.done!==true||resident.session.backgroundTasks?.size||resident.session.awaitingBackground))return true;
+ if(leases.some(s=>!resident||resident.message.leaseId!==s.id||!inspect(s)))return true;
+ return Boolean(resident&&!leases.length);
+}
 /** Binary vendor histories may omit cwd; only our committed creation receipt can supply that missing fact. */
 export function nativeAgentSessionWorkspace(db,{runtime,sessionId,historyWorkspace}){
  const op=db.list('workerNativeAgentSwitches').find(s=>s.published&&same(s.target,{runtime,sessionId}));
@@ -29,10 +38,11 @@ export function assertNativeSwitchAccess(db,{runtime,sessionId,workspace,claimId
 }
 
 /** Exact persisted native preparation, reusing the ordinary terminal creation and identity checks. */
-export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtimes,isPaused,sourceBusy,query,check,prepareGrant=async()=>null,makeContext=createNativeAgentContext}){
+export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtimes,isPaused,sourceBusy,query,check,releaseIdle=async()=>{},prepareGrant=async()=>null,cancelGrant=()=>{},makeContext=createNativeAgentContext}){
  const inflight=new Map();
  const view=op=>({operationId:op.id,stage:op.stage,workspace:op.workspace,target:op.target,contextId:op.context?.id,contextHash:op.context?.hash,folderGrant:op.folderGrant||null,error:op.error||null,settled:op.stage==='failed'});
  const save=(op,patch)=>db.put('workerNativeAgentSwitches',{...op,...patch,updatedAt:new Date().toISOString()});
+ const fail=(op,error)=>{if(op.grantAttempted)cancelGrant(op);return save(op,{stage:'failed',error});};
  async function preflight(input,{allowSource=true,claimId=null}={}){
   if(isPaused())throw Error('Remote execution is paused');
   if(!runtimes().some(r=>r.type===input.targetRuntime&&r.available&&r.supported!==false))throw Error('Target Agent is unavailable on this device');
@@ -62,7 +72,7 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
   const proof=check(lease);
   if(proof.processState!=='released')return view(op);
   const entry=db.get('nativeCatalogEntries',op.leaseId);
-  if(lease.exitCode!==0||!entry?.sessionId)return view(save(op,{stage:'failed',error:lease.helloError||'Target Agent did not create a native history'}));
+  if(lease.exitCode!==0||!entry?.sessionId)return view(fail(op,lease.helloError||'Target Agent did not create a native history'));
   const context=op.context||await makeContext({db,conversation:{id:op.conversationId,workspace:op.workspace},segments:op.segments,recentMessages:op.recentMessages||[],dataDir:data});
   return view(save(op,{stage:'ready',context,target:{runtime:op.targetRuntime,sessionId:entry.sessionId,entryId:entry.id}}));
  }
@@ -71,33 +81,39 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
   let op=db.get('workerNativeAgentSwitches',input.operationId);
   if(op&&(op.conversationId!==input.conversationId||!same(op.source,input.source)||op.targetRuntime!==input.targetRuntime||op.workspace!==input.workspace))throw Error('Switch identity changed');
   if(action==='native_agent_switch_preflight')return preflight(input);
+  if(action==='native_agent_switch_release'){await preflight(input);await releaseIdle(input.source);return {released:true};}
   if(action==='native_agent_switch_status')return op?status(op,input):{stage:'missing',workspace:input.workspace};
   if(action==='native_agent_switch_abort'){
-   if(!op)return {stage:'failed',settled:true};const lease=db.get('terminalSessions',op.leaseId);
+   if(!op)return view(save({id:input.operationId,...input,stage:'failed',published:false},{error:'Preparation cancelled before receipt'}));const lease=db.get('terminalSessions',op.leaseId);
    if(lease&&check(lease).processState!=='released')throw Error('Target process exit is not confirmed');
-   if(op.published)throw Error('Committed switch cannot be aborted');return view(save(op,{stage:'failed',error:'Preparation cancelled'}));
+   if(op.published)throw Error('Committed switch cannot be aborted');return view(fail(op,'Preparation cancelled'));
   }
   if(action!=='native_agent_switch_prepare')throw Error('Invalid Agent switch action');
   if(inflight.has(input.operationId))return inflight.get(input.operationId);
   if(op)return status(op,input);
+  if(db.get('terminalSessions',input.operationId)||db.get('nativeCatalogEntries',input.operationId))throw Error('Switch ID is already owned by another native session');
+  // Persist before any await: even a rejected second preflight must have a terminal, replay-safe receipt.
+  op=save({id:input.operationId,...input,leaseId:input.operationId,stage:'checking',published:false},{});
   const promise=(async()=>{
-   await preflight(input,{allowSource:false});
-   // Recheck after async path resolution before installing the reservation.
-   if(db.get('workerNativeAgentSwitches',input.operationId))return status(db.get('workerNativeAgentSwitches',input.operationId),input);
-   op=save({id:input.operationId,...input,leaseId:input.operationId,stage:'preparing',published:false},{});
    try{
-    op=save(op,{folderGrant:await prepareGrant(op)});
+    await preflight(input,{allowSource:false,claimId:op.leaseId});
+    if(db.get('workerNativeAgentSwitches',op.id)?.stage==='failed')return view(db.get('workerNativeAgentSwitches',op.id));
+    op=save(op,{stage:'preparing'});
+    op=save(op,{grantAttempted:true});const folderGrant=await prepareGrant(op);
+    if(db.get('workerNativeAgentSwitches',op.id)?.stage==='failed')return view(db.get('workerNativeAgentSwitches',op.id));
+    op=save(op,{folderGrant});
     const prepared={id:op.leaseId,entryId:op.leaseId,nodeId,projectId:`native-tui:${op.leaseId}`,runtime:op.targetRuntime,workspace:op.workspace,title:op.title||'Conversation',allowAll:true,freshSessionId:['claude','grok'].includes(op.targetRuntime)?randomUUID():null};
     await query('native_terminal_prepare',prepared);
+    if(db.get('workerNativeAgentSwitches',op.id)?.stage==='failed'){await query('terminal_release',{id:op.leaseId});return view(db.get('workerNativeAgentSwitches',op.id));}
     // The launcher uses a no-business-work initialization prompt, not the old request.
     const lease=db.get('terminalSessions',op.leaseId);db.put('terminalSessions',{...lease,nativeSwitchId:op.id});
     op=save(op,{startRequested:true});await query('native_terminal_start',{id:op.leaseId});
     return status(op,input);
    }catch(error){
     const lease=db.get('terminalSessions',op.leaseId);
-    if(!lease&&!op.startRequested)return view(save(op,{stage:'failed',error:error.message}));
+    if(!lease&&!op.startRequested)return view(fail(op,error.message));
     // Release only through the existing identity check; this never signals an active or unknown process.
-    try{await query('terminal_release',{id:op.leaseId});return view(save(op,{stage:'failed',error:error.message}));}catch{}
+    try{await query('terminal_release',{id:op.leaseId});return view(fail(op,error.message));}catch{}
     return view(save(op,{error:error.message}));
    }
   })().finally(()=>inflight.delete(input.operationId));inflight.set(input.operationId,promise);return promise;
