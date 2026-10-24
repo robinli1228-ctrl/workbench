@@ -31,9 +31,11 @@ export class FolderAccess {
    try{marker=await open(join(root,'.agent-workbench-project.json'),constants.O_RDONLY|constants.O_NOFOLLOW);const info=await marker.stat();if(!info.isFile()||info.size>16384)throw Error('Invalid project folder ownership marker');const buffer=Buffer.alloc(16385),{bytesRead}=await marker.read(buffer,0,buffer.length,0);if(bytesRead>16384)throw Error('Invalid project folder ownership marker');const owner=JSON.parse(buffer.subarray(0,bytesRead).toString('utf8'));if(`project:${owner.projectId}`!==scope)throw Error('Folder belongs to another project');}catch(error){if(error instanceof SyntaxError)throw Error('Invalid project folder ownership marker');if(error.code!=='ENOENT')throw error;}finally{await marker?.close();}
   }
   const receipt={id,nodeId:this.nodeId,scope,root,...identity(info),preparedAt:Date.now()};
-  // Reserve concurrent preparations briefly; durable ownership still comes from Home's live bindings.
+  // Reserve concurrent preparations briefly; durable ownership still comes from Home's live bindings. Sessions may share a
+  // folder (a new session, an Agent switch, switching back), so only a project binding is held off by another preparation.
+  const native=s=>String(s).startsWith('native:');
   return this.db.transaction(()=>{
-   if(!legacyNative&&this.db.list('folderGrantReceipts').some(r=>!r.cancelledAt&&r.id!==id&&r.scope!==scope&&Date.now()-r.preparedAt<900000&&(inside(r.root,root)||inside(root,r.root))))throw Error('Folder has another pending binding');
+   if(!legacyNative&&this.db.list('folderGrantReceipts').some(r=>!r.cancelledAt&&r.id!==id&&r.scope!==scope&&!(native(r.scope)&&native(scope))&&Date.now()-r.preparedAt<900000&&(inside(r.root,root)||inside(root,r.root))))throw Error('Folder has another pending binding');
    const concurrent=this.db.get('folderGrantReceipts',id);
    if(concurrent&&(concurrent.cancelledAt||concurrent.scope!==scope||concurrent.root!==root||!sameIdentity(concurrent,info)))throw Error('Folder binding request changed');
    return grantView(this.db.put('folderGrantReceipts',{...(concurrent||receipt),preparedAt:Date.now()}));

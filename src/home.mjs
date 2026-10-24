@@ -1583,7 +1583,7 @@ wss.on('connection', ws => {
       if(['source_sync_receipt','source_sync_command_ack','source_sync_watch_ack','source_sync_watch_status','source_sync_dirty'].includes(m.type)){
         void sourceSync.message(nodeId,m).catch(e=>send(ws,{type:'error',error:e.message}));return;
       }
-      if (m.type === 'ready') { ws.workerReady = true; void reconcileTerminals(nodeId); dispatch(nodeId); scheduleChat(); collectUsage(nodeId); }
+      if (m.type === 'ready') { ws.workerReady = true; void reconcileTerminals(nodeId); dispatch(nodeId); scheduleChat(); collectUsage(nodeId); nativeTurns.switches.resume(nodeId); }
       if (m.type === 'queue_reservation') { if(queuePump.onReservation(nodeId,m)){change();dispatch(nodeId);} return; }
       if (m.type === 'heartbeat') {ws.lastHeartbeatAt=Date.now();db.put('workers', { ...db.get('workers', nodeId), lastSeen: new Date().toISOString() });}
       if(m.type==='launch_deferred') {

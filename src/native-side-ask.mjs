@@ -122,6 +122,8 @@ export class SideAsks{
   Object.assign(this,{db,send,canStart,receiveFiles,data,env,limits,createClaude,createCodex,deleteThread,parentState,historyFile,clock});this.running=new Map();this.closing=new Map();
  }
  get size(){return this.running.size;}
+ /** Whether a side question about this main session is being answered; others on the device do not concern it. */
+ busyFor(runtime,sessionId){return [...this.running.values()].some(s=>s.runtime===runtime&&s.sessionId===sessionId);}
  record(sideId){return this.db.get('sideAsks',sideId);}
  event(sideId,questionId,event){this.send({type:'side_ask_event',sideId,questionId,event});}
  /** Keep failed deletions discoverable by the next sweep, including after a Worker restart. */
@@ -171,7 +173,7 @@ export class SideAsks{
    if(this.running.has(sideId)||this.closing.has(sideId))throw Error('The previous side question is still being answered');
    this.canStart(m);
    // Reserve before the first asynchronous read; a duplicate must never release this request's slot.
-   state={questionId,closing:false,session:null,prepared:new Promise(resolve=>{prepared=resolve;})};this.running.set(sideId,state);
+   state={questionId,runtime,sessionId,closing:false,session:null,prepared:new Promise(resolve=>{prepared=resolve;})};this.running.set(sideId,state);
    const record=m.record||registeredNativeSession(this.db,runtime,sessionId);
    const parent=await this.parentState(runtime,sessionId,record,this.env);
    if(state.closing)return;

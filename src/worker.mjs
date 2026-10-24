@@ -154,8 +154,10 @@ function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalS
 nativeTurns=createWorkerNativeTurns({db,send:m=>send(m),data,homeHttp:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,projectRoot:path=>projectRoot(path),
   isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots()),onQuota:receiveRuntimeQuota});
 const nativeAgentSwitches=createWorkerNativeAgentSwitch({db,nodeId:identity.nodeId,data,projectRoot,runtimes:()=>runtimes,isPaused:()=>paused||quitting,
- sourceBusy:source=>nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}),
- releaseIdle:async source=>{if(nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}))throw Error('Source Agent still has work or process state is unknown');const resident=nativeTurns.resident.get(`${source.runtime}/${source.sessionId}`);if(resident)await nativeTurns.releaseLease(source.runtime,source.sessionId,resident.message.leaseId);},
+ // Only a side question about this session holds its switch; one about another session on the device does not.
+ sourceBusy:source=>nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.busyFor(source.runtime,source.sessionId))}),
+ sideAsking:source=>Boolean(sideAsks?.busyFor(source.runtime,source.sessionId)),
+ releaseIdle:async source=>{if(nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.busyFor(source.runtime,source.sessionId))}))throw Error('Source Agent still has work or process state is unknown');const resident=nativeTurns.resident.get(`${source.runtime}/${source.sessionId}`);if(resident)await nativeTurns.releaseLease(source.runtime,source.sessionId,resident.message.leaseId);},
  query:async(action,path)=>{let response;await query({action,path,id:randomUUID()},message=>{response=message;});if(!response||response.error)throw Error(response?.error||'Native preparation returned no receipt');return response.result;},
  check:claim=>checkTerminalSession(db,{id:claim.id,nodeId:identity.nodeId,projectId:claim.projectId},join(data,'worker.sqlite'),{automatic:true}),
  prepareGrant:op=>folderAccess.local?folderAccess.prepare({operationId:op.id,scope:`native:${op.leaseId}`,path:op.workspace}):null,

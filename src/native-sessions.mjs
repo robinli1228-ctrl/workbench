@@ -52,8 +52,10 @@ const codexInput=p=>{if(p.type==='local_shell_call')return {command:p.action?.co
 const call=(callId,name,input,at)=>({role:'tool_call',callId:String(callId||''),name:String(name||'tool'),input:clipInput(input),timestamp:at});
 const result=(callId,output,failed,at)=>({role:'tool_result',callId:String(callId||''),output:clip(toolText(output),4000),failed:failed===true,timestamp:at});
 /** Conversation rows plus the tool calls and results between them; the page pairs them and shows each turn like a page turn. */
+/** The message an Agent switch creates its new session with. It is Workbench's, not the person's: history and handoffs omit it. */
+export const NATIVE_SWITCH_HELLO='Create this empty session for a Workbench Agent switch. Reply READY only. Do not use tools, read or modify files, or begin any task. Wait for the next user message.';
 function messagesFrom(rows,runtime){return rows.flatMap(row=>{
- const at=row.timestamp||null,out=[],say=(role,content,extra)=>{const text=bodyText(content);if(text)out.push({role,text:text.slice(0,12000),timestamp:at,...extra});};
+ const at=row.timestamp||null,out=[],say=(role,content,extra)=>{const text=bodyText(content);if(text&&!(role==='user'&&text.trim()===NATIVE_SWITCH_HELLO))out.push({role,text:text.slice(0,12000),timestamp:at,...extra});};
  if(runtime==='claude'){
   // Meta user rows are context Claude Code injects (image descriptions, command caveats), never something the user typed.
   const m=row.isSidechain===true||row.isMeta===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];

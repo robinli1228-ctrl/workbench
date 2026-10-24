@@ -1,6 +1,6 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {nativeSessionProjectIds} from './terminal-resume.mjs';
-import {nativeTurnRows} from './native-turns.mjs';
+import {nativeTurnRows,nativeSettingsKey} from './native-turns.mjs';
 
 const stamp=()=>new Date().toISOString();
 const uuid=/^[a-f0-9-]{36}$/;
@@ -50,12 +50,26 @@ export class NativeAgentSwitches{
   return this.get(nodeId,operationId);
  }
  async get(nodeId,id){
-  const op=this.db.get('nativeAgentSwitches',id);if(!op||op.nodeId!==nodeId)throw Error('Agent switch not found');
+  const op=this.db.get('nativeAgentSwitches',id);if(!op||op.nodeId!==nodeId)throw Object.assign(Error('Agent switch not found'),{code:'agent_switch_not_found'});
   if(this.inflight.has(id))return this.inflight.get(id);
   if(finished(op)){if(op.stage==='committed'&&!op.published&&this.online(nodeId))await this.publish(op);return this.view(this.db.get('nativeAgentSwitches',id));}
   if(!this.online(nodeId))return this.view(op);
-  const promise=this.advance(op).finally(()=>this.inflight.delete(id));this.inflight.set(id,promise);return promise;
+  const promise=this.advance(op).finally(()=>{if(this.inflight.get(id)===promise)this.inflight.delete(id);});this.inflight.set(id,promise);return promise;
  }
+ /** A person may give up a switch that has not committed. It waits for the step in flight, so a cancel never races a commit;
+  * the Worker then stops a target that is still starting and the conversation keeps its current Agent. */
+ async cancel(nodeId,id){
+  const op=this.db.get('nativeAgentSwitches',id);if(!op||op.nodeId!==nodeId)throw Error('Agent switch not found');
+  if(finished(op))return this.view(op);
+  if(!this.online(nodeId))throw Error('Device is offline');
+  const prior=this.inflight.get(id);
+  const promise=(async()=>{await prior?.catch(()=>{});const current=this.db.get('nativeAgentSwitches',id);if(finished(current))return this.view(current);
+   return this.accept(current,await this.query(current,'abort',{stop:true}));})().finally(()=>{if(this.inflight.get(id)===promise)this.inflight.delete(id);});
+  this.inflight.set(id,promise);return promise;
+ }
+ /** A Worker that connects again gets every commit acknowledgement it missed and unfinished switches move on, so a lost reply
+  * never leaves the folder locked until someone reopens the page. */
+ resume(nodeId){for(const op of this.db.list('nativeAgentSwitches'))if(op.nodeId===nodeId&&(!finished(op)||op.stage==='committed'&&!op.published))void this.get(nodeId,op.id).catch(()=>{});}
  payload(op){const c=this.db.get('nativeConversations',op.conversationId),recentMessages=[];let bytes=0;
   // Binary histories cannot supply text. Keep bounded original Home receipts as a labelled fallback, not a summary.
   for(const segment of c.segments.slice(-4).reverse())for(const turn of nativeTurnRows(this.db,{nodeId:op.nodeId,runtime:segment.runtime,sessionId:segment.sessionId,limit:16})){
@@ -88,7 +102,7 @@ export class NativeAgentSwitches{
    return await this.accept(op,await this.query(op,'status'));
   }catch(error){
    op=this.db.get('nativeAgentSwitches',op.id);
-   if(op.stage==='committed')return this.view(op);
+   if(finished(op))return this.view(op);
    if(op.stage==='preflight'){
     this.db.transaction(()=>{this.update(op,{stage:'failed',error:error.message});const c=this.db.get('nativeConversations',op.conversationId);this.db.put('nativeConversations',{...c,pendingSwitchId:null});});
    }else this.update(op,{stage:'reconciling',error:error.message});
@@ -108,6 +122,9 @@ export class NativeAgentSwitches{
     this.db.put('nativeConversations',{...c,revision:c.revision+1,currentSegmentId:segment.id,segments:[...c.segments,segment],pendingSwitchId:null});
     this.db.put('nativeCatalogEntries',{id:target.entryId,nodeId:op.nodeId,...target,workspace:c.workspace,title:c.title,origin:'dialog',status:'ready',hasHistory:true,previewAvailable:true,createdAt:segment.createdAt});
     if(result.folderGrant){const scope=`native:${target.entryId}`,grant=result.folderGrant;if(grant.nodeId!==op.nodeId||grant.root!==c.workspace||grant.scope!==scope)throw Error('Target folder grant changed');this.db.put('folderGrants',{id:`${op.nodeId}:${scope}`,nodeId:op.nodeId,scope,status:'active',grant});}
+    // The conversation keeps pushing with the Git account it was bound to; model and effort belong to the old CLI.
+    const from=this.db.get('nativeSessionSettings',nativeSettingsKey(op.nodeId,op.source.runtime,op.source.sessionId)),key=nativeSettingsKey(op.nodeId,target.runtime,target.sessionId);
+    if(from?.hostingAccountId&&!this.db.get('nativeSessionSettings',key)?.hostingAccountId)this.db.put('nativeSessionSettings',{...this.db.get('nativeSessionSettings',key),id:key,nodeId:op.nodeId,runtime:target.runtime,sessionId:target.sessionId,hostingAccountId:from.hostingAccountId,repoUrl:from.repoUrl||null,updatedAt:stamp()});
     this.update(op,{stage:'committed',target,contextId:segment.contextId,error:null});
    });
    await this.publish(this.db.get('nativeAgentSwitches',op.id));

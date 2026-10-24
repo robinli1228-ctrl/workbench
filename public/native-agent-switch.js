@@ -21,7 +21,14 @@ export function createNativeAgentSwitchUI({api,getState,onCommitted,onError,t=te
  function schedule(entry){clearTimeout(entry.timer);if(disposed||entry.polls>=60)return;entry.timer=setTimeout(()=>void poll(entry),1000);}
  async function poll(entry){if(disposed||!pending.has(identity(entry.source)))return;entry.polls++;
   try{await apply(entry,await api(`/api/native-sessions/${encodeURIComponent(entry.source.nodeId)}/agent-switch/${encodeURIComponent(entry.id)}`));}
-  catch(error){entry.message=error.message;schedule(entry);onChange();}}
+  catch(error){
+   // Home never received this switch (its request was lost): nothing was reserved, so the input unlocks. A switch Home did
+   // reserve still comes back through the conversation's pending ID.
+   if(error.code==='agent_switch_not_found'){clearTimeout(entry.timer);pending.delete(identity(entry.source));remember(identity(entry.source),null);onChange();return;}
+   entry.message=error.message;schedule(entry);onChange();}}
+ async function cancel(entry){entry.cancelling=true;onChange();
+  try{await apply(entry,await api(`/api/native-sessions/${encodeURIComponent(entry.source.nodeId)}/agent-switch/${encodeURIComponent(entry.id)}`,{method:'DELETE'}));}
+  catch(error){entry.message=error.message;onError(error.message);}finally{entry.cancelling=false;onChange();}}
  async function choose(item,targetRuntime){
   if(busy(item)||getState().busy)return;
   const entry={id:crypto.randomUUID(),source:{...item,sessionId:item.sessionId||item.id},polls:0,message:'Switching Agent…'};pending.set(identity(item),entry);remember(identity(item),{id:entry.id});onChange();
@@ -55,7 +62,8 @@ export function createNativeAgentSwitchUI({api,getState,onCommitted,onError,t=te
   root.title=t(entry?.message||(!worker?.capabilities?.nativeAgentSwitch?'Upgrade this Worker to switch Agent':item.roleBinding?'Use the group role controls to switch this Agent':occupied?'Finish replies, questions and queued messages before switching Agent':'Switch Agent'));
   select.onclick=()=>openPicker(item,worker);root.append(select);
   if(entry){const indicator=document.createElement('span');indicator.className='native-agent-switch-status';indicator.setAttribute('role','status');indicator.textContent=t('Switching Agent…');root.append(indicator);
-   if(entry.polls>=60){const retry=document.createElement('button');retry.type='button';retry.textContent=t('Check status');retry.onclick=()=>{entry.polls=0;void poll(entry);};root.append(retry);}}
+   if(entry.polls>=60){const retry=document.createElement('button');retry.type='button';retry.textContent=t('Check status');retry.onclick=()=>{entry.polls=0;void poll(entry);};root.append(retry);}
+   const stop=document.createElement('button');stop.type='button';stop.textContent=t('Cancel switch');stop.disabled=Boolean(entry.cancelling);stop.onclick=()=>void cancel(entry);root.append(stop);}
   return root;
  }
  return {render,busy,dispose(){disposed=true;for(const entry of pending.values())clearTimeout(entry.timer);dialog.close();dialog.remove();}};
