@@ -1,5 +1,6 @@
 import {createHomeNativeTurns} from './native-turns-home.mjs';
 import {mergeReportedRuntimes,expireRuntimeQuota} from './runtime-quota.mjs';
+import {noteRoleCompaction,dueRoleCompactions,recordRoleCompaction} from './role-compaction.mjs';
 import {createRemoteAccessSettings} from './remote-access-settings.mjs';
 import http from 'node:http';
 import { sendBufferedResponse } from './http-response.mjs';
@@ -429,6 +430,7 @@ function scheduleChatTurn() {
     }catch(error){chatScheduleError(error,request.id);}
   }
   try {if(proactiveFollowup.tick())change();}catch(error){console.error('Proactive follow-up:',error.message);}
+  try {if(dueRoleCompactions(db,{online:id=>online(id)&&sockets.get(id).workerReady,send:(nodeId,payload)=>send(sockets.get(nodeId),payload)}))change();}catch(error){console.error('Role compaction:',error.message);}
   for(const task of db.chatTasks(['ready']))prepareChatContext(task);
   const scheduled = rooms.schedule(id => online(id) && sockets.get(id).workerReady);
   for (const nodeId of scheduled.nodes) dispatch(nodeId);
@@ -1602,6 +1604,7 @@ wss.on('connection', ws => {
         if(usage.active+usage.organizer+usage.terminal<Math.min(desiredCapacity,appliedCapacity))for(const c of db.list('commands').filter(c=>c.nodeId===nodeId&&!c.acked&&c.capacityDeferred))db.put('commands',{...c,lastSentAt:null});
         dispatch(nodeId);scheduleChat();change();
       }
+      if(m.type==='role_session_compacted'){if(recordRoleCompaction(db,nodeId,m))change();}
       if(m.type==='warm_sessions') {
         db.put('workers',{...db.get('workers',nodeId),warmSessions:Array.isArray(m.sessions)?m.sessions.slice(0,64):[]});change();
       }
@@ -1639,6 +1642,8 @@ wss.on('connection', ws => {
           if (m.event.type === 'delivery') deliveries.accept(current.id, m.event.payload);
           if(!discussions.finishRun(current.id).handled)calls.finish(current.id);
           rooms.complete(current);
+          // A role whose work has ended with a large context is marked for compaction in its retained process once it stays idle.
+          if(m.event.type==='status')noteRoleCompaction(db,db.get('runs',current.id),{online});
         });
         send(ws, { type: 'ack', id: m.event.id });
         if(['message','tool','usage','context_usage'].includes(m.event.type))outputChanged();else change();

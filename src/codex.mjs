@@ -176,6 +176,8 @@ export class CodexSession {
     this.shutdown();
   }
   request(method, params) {
+    // A compaction turn (control 'compact') starts thread/compact/start instead of a prompt; it completes as an ordinary turn.
+    if(method==='turn/start'&&this.control==='compact')return this.request('thread/compact/start',{threadId:params.threadId}).then(result=>({turn:{id:result?.turn?.id??this.turnId}}));
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(tr('codex.codexTimedOut', { method }))); }, 45000);

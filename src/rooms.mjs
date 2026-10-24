@@ -269,7 +269,9 @@ export class Rooms {
         this.db.put('tasks', { ...task, conversationId, origin: 'chat', sourceMessageId: clientMessageId, roleId: role.id, roleSnapshot: role,
           sourceRunId: delivery || !reuseSource ? null : source.id, deliveryId: delivery?.id || null,
           quoteMessageId:quote?.id||null,
-          attachments: attachments.length ? attachments : (quote?.attachments?.length ? quote.attachments : source?.attachments || []), schedulingTargets,schedulingRoster,reportRequired:true,scheduledJobId,
+          attachments: attachments.length ? attachments : (quote?.attachments?.length ? quote.attachments : source?.attachments || []), schedulingTargets,schedulingRoster,
+          // A person's @ is answered in the chat; a structured report is asked only for scheduled jobs and cross-device deliveries.
+          reportRequired:Boolean(scheduledJobId||delivery),scheduledJobId,
           requiresCoordination: Boolean(delivery), broadcast: broadcast || undefined });
         return task.id;
       });
