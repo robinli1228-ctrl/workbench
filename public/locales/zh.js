@@ -1255,6 +1255,8 @@ export default {
   'This project has no scheduled jobs yet.': '这个项目还没有定时任务。',
   'No scheduled jobs yet.': '尚无定时任务。',
   'Paused': '已暂停',
+  'Pause the queue: keep these messages after the current replies end': '暂停发送：当前回复结束后不自动发出',
+  'Resume the queue': '继续发送',
   '{v} · Next {v2} · Last {v3}': '{v} · 下次 {v2} · 上次 {v3}',
   'new anomaly; supervisor will be notified when idle': '新异常待主管空闲后通知',
   'new anomaly found': '发现新异常',

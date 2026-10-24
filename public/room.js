@@ -179,7 +179,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
   // The displayed queue owns these tasks until its next render, including while a drag is active.
   let displayedTaskIds=new Set();
-  const commands=new Map(),pending=new Set(),steeringPending=new Set(),steeringErrors=new Map();let currentProject=null,lastData=null,optimistic=null;
+  const commands=new Map(),pending=new Set(),steeringPending=new Set(),steeringErrors=new Map();let currentProject=null,lastData=null,optimistic=null,pausing=false;
   const queueKey=task=>Number.isFinite(task.queueOrder)?task.queueOrder:(Date.parse(task.createdAt)||0);
   // Long press reorders waiting items; Home stores the order and the scheduler runs them in that order.
   const order=createListOrder({container:list,scope:()=>`queue:${currentProject||''}`,onEnd:()=>{if(lastData){view.update(lastData,currentProject);onUpdate();}},onError:setError,
@@ -211,7 +211,19 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     const protectedRole=task=>waits.find(w=>!w.released&&w.roleId===task.roleId&&w.conversationId===(task.conversationId||task.projectId));
     panel.hidden=!tasks.length;list.replaceChildren();
     const title=create('span','message-queue-title',t('Queue · {v}', { v: tasks.length }));
-    summary.replaceChildren(title);
+    // Pause/resume at the right of the title, as on the Sessions queue: paused messages wait after the running replies end.
+    const paused=Boolean(data.chatQueuePaused)&&tasks.length>0,head=[title];panel.classList.toggle('is-paused',paused);
+    if(paused)head.push(create('span','message-queue-paused',t('Paused')));
+    if(data.capabilities?.queuePause&&tasks.length){
+      const toggle=create('button',`icon-button message-queue-pause${paused?' is-paused':''}`),label=t(paused?'Resume the queue':'Pause the queue: keep these messages after the current replies end');
+      toggle.type='button';toggle.innerHTML=UI_ICON[paused?'play':'pause'];toggle.querySelector('svg')?.setAttribute('aria-hidden','true');toggle.title=label;toggle.setAttribute('aria-label',label);toggle.disabled=pausing;
+      // Inside <summary>: the click must not fold the queue.
+      toggle.onclick=async e=>{e.preventDefault();e.stopPropagation();pausing=true;toggle.disabled=true;
+        try{await api(`/api/projects/${encodeURIComponent(projectId)}/queue/pause`,{method:'POST',json:{paused:!paused,conversationId:conversation}});await refreshState({quiet:true});}
+        catch(error){setError(error.message);}finally{pausing=false;if(lastData)view.update(lastData,currentProject);}};
+      head.push(toggle);
+    }
+    summary.replaceChildren(...head);
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
       if(data.capabilities?.queueOrder&&!task.steering&&!steeringPending.has(task.id)){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
