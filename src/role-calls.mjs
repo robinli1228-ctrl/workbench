@@ -159,11 +159,11 @@ export class RoleCalls {
         ...(continued?.callMessageId?{callMessageId:continued.callMessageId}:{}),
         // Publication is independent of charging: necessary continuations retain the original private boundary, including legacy requests.
         explicitPublish:Boolean(sourceRequest?.explicitPublish||sourceRequest?.automaticPropagation||sourceRequest?.continuationBatchId||sourceTask?.explicitPublish||sourceTask?.automaticPropagation||sourceTask?.collaborationBatchId),
-        automaticPropagation: input.kind !== 'continuation' && Boolean(sourceRequest?.collaborationCycleId),
+        automaticPropagation: input.kind !== 'continuation' && !normalized.transferredFrom && Boolean(sourceRequest?.collaborationCycleId),
         sourceInputs:continued?.sourceInputs||[],
         ...sourceConflictContext(continued),
         consultRound:continued ? (continued.consultRound||0)+(['timeout','blocked'].includes(input.wakeReason)?0:1) : 0,
-        scheduledJobId:input.scheduledJobId||continued?.scheduledJobId||this.db.get('coordinationRequests',normalized.parentRequestId||'')?.scheduledJobId||null,
+        scheduledJobId:input.scheduledJobId||continued?.scheduledJobId||this.db.get('coordinationRequests',normalized.parentRequestId||normalized.transferredFrom||'')?.scheduledJobId||null,
         attachments: input.attachments || continued?.attachments || [], execution:input.execution || continued?.execution || null,
         rootRequestId, targetSnapshot: continued?.targetSnapshot || { ...role, revision: role.revision || 1 },
         status: input.kind === 'handoff' ? 'waiting_delivery' : 'queued', currentRunId: null,

@@ -177,6 +177,19 @@ test('two roles may reuse a reminder requestId, and a working role has a reminde
   const timers = new TimerAgentActions(e.db, jobs), schedule = { type: 'once', onceAt: '2026-10-25T09:00:00+08:00' };
   for (const roleId of ['b', 'c']) timers.execute({ id: `r-${roleId}`, projectId: P, roleId, roleSnapshot: e.db.get('roles', roleId) }, 'create', { requestId: 'remind-1', name: 'x', description: 'x', schedule });
   assert.deepEqual(saved.map(v => v.roleId), ['b', 'c']);
-  for (let i = 0; i < 10; i++) e.db.put('scheduledJobs', { id: `own-${i}`, projectId: P, roleId: 'b', enabled: true });
-  assert.throws(() => timers.execute({ id: 'r-b', projectId: P, roleId: 'b', roleSnapshot: e.db.get('roles', 'b') }, 'create', { requestId: 'remind-2', name: 'x', description: 'x', schedule }), /tooManyReminders|active reminders/);
+  const builder = { id: 'r-b', projectId: P, roleId: 'b', roleSnapshot: e.db.get('roles', 'b') };
+  for (let i = 0; i < 9; i++) e.db.put('scheduledJobs', { id: `own-${i}`, projectId: P, roleId: 'b', enabled: true, nextRunAt: '2026-10-26T00:00:00.000Z' });
+  e.db.put('scheduledJobs', { id: 'fired', projectId: P, roleId: 'b', enabled: true, nextRunAt: null });
+  e.db.put('scheduledJobs', { id: 'own-9', projectId: P, roleId: 'b', enabled: true, nextRunAt: '2026-10-26T00:00:00.000Z' });
+  assert.throws(() => timers.execute(builder, 'create', { requestId: 'remind-2', name: 'x', description: 'x', schedule }), /tooManyReminders|active reminders/);
+  assert.equal(timers.execute(builder, 'create', { requestId: 'remind-1', name: 'x', description: 'x', schedule }).roleId, 'b', 'a retried create still answers at the limit');
+});
+
+test('migration, deployment and production cannot be stages of an execution plan', async () => {
+  const { ExecutionPlans } = await import('../src/execution-plans.mjs');
+  const e = env(), plans = new ExecutionPlans(e.db, e.calls, async () => null);
+  e.db.put('projects', { ...e.db.get('projects', P), supervisorRoleId: 'sup' });
+  assert.throws(() => plans.submit(e.db.get('runs', 'r1'), { id: 'p1', reason: 'ship it', stages: [
+    { title: 'review', mode: 'serial', members: [{ role: 'Checker', purpose: 'audit', text: 'review' }] },
+    { title: 'deploy', mode: 'serial', members: [{ role: 'Builder', purpose: 'deploy', text: 'deploy' }] }] }), /exclusiveStageOutsidePlan|cannot be in an execution plan/);
 });

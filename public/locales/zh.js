@@ -470,7 +470,6 @@ export default {
   'Pending execution': '待执行',
   'Execution error': '执行异常',
   'Reviews collected; see replies and reports': '审核结果已收集，请查看回复',
-  'Stage done; waiting for the supervisor to accept it': '本段已完成，等总管认可后再继续',
   'Execution finished; see the reply and report': '执行已完成，请查看回复和报告',
   'Waiting for stop confirmation': '等待停止确认',
   'Waiting for user confirmation': '等待用户确认',

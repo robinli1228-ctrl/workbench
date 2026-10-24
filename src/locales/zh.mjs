@@ -357,10 +357,10 @@ ask 接受后马上结束回合释放容量；已经提交业务报告则结束�
 格式：{"id":"稳定编号","reason":"为什么这样安排","stages":[{"title":"独立审核","mode":"serial","members":[{"role":"角色名","purpose":"audit","text":"具体要求","writeRepositories":[]}]}]}
 mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migration/deploy/production。顶层 repositories 可列出本次实际需要读写的仓库 key，省略则全部准备；角色权限不改变。
 审核默认依次执行，每位审核者一个串行阶段；仅在用户明确要求时安排独立并行审核。不同仓库开发可并行，writeRepositories 填仓库 key；同一模块并行开发必须紧跟一个单人 merge 阶段再测试。计划、开发、测试各占独立阶段；数据库迁移、部署、生产操作只能串行独占。
-每段完成后计划停下，结果交回你核对；认可后再用 wb schedule 提交剩余阶段。failurePolicy 接口默认 stop，依赖步骤失败就停止。组织多位角色对同一输入独立只读审核时，应单独成批，并显式选择 failurePolicy:"collect_reviews"，不要混入后续修改步骤。此模式仅限全员 purpose=audit 且无 writeRepositories：确认执行已结束后，临时服务错误（如503、明确网络连接错误）保存原始错误并继续下一位，不自动重试；输出超限另记“结果不完整”，同样保留缺失并继续独立审核，不能当作临时服务故障或审核通过。显式否定意见也继续收集。权限/登录问题、未知错误、用户取消、等待用户回答、版本异常或进程状态不明仍停止，不自行换模型或绕过。测试/计划角色只读审查设计也用 audit；真正执行测试、修改文档、开发、合并、部署必须另排严格计划，不得混入 collect_reviews。
+一段的派活都成功后自动进入下一段；迁移、部署、生产操作不能放进计划，等你核对结果后单独派。failurePolicy 接口默认 stop，依赖步骤失败就停止。组织多位角色对同一输入独立只读审核时，应单独成批，并显式选择 failurePolicy:"collect_reviews"，不要混入后续修改步骤。此模式仅限全员 purpose=audit 且无 writeRepositories：确认执行已结束后，临时服务错误（如503、明确网络连接错误）保存原始错误并继续下一位，不自动重试；输出超限另记“结果不完整”，同样保留缺失并继续独立审核，不能当作临时服务故障或审核通过。显式否定意见也继续收集。权限/登录问题、未知错误、用户取消、等待用户回答、版本异常或进程状态不明仍停止，不自行换模型或绕过。测试/计划角色只读审查设计也用 audit；真正执行测试、修改文档、开发、合并、部署必须另排严格计划，不得混入 collect_reviews。
 派发独立审核时，明确本轮先提交独立意见，由你收齐后组织讨论；允许按需核实事实，不按角色名称推定作者或把审核默认转为开发返工。
 独立审核只读取共同输入，不把其他审核结果作为必须通过的前提。收齐成功、否定和缺失后先汇总，再按有效意见单独安排修改；不得把缺失审核视为通过。每个阶段都保留用户原始要求与限制。隔离或跨设备 Git 交付需要已授权的提交和原有交付审批，未提交文件不会自动传送。用户禁止提交时，不得要求 commit 或 wb deliver；沿用已支持的同设备串行共享工作区流程，或说明交付前提，不替用户修改限制。
-提交成功后立即结束当前回合，平台已登记等待，每段结束后唤醒你核对。不轮询、不重复调用、不额外 wb wait。附件会沿安排传递。并行受设备容量约束。
+提交成功后立即结束当前回合，平台已登记等待，全部阶段结束后自动唤醒你汇总。不轮询、不重复调用、不额外 wb wait。附件会沿安排传递。并行受设备容量约束。
 平台可能因脏目录/非 Git 退回同设备串行，跨设备版本不一致会阻塞，必须如实说明。调用其他角色不要用群聊文字 @ 代替 wb 工具。`,
   'executionPlans.onlyProjectSupervisorCanApprove': '只有项目主管可以批准执行安排',
   'executionPlans.stablePlanIdSchedulingReason': '需要稳定计划编号和调度理由',
@@ -1441,7 +1441,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'wbCli.wbScheduleJsonSupervisorSubmits': `{HELP}
 
 总管专用：
-wb schedule '<JSON>'  可选的分阶段执行计划，只在用户或你明确要分阶段时用；默认整件转交给一个负责人。一段的派活都成功后自动进入下一段，全部结束后结果交回你判断。failurePolicy 默认 stop；几位角色只读独立审核可单独一段并选 collect_reviews（成员都是 audit，不写仓库）。权限问题、未知错误、取消或版本异常会停下，不自动重试。`,
+wb schedule '<JSON>'  可选的分阶段执行计划，只在用户或你明确要分阶段时用；默认整件转交给一个负责人。一段的派活都成功后自动进入下一段，全部结束后结果交回你判断；中间没有人核对结论，所以迁移、部署、生产操作不能放进计划，要等你核对后单独派。failurePolicy 默认 stop；几位角色只读独立审核可单独一段并选 collect_reviews（成员都是 audit，不写仓库）。权限问题、未知错误、取消或版本异常会停下，不自动重试。`,
   'wbCli.invalidDuplicateWbCallParameters': 'wb call 参数无效或重复（仅 --role 可以重复）',
   'wbTools.invalidCallTargets': '请提供一个 role 或非空的 roles 角色名称/ID 数组，不能同时提供。',
   'wbCli.unknownCommand': `未知命令 {cmd}
@@ -1901,5 +1901,5 @@ wb setup propose '<JSON>'  提交配置卡片，等用户确认`,
   'timerAgent.tooManyReminders': `你已经有 {count} 个启用的提醒，先删掉或暂停不用的再建。`,
   'scheduledJobs.reminderText': `定时提醒「{name}」：{text}`,
   'scheduledJobs.reminderSender': `定时提醒`,
-  'executionPlans.awaitingAcceptance': `上一段已完成，等总管核对结果；认可后由总管用 wb schedule 提交剩余阶段`,
+  'executionPlans.exclusiveStageOutsidePlan': `迁移、部署、生产操作不能放进执行计划：计划按派活完成自动推进，没有人核对前面的结果。先跑完前面的阶段，你核对后再单独派这一步。`,
 });

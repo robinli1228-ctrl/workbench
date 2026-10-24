@@ -49,7 +49,6 @@ export class TimerAgentActions {
     if (action === 'create' && values.roleId === undefined) values.roleId = run.roleId;
     if (action === 'update' && values.roleId === undefined && existing) values.roleId = existing.roleId;
     if (!supervisor && (existing && existing.roleId !== run.roleId || values.roleId !== undefined && values.roleId !== run.roleId)) throw new Error(tr('timerAgent.ownRemindersOnly'));
-    if (!supervisor && action === 'create' && this.db.list('scheduledJobs').filter(job => job.projectId === run.projectId && job.roleId === run.roleId && job.enabled !== false).length >= MAX_OWN_REMINDERS) throw new Error(tr('timerAgent.tooManyReminders', { count: MAX_OWN_REMINDERS }));
     if (['create', 'update'].includes(action) && values.roleId && this.db.get('roles', values.roleId)?.projectId !== run.projectId) throw new Error(tr('timerAgent.onlyRolesFromCurrentProject'));
     if (this.db.get('settings', 'main')?.paused) throw new Error(tr('timerAgent.remoteExecutionPaused'));
     return this.db.transaction(() => {
@@ -61,6 +60,8 @@ export class TimerAgentActions {
         if (prior.fingerprint !== fingerprint) throw new Error(tr('timerAgent.requestidParameterConflict'));
         return prior.result;
       }
+      // Counted after the retry lookup so a retried create still answers; fired one-time reminders no longer count.
+      if (!supervisor && action === 'create' && this.db.list('scheduledJobs').filter(job => job.projectId === run.projectId && job.roleId === run.roleId && job.enabled !== false && job.nextRunAt).length >= MAX_OWN_REMINDERS) throw new Error(tr('timerAgent.tooManyReminders', { count: MAX_OWN_REMINDERS }));
       let result;
       if (action === 'create' || action === 'update') result = this.jobs.save(run.projectId, {...values,conversationId:conversationIdOf(run)});
       else if (action === 'pause' || action === 'resume') result = this.jobs.pause(run.projectId, values.id, action === 'resume', values.revision);
