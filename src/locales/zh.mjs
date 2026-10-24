@@ -409,7 +409,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'executionPlans.crossDeviceProjectContainsUncommitted': '跨设备项目含未提交内容或非 Git 目录，请先完成 Git 交付',
   'executionPlans.repositoryVersionsDifferAcrossDevices': '设备仓库版本不一致',
   'executionPlans.directoryHasUncommittedContentNot': '目录有未提交内容或不是 Git 仓库，改为同设备串行，保留当前输入',
-  'executionPlans.waitingForGitDeliveryConfirmation': '等待 Git 交付确认；批准后自动接收固定版本并继续本阶段',
+  'executionPlans.waitingForGitDeliveryConfirmation': '等待 Git 交付推送完成；推送后自动接收固定版本并继续本阶段',
   'executionPlans.gitDeliveryBlockedCheckDelivery': 'Git 交付受阻，请检查交付详情；后续步骤未启动',
   'executionPlans.projectDirectoryForExclusiveOperation': '独占操作的项目目录未对齐前序版本，请先人工确认合并/交付',
   'executionPlans.previousStageResultsContextNot': `
@@ -1809,7 +1809,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 仅已启用同步、纳入范围的绑定目录按当前策略同步，可含未提交修改和获准的 Git-ignored 产物；隔离 worktree 不自动纳入。以实际范围、排除规则和回执为准，不保证所有文件或固定时限。依赖他端文件前用 wb sync status 核对范围、冲突、待处理批次和回执；项目状态不证明单文件一致，用 wb sync status '{"path":"相对路径"}' 核对各端 SHA256 和观察时间：你依赖的那一端为 consistent 才算已到，in_transit、conflict 或 unknown（含设备离线）如实说明，不说成没到。同步不是冻结快照，输入变化须重查。
 - 改绑定目录前用 wb discuss peers 协调负责文件和重叠任务；peers 不是文件锁，不同时派两端改同一文件。
 - 共享文档和小文件放获准且纳入同步的绑定项目 .workbench/docs，交接写设备、路径、哈希并确认接收；未共享、排除或离线时如实说明，不泄露未公开审核材料。
-- 正式审核、测试验收等固定版本工作用已提交 commit 交付（wb deliver 或排程自动交付，勿重复），写完整 SHA，保留批准并接收核对后执行；同步文件只用于临时查看和快检，不代替提交或正式验收。本设备做不了的交目标设备角色，目标不可用就说明阻塞，不改派冒充完成。
+- 正式审核、测试验收等固定版本工作用已提交 commit 交付（wb deliver 或排程自动交付，勿重复），写完整 SHA；交付自动推送，接收核对后执行；同步文件只用于临时查看和快检，不代替提交或正式验收。本设备做不了的交目标设备角色，目标不可用就说明阻塞，不改派冒充完成。
 - 整套测试或大型编译交执行跑属于开发阶段的自测，不算独立测试。较长的清单或证据用 "files" 随 wb report 附上，别人用 wb report file 读取。`,
   'wbTools.helpErrors': `工具报错以 [code] 开头：run_reconciling、home_disconnected 表示请求没有执行，用同一请求编号重试；run_stopping、run_ended、paused 表示本次已结束，本轮不再重试。`,
   'minimal.identity': '当前通过 Workbench 执行，角色为 {name}（角色 ID：{roleId}）。可按需使用协作工具，通过 wb help 发现入口。',

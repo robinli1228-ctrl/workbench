@@ -102,7 +102,10 @@ export class Deliveries {
     return this.db.put('deliveries', { id, projectId: run.projectId, sourceRunId: run.id, sourceNodeId: run.nodeId,
       ...(items ? {items} : {}),
       repositoryId: run.repositoryId || null, commit: input.commit, baseCommit: run.baseCommit || null, repoUrl: repositoryUrl, ref: `refs/heads/agent-delivery/${id}`,
-      summary: input.summary.trim(), status: 'waiting_source', fingerprint, approvedAt: null, createdAt: new Date().toISOString() });
+      summary: input.summary.trim(), status: 'waiting_source', fingerprint,
+      // Cross-device deliveries are confirmed as they are registered: only this commit goes to its own agent-delivery/<id>
+      // branch (never merged or deployed), so the roles on other devices get it without waiting for a person.
+      approvedAt: new Date().toISOString(), approvedBy: 'auto', createdAt: new Date().toISOString() });
   }
 
   approve(projectId, id) {
@@ -115,7 +118,7 @@ export class Deliveries {
   schedule() {
     const nodes = new Set();
     if (this.db.get('settings', 'main')?.paused) return [];
-    for (const r of this.db.list('deliveries').filter(d => ['waiting_source', 'awaiting_approval'].includes(d.status))) {
+    for (let r of this.db.list('deliveries').filter(d => ['waiting_source', 'awaiting_approval'].includes(d.status))) {
       const run = this.db.get('runs', r.sourceRunId);
       const request = run?.requestId ? this.db.get('coordinationRequests', run.requestId)
         : this.db.list('coordinationRequests').find(c => c.currentRunId === r.sourceRunId);
@@ -124,7 +127,8 @@ export class Deliveries {
         this.db.put('deliveries', { ...r, status: 'blocked', error: tr('gitDelivery.sourceRunDidNotSucceed') }); continue;
       }
       if (run.status !== 'succeeded') continue;
-      if (!r.approvedAt) { if (r.status !== 'awaiting_approval') this.db.put('deliveries', { ...r, status: 'awaiting_approval' }); continue; }
+      // One registered before deliveries were confirmed automatically is confirmed now.
+      if (!r.approvedAt) r = this.db.put('deliveries', { ...r, approvedAt: new Date().toISOString(), approvedBy: 'auto' });
       const project = this.db.get('projects', r.projectId);
       const repositoryUrl = r.repositoryId ? this.db.get('repositories', r.repositoryId)?.repoUrl : project?.repoUrl;
       if (r.items ? r.items.some(item=>this.db.get('repositories',item.id)?.repoUrl !== item.repoUrl) : repositoryUrl !== r.repoUrl) { this.db.put('deliveries', { ...r, status: 'blocked', error: tr('gitDelivery.projectRepositoryConfigurationHasChanged') }); continue; }
