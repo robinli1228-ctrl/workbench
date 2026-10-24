@@ -47,6 +47,8 @@ export async function inspectCodex() {
     proc.stdin.write(`${JSON.stringify({ method: 'initialized' })}\n`);
     const auth = await call('account/read', { refreshToken: false });
     result.authReady = !!auth.account || auth.requiresOpenaiAuth === false;
+    // A real answer saying there is no account is a definite sign-out (unlike a probe that failed or timed out).
+    if(!result.authReady)result.authState='signed_out';
     result.quotaIdentity=quotaIdentity('codex',auth.account);
     result.authType = auth.account?.type || (auth.requiresOpenaiAuth === false ? 'provider' : 'none');
     let cursor = null; const seen = new Set();
@@ -334,11 +336,13 @@ export async function inspectClaude() {
     } catch {}
     if (parsed && typeof parsed === 'object') {
       authReady = parsed.loggedIn === true || parsed.authenticated === true;
+      if (!authReady) result.authState = 'signed_out';
       result.quotaIdentity=authReady?quotaIdentity('claude',parsed):null;
       if (parsed.subscriptionType) result.authType = String(parsed.subscriptionType);
       else if (parsed.authMethod) result.authType = String(parsed.authMethod);
     } else {
       authReady = /logged[\s-]?in|authenticated|subscription/i.test(text) && !looksLoggedOut(text);
+      if (looksLoggedOut(text)) result.authState = 'signed_out';
     }
   } catch (e) {
     const text = `${e.message || ''}\n${e.stdout || ''}\n${e.stderr || ''}`;
@@ -346,7 +350,7 @@ export async function inspectClaude() {
     let signedOut = false;
     try { const out = String(e.stdout || ''), start = out.indexOf('{'), end = out.lastIndexOf('}'); signedOut = start >= 0 && end > start && JSON.parse(out.slice(start, end + 1)).loggedIn === false; } catch {}
     if (signedOut || looksLoggedOut(text)) {
-      return { ...result, authReady: false, reason: tr('runtimeProbe.signInWithClaudeOn') };
+      return { ...result, authReady: false, authState: 'signed_out', reason: tr('runtimeProbe.signInWithClaudeOn') };
     }
     // A check that timed out or was killed does not know the account: it is retried, and the saved quota is kept meanwhile.
     if (checkInterrupted(e)) { result.authUnknown = true; result.transient = true; result.authCheckError = e.killed || e.signal || e.code === 'ETIMEDOUT' ? tr('runtimeProbe.cliStatusProbeTimedOut') : String(e.code); }

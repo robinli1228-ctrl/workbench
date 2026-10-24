@@ -15,6 +15,9 @@ import { renderPermissionScope, permissionScopeValue } from './permission-scope.
 import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl } from './elapsed.js';
+import {classifyStep,stepTitle} from './native-transcript.js';
+import stepZh from './locales/native-takeover-zh.js';
+import { getLanguage } from './i18n.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
 import { pastesAsFile, pastedTextName } from './pasted-text.js';
 
@@ -641,6 +644,17 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   function liveText(runId) {
     return liveByRun.get(runId)?.text || '';
   }
+  // Step verbs ("Read", "Ran") share the Sessions page's own translations.
+  const stepT=(text,params)=>{const own=getLanguage()==='zh'?stepZh[text]:undefined;return own===undefined?t(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
+  /** What a running role is doing right now, from its live events: the latest tool still in progress, else '' (thinking or
+   * writing). A tool's later events (its result) carry the same id, so a finished tool no longer counts. */
+  function liveStep(events) {
+    const tools=new Map();
+    for(const e of events)if(e.type==='tool'&&e.payload?.item?.id){const prior=tools.get(e.payload.item.id);tools.delete(e.payload.item.id);tools.set(e.payload.item.id,{...prior,...e.payload.item,name:e.payload.item.name||prior?.name,input:e.payload.item.input??prior?.input,arguments:e.payload.item.arguments??prior?.arguments});}
+    // Codex and others mark a running item inProgress; Claude's tool_use has no status until its tool_result arrives.
+    const running=[...tools.values()].reverse().find(item=>item.status==='inProgress'||item.type==='tool_use'&&!item.status);
+    if(!running)return '';const {verb,target}=stepTitle(classifyStep(running,'running'),stepT),text=`${verb} ${target}`.trim();return text.length>36?`${text.slice(0,35)}…`:text;
+  }
 
   async function pullLive(runId) {
     if (!runId || liveFetching.has(runId)) return;
@@ -649,11 +663,11 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const prior=liveByRun.get(runId);
       const result = await api(`/api/runs/${encodeURIComponent(runId)}/events?after=${prior?.seq || 0}`);
       const events = [...new Map([...(prior?.events || []),...(Array.isArray(result?.events)?result.events:[])].map(e=>[e.seq,e])).values()].sort((a,b)=>a.seq-b.seq);
-      const text = extractLiveText(events);
-      const prev = liveByRun.get(runId)?.text || '';
-      liveByRun.set(runId, { text, events, seq:events.at(-1)?.seq || 0, at: Date.now() });
+      const text = extractLiveText(events), step = liveStep(events);
+      const prev = liveByRun.get(runId);
+      liveByRun.set(runId, { text, step, events, seq:events.at(-1)?.seq || 0, at: Date.now() });
       updateLiveFullscreen();
-      if (text !== prev && projectId) renderMessages();
+      if ((text !== (prev?.text || '') || step !== (prev?.step || '')) && projectId) renderMessages();
     } catch {
       if(fullscreenView?.runId===runId)fullscreenView.heading.textContent='Live reply · connection unavailable; content already received is kept';
     } finally { liveFetching.delete(runId); }
@@ -1000,8 +1014,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     if (run) actions.push(iconAction('live', 'Log', () => openTask(task.id,run.id)));
     // Status and actions sit inside the card, the same footer as finished messages.
-    const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', label);
-    if (running) { const elapsed = elapsedEl(create, run.startedAt); if (elapsed) status.append(elapsed); }
+    // The footer names the stage: queued, the CLI getting ready (workspace, start, resume), then thinking, the step it is
+    // running, or replying, with the time it has taken so far.
+    const preparing=progress.stage==='worker_received',step=running?liveByRun.get(run.id)?.step:'';
+    const stage=preparing?t('CLI preparing'):progress.stage==='queued'?t('Queued'):running?(step||t(preview?'Replying':'Thinking')):label;
+    const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', stage);status.title=stage;
+    if (running||preparing) { const elapsed = elapsedEl(create, running?run.startedAt:run.createdAt); if (elapsed) status.append(elapsed); }
     const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
     // The CLI occupancy check stays available as one more icon in the row, instead of a box standing in for the body.
     if (recoveryButton) actionBar.append(recoveryButton);

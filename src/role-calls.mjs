@@ -1,4 +1,5 @@
 import { isRoleConfigured } from './default-roles.mjs';
+import { cliUnavailable } from './cli-availability.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import { terminal } from './store.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -95,6 +96,9 @@ export class RoleCalls {
       if (role?.projectId !== input.projectId) throw new Error(tr('roleCalls.targetRoleDoesNotBelong'));
       if (role.archivedAt || !role.enabled || !isRoleConfigured(role)) throw new Error(tr('roleCalls.targetRoleNotConfiguredDisabled'));
       if (!roleWorkspace(this.db, input.projectId, role.nodeId, role.repositoryId)) throw new Error(tr('roleCalls.targetRoleHasNoRepository'));
+      // A new call to a role whose CLI cannot work now fails at once, so the caller (often the supervisor) picks another role.
+      // Plan stages are created up front and run later; their roles are checked when they actually start.
+      if (normalized.kind!=='continuation'&&!input.planId) { const unavailable=cliUnavailable(this.db.get('workers',role.nodeId),role.runtime,role.model); if (unavailable) throw new Error(tr('roleCalls.targetRoleCliUnavailable', { name: role.name, reason: unavailable })); }
       for (const id of [normalized.parentRequestId, normalized.continuationOf].filter(Boolean)) {
         if (this.db.get('coordinationRequests', id)?.projectId !== input.projectId) throw new Error(tr('roleCalls.sourceCallDoesNotBelong'));
       }
