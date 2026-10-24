@@ -165,7 +165,8 @@ const compacting=new Map();
 function compactRoleSession(m) {
   const key=m.roleSessionId;
   if(typeof key!=='string'||!key||compacting.has(key)||paused||quitting)return;
-  const job=(async()=>{
+  // Register maintenance before borrow() reports capacity, so Home never observes a false idle gap.
+  const job=Promise.resolve().then(async()=>{
     const entry=warmSessions.borrow(key);
     if(!entry)return {ok:false,error:'not_retained'};
     const {session}=entry;let usage=null;
@@ -184,7 +185,7 @@ function compactRoleSession(m) {
     // Kept warm again after a good compaction; otherwise closed and retired like any idle process.
     await warmSessions.giveBack(key,{keep:outcome.status==='succeeded'&&!paused&&!quitting});
     return {ok:outcome.status==='succeeded',error:outcome.error||null,usedTokens:Number.isFinite(usage?.usedTokens)?usage.usedTokens:null};
-  })().catch(error=>({ok:false,error:error.message})).then(result=>{compacting.delete(key);reportCapacity();send({type:'role_session_compacted',roleSessionId:key,afterRunId:m.afterRunId||null,...result});});
+  }).catch(error=>({ok:false,error:error.message})).then(result=>{compacting.delete(key);reportCapacity();send({type:'role_session_compacted',roleSessionId:key,afterRunId:m.afterRunId||null,...result});});
   compacting.set(key,job);reportCapacity();
 }
 /** Session-page takeover hook (src/native-turns-worker.mjs); idle unless a native session is taken over. */
@@ -199,7 +200,7 @@ const nativeAgentSwitches=createWorkerNativeAgentSwitch({db,nodeId:identity.node
  check:claim=>checkTerminalSession(db,{id:claim.id,nodeId:identity.nodeId,projectId:claim.projectId},join(data,'worker.sqlite'),{automatic:true}),
  prepareGrant:op=>folderAccess.local?folderAccess.prepare({operationId:op.id,scope:`native:${op.leaseId}`,path:op.workspace}):null,
  cancelGrant:op=>folderAccess.local?folderAccess.cancel({id:`${identity.nodeId}:${op.id}`,scope:`native:${op.leaseId}`}):null});
-function reportCapacity(){send({type:'capacity_state',capacity,usage:{active:sessions.size,retained:warmSessions.snapshot().length,organizer:organizerRunning,terminal:reservedTerminalSlots(db,identity.nodeId)}});}
+function reportCapacity(){send({type:'capacity_state',capacity,usage:{active:sessions.size+compacting.size,retained:warmSessions.snapshot().length,organizer:organizerRunning,terminal:reservedTerminalSlots(db,identity.nodeId)}});}
 const terminalStops=new Map();
 async function applyCapacity(value) {
   capacity=validateCliCapacity(value);db.put('settings',{id:'cli-capacity',capacity});warmSessions.max=capacity;

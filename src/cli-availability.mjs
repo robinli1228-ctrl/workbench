@@ -19,10 +19,10 @@ export function cliUnavailable(worker,type,model,now=Date.now()) {
   const spent=quotaSpent(runtime,now);
   return spent?tr('cliAvailability.quotaUsedUp',{window:tr(spent.key==='fiveHour'?'cliAvailability.fiveHour':'cliAvailability.weekly'),time:shortTime(spent.reset)}):null;
 }
-/** A used-up Codex window with no credits stays used up until its reset, even when the sample is old; a changed account clears it. */
+/** A confirmed account's used-up window stays used up until reset; borrowed quota during an unknown login cannot reject work. */
 export function quotaSpent(runtime,now=Date.now()) {
   const credits=runtime?.quota?.credits;
-  if(runtime?.type!=='codex'||runtime.quotaInvalidated||!credits||credits.hasCredits||credits.unlimited)return null;
+  if(runtime?.type!=='codex'||runtime.authUnknown||runtime.quotaUnconfirmed||runtime.quotaInvalidated||!credits||credits.hasCredits||credits.unlimited)return null;
   for(const key of ['fiveHour','weekly']){const w=runtime.quota?.[key],reset=Date.parse(w?.resetsAt);
     if(w&&Number.isFinite(w.remainingPercent)&&w.remainingPercent<=0&&Number.isFinite(reset)&&reset>now)return {key,reset};}
   return null;
