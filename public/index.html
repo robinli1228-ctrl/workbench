@@ -218,14 +218,14 @@
                 </div>
                 <div id="project-panel-coordination" data-project-settings-panel="coordination" role="tabpanel" aria-labelledby="project-tab-coordination" tabindex="0" hidden>
                 <section class="settings-block" aria-labelledby="followup-heading">
-                  <h3 id="followup-heading">Supervisor proactive follow-up</h3>
-                  <p class="workspace-note">After chat silence, the supervisor checks once and decides whether to help. No new messages means no repeated wake-ups. Disabling does not stop work already started.</p>
+                  <h3 id="followup-heading">Stall reminders</h3>
+                  <p class="workspace-note">Enabled by default, after 10 quiet minutes. Completed final replies need no reminder; no new messages means no repeated wake-ups. Disabling does not stop work already started.</p>
                   <form id="proactive-followup-form" class="form-grid">
-                    <label class="checkbox-label full-width"><input type="checkbox" name="enabled">Enable supervisor follow-up</label>
+                    <label class="checkbox-label full-width"><input type="checkbox" name="enabled">Enable stall reminders</label>
                     <label>Silence duration (minutes)<input type="number" name="silenceMinutes" min="1" max="10080" step="1" value="10" required></label>
-                    <div class="form-actions full-width"><button type="submit" class="primary">Save follow-up settings</button></div>
+                    <div class="form-actions full-width"><button type="submit" class="primary">Save stall reminder settings</button></div>
                   </form>
-                  <div class="followup-status-row"><p class="workspace-note" id="followup-status" role="status"></p><span class="followup-tools"><button type="button" class="secondary" id="refresh-followup">Refresh follow-up status</button><button type="button" class="secondary" id="view-followup" disabled>View latest follow-up</button></span></div>
+                  <div class="followup-status-row"><p class="workspace-note" id="followup-status" role="status"></p><span class="followup-tools"><button type="button" class="secondary" id="refresh-followup">Refresh stall reminder status</button><button type="button" class="secondary" id="view-followup" disabled>View latest stall reminder</button></span></div>
                   <p id="followup-feedback" class="form-feedback" role="status" hidden></p>
                 </section>
                 <section class="settings-block" aria-labelledby="session-queue-heading">
