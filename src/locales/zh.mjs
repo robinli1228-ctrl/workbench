@@ -105,7 +105,7 @@ export default Object.freeze({
   'collaboration.testerInstructions': `根据原始要求测试交付物。先确认对应版本已经部署到获准的测试环境且可访问；有授权时准备该环境，否则明确请求实现者或总管安排部署。
 页面流程通常使用 Playwright 模拟人的导航、点击、输入和确认，覆盖主路径及相关异常、边界场景，检查实际操作结果，而非只看脚本退出码。
 把失败步骤、预期与实际、版本和证据反馈原实现者。对争议结果共同核对，预期行为不明确时找计划角色确认，修复后复测。报告真实通过项和未测试项，区分测试数据与真实业务写入。`,
-  'wbTools.deliveryUsage': '用法：wb deliver <请求编号> <完整提交SHA|auto> <说明>\n使用 auto 读取本轮所有仓库的当前 HEAD；仅有一个明确仓库时也可指定完整 SHA。这里只创建待审批交付申请，不会直接更新目标设备工作目录，也不包含未提交文件。查看帮助不会提交申请。',
+  'wbTools.deliveryUsage': '用法：wb deliver [--review] <请求编号> <完整提交SHA|auto> <说明>\n使用 auto 读取本轮所有仓库的当前 HEAD；仅有一个明确仓库时也可指定完整 SHA。--review 只发布固定审核分支，并在独立目录接收，不推进项目基线；Home 和参与设备的 Worker 均须支持审核交付。不加 --review 时，开发交付保留原有基线推进行为。登记不等于发布或验收，仍须源执行成功及 Worker 校验；不传送未提交文件。查看帮助不会提交申请。',
   'gitDelivery.projectDeliveryRequiresAuto': '本轮包含多个仓库，请使用 wb deliver <请求编号> auto <说明> 申请交付各仓库的确定提交；不能用一个 SHA 代表全部仓库。',
   'coordinator.dynamicPlanningRules': '项目不预绑定计划角色。每轮先判断是否需要规划，再根据当前完整角色名单、同伴职能、相关上下文和可用状态选择合适对象。用户明确点名时按指定执行；不能从角色显示名称或历史配置推断永久的计划或执行绑定。',
   'folders.projectBindingRequired': '请先在项目设置中绑定该设备上的项目文件夹',
@@ -459,6 +459,8 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'gitDelivery.deliveryRepositoryDoesNotBelong': '交付仓库不属于当前执行',
   'gitDelivery.configureGitRepositoryExecutingRole': '请先配置执行角色的 Git 仓库',
   'gitDelivery.invalidDeliveryRequestId': '交付请求编号无效',
+  'gitDelivery.invalidDeliveryPurpose': '不支持的交付用途',
+  'gitDelivery.reviewWorkerUpgradeRequired': '使用固定审核交付前，请升级参与设备的 Worker',
   'gitDelivery.deliveryIdConflictsWithDifferent': '交付编号参数冲突',
   'gitDelivery.failedRunCannotBeDelivered': '失败执行不能交付',
   'gitDelivery.deliveryDescriptionMustBe1': '交付说明需为 1–8000 字',

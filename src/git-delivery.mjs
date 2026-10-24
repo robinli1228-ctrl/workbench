@@ -11,6 +11,11 @@ const git = async (cwd, args) => (await exec('git', args, { cwd, env: env(), tim
 const inside = (root, path) => { const r = relative(root, path); return !r || (!r.startsWith('..') && !isAbsolute(r)); };
 const repoKey = url => String(url).replace(/^(?:https:\/\/|ssh:\/\/git@|git@)([^/:]+)[:/]/, '$1/').replace(/\/?\.git\/?$/, '').replace(/\/$/, '');
 
+/** Older Workers ignore review purpose and advance baselines; reject before sending them a command. */
+export function reviewDeliveryIssue(worker, delivery) {
+  return delivery?.purpose === 'review' && worker?.capabilities?.reviewDeliveries !== 1 ? tr('gitDelivery.reviewWorkerUpgradeRequired') : null;
+}
+
 function checkId(runId) { if (typeof runId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(runId)) throw new Error(tr('gitDelivery.invalidRunId')); }
 function checkCommit(commit) { if (typeof commit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit)) throw new Error(tr('gitDelivery.fullGitCommitIdRequired')); }
 function checkRef(ref) { if (typeof ref !== 'string' || !/^refs\/heads\/agent-delivery\/[a-zA-Z0-9_-]{1,100}$/.test(ref)) throw new Error(tr('gitDelivery.onlyPlatformDeliveryBranchCan')); }
@@ -71,6 +76,8 @@ export class Deliveries {
 
   request(run, input) {
     const project = this.db.get('projects', run.projectId);
+    if (input.purpose !== undefined && input.purpose !== 'review') throw new Error(tr('gitDelivery.invalidDeliveryPurpose'));
+    const purpose = input.purpose === 'review' ? { purpose: 'review' } : {};
     if (typeof input.requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(input.requestId)) throw new Error(tr('gitDelivery.invalidDeliveryRequestId'));
     checkCommit(input.commit);
     let items = input.items;
@@ -94,13 +101,15 @@ export class Deliveries {
     const repositoryUrl = items?.[0]?.repoUrl || run.repositoryUrl || project?.repoUrl;
     if (!repositoryUrl) throw new Error(tr('gitDelivery.configureGitRepositoryExecutingRole'));
     const id = createHash('sha256').update(`${run.id}:${input.requestId}`).digest('hex').slice(0, 32);
-    const fingerprint = JSON.stringify({ runId: run.id, commit: input.commit, items, repoUrl: repositoryUrl, summary: input.summary || '' });
+    const fingerprint = JSON.stringify({ runId: run.id, commit: input.commit, items, repoUrl: repositoryUrl, summary: input.summary || '', ...purpose });
     const old = this.db.get('deliveries', id);
     if (old) { if (old.fingerprint !== fingerprint) throw new Error(tr('gitDelivery.deliveryIdConflictsWithDifferent')); return old; }
+    const issue = purpose.purpose && reviewDeliveryIssue(this.db.get('workers', run.nodeId || ''), purpose);
+    if (issue) throw new Error(issue);
     if (['failed', 'interrupted'].includes(run.status)) throw new Error(tr('gitDelivery.failedRunCannotBeDelivered'));
     if (typeof input.summary !== 'string' || !input.summary.trim() || input.summary.length > 8000) throw new Error(tr('gitDelivery.deliveryDescriptionMustBe1'));
     return this.db.put('deliveries', { id, projectId: run.projectId, sourceRunId: run.id, sourceNodeId: run.nodeId,
-      ...(items ? {items} : {}),
+      ...(items ? {items} : {}), ...purpose,
       repositoryId: run.repositoryId || null, commit: input.commit, baseCommit: run.baseCommit || null, repoUrl: repositoryUrl, ref: `refs/heads/agent-delivery/${id}`,
       summary: input.summary.trim(), status: 'waiting_source', fingerprint,
       // Cross-device deliveries are confirmed as they are registered: only this commit goes to its own agent-delivery/<id>

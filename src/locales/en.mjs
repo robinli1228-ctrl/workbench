@@ -105,7 +105,7 @@ During independent review, submit your own conclusions first; the requester orga
   'collaboration.testerInstructions': `Test the delivered work against the original requirements. First verify that the intended version is deployed and reachable in the authorized test environment; prepare that environment when authorized or request deployment from the implementer or supervisor.
 For web flows, normally use Playwright to simulate real human navigation, clicks, input and confirmation. Cover the main path and relevant error and boundary cases; check the observable result rather than only a script exit code.
 Send failures, reproduction steps, expected/actual behavior, version and evidence to the original implementer. Discuss disputed results, involve the planner when expected behavior is unclear, and re-test fixes. Report what actually passed and what was not tested, distinguishing test data from real business writes.`,
-  'wbTools.deliveryUsage': 'Usage: wb deliver <request-id> <full-commit-sha|auto> <summary>\nUse auto to capture the current HEAD of every repository in this Run. An explicit SHA is supported for an unambiguous single repository. This creates an approval request only: it neither updates the destination checkout nor transfers uncommitted files. Help does not submit a request.',
+  'wbTools.deliveryUsage': 'Usage: wb deliver [--review] <request-id> <full-commit-sha|auto> <summary>\nUse auto to capture the current HEAD of every repository in this Run. An explicit SHA is supported for an unambiguous single repository. --review publishes only a fixed review ref and receives it in an independent directory, without advancing project baselines; Home and participating Workers must support review deliveries. Without --review, development delivery keeps its baseline advancement. Registration is not publication or acceptance; source success and Worker checks still apply. Uncommitted files are not transferred. Help does not submit a request.',
   'gitDelivery.projectDeliveryRequiresAuto': 'This Run contains multiple repositories. Use wb deliver <request-id> auto <summary> to request delivery of their exact commits; one SHA cannot identify all repositories.',
   'coordinator.dynamicPlanningRules': 'There is no pre-bound planner role. Decide whether this task needs planning, and select the appropriate collaborator from the current full roster using responsibilities, relevant context and availability. Respect an explicit user assignment; do not infer a permanent planning or execution binding from a display name or historical configuration.',
   'folders.projectBindingRequired': 'First bind this project folder on the selected device in Project Settings',
@@ -459,6 +459,8 @@ Execution purpose: {purpose}. {p4}{p5}`,
   'gitDelivery.deliveryRepositoryDoesNotBelong': 'The delivery repository does not belong to the current run',
   'gitDelivery.configureGitRepositoryExecutingRole': 'Configure the Git repository of the executing role first',
   'gitDelivery.invalidDeliveryRequestId': 'Invalid delivery request ID',
+  'gitDelivery.invalidDeliveryPurpose': 'Unsupported delivery purpose',
+  'gitDelivery.reviewWorkerUpgradeRequired': 'Upgrade the participating Worker before using fixed review deliveries',
   'gitDelivery.deliveryIdConflictsWithDifferent': 'Delivery ID conflicts with different parameters',
   'gitDelivery.failedRunCannotBeDelivered': 'A failed run cannot be delivered',
   'gitDelivery.deliveryDescriptionMustBe1': 'The delivery description must be 1-8000 characters',

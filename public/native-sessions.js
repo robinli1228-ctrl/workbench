@@ -16,12 +16,25 @@ import {liveSceneRows} from './live-scene.js';
 import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,sameSend} from './send-state.js';
 import {stripAnsi} from './run-log-data.js';
 import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSummary} from './history-prompt.js';
-import {cachedHistory,saveHistory,forgetHistory} from './history-cache.js';
+import {cachedHistory,saveHistory,forgetHistory,compactHistoryPage} from './history-cache.js';
 import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
 const names={codex:'Codex',claude:'Claude Code',grok:'Grok',agy:'Agy'};
+
+/** Read bounded opaque tool-detail chunks. Successful chunks are LRU cached; failures remain retryable. */
+export function createNativeToolDetailReader({api,endpoint,limit=128}){
+ const cache=new Map(),inflight=new Map();
+ return (item,step,ref,offset=0)=>{
+  const sessionId=item.sessionId||item.id,key=JSON.stringify([item.nodeId,item.runtime,sessionId,ref,offset]);
+  if(cache.has(key)){const value=cache.get(key);cache.delete(key);cache.set(key,value);return Promise.resolve(value);}
+  if(inflight.has(key))return inflight.get(key);
+  const url=`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId,toolDetail:ref,detailOffset:String(offset)})}`;
+  const request=Promise.resolve(api(url)).then(page=>{if(page?.callId!==step.id||page?.offset!==offset||!['tool_call','tool_result'].includes(page?.role)||typeof page?.text!=='string')throw Error('Tool detail changed; refresh this session.');cache.set(key,page);while(cache.size>limit)cache.delete(cache.keys().next().value);return page;}).finally(()=>inflight.delete(key));
+  inflight.set(key,request);return request;
+ };
+}
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
 const button=(text,fn,cls='secondary')=>{const n=el('button',cls,t(text));n.type='button';n.addEventListener('click',fn);return n;};
 const closeButton=fn=>{const n=button('',fn,'icon-button native-close');setActionIcon(n,'close','Close');n.dataset.close='';return n;};
@@ -290,6 +303,8 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const MODE_KEY='agent-workbench.navigation-mode';
  const listOrder=createListOrder({container:list,scope:'native-sessions',onEnd:()=>{listSignature='';renderList();},onError:message=>{note.textContent=message;}});
  const nativeId=item=>item.entryId?item.sessionId:item.sessionId||item.id;
+ const toolPreview=item=>getData().workers?.find(worker=>worker.id===item?.nodeId)?.capabilities?.nativeToolDetails===1;
+ const toolDetail=createNativeToolDetailReader({api,endpoint});
  const workerName=id=>getData().workers?.find(w=>w.id===id)?.name||id;
  const time=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});};
  /** Transcript rows show the clock time; the day sits on the centred date lines between them, the full stamp in the tooltip. */
@@ -537,7 +552,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  /** History scrolls above a persistent footer, so quiet refreshes never discard a takeover draft. */
  const scroll=el('div','native-session-scroll');
  // With a snapshot the refresh asks only for rows appended since it (`delta`); a Worker that cannot answers with the latest page.
- const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(cursor?{cursor}:{}),...(snapshot?{snapshot,delta:'1'}:{})})}`);
+ const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(toolPreview(item)?{toolPreview:'1'}:{}),...(cursor?{cursor}:{}),...(snapshot?{snapshot,delta:'1'}:{})})}`);
  /** Settings read from appended rows refine the ones already known; a field the new rows do not mention keeps its value. */
  const mergeConfiguration=(known,fresh)=>{if(!fresh)return known;const out={...(known||{})};for(const [k,v] of Object.entries(fresh))if(v!=null)out[k]=v;return out;};
  let lastPromptAt=null;
@@ -564,6 +579,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   * every turn it did not touch, so their pictures, open activity lists and scroll position stay as they are.
   */
  const renderedTurns=new Map(),renderedPieces=new Map();
+ const historyStep=tool=>tool.toolSummary?{...tool.toolSummary,id:tool.id,name:tool.toolSummary.name||tool.name,files:Array.isArray(tool.toolSummary.files)?tool.toolSummary.files:tool.toolSummary.path?[tool.toolSummary.path]:[],failed:tool.failed,error:tool.errorSummary||'',running:false,detailRefs:[tool.callDetailRef,tool.resultDetailRef].filter(Boolean)}:classifyStep({type:'tool_use',id:tool.id,name:tool.name,input:tool.input,output:tool.output,is_error:tool.failed,status:'completed'},'succeeded');
  // A fresh snapshot can replace same-length text or tool inputs at the same offsets; equality must include their content.
  const turnSignature=(turn,startedAt)=>JSON.stringify([turn.prompt,startedAt,turn.endedAt,turn.parts]);
  /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
@@ -592,7 +608,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   if(turn.prompt)nodes.push(piece(`${turnId}|prompt|${JSON.stringify(turn.prompt)}`,()=>renderHistoryRow(turn.prompt,item)));
   if(!turn.parts.length)return nodes;
   const frag=document.createDocumentFragment();let group=[],process=false;
-  const flush=()=>{if(!group.length)return;process=true;const steps=group;frag.append(piece(`${turnId}|steps|${JSON.stringify(steps)}`,()=>activityBlock({steps:steps.map(tool=>classifyStep({type:'tool_use',id:tool.id,name:tool.name,input:tool.input,output:tool.output,is_error:tool.failed,status:'completed'},'succeeded')),notes:[],t,onPreview:(step,path)=>preview.open(step,path)})));group=[];};
+  const flush=()=>{if(!group.length)return;process=true;const steps=group;frag.append(piece(`${turnId}|steps|${JSON.stringify(steps)}`,()=>activityBlock({steps:steps.map(historyStep),notes:[],t,onPreview:(step,path)=>preview.open(step,path),onDetail:(step,ref,offset)=>toolDetail(item,step,ref,offset)})));group=[];};
   for(const [index,part] of turn.parts.entries()){if(part.kind==='tool'){group.push(part);continue;}flush();
    // A background task finished while this turn ran: one quiet line in place, the reply goes on below it.
    if(part.kind==='notice'){const line=el('div','nt-system nt-turn-notice');line.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${part.task.slice(0,8)}`));if(part.timestamp)line.title=time(part.timestamp);frag.append(line);continue;}const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;
@@ -609,17 +625,22 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const savedPages=new Map();
  const SAVED_PAGE_CHARS=2*1024*1024;
  function keepPage(k,saved){
-  // A copy grown past the limit (a long-running session) is dropped everywhere; the next open reads the latest page and saves that.
-  if(JSON.stringify(saved).length>SAVED_PAGE_CHARS){forgetPage(k);return;}
-  savedPages.delete(k);savedPages.set(k,saved);if(savedPages.size>30)savedPages.delete(savedPages.keys().next().value);void saveHistory(k,saved);
+  const bounded=compactHistoryPage(saved,SAVED_PAGE_CHARS);
+  // Unsupported snapshots cannot be cropped safely. Keep the previous bounded page rather than losing offline history.
+  if(!bounded)return false;
+  savedPages.delete(k);savedPages.set(k,bounded);if(savedPages.size>30)savedPages.delete(savedPages.keys().next().value);void saveHistory(k,bounded);return true;
  }
  function forgetPage(k){savedPages.delete(k);void forgetHistory(k);}
- function rememberPage(item,page,{appended=false}={}){
+ function rememberPage(item,page,{appended=false,baseSnapshot=null}={}){
   const k=key(item);
   // The same snapshot again (an older Worker answers every refresh with the full page): nothing to save.
-  if(!appended&&savedPages.get(k)?.historySnapshot===page.historySnapshot)return;
-  if(!appended){const {messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice}=page;keepPage(k,{sessionId:nativeId(item),messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice});return;}
+  const prior=savedPages.get(k);
+  if(!appended&&prior?.historySnapshot===page.historySnapshot&&Boolean(prior.toolPreview===1)===toolPreview(item))return;
+  if(!appended){const {messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice}=page;keepPage(k,{sessionId:nativeId(item),messages,historySnapshot,nextCursor,hasMore,partial,turnStartedAt,sessionConfiguration,notice,...(toolPreview(item)?{toolPreview:1}:{})});return;}
   const saved=savedPages.get(k);if(!saved)return;
+  // A delta certifies only the snapshot it was requested from. Once one cannot fit, later deltas begin after a gap and
+  // must not advance the old copy's snapshot; reopening it will request the complete missing suffix again.
+  if(!baseSnapshot||saved.historySnapshot!==baseSnapshot)return;
   const known=new Set(saved.messages.map(m=>m.id));
   keepPage(k,{...saved,messages:[...saved.messages,...page.messages.filter(m=>!known.has(m.id))],historySnapshot:page.historySnapshot,sessionConfiguration:mergeConfiguration(saved.sessionConfiguration,page.sessionConfiguration)});
  }
@@ -654,7 +675,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
     const saved=savedPages.get(key(item))||await cachedHistory(key(item));
     if(!current())return;
     // A copy is drawn only for the same native session (an entry can be relinked to another one).
-    if(saved?.historySnapshot&&Array.isArray(saved.messages)&&saved.sessionId===id){
+    if(saved?.historySnapshot&&Array.isArray(saved.messages)&&saved.sessionId===id&&Boolean(saved.toolPreview===1)===toolPreview(item)){
      savedPages.set(key(item),saved);present(item,saved,{quietly:false});
      let page;
      try{page=await readPage(selected,null,saved.historySnapshot);}
@@ -662,21 +683,22 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
       // The history was rewritten since the copy: forget it and read the latest page as usual. Other errors (device offline)
       // leave the copy on screen with the error under it.
       if(!staleCopy(error)){if(current())timeline.showError(error);return;}
-      forgetPage(key(item));page=null;
+      if(!current())return;
+      forgetPage(key(item));page=null;timeline.showUpdating();
      }
      if(!current())return;
-     if(page?.delta){present(selected,page,{quietly:true});if(page.messages?.length)rememberPage(item,page,{appended:true});return;}
+     if(page?.delta){present(selected,page,{quietly:true});rememberPage(item,page,{appended:true,baseSnapshot:saved.historySnapshot});return;}
+     if(!page){try{page=await readPage(item,null,null);}catch(error){if(current())timeline.showError(error);return;}if(!current())return;}
      restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));
-     if(!page){page=await readPage(item,null,null);if(!current())return;}
      present(item,page,{quietly:false});rememberPage(item,page);return;
     }
    }
-   const page=await readPage(item,null,quiet?item.historySnapshot:null);if(!current())return;
+   const baseSnapshot=quiet?item.historySnapshot:null,page=await readPage(item,null,baseSnapshot);if(!current())return;
    // A background overflow must keep the loaded pages, cursor and snapshot. Only Refresh latest history may replace them;
    // advancing the snapshot here would make the next delta silently skip the unread burst.
    if(quiet&&page.deltaFallback){timeline.showNewer();return;}
    present(item,page,{quietly:quiet});
-   if(page.delta){if(page.messages?.length)rememberPage(item,page,{appended:true});}else rememberPage(item,page);
+   if(page.delta)rememberPage(item,page,{appended:true,baseSnapshot});else rememberPage(item,page);
   }catch(e){if(staleCopy(e))forgetPage(key(item));if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
  }
  /** Full text of one prompt in the group chat's reading layer; nothing stays on the page when it is closed. */

@@ -197,6 +197,7 @@ export class RoleCalls {
         continuationBatchId:r.kind==='continuation'?r.continuationBatchId||null:null,
         explicitPublish:Boolean(r.explicitPublish||r.automaticPropagation||r.continuationBatchId||previous?.explicitPublish||previous?.automaticPropagation||this.db.get('tasks',previous?.taskId||'')?.explicitPublish),
         requestId: r.id, roleId: role.id, roleSnapshot: role, executionBinding:r.executionBinding||null, deliveryId: r.deliveryId,
+        ...(delivery?.purpose==='review'?{reviewDeliveryId:delivery.id}:{}),
         sourceSyncBatchId:r.sourceSyncBatchId,sourceInputs,
         ...sourceConflictContext(r),sourceSessionKey,
         continuationRunId: previous?.currentRunId || null,

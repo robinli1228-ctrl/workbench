@@ -7,7 +7,9 @@ import {conversationIdOf,groupConversationIdOfSession,resolveConversationId} fro
 const now = () => new Date().toISOString();
 
 /** Dispatch and occupancy checks must select the same isolated source conversation. */
-export const taskConversationId=task=>task.sourceInputs?.length&&task.execution?.isolated
+export const taskConversationId=task=>task.reviewDeliveryId
+  ? `${conversationIdOf(task)}:review:${task.sourceSessionKey||task.id}`
+  : task.sourceInputs?.length&&task.execution?.isolated
   ? `${task.projectId}${conversationIdOf(task)===task.projectId?'':`:chat:${conversationIdOf(task)}`}:source:${task.sourceSessionKey||task.sourceConflictAssignmentId||task.id}`
   : conversationIdOf(task);
 

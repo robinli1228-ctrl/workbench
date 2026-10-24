@@ -2,6 +2,8 @@
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [design-lazy-native-tools](design-lazy-native-tools.md) | Native history summaries, on-demand tool details and bounded recent cache | Locally implemented; verification evidence recorded separately; not deployed |
+| [design-review-delivery](design-review-delivery.md) | Fixed review refs, baseline-preserving reception and isolated review sessions | Locally implemented, independently reviewed and isolated-tested; not deployed |
 | [design-runtime-quota-events](design-runtime-quota-events.md) | Passive Claude/Codex quota, snapshot ownership and freshness; unchanged UI | Implemented on the feature branch; isolated checks, not deployed |
 | [plan-runtime-quota-events](plan-runtime-quota-events.md) | Adapter events, Worker/Home snapshots and removal of extra quota queries | Local implementation; real-account acceptance and independent review pending |
 | [design-remote-access-settings](design-remote-access-settings.md) | Local-only Basic Settings controls for the independent browser relay | Approved; implemented in the feature branch, deployment separate |

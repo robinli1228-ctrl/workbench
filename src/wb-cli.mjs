@@ -129,7 +129,8 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (cmd === 'deliver') {
       if (['help', '-h', '--help'].includes(sub)) return out(tr('wbTools.deliveryUsage'));
-      return out(await requestDelivery(sub, rest[0], rest.slice(1).join(' ')));
+      const review=sub==='--review',args=review?rest:tail;
+      return out(await requestDelivery(args[0], args[1], args.slice(2).join(' '),{review}));
     }
     if (cmd === 'call') {
       const values = {}, flags = { '--role': 'role', '--kind': 'kind', '--request-id': 'requestId', '--text': 'text', '--file':'file', '--delivery-id': 'deliveryId','--source-sync-batch-id':'sourceSyncBatchId',

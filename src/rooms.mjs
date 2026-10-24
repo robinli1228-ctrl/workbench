@@ -272,6 +272,7 @@ export class Rooms {
         const task = this.db.createTask({ projectId, title: text.slice(0, 80) || tr('rooms.reviewAttachments'), prompt, model: role.model, mode: role.mode });
         this.db.put('tasks', { ...task, conversationId, origin: 'chat', sourceMessageId: clientMessageId, roleId: role.id, roleSnapshot: role,
           sourceRunId: delivery || !reuseSource ? null : source.id, deliveryId: delivery?.id || null,
+          ...(delivery?.purpose==='review'?{reviewDeliveryId:delivery.id}:{}),
           quoteMessageId:quote?.id||null,
           attachments: attachments.length ? attachments : (quote?.attachments?.length ? quote.attachments : source?.attachments || []), schedulingTargets,schedulingRoster,
           // A person's @ is answered in the chat; a structured report is asked only for scheduled jobs and cross-device deliveries.

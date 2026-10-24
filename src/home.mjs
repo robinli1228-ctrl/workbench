@@ -43,7 +43,7 @@ import { collaborationQueueView } from './coordination-wait.mjs';
 import { WorkspaceStateFeed, workspaceScope, WORKSPACE_SUMMARY } from './workspace-state.mjs';
 import { pageSummaries } from './workspace-summaries.mjs';
 import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
-import { Deliveries } from './git-delivery.mjs';
+import { Deliveries, reviewDeliveryIssue } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
 import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updatePausedSetting, updateConversationOrganizer,legacyExecutionPrompt,executionRules } from './platform-prompts.mjs';
 import { runtimeReportFresh } from './runtime-state.mjs';
@@ -269,8 +269,14 @@ async function dispatch(nodeId) {
     if(c.type==='launch'&&db.get('settings','main')?.paused)continue;
     if(['launch','delivery_publish'].includes(c.type)&&sourceSync.busy(run.projectId,nodeId))continue;
     if (['launch','delivery_publish'].includes(c.type) && projectTerminalLock(db,run.projectId,nodeId)) continue;
+    const reviewIssue=reviewDeliveryIssue(db.get('workers',nodeId),db.get('deliveries',c.deliveryId||run.deliveryId||''));
+    if(c.type==='delivery_publish'&&reviewIssue){
+      const delivery=db.get('deliveries',c.deliveryId);
+      if(delivery)db.put('deliveries',{...delivery,status:'blocked',error:reviewIssue});
+      db.put('commands',{...c,acked:true});change();continue;
+    }
     if(c.type==='launch') {
-      const issue=instructionProtocolIssue(run,db.get('workers',nodeId));
+      const issue=reviewIssue||instructionProtocolIssue(run,db.get('workers',nodeId));
       if(issue||run.instructionProtocolIssue) {
         const task=db.get('tasks',run.taskId),previous=run.instructionProtocolIssue;
         run={...run,instructionProtocolIssue:issue};db.put('runs',run);
@@ -454,6 +460,9 @@ function json(res, data, status = 200) { res.writeHead(status, { 'Content-Type':
 /** Path checks and file reads are both done by the target Worker; Home does not probe the remote filesystem. */
 function workerQuery(run, action, path, timeout = 10000) {
   if (!online(run.nodeId)) throw new Error(tr('home.executionNodeOfflineUnableRead'));
+  if(action==='execution_receive')for(const delivery of path?.deliveries||[]){
+    const issue=reviewDeliveryIssue(db.get('workers',run.nodeId),delivery);if(issue)throw new Error(issue);
+  }
   const id = randomUUID();
   return new Promise((resolveQuery, reject) => {
     const timer = setTimeout(() => { queries.delete(id); reject(new Error(tr('home.nodeQueryTimedOut'))); }, timeout);
@@ -791,6 +800,14 @@ const server = http.createServer(async (req, res) => {
             if(!sessionId&&['created','all'].includes(scope))return json(res,{items:nativeTurns.switches.decorateCatalog(nodeId,nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem)),partial:scope==='all',offline:true});
             throw Error('Device is offline');
           }
+          const toolDetail=url.searchParams.get('toolDetail'),toolPreview=url.searchParams.get('toolPreview')==='1';
+          if(toolDetail!==null){
+            const offset=Number(url.searchParams.get('detailOffset')||0);
+            if(!sessionId||!toolDetail||toolDetail.length>2048||!Number.isSafeInteger(offset)||offset<0)throw Error('Invalid native tool detail reference');
+            if(worker.capabilities?.nativeToolDetails!==1)throw Error('Upgrade this Worker to read tool details on demand.');
+            return json(res,await workerQuery({nodeId},'native_tool_detail',{runtime,sessionId,record,ref:toolDetail,offset},30000));
+          }
+          if(toolPreview&&worker.capabilities?.nativeToolDetails!==1)throw Error('Upgrade this Worker to read tool details on demand.');
           // Page authoritative cross-project bindings before the Worker catalogue's limit and WebSocket envelope.
           const managed=!sessionId&&['group','all'].includes(scope)?managedNativeSessions(nodeId,runtime):[];
           const offset=Number(url.searchParams.get('offset')||0);
@@ -803,7 +820,7 @@ const server = http.createServer(async (req, res) => {
           if(paged&&worker.capabilities?.nativeHistoryPages!==1)throw Error('Upgrade this Worker to load older native history.');
           if(sessionId&&cursor?.startsWith('home-turns:')){const stored=nativeTurns.switches.historyPage({nodeId,runtime,sessionId},{cursor});if(!stored)throw Error('Conversation history is unavailable');return json(res,stored);}
           const nativeSnapshot=historySnapshot?.startsWith('home-turns:')?null:historySnapshot;
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:nativeSnapshot,...(delta&&nativeSnapshot?{delta:true}:{})}:{})},30000);
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,toolPreview,cursor,snapshot:nativeSnapshot,...(delta&&nativeSnapshot?{delta:true}:{})}:{})},30000);
           if(sessionId&&result.previewAvailable===false){const stored=nativeTurns.switches.historyPage({nodeId,runtime,sessionId});if(stored)return json(res,{...result,...stored,workspace:record.workspace,notice:undefined});}
           if(!sessionId&&scope==='group'){
             const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));
@@ -1032,8 +1049,8 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/agent/wait') {
           const r = calls.wait(run, b.summary,{requestIds:b.requestIds,timeoutSeconds:b.timeoutSeconds}); change(); return json(res, { requestId: r.id, status: r.status,requestIds:r.waitRequestIds,deadlineAt:r.waitDeadlineAt,note: tr('home.endTurnNowExecutionSlot') });
         }
-        if (pathname === '/api/agent/deliveries') {
-          const r = deliveries.request(run, b); change(); return json(res, r, 201);
+        if (pathname === '/api/agent/deliveries' || pathname === '/api/agent/deliveries/review') {
+          const r = deliveries.request(run, pathname.endsWith('/review') ? {...b,purpose:'review'} : b); change(); return json(res, r, 201);
         }
         throw new Error(tr('home.unknownCollaborationEndpoint'));
       }

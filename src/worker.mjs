@@ -27,7 +27,7 @@ import {FolderAccess} from './folder-access.mjs';
 import {createWorkerNativeTurns,receiveTurnFiles} from './native-turns-worker.mjs';
 import {SideAsks} from './native-side-ask.mjs';
 import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
-import {listNativeSessions,readNativeSession,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
+import {listNativeSessions,readNativeSession,readNativeToolDetail,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import {createWorkerNativeAgentSwitch,assertNativeSwitchAccess,nativeAgentSourceBusy} from './native-agent-switch-worker.mjs';
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
@@ -914,15 +914,16 @@ async function query(m,emit=send) {
       if(claimed.timeout)throw Error('The CLI did not start in time');
       reportCapacity();send({type:'reply',id:m.id,result:{id:s.id,pid:claimed.pid}});return;
     }
-    if(['native_sessions','native_session','native_terminal_preview','native_terminal_prepare'].includes(m.action)) {
+    if(['native_sessions','native_session','native_tool_detail','native_terminal_preview','native_terminal_prepare'].includes(m.action)) {
       const input=m.path||{},runtime=input.runtime;
       // Reading history and opening iTerm need the CLI installed, not signed in: a signed-out CLI opens in iTerm, where the
       // person signs in. Running it from the page still requires a ready CLI.
       const installed=runtimes.some(r=>r.type===runtime&&r.installed&&r.supported!==false),ready=runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false);
-      if(m.action!=='native_sessions'&&!ready&&!(installed&&['native_session','native_terminal_preview','native_terminal_prepare'].includes(m.action)))throw Error(installed?'CLI is not signed in on this device':'CLI is not available on this device');
+      if(m.action!=='native_sessions'&&!ready&&!(installed&&['native_session','native_tool_detail','native_terminal_preview','native_terminal_prepare'].includes(m.action)))throw Error(installed?'CLI is not signed in on this device':'CLI is not available on this device');
       if(m.action==='native_sessions'){const staged=new Set(db.list('workerNativeAgentSwitches').filter(op=>!op.published).map(op=>op.leaseId));send({type:'reply',id:m.id,result:await listNativeSessions(runtime,{scope:input.scope||'created',registry:db.list('nativeCatalogEntries').filter(e=>!staged.has(e.id)),managedSessions:input.managedSessions||[],adoptedSessions:input.adoptedSessions||[],nodeId:identity.nodeId})});return;}
       const record=input.record||registeredNativeSession(db,runtime,input.sessionId);
-      if(m.action==='native_session'){send({type:'reply',id:m.id,result:await readNativeSession(runtime,input.sessionId,{record,historyPage:input.historyPage===true,cursor:input.cursor,snapshot:input.snapshot,delta:input.delta===true})});return;}
+      if(m.action==='native_tool_detail'){send({type:'reply',id:m.id,result:await readNativeToolDetail(runtime,input.sessionId,{record,ref:input.ref,offset:input.offset})});return;}
+      if(m.action==='native_session'){send({type:'reply',id:m.id,result:await readNativeSession(runtime,input.sessionId,{record,historyPage:input.historyPage===true,cursor:input.cursor,snapshot:input.snapshot,delta:input.delta===true,toolPreview:input.toolPreview===true})});return;}
       if(paused)throw Error('Remote execution is paused');
       const freshId=input.sessionId?null:input.freshSessionId||null;
       if(!input.sessionId&&['claude','grok'].includes(runtime)&&!freshId)throw Error('Upgrade Home to create an exact native session ID');
@@ -1213,7 +1214,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
