@@ -230,11 +230,12 @@ export async function waitForRole(summary,options={}) {
   return homeFetch('/api/agent/wait', { runId: context().runId, summary,requestIds:options.requestIds,timeoutSeconds:options.timeoutSeconds });
 }
 
-/** Only submits a delivery request; once the user approves it, the Worker pushes the specified SHA. */
-export async function requestDelivery(requestId, commit, summary) {
+/** A distinct review endpoint fails closed on older Homes instead of silently advancing baselines. */
+export async function requestDelivery(requestId, commit, summary, { review = false } = {}) {
   if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(requestId)
     || typeof commit !== 'string' || (commit !== 'auto' && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit))
     || typeof summary !== 'string' || !summary.trim() || summary.length > 8000) throw new Error(tr('wbTools.deliveryUsage'));
+  const path = review ? '/api/agent/deliveries/review' : '/api/agent/deliveries';
   if (commit === 'auto') {
     const repositories = JSON.parse(process.env.WB_REPOSITORIES || '[]');
     if (!repositories.length) throw new Error(tr('wbTools.currentRunHasNoDeliverable'));
@@ -243,9 +244,9 @@ export async function requestDelivery(requestId, commit, summary) {
       const head = (await exec('git',['rev-parse','HEAD'],{cwd:repo.localRoot,timeout:5000})).stdout.trim();
       items.push({id:repo.id,repoUrl:repo.repoUrl,commit:head});
     }
-    return homeFetch('/api/agent/deliveries',{runId:context().runId,requestId,commit:items[0].commit,items,summary});
+    return homeFetch(path,{runId:context().runId,requestId,commit:items[0].commit,items,summary});
   }
-  return homeFetch('/api/agent/deliveries', { runId: context().runId, requestId, commit, summary });
+  return homeFetch(path, { runId: context().runId, requestId, commit, summary });
 }
 
 async function gitSnapshot(cwd) {

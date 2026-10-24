@@ -30,19 +30,19 @@ export async function fetchExecutionDeliveries(repositories, deliveries) {
       const repo=repositories.find(r=>r.id===item.id);if(!repo)continue;
       if(repo.repoUrl!==item.repoUrl||!/^[a-f0-9]{40,64}$/.test(item.commit))throw new Error(tr('projectDelivery.deliveryDoesNotMatchProject'));
       if(giteeRepository(await git(repo.localRoot,['config','--get','remote.origin.url'],repo))?.webUrl!==giteeRepository(repo.repoUrl).webUrl)throw new Error(tr('projectDelivery.receivingRepositoryOriginDoesNot'));
-      if(item.changed===false && repo.baselineRoot)await unchangedVersion(repo,item);
+      if(delivery.purpose!=='review' && item.changed===false && repo.baselineRoot)await unchangedVersion(repo,item);
       else {
         await git(repo.localRoot,['fetch','--no-tags','origin',delivery.ref],repo);
         if(await git(repo.localRoot,['rev-parse','FETCH_HEAD'],repo)!==item.commit)throw new Error(tr('projectDelivery.receivedCommitDoesNotMatch'));
       }
-      if(repo.baselineRoot && item.changed!==false)await syncProjectBaseline({localRoot:repo.baselineRoot,branch:repo.baselineBranch,
+      if(delivery.purpose!=='review' && repo.baselineRoot && item.changed!==false)await syncProjectBaseline({localRoot:repo.baselineRoot,branch:repo.baselineBranch,
         commit:item.commit,repoUrl:repo.repoUrl,credential:repo.credential});
     }
   }
   return {received:true};
 }
 
-/** A project delivery is published at an explicit SHA per repository; the user's current branch is never switched. */
+/** Review publishes only its pinned ref; ordinary development delivery retains baseline advancement. */
 export async function publishProjectDelivery(repositories, delivery) {
   for (const item of delivery.items) {
     const repo = repositories.find(r=>r.id===item.id);
@@ -54,20 +54,20 @@ export async function publishProjectDelivery(repositories, delivery) {
     if (await git(cwd,['rev-parse','HEAD'],repo) !== item.commit) throw new Error(tr('projectDelivery.repositoryCommitChangedAfterDelivery'));
     const dirty = await git(cwd,['status','--porcelain','--','.',':(exclude).workbench/**',':(exclude).wb-bridge-*/**',':(exclude).agent-workbench-project.json'],repo);
     if (dirty) throw new Error(tr('projectDelivery.repositoryHasUncommittedChangesCommit'));
-    if(item.changed===false && repo.baselineRoot)await unchangedVersion(repo,item);
+    if(delivery.purpose!=='review' && item.changed===false && repo.baselineRoot)await unchangedVersion(repo,item);
     else {
       const existing = await git(cwd,['ls-remote','origin',delivery.ref],repo);
       if (existing && existing.split(/\s/)[0] !== item.commit) throw new Error(tr('projectDelivery.deliveryBranchAlreadyContainsAnother'));
       if (!existing) await git(cwd,['push','origin',`${item.commit}:${delivery.ref}`],repo);
       if ((await git(cwd,['ls-remote','origin',delivery.ref],repo)).split(/\s/)[0] !== item.commit) throw new Error(tr('projectDelivery.remoteDeliveryVersionNotConfirmed'));
     }
-    if(repo.baselineRoot && item.changed!==false)await publishProjectBaseline({localRoot:repo.baselineRoot,workingRoot:cwd,branch:repo.baselineBranch,
+    if(delivery.purpose!=='review' && repo.baselineRoot && item.changed!==false)await publishProjectBaseline({localRoot:repo.baselineRoot,workingRoot:cwd,branch:repo.baselineBranch,
       commit:item.commit,repoUrl:repo.repoUrl,credential:repo.credential});
   }
   return { status:'ready', commit:delivery.commit, ref:delivery.ref };
 }
 
-/** The receiver builds the complete repository set of this delivery inside the project and confirms each pinned commit one by one. */
+/** Build a pinned independent directory; review reception neither requires nor changes a clean baseline. */
 export async function receiveProjectDelivery(root, runId, repositories, delivery) {
   if (!Array.isArray(delivery.items) || delivery.items.length !== repositories.length || new Set(delivery.items.map(r=>r.id)).size !== repositories.length) throw new Error(tr('projectDelivery.projectRepositorySetHasChanged'));
   if (!/^[a-f0-9-]{36}$/.test(runId) || !/^refs\/heads\/agent-delivery\/[a-f0-9]{32}$/.test(delivery.ref)) throw new Error(tr('projectDelivery.invalidDeliveryParameters'));
@@ -79,12 +79,12 @@ export async function receiveProjectDelivery(root, runId, repositories, delivery
     const repo = repositories.find(r=>r.id===item.id);
     if (!repo?.localRoot || repo.repoUrl !== item.repoUrl || !/^[a-zA-Z0-9_-]+$/.test(repo.key)) throw new Error(tr('projectDelivery.receivingDeviceLacksProjectRepository'));
     if(giteeRepository(await git(repo.localRoot,['config','--get','remote.origin.url'],repo))?.webUrl !== giteeRepository(repo.repoUrl).webUrl)throw new Error(tr('projectDelivery.receivingRepositoryOriginDoesNot2'));
-    if(item.changed===false && repo.baselineRoot)await unchangedVersion(repo,item);
+    if(delivery.purpose!=='review' && item.changed===false && repo.baselineRoot)await unchangedVersion(repo,item);
     else {
       await git(repo.localRoot,['fetch','--no-tags','origin',delivery.ref],repo);
       if (await git(repo.localRoot,['rev-parse','FETCH_HEAD'],repo) !== item.commit) throw new Error(tr('projectDelivery.receivedCommitDoesNotMatch2'));
     }
-    if(repo.baselineRoot && item.changed!==false)await syncProjectBaseline({localRoot:repo.baselineRoot,branch:repo.baselineBranch,
+    if(delivery.purpose!=='review' && repo.baselineRoot && item.changed!==false)await syncProjectBaseline({localRoot:repo.baselineRoot,branch:repo.baselineBranch,
       commit:item.commit,repoUrl:repo.repoUrl,credential:repo.credential});
     const target = join(folder,repo.key);
     await git(repo.localRoot,['worktree','add','--detach',target,item.commit],repo);

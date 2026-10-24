@@ -13,6 +13,7 @@ allowed.add('/api/agent/documents');
 allowed.add('/api/agent/source-sync');
 allowed.add('/api/agent/notify');
 allowed.add('/api/agent/progress');
+allowed.add('/api/agent/deliveries/review');
 for(const path of ['/api/agent/read-source','/api/agent/node-query','/api/agent/file-read'])allowed.add(path);
 
 /** Dispatch pause must not swallow accepted work's conclusions; new work and write operations remain blocked. */

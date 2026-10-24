@@ -43,7 +43,7 @@ import { collaborationQueueView } from './coordination-wait.mjs';
 import { WorkspaceStateFeed, workspaceScope, WORKSPACE_SUMMARY } from './workspace-state.mjs';
 import { pageSummaries } from './workspace-summaries.mjs';
 import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
-import { Deliveries } from './git-delivery.mjs';
+import { Deliveries, reviewDeliveryIssue } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
 import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updatePausedSetting, updateConversationOrganizer,legacyExecutionPrompt,executionRules } from './platform-prompts.mjs';
 import { runtimeReportFresh } from './runtime-state.mjs';
@@ -269,8 +269,14 @@ async function dispatch(nodeId) {
     if(c.type==='launch'&&db.get('settings','main')?.paused)continue;
     if(['launch','delivery_publish'].includes(c.type)&&sourceSync.busy(run.projectId,nodeId))continue;
     if (['launch','delivery_publish'].includes(c.type) && projectTerminalLock(db,run.projectId,nodeId)) continue;
+    const reviewIssue=reviewDeliveryIssue(db.get('workers',nodeId),db.get('deliveries',c.deliveryId||run.deliveryId||''));
+    if(c.type==='delivery_publish'&&reviewIssue){
+      const delivery=db.get('deliveries',c.deliveryId);
+      if(delivery)db.put('deliveries',{...delivery,status:'blocked',error:reviewIssue});
+      db.put('commands',{...c,acked:true});change();continue;
+    }
     if(c.type==='launch') {
-      const issue=instructionProtocolIssue(run,db.get('workers',nodeId));
+      const issue=reviewIssue||instructionProtocolIssue(run,db.get('workers',nodeId));
       if(issue||run.instructionProtocolIssue) {
         const task=db.get('tasks',run.taskId),previous=run.instructionProtocolIssue;
         run={...run,instructionProtocolIssue:issue};db.put('runs',run);
@@ -454,6 +460,9 @@ function json(res, data, status = 200) { res.writeHead(status, { 'Content-Type':
 /** Path checks and file reads are both done by the target Worker; Home does not probe the remote filesystem. */
 function workerQuery(run, action, path, timeout = 10000) {
   if (!online(run.nodeId)) throw new Error(tr('home.executionNodeOfflineUnableRead'));
+  if(action==='execution_receive')for(const delivery of path?.deliveries||[]){
+    const issue=reviewDeliveryIssue(db.get('workers',run.nodeId),delivery);if(issue)throw new Error(issue);
+  }
   const id = randomUUID();
   return new Promise((resolveQuery, reject) => {
     const timer = setTimeout(() => { queries.delete(id); reject(new Error(tr('home.nodeQueryTimedOut'))); }, timeout);
@@ -1032,8 +1041,8 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/agent/wait') {
           const r = calls.wait(run, b.summary,{requestIds:b.requestIds,timeoutSeconds:b.timeoutSeconds}); change(); return json(res, { requestId: r.id, status: r.status,requestIds:r.waitRequestIds,deadlineAt:r.waitDeadlineAt,note: tr('home.endTurnNowExecutionSlot') });
         }
-        if (pathname === '/api/agent/deliveries') {
-          const r = deliveries.request(run, b); change(); return json(res, r, 201);
+        if (pathname === '/api/agent/deliveries' || pathname === '/api/agent/deliveries/review') {
+          const r = deliveries.request(run, pathname.endsWith('/review') ? {...b,purpose:'review'} : b); change(); return json(res, r, 201);
         }
         throw new Error(tr('home.unknownCollaborationEndpoint'));
       }
