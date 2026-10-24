@@ -6,7 +6,8 @@ import {sideButton,canOpenSide} from './side-preview.js';
 
 const el=(tag,className,text)=>Object.assign(document.createElement(tag),{className:className||'',...(text!==undefined?{textContent:text}:{})});
 const date=value=>value?new Date(value).toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'Modified time unknown';
-const fileState=file=>file.error?t('Read failed'):file.syncState==='conflict'?t('Sync conflict'):file.path
+const sourceVersion=file=>file.readMode==='recorded'?[t(file.versionEvidence==='recorded_commit'?'Recorded commit':'Source workspace snapshot; execution-time version not recorded'),file.sourceCommit?.slice(0,12),file.sha256?`SHA256 ${file.sha256.slice(0,12)}`:''].filter(Boolean).join(' · '):'';
+const fileState=file=>file.error?t('Read failed'):file.readMode==='recorded'?t('Read-only source file'):file.syncState==='conflict'?t('Sync conflict'):file.path
   ?[t('Available on Mac'),file.syncState==='disabled'?t('Sync disabled'):file.syncState==='pending'?t('Sync pending'):null].filter(Boolean).join(' · ')
   :t(file.syncState==='disabled'?'Sync disabled':file.syncState==='pending'?'Waiting for local synchronization':'Local file not found.');
 
@@ -31,13 +32,13 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
     const version=++detailVersion;
     document.querySelector('#artifact-detail-title').textContent=file.name;
     const worker=getData().workers.find(w=>w.id===file.nodeId);
-    document.querySelector('#artifact-detail-meta').textContent=`${file.type} · ${fileState(file)}${worker?` · ${worker.name}`:''}\n${file.path||''}`;
+    document.querySelector('#artifact-detail-meta').textContent=`${file.type} · ${fileState(file)}${worker?` · ${worker.name}`:''}\n${file.path||''}${sourceVersion(file)?`\n${sourceVersion(file)}`:''}`;
     content.textContent='Reading file…';side.hidden=true;sideItem=null;dialog.showModal();
     if(!file.shared&&!file.path){content.textContent=file.error||t('Local file not found.');return;}
     // An older Worker may only lack the metadata query; the existing content API still works, so details are not blocked.
     const path=file.relativePath||file.path,markdown=/\.(md|markdown)$/i.test(path),text=/\.(md|markdown|txt)$/i.test(path);
     try{
-      const result=await api(file.shared?`/api/projects/${encodeURIComponent(file.projectId)}/local-file?${new URLSearchParams({scopeId:file.scopeId,path})}`:`/api/runs/${encodeURIComponent(file.runId)}/${text?'document':'file'}?path=${encodeURIComponent(path)}`);
+      const result=await api(file.shared?`/api/projects/${encodeURIComponent(file.projectId)}/local-file?${new URLSearchParams({scopeId:file.scopeId,path})}`:`/api/runs/${encodeURIComponent(file.runId)}/${text?'document':'file'}?${new URLSearchParams({path,...(file.readMode==='recorded'?{source:'recorded',sha256:file.sha256,...(file.sourceCommit?{commit:file.sourceCommit}:{})}:{})})}`);
       if(version!==detailVersion||!dialog.open)return;
       if(result.shared){document.querySelector('#artifact-detail-meta').textContent=`${fileState(result)}\n${result.path||''}`;
         if(result.content===null){content.textContent=t(result.preview==='binary'?'Binary file; preview unavailable.':result.preview==='too_large'?(result.reason==='serialized_response_limit'?'Text preview exceeds the serialized response size limit.':'Local file exceeds the 600 KB text preview limit.'):result.syncState==='pending'?'Waiting for local synchronization':'Local file not found.');return;}}
@@ -55,7 +56,8 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
     if(file.modifiedAt)body.append(el('small','',t('Local modified: {time}',{time:date(file.modifiedAt)})));
     if(file.path){const path=el('small','artifact-local-path',file.path);path.setAttribute('translate','no');body.append(path);}
     body.append(el('small',file.error||file.syncState==='conflict'?'artifact-warning':'',fileState(file)));
-    if(file.error)body.append(el('small','artifact-warning',file.error));
+    if(sourceVersion(file))body.append(el('small','artifact-local-path',`${getData().workers.find(w=>w.id===file.nodeId)?.name||file.nodeId} · ${sourceVersion(file)}`));
+    if(file.error)body.append(el('small','artifact-warning',t(file.error)));
     button.title=`${file.path||''}\n${file.source}${file.roleName?` · ${file.roleName}`:''}`;
     button.append(type,body);button.addEventListener('click',()=>void detail(file));
     return button;

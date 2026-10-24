@@ -1765,6 +1765,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 整套测试或大型编译交执行跑属于开发阶段的自测，不算独立测试。较长的清单或证据写进文件，用 wb call --file 附上，或放在 .workbench/docs 并写明路径和哈希。`,
   'wbTools.helpErrors': `工具报错以 [code] 开头：run_reconciling、home_disconnected 表示请求没有执行，用同一请求编号重试；run_stopping、run_ended、paused 表示本次已结束，本轮不再重试。`,
   'minimal.identity': '当前通过 Workbench 执行，角色为 {name}（角色 ID：{roleId}）。可按需使用协作工具，通过 wb help 发现入口。',
+  'minimal.sharedReportDirectory': '共享报告目录（绝对路径）：{path}。获准公开的报告写入这里，不要写到仓库相对路径的 .workbench/docs 或临时工作区。未公开审核材料仍须保密；此路径不授予额外写权限。',
   'minimal.inputRepositoryVersions': '任务启动时的实际输入（工作目录 {cwd}）：{versions}。commit 是执行目录 HEAD；boundCommit 仅是当前项目的对照，不代表旧会话内的代码。代码任务先核对指定版本和这些实际路径，不静默更新旧目录。',
   'platformPrompts.independentReviewBoundary': `独立审核只读。核对指定版本，报告问题位置、触发条件、影响及证据，修复后核对新版本。结论写在回复里：通过、需要修改、无法核实或需要用户决定；只有非阻塞建议时才算通过。`,
   'executionWorkspace.resumeRepositoryMissing': '无法在旧会话目录中定位仓库 {key}，未改用当前项目副本。请核对原目录，或明确准备新会话。',

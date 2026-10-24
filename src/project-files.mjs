@@ -23,7 +23,10 @@ export class ProjectFiles {
     const isolated=this.db.sourceIsolationRuns(projectId).filter(r=>r.nodeId===nodeId&&r.execution?.isolated&&r.workspace&&r.workspace!==r.projectRoot);
     return scopes.filter(b=>!isolated.some(r=>beneath(resolve(r.workspace),resolve(b.localRoot))!==null)).map(b=>{
       const root=resolve(b.localRoot),sharedDocs=isProjectFileScope(projectId,b.repositoryId);
-      const excludeRoots=scopes.filter(other=>other.repositoryId!==b.repositoryId).map(other=>beneath(root,resolve(other.localRoot))).filter(p=>p!==null);
+      const excludeRoots=scopes.filter(other=>other.repositoryId!==b.repositoryId&&!(
+        !sharedDocs&&isProjectFileScope(projectId,other.repositoryId)&&resolve(other.localRoot)===root
+      )).map(other=>beneath(root,resolve(other.localRoot))).filter(p=>p!==null);
+      if(!sharedDocs&&project?.localRoot&&resolve(project.localRoot)===root)excludeRoots.push('.workbench/docs');
       if(!sharedDocs&&excludeRoots.includes(''))throw syncError('overlapping_scope');
       return {repositoryId:b.repositoryId,nodeId,root,scopeKind:'directory',scopePolicy:{sharedDocs,excludeRoots:[...new Set(excludeRoots)].sort()}};
     });
@@ -38,6 +41,19 @@ export class ProjectFiles {
   legacyReadable(run){
     try{const nodeId=this.config(run.projectId).displayNodeId;return run.nodeId===nodeId&&this.db.get('workers',nodeId)?.capabilities?.projectFiles!==1;}catch{return false;}
   }
+  /** Older repository-local reports have a collision-free shared copy; historical messages keep their original link. */
+  sharedReportReference(projectId,nodeId,absolute){
+    const projectRoot=this.db.get('workspaces',`${projectId}:${nodeId}`)?.localRoot;
+    if(!projectRoot)return null;
+    for(const binding of this.readBindings(projectId,nodeId)){
+      if(isProjectFileScope(projectId,binding.repositoryId)||binding.root===resolve(projectRoot))continue;
+      const repo=this.db.get('repositories',binding.repositoryId),rel=beneath(binding.root,absolute);
+      if(repo?.projectId!==projectId||!repo.key||!rel?.startsWith('.workbench/docs/'))continue;
+      const path=`.workbench/docs/repositories/${encodeURIComponent(repo.key)}/${rel.slice('.workbench/docs/'.length)}`;
+      try{validateSourcePath(path,{sharedDocs:true,excludeRoots:[]});return {scopeId:projectFileScopeId(projectId),path};}catch{}
+    }
+    return null;
+  }
   /** Map registered scopes only; a same-named isolated output is not a delivered project file. */
   reference(run,path){
     if(!this.db.get('projects',run.projectId))throw syncError('project_missing');
@@ -49,6 +65,8 @@ export class ProjectFiles {
     if(logicalDocument&&(!run.projectRoot||!projectRoot||resolve(run.projectRoot)!==resolve(projectRoot)))return null;
     if(!isAbsolute(path)&&!run.workspace&&!logicalDocument)return null;
     const absolute=isAbsolute(path)?resolve(path):resolve(logicalDocument?run.projectRoot:run.workspace,path);
+    const sharedReport=this.sharedReportReference(run.projectId,run.nodeId,absolute);
+    if(sharedReport)return sharedReport;
     for(const binding of this.readBindings(run.projectId,run.nodeId).sort((a,b)=>b.root.length-a.root.length)){
       if(sourceScopeBinding(this.db,run.projectId,binding.repositoryId,run.nodeId)?.localRoot!==binding.root)continue;
       const rel=relative(binding.root,absolute);if(!rel||isAbsolute(rel)||rel==='..'||rel.startsWith('../'))continue;
@@ -58,6 +76,7 @@ export class ProjectFiles {
     // never relative Run paths, isolated outputs, or an ambiguous same-spelled scope on another device.
     if(!isAbsolute(path)||path.split('/').some(part=>part==='..'||part==='.')||run.execution?.isolated&&run.workspace&&beneath(resolve(run.workspace),absolute)!==null)return null;
     const nodes=new Set([...this.db.list('workspaces'),...this.db.list('repositoryWorkspaces')].filter(b=>b.projectId===run.projectId&&b.nodeId!==run.nodeId).map(b=>b.nodeId)),references=new Map();
+    for(const nodeId of nodes){const report=this.sharedReportReference(run.projectId,nodeId,absolute);if(report)references.set(JSON.stringify(report),report);}
     for(const nodeId of nodes)for(const binding of this.readBindings(run.projectId,nodeId)){
       if(sourceScopeBinding(this.db,run.projectId,binding.repositoryId,nodeId)?.localRoot!==binding.root)continue;
       const rel=beneath(binding.root,absolute);if(!rel)continue;

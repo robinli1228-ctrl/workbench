@@ -33,7 +33,7 @@ import { RoleCalls } from './role-calls.mjs';
 import {createAgentCalls} from './agent-calls.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
-import {recentProjectArtifacts} from './run-artifacts.mjs';
+import {recentProjectArtifacts,recordedArtifactPath} from './run-artifacts.mjs';
 import {ProjectFiles} from './project-files.mjs';
 import {MediaStreams,MEDIA_CACHE_CONTROL,cachedMediaAllowed} from './media-streams.mjs';
 import {MediaCache} from './media-cache.mjs';
@@ -1417,7 +1417,15 @@ const server = http.createServer(async (req, res) => {
           const events=db.events(r.id,after,limit===null?-1:limit+1);
           return json(res, { events:limit===null?events:events.slice(0,limit),...(limit===null?{}:{hasMore:events.length>limit,runState:{status:r.status,lastSeq:r.lastSeq,finishedAt:r.finishedAt}}) });
         }
-        if(['file','document'].includes(m[2])){const ref=projectFiles.reference(r,url.searchParams.get('path'));if(ref&&!projectFiles.legacyReadable(r))return json(res,await projectFiles.read(r.projectId,ref.scopeId,ref.path,{metadata:url.searchParams.get('metadata')==='1'}));}
+        if(['file','document'].includes(m[2])){
+          const path=url.searchParams.get('path');
+          if(url.searchParams.get('source')==='recorded'){
+            if(db.get('workers',r.nodeId)?.capabilities?.recordedArtifacts!==1)throw Error('Upgrade the source Worker to read recorded artifacts.');
+            const homeRecordedPath=recordedArtifactPath(db,r,path);
+            return json(res,await workerQuery(r,'artifact_source',{path,homeRecordedPath,metadata:url.searchParams.get('metadata')==='1',expectedHash:url.searchParams.get('sha256'),expectedCommit:url.searchParams.get('commit')},30000));
+          }
+          const ref=projectFiles.reference(r,path);if(ref&&!projectFiles.legacyReadable(r))return json(res,await projectFiles.read(r.projectId,ref.scopeId,ref.path,{metadata:url.searchParams.get('metadata')==='1'}));
+        }
         const result = await workerQuery(r, m[2], url.searchParams.get('path'),m[2]==='document'?30000:10000);
         return json(res, result);
       }

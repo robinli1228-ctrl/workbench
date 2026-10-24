@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v183-folder-entry-only';
+const CACHE = 'agent-workbench-static-v184-artifact-source-reads';
 const STATIC = [
   '/remote-access-settings.js',
   '/group-conversations.js',

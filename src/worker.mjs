@@ -15,6 +15,7 @@ import { promisify } from 'node:util';
 import { Store, terminal } from './store.mjs';
 import {validateCliCapacity,reservedTerminalSlots} from './device-capacity.mjs';
 import { readRunDocument } from './run-document.mjs';
+import {readRecordedArtifact} from './run-artifact-source.mjs';
 import {readProjectFile,listProjectFiles} from './project-file-read.mjs';
 import {budgetReadReply} from './read-query-response.mjs';
 import {inspectReadSource,readSourceCurrent} from './cross-device-read-worker.mjs';
@@ -537,7 +538,7 @@ async function command(m) {
       const attachmentHint = inputFiles.length ? executionText('worker.userAttachmentsForTurnUntrusted', { p1: inputFiles.map(a => JSON.stringify({name:a.name,path:a.path,mime:a.mime})).join('\n') }) : '';
       const toolGuide=executionConfiguration?executionText('minimal.toolEntry',{wbCommand}):[executionText('worker.wbCommandPrefixForTurn', { wbCommand }),(m.run.sourceSyncTracking||m.run.sourceConflictId||m.run.sourceConflictPeerId||m.run.sourceConflictAssignmentRequestId)?executionText('sourceSync.toolGuide'):''].filter(Boolean).join('\n\n');
       const taskPrompt=[m.task.prompt,executionConfiguration?.dependencyEvents?.length?executionText('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):''].filter(Boolean).join('\n\n');
-      const environmentHint=executionEnvironmentHint({cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions});
+      const environmentHint=executionEnvironmentHint({cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
       const input = createRunInput({ minimal:Boolean(executionConfiguration),environmentHint,configurationUpdate:instructions.configurationUpdate,taskPrompt, boundary, context, runtimeGuidance:toolGuide, setupHint, attachmentHint,
         executionInstructions:m.run.switchOperationId?'Read-only CLI handoff maintenance. Return the requested final answer; do not execute business work or write handoff files.':englishExecutionRules(m.run,{minimal:Boolean(executionConfiguration)}),roleInstructions:instructions.instructions,sourceInputs:sourceInputReceipts });
       if(instructions.inheritedFrom)input.instructionsInheritedFrom=instructions.inheritedFrom;
@@ -651,7 +652,7 @@ async function query(m,emit=send) {
     try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
   }
   const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write','native_session_branch','native_session_delete'].includes(m.action)&&!(m.action==='native_session_delete'&&m.path?.dryRun===true);
-  const guarded=['source_inspect','source_read','read_query','project_file','file','document','collaboration_documents'].includes(m.action);
+  const guarded=['source_inspect','source_read','read_query','project_file','file','document','artifact_source','collaboration_documents'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
     if(m.action.startsWith('native_agent_switch_')){send({type:'reply',id:m.id,result:await nativeAgentSwitches.handle(m.action,m.path)});return;}
@@ -1158,8 +1159,9 @@ async function query(m,emit=send) {
       } catch {}
       send({ type: 'reply', id: m.id, result: { localRoot, git } }); return;
     }
-    if (!['file', 'files', 'document','artifact_files'].includes(m.action)) throw new Error(tr('worker.unknownNodeQuery'));
+    if (!['file', 'files', 'document','artifact_files','artifact_source'].includes(m.action)) throw new Error(tr('worker.unknownNodeQuery'));
     const r = db.get('runs', m.runId); if (!r?.workspace) throw new Error(tr('worker.noTaskWorkspaceYet'));
+    if(m.action==='artifact_source'){reply(await readRecordedArtifact(r,m.path?.path,{events:db.events(r.id),homeRecordedPath:m.path?.homeRecordedPath,metadata:m.path?.metadata===true,expectedHash:m.path?.expectedHash,expectedCommit:m.path?.expectedCommit}));return;}
     const root = await realpath(r.workspace);
     if(m.action==='artifact_files'){send({type:'reply',id:m.id,result:await inspectArtifactFiles(root,m.path)});return;}
     if (m.action === 'document') {
@@ -1205,7 +1207,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

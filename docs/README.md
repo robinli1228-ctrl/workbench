@@ -2,6 +2,7 @@
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [design-artifact-source-reading](design-artifact-source-reading.md) | Shared report locations and evidence-bound source artifact reads | Implementation and isolated verification; not deployed |
 | [design-lazy-native-tools](design-lazy-native-tools.md) | Native history summaries, on-demand tool details and bounded recent cache | Locally implemented; verification evidence recorded separately; not deployed |
 | [design-review-delivery](design-review-delivery.md) | Fixed review refs, baseline-preserving reception and isolated review sessions | Locally implemented, independently reviewed and isolated-tested; not deployed |
 | [design-runtime-quota-events](design-runtime-quota-events.md) | Passive Claude/Codex quota, snapshot ownership and freshness; unchanged UI | Implemented on the feature branch; isolated checks, not deployed |

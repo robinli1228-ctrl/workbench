@@ -372,3 +372,5 @@ Project status and planned work are tracked in the issue tracker.
 MIT. See [LICENSE](LICENSE).
 
 Group-chat roles can transfer whole-task ownership with `wb call --kind transfer`. The receiver arranges its reviews and replies to the user; final replies replace `wb report`. Migration, deployment and production operations must be assigned separately after review, rather than automatically following a stage plan, including plans saved by older versions.
+
+Public reports belong in the bound project root’s `.workbench/docs`, using the absolute directory supplied for eligible managed turns. Older repository-local report links resolve to recovered shared copies under `.workbench/docs/repositories/<repository-key>/`. Recorded temporary-worktree artifacts are read from their source device with file-hash and repository checks; missing historical version evidence is labelled as a source-workspace snapshot rather than a historical commit. See [artifact source reading](docs/design-artifact-source-reading.md).
