@@ -69,11 +69,19 @@ export class NativeCliSession extends CliPrintSession {
       // The live background-task list is kept between turns too, so a later turn knows what is still running.
       if(message.type==='system'&&message.subtype==='background_tasks_changed'&&Array.isArray(message.tasks))this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
       if(!this.done&&!this.awaitingEcho&&message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id)this.task(message);
+      // A rejected queued input has no replay. Only its own negative receipt may settle it without an echo.
+      if(this.awaitingEcho&&!this.done&&!this.stopping&&message.type==='command_lifecycle'&&!message.parent_tool_use_id&&message.command_uuid===this.inputUuid&&message.session_id===this.inputSessionId&&['refused','discarded'].includes(message.state)){
+        this.awaitingEcho=false;
+        this.emit('status',{inputDeliveryState:'not_delivered',inputRejection:message.state});
+        // Discard means the session is ending: retire its process through the existing exit/lease path, never reuse it.
+        if(message.state==='discarded')this.close();
+        return this.finish('failed',`Input not delivered: Claude ${message.state} this message before its echo`);
+      }
       // Claude echoes a stdin message (--replay-user-messages) when it starts on it. Until this turn's echo, what it says
       // answers something else it queued first (a background task's completion notice): that output and its result are not
       // this turn's, so they neither show in it nor end it.
       if(message.type==='user'&&message.isReplay){
-        if(message.uuid===this.inputUuid&&!message.parent_tool_use_id&&message.session_id===(this.nativeSessionId||this.resumeSessionId))this.awaitingEcho=false;
+        if(this.awaitingEcho&&message.uuid===this.inputUuid&&!message.parent_tool_use_id&&message.session_id===this.inputSessionId){this.awaitingEcho=false;this.emit('status',{inputDeliveryState:'accepted'});}
         return;
       }
       if(this.awaitingEcho&&!this.stopping&&message.type!=='system')return;
@@ -123,9 +131,11 @@ export class NativeCliSession extends CliPrintSession {
     this.awaitingEcho=this.keepAlive&&this.runtime==='claude'&&!String(prompt).trimStart().startsWith('/');
     // Queued background notices are replayed too; UUID identity, not text, binds even repeated prompts to this input.
     if(this.awaitingEcho)message.uuid=this.inputUuid=randomUUID();else this.inputUuid=null;
+    this.inputSessionId=message.session_id;
     // Process-wide backgroundTasks still gates completion; this map only owns the current turn's visible tasks.
     this.tasks=new Map();
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error)this.emit('status',{inputDeliveryState:'accepted'});});
+    const needsEcho=this.awaitingEcho;
+    this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error&&!needsEcho)this.emit('status',{inputDeliveryState:'accepted'});});
   }
   /** Resident Claude interrupts only the current turn through the stream-json control channel; others end the process. */
   async stop() {

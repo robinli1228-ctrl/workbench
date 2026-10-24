@@ -89,6 +89,7 @@ export function applyNativeTurnEvent(turn,event){
  if(event.kind==='status'){
   // Input acceptance is independent of the task outcome; a later failure cannot undo delivery.
   if(next.inputDeliveryState!=='accepted'&&['accepted','not_delivered'].includes(event.inputDeliveryState))next.inputDeliveryState=event.inputDeliveryState;
+  if(next.runtime==='claude'&&next.inputDeliveryState==='not_delivered'&&['refused','discarded'].includes(event.inputRejection))next.inputRejection=event.inputRejection;
   if(event.status&&!(turn.status==='stopping'&&ACTIVE.has(event.status)))next.status=event.status;
   if(event.status==='starting')next.phase='starting';
   if(event.status==='running'&&!next.phase)next.phase='thinking';
@@ -328,7 +329,8 @@ export class NativeTurnsHome{
    }
    // One failed reply never drops the queue. Two in a row that failed before the CLI produced anything mean the process
    // cannot start (login expired, binary gone): the rest would fail the same way one by one, so they are cancelled with the reason.
-   const silent=t=>t.status==='failed'&&!(t.events||[]).some(e=>['message','text','tool'].includes(e.type));
+   // An explicit per-input rejection is not a startup failure; a later input can still be accepted.
+   const silent=t=>t.status==='failed'&&!(t.runtime==='claude'&&t.inputDeliveryState==='not_delivered'&&['refused','discarded'].includes(t.inputRejection))&&!(t.events||[]).some(e=>['message','text','tool'].includes(e.type));
    if(silent(next)){const previous=nativeTurnRows(this.db,{nodeId,runtime:turn.runtime,sessionId:turn.sessionId,limit:10}).find(t=>t.id!==turn.id&&t.endedAt&&t.status!=='cancelled');
     if(previous&&silent(previous))this.cancelWaiting(nodeId,turn.runtime,turn.sessionId,`The CLI did not start twice in a row${next.error?` (${next.error})`:''}; queued messages were not sent`);}
    void this.pump(nodeId,turn.runtime,turn.sessionId);
@@ -443,7 +445,7 @@ export class NativeTurnRunner{
     if(ended)return;
     if(type==='status'&&p.nativeSessionId&&p.nativeSessionId!==m.sessionId){void state.session?.stop();return end('mismatch','The CLI resumed a different native session; stopped');}
     // Delivery receipts need not carry a status; forward them before settling a terminal event.
-    if(type==='status'&&['accepted','not_delivered'].includes(p.inputDeliveryState))this.event(m.id,{kind:'status',inputDeliveryState:p.inputDeliveryState});
+    if(type==='status'&&['accepted','not_delivered'].includes(p.inputDeliveryState))this.event(m.id,{kind:'status',inputDeliveryState:p.inputDeliveryState,...(['refused','discarded'].includes(p.inputRejection)?{inputRejection:p.inputRejection}:{})});
     if(type==='status'&&p.status==='reconciling'){this.event(m.id,{kind:'status',status:'stopping',error:p.error});if(this.leases)void this.close(key,'unconfirmed');return;}
     if(type==='status'&&['succeeded','failed','interrupted'].includes(p.status))return end(p.status,p.error);
     if(type==='status'&&p.status)this.event(m.id,{kind:'status',status:p.status});
