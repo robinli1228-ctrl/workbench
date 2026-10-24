@@ -431,6 +431,7 @@ export default {
  "All finished": "全部完成",
  "{n} failed or stopped": "{n} 个失败或已停止",
  "Earlier turn": "之前的轮次",
+ "Clearing the context starts another session; start a new session here instead": "清空上下文会换成另一个会话，请直接在这里新建会话",
  "Status unknown": "状态未确认",
  "Background command": "后台命令",
  "Subagent": "子代理",
