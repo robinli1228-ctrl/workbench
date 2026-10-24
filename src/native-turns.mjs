@@ -78,12 +78,16 @@ export function applyNativeTurnEvent(turn,event){
  // the run time measured on the device; later events of one task fill in what it is doing now and how it ended.
  if(event.kind==='task'&&event.task?.id){
   const tk=event.task,id=String(tk.id).slice(0,80),tasks=[...(next.tasks||[])],i=tasks.findIndex(x=>x.id===id),str=(v,n)=>typeof v==='string'?v.slice(0,n):undefined;
-  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',status:'running',startedAt:now()});
+  // One carried over from an earlier turn keeps its device-measured age, so its time counts from when it really started.
+  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',status:'running',
+   startedAt:tk.earlier&&Number.isFinite(tk.elapsedMs)&&tk.elapsedMs>=0?new Date(Date.now()-tk.elapsedMs).toISOString():now(),...(tk.earlier===true?{earlier:true}:{})});
   else if(i>=0&&tasks[i].status==='running'){const x={...tasks[i]};
    if(typeof tk.activity==='string')x.activity=str(tk.activity,200);if(Number.isFinite(tk.toolUses))x.toolUses=tk.toolUses;
    if(['completed','failed','stopped'].includes(tk.status)){x.status=tk.status;x.endedAt=now();if(Number.isFinite(tk.durationMs)&&tk.durationMs>=0)x.durationMs=tk.durationMs;}
    tasks[i]=x;}
-  next.tasks=tasks.slice(-20);
+  // At most 20 rows; finished ones leave first (oldest first), a running one only if all are running.
+  while(tasks.length>20){const j=tasks.findIndex(x=>x.status!=='running');tasks.splice(j<0?0:j,1);}
+  next.tasks=tasks;
  }
  if(event.kind==='log'&&typeof event.text==='string'){push('log',{text:clip(event.text)});if(event.thinking)next.phase='thinking';}
  if(event.kind==='status'){

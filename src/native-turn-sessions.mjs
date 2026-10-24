@@ -67,8 +67,13 @@ export class NativeCliSession extends CliPrintSession {
     }
     if(this.keepAlive&&this.runtime==='claude'&&message&&typeof message==='object'){
       // The live background-task list is kept between turns too, so a later turn knows what is still running.
-      if(message.type==='system'&&message.subtype==='background_tasks_changed'&&Array.isArray(message.tasks))this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
-      if(!this.done&&!this.awaitingEcho&&message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id)this.task(message);
+      if(message.type==='system'&&message.subtype==='background_tasks_changed'&&Array.isArray(message.tasks)){this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
+        for(const id of this.liveTasks?.keys()||[])if(!this.backgroundTasks.has(id))this.liveTasks.delete(id);}
+      if(message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id){
+        this.track(message);
+        // Before the echo only a task this turn already lists (one carried over from an earlier turn) may report on it.
+        if(!this.done&&(!this.awaitingEcho||this.tasks?.has(message.task_id)))this.task(message);
+      }
       // A rejected queued input has no replay. Only its own negative receipt may settle it without an echo.
       if(this.awaitingEcho&&!this.done&&!this.stopping&&message.type==='command_lifecycle'&&!message.parent_tool_use_id&&message.command_uuid===this.inputUuid&&message.session_id===this.inputSessionId&&['refused','discarded'].includes(message.state)){
         this.awaitingEcho=false;
@@ -77,6 +82,8 @@ export class NativeCliSession extends CliPrintSession {
         if(message.state==='discarded')this.close();
         return this.finish('failed',`Input not delivered: Claude ${message.state} this message before its echo`);
       }
+      // A build that answers a local command without a replay still reports it started; for a slash input only, that is its start.
+      if(this.awaitingEcho&&this.slashInput&&!this.done&&message.type==='command_lifecycle'&&message.state==='started'&&!message.parent_tool_use_id&&message.command_uuid===this.inputUuid&&message.session_id===this.inputSessionId){this.awaitingEcho=false;this.emit('status',{inputDeliveryState:'accepted'});return;}
       // Claude echoes a stdin message (--replay-user-messages) when it starts on it. Until this turn's echo, what it says
       // answers something else it queued first (a background task's completion notice): that output and its result are not
       // this turn's, so they neither show in it nor end it.
@@ -92,6 +99,13 @@ export class NativeCliSession extends CliPrintSession {
   }
   /** A subagent or background shell of this turn for the page: start, what it is doing now (at most every 5s), end. An end
    * without a start here (a task of an earlier, killed process) is not reported. */
+  /** Process-wide record of the live tasks (they outlive the turn that started them), so a later turn can show what it waits for. */
+  track(m){
+    const id=m.task_id;if(!id)return;const live=this.liveTasks||=new Map();
+    if(m.subtype==='task_started')return void live.set(id,{at:Date.now(),kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80)});
+    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
+    if(status&&!['pending','running'].includes(status))live.delete(id);
+  }
   task(m){
     const id=m.task_id;if(!id)return;const tasks=this.tasks||=new Map(),known=tasks.get(id),now=Date.now();
     if(m.subtype==='task_started'){tasks.set(id,{at:now,shown:0});return this.emit('task',{id,status:'running',kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80)});}
@@ -127,13 +141,18 @@ export class NativeCliSession extends CliPrintSession {
     const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text:prompt},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
     const message=this.runtime==='agy'?{event:'user',message:{role:'user',content}}:{type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
     this.inputAttempted=true;
-    // A prompt waits for its own echo before output counts as its own; a slash command is handled locally and not echoed.
-    this.awaitingEcho=this.keepAlive&&this.runtime==='claude'&&!String(prompt).trimStart().startsWith('/');
+    // Every input waits for its own echo before output counts as its own: Claude 2.1.303 echoes slash commands (/compact,
+    // /model, unknown ones) under their uuid too, and a message that only starts with a path must not end early.
+    this.awaitingEcho=this.keepAlive&&this.runtime==='claude';
+    this.slashInput=String(prompt).trimStart().startsWith('/');
     // Queued background notices are replayed too; UUID identity, not text, binds even repeated prompts to this input.
     if(this.awaitingEcho)message.uuid=this.inputUuid=randomUUID();else this.inputUuid=null;
     this.inputSessionId=message.session_id;
     // Process-wide backgroundTasks still gates completion; this map only owns the current turn's visible tasks.
     this.tasks=new Map();
+    // Tasks an earlier turn left running still hold this one open: list them here, with the time they have run so far.
+    for(const id of this.backgroundTasks||[]){const info=this.liveTasks?.get(id);if(!info)continue;this.tasks.set(id,{at:info.at,shown:0});
+      this.emit('task',{id,status:'running',kind:info.kind,description:info.description,agentType:info.agentType,earlier:true,elapsedMs:Date.now()-info.at});}
     const needsEcho=this.awaitingEcho;
     this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error&&!needsEcho)this.emit('status',{inputDeliveryState:'accepted'});});
   }
