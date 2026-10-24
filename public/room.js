@@ -746,7 +746,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   function messageCardMeta(message) {
     const outbound=message.sender!=='agent'||['handoff','discussion'].includes(message.kind);
     const kind=message.kind==='discussion'?'Question':message.kind==='handoff'
-      ? ({consult:'Question',direct:'Instruction',note:'Notice'}[message.handoff?.kind]||'Instruction')
+      ? ({consult:'Question',direct:'Instruction',transfer:'Transfer',note:'Notice'}[message.handoff?.kind]||'Instruction')
       : message.sender==='agent'?'Reply':'Message';
     if(outbound)return {kind,status:'Completed'};
     const run=data.runs?.find(item=>item.id===message.runId);

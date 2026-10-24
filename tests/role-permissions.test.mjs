@@ -92,11 +92,12 @@ test('role saves store the scope and old clients cannot reset it', () => {
   assert.equal(renamed.permissionScope, 'device');
 });
 
-test('the built-in supervisor template asks the dispatcher to own and follow up its goals', async () => {
+test('the built-in supervisor template hands whole tasks to an owner and clears blockers itself', async () => {
   const { runWithLanguage } = await import('../src/i18n.mjs');
   const { defaultSupervisorPrompt } = await import('../src/platform-prompts.mjs');
-  assert.match(await runWithLanguage('en', () => defaultSupervisorPrompt()), /Goal ownership/);
-  assert.match(await runWithLanguage('zh', () => defaultSupervisorPrompt()), /目标负责/);
+  assert.match(await runWithLanguage('en', () => defaultSupervisorPrompt()), /transfer a task whole to one role/);
+  assert.match(await runWithLanguage('zh', () => defaultSupervisorPrompt()), /任务整件转交给一个角色/);
+  assert.match(await runWithLanguage('zh', () => defaultSupervisorPrompt()), /解决卡点/);
 });
 
 test('a reused Codex process keeps asking for approval in the approval scope', () => {

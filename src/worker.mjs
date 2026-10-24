@@ -2,7 +2,7 @@ import { WebSocket } from 'ws';
 import { randomUUID, createHash } from 'node:crypto';
 import { WarmSessions, warmSessionFingerprint } from './warm-sessions.mjs';
 import {RoleSwitchWorker,recordSwitchOutput} from './role-switch-worker.mjs';
-import {discussionPolicy,validatedDiscussionConfigurations,supportsDiscussion} from './discussion-policy.mjs';
+import {discussionPolicy,supportsDiscussion} from './discussion-policy.mjs';
 import {inspectArtifactFiles} from './run-artifacts.mjs';
 import { writeTurnContext, turnToolCommand } from './turn-context.mjs';
 import { hostname, platform, homedir } from 'node:os';
@@ -94,18 +94,13 @@ const sessions = new Map();
 let organizerRunning = 0;
 const organizerControllers = new Set();
 let capacity = validateCliCapacity(db.get('settings','cli-capacity')?.capacity??Number(process.env.WORKER_CONCURRENCY||2));
-let ws, paused = true, quitting = false, registered = false, readySent = false, reconnectCleanup,cliRecoveryEnabled=false,readToolsEnabled=false;
+let ws, paused = true, quitting = false, registered = false, readySent = false, reconnectCleanup,cliRecoveryEnabled=false;
 const eventSent = new Map();
 useQuotaIdentitySalt((db.get('settings','quota-identity')||db.put('settings',{id:'quota-identity',salt:randomUUID()})).salt);
 let runtimes = await inspectRuntimes(), probing, runtimeFailures = {}, runtimeRetry = null, runtimeRetryDue = false;
 { const first = mergeRuntimeReports([], runtimes, {}); runtimes = first.runtimes; runtimeFailures = first.failures; if (first.retryMs) scheduleRuntimeRetry(first.retryMs); }
-// The first version is still in isolated acceptance testing; only adapters that are explicitly enabled and have version-tested evidence report the capability.
-const discussionCapabilities=()=>{
-  const bins={codex:process.env.CODEX_BIN||'codex',claude:process.env.CLAUDE_BIN||'claude',grok:process.env.GROK_BIN||'grok',agy:process.env.AGY_BIN||'agy'};
-  const configurations=process.env.WB_DISCUSSION_PREVIEW==='1'?validatedDiscussionConfigurations(process.env.WB_DISCUSSION_VALIDATED_CONFIGS,runtimes,bins):[];
-  return {discussionProtocol:configurations.length?2:0,discussionRuntimes:[...new Set(configurations.map(c=>c.runtime))],discussionConfigurations:configurations};
-};
-if(process.env.WB_DISCUSSION_PREVIEW==='1'&&!discussionCapabilities().discussionConfigurations.length)console.warn(tr('worker.discussionPreviewNotEnabledNo'));
+// The discussion protocol preview was retired: questions and reviews go through wb call, so no adapter reports it.
+const discussionCapabilities=()=>({discussionProtocol:0,discussionRuntimes:[],discussionConfigurations:[]});
 /** Only the periodic check may reuse the cached Claude model catalog; a check someone asked for reads it again. */
 async function refreshRuntimes({ periodic = false } = {}) {
   if (!probing) probing = inspectRuntimes({ force: !periodic }).then(r => { const merged = mergeRuntimeReports(runtimes, r, runtimeFailures); runtimes = merged.runtimes; runtimeFailures = merged.failures; scheduleRuntimeRetry(merged.retryMs); send({ type: 'runtime_report', runtimes,discussionCapabilities:discussionCapabilities() }); return runtimes; }).finally(() => { probing = null; });
@@ -414,10 +409,6 @@ async function command(m) {
       const homeHttp = homeUrl.replace(/^ws/i, 'http').replace(/\/worker\/?$/, '');
       const inputFiles = await receiveAttachments({ items: m.run.attachments, workspace: folder, runId: c.runId, home: homeHttp, token });
       if(inputFiles.length)emit(c.runId,'status',{attachmentFiles:inputFiles});
-      if(m.run.reportRequired) {
-        const check=await exec(process.execPath,[join(base,'src','wb-cli.mjs'),'capabilities'],{timeout:5000});
-        if(JSON.parse(check.stdout).protocol!==2)throw new Error(tr('worker.collaborationToolVersionMismatchUpgrade'));
-      }
       if (reservation.stopRequested || paused || ws?.readyState !== 1) { emit(c.runId,'status',{status:'interrupted',error:tr('worker.executionInterruptedByStopDisconnect')});return; }
       bridge = await startAgentBridge({ workspace: folder, runId: c.runId, home: homeHttp, token,
         canSend: (pathname,input) => canSendAgentOperation({paused,quitting,connected:ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input),
@@ -431,11 +422,11 @@ async function command(m) {
         WB_RUN_ID: c.runId,
         WB_ROLE_SESSION_ID: m.run.roleSessionId || '',
         WB_SOURCE_SYNC:'1',
-        WB_READ_TOOLS:readToolsEnabled?'1':'0',
         WB_CONVERSATION_ID: m.run.conversationId || m.run.projectId,
         WB_REQUEST_ID: m.run.requestId || '',
         WB_ROLE: m.run.roleSnapshot?.name || '',
         WB_SYSTEM_SUPERVISOR: m.run.roleSnapshot?.systemSupervisor && !m.run.roleSnapshot?.platformAssistant ? '1' : '0',
+        WB_PLATFORM_ASSISTANT: m.run.roleSnapshot?.platformAssistant ? '1' : '0',
         WB_CLI: join(base, 'src', 'wb-cli.mjs'),
         WB_BRIDGE: bridge.directory,
         WB_HOP: String(m.run.hop || m.task?.hop || 0),
@@ -1230,7 +1221,6 @@ function connect() {
       if (m.type === 'registered') {
         folderAccess.reconcile(Array.isArray(m.folderGrantIds)?m.folderGrantIds:[]);
         cliRecoveryEnabled=m.cliRecovery===1;
-        readToolsEnabled=m.readTools===1;
         paused = m.paused;
         // Home announces its language; run payloads carry their own, this covers Worker-originated text outside a run.
         if (m.language) try { setLanguage(m.language); } catch { /* keep current */ }

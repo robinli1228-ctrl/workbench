@@ -69,7 +69,7 @@ export class ExecutionPlans {
       }
       this.calls.wait(run,tr('executionPlans.schedulingReasonVerifyActualResult', { reason: input.reason }));
       return this.db.put('executionPlans',{id,projectId:run.projectId,conversationId:run.conversationId||run.projectId,parentRequestId:parent.id,sourceRunId:run.id,sourceMessageId:run.sourceMessageId,
-        reason:input.reason,fingerprint,stages,repositoryKeys,failurePolicy,requiresReports:true,status:'running',createdAt:now(),updatedAt:now()});
+        reason:input.reason,fingerprint,stages,repositoryKeys,failurePolicy,status:'running',createdAt:now(),updatedAt:now()});
     });
   }
   repositories(plan,nodeId) {return projectRepositories(this.db,plan.projectId,nodeId).filter(r=>!plan.repositoryKeys||plan.repositoryKeys.includes(r.key));}
@@ -113,23 +113,20 @@ export class ExecutionPlans {
               });
               if(runs.some(r=>!r||!terminal.has(r.status)||r.controlLost))throw new Error(tr('executionPlans.reviewRunResultsHaveNot'));
               if(runs.some(r=>r.status==='interrupted'||r.stopRequested))throw new Error(tr('executionPlans.reviewWasStoppedLaterSteps'));
-              if(runs.some(r=>this.db.get('runReports',r.id)?.verdict==='needs_input'))throw new Error(tr('executionPlans.reviewHasQuestionAwaitingUser'));
               if(runs.some(r=>r.status==='failed'&&!['temporary_service','incomplete_output'].includes(runFailureKind(r))))throw new Error(tr('executionPlans.reviewHitPermissionProblemUnconfirmed'));
-              if(runs.some((r,i)=>r.status==='succeeded'&&!['passed','failed','blocked'].includes(settled[i].outcome)))throw new Error(tr('executionPlans.reviewHasNoClearConclusion'));
               if(plan.isolated && runs.some(r=>!r.repositoryVersions?.length||r.repositoryVersions.length!==plan.baselines.length||r.repositoryVersions.some(v=>v.dirty&&!v.sourceInputVerified||v.commit!==plan.baselines.find(b=>b.id===v.id)?.commit)))throw new Error(tr('executionPlans.independentReviewMadeChangesLacks'));
             }
             if(requests.every(r=>callTerminal.has(r.status))) {
-              stage.status=requests.every(r=>r.status==='succeeded'&&r.outcome==='passed')?'succeeded':'failed';
+              // Reviews are collected, not judged here: the supervisor reads every reply when the plan returns to it.
+              stage.status=requests.every(r=>r.status==='succeeded')?'succeeded':'failed';
               stage.finishedAt=now();
               if(stage.status==='failed')stage.error=tr('executionPlans.stageHasFailedNegativeMissing');
               if(!plan.stages[stage.index+1])plan.status=plan.stages.some(s=>s.status==='failed')?'completed_with_issues':'succeeded';
               this.db.put('executionPlans',{...plan,updatedAt:now()});changed=true;continue;
             }
           } else if(requests.some(r=>['failed','cancelled'].includes(r.status))) throw new Error(tr('executionPlans.stageHasFailedCancelledRuns'));
-          // Preserve the existing stop-policy admission after call completion is separated from business verdicts; this does not add a new gate.
-          if(!collect&&requests.some(r=>r.status==='succeeded'&&['failed','blocked','needs_input'].includes(r.outcome)))throw new Error(tr('executionPlans.stageHasNoPassingConclusion'));
+          // A stage advances once its calls succeed; reports are gone, so no verdict gate remains (older plans included).
           if(!collect && requests.every(r=>r.status==='succeeded')) {
-            if(plan.requiresReports && requests.some(r=>r.outcome!=='passed')) throw new Error(tr('executionPlans.stageHasNoPassingConclusion'));
             const stageRuns=requests.map((request,index)=>{
               let r=request;
               for(let i=0;r.continuationRequestId && i<20;i++) r=this.db.get('coordinationRequests',r.continuationRequestId);

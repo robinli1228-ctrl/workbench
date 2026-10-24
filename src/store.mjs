@@ -352,7 +352,7 @@ export class Store {
         sourceSyncTracking:Boolean(this.get('sourceSyncConfigs',task.projectId)?.enabled&&this.get('sourceSyncConfigs',task.projectId)?.nodeIds?.includes(nodeId)),
         discussionProtocol:supportsDiscussion(this.get('workers',nodeId),task.roleSnapshot?.runtime,task.roleSnapshot?.model)?2:0,peerStatus:this.get('workers',nodeId)?.capabilities?.peerStatus===1?1:0,permissionProfile:'business',
         roleSessionId:roleSession?.id||null,resumeNativeSessionId:roleSession?.nativeSessionId||null,resumeNativeSession:roleSession?.nativeSession||null,resumeWorkspace:roleSession?.workspace||null,
-        projectScope: true, repositories, attachments: task.attachments || [], execution:task.execution||null,reportRequired:Boolean(task.reportRequired),scheduledJobId:task.scheduledJobId||null,
+        projectScope: true, repositories, attachments: task.attachments || [], execution:task.execution||null,scheduledJobId:task.scheduledJobId||null,
         documentViews:this.get('workers',nodeId)?.capabilities?.sessionQueue===2?1:0,
         repositoryUrl: repositoryId ? this.get('repositories', repositoryId)?.repoUrl : null,
         projectRoot: binding.localRoot, model: task.model, mode: task.mode, status: 'queued', lastSeq: 0, createdAt: now(), updatedAt: now(),

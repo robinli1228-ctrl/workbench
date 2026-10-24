@@ -14,6 +14,22 @@ import {conversationIdOf,resolveConversationId,assertConversationRecord} from '.
 import {registerResultReceipt,registerCallOutcome} from './result-receipts.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
+/** A task may change owner this many times in a row before the next owner must finish it or hand it to the supervisor. */
+const MAX_TRANSFERS = 8;
+
+/** Owners a task has had before this request: each transfer starts a new root chain whose root records where it came from. */
+export function transferDepth(db, requestId) {
+  let depth = 0, request = db.get('coordinationRequests', requestId);
+  const seen = new Set();
+  while (request && !seen.has(request.id) && seen.size < 200) {
+    seen.add(request.id);
+    const root = db.get('coordinationRequests', request.rootRequestId || request.id) || request;
+    if (!root.transferredFrom) break;
+    depth++;
+    request = db.get('coordinationRequests', root.transferredFrom);
+  }
+  return depth;
+}
 export const BLOCKED_WAKE_MS = 10 * 60000;
 /** Storage errors get this many resume attempts; a wait whose replies settled longer ago than STALE_WAIT_MS is history at Home start. */
 const RESUME_ATTEMPTS = 3;
@@ -80,6 +96,7 @@ export class RoleCalls {
       continuationOf: input.continuationOf || null, deliveryId: input.deliveryId || null,
       ...(input.waitRequestIds?{waitRequestIds:[...input.waitRequestIds]}:{}),...(input.wakeReason?{wakeReason:input.wakeReason}:{}),
       ...(input.sourceSyncBatchId?{sourceSyncBatchId:input.sourceSyncBatchId}:{}),
+      ...(input.transferredFrom?{transferredFrom:input.transferredFrom}:{}),
       planId: input.planId || null, planVersion: input.planVersion || null, stepId: input.stepId || null };
     const fingerprint = JSON.stringify(normalized);
     return this.db.transaction(() => {
@@ -99,9 +116,10 @@ export class RoleCalls {
       // A new call to a role whose CLI cannot work now fails at once, so the caller (often the supervisor) picks another role.
       // Plan stages are created up front and run later; their roles are checked when they actually start.
       if (normalized.kind!=='continuation'&&!input.planId) { const unavailable=cliUnavailable(this.db.get('workers',role.nodeId),role.runtime,role.model); if (unavailable) throw new Error(tr('roleCalls.targetRoleCliUnavailable', { name: role.name, reason: unavailable })); }
-      for (const id of [normalized.parentRequestId, normalized.continuationOf].filter(Boolean)) {
+      for (const id of [normalized.parentRequestId, normalized.continuationOf, normalized.transferredFrom].filter(Boolean)) {
         if (this.db.get('coordinationRequests', id)?.projectId !== input.projectId) throw new Error(tr('roleCalls.sourceCallDoesNotBelong'));
       }
+      if (normalized.transferredFrom && transferDepth(this.db, normalized.transferredFrom) >= MAX_TRANSFERS) throw new Error(tr('roleCalls.transferChainTooLong'));
       let ancestor = normalized.parentRequestId ? this.db.get('coordinationRequests', normalized.parentRequestId) : null;
       // A new call needs a live source call. A continuation only resumes work already delegated, so an upstream turn that
       // simply finished (succeeded or failed) does not end it; an explicit cancel or a user redirect does.
@@ -201,7 +219,7 @@ export class RoleCalls {
         ...sourceConflictContext(r),sourceSessionKey,
         continuationRunId: previous?.currentRunId || null,
         requiresCoordination: r.kind !== 'direct', contextPrepared:['consult','continuation'].includes(r.kind), planId: r.planId, planVersion: r.planVersion, stepId: r.stepId,
-        execution:r.execution || null,attachments:r.attachments || [],reportRequired:true,scheduledJobId:r.scheduledJobId||null });
+        execution:r.execution || null,attachments:r.attachments || [],scheduledJobId:r.scheduledJobId||null });
       const next = this.db.put('coordinationRequests', { ...r,sourceInputs,sourceSessionKey, status: 'queued', taskId: task.id, updatedAt: new Date().toISOString() });
       new SessionQueue(this.db).attachRequest(next);
       return next;

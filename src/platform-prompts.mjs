@@ -23,9 +23,8 @@ export function executionRules(run,{minimal=false}={}) {
   const passRule=run.collaborationBatchId||run.continuationBatchId?tr('sessionQueue.passRule'):'';
   if(minimal)return [passRule,purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):'',
     ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):'',
-    ['audit','review'].includes(purpose)?tr('platformPrompts.independentReviewBoundary'):'',
-    run.reportRequired?tr('platformPrompts.beforeBusinessDeliveryRunWb',{p1:''}):''].filter(Boolean).join('\n');
-  return tr('platformPrompts.handleOnlyAssignmentDoNot', { discussion, p2: run.discussionProtocol===2?tr('platformPrompts.useWbDiscussForShort'):tr('platformPrompts.useWbCallForRole'), p3: run.roleSnapshot?.systemSupervisor?tr('platformPrompts.workingRolesMayConsultDiscuss'):'', p4: purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):tr('platformPrompts.unlessMergeStageScheduledDo'), p5: ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):tr('platformPrompts.doNotReleaseOperateProduction'), p6: run.reportRequired?tr('platformPrompts.beforeBusinessDeliveryRunWb', { p1: run.discussionProtocol===2?tr('platformPrompts.wbDiscussAsk'):'' }):''  })+(passRule?`\n${passRule}`:'');
+    ['audit','review'].includes(purpose)?tr('platformPrompts.independentReviewBoundary'):''].filter(Boolean).join('\n');
+  return tr('platformPrompts.handleOnlyAssignmentDoNot', { discussion, p2: tr('platformPrompts.useWbCallForRole'), p3: run.roleSnapshot?.systemSupervisor?tr('platformPrompts.workingRolesMayConsultDiscuss'):'', p4: purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):tr('platformPrompts.unlessMergeStageScheduledDo'), p5: ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):tr('platformPrompts.doNotReleaseOperateProduction'), p6: ''  })+(passRule?`\n${passRule}`:'');
 }
 const DEFAULT_FIELD_LIMIT = 128;
 // Match only exact previous EN/ZH defaults; custom edits must survive prompt upgrades.
@@ -57,7 +56,10 @@ const LEGACY_SUPERVISOR_DEFAULTS = new Set([
   '8ab1ec3517d5e91083434ca363fb4a59a25153b2422af339a84d142674d9a137',
   // Defaults before the supervisor took on the simplest tasks itself.
   'fb1b0d4f6d221456decc6772b6a971ca37fb97981836b6967587bf706367b2d9',
-  '5c5a736260792f1eea3239614c4cdb1528aa3bd714bacabd15840495261fe156'
+  '5c5a736260792f1eea3239614c4cdb1528aa3bd714bacabd15840495261fe156',
+  // Defaults before whole-task transfer, stall handling and the end of wb schedule / wb progress / wb setup propose.
+  '658468f3a543b60041dc94da72c10d877e07e8f85687c8cde715377ca9b87725',
+  '891c4412e1ff62d8ca3264e1627dc12b10678a2025b0cafaa907384b48751bb0'
 ]);
 const LEGACY_PLATFORM_DEFAULTS = new Set([
   '4a7bd0d1a4bedbfd714d1493b7fd6c9a439bfec754a23f43d150a845ff249324',
@@ -75,7 +77,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   '1a1c7c92c460eb03cf2cd50d2e28f3f5d70f4bf57b6d5d4156089f1a71e70801',
   // Defaults before every @ had to be handled, reviews in turn, evidence-backed challenge and report only for assigned work.
   'ab94b6b0f24365f002461752c06a195e7f65602e7c42ba2fb5fa17901f6f5185',
-  '425555463ecd6044365b7ecfec4f40ec07ad996d5587dba08191b2f2be4a5db4'
+  '425555463ecd6044365b7ecfec4f40ec07ad996d5587dba08191b2f2be4a5db4',
+  // Defaults before the short template: no wb report, owners of transferred tasks, device > quota > idle.
+  '9d72984584070cec25b18a4d085c55b2e1fba00a362c4cf4366af7a38d811a38',
+  'f2a7f7f83e8454bcc2d7c1b20115c39f29448d8e7844513f397d307ffc276c27'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */

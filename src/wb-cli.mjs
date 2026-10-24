@@ -2,19 +2,15 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { loadTurnContext } from './turn-context.mjs';
 import { agentRequest } from './agent-bridge.mjs';
-import {discussionHelp} from './discussion-policy.mjs';
-import { setupCatalog, setupPropose, updateRolePrompt } from './setup-tools.mjs';
-import {
-  helpText, historySearchInput, boot, docsList, docsRead,inspectReadSource,queryNodeReadOnly,readDeviceFile,
-  gitStatus, chatPost, notifySupervisor, askRole, callRole, callDocument, waitForRole, requestDelivery, writeHandoff, handoffLast
-} from './wb-tools.mjs';
+import { setupCatalog, setupPropose } from './setup-tools.mjs';
+import { helpText, historySearchInput, chatPost, notifySupervisor, callRole, waitForRole, requestDelivery } from './wb-tools.mjs';
 import { tr } from './i18n.mjs';
 
 function out(data) {
   process.stdout.write(`${typeof data === 'string' ? data : JSON.stringify(data, null, 2)}\n`);
 }
 
-/** New session queries accept only explicit pagination parameters and never swallow unknown parameters into the current project request. */
+/** Session queries accept only explicit pagination parameters and never swallow unknown parameters into the current project request. */
 function sessionOptions(args) {
   const values={};
   const names={'--offset':'offset','--limit':'limit','--version':'version','--cursor':'cursor'};
@@ -26,19 +22,7 @@ function sessionOptions(args) {
   return values;
 }
 
-function parseHandoffArgs(args) {
-  const fields = {};
-  const leftover = [];
-  for (let i = 0; i < args.length; i++) {
-    const token = args[i];
-    const key = token.replace(/^--/, '');
-    if (['done', 'files', 'next', 'blocked', 'verify'].includes(key) && args[i + 1]) {
-      fields[key] = args[++i];
-    } else leftover.push(token);
-  }
-  if (!fields.done && leftover.length) fields.done = leftover.join(' ');
-  return fields;
-}
+const COMMANDS=['pass','notify','collaboration','sync','discuss','capabilities','session','setup','history','schedule','timer','note','wait','deliver','call'];
 
 export async function main(argv = process.argv.slice(2)) {
   const turnId=argv[0]==='--turn'?argv[1]:undefined;
@@ -49,23 +33,15 @@ export async function main(argv = process.argv.slice(2)) {
     // Discovery must work even when a retained process inherited a deleted turn context.
     // Long-form guidance that left the platform template: read on demand, no turn context needed.
     if(['help','-h','--help'].includes(cmd)&&['review','sync','errors'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
-    if(!cmd||['help','-h','--help'].includes(cmd)||(tail.some(value=>['--help','-h'].includes(value))&&!tail.includes('--'))||(cmd==='deliver'&&sub==='help')) {
-      const text=process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wbCli.wbScheduleJsonSupervisorSubmits',{HELP:helpText()}):helpText();
-      return out(process.env.WB_DISCUSSION_PROTOCOL==='2'?`${text}\n\n${discussionHelp()}`:text);
-    }
-    if(!['notify','read','collaboration','sync','discuss','capabilities','session','chat','setup','pass','report','progress','history','result','schedule','timer','role','boot','status','docs','git','note','ask','wait','deliver','call','handoff'].includes(cmd))throw new Error(tr('wbCli.unknownCommand',{cmd,HELP:helpText()}));
+    if(!cmd||['help','-h','--help'].includes(cmd)||(tail.some(value=>['--help','-h'].includes(value))&&!tail.includes('--'))||(cmd==='deliver'&&sub==='help'))
+      return out(process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wbCli.wbScheduleJsonSupervisorSubmits',{HELP:helpText()}):helpText());
+    if(!COMMANDS.includes(cmd))throw new Error(tr('wbCli.unknownCommand',{cmd,HELP:helpText()}));
     loadTurnContext(process.env,{turnId});
     const supervisor = process.env.WB_SYSTEM_SUPERVISOR === '1';
-    const roleSession=Boolean(process.env.WB_ROLE_SESSION_ID),discussion=roleSession&&process.env.WB_DISCUSSION_PROTOCOL==='2';
     const sourceSync=process.env.WB_SOURCE_SYNC==='1';
     if (cmd === 'notify') {
       if (!['send','status'].includes(sub) || rest.length !== 1) throw new Error(tr('wechatChannel.toolGuide'));
       return out(await notifySupervisor(sub,sub==='status'?{id:rest[0]}:JSON.parse(rest[0])));
-    }
-    if(cmd==='read'){
-      if(!['source','query','file'].includes(sub)||rest.length!==1)throw new Error(tr('readTools.guide'));
-      const input=JSON.parse(rest[0]),tool={source:inspectReadSource,query:queryNodeReadOnly,file:readDeviceFile}[sub];
-      return out(await tool(input));
     }
     if(cmd==='collaboration') {
       if(!['list','create','link','add-member','remove-member','release','close'].includes(sub)||rest.length>1)throw new Error(tr('collabSessions.toolHelp'));
@@ -77,35 +53,29 @@ export async function main(argv = process.argv.slice(2)) {
       return out(await agentRequest('/api/agent/source-sync',{runId:process.env.WB_RUN_ID,action:sub,input:rest.length?JSON.parse(rest[0]):{}}));
     }
     if(cmd==='discuss') {
-      if(!discussion&&sub!=='peers')throw new Error(tr('wbCli.discussionToolsNotEnabledFor'));
-      if(!['peers','ask','reply','read','resolve','budget_extend'].includes(sub)||rest.length>1)throw new Error(discussionHelp());
-      return out(await agentRequest('/api/agent/discussions',{runId:process.env.WB_RUN_ID,action:sub,input:rest.length?JSON.parse(rest[0]):sub==='peers'?{view:'summary'}:{}}));
+      if(sub!=='peers'||rest.length>1)throw new Error(tr('wbCli.discussPeersUsage'));
+      return out(await agentRequest('/api/agent/discussions',{runId:process.env.WB_RUN_ID,action:'peers',input:rest.length?JSON.parse(rest[0]):{view:'summary'}}));
     }
-    if (cmd === 'capabilities') return out({protocol:2,notifications:supervisor?1:0,queryRecipes:process.env.WB_READ_TOOLS==='1'?1:0,fileReadFreshness:process.env.WB_READ_TOOLS==='1'?1:0,readSourceBindings:process.env.WB_READ_TOOLS==='1'?1:0,sourceSyncTools:sourceSync?1:0,discussionProtocol:discussion?2:0,sessionTools:1,timerTools:1,queueTools:process.env.WB_QUEUE_BATCH==='1'?2:0,tools:['setup catalog',...(process.env.WB_READ_TOOLS==='1'?['read source','read query','read file']:[]),...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),...(roleSession?['discuss peers']:[]),...(discussion?['discuss ask','discuss reply','discuss read','discuss resolve',...(supervisor?['discuss budget_extend']:[])]:[]),'call','wait',...(supervisor?['notify send','notify status','schedule','timer','role prompt','collaboration list','collaboration create','collaboration link','collaboration add-member','collaboration remove-member','collaboration release','collaboration close']:[]),...(process.env.WB_QUEUE_BATCH==='1'?['pass']:[]),'note','git status','report','history search','history read','result read','deliver','session current','session list','session summary','session read','chat summary']});
+    if (cmd === 'capabilities') return out({protocol:2,notifications:supervisor?1:0,sourceSyncTools:sourceSync?1:0,sessionTools:1,timerTools:1,transfer:1,
+      tools:[...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),'discuss peers','call','wait','note','timer',
+        ...(supervisor?['notify send','notify status','schedule','collaboration list','collaboration create','collaboration link','collaboration add-member','collaboration remove-member','collaboration release','collaboration close']:[]),
+        ...(process.env.WB_QUEUE_BATCH==='1'?['pass']:[]),'history','history search','history read','history summary','deliver','session current']});
+    // Discussion batches belong to collaboration sessions and leave with them.
+    if (cmd === 'pass' && process.env.WB_QUEUE_BATCH === '1') return out(await agentRequest('/api/agent/pass',{runId:process.env.WB_RUN_ID}));
+    if (cmd === 'pass') throw new Error(tr('sessionQueue.passNoBatch'));
     if (cmd === 'session' && sub === 'current') return out(await agentRequest('/api/agent/sessions/current',{runId:process.env.WB_RUN_ID}));
-    if (cmd === 'session' && sub === 'list') return out(await agentRequest('/api/agent/sessions/list',{runId:process.env.WB_RUN_ID,...sessionOptions(rest)}));
-    if (cmd === 'session' && sub === 'summary') return out(await agentRequest('/api/agent/sessions/summary',{runId:process.env.WB_RUN_ID,roleSessionId:rest[0]}));
-    if (cmd === 'session' && sub === 'read') return out(await agentRequest('/api/agent/sessions/read',{runId:process.env.WB_RUN_ID,roleSessionId:rest[0],...sessionOptions(rest.slice(1))}));
-    if (cmd === 'chat' && sub === 'summary') return out(await agentRequest('/api/agent/conversation/summary',{runId:process.env.WB_RUN_ID,...sessionOptions(rest)}));
-    if (cmd === 'setup' && sub === 'catalog') return out(await setupCatalog());
-    if (cmd === 'pass') return out(await agentRequest('/api/agent/pass',{runId:process.env.WB_RUN_ID}));
-    if(cmd==='report'&&sub==='status'){if(rest.length!==1)throw new Error(tr('runReports.invalidSubmissionId'));return out(await agentRequest('/api/agent/report',{runId:process.env.WB_RUN_ID,action:'status',submissionId:rest[0]}));}
-    if(cmd==='report'&&sub==='file'){if(!rest.length||rest.length>3)throw new Error(tr('runReports.fileUsage'));return out(await agentRequest('/api/agent/report',{runId:process.env.WB_RUN_ID,action:'file',target:rest[0],...(rest[1]!==undefined?{path:rest[1]}:{}),...(rest[2]!==undefined?{offset:Number(rest[2])}:{})}));}
-    if (cmd === 'report') {
-      const input=JSON.parse(tail.join(' '));
-      // Attached files are read here by path, with the same allow-list and SHA256 as wb call --file; Home re-checks both.
-      if(input.files!==undefined){if(!Array.isArray(input.files)||!input.files.length||input.files.length>3||input.files.some(f=>typeof f!=='string'))throw new Error(tr('runReports.invalidFiles'));input.files=await Promise.all(input.files.map(f=>callDocument(f)));}
-      const body={...input,runId:process.env.WB_RUN_ID};
-      if(input.files&&Buffer.byteLength(JSON.stringify(body))>60000)throw new Error(tr('runReports.invalidFiles'));
-      return out(await agentRequest('/api/agent/report',body));
-    }
-    if (cmd === 'progress') {
-      if(!sub||sub==='list')return out(await agentRequest('/api/agent/progress',{runId:process.env.WB_RUN_ID,action:'list'}));
-      if(sub==='verify'&&rest.length)return out(await agentRequest('/api/agent/progress',{runId:process.env.WB_RUN_ID,action:'verify',input:JSON.parse(rest.join(' '))}));
-      throw new Error(tr('resultReceipts.usage'));
-    }
+    // Configuration cards belong to the platform assistant; project roles read the team with wb discuss peers.
+    if (cmd === 'setup' && process.env.WB_PLATFORM_ASSISTANT === '1' && sub === 'catalog') return out(await setupCatalog());
+    if (cmd === 'setup' && process.env.WB_PLATFORM_ASSISTANT === '1' && sub === 'propose') return out(await setupPropose(JSON.parse(rest.join(' '))));
+    if (cmd === 'setup') throw new Error(tr('wbCli.setupAssistantOnly'));
     if (cmd === 'history' && sub === 'search') return out(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(rest)}));
-    if ((cmd === 'history' || cmd === 'result') && sub === 'read') return out(await agentRequest('/api/agent/history/read',{runId:process.env.WB_RUN_ID,kind:cmd==='history'?'message':'result',id:rest[0],offset:rest[1]===undefined?0:Number(rest[1]),version:rest[2]}));
+    if (cmd === 'history' && sub === 'read') {
+      if(!rest[0]||rest.length>3)throw new Error(tr('wbCli.historyReadUsage'));
+      return out(await agentRequest('/api/agent/history/read',{runId:process.env.WB_RUN_ID,kind:'auto',id:rest[0],offset:rest[1]===undefined?0:Number(rest[1]),version:rest[2]}));
+    }
+    if (cmd === 'history' && sub === 'summary') return out(await agentRequest('/api/agent/conversation/summary',{runId:process.env.WB_RUN_ID,...sessionOptions(rest)}));
+    // Bare wb history lists the latest messages; any other words are search terms, as with wb history search.
+    if (cmd === 'history') return out(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(tail)}));
     if (cmd === 'schedule') {
       if (!supervisor) throw new Error(tr('wbCli.onlyProjectSupervisorCanSubmit'));
       return out(await agentRequest('/api/agent/schedule',{...JSON.parse(tail.join(' ')),runId:process.env.WB_RUN_ID}));
@@ -115,14 +85,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (!['create','update','pause','resume','delete'].includes(sub) || rest.length !== 1) throw new Error(tr('wbCli.usageWbTimerListWb'));
       return out(await agentRequest('/api/agent/timers',{...JSON.parse(rest[0]),runId:process.env.WB_RUN_ID,action:sub}));
     }
-    if (cmd === 'setup' && sub === 'propose') return out(await setupPropose(JSON.parse(rest.join(' '))));
-    if (cmd === 'role' && sub === 'prompt') return out(await updateRolePrompt(JSON.parse(rest.join(' '))));
-    if (cmd === 'boot' || cmd === 'status') return out(await boot());
-    if (cmd === 'docs' && (!sub || sub === 'list')) return out(await docsList());
-    if (cmd === 'docs' && sub === 'read') return out(await docsRead(rest.join(' ')));
-    if (cmd === 'git' && (!sub || sub === 'status')) return out(await gitStatus());
-    if (cmd === 'chat' || cmd === 'note') return out(await chatPost(cmd==='chat'&&sub==='post'?rest.join(' '):tail.join(' ')));
-    if (cmd === 'ask') return out(await askRole(sub, rest.join(' ')));
+    if (cmd === 'note') return out(await chatPost(tail.join(' ')));
     if (cmd === 'wait') {
       if(tail.length===1&&tail[0].trim().startsWith('{')){const input=JSON.parse(tail[0]);if(Object.keys(input).some(k=>!['summary','requestIds','timeoutSeconds'].includes(k)))throw new Error(tr('minimal.invalidWait'));return out(await waitForRole(input.summary,input));}
       return out(await waitForRole(tail.join(' ')));
@@ -143,8 +106,6 @@ export async function main(argv = process.argv.slice(2)) {
       if(values.roles)delete values.role;
       return out(await callRole(values));
     }
-    if (cmd === 'handoff' && (sub === 'last' || sub === 'read')) return out(await handoffLast());
-    if (cmd === 'handoff') return out(await writeHandoff(parseHandoffArgs(argv.slice(1))));
     throw new Error(tr('wbCli.unknownCommand', { cmd, HELP: helpText() }));
   } catch (error) {
     process.stderr.write(`${error.message}\n`);

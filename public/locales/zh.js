@@ -741,6 +741,7 @@ export default {
   'View quoted original': '查看引用原文',
   'Question': '提问',
   'Instruction': '指令',
+  'Transfer': '转交',
   'Notice': '通知',
   '{kind} · {status}': '{kind} · {status}',
   'No tool calls this round': '本轮暂无工具调用',

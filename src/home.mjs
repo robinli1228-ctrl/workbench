@@ -37,7 +37,6 @@ import {recentProjectArtifacts} from './run-artifacts.mjs';
 import {ProjectFiles} from './project-files.mjs';
 import {MediaStreams,MEDIA_CACHE_CONTROL,cachedMediaAllowed} from './media-streams.mjs';
 import {MediaCache} from './media-cache.mjs';
-import {CrossDeviceRead} from './cross-device-read.mjs';
 import { RoleSteering } from './role-steering.mjs';
 import { collaborationQueueView } from './coordination-wait.mjs';
 import { WorkspaceStateFeed, workspaceScope, WORKSPACE_SUMMARY } from './workspace-state.mjs';
@@ -45,7 +44,7 @@ import { pageSummaries } from './workspace-summaries.mjs';
 import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
-import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updatePausedSetting, updateConversationOrganizer,legacyExecutionPrompt,executionRules } from './platform-prompts.mjs';
+import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updatePausedSetting, updateConversationOrganizer,legacyExecutionPrompt } from './platform-prompts.mjs';
 import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -59,8 +58,7 @@ import { TokenUsage, createTokenUsageBackgroundCollector } from './token-usage.m
 import { Attachments, AttachmentTransfers } from './attachments.mjs';
 import { ExecutionPlans, schedulingRules } from './execution-plans.mjs';
 import { History } from './history.mjs';
-import { saveRunReport,readReportSubmission,readReportFile } from './run-reports.mjs';
-import { receiptList,verifyResultReceipt,archiveHistoricalReceipts } from './result-receipts.mjs';
+import { archiveHistoricalReceipts } from './result-receipts.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
@@ -195,7 +193,6 @@ await chmod(mediaKeyFile,0o600);
 // Media bytes that came from a device are kept on Home by file version for 10 days (2 GB at most).
 const mediaCache=new MediaCache({dir:join(data,'media-cache')});
 const mediaStreams=new MediaStreams({db,online,secret:mediaSecret,cache:mediaCache,canReadCached:t=>cachedMediaAllowed(db,t),query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
-const crossDeviceRead=new CrossDeviceRead({db,online,query:workerQuery});
 const setup = new ProjectSetup(db, rooms, workerQuery, online, change);
 const credentials = new CredentialStore(join(data, 'credentials'));
 const hosting = new Hosting(db, credentials);
@@ -288,7 +285,8 @@ async function dispatch(nodeId) {
       db.put('runs',run);
     }
     const storedTask = run.inputTask||db.get('tasks', run.taskId);
-    const basePrompt=runWithLanguage('en',()=>[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal?executionRules(run,{minimal:true}):run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n'));
+    // Minimal turns get the execution rules once, from the Worker's executionInstructions; adding them here too repeated them.
+    const basePrompt=runWithLanguage('en',()=>[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal||run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n'));
     const rulesText = runWithLanguage('en',()=>schedulingRules());
     // The timer line is matched in both languages; it is dropped for Workers without timer tools.
     const schedulingRulesText = db.get('workers',nodeId)?.capabilities?.timerTools===1 ? rulesText : rulesText.replace(/^(?:Use wb timer only when given an explicit wall-clock time or recurrence requirement; |\u53ea\u6709\u6536\u5230\u660e\u786e\u7684\u5899\u949f\u65f6\u95f4\/\u5468\u671f\u9700\u6c42\u624d\u7528 wb timer\uff1b).*\n/m,'');
@@ -948,55 +946,33 @@ const server = http.createServer(async (req, res) => {
         const b = await body(req);
         assertAgentSender(b);
         const run = db.get('runs', b.runId);
-        if(pathname==='/api/agent/report') {
-          if(!run)throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
-          if(run.switchOperationId)throw new Error('CLI handoff maintenance permits history reads only.');
-          if(b.action==='status')return json(res,readReportSubmission(db,run,b));
-          if(b.action==='file')return json(res,readReportFile(conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run),run,b));
-          const result=saveRunReport(db,run,b);if(!result.replayed&&!result.ignored)change();return json(res,result);
-        }
+        // wb report was removed: results are the final reply, judged by whoever assigned the work.
+        if(pathname==='/api/agent/report')throw new Error(tr('home.reportRemoved'));
         // Distinct codes: reconciling is retryable with the same request; stopping and ended are final for this Run.
         if (run?.status === 'reconciling') throw Object.assign(new Error(tr('home.runReconciling')),{code:'run_reconciling'});
         if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
         if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
         if(db.get('settings','main')?.paused&&!allowsPausedAgentOperation(pathname,b))throw Object.assign(new Error(tr('home.remoteExecutionPaused')),{code:'paused'});
-        if(run.switchOperationId&&!['/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/sessions/list','/api/agent/sessions/summary','/api/agent/sessions/read','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
-        if (pathname === '/api/agent/progress') {
-          // Receipts and derived progress belong to the calling role; verification is its explicit, recorded decision.
-          if(b.action==='list'||b.action===undefined)return json(res,receiptList(db,{projectId:run.projectId,roleId:run.roleId}));
-          if(b.action==='verify'){const result=verifyResultReceipt(db,run,b.input||{});if(!result.replayed)change();return json(res,result);}
-          throw new Error(tr('resultReceipts.invalidAction'));
-        }
+        if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
         if (pathname === '/api/agent/notify') {
           if (Object.keys(b).some(key=>!['runId','action','input'].includes(key))) throw new Error(tr('wechatChannel.toolGuide'));
           const result=wechat.notify(run,b.action,b.input); void wechat.tick().catch(()=>{}); return json(res,result);
         }
-        if(['/api/agent/read-source','/api/agent/node-query','/api/agent/file-read'].includes(pathname)){
-          if(Object.keys(b).some(k=>!['runId','input'].includes(k)))throw Error('invalid_read_request');
-          const method=pathname==='/api/agent/read-source'?'inspect':pathname==='/api/agent/node-query'?'query':'read';
-          return json(res,await crossDeviceRead[method](run,b.input));
-        }
         if(pathname==='/api/agent/source-sync'){const result=await sourceSync.agent.execute(run,b.action,b.input||{});change();return json(res,result);}
         if(pathname==='/api/agent/source-candidates'){const result=b.finish?await sourceSync.agent.completeCandidate(run,b.candidateId):sourceSync.agent.stageCandidate(run,b);change();return json(res,result);}
         if(pathname==='/api/agent/discussions') {
+          // Only the team roster is left of the discussion tools; questions and reviews go through wb call.
           if(Object.keys(b).some(k=>!['runId','action','input'].includes(k)))throw new Error(tr('home.discussionRequestContainsUnauthorizedFields'));
-          // Read/reply/resolve for an already started turn still finish under the frozen identity; a probe withdrawal only blocks new questions and does not swallow in-flight answers.
-          if(b.action!=='peers'&&(run.discussionProtocol!==2||(b.action==='ask'&&!supportsDiscussion(db.get('workers',run.nodeId),run.roleSnapshot?.runtime,run.roleSnapshot?.model))))throw new Error(tr('home.discussionProtocolV2NotEnabled'));
-          if(!['peers','ask','reply','read','resolve','budget_extend'].includes(b.action))throw new Error(tr('home.unknownDiscussionAction'));
-          const reader=['peers','read'].includes(b.action)?new RoleDiscussions(conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run),{online:id=>online(id)}):discussions;
-          const result=b.action==='budget_extend'?discussions.extendBudget({kind:'agent',runId:run.id},b.input):reader[b.action](run,b.input||{});
-          scheduleChat();change();return json(res,result);
+          if(b.action!=='peers')throw new Error(tr('wbCli.discussPeersUsage'));
+          return json(res,new RoleDiscussions(conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run),{online:id=>online(id)}).peers(run,b.input||{}));
         }
         // Independent-review isolation is applied to the data the read tools see, before search, pagination or summaries.
         const readView=conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run);
         if (pathname === '/api/agent/history/search') return json(res,new History(readView).search(run.projectId,agentConversationInput(run,b)));
         if (pathname === '/api/agent/history/read') return json(res,new History(readView).read(run.projectId,agentConversationInput(run,b)));
         if (pathname === '/api/agent/sessions/current') return json(res,sessionTools.current(run));
-        if (pathname === '/api/agent/sessions/list') return json(res,new SessionTools(readView).list(run,b));
-        if (pathname === '/api/agent/sessions/summary') return json(res,new SessionTools(readView).summary(run,b.roleSessionId));
-        if (pathname === '/api/agent/sessions/read') return json(res,new SessionTools(readView).read(run,b.roleSessionId,b));
         if (pathname === '/api/agent/conversation/summary') return json(res,new SessionTools(readView).chatSummary(run,b));
-        if (pathname === '/api/agent/setup/catalog') return json(res, run.roleSnapshot?.platformAssistant ? assistant.catalog(run) : { ...setup.catalog(run), roleTemplates: listRoleTemplates(db) });
+        if (pathname === '/api/agent/setup/catalog' && run.roleSnapshot?.platformAssistant) return json(res, assistant.catalog(run));
         if (pathname === '/api/agent/schedule') { const p=executionPlans.submit(run,b);change();return json(res,{planId:p.id,status:p.status,note:tr('home.waitScheduledEndCurrentTurn')},201); }
         if (pathname === '/api/agent/timers') {
           if (db.get('workers',run.nodeId)?.capabilities?.timerTools!==1) throw new Error(tr('home.upgradeCurrentWorkerUseScheduled'));
@@ -1004,29 +980,18 @@ const server = http.createServer(async (req, res) => {
           if(b.action!=='list')change();
           return json(res,result);
         }
-        if (pathname === '/api/agent/setup/propose') return json(res, run.roleSnapshot?.platformAssistant ? assistant.propose(run,b) : setup.propose(run, b));
-        if (pathname === '/api/agent/roles/prompt') return json(res, setup.updateRolePrompt(run, b));
+        if (pathname === '/api/agent/setup/propose' && run.roleSnapshot?.platformAssistant) return json(res, assistant.propose(run,b));
         if (pathname === '/api/agent/pass') { const result=new SessionQueue(db).pass(run);change();return json(res,result); }
         if (pathname === '/api/agent/collaboration-sessions') {
           if(b.action==='create'&&db.get('projects',run.projectId)?.supervisorRoleId!==run.roleId)throw new Error(tr('collabSessions.supervisorOnly'));
           const baselines=b.action==='create'?await reviewDocumentBaselines(run.projectId,b.input||{}):[];
           const result=new CollaborationSessions(db).agent(run,b.action,b.input,baselines);change();return json(res,result);
         }
-        if(pathname==='/api/agent/documents'){
-          const root=db.get('workspaces',`${run.projectId}:${run.nodeId}`)?.localRoot;
-          if(!root)throw new Error(tr('store.bindProjectWorkspaceOnNode'));
-          const privatePath=readView.reviewGuarded?`handoffs/private/${run.roleId}/LATEST.md`:'handoffs/LATEST.md';
-          const deviceHandoffs=db.get('workers',run.nodeId)?.capabilities?.sourceSyncOutputs===1;
-          const result=await workerQuery(run,'collaboration_documents',{root,action:b.action==='last'?(deviceHandoffs?'last':'read'):b.action,path:b.action==='last'?privatePath:b.path,...(b.action==='last'&&deviceHandoffs?{reviewPrivate:readView.reviewGuarded?run.roleId:'',...(db.get('workers',run.nodeId)?.capabilities?.groupConversations===1?{roleSessionId:run.roleSessionId||''}:{})}:{})});
-          if(b.action==='list')return json(res,{docs:result.files.filter(file=>reviewDocumentAllowed(db,run,file)&&file.path.startsWith('docs/')).map(file=>file.path.slice(5)),partial:result.partial});
-          if(!reviewDocumentAllowed(db,run,result))throw new Error(tr('collabSessions.documentNotReleased'));
-          return json(res,{path:result.path,text:result.text});
-        }
         if (pathname === '/api/agent/note') {
           const r = rooms.agentNote(run, b.text); change(); return json(res, r, 201);
         }
-        if (pathname === '/api/agent/calls' || pathname === '/api/agent/ask') {
-          const result=createAgentCalls({db,calls,rooms},run,b,{legacyAsk:pathname.endsWith('/ask')});
+        if (pathname === '/api/agent/calls') {
+          const result=createAgentCalls({db,calls,rooms},run,b);
           scheduleChat(); change(); return json(res,result,201);
         }
         if (pathname === '/api/agent/wait') {
@@ -1042,9 +1007,6 @@ const server = http.createServer(async (req, res) => {
         res.write('event: change\ndata: {}\n\n'); viewers.add(res);
         req.on('close', () => viewers.delete(res)); return;
       }
-      const readAccessRoute=pathname.match(/^\/api\/projects\/([^/]+)\/read-access$/);
-      if(readAccessRoute&&req.method==='GET')return json(res,crossDeviceRead.configuration(readAccessRoute[1]));
-      if(readAccessRoute&&req.method==='PUT'){const result=crossDeviceRead.updateConfiguration(readAccessRoute[1],await body(req));change();return json(res,result);}
       const collabFlagRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/feature$/);
       if(collabFlagRoute&&req.method==='POST'){const p=setCollaborationSessionsEnabled(db,collabFlagRoute[1],(await body(req)).enabled);change();return json(res,{enabled:p.features.collaborationSessions});}
       const queueRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/(queue|queue-config)$/);

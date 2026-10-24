@@ -5,7 +5,7 @@ import { tr } from './i18n.mjs';
 
 const keys=['WB_PROJECT_ROOT','WB_KNOWLEDGE','WB_WORKSPACE','WB_RUN_ID','WB_ROLE_SESSION_ID','WB_CONVERSATION_ID','WB_REQUEST_ID','WB_ROLE','WB_SYSTEM_SUPERVISOR','WB_CLI','WB_BRIDGE','WB_HOP','WB_HOME','WB_MODE','WB_REPOSITORIES'];
 keys.push('WB_TURN_PURPOSE','WB_DISCUSSION_PROTOCOL','WB_SOURCE_SYNC','WB_REVIEW_PRIVATE','WB_DOCUMENT_VIEWS','WB_QUEUE_BATCH');
-keys.push('WB_READ_TOOLS','WB_NODE_ID');
+keys.push('WB_PLATFORM_ASSISTANT','WB_NODE_ID');
 
 /** Every turn uses its own entry file, so an old background command cannot regain permissions through the next turn's scope. */
 export async function writeTurnContext(path,env) {

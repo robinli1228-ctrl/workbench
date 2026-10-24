@@ -263,7 +263,8 @@ export class ScheduledJobs {
     if (tasks.some(task => task.status === 'blocked') || calls.some(call => call.status === 'failed')) return { ...item, status: 'failed' };
     if (tasks.length && tasks.every(task => ['completed', 'done', 'succeeded', 'cancelled'].includes(task.status))) {
       if (tasks.every(task => task.status === 'cancelled')) return { ...item, status: 'cancelled' };
-      return { ...item, status: calls.length && calls.every(call => call.status === 'succeeded' && call.outcome === 'passed') ? 'succeeded' : 'unverified' };
+      // Without reports a finished job is simply done; the creator judges what the reply says.
+      return { ...item, status: calls.every(call => call.status === 'succeeded') ? 'succeeded' : 'unverified' };
     }
     return item;
   }

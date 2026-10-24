@@ -23,7 +23,8 @@ export function validateLocalSupervisor(worker, input, online) {
   if (input.effort && !(model.efforts || runtime.efforts || []).includes(input.effort)) throw new Error(tr('projectSetup.supervisorModelDoesNotSupport'));
 }
 
-export const setupRules = () => [tr('projectSetup.youProjectSFixedSupervisor'), tr('roleDefinition.supervisorConvention'), tr('coordinator.dynamicPlanningRules')].join('\n\n');
+// Repository and role configuration moved to project settings; the supervisor no longer proposes setup cards or edits role prompts.
+export const setupRules = () => [tr('roleDefinition.supervisorConvention'), tr('coordinator.dynamicPlanningRules')].join('\n\n');
 
 /** Stores and executes configuration proposals; the model can only propose, and the user-confirmation endpoint applies them. */
 export class ProjectSetup {

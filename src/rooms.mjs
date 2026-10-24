@@ -102,8 +102,8 @@ export class Rooms {
       const fingerprint=JSON.stringify({projectId,roleId,text,source,sourceInputs,execution,...(conversationId!==projectId?{conversationId}:{})}),prior=this.db.get('roomMessages',id);
       if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('rooms.projectNotFound'));return prior;}
       const task=this.db.createTask({projectId,title:text.slice(0,80),prompt:text,model:role.model,mode:role.mode});
-      this.db.put('tasks',{...task,conversationId,origin:'chat',roleId,roleSnapshot:role,sourceMessageId:id,contextPrepared:true,reportRequired:true,sourceInputs,execution,
-        ...(source.kind==='proactive_followup'?{proactiveFollowup:source.context,proactiveInitial:true,backgroundFollowup:true,reportRequired:false}:{}),
+      this.db.put('tasks',{...task,conversationId,origin:'chat',roleId,roleSnapshot:role,sourceMessageId:id,contextPrepared:true,sourceInputs,execution,
+        ...(source.kind==='proactive_followup'?{proactiveFollowup:source.context,proactiveInitial:true,backgroundFollowup:true}:{}),
         ...(source.kind==='repair'?{sourceConflictId:source.conflictId,sourceConflictGeneration:source.generation,sourceConflictAssignmentId:source.assignmentId}:{}),
         ...(source.kind==='peer'?{sourceConflictPeerId:source.conflictId}:{}),
         ...(source.kind==='assignment'?{sourceConflictAssignmentRequestId:source.conflictId}:{})});
@@ -274,8 +274,7 @@ export class Rooms {
           sourceRunId: delivery || !reuseSource ? null : source.id, deliveryId: delivery?.id || null,
           quoteMessageId:quote?.id||null,
           attachments: attachments.length ? attachments : (quote?.attachments?.length ? quote.attachments : source?.attachments || []), schedulingTargets,schedulingRoster,
-          // A person's @ is answered in the chat; a structured report is asked only for scheduled jobs and cross-device deliveries.
-          reportRequired:Boolean(scheduledJobId||delivery),scheduledJobId,
+          scheduledJobId,
           requiresCoordination: Boolean(delivery), broadcast: broadcast || undefined });
         return task.id;
       });
@@ -485,7 +484,6 @@ export class Rooms {
         : worker.capabilities.managedResume !== 1 ? tr('rooms.upgradeWorkerSupportRoleSession')
         : conversationIdOf(task)!==task.projectId && worker.capabilities.groupConversations!==1 ? tr('conversations.workerUpgrade')
         : task.attachments?.length && worker.capabilities.attachments !== 1 ? tr('rooms.upgradeWorkerReceiveAttachments')
-        : task.reportRequired && worker.capabilities.collaborationTools !== 2 ? tr('rooms.upgradeWorkerForReportFull')
         : task.execution && worker.capabilities.executionScheduling !== 1 ? tr('rooms.upgradeWorkerRunSupervisorSchedules')
         : task.requiresCoordination && worker?.capabilities?.coordinationVersion !== 1 ? tr('rooms.upgradeWorkerSupportCrossDevice')
         : runtimeIssue(worker, role.runtime, role.model) ? runtimeIssue(worker, role.runtime, role.model)

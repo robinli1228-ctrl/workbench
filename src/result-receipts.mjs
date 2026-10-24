@@ -99,7 +99,7 @@ export function ownedReceipts(db,{projectId,roleId,conversationId}) {
 
 const digest=r=>({id:r.id,role:r.sourceRoleName||r.sourceRoleId,requestId:r.requestId,runId:r.runId,item:r.item,verdict:r.verdict||r.outcome||'unverified',
   outcome:r.outcome||null,reportRevision:r.reportRevision,version:r.version,stage:r.stage,runStatus:r.runStatus,summary:r.summary,
-  files:(r.files||[]).length,readCommand:`wb result read ${r.requestId}`});
+  files:(r.files||[]).length,readCommand:`wb history read ${r.requestId}`});
 
 /** At a safe launch point, attach the owner's undelivered receipts (summaries and references only) to this Run's input. */
 export function claimResultReceipts(db,run,{limit=20}={}) {
@@ -174,7 +174,7 @@ export function progressItems(db,{projectId,roleId}) {
       // An acknowledged blocker stays listed with that decision: noting a result never turns it into a pass.
       blocker:blocked?{receiptId:latest.id,verdict:latest.verdict||latest.outcome||'unverified',runStatus:latest.runStatus,summary:latest.summary,decision:latest.verification?.decision||null}:null,
       next:latest.next||null,awaitingVerification:receipts.filter(r=>!r.verification).map(r=>r.id),
-      evidence:receipts.map(r=>({receiptId:r.id,state:r.state,readCommand:`wb result read ${r.requestId}`}))};
+      evidence:receipts.map(r=>({receiptId:r.id,state:r.state,readCommand:`wb history read ${r.requestId}`}))};
   });
 }
 
