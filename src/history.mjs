@@ -155,8 +155,10 @@ export class History {
   read(projectId, { kind, id, offset, limit, version, conversationId } = {}) {
     conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (!this.db.get('projects', projectId)) throw new Error(tr('history.projectNotFound2'));
-    if (!['message', 'result'].includes(kind)) throw new Error(tr('history.kindMustBeMessageResult'));
+    if (!['message', 'result', 'auto'].includes(kind)) throw new Error(tr('history.kindMustBeMessageResult'));
     if (typeof id !== 'string' || !id) throw new Error(tr('history.idRequired'));
+    // One read command for both: a stored message ID reads the message, anything else a run or call result.
+    if (kind === 'auto') kind = this.db.get('roomMessages', id)?.projectId === projectId ? 'message' : 'result';
     const start = offsetValue(offset);
     const pageLimit = positiveLimit(limit, DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
     if (start && !version) throw new Error(tr('history.versionRequiredWhenOffsetGreater'));

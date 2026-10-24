@@ -2,25 +2,17 @@ import { mkdir, readdir, readFile, writeFile, rename, link, lstat, unlink, rmdir
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { tr } from './i18n.mjs';
-import {submitReport} from './report-submission.mjs';
 
-const allowed = new Set(['/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/roles/prompt', '/api/agent/schedule', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/ask', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/report', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/sessions/list', '/api/agent/sessions/summary', '/api/agent/sessions/read', '/api/agent/conversation/summary']);
+// Paths a role's wb command may reach; Home re-checks each request against the run and its role.
+const allowed = new Set(['/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/schedule', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary',
+  '/api/agent/discussions', '/api/agent/pass', '/api/agent/collaboration-sessions', '/api/agent/source-sync', '/api/agent/notify']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-allowed.add('/api/agent/discussions');
-allowed.add('/api/agent/pass');
-allowed.add('/api/agent/collaboration-sessions');
-allowed.add('/api/agent/documents');
-allowed.add('/api/agent/source-sync');
-allowed.add('/api/agent/notify');
-allowed.add('/api/agent/progress');
-for(const path of ['/api/agent/read-source','/api/agent/node-query','/api/agent/file-read'])allowed.add(path);
 
 /** Dispatch pause must not swallow accepted work's conclusions; new work and write operations remain blocked. */
 export function allowsPausedAgentOperation(pathname,input={}) {
-  return new Set(['/api/agent/report','/api/agent/wait','/api/agent/note','/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/sessions/list','/api/agent/sessions/summary','/api/agent/sessions/read','/api/agent/conversation/summary']).has(pathname)
-    ||pathname==='/api/agent/discussions'&&['peers','read','reply','resolve'].includes(input.action)
-    ||pathname==='/api/agent/pass'||pathname==='/api/agent/documents'||pathname==='/api/agent/progress'||pathname==='/api/agent/collaboration-sessions'&&input.action==='list'
-    ||['/api/agent/read-source','/api/agent/node-query','/api/agent/file-read'].includes(pathname);
+  return new Set(['/api/agent/wait','/api/agent/note','/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary']).has(pathname)
+    ||pathname==='/api/agent/discussions'&&input.action==='peers'
+    ||pathname==='/api/agent/pass'||pathname==='/api/agent/collaboration-sessions'&&input.action==='list';
 }
 
 /**
@@ -28,10 +20,9 @@ export function allowsPausedAgentOperation(pathname,input={}) {
  * checks still apply to every tool call. The code tells the caller whether retrying the same request can help.
  */
 export function agentOperationBlock({paused,quitting,connected,status},pathname,input) {
-  const reportStatus=pathname==='/api/agent/report'&&input?.action==='status'&&['running','starting','succeeded','failed','interrupted','stopping','reconciling'].includes(status);
   if(quitting)return 'run_ended';
   if(!connected)return 'home_disconnected';
-  if(!reportStatus&&!['running','starting'].includes(status))return status==='stopping'?'run_stopping':status==='reconciling'?'run_reconciling':'run_ended';
+  if(!['running','starting'].includes(status))return status==='stopping'?'run_stopping':status==='reconciling'?'run_reconciling':'run_ended';
   if(paused&&!allowsPausedAgentOperation(pathname,input))return 'paused';
   return null;
 }
@@ -71,7 +62,6 @@ export function agentProcessEnv(base, additions) {
 
 /** The CLI sandbox needs no network access; requests can only land in this workspace and are sent on its behalf by the Worker that holds the connection. */
 export async function agentRequest(pathname, payload) {
-  if(pathname==='/api/agent/report'&&payload.action!=='status')return submitReport(input=>withRetry(()=>agentRequestOnce(pathname,input)),payload);
   return withRetry(()=>agentRequestOnce(pathname,payload));
 }
 async function agentRequestOnce(pathname,payload) {

@@ -41,7 +41,7 @@ export function waitDependencies(db,request) {
 export function dependencySnapshot(db,requestId) {
   const request=db.get('coordinationRequests',requestId||'');
   return request?waitDependencies(db,request).map(r=>({requestId:r.id,status:r.status,outcome:r.outcome||null,waitingReason:db.get('tasks',r.taskId||'')?.waitingReason||r.waitingReason||null,
-    summary:String(r.reportSummary||r.result||r.error||'').slice(0,1500),readCommand:`wb result read ${r.id}`})):[];
+    summary:String(r.reportSummary||r.result||r.error||'').slice(0,1500),readCommand:`wb history read ${r.id}`})):[];
 }
 
 export const COLLAB_RELEASE_DEFAULT_MINUTES=40;

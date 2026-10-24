@@ -153,7 +153,8 @@ export function dialogueReplyDirection(message,messages,data) {
   if(message.sender!=='agent'||message.kind==='handoff'||message.id!==`result-${message.runId}`)return null;
   if(message.dialogue)return message.dialogue;
   const call=messages.find(m=>m.id===message.replyToId&&m.projectId===message.projectId)?.handoff;
-  if(call)return {from:message.senderName,to:call.fromRole};
+  // A transferred owner answers the user, not the role that handed the task over.
+  if(call)return call.kind==='transfer'?null:{from:message.senderName,to:call.fromRole};
   const run=data.runs?.find(r=>r.id===message.runId&&r.projectId===message.projectId);
   const request=data.requests?.find(r=>r.id===run?.requestId&&r.projectId===message.projectId);
   if(!request?.parentRequestId||request.kind==='continuation')return null;
@@ -746,7 +747,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   function messageCardMeta(message) {
     const outbound=message.sender!=='agent'||['handoff','discussion'].includes(message.kind);
     const kind=message.kind==='discussion'?'Question':message.kind==='handoff'
-      ? ({consult:'Question',direct:'Instruction',note:'Notice'}[message.handoff?.kind]||'Instruction')
+      ? ({consult:'Question',direct:'Instruction',transfer:'Transfer',note:'Notice'}[message.handoff?.kind]||'Instruction')
       : message.sender==='agent'?'Reply':'Message';
     if(outbound)return {kind,status:'Completed'};
     const run=data.runs?.find(item=>item.id===message.runId);

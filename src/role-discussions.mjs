@@ -85,7 +85,7 @@ export class RoleDiscussions {
         roleSessionId:session.id,resumeNativeSessionId:session.nativeSessionId||null,resumeNativeSession:session.nativeSession||null,resumeWorkspace:session.workspace||null,
         discussionDeliveryId:delivery.id,discussionThreadId:thread.id,discussionMessageId:message.id,directionRevision:thread.directionRevision,turnPurpose:purpose,
         discussionProtocol:2,permissionProfile:discussionPolicy({turnPurpose:purpose}).profileId,projectScope:true,projectRoot:binding.localRoot,
-        repositories:projectRepositories(this.db,thread.projectId,nodeId),model:role.model,mode:role.mode||'workspace-write',reportRequired:false,status:'queued',lastSeq:0,createdAt:now(),updatedAt:now(),
+        repositories:projectRepositories(this.db,thread.projectId,nodeId),model:role.model,mode:role.mode||'workspace-write',status:'queued',lastSeq:0,createdAt:now(),updatedAt:now(),
         discussionContext:{threadId:thread.id,questionId:thread.currentQuestionId,revision:thread.revision,message,attempt:delivery.attempts.length+1,
           actionRequestIds:purpose==='clarification'?{reply:`reply:${message.id}`}:{resolve:`resolve:${thread.currentQuestionId}`}}};
       run.inputTask={title:purpose==='clarification'?tr('roleDiscussions.replyPeerQuestion'):tr('roleDiscussions.handlePeerAnswer'),prompt:JSON.stringify(run.discussionContext),model:role.model,mode:run.mode,roleSnapshot:run.roleSnapshot};

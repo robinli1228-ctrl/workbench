@@ -248,7 +248,8 @@ export class ScheduledJobs {
       roleId: role.id, roleSnapshot: role, messageId, status: 'dispatching', createdAt: iso(now)
     });
     const message = this.rooms.post(job.projectId, {
-      clientMessageId: messageId, conversationId:conversationIdOf(job), text: text || job.description, targetRoleId: role.id, scheduledJobId: job.id
+      clientMessageId: messageId, conversationId:conversationIdOf(job), // Reminders say who set them; supervisor patrols keep their own wording. The message limit still applies after labelling.
+      text: (job.jobType === 'monitor' ? text || job.description : tr('scheduledJobs.reminderText', { name: job.name, text: text || job.description })).slice(0, 12000), targetRoleId: role.id, scheduledJobId: job.id
     });
     if(extra.followupMessageIds?.length)for(const taskId of message.taskIds||[]){const task=this.db.get('tasks',taskId);this.db.put('tasks',{...task,followupMessageIds:extra.followupMessageIds});}
     return this.db.put('scheduledOccurrences', { ...occurrence, taskIds: message.taskIds || [], status: 'queued' });
@@ -263,7 +264,8 @@ export class ScheduledJobs {
     if (tasks.some(task => task.status === 'blocked') || calls.some(call => call.status === 'failed')) return { ...item, status: 'failed' };
     if (tasks.length && tasks.every(task => ['completed', 'done', 'succeeded', 'cancelled'].includes(task.status))) {
       if (tasks.every(task => task.status === 'cancelled')) return { ...item, status: 'cancelled' };
-      return { ...item, status: calls.length && calls.every(call => call.status === 'succeeded' && call.outcome === 'passed') ? 'succeeded' : 'unverified' };
+      // Without reports a finished job is simply done; the creator judges what the reply says.
+      return { ...item, status: calls.every(call => call.status === 'succeeded') ? 'succeeded' : 'unverified' };
     }
     return item;
   }

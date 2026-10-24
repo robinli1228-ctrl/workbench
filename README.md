@@ -269,6 +269,10 @@ Never commit any of these. See [docs/OPERATING-GUIDE.md](docs/OPERATING-GUIDE.md
 
 ## Configuration
 
+Native session history loads recent conversation text and lightweight tool summaries first. Expand a tool step to fetch its command or output; long details use explicit continuation and loaded chunks are cached. This requires a Worker with `nativeToolDetails: 1`; older Workers keep the existing full-history contract. The browser keeps a bounded recent preview while refreshing, and older history remains reachable. See the [lazy tool history design](docs/design-lazy-native-tools.md).
+
+For fixed-version review input, use `wb deliver --review <request-id> <full-commit-sha|auto> <summary>`. It publishes a dedicated review ref and receives it in an independent directory without advancing the project baseline or changing the bound checkout. Home and both Workers must support review deliveries. Ordinary `wb deliver` keeps its development baseline behavior. Registration is not publication or review acceptance, and old blocked cards are not rewritten; see the [review delivery contract](docs/design-review-delivery.md).
+
 Role editing separates **responsibility** (used by other roles to choose collaborators) from **role prompt** (injected for that role's execution). A role does not receive its own responsibility through the team directory. Text-only edits work while its device is offline and preserve its CLI/model binding. Existing custom prompts remain unchanged; missing responsibilities are unspecified, not inferred.
 
 The editable platform and supervisor v2 defaults describe proactive execution and evidence-based coordination. Delegation includes the goal, recipient role/change boundary, exact device/version/file inputs and required return. Shared prompt edits affect existing managed sessions at their next actual turn, preserve role-specific prompts and history, and do not interrupt running work. Retry/replacement guidance is not an automatic account switch or additional publishing permission.
@@ -366,3 +370,5 @@ Project status and planned work are tracked in the issue tracker.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Group-chat roles can transfer whole-task ownership with `wb call --kind transfer`. The receiver arranges its reviews and replies to the user; final replies replace `wb report`. Migration, deployment and production operations must be assigned separately after review, rather than automatically following a stage plan, including plans saved by older versions.
