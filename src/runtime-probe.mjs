@@ -272,18 +272,34 @@ export async function inspectAgy() {
 
 
 /** Read native model capabilities without a user turn, saved session, hooks or MCP startup. Older CLIs keep unspecified levels. */
-function probeClaudeModels(bin) {
+// Claude may be renewing its login while it starts: the old refresh token is already spent once the request is sent, so a
+// kill before the new one is saved leaves only a dead token and signs the device out. A probe is therefore never killed
+// early: its stdin closes once it has lived long enough to finish start-up, and only one still running a minute later is killed.
+const CLAUDE_PROBE_SETTLE_MS = 15000, CLAUDE_PROBE_KILL_MS = 60000;
+// The catalog changes with the CLI version or the account, not every five minutes; the periodic check reuses it for an hour.
+const CLAUDE_CATALOG_TTL_MS = 3600000;
+let claudeCatalog = null;
+
+export function probeClaudeModels(bin, { settleMs = CLAUDE_PROBE_SETTLE_MS, killMs = CLAUDE_PROBE_KILL_MS } = {}) {
   return new Promise(resolve => {
+    const started = Date.now();
     const child = spawn(bin, ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--no-session-persistence', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
       '--settings', '{"disableAllHooks":true}'], { stdio: ['pipe', 'pipe', 'ignore'] });
     const lines = createInterface({ input: child.stdout });
     let settled = false, bytes = 0;
+    let exited = false;
+    child.on('exit', () => { exited = true; });
     const finish = models => {
       if (settled) return;
       settled = true; clearTimeout(timer); lines.close();
-      child.stdin.end(); child.kill('SIGKILL');
       resolve(models);
+      if (exited) return;
+      const close = setTimeout(() => {
+        try { child.stdin.end(); } catch {}
+        const kill = setTimeout(() => { if (!exited) child.kill('SIGKILL'); }, killMs); kill.unref?.();
+      }, Math.max(0, settleMs - (Date.now() - started)));
+      close.unref?.();
     };
     const timer = setTimeout(() => finish(null), 5000);
     child.on('error', () => finish(null));
@@ -303,7 +319,7 @@ function probeClaudeModels(bin) {
 }
 
 /** Claude Code: read installation, authentication and model capabilities without starting a conversation. */
-export async function inspectClaude() {
+export async function inspectClaude({ force = true } = {}) {
   const result = baseRuntime('claude', 'Claude Code');
   const bin = process.env.CLAUDE_BIN || 'claude';
   try {
@@ -345,7 +361,9 @@ export async function inspectClaude() {
     { id: 'opus', name: 'Opus', effort: null, efforts: [] },
     { id: 'haiku', name: 'Haiku', effort: null, efforts: [] },
   ];
-  const nativeModels = authReady ? await probeClaudeModels(bin) : [];
+  const fresh = claudeCatalog && !force && claudeCatalog.version === result.version && claudeCatalog.identity === JSON.stringify(result.quotaIdentity) && Date.now() - claudeCatalog.at < CLAUDE_CATALOG_TTL_MS;
+  const nativeModels = !authReady ? [] : fresh ? claudeCatalog.models : await probeClaudeModels(bin);
+  if (authReady && !fresh && nativeModels) claudeCatalog = { version: result.version, identity: JSON.stringify(result.quotaIdentity), models: nativeModels, at: Date.now() };
   // An empty successful catalog is authoritative; only an unavailable probe keeps legacy aliases.
   const seen = new Set();
   const catalog = nativeModels?.filter(m => {
@@ -411,8 +429,8 @@ export function visibleRuntimes(reports, hiddenRuntimes = []) {
 }
 
 /** Other installed CLIs only report the fact of installation; adapters that are not integrated cannot take part in scheduling. */
-export async function inspectRuntimes() {
-  const results = await Promise.all([inspectCodex(), inspectGrok(), inspectAgy(), inspectClaude(), ...['opencode'].map(async type => {
+export async function inspectRuntimes({ force = true } = {}) {
+  const results = await Promise.all([inspectCodex(), inspectGrok(), inspectAgy(), inspectClaude({ force }), ...['opencode'].map(async type => {
     try { const { stdout } = await exec(type, ['--version'], { timeout: 5000, maxBuffer: 16384 });
       return { type, label: `${type} CLI`, installed: true, supported: false, available: false, models: [], quota: null, quotaStatus: 'unavailable', version: stdout.trim().split('\n')[0].slice(0, 120), checkedAt: new Date().toISOString(), reason: tr('runtimeProbe.installedButPlatformHasNot') };
     } catch { return null; }

@@ -105,8 +105,9 @@ const discussionCapabilities=()=>{
   return {discussionProtocol:configurations.length?2:0,discussionRuntimes:[...new Set(configurations.map(c=>c.runtime))],discussionConfigurations:configurations};
 };
 if(process.env.WB_DISCUSSION_PREVIEW==='1'&&!discussionCapabilities().discussionConfigurations.length)console.warn(tr('worker.discussionPreviewNotEnabledNo'));
-async function refreshRuntimes() {
-  if (!probing) probing = inspectRuntimes().then(r => { const merged = mergeRuntimeReports(runtimes, r, runtimeFailures); runtimes = merged.runtimes; runtimeFailures = merged.failures; scheduleRuntimeRetry(merged.retryMs); send({ type: 'runtime_report', runtimes,discussionCapabilities:discussionCapabilities() }); return runtimes; }).finally(() => { probing = null; });
+/** Only the periodic check may reuse the cached Claude model catalog; a check someone asked for reads it again. */
+async function refreshRuntimes({ periodic = false } = {}) {
+  if (!probing) probing = inspectRuntimes({ force: !periodic }).then(r => { const merged = mergeRuntimeReports(runtimes, r, runtimeFailures); runtimes = merged.runtimes; runtimeFailures = merged.failures; scheduleRuntimeRetry(merged.retryMs); send({ type: 'runtime_report', runtimes,discussionCapabilities:discussionCapabilities() }); return runtimes; }).finally(() => { probing = null; });
   return probing;
 }
 /** One pending retry at a time; it reuses the single in-flight probe instead of starting another App Server. */
@@ -1266,7 +1267,7 @@ async function runMaintenance(){
 function startMaintenance(){if(maintenanceStarted)return;maintenanceStarted=true;const first=setTimeout(()=>void runMaintenance(),60000);first.unref();const daily=setInterval(()=>void runMaintenance(),24*3600000);daily.unref();}
 const sourceSyncTimer=setInterval(()=>{if(registered)sourceSync.flush();void sourceSync.watch.tick().catch(e=>console.error('Source sync observation failed:',e.code||e.message));},500);sourceSyncTimer.unref();
 const heartbeat = setInterval(() => send({ type: 'heartbeat' }), 15000);
-const runtimeTimer = setInterval(() => { if (ws?.readyState === 1) void refreshRuntimes(); }, 300000);
+const runtimeTimer = setInterval(() => { if (ws?.readyState === 1) void refreshRuntimes({ periodic: true }); }, 300000);
 await nativeTurns.recover();
 connect();
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
