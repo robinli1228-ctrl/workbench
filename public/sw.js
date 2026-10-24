@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v180-review-followups';
+const CACHE = 'agent-workbench-static-v181-consolidated-roles';
 const STATIC = [
   '/remote-access-settings.js',
   '/group-conversations.js',

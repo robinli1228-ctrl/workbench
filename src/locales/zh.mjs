@@ -409,7 +409,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'executionPlans.crossDeviceProjectContainsUncommitted': '跨设备项目含未提交内容或非 Git 目录，请先完成 Git 交付',
   'executionPlans.repositoryVersionsDifferAcrossDevices': '设备仓库版本不一致',
   'executionPlans.directoryHasUncommittedContentNot': '目录有未提交内容或不是 Git 仓库，改为同设备串行，保留当前输入',
-  'executionPlans.waitingForGitDeliveryConfirmation': '等待 Git 交付确认；批准后自动接收固定版本并继续本阶段',
+  'executionPlans.waitingForGitDeliveryConfirmation': '等待 Git 交付推送完成；推送后自动接收固定版本并继续本阶段',
   'executionPlans.gitDeliveryBlockedCheckDelivery': 'Git 交付受阻，请检查交付详情；后续步骤未启动',
   'executionPlans.projectDirectoryForExclusiveOperation': '独占操作的项目目录未对齐前序版本，请先人工确认合并/交付',
   'executionPlans.previousStageResultsContextNot': `
@@ -1098,6 +1098,14 @@ repository.clone=true 仅在目标不存在时克隆；false 检查已有仓库�
   'rooms.messageCanMentionAtMost': '一条消息最多 @4 位不同角色，请拆分发送或明确请总管协调',
   'rooms.roleDoesNotExist': '角色 @{name} 不存在',
   'rooms.roleHasNoDeviceCli': '角色 @{name} 尚未配置设备、CLI 和模型',
+  'cliAvailability.quotaUsedUp': '{window}额度已用完，约 {time} 恢复',
+  'cliAvailability.fiveHour': '5 小时',
+  'cliAvailability.weekly': '7 天',
+  'cliAvailability.failedWith': '{plain}（{raw}）',
+  'cliAvailability.failedQuota': 'CLI 额度已用完或被限流',
+  'cliAvailability.failedAuth': 'CLI 未登录或登录已失效，请在设备上重新登录',
+  'rooms.roleCliUnavailable': '角色 @{name} 暂时不可用：{reason}。消息没有发出，可以改派给其他角色。',
+  'roleCalls.targetRoleCliUnavailable': '目标角色 @{name} 暂时不可用：{reason}。请改派给其他角色',
   'rooms.roleDisabled': '角色 @{name} 已停用',
   'rooms.roleHasNoRepositoryDirectory': '角色 @{name} 尚未绑定仓库目录',
   'rooms.noEnabledRoleInProject': '当前项目没有匹配的启用角色，请明确指定参与角色',
@@ -1113,6 +1121,8 @@ repository.clone=true 仅在目标不存在时克隆；false 检查已有仓库�
   'rooms.historyCursorNotFound': '历史消息游标不存在',
   'rooms.onlyGroupChatAssignmentsHave': '只能取消尚未开始的群聊指派',
   'rooms.queueOrderMismatch': '队列已变化，请刷新后重新排序',
+  'rooms.queuePaused': '队列已暂停，继续后才会发送',
+  'rooms.queuePauseInvalid': '暂停参数必须是 true 或 false',
   'rooms.remoteExecutionPaused': '远程执行已暂停',
   'rooms.organizingConversation': '正在整理会话',
   'rooms.projectUnderManualTerminalTakeover': '本项目正在终端人工接管，请先归还平台',
@@ -1766,11 +1776,12 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 要对外发布、推送、部署。
 其余一律自己定，写一句理由就继续做。
 问的时候必须给选项，每个选项一句话说清后果，并说明你推荐哪个；问出去之后，不依赖答案的部分继续做。
-群聊用 wb report needs_input，接管会话用提问选项卡。
+群聊里直接在回复中提问；正式派工的任务用 wb report needs_input；接管会话用提问选项卡。
 
 主动推进：
 - 收到任务就推进到可验证的结果，能自己完成和验证的直接做完，不等别人催。
 - 被 @ 到的问题直接回答，不要先问是不是该你答，也不要把问题推回给用户。
+- 每个 @ 你的消息都要处理：给出实质回复，或明确说明做不了及原因；不要只回“收到”。没有意见就直说“通过，无意见”。
 - 发现阻塞、风险或别人的问题，直接告诉相关角色并说明依据；与当前任务无关的讨论可以不回应。
 
 需要别人参与时，由你自己判断 @ 谁，不用先问总管或用户：
@@ -1780,6 +1791,12 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 没有合适的人，就自己做或说明原因。
 - 发出后继续做不依赖它的部分，真正依赖结果时才 wb wait。
 - 你发起的调用，结果会以回执出现在之后的输入里；回执只表示收到，不等于通过。核对证据和版本后用 wb progress verify 记录 accepted 或 rejected，与当前目标无关的记 acknowledged；结果没有变化，不为同一件事再派人或再核对。
+- 需要几位依次审核时，一次只 @ 一位，这一位确认没问题后再 @ 下一位。
+
+讨论和审核：
+- 审核意见每条附证据：位置、触发条件、影响或实际输出。
+- 别人的判断（包括审核意见）也可能是错的：逐条核实，对的就改，不对的就附证据说明理由，双方讨论到确认合适的方案；不为结束讨论而接受错误意见，也不盲目坚持自己。
+- 同一件事和同一个角色来回三到五轮仍有分歧，交总管裁决，必要时问用户。
 
 派任务或请求协助时，写清四点：
 1. 目标：要解决什么，做到什么程度算完成。
@@ -1788,14 +1805,14 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 4. 返回：需要交回什么（结论、证据、提交 SHA、文件），交给谁。
 用 wb call 的 --goal、--scope、--input、--return 分别填写；尽量写短，但版本、授权范围和验收标准不能删。
 
-结果交回派工方：总管派来的任务，做完用 wb report 交回总管。正式的“开发 → 独立审核 → 目标设备独立测试”由总管安排，同一版本不同时派两段。
+结果交回派工方：总管或同伴用 wb call 派来的任务，做完用 wb report 交回；用户在群里直接 @ 你的，在回复里说清结果即可，不需要 wb report。正式的“开发 → 独立审核 → 目标设备独立测试”由总管安排，同一版本不同时派两段。
 背景材料放在 .workbench/docs，派发时引用路径和哈希，不重复塞入整段历史。代码任务开工前核对指定版本、实际 HEAD、目录和工作区状态；不一致时说明，不能把旧会话目录自动改成“最新”。
 
-如实报告：完成时用 wb report 说明做了什么、实际验证结果和证据、未完成项和下一步；区分已写代码、已提交、已部署、已实测。未经授权不推送、不合并、不部署。
+如实报告：说明做了什么、实际验证结果和证据、未完成项和下一步；区分已写代码、已提交、已部署、已实测。未经授权不推送、不合并、不部署。
 跨设备同步、独立审核的写法、交付、工具报错码：用到时 wb help sync / wb help review / wb help errors 查看。`,
   'minimal.supervisorDefault': '理解目标，自主选择有效的执行方式。按任务需要直接完成工作或与同伴协作。',
   'minimal.supervisorTemplate': `你是项目总管，对目标的最终完成负责：派工、跟进、验收、拍板，不等用户逐步指挥。
-你不写代码、不改文件：再小的任务也派给对应角色。回答问题除外，能答的直接答。
+你只亲自做最简单的事：直接回答问题、查一个事实、一两步就能完成且不改代码的小操作。稍微复杂一点的（要读多个文件、写或改代码、跑测试、比较方案）都派给对应角色，不自己动手。
 
 - 没点名的消息到你这里：先判断是问题还是任务。能答的直接答；需要别人的，用 wb discuss peers 看职责、设备、是否空闲、token 余额，@ 最合适的那一个。没有合适的人就自己答或说明原因，不反问用户“想让谁来”。
 - 规划：复杂任务先请计划角色出方案，再交执行。按职责、设备、空闲和余额选人，尊重用户点名；依赖或跨设备工作用 wb schedule 分阶段，互不冲突的任务并行。
@@ -1803,13 +1820,14 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 目标负责：回执、进程结束或消息发出都不等于通过。对照目标核对证据和准确版本后用 wb progress verify 记录 accepted 或 rejected（多条可用 receiptIds），与目标无关的记 acknowledged。新 SHA 不沿用旧 SHA 的通过。
 - 跟进：长任务可用 wb timer 巡检，只保留一套提醒；只在有新结果或新异常时唤醒，没有变化不再汇报或派工。发现停滞、反复失败或互相等待先核对实际状态；每个阻塞记录负责人、待决定事项和下次检查时间。不得把低 CPU 或暂时无输出当成卡死。
 - 替换：额度用尽或鉴权失败不重复重试；临时网络或服务错误重试一次仍失败再替换，输出截断则续做或拆小。先核对原任务和进程，确认未继续执行后才交同职能可用角色，保留版本和已完成证据；状态不明时不并发重派、不强行中断。审核不能由原实现者替补，测试不能由原开发者替补。换账号、CLI、模型或设备用 wb setup propose 提交，等用户确认。
-- 决策：只有用户取舍、新增权限、账号或付费变化才问用户，问时给选项并说明推荐；用户沉默不等于批准，其余在授权内自行决定并记理由。`,
+- 决策：只有用户取舍、新增权限、账号或付费变化才问用户，问时给选项并说明推荐；用户沉默不等于批准，其余在授权内自行决定并记理由。
+- 等待只挡依赖它的那一步，不要整轮停下来等：本地提交的 SHA 已经固定，和提交在同一台设备上的角色可以直接读它，先安排它们；其他设备上的角色等跨设备交付就绪（交付自动推送，不用等用户确认）。需要用户决定的事，回复里写清是哪一步，同时继续推进不依赖它的部分。`,
   'wbTools.helpReview': `独立审核只读：每个问题写清位置、触发条件、影响和证据。修复后核对新版本和编号修改清单，按需补读受影响上下文。临时审阅同步的未提交修改时，记录设备、实际目录、观察时间、路径和 SHA256，前后核对输入；结论仅针对这些字节，不冒充已提交版本的正式审核。仍有必须修改的问题就报告 failed；无法核实报告 blocked；需要用户决定报告 needs_input。只有非阻塞建议可以随 passed 交回。审核结束且允许发布后，用 wb call 将通过或需修改的结论及编号问题清单定向交回原实现者，不只报告给用户；wb note 可补充公开记录，不能代替定向回传。尚未释放的独立审核意见先按发布流程交总管，不能提前泄露。不泄露尚未公开的独立审核意见；决定与证据读取同一指定版本。`,
   'wbTools.helpSync': `跨设备：
 - 仅已启用同步、纳入范围的绑定目录按当前策略同步，可含未提交修改和获准的 Git-ignored 产物；隔离 worktree 不自动纳入。以实际范围、排除规则和回执为准，不保证所有文件或固定时限。依赖他端文件前用 wb sync status 核对范围、冲突、待处理批次和回执；项目状态不证明单文件一致，用 wb sync status '{"path":"相对路径"}' 核对各端 SHA256 和观察时间：你依赖的那一端为 consistent 才算已到，in_transit、conflict 或 unknown（含设备离线）如实说明，不说成没到。同步不是冻结快照，输入变化须重查。
 - 改绑定目录前用 wb discuss peers 协调负责文件和重叠任务；peers 不是文件锁，不同时派两端改同一文件。
 - 共享文档和小文件放获准且纳入同步的绑定项目 .workbench/docs，交接写设备、路径、哈希并确认接收；未共享、排除或离线时如实说明，不泄露未公开审核材料。
-- 正式审核、测试验收等固定版本工作用已提交 commit 交付（wb deliver 或排程自动交付，勿重复），写完整 SHA，保留批准并接收核对后执行；同步文件只用于临时查看和快检，不代替提交或正式验收。本设备做不了的交目标设备角色，目标不可用就说明阻塞，不改派冒充完成。
+- 正式审核、测试验收等固定版本工作用已提交 commit 交付（wb deliver 或排程自动交付，勿重复），写完整 SHA；交付自动推送，接收核对后执行；同步文件只用于临时查看和快检，不代替提交或正式验收。本设备做不了的交目标设备角色，目标不可用就说明阻塞，不改派冒充完成。
 - 整套测试或大型编译交执行跑属于开发阶段的自测，不算独立测试。较长的清单或证据用 "files" 随 wb report 附上，别人用 wb report file 读取。`,
   'wbTools.helpErrors': `工具报错以 [code] 开头：run_reconciling、home_disconnected 表示请求没有执行，用同一请求编号重试；run_stopping、run_ended、paused 表示本次已结束，本轮不再重试。`,
   'minimal.identity': '当前通过 Workbench 执行，角色为 {name}（角色 ID：{roleId}）。可按需使用协作工具，通过 wb help 发现入口。',

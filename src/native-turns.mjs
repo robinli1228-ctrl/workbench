@@ -185,7 +185,12 @@ export class NativeTurnsHome{
   if(!this.online(nodeId))throw Error('Device offline or not connected');
   const turn={id:randomUUID(),clientTurnId,nodeId,runtime,sessionId,prompt:text,text:'',events:[],attachments:items,status:'waiting',phase:null,createdAt:now(),updatedAt:now(),...(control?{control}:{})};
   // A message sent while the session is replying waits in Home's queue, like a queued group-chat message; it starts when the reply ends.
-  if(this.active(nodeId,runtime,sessionId)||this.waitsForExit(nodeId,runtime,sessionId)||this.waiting(nodeId,runtime,sessionId).length||this.queueState(nodeId,runtime,sessionId).paused){this.db.put('nativeTurns',turn);this.change();void this.pump(nodeId,runtime,sessionId);return nativeTurnView(turn);}
+  const waiting=this.waiting(nodeId,runtime,sessionId);
+  if(this.active(nodeId,runtime,sessionId)||this.waitsForExit(nodeId,runtime,sessionId)||waiting.length||this.queueState(nodeId,runtime,sessionId).paused){
+   // A same-millisecond send must follow the user's reordered ranks, not fall back between them by its timestamp.
+   turn.queueRank=Math.max(Date.parse(turn.createdAt),...waiting.map(t=>queueRank(t)+1));
+   this.db.put('nativeTurns',turn);this.change();void this.pump(nodeId,runtime,sessionId);return nativeTurnView(turn);
+  }
   return nativeTurnView(this.dispatch(turn,{gitCredential}));
  }
  /** Reserve the resident process and hand the turn to the Worker; the only place a turn leaves the queue. */

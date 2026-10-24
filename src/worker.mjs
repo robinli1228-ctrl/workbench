@@ -106,8 +106,9 @@ const discussionCapabilities=()=>{
   return {discussionProtocol:configurations.length?2:0,discussionRuntimes:[...new Set(configurations.map(c=>c.runtime))],discussionConfigurations:configurations};
 };
 if(process.env.WB_DISCUSSION_PREVIEW==='1'&&!discussionCapabilities().discussionConfigurations.length)console.warn(tr('worker.discussionPreviewNotEnabledNo'));
-async function refreshRuntimes() {
-  if (!probing) probing = inspectRuntimes().then(r => { const merged = mergeRuntimeReports(runtimes, r, runtimeFailures); runtimes = merged.runtimes; runtimeFailures = merged.failures; scheduleRuntimeRetry(merged.retryMs); send({ type: 'runtime_report', runtimes,discussionCapabilities:discussionCapabilities() }); return runtimes; }).finally(() => { probing = null; });
+/** Only the periodic check may reuse the cached Claude model catalog; a check someone asked for reads it again. */
+async function refreshRuntimes({ periodic = false } = {}) {
+  if (!probing) probing = inspectRuntimes({ force: !periodic }).then(r => { const merged = mergeRuntimeReports(runtimes, r, runtimeFailures); runtimes = merged.runtimes; runtimeFailures = merged.failures; scheduleRuntimeRetry(merged.retryMs); send({ type: 'runtime_report', runtimes,discussionCapabilities:discussionCapabilities() }); return runtimes; }).finally(() => { probing = null; });
   return probing;
 }
 /** One pending retry at a time; it reuses the single in-flight probe instead of starting another App Server. */
@@ -147,7 +148,8 @@ function flushOutbox() {
   }
   if(!events.length&&!readySent){readySent=true;send({type:'ready'});}
 }
-const warmSessions = new WarmSessions({max:capacity,changed:()=>{send({type:'warm_sessions',sessions:warmSessions.snapshot()});reportCapacity();},retired:(metadata,pid)=>{if(!quitting&&metadata.runId&&db.get('runs',metadata.runId))emit(metadata.runId,'status',{pid:null,previousPid:pid,runtimeRetained:false,processSettled:true,driverState:'exited'});}});
+// An idle role keeps its CLI process for an hour, so the next message to it skips the restart and resume.
+const warmSessions = new WarmSessions({idleMs:3600000,max:capacity,changed:()=>{send({type:'warm_sessions',sessions:warmSessions.snapshot()});reportCapacity();},retired:(metadata,pid)=>{if(!quitting&&metadata.runId&&db.get('runs',metadata.runId))emit(metadata.runId,'status',{pid:null,previousPid:pid,runtimeRetained:false,processSettled:true,driverState:'exited'});}});
 const cliRecovery=new CliSessionRecovery({db,warmSessions,activeSessions:sessions,emit});
 const recoveryBinding=m=>({taskId:m.run.taskId||m.task.id,projectId:m.run.projectId,roleId:m.run.roleId,nodeId:identity.nodeId,roleSessionId:m.run.roleSessionId||null,
   nativeSessionId:m.run.resumeNativeSessionId||db.get('runs',m.run.continuationRunId||'')?.nativeSession?.id||null,priorRunId:m.run.continuationRunId||null,runId:m.run.id});
@@ -156,7 +158,36 @@ async function checkNativeDriver(m){const binding=recoveryBinding(m);if(!binding
 let nativeTurns=null;
 /** Side questions (src/native-side-ask.mjs): read-only, one temporary session each, removed on close, expiry or restart. */
 let sideAsks=null;
-function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalSlots(db,identity.nodeId)+(sideAsks?.size||0);}
+function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalSlots(db,identity.nodeId)+(sideAsks?.size||0)+compacting.size;}
+/** After a role's task is done, Home asks to compact its large native context. The compaction runs in that role's retained
+ * process (a new Run for the role waits for it), never in a second process on the same session; without one it is skipped. */
+const compacting=new Map();
+function compactRoleSession(m) {
+  const key=m.roleSessionId;
+  if(typeof key!=='string'||!key||compacting.has(key)||paused||quitting)return;
+  // Register maintenance before borrow() reports capacity, so Home never observes a false idle gap.
+  const job=Promise.resolve().then(async()=>{
+    const entry=warmSessions.borrow(key);
+    if(!entry)return {ok:false,error:'not_retained'};
+    const {session}=entry;let usage=null;
+    const outcome=await new Promise(resolve=>{
+      const timer=setTimeout(()=>resolve({status:'failed',error:'timeout'}),10*60000);timer.unref?.();
+      const done=p=>{clearTimeout(timer);resolve(p);};
+      try {
+        // The role's own thread: a Codex process whose last Run started the thread holds it as threadId, not resumeSessionId.
+        session.reuse({emit:(type,p={})=>{if(type==='context_usage')usage=p;if(type==='status'&&['succeeded','failed','interrupted','reconciling'].includes(p.status))done(p);},
+          beforeInput:null,onProcess:null,control:'compact',maintenance:true,attachments:[],inputImages:[],configurationUpdate:null,
+          resumeSessionId:session.threadId||session.nativeSessionId||session.resumeSessionId});
+        void Promise.resolve(session.start('/compact')).catch(error=>done({status:'failed',error:error.message}));
+      } catch(error) {done({status:'failed',error:error.message});}
+    });
+    session.control=null;
+    // Kept warm again after a good compaction; otherwise closed and retired like any idle process.
+    await warmSessions.giveBack(key,{keep:outcome.status==='succeeded'&&!paused&&!quitting});
+    return {ok:outcome.status==='succeeded',error:outcome.error||null,usedTokens:Number.isFinite(usage?.usedTokens)?usage.usedTokens:null};
+  }).catch(error=>({ok:false,error:error.message})).then(result=>{compacting.delete(key);reportCapacity();send({type:'role_session_compacted',roleSessionId:key,afterRunId:m.afterRunId||null,...result});});
+  compacting.set(key,job);reportCapacity();
+}
 /** Session-page takeover hook (src/native-turns-worker.mjs); idle unless a native session is taken over. */
 nativeTurns=createWorkerNativeTurns({db,send:m=>send(m),data,homeHttp:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,projectRoot:path=>projectRoot(path),
   isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots()),onQuota:receiveRuntimeQuota});
@@ -169,7 +200,7 @@ const nativeAgentSwitches=createWorkerNativeAgentSwitch({db,nodeId:identity.node
  check:claim=>checkTerminalSession(db,{id:claim.id,nodeId:identity.nodeId,projectId:claim.projectId},join(data,'worker.sqlite'),{automatic:true}),
  prepareGrant:op=>folderAccess.local?folderAccess.prepare({operationId:op.id,scope:`native:${op.leaseId}`,path:op.workspace}):null,
  cancelGrant:op=>folderAccess.local?folderAccess.cancel({id:`${identity.nodeId}:${op.id}`,scope:`native:${op.leaseId}`}):null});
-function reportCapacity(){send({type:'capacity_state',capacity,usage:{active:sessions.size,retained:warmSessions.snapshot().length,organizer:organizerRunning,terminal:reservedTerminalSlots(db,identity.nodeId)}});}
+function reportCapacity(){send({type:'capacity_state',capacity,usage:{active:sessions.size+compacting.size,retained:warmSessions.snapshot().length,organizer:organizerRunning,terminal:reservedTerminalSlots(db,identity.nodeId)}});}
 const terminalStops=new Map();
 async function applyCapacity(value) {
   capacity=validateCliCapacity(value);db.put('settings',{id:'cli-capacity',capacity});warmSessions.max=capacity;
@@ -306,6 +337,8 @@ async function command(m) {
       if (m.run.requestId) validateLaunch({ request: m.request, roleSnapshot: m.run.roleSnapshot, delivery: m.delivery, currentPlanVersion: m.run.planVersion });
       const issue = runtimeIssue({ capabilities: { runtimeDiscovery: true }, runtimes }, m.run.roleSnapshot?.runtime || 'codex', m.task.model);
       if (issue) throw new Error(issue);
+      // A compaction of this role's session finishes before its process is checked or reused.
+      if(compacting.has(m.run.roleSessionId))await compacting.get(m.run.roleSessionId);
       await checkNativeDriver(m);
       if(reservation.stopRequested){emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.taskHadNotStartedWas')});return;}
       if (db.list('runs').some(r => r.id !== c.runId && r.status === 'reconciling')) throw new Error(tr('worker.workerFullHasProcessesAwaiting'));
@@ -1180,7 +1213,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -1226,6 +1259,7 @@ function connect() {
       if (m.type === 'query') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>query(m)));
       if (m.type === 'native_turn') void runWithLanguage(m.language, () => folderAccess.run(folderEnvelope(m),()=>nativeTurns.start(m)));
       if (m.type === 'native_turn_stop') void nativeTurns.stop(m.id);
+      if (m.type === 'compact_role_session') compactRoleSession(m);
       if (m.type === 'side_ask') void runWithLanguage(m.language, () => sideAsks.ask(m));
       if (m.type === 'side_ask_close') void sideAsks.close(m.sideId,'cleared');
       if (m.type === 'native_turn_answer') nativeTurns.answer(m.id,m);
@@ -1275,7 +1309,7 @@ async function runMaintenance(){
 function startMaintenance(){if(maintenanceStarted)return;maintenanceStarted=true;const first=setTimeout(()=>void runMaintenance(),60000);first.unref();const daily=setInterval(()=>void runMaintenance(),24*3600000);daily.unref();}
 const sourceSyncTimer=setInterval(()=>{if(registered)sourceSync.flush();void sourceSync.watch.tick().catch(e=>console.error('Source sync observation failed:',e.code||e.message));},500);sourceSyncTimer.unref();
 const heartbeat = setInterval(() => send({ type: 'heartbeat' }), 15000);
-const runtimeTimer = setInterval(() => { if (ws?.readyState === 1) void refreshRuntimes(); }, 300000);
+const runtimeTimer = setInterval(() => { if (ws?.readyState === 1) void refreshRuntimes({ periodic: true }); }, 300000);
 await nativeTurns.recover();
 connect();
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {

@@ -15,7 +15,9 @@ export const taskConversationId=task=>task.sourceInputs?.length&&task.execution?
 export class RoleSessions {
   constructor(db) { this.db=db; }
 
-  /** A role in the same conversation reuses its session by default; switching device or CLI requires explicitly opening a new session. */
+  /** A role in the same conversation reuses its session by default. When the role has moved to another device, CLI or folder
+   * (its old native session cannot be resumed there), an idle old session is retired and a new one starts in its place, so the
+   * role's work goes on; the conversation context still reaches it. A busy old session or a running switch still refuses. */
   getOrCreate(binding) {
     const {projectId,conversationId,roleId,nodeId,runtime}=binding || {};
     if (![projectId,conversationId,roleId,nodeId,runtime].every(value=>typeof value==='string' && value)) throw new Error(tr('roleSessions.roleSessionBindingIncomplete'));
@@ -23,8 +25,10 @@ export class RoleSessions {
       const records=this.db.list('roleSessions').filter(s=>s.projectId===projectId && s.conversationId===conversationId && s.roleId===roleId);
       const current=records.find(s=>s.status!=='archived' && !s.candidateFor);
       if(current) {
-        if(current.nodeId!==nodeId || current.runtime!==runtime || (current.workspaceRoot||null)!==(binding.workspaceRoot||null)) throw new Error(tr('roleSessions.roleSessionBindingHasChanged'));
-        return current;
+        const moved=current.nodeId!==nodeId || current.runtime!==runtime || (current.workspaceRoot||null)!==(binding.workspaceRoot||null);
+        if(!moved)return current;
+        if(current.activeRunId || activeRoleSwitch(this.db,roleId)) throw new Error(tr('roleSessions.roleSessionBindingHasChanged'));
+        this.db.put('roleSessions',{...current,status:'archived',archivedReason:'binding_changed',supersededAt:now(),updatedAt:now()});
       }
       const value={id:randomUUID(),projectId,conversationId,groupConversationId:binding.groupConversationId||projectId,roleId,nodeId,runtime,model:binding.model||null,workspaceRoot:binding.workspaceRoot||null,
         generation:Math.max(0,...records.map(s=>s.generation||0))+1,nativeSessionId:null,nativeSession:null,

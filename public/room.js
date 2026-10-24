@@ -15,6 +15,9 @@ import { renderPermissionScope, permissionScopeValue } from './permission-scope.
 import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl } from './elapsed.js';
+import {classifyStep,stepTitle} from './native-transcript.js';
+import stepZh from './locales/native-takeover-zh.js';
+import { getLanguage } from './i18n.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
 import { pastesAsFile, pastedTextName } from './pasted-text.js';
 
@@ -179,7 +182,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
   // The displayed queue owns these tasks until its next render, including while a drag is active.
   let displayedTaskIds=new Set();
-  const commands=new Map(),pending=new Set(),steeringPending=new Set(),steeringErrors=new Map();let currentProject=null,lastData=null,optimistic=null;
+  const commands=new Map(),pending=new Set(),steeringPending=new Set(),steeringErrors=new Map();let currentProject=null,lastData=null,optimistic=null,pausing=false;
   const queueKey=task=>Number.isFinite(task.queueOrder)?task.queueOrder:(Date.parse(task.createdAt)||0);
   // Long press reorders waiting items; Home stores the order and the scheduler runs them in that order.
   const order=createListOrder({container:list,scope:()=>`queue:${currentProject||''}`,onEnd:()=>{if(lastData){view.update(lastData,currentProject);onUpdate();}},onError:setError,
@@ -194,7 +197,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     if(currentProject!==projectId){panel.open=false;currentProject=projectId;optimistic=null;}
     const rank=new Map((optimistic||[]).map((id,index)=>[id,index]));
     const runs=new Map((data.runs||[]).map(run=>[run.id,run]));
-    const tasks=(data.tasks||[]).filter(task=>{
+    let tasks=(data.tasks||[]).filter(task=>{
       if(task.projectId!==projectId||task.origin!=='chat')return false;
       if(task.status==='ready'&&!task.currentRunId)return true;
       if(!task.steering||!['ready','in_progress','blocked'].includes(task.status))return false;
@@ -203,6 +206,13 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       return !run||!(run.inputDeliveryState==='accepted'||run.status==='succeeded');
     })
       .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||queueKey(a)-queueKey(b));
+    // A message about to start is not waiting: its role is idle, nothing for that role is ahead of it and Home gave no reason
+    // to wait. It shows as the role's starting card instead of in the queue (for at most 30s, so a stuck one comes back here).
+    const busyRoles=new Set((data.runs||[]).filter(r=>r.projectId===projectId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)).map(r=>r.roleId));
+    const firstForRole=new Map();for(const task of [...tasks].sort((a,b)=>queueKey(a)-queueKey(b)))if(!firstForRole.has(task.roleId))firstForRole.set(task.roleId,task.id);
+    const starting=task=>!task.steering&&!task.waitingReason&&!task.collaborationYield&&!data.settings?.paused&&!data.chatQueuePaused&&!busyRoles.has(task.roleId)
+      &&firstForRole.get(task.roleId)===task.id&&Date.now()-Date.parse(task.createdAt)<30000;
+    tasks=tasks.filter(task=>!starting(task));
     displayedTaskIds=new Set(tasks.map(task=>task.id));
     list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&tasks.length>1);
     const conversation=tasks[0]?.conversationId||projectId;
@@ -211,7 +221,19 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     const protectedRole=task=>waits.find(w=>!w.released&&w.roleId===task.roleId&&w.conversationId===(task.conversationId||task.projectId));
     panel.hidden=!tasks.length;list.replaceChildren();
     const title=create('span','message-queue-title',t('Queue · {v}', { v: tasks.length }));
-    summary.replaceChildren(title);
+    // Pause/resume at the right of the title, as on the Sessions queue: paused messages wait after the running replies end.
+    const paused=Boolean(data.chatQueuePaused)&&tasks.length>0,head=[title];panel.classList.toggle('is-paused',paused);
+    if(paused)head.push(create('span','message-queue-paused',t('Paused')));
+    if(data.capabilities?.queuePause&&tasks.length){
+      const toggle=create('button',`icon-button message-queue-pause${paused?' is-paused':''}`),label=t(paused?'Resume the queue':'Pause the queue: keep these messages after the current replies end');
+      toggle.type='button';toggle.innerHTML=UI_ICON[paused?'play':'pause'];toggle.querySelector('svg')?.setAttribute('aria-hidden','true');toggle.title=label;toggle.setAttribute('aria-label',label);toggle.disabled=pausing;
+      // Inside <summary>: the click must not fold the queue.
+      toggle.onclick=async e=>{e.preventDefault();e.stopPropagation();pausing=true;toggle.disabled=true;
+        try{await api(`/api/projects/${encodeURIComponent(projectId)}/queue/pause`,{method:'POST',json:{paused:!paused,conversationId:conversation}});await refreshState({quiet:true});}
+        catch(error){setError(error.message);}finally{pausing=false;if(lastData)view.update(lastData,currentProject);}};
+      head.push(toggle);
+    }
+    summary.replaceChildren(...head);
     for(const [i,task] of tasks.entries()) {
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
       if(data.capabilities?.queueOrder&&!task.steering&&!steeringPending.has(task.id)){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
@@ -629,6 +651,17 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   function liveText(runId) {
     return liveByRun.get(runId)?.text || '';
   }
+  // Step verbs ("Read", "Ran") share the Sessions page's own translations.
+  const stepT=(text,params)=>{const own=getLanguage()==='zh'?stepZh[text]:undefined;return own===undefined?t(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
+  /** What a running role is doing right now, from its live events: the latest tool still in progress, else '' (thinking or
+   * writing). A tool's later events (its result) carry the same id, so a finished tool no longer counts. */
+  function liveStep(events) {
+    const tools=new Map();
+    for(const e of events)if(e.type==='tool'&&e.payload?.item?.id){const prior=tools.get(e.payload.item.id);tools.delete(e.payload.item.id);tools.set(e.payload.item.id,{...prior,...e.payload.item,name:e.payload.item.name||prior?.name,input:e.payload.item.input??prior?.input,arguments:e.payload.item.arguments??prior?.arguments});}
+    // Codex and others mark a running item inProgress; Claude's tool_use has no status until its tool_result arrives.
+    const running=[...tools.values()].reverse().find(item=>item.status==='inProgress'||item.type==='tool_use'&&!item.status);
+    if(!running)return '';const {verb,target}=stepTitle(classifyStep(running,'running'),stepT),text=`${verb} ${target}`.trim();return text.length>36?`${text.slice(0,35)}…`:text;
+  }
 
   async function pullLive(runId) {
     if (!runId || liveFetching.has(runId)) return;
@@ -637,11 +670,11 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const prior=liveByRun.get(runId);
       const result = await api(`/api/runs/${encodeURIComponent(runId)}/events?after=${prior?.seq || 0}`);
       const events = [...new Map([...(prior?.events || []),...(Array.isArray(result?.events)?result.events:[])].map(e=>[e.seq,e])).values()].sort((a,b)=>a.seq-b.seq);
-      const text = extractLiveText(events);
-      const prev = liveByRun.get(runId)?.text || '';
-      liveByRun.set(runId, { text, events, seq:events.at(-1)?.seq || 0, at: Date.now() });
+      const text = extractLiveText(events), step = liveStep(events);
+      const prev = liveByRun.get(runId);
+      liveByRun.set(runId, { text, step, events, seq:events.at(-1)?.seq || 0, at: Date.now() });
       updateLiveFullscreen();
-      if (text !== prev && projectId) renderMessages();
+      if ((text !== (prev?.text || '') || step !== (prev?.step || '')) && projectId) renderMessages();
     } catch {
       if(fullscreenView?.runId===runId)fullscreenView.heading.textContent='Live reply · connection unavailable; content already received is kept';
     } finally { liveFetching.delete(runId); }
@@ -988,8 +1021,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     if (run) actions.push(iconAction('live', 'Log', () => openTask(task.id,run.id)));
     // Status and actions sit inside the card, the same footer as finished messages.
-    const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', label);
-    if (running) { const elapsed = elapsedEl(create, run.startedAt); if (elapsed) status.append(elapsed); }
+    // The footer names the stage: queued, the CLI getting ready (workspace, start, resume), then thinking, the step it is
+    // running, or replying, with the time it has taken so far.
+    const preparing=progress.stage==='worker_received',step=running?liveByRun.get(run.id)?.step:'';
+    const stage=preparing?t('CLI preparing'):progress.stage==='queued'?t('Queued'):running?(step||t(preview?'Replying':'Thinking')):label;
+    const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', stage);status.title=stage;
+    if (running||preparing) { const elapsed = elapsedEl(create, running?run.startedAt:run.createdAt); if (elapsed) status.append(elapsed); }
     const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
     // The CLI occupancy check stays available as one more icon in the row, instead of a box standing in for the body.
     if (recoveryButton) actionBar.append(recoveryButton);
@@ -1315,6 +1352,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       settleSent(ownerId, sent);
       setError('');
       await refreshState({ quiet: true });
+      // Home starts the reply within a second or two; a polling page would otherwise learn of it only on its next poll.
+      for (const ms of [1000, 3000, 6000]) setTimeout(() => void refreshState({ quiet: true }).catch(() => {}), ms);
     } catch (error) {
       // Lost connections, timeouts and server errors leave the outcome unknown: keep the id and look it up.
       // A definite rejection (4xx) stored nothing, so the draft becomes editable again with its text and files.

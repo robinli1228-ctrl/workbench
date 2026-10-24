@@ -3550,11 +3550,11 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-queue .message-queue-item .icon-button svg { width: 16px; height: 16px; }
 .native-queue .message-queue-item .message-queue-delete:hover:not(:disabled) { color: var(--danger); background: #fdecec; }
 .native-queue summary { padding-right: 8px; }
-.native-queue summary .message-queue-pause { margin-left: auto; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 5px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
-.native-queue summary .message-queue-pause:hover { color: var(--accent); background: var(--accent-tint, #eef0ff); }
-.native-queue summary .message-queue-pause.is-paused { color: #b45309; background: #fff4e5; }
-.native-queue summary .message-queue-pause svg { width: 16px; height: 16px; }
-.native-queue summary .message-queue-paused { margin-left: 2px; padding: 1px 8px; border-radius: 999px; background: #fff4e5; color: #b45309; font-size: 11.5px; font-weight: 600; }
+:is(.native-queue, #message-queue) summary .message-queue-pause { margin-left: auto; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 5px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
+:is(.native-queue, #message-queue) summary .message-queue-pause:hover { color: var(--accent); background: var(--accent-tint, #eef0ff); }
+:is(.native-queue, #message-queue) summary .message-queue-pause.is-paused { color: #b45309; background: #fff4e5; }
+:is(.native-queue, #message-queue) summary .message-queue-pause svg { width: 16px; height: 16px; }
+:is(.native-queue, #message-queue) summary .message-queue-paused { margin-left: 2px; padding: 1px 8px; border-radius: 999px; background: #fff4e5; color: #b45309; font-size: 11.5px; font-weight: 600; }
 .native-queue .message-queue-item.list-order-placeholder { background: rgb(37 99 235 / 12%); }
 .message-queue-item.list-order-ghost .message-queue-time { opacity: 0; }
 

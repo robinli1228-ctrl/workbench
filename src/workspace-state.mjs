@@ -56,6 +56,8 @@ export function workspaceState(snapshot,requestedProjectId,requestedConversation
       projectIds:[...new Set(sessions.filter(s=>s.nodeId===turn.nodeId&&s.runtime===turn.runtime&&s.nativeSessionId===turn.sessionId).map(s=>s.projectId))],conversationIds:[...(owners.get(identity(turn.nodeId,turn.runtime,turn.sessionId))||[])],nodeId:turn.nodeId,runtime:turn.runtime,sessionId:turn.sessionId}))
   ].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0); // marks are a set; a fixed order keeps scoped and full reads byte-identical
   delete state.nativeTurnExecutions;
+  // The selected conversation's queue pause; Home drops the record once its queue empties.
+  state.chatQueuePaused=(snapshot.chatQueuePauses||[]).some(p=>p.id===conversationId&&p.projectId===projectId);delete state.chatQueuePauses;
   const runs=snapshot.runs.filter(belongs),runIds=new Set(runs.map(r=>r.id));
   // hasReply is Home's own progress evidence from a SQL summary; the page gets the computed stage instead.
   state.runs=cachedHistory?.runs||runs.map(r=>({...omit(r,[...PAGE_BODY_FIELDS.runs,'hasReply']),

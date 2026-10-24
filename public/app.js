@@ -538,6 +538,7 @@ async function refreshState({ quiet = false } = {}) {
       gitChecks: Array.isArray(data.gitChecks) ? data.gitChecks : [],
       workspaces: Array.isArray(data.workspaces) ? data.workspaces : [],
       tasks: Array.isArray(data.tasks) ? data.tasks : [],
+      chatQueuePaused:data.chatQueuePaused===true,
       runs: Array.isArray(data.runs) ? data.runs : [],
       sidebarExecutions:Array.isArray(data.sidebarExecutions)?data.sidebarExecutions:[],
       workers: Array.isArray(data.workers) ? data.workers : [],

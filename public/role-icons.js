@@ -153,6 +153,9 @@ function currentRuntimeActivity(role,worker,check,after) {
   if(check?.state==='failed'&&attempt>=checked&&attempt>previous)return {tone:'blocked',label:'Check failed',detail:check.error||'This check did not complete; please retry'};
   // A probe older than the last failure proves no recovery; ask for a new observation instead of pinning an old error.
   if(after&&checked<=previous)return {tone:'waiting',label:'To check',detail:'Refresh CLI availability after the last execution failure'};
+  // A used-up Codex window with no credits stops new work until it resets, however old the sample (Home refuses messages to it too).
+  const credits=report?.quota?.credits,spent=report?.type==='codex'&&!report.quotaInvalidated&&credits&&!credits.hasCredits&&!credits.unlimited&&['fiveHour','weekly'].map(key=>report.quota?.[key]).find(w=>w&&Number.isFinite(w.remainingPercent)&&w.remainingPercent<=0&&Date.parse(w.resetsAt)>Date.now());
+  if(spent)return {tone:'blocked',label:'Quota used up',detail:t('Quota used up; resets around {time}',{time:new Date(spent.resetsAt).toLocaleString(getLanguage()==='zh'?'zh-CN':'en-US',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false})})};
   if(!checked||Date.now()-checked>600000||checked>Date.now()+60000)return {tone:'waiting',label:'To check',detail:'CLI check is stale or incomplete; please refresh'};
   if(!report.available)return {tone:'blocked',label:'CLI unavailable',detail:report.reason||'CLI failed the check; verify sign-in or configuration'};
   if(!report.models?.some(m=>m.id===role.model))return {tone:'blocked',label:'Model unavailable',detail:'The current model is not in this device\'s CLI model list; please reconfigure'};

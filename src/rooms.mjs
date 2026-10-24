@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { terminal } from './store.mjs';
 import {reservedTerminalSlots} from './device-capacity.mjs';
 import { runtimeIssue } from './runtime-probe.mjs';
+import { cliUnavailable, cliFailureText } from './cli-availability.mjs';
 import { listRoleTemplates } from './role-templates.mjs';
 import { isRoleConfigured, isSupervisorName, isBroadcastName } from './default-roles.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -237,6 +238,9 @@ export class Rooms {
           if (!isRoleConfigured(role)) throw new Error(tr('rooms.roleHasNoDeviceCli', { name }));
           if (!role.enabled) throw new Error(tr('rooms.roleDisabled', { name }));
           if (!roleWorkspace(this.db, projectId, role.nodeId, role.repositoryId)) throw new Error(tr('rooms.roleHasNoRepositoryDirectory', { name }));
+          // A CLI that cannot work now (signed out, quota used up, model gone) is named at once instead of queueing silently.
+          const unavailable=!scheduledJobId&&cliUnavailable(this.db.get('workers',role.nodeId),role.runtime,role.model);
+          if (unavailable) throw new Error(tr('rooms.roleCliUnavailable', { name: role.name, reason: unavailable }));
           selected.set(role.id,role);
           if(selected.size>4)throw new Error(tr('rooms.messageCanMentionAtMost'));
         }
@@ -269,7 +273,9 @@ export class Rooms {
         this.db.put('tasks', { ...task, conversationId, origin: 'chat', sourceMessageId: clientMessageId, roleId: role.id, roleSnapshot: role,
           sourceRunId: delivery || !reuseSource ? null : source.id, deliveryId: delivery?.id || null,
           quoteMessageId:quote?.id||null,
-          attachments: attachments.length ? attachments : (quote?.attachments?.length ? quote.attachments : source?.attachments || []), schedulingTargets,schedulingRoster,reportRequired:true,scheduledJobId,
+          attachments: attachments.length ? attachments : (quote?.attachments?.length ? quote.attachments : source?.attachments || []), schedulingTargets,schedulingRoster,
+          // A person's @ is answered in the chat; a structured report is asked only for scheduled jobs and cross-device deliveries.
+          reportRequired:Boolean(scheduledJobId||delivery),scheduledJobId,
           requiresCoordination: Boolean(delivery), broadcast: broadcast || undefined });
         return task.id;
       });
@@ -404,6 +410,22 @@ export class Rooms {
     });
   }
 
+  /** Queued chat messages of one group conversation, as the queue above its composer lists them. */
+  queuedChatTasks(projectId,conversationId) {
+    return this.db.chatTasks(['ready']).filter(t=>t.projectId===projectId&&conversationIdOf(t)===conversationId&&!t.currentRunId);
+  }
+  /** Pause keeps a conversation's queued messages after the running replies end (Steer now still goes ahead); like the Sessions
+   * queue it only exists while something waits, so pausing an empty queue does nothing and an emptied queue un-pauses itself. */
+  setQueuePaused(projectId,{paused,conversationId}={}) {
+    conversationId=resolveConversationId(this.db,projectId,conversationId);
+    if(typeof paused!=='boolean')throw new Error(tr('rooms.queuePauseInvalid'));
+    return this.db.transaction(()=>{
+      if(paused&&this.queuedChatTasks(projectId,conversationId).length)this.db.put('chatQueuePauses',{id:conversationId,projectId,conversationId,paused:true,updatedAt:new Date().toISOString()});
+      else this.db.remove('chatQueuePauses',conversationId);
+      return {paused:Boolean(this.db.get('chatQueuePauses',conversationId))};
+    });
+  }
+
   /** Recall one human message atomically, including its queued recipients; never stop a Run or rewrite the original. */
   editQueuedMessage(projectId,taskId,{commandId,conversationId}={}) {
     conversationId=resolveConversationId(this.db,projectId,conversationId);
@@ -433,6 +455,9 @@ export class Rooms {
     const nodes = new Set(), recoveryChecks = new Set(); let changed = false;
     const discussions=new RoleDiscussions(this.db,{online:isReady});changed=discussions.recover().changed;
     const candidates=[...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()];
+    // A paused queue that has emptied (sent, recalled or cancelled) un-pauses itself.
+    const paused=new Set();
+    for(const pause of this.db.list('chatQueuePauses')){if(candidates.some(t=>!t.currentRunId&&t.projectId===pause.projectId&&conversationIdOf(t)===pause.conversationId))paused.add(pause.conversationId);else{this.db.remove('chatQueuePauses',pause.id);changed=true;}}
     const collaboration=collaborationQueueView(this.db);
     // After a stalled collaboration is released, the human's own queued messages go ahead of other ordinary work.
     for (let task of orderRoleQueue(candidates,id=>this.db.get('roleQueueTurns',id)?.priorityUsed,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed)) {
@@ -444,6 +469,7 @@ export class Rooms {
       const collaborationCheck=collaboration.forTask(collaborationTask);
       const active = this.db.activeRuns();
       const reason = this.db.get('settings', 'main')?.paused ? tr('rooms.remoteExecutionPaused')
+        : !discussion&&!task.steering&&paused.has(conversationIdOf(task)) ? tr('rooms.queuePaused')
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)
@@ -478,6 +504,8 @@ export class Rooms {
         // The caller hears about a block once per episode: at once when a person must act, after the wake window otherwise.
         if(blockedKind&&task.requestId&&(blockedKind==='role_disabled'||Date.now()-Date.parse(blockedSince)>=BLOCKED_NOTICE_MS))
           registerCallOutcome(this.db,this.db.get('coordinationRequests',task.requestId),{outcome:'blocked',reason,episode:`${blockedKind}:${blockedSince}`});
+        // The second-long check of the role's previous CLI before a start is not a wait: the message stays "about to start".
+        if (reason===tr('cliRecovery.checking') && !record?.waitingReason) continue;
         if (record?.waitingReason !== reason || (!discussion && ((record?.blockedKind||null)!==blockedKind || (record?.blockedSince||null)!==blockedSince))) {
           this.db.put(discussion?kind:'tasks', { ...record, waitingReason: reason, ...(discussion?{}:{blockedKind,blockedSince}) }); changed = true;
         }
@@ -535,7 +563,7 @@ export class Rooms {
       const quiet=privateFollowup(this.db,run)||handoffOnly(run,report);
       if(quiet&&!question)return;
       const text = quiet||(run.explicitPublish||run.handoffWait&&question)&&run.status==='succeeded'?question:run.status === 'succeeded' ? (run.result || question || tr('rooms.runHasEndedRuntimeReturned'))
-        : tr('rooms.text', { p1: run.status === 'interrupted' ? tr('rooms.runStopped') : tr('rooms.runFailed'), p2: run.error || tr('rooms.seeRunDetails'), p3: !run.explicitPublish && run.result ? tr('rooms.existingOutput', { result: run.result }) : '' });
+        : tr('rooms.text', { p1: run.status === 'interrupted' ? tr('rooms.runStopped') : tr('rooms.runFailed'), p2: cliFailureText(run.error) || tr('rooms.seeRunDetails'), p3: !run.explicitPublish && run.result ? tr('rooms.existingOutput', { result: run.result }) : '' });
       const source=this.replySourceFor(run);
       this.db.put('roomMessages', { id, projectId: run.projectId, conversationId:conversationIdOf(run), sender: 'agent', senderName: run.roleSnapshot.name,
         ...(run.explicitPublish?{kind:question?'user_question':'technical_notice'}:{}),
