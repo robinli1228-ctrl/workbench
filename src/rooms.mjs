@@ -278,7 +278,8 @@ export class Rooms {
           requiresCoordination: Boolean(delivery), broadcast: broadcast || undefined });
         return task.id;
       });
-      const message = this.db.put('roomMessages', { id: clientMessageId, projectId, conversationId, sender: 'human', senderName: tr('rooms.me'), text, attachments, replyToId, taskIds, broadcast: broadcast || undefined, createdAt: now(), fingerprint });
+      // A timed reminder is set by a role, not typed by the user, and says so where it appears.
+      const message = this.db.put('roomMessages', { id: clientMessageId, projectId, conversationId, sender: 'human', senderName: scheduledJobId ? tr('scheduledJobs.reminderSender') : tr('rooms.me'), ...(scheduledJobId ? { scheduledJobId } : {}), text, attachments, replyToId, taskIds, broadcast: broadcast || undefined, createdAt: now(), fingerprint });
       if(!project.systemConfig)new ConversationContext(this.db).enqueue(projectId,conversationId);
       this.touch(projectId,conversationId);
       return message;

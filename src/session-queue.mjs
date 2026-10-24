@@ -620,7 +620,8 @@ export function reassignRequest(db, calls, projectId, requestId, roleId) {
     if (started) throw new Error(tr('sessionQueue.reassignStarted'));
     calls.cancel(requestId);
     const next = calls.create({ id: `${requestId}:to:${roleId}`.slice(0, 200), projectId, targetRoleId: roleId, kind: request.kind, summary: request.summary,
-      sourceMessageId: request.sourceMessageId, parentRequestId: request.parentRequestId, originNodeId: request.originNodeId });
+      sourceMessageId: request.sourceMessageId, parentRequestId: request.parentRequestId, originNodeId: request.originNodeId,
+      ...(request.transferredFrom ? { transferredFrom: request.transferredFrom } : {}) });
     db.put('coordinationRequests', { ...db.get('coordinationRequests', next.id), reassignedFrom: requestId, ...(request.collaborationSessionId ? { collaborationSessionId: request.collaborationSessionId } : {}) });
     db.put('coordinationRequests', { ...db.get('coordinationRequests', requestId), reassignedTo: next.id });
     return db.get('coordinationRequests', next.id);

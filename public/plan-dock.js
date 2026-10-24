@@ -50,7 +50,7 @@ export function planDockState(plans, requests, projectId, dismissedKeys = []) {
     .sort((a, b) => time(b) - time(a)).slice(0, 1);
   const byId = new Map((requests || []).map(request => [request.id, request]));
   const dismissible = dated.filter(plan => {
-    if (!['succeeded', 'cancelled', 'failed', 'blocked', 'completed_with_issues'].includes(plan.status)) return false;
+    if (!['succeeded', 'cancelled', 'failed', 'blocked', 'completed_with_issues', 'awaiting_acceptance'].includes(plan.status)) return false;
     const ids = new Set((plan.stages || []).flatMap(stage => (stage.members || []).map(member => member.requestId)));
     for (const id of ids) {
       const request = byId.get(id);
@@ -78,6 +78,6 @@ export function planDockState(plans, requests, projectId, dismissedKeys = []) {
   const total = stages.reduce((count, stage) => count + (stage.members || []).length, 0);
   const completed = stages.reduce((count, stage) => count + (stage.status === 'succeeded'
     ? (stage.members || []).length : (stage.members || []).filter(member => completedRequest(member.requestId)).length), 0);
-  const currentStage = current.status==='completed_with_issues'?'Reviews collected; see replies and reports':stages.find(stage => stage.status !== 'succeeded' && !(current.failurePolicy==='collect_reviews'&&stage.status==='failed'))?.title || (current.status === 'succeeded' ? 'All done' : 'Waiting to advance');
+  const currentStage = current.status==='awaiting_acceptance'?'Stage done; waiting for the supervisor to accept it':current.status==='completed_with_issues'?'Reviews collected; see replies and reports':stages.find(stage => stage.status !== 'succeeded' && !(current.failurePolicy==='collect_reviews'&&stage.status==='failed'))?.title || (current.status === 'succeeded' ? 'All done' : 'Waiting to advance');
   return { current, plans: dated, dismissible, completed, total, currentStage };
 }

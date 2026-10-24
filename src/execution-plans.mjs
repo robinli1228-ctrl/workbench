@@ -72,6 +72,19 @@ export class ExecutionPlans {
         reason:input.reason,fingerprint,stages,repositoryKeys,failurePolicy,status:'running',createdAt:now(),updatedAt:now()});
     });
   }
+  /** Without reports nothing proves a stage passed, so each finished stage goes back to the supervisor: later stages are released
+   *  unsent (like a blocked plan) and the supervisor submits them again once it has checked and accepted these results. */
+  holdForAcceptance(plan) {
+    const reason=tr('executionPlans.awaitingAcceptance');
+    this.db.transaction(()=>{
+      for(const s of plan.stages)if(s.status==='pending')s.status='not_started';
+      this.db.put('executionPlans',{...plan,status:'awaiting_acceptance',updatedAt:now()});
+      for(const m of plan.stages.flatMap(s=>s.members)) {
+        const r=this.db.get('coordinationRequests',m.requestId);
+        if(!callTerminal.has(r.status)&&!r.currentRunId)this.db.put('coordinationRequests',{...r,status:'failed',notExecutedReason:reason,result:tr('executionPlans.notExecuted',{message:reason}),updatedAt:now()});
+      }
+    });
+  }
   repositories(plan,nodeId) {return projectRepositories(this.db,plan.projectId,nodeId).filter(r=>!plan.repositoryKeys||plan.repositoryKeys.includes(r.key));}
   /** Re-check the steering marker when the remote query returns, so that an old asynchronous plan cannot override the user's new direction. */
   async checked(plan,operation) {
@@ -122,7 +135,7 @@ export class ExecutionPlans {
               stage.finishedAt=now();
               if(stage.status==='failed')stage.error=tr('executionPlans.stageHasFailedNegativeMissing');
               if(!plan.stages[stage.index+1])plan.status=plan.stages.some(s=>s.status==='failed')?'completed_with_issues':'succeeded';
-              this.db.put('executionPlans',{...plan,updatedAt:now()});changed=true;continue;
+              if(plan.stages[stage.index+1])this.holdForAcceptance(plan);else this.db.put('executionPlans',{...plan,updatedAt:now()});changed=true;continue;
             }
           } else if(requests.some(r=>['failed','cancelled'].includes(r.status))) throw new Error(tr('executionPlans.stageHasFailedCancelledRuns'));
           // A stage advances once its calls succeed; reports are gone, so no verdict gate remains (older plans included).
@@ -154,7 +167,7 @@ export class ExecutionPlans {
             }
             stage.status='succeeded';stage.finishedAt=now();
             if(!next) plan.status='succeeded';
-            this.db.put('executionPlans',{...plan,updatedAt:now()});changed=true;continue;
+            if(next)this.holdForAcceptance(plan);else this.db.put('executionPlans',{...plan,updatedAt:now()});changed=true;continue;
           }
           if(!requests.some(r=>r.status==='waiting_dependencies')) continue;
           if(stage.status==='pending') {

@@ -248,7 +248,7 @@ export class ScheduledJobs {
       roleId: role.id, roleSnapshot: role, messageId, status: 'dispatching', createdAt: iso(now)
     });
     const message = this.rooms.post(job.projectId, {
-      clientMessageId: messageId, conversationId:conversationIdOf(job), text: text || job.description, targetRoleId: role.id, scheduledJobId: job.id
+      clientMessageId: messageId, conversationId:conversationIdOf(job), text: tr('scheduledJobs.reminderText', { name: job.name, text: text || job.description }), targetRoleId: role.id, scheduledJobId: job.id
     });
     if(extra.followupMessageIds?.length)for(const taskId of message.taskIds||[]){const task=this.db.get('tasks',taskId);this.db.put('tasks',{...task,followupMessageIds:extra.followupMessageIds});}
     return this.db.put('scheduledOccurrences', { ...occurrence, taskIds: message.taskIds || [], status: 'queued' });

@@ -21,7 +21,7 @@ export function recentTimerOccurrences(occurrences, data, jobId) {
     if (tasks.some(task => task.status === 'blocked') || calls.some(call => call.status === 'failed')) return { ...item, status: 'failed' };
     if (tasks.length && tasks.every(task => ['completed', 'done', 'succeeded', 'cancelled'].includes(task.status))) {
       if (tasks.every(task => task.status === 'cancelled')) return { ...item, status: 'cancelled' };
-      return { ...item, status: calls.length && calls.every(call => call.status === 'succeeded' && call.outcome === 'passed') ? 'succeeded' : 'unverified' };
+      return { ...item, status: calls.every(call => call.status === 'succeeded') ? 'succeeded' : 'unverified' };
     }
     return item;
   }).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 5);

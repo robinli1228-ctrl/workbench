@@ -18,9 +18,10 @@ const now=()=>new Date().toISOString();
 const short=(text,limit)=>{const value=String(text||'').replace(/\s+/g,' ').trim();return value.length>limit?`${value.slice(0,limit-1)}…`:value;};
 const receiptId=(requestId,runId,revision)=>`rr:${createHash('sha256').update(JSON.stringify([requestId,runId||null,revision||0])).digest('hex').slice(0,32)}`;
 
-/** The owner is the role that issued the call; self-continuations and requests without a caller have no receipt. */
-function ownerOf(db,request) {
-  const parent=request?.parentRequestId?db.get('coordinationRequests',request.parentRequestId):null;
+/** The owner is the role that issued the call; self-continuations and requests without a caller have no receipt.
+ *  A transfer returns no result, but a transfer that never ran (not executed, blocked) is still told to the role that handed it over. */
+function ownerOf(db,request,{outcome=false}={}) {
+  const parent=request?.parentRequestId?db.get('coordinationRequests',request.parentRequestId):outcome&&request?.transferredFrom?db.get('coordinationRequests',request.transferredFrom):null;
   if(!parent?.targetRoleId||parent.projectId!==request.projectId||parent.targetRoleId===request.targetRoleId)return null;
   return parent.targetRoleId;
 }
@@ -64,7 +65,7 @@ function register(db,{run,request,report,refreshOnly}) {
 export function registerCallOutcome(db,request,{outcome,reason='',episode=''}) {
   return db.transaction(()=>{
     if(!request?.id||!OUTCOMES.has(outcome))return null;
-    const ownerRoleId=ownerOf(db,request);
+    const ownerRoleId=ownerOf(db,request,{outcome:true});
     if(!ownerRoleId)return null;
     const id=receiptId(request.id,null,`${outcome}:${episode}`),previous=db.get(KIND,id);
     if(previous)return previous;

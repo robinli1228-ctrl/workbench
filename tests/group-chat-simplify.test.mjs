@@ -140,3 +140,43 @@ test('wb wait accepts the short --request-id the role gave wb call', () => {
   assert.deepEqual(waited.waitRequestIds, ['r1:rev-a']);
   assert.throws(() => e.calls.wait(e.db.get('runs', 'r1'), 'again', { requestIds: ['nope'] }));
 });
+
+test('only an owner transfers, never to itself, and a cancelled or redirected chain cannot transfer', () => {
+  const e = env();
+  const consult = createAgentCalls(e, e.db.get('runs', 'r1'), { role: 'Builder', kind: 'consult', requestId: 'r1:ask', text: 'question' });
+  const builder = start(e, consult.requestId, 'r2');
+  assert.throws(() => createAgentCalls(e, builder, { role: 'Checker', kind: 'transfer', requestId: 'r2:t', text: 'take it' }), /transferNotOwner|Only a task owner/);
+  assert.throws(() => createAgentCalls(e, e.db.get('runs', 'r1'), { role: 'Supervisor', kind: 'transfer', requestId: 'r1:self', text: 'x' }), /transferToSelf|yourself/);
+  assert.throws(() => createAgentCalls(e, { ...e.db.get('runs', 'r1'), planId: 'plan-1' }, { role: 'Builder', kind: 'transfer', requestId: 'r1:plan', text: 'x' }), /transferNotOwner|Only a task owner/);
+  const parent = e.calls.forRun(e.db.get('runs', 'r1'));
+  e.db.put('coordinationRequests', { ...parent, steeringTaskId: 'steer-1' });
+  assert.throws(() => createAgentCalls(e, e.db.get('runs', 'r1'), { role: 'Builder', kind: 'transfer', requestId: 'r1:late', text: 'x' }));
+});
+
+test('cancelling the handing-over chain takes an unstarted transfer with it, not a running one', () => {
+  for (const started of [false, true]) {
+    const e = env();
+    const sent = createAgentCalls(e, e.db.get('runs', 'r1'), { role: 'Builder', kind: 'transfer', requestId: `r1:own-${started}`, text: 'own it' });
+    if (started) start(e, sent.requestId, 'r2'); else e.calls.reconcile(sent.requestId);
+    e.calls.cancel(e.calls.forRun(e.db.get('runs', 'r1')).id);
+    assert.equal(e.db.get('coordinationRequests', sent.requestId).status === 'cancelled', !started, `started=${started}`);
+  }
+});
+
+test('a transfer that is never executed is reported to the role that handed it over', async () => {
+  const { ownedReceipts } = await import('../src/result-receipts.mjs');
+  const e = env();
+  const sent = createAgentCalls(e, e.db.get('runs', 'r1'), { role: 'Builder', kind: 'transfer', requestId: 'r1:own', text: 'own it' });
+  e.calls.failAdmission(sent.requestId, new Error('device gone'));
+  assert.deepEqual(ownedReceipts(e.db, { projectId: P, roleId: 'sup' }).map(r => r.outcome), ['not_executed']);
+});
+
+test('two roles may reuse a reminder requestId, and a working role has a reminder limit', () => {
+  const e = env(), saved = [];
+  const jobs = { list: () => ({ jobs: [], occurrences: [] }), save: (projectId, values) => { saved.push(values); return { id: `j${saved.length}`, ...values }; } };
+  const timers = new TimerAgentActions(e.db, jobs), schedule = { type: 'once', onceAt: '2026-10-25T09:00:00+08:00' };
+  for (const roleId of ['b', 'c']) timers.execute({ id: `r-${roleId}`, projectId: P, roleId, roleSnapshot: e.db.get('roles', roleId) }, 'create', { requestId: 'remind-1', name: 'x', description: 'x', schedule });
+  assert.deepEqual(saved.map(v => v.roleId), ['b', 'c']);
+  for (let i = 0; i < 10; i++) e.db.put('scheduledJobs', { id: `own-${i}`, projectId: P, roleId: 'b', enabled: true });
+  assert.throws(() => timers.execute({ id: 'r-b', projectId: P, roleId: 'b', roleSnapshot: e.db.get('roles', 'b') }, 'create', { requestId: 'remind-2', name: 'x', description: 'x', schedule }), /tooManyReminders|active reminders/);
+});

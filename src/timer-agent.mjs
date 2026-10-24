@@ -1,5 +1,7 @@
 import { tr } from './i18n.mjs';
 import {conversationIdOf,assertConversationRecord} from './group-conversations.mjs';
+/** A working role may keep this many active reminders of its own; the supervisor has no such limit. */
+const MAX_OWN_REMINDERS = 10;
 const ACTIONS = new Set(['list', 'create', 'update', 'pause', 'resume', 'delete']);
 const SCHEDULE_FIELDS = ['type', 'onceAt', 'intervalMinutes', 'time', 'timezone', 'weekday', 'anchorAt'];
 const WRITE_FIELDS = ['requestId', 'id', 'revision', 'name', 'description', 'roleId', 'jobType', 'enabled', 'schedule', ...SCHEDULE_FIELDS];
@@ -47,10 +49,12 @@ export class TimerAgentActions {
     if (action === 'create' && values.roleId === undefined) values.roleId = run.roleId;
     if (action === 'update' && values.roleId === undefined && existing) values.roleId = existing.roleId;
     if (!supervisor && (existing && existing.roleId !== run.roleId || values.roleId !== undefined && values.roleId !== run.roleId)) throw new Error(tr('timerAgent.ownRemindersOnly'));
+    if (!supervisor && action === 'create' && this.db.list('scheduledJobs').filter(job => job.projectId === run.projectId && job.roleId === run.roleId && job.enabled !== false).length >= MAX_OWN_REMINDERS) throw new Error(tr('timerAgent.tooManyReminders', { count: MAX_OWN_REMINDERS }));
     if (['create', 'update'].includes(action) && values.roleId && this.db.get('roles', values.roleId)?.projectId !== run.projectId) throw new Error(tr('timerAgent.onlyRolesFromCurrentProject'));
     if (this.db.get('settings', 'main')?.paused) throw new Error(tr('timerAgent.remoteExecutionPaused'));
     return this.db.transaction(() => {
-      const id = `${run.projectId}:${conversationIdOf(run)===run.projectId?'':`${conversationIdOf(run)}:`}${values.requestId}`;
+      // The supervisor keeps its original keys; other roles get their own namespace so two roles may both use "remind-1".
+      const id = `${run.projectId}:${conversationIdOf(run)===run.projectId?'':`${conversationIdOf(run)}:`}${supervisor?'':`${run.roleId}:`}${values.requestId}`;
       const fingerprint = JSON.stringify({ action, values });
       const prior = this.db.get('timerActions', id);
       if (prior) {

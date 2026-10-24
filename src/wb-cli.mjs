@@ -59,7 +59,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'capabilities') return out({protocol:2,notifications:supervisor?1:0,sourceSyncTools:sourceSync?1:0,sessionTools:1,timerTools:1,transfer:1,
       tools:[...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),'discuss peers','call','wait','note','timer',
         ...(supervisor?['notify send','notify status','schedule','collaboration list','collaboration create','collaboration link','collaboration add-member','collaboration remove-member','collaboration release','collaboration close']:[]),
-        ...(process.env.WB_QUEUE_BATCH==='1'?['pass']:[]),'history','history search','history read','history summary','deliver','session current']});
+        ...(process.env.WB_QUEUE_BATCH==='1'?['pass']:[]),'history','history search','history read','history summary','deliver','session current',...(process.env.WB_PLATFORM_ASSISTANT==='1'?['setup catalog','setup propose']:[])]});
     // Discussion batches belong to collaboration sessions and leave with them.
     if (cmd === 'pass' && process.env.WB_QUEUE_BATCH === '1') return out(await agentRequest('/api/agent/pass',{runId:process.env.WB_RUN_ID}));
     if (cmd === 'pass') throw new Error(tr('sessionQueue.passNoBatch'));

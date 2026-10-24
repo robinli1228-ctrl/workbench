@@ -120,6 +120,12 @@ export class RoleCalls {
         if (this.db.get('coordinationRequests', id)?.projectId !== input.projectId) throw new Error(tr('roleCalls.sourceCallDoesNotBelong'));
       }
       if (normalized.transferredFrom && transferDepth(this.db, normalized.transferredFrom) >= MAX_TRANSFERS) throw new Error(tr('roleCalls.transferChainTooLong'));
+      // A transfer has no parent to check, so the handing-over chain must itself still be live: no cancel, no user redirect.
+      for (let id = normalized.transferredFrom, seen = new Set(); id && !seen.has(id); ) {
+        seen.add(id); const r = this.db.get('coordinationRequests', id);
+        if (!r || r.status === 'cancelled' || r.steeringTaskId) throw new Error(tr('roleCalls.sourceCallHasEndedBeen'));
+        id = r.continuationOf;
+      }
       let ancestor = normalized.parentRequestId ? this.db.get('coordinationRequests', normalized.parentRequestId) : null;
       // A new call needs a live source call. A continuation only resumes work already delegated, so an upstream turn that
       // simply finished (succeeded or failed) does not end it; an explicit cancel or a user redirect does.
@@ -134,7 +140,8 @@ export class RoleCalls {
         ancestor = ancestor.parentRequestId ? this.db.get('coordinationRequests', ancestor.parentRequestId) : null;
       }
       const continued = normalized.continuationOf ? this.db.get('coordinationRequests', normalized.continuationOf) : null;
-      const sourceRequest = continued || this.db.get('coordinationRequests', normalized.parentRequestId || '');
+      // A transfer keeps the publication, session and scheduled-job context of the request that handed it over.
+      const sourceRequest = continued || this.db.get('coordinationRequests', normalized.parentRequestId || normalized.transferredFrom || '');
       const sourceTask=this.db.get('tasks',sourceRequest?.taskId||'');
       if (continued) rootRequestId = continued.rootRequestId || continued.id;
       if (input.kind!=='continuation'&&this.db.list('coordinationRequests').filter(r => r.rootRequestId === rootRequestId&&r.kind!=='continuation').length >= 20) throw new Error(tr('roleCalls.collaborationChainHasReached20'));
@@ -469,7 +476,8 @@ export class RoleCalls {
     }
     const ids = new Set([root.id]);
     const all = this.db.list('coordinationRequests').filter(r => r.projectId === root.projectId);
-    for (let i = 0; i < all.length; i++) for (const r of all) if (ids.has(r.parentRequestId) || ids.has(r.continuationOf)) ids.add(r.id);
+    // A transfer that has not started yet goes with the chain that handed it over; once its owner runs, it stands alone.
+    for (let i = 0; i < all.length; i++) for (const r of all) if (ids.has(r.parentRequestId) || ids.has(r.continuationOf) || ids.has(r.transferredFrom) && !r.currentRunId && !callTerminal.has(r.status)) ids.add(r.id);
     // A human steering one role does not authorize interrupting an admitted peer Run, even before launch acknowledgement.
     // Preserve that peer's continuation ancestry and descendants so its late result remains attributable.
     if(preserveRunningChildren) {

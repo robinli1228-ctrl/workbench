@@ -22,6 +22,8 @@ export function createAgentCalls({db,calls,rooms},run,input) {
       return [role.id,role];
     })).values()];
     if(transfer&&targets.length!==1)throw new Error(tr('wbTools.invalidCallTargets'));
+    if(transfer&&targets[0].id===run.roleId)throw new Error(tr('roleCalls.transferToSelf'));
+    if(transfer&&input.deliveryId)throw new Error(tr('roleCalls.transferNoDelivery'));
     const id=input.requestId||'';
     if(typeof id!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(id))throw new Error(tr('roleCalls.invalidCallId'));
     if(typeof input.text!=='string'||!input.text.trim()||input.text.length>12000)throw new Error(tr('roleCalls.callSummaryMustBe1'));
@@ -41,6 +43,8 @@ export function createAgentCalls({db,calls,rooms},run,input) {
     if(existing&&targets.length>1)throw new Error(tr('roleCalls.callIdConflictsWithDifferent'));
     const parent=calls.forRun(run);
     if(!parent)throw new Error(tr('home.currentExecutionHasNoRole'));
+    // Only an owner hands a task over: a consulted or delegated role answers its caller, and a plan stage stays in its plan.
+    if(transfer&&(parent.parentRequestId||run.planId||parent.planId))throw new Error(tr('roleCalls.transferNotOwner'));
     const recipients=[],requests=targets.map(target=>{
       if(target.archivedAt)throw new Error(tr('home.targetRoleArchivedCannotBe'));
       let role=target,summary=input.text;

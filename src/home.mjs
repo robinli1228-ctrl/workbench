@@ -1546,7 +1546,7 @@ wss.on('connection', ws => {
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId,runtimes:mergeReportedRuntimes(db.get('workers',nodeId)?.runtimes,m.node.runtimes), lastSeen: new Date().toISOString() });
         // Turns the Worker kept running through the disconnect continue; the ones it no longer has ended while it was away.
         nativeTurns.reconnected(nodeId, Array.isArray(m.nativeTurns) ? m.nativeTurns.filter(id => typeof id === 'string').slice(0, 200) : []);
-        send(ws, { type: 'registered', retention:retentionPolicy(), folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:m.node.capabilities?.readSourceBindings===1?1:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
+        send(ws, { type: 'registered', retention:retentionPolicy(), folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
       }
       if (!nodeId || sockets.get(nodeId) !== ws) throw new Error(tr('home.nodeNotRegisteredYet'));
       if(['source_sync_receipt','source_sync_command_ack','source_sync_watch_ack','source_sync_watch_status','source_sync_dirty'].includes(m.type)){

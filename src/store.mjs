@@ -11,7 +11,6 @@ import { RoleSessions,taskConversationId } from './role-sessions.mjs';
 import { buildRunContext } from './run-context.mjs';
 import { steeringWaitReason } from './role-steering.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
-import {supportsDiscussion} from './discussion-policy.mjs';
 import { tr } from './i18n.mjs';
 import {switchSettled,roleSwitchWaitReason,effectiveExecutionRole,isSwitchMaintenance} from './role-switch-policy.mjs';
 import {syncError} from './source-sync-manifest.mjs';
@@ -350,7 +349,8 @@ export class Store {
         sourceInputs:structuredClone(task.sourceInputs||[]),sourceSyncBatchId:task.sourceSyncBatchId||null,
         ...sourceConflictContext(task),
         sourceSyncTracking:Boolean(this.get('sourceSyncConfigs',task.projectId)?.enabled&&this.get('sourceSyncConfigs',task.projectId)?.nodeIds?.includes(nodeId)),
-        discussionProtocol:supportsDiscussion(this.get('workers',nodeId),task.roleSnapshot?.runtime,task.roleSnapshot?.model)?2:0,peerStatus:this.get('workers',nodeId)?.capabilities?.peerStatus===1?1:0,permissionProfile:'business',
+        // The discussion protocol preview was retired; even an older preview Worker gets ordinary turns.
+        discussionProtocol:0,peerStatus:this.get('workers',nodeId)?.capabilities?.peerStatus===1?1:0,permissionProfile:'business',
         roleSessionId:roleSession?.id||null,resumeNativeSessionId:roleSession?.nativeSessionId||null,resumeNativeSession:roleSession?.nativeSession||null,resumeWorkspace:roleSession?.workspace||null,
         projectScope: true, repositories, attachments: task.attachments || [], execution:task.execution||null,scheduledJobId:task.scheduledJobId||null,
         documentViews:this.get('workers',nodeId)?.capabilities?.sessionQueue===2?1:0,
