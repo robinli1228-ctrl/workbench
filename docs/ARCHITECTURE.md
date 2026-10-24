@@ -618,3 +618,5 @@ These limitations stay visible, and simulated events, fake online status or stat
 ### Group-call simplification compatibility
 
 Whole-task transfer moves ownership without making the recipient a child call. The receiver arranges review and returns the final reply. Role reminders and short wait IDs share the existing call infrastructure. Managed results use final replies instead of `wb report`; a successful execution is not a business acceptance verdict. New stage plans cannot contain migration, deployment or production operations. Before releasing waiting dependencies, the same restriction is checked on persisted older plans, including stages marked running before their requests were dispatched; already-running requests are not cancelled. A blocked irreversible step must be reviewed and assigned separately.
+
+The group Resources sidebar keeps the existing clickable project-folder/device entry and does not enumerate local project files on tab selection or background state refresh. Folder contents are opened only through the existing explicit folder action. Recent run outputs retain their separate bounded view.
