@@ -4,17 +4,18 @@ const names={claude:'Claude Code',codex:'Codex',grok:'Grok',agy:'Agy'};
 const identity=item=>`${item.nodeId}/${item.runtime}/${item.sessionId||item.id}`;
 /** Small selector at the existing Agent label. Only an explicit choice begins an idempotent switch. */
 export function createNativeAgentSwitchUI({api,getState,onCommitted,onError,t=text=>text,onChange=()=>{}}){
- const pending=new Map();let disposed=false;
+ // Switches this page saw end: a conversation listing fetched before that still names it as pending until it refreshes.
+ const pending=new Map(),settled=new Set();let disposed=false;
  const dialog=document.createElement('dialog');dialog.className='settings-edit-dialog native-agent-dialog';dialog.setAttribute('aria-label',t('Switch Agent'));document.body.append(dialog);
- const busy=item=>pending.has(identity(item))||Boolean(item.conversationBinding?.pendingSwitchId);
+ const busy=item=>pending.has(identity(item))||Boolean(item.conversationBinding?.pendingSwitchId&&!settled.has(item.conversationBinding.pendingSwitchId));
  function remember(id,value){try{sessionStorage.setItem(`workbench.agent-switch.${id}`,JSON.stringify(value));}catch{}}
  async function apply(entry,result){
   if(result.conversation)entry.conversation=result.conversation;
   if(result.operation?.stage==='committed'){
-   clearTimeout(entry.timer);pending.delete(identity(entry.source));remember(identity(entry.source),null);
+   clearTimeout(entry.timer);settled.add(entry.id);pending.delete(identity(entry.source));remember(identity(entry.source),null);
    const c=result.conversation;await onCommitted({source:entry.source,conversation:c,current:c.segments.find(s=>s.id===c.currentSegmentId),segments:c.segments});
   }else if(result.operation?.stage==='failed'){
-   clearTimeout(entry.timer);pending.delete(identity(entry.source));remember(identity(entry.source),null);onError(result.operation.error||'Agent switch failed');
+   clearTimeout(entry.timer);settled.add(entry.id);pending.delete(identity(entry.source));remember(identity(entry.source),null);onError(result.operation.error||'Agent switch failed');
   }else{entry.message=result.operation?.error||'Switching Agent…';schedule(entry);}
   onChange();
  }
@@ -24,7 +25,7 @@ export function createNativeAgentSwitchUI({api,getState,onCommitted,onError,t=te
   catch(error){
    // Home never received this switch (its request was lost): nothing was reserved, so the input unlocks. A switch Home did
    // reserve still comes back through the conversation's pending ID.
-   if(error.code==='agent_switch_not_found'){clearTimeout(entry.timer);pending.delete(identity(entry.source));remember(identity(entry.source),null);onChange();return;}
+   if(error.code==='agent_switch_not_found'){clearTimeout(entry.timer);settled.add(entry.id);pending.delete(identity(entry.source));remember(identity(entry.source),null);onChange();return;}
    entry.message=error.message;schedule(entry);onChange();}}
  async function cancel(entry){entry.cancelling=true;onChange();
   try{await apply(entry,await api(`/api/native-sessions/${encodeURIComponent(entry.source.nodeId)}/agent-switch/${encodeURIComponent(entry.id)}`,{method:'DELETE'}));}
@@ -54,7 +55,7 @@ export function createNativeAgentSwitchUI({api,getState,onCommitted,onError,t=te
  function render({item,worker,conversation=item.conversationBinding,busy:occupied=false}){
   const id=identity(item);let entry=pending.get(id),saved=null;
   if(!entry){try{saved=JSON.parse(sessionStorage.getItem(`workbench.agent-switch.${id}`));}catch{}
-   const operationId=conversation?.pendingSwitchId||saved?.id;if(operationId){entry={id:operationId,source:item,polls:0,message:'Switching Agent…'};pending.set(id,entry);schedule(entry);}}
+   const operationId=[conversation?.pendingSwitchId,saved?.id].find(id=>id&&!settled.has(id));if(operationId){entry={id:operationId,source:item,polls:0,message:'Switching Agent…'};pending.set(id,entry);schedule(entry);}}
   const root=document.createElement('span');root.className='native-identity-item native-agent-selector';root.append(agentIconEl(item.runtime));
   const name=document.createElement('span');name.className='native-identity-name';name.textContent=names[item.runtime]||item.runtime;root.append(name);
   const select=document.createElement('button');select.type='button';select.className='icon-button native-agent-switch-button';setActionIcon(select,'refresh',t('Switch Agent'));select.setAttribute('aria-haspopup','dialog');
