@@ -197,7 +197,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     if(currentProject!==projectId){panel.open=false;currentProject=projectId;optimistic=null;}
     const rank=new Map((optimistic||[]).map((id,index)=>[id,index]));
     const runs=new Map((data.runs||[]).map(run=>[run.id,run]));
-    const tasks=(data.tasks||[]).filter(task=>{
+    let tasks=(data.tasks||[]).filter(task=>{
       if(task.projectId!==projectId||task.origin!=='chat')return false;
       if(task.status==='ready'&&!task.currentRunId)return true;
       if(!task.steering||!['ready','in_progress','blocked'].includes(task.status))return false;
@@ -206,6 +206,13 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       return !run||!(run.inputDeliveryState==='accepted'||run.status==='succeeded');
     })
       .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||queueKey(a)-queueKey(b));
+    // A message about to start is not waiting: its role is idle, nothing for that role is ahead of it and Home gave no reason
+    // to wait. It shows as the role's starting card instead of in the queue (for at most 30s, so a stuck one comes back here).
+    const busyRoles=new Set((data.runs||[]).filter(r=>r.projectId===projectId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)).map(r=>r.roleId));
+    const firstForRole=new Map();for(const task of [...tasks].sort((a,b)=>queueKey(a)-queueKey(b)))if(!firstForRole.has(task.roleId))firstForRole.set(task.roleId,task.id);
+    const starting=task=>!task.steering&&!task.waitingReason&&!task.collaborationYield&&!data.settings?.paused&&!data.chatQueuePaused&&!busyRoles.has(task.roleId)
+      &&firstForRole.get(task.roleId)===task.id&&Date.now()-Date.parse(task.createdAt)<30000;
+    tasks=tasks.filter(task=>!starting(task));
     displayedTaskIds=new Set(tasks.map(task=>task.id));
     list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&tasks.length>1);
     const conversation=tasks[0]?.conversationId||projectId;
@@ -1345,6 +1352,8 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       settleSent(ownerId, sent);
       setError('');
       await refreshState({ quiet: true });
+      // Home starts the reply within a second or two; a polling page would otherwise learn of it only on its next poll.
+      for (const ms of [1000, 3000, 6000]) setTimeout(() => void refreshState({ quiet: true }).catch(() => {}), ms);
     } catch (error) {
       // Lost connections, timeouts and server errors leave the outcome unknown: keep the id and look it up.
       // A definite rejection (4xx) stored nothing, so the draft becomes editable again with its text and files.
