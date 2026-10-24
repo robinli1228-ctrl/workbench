@@ -383,7 +383,8 @@ export function bindQuotaDetails(mark, getDetails, title = 'Quota details') {
 }
 
 /** Draw only quota windows actually returned by the vendor; unknown quota is not shown as green. */
-export function roleNameQuota(quota) {
+/** A stale snapshot (kept, unconfirmed or old) keeps its number but loses its tone, so it never reads as current. */
+export function roleNameQuota(quota, { stale = false } = {}) {
   const wrap = el('span', 'role-name-quota');
   const add = (kind, bucket, weekly = false) => {
     const known = usableBucket(bucket);
@@ -391,7 +392,7 @@ export function roleNameQuota(quota) {
     const pct = Math.round(remainingPercent(bucket));
     const tone = quotaTone(pct, { weekly, resetsAt: bucket?.resetsAt });
     const windowClass = weekly ? 'is-weekly' : 'is-five-hour';
-    const mark = el('button', `role-quota-mark ${windowClass} is-${tone}`), getDetails = () => quotaDetails(kind, pct, bucket), details = getDetails();
+    const mark = el('button', `role-quota-mark ${windowClass} is-${stale ? 'stale' : tone}`), getDetails = () => { const d = quotaDetails(kind, pct, bucket); return stale ? { ...d, remaining: `${d.remaining} · ${t('Not latest')}` } : d; }, details = getDetails();
     mark.type = 'button'; mark.setAttribute('aria-haspopup', 'dialog');
     mark.setAttribute('aria-label', `${details.remaining} · ${details.reset}`);
     bindQuotaDetails(mark, getDetails);

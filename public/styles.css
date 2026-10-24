@@ -1089,6 +1089,7 @@ body.is-list-reordering, body.is-list-reordering * { cursor: grabbing !important
 .role-quota-mark.is-mid { background: var(--warning); }
 .role-quota-mark.is-low { background: var(--danger); }
 .role-quota-mark.is-smile { background: #078653; }
+.role-quota-mark.is-stale { background: var(--muted); }
 .role-badge { padding: 2px 7px; border-radius: 99px; background: #eee; color: #666; font-size: 10px; font-weight: 700; flex-shrink: 0; }
 .role-id-row { display: flex; align-items: center; gap: 4px; min-width: 0; margin-top: 8px; }
 .role-icon {

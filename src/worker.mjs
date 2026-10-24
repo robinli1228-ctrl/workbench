@@ -33,7 +33,7 @@ import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
 import { inspectRuntimes, runtimeIssue, mergeRuntimeReports, useQuotaIdentitySalt } from './runtime-probe.mjs';
-import {applyRuntimeQuota,quotaSignature} from './runtime-quota.mjs';
+import {applyRuntimeQuota,quotaSignature,sessionQuotaIdentity} from './runtime-quota.mjs';
 import { writeHandoff } from './wb-tools.mjs';
 import {handoffReadPaths} from './handoff-paths.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
@@ -501,7 +501,7 @@ async function command(m) {
       if(session && !warmSessions.alive(session)){await afterProcessExit(session.proc,()=>{});session=null;}
       const sessionReuse=session?'process':m.run.resumeNativeSessionId?'resume':'new';
       if(session)instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,processReused:true,components});
-      if(session)session.reuse(options);else {session=new Session(options);session.quotaIdentity=runtimes.find(r=>r.type===runtimeType)?.quotaIdentity;}
+      if(session)session.reuse(options);else {session=new Session(options);session.quotaIdentity=sessionQuotaIdentity(runtimes.find(r=>r.type===runtimeType));}
       sessions.set(c.runId, session);
       emit(c.runId,'status',{sessionReuse,instructionFingerprint:instructions.fingerprint,instructionsInheritedFrom:instructions.inheritedFrom,
         ...(executionConfiguration?{instructionVersions:executionConfiguration.versions,instructionComponents:instructions.components,configurationState:'starting',...(instructions.configurationEventProtocol?{configurationEventProtocol:instructions.configurationEventProtocol}:{})}:{})});

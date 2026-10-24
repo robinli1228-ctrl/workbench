@@ -9,12 +9,16 @@ let quotaIdentitySalt=randomUUID();
 /** The Worker keeps its salt in its database, so a restart keeps the same identity and Home keeps the saved quota. */
 export function useQuotaIdentitySalt(salt){if(typeof salt==='string'&&salt)quotaIdentitySalt=salt;}
 /** Report an opaque, salted identity, never an email, account ID or token. */
-function quotaIdentity(type,account) {
-  const id=account?.email||account?.emailAddress||account?.accountId||account?.orgId||account?.organizationId;
-  // A token-only Claude login names no account; its sign-in method and config folder still identify one login on this device.
-  const key=typeof id==='string'&&id?id:type==='claude'&&account?.loggedIn===true&&typeof account.authMethod==='string'&&account.authMethod?`login:${account.authMethod}:${account.configDirectory||''}`:null;
+function quotaIdentity(type,account,env=process.env) {
+  const id=account?.email||account?.emailAddress||account?.accountUuid||account?.accountId;
+  // A token-only Claude login names no account: the token itself is the account, so its salted hash changes with it.
+  // The token never leaves this function; only the salted digest is reported.
+  const token=type==='claude'&&(account?.loggedIn===true||account?.authenticated===true)?account.authMethod==='oauth_token'?env.CLAUDE_CODE_OAUTH_TOKEN||env.ANTHROPIC_AUTH_TOKEN:account.authMethod==='api_key'?env.ANTHROPIC_API_KEY:null:null;
+  const key=typeof id==='string'&&id?id:typeof token==='string'&&token?`token:${token}`:null;
   return key?createHash('sha256').update(JSON.stringify([quotaIdentitySalt,type,key,account.organizationId||account.orgId||null])).digest('hex'):null;
 }
+/** Only a timeout, a kill or a short-lived resource shortage leaves the account unknown; any other failure is an answer. */
+const checkInterrupted=e=>Boolean(e?.killed||e?.signal||['ETIMEDOUT','EAGAIN','ENOMEM','EMFILE','ENFILE'].includes(e?.code));
 
 /** A single no-inference probe: reads only the version, login state, and model catalog, and creates no Thread/Turn. */
 export async function inspectCodex() {
@@ -63,7 +67,7 @@ export async function inspectCodex() {
   } catch (e) {
     // Once account/read has confirmed a missing login, a later transport error must not make the result look transient.
     if (result.authReady === false) result.reason = tr('runtimeProbe.runCodexLoginOnDevice');
-    else { result.reason = tr('runtimeProbe.checkCliOnDeviceThen', { message: e.message }); if (e.transient) result.transient = true; if (result.authReady === undefined) result.authUnknown = true; }
+    else { result.reason = tr('runtimeProbe.checkCliOnDeviceThen', { message: e.message }); if (e.transient) { result.transient = true; if (result.authReady === undefined) result.authUnknown = true; } }
   }
   finally { clearTimeout(timer); lines.close(); proc.stdin.end(); proc.kill(); }
   return result;
@@ -343,8 +347,8 @@ export async function inspectClaude() {
     if (signedOut || looksLoggedOut(text)) {
       return { ...result, authReady: false, reason: tr('runtimeProbe.signInWithClaudeOn') };
     }
-    // A check that timed out or crashed does not know the account: it is retried, and the saved quota is kept meanwhile.
-    result.authUnknown = true; result.transient = true;
+    // A check that timed out or was killed does not know the account: it is retried, and the saved quota is kept meanwhile.
+    if (checkInterrupted(e)) { result.authUnknown = true; result.transient = true; result.authCheckError = e.killed || e.signal || e.code === 'ETIMEDOUT' ? tr('runtimeProbe.cliStatusProbeTimedOut') : String(e.code); }
   }
   // A third-party Anthropic-compatible service declares its models explicitly on the device, to avoid showing MiMo as Opus by mistake.
   // Claude Code has no stable models subcommand; a positional argument would be treated as a prompt and consume quota.
@@ -375,7 +379,7 @@ export async function inspectClaude() {
   result.authReady = authReady;
   result.available = authReady && models.length > 0;
   result.reason = !result.installed ? result.reason
-    : result.authUnknown ? tr('runtimeProbe.checkCliOnDeviceThen2', { message: tr('runtimeProbe.cliStatusProbeTimedOut') })
+    : result.authUnknown ? tr('runtimeProbe.checkCliOnDeviceThen2', { message: result.authCheckError })
     : !authReady ? tr('runtimeProbe.signInWithClaudeOn2')
     : !models.length ? tr('runtimeProbe.cliReturnedNoAvailableModels3')
     : '';

@@ -1018,6 +1018,7 @@ export default {
   'Resets at: {time}': '重置时间：{time}',
   'Reset in: {time}': '重置剩余：{time}',
   'Updated just now': '刚更新',
+  'Not latest': '非最新',
   'Updated {n} min ago': '{n} 分钟前更新',
   'Updated {n} h ago': '{n} 小时前更新',
   'Reset time unavailable': '暂未取得重置时间',

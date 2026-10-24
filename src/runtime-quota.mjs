@@ -1,5 +1,8 @@
 const WINDOWS=['fiveHour','weekly'];
 const PARTS=[...WINDOWS,'credits'];
+// Claude reports only when a whole percent changes, so a quiet hour is normal; a sample older than this is shown as not latest.
+const MAX_SAMPLE_AGE_MS=3*3600000;
+const aged=(quota,now)=>PARTS.some(key=>quota?.[key]&&!(now-Date.parse(quota[key].checkedAt)<=MAX_SAMPLE_AGE_MS));
 
 /** Keep the existing optional credit display when the account event supplies it; absence is not a zero balance. */
 function creditSample(value,now) {
@@ -67,18 +70,18 @@ export function mergeRuntimeQuota(previous,report,now=Date.now()) {
   if(quota.fiveHour||quota.weekly)quota.remainingPercent=quota.fiveHour?.remainingPercent??quota.weekly.remainingPercent;
   const incoming=report.quotaSource==='session'&&PARTS.some(key=>report.quota?.[key]&&Date.parse(report.quota[key].checkedAt)>=latest);
   const invalidated=report.authReady===false&&!report.authUnknown||Boolean(same&&previous.quotaInvalidated&&!incoming)||report.quotaInvalidated===true;
-  // Claude reports only when a whole percent changes, so a quiet hour is not staleness: a sample stays valid until its window resets.
-  const stale=!latest||invalidated||report.quotaUnconfirmed===true;
+  // A sample counts until its window resets or it grows older than MAX_SAMPLE_AGE_MS, whichever comes first.
+  const stale=!latest||invalidated||report.quotaUnconfirmed===true||aged(quota,now);
   return {...report,quota:latest?quota:null,quotaSource:'session',quotaCheckedAt:latest?new Date(latest).toISOString():null,quotaStatus:latest?'ok':'unavailable',quotaStale:stale,quotaInvalidated:invalidated};
 }
 
 /** Only an adapter bound at startup to this device's current account can update quota, never auth state. */
 export function applyRuntimeQuota(reports,type,sample,identity,now=Date.now()) {
   return reports.map(r=>{
-    if(r.type!==type||!identity||r.quotaIdentity!==identity||r.authReady===false&&!r.authUnknown)return r;
+    // While a check could not read the account, the kept identity is only borrowed: no sample may refresh it.
+    if(r.type!==type||!identity||r.quotaIdentity!==identity||r.authReady===false||r.authUnknown||r.quotaUnconfirmed)return r;
     if(sample?.invalidated)return {...r,quotaIdentity:null,quotaInvalidated:true,quotaStale:true};
-    // A live sample from the same account confirms it again after a check that could not read the account.
-    return mergeRuntimeQuota(r,{...r,...sample,quotaInvalidated:false,quotaUnconfirmed:false},now);
+    return mergeRuntimeQuota(r,{...r,...sample,quotaInvalidated:false},now);
   });
 }
 
@@ -88,12 +91,28 @@ export function expireRuntimeQuota(runtime,now=Date.now()) {
   const quota=runtime.quota&&typeof runtime.quota==='object'?runtime.quota:{};
   const expired=WINDOWS.filter(key=>quota[key]&&!(Date.parse(quota[key].resetsAt)>now));
   const unusable=Boolean(runtime.quotaInvalidated||runtime.authReady===false&&!runtime.authUnknown);
-  if(!expired.length&&(runtime.quotaStale||!unusable&&PARTS.some(key=>quota[key])))return runtime;
+  if(!expired.length&&(runtime.quotaStale||!unusable&&PARTS.some(key=>quota[key])&&!aged(quota,now)))return runtime;
   const next={...quota};for(const key of expired)delete next[key];
   if(next.fiveHour||next.weekly)next.remainingPercent=next.fiveHour?.remainingPercent??next.weekly.remainingPercent;else delete next.remainingPercent;
   const left=PARTS.some(key=>next[key]);
-  return {...runtime,quota:left?next:null,quotaStatus:left?'ok':'unavailable',quotaStale:Boolean(runtime.quotaStale||unusable||!left)};
+  return {...runtime,quota:left?next:null,quotaStatus:left?'ok':'unavailable',quotaStale:Boolean(runtime.quotaStale||unusable||!left||aged(next,now))};
 }
+
+/** Every report Home receives (registration and runtime_report) merges the same way: a fresh probe after a Worker restart
+ * keeps the saved samples of the same account, and windows past their reset are dropped at once. */
+export function mergeReportedRuntimes(previous,incoming,now=Date.now()) {
+  return (Array.isArray(incoming)?incoming:[]).map(rt=>{
+    const old=(Array.isArray(previous)?previous:[]).find(p=>p?.type===rt?.type);
+    if(rt?.quotaSource==='session')return expireRuntimeQuota(mergeRuntimeQuota(old,rt,now),now);
+    const hasQuota=rt?.quota&&typeof rt.quota==='object'&&(rt.quota.fiveHour||rt.quota.weekly||rt.quota.groups||rt.quota.credits||rt.quota.remainingPercent!=null);
+    if(hasQuota)return rt;
+    if(old?.quota&&(old.quota.fiveHour||old.quota.weekly||old.quota.groups||old.quota.credits))return {...rt,quota:old.quota,quotaStatus:old.quotaStatus||'ok',quotaStale:true};
+    return rt;
+  });
+}
+
+/** A session binds to the device's current account; while the last check could not read it, a new session binds to none. */
+export function sessionQuotaIdentity(runtime){return runtime&&!runtime.authUnknown&&!runtime.quotaUnconfirmed?runtime.quotaIdentity||null:null;}
 
 /** The values a page shows; a resend that changes only sample times compares equal. */
 export function quotaSignature(runtime) {
