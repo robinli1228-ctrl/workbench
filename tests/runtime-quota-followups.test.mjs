@@ -152,3 +152,13 @@ test('a signed-out Grok or Agy report drops its saved quota; a report merely wit
   const kept = mergeReportedRuntimes([{ ...saved[0], quota: { fiveHour: win(50, 0, 3600000) } }], [{ type: 'grok', authReady: true, quota: null }], now)[0];
   assert.equal(kept.quota.fiveHour.usedPercent, 50); assert.equal(kept.quotaStale, true);
 });
+
+test('Codex announcing its account when the app-server starts keeps the quota; a later change of plan voids it', async () => {
+  const { NativeCodexSession } = await import('../src/native-turn-sessions.mjs');
+  const events = [], session = new NativeCodexSession({ cwd: '/w', resumeSessionId: '01a16c3c-0c49-75e1-a05f-b6da8a970c16', emit: (type, payload) => events.push([type, payload]) });
+  const notice = planType => session.receive({ jsonrpc: '2.0', method: 'account/updated', params: { authMode: 'chatgpt', planType } });
+  notice('plus'); notice('plus');
+  assert.deepEqual(events.filter(([type]) => type === 'quota'), [], 'the start-up notice and a repeat of it are not an account change');
+  notice('pro');
+  assert.deepEqual(events.filter(([type]) => type === 'quota').map(([, p]) => p), [{ invalidated: true }]);
+});
