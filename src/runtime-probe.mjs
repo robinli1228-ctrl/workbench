@@ -18,7 +18,8 @@ function quotaIdentity(type,account,env=process.env) {
   return key?createHash('sha256').update(JSON.stringify([quotaIdentitySalt,type,key,account.organizationId||account.orgId||null])).digest('hex'):null;
 }
 /** Only a timeout, a kill or a short-lived resource shortage leaves the account unknown; any other failure is an answer. */
-const checkInterrupted=e=>Boolean(e?.killed||e?.signal||['ETIMEDOUT','EAGAIN','ENOMEM','EMFILE','ENFILE'].includes(e?.code));
+// ENOENT/ETXTBSY: the binary was swapped by a self-update between --version and auth status; a too-long answer is no answer either.
+const checkInterrupted=e=>Boolean(e?.killed||e?.signal||['ETIMEDOUT','EAGAIN','ENOMEM','EMFILE','ENFILE','ENOENT','ETXTBSY','ERR_CHILD_PROCESS_STDIO_MAXBUFFER'].includes(e?.code));
 
 /** A single no-inference probe: reads only the version, login state, and model catalog, and creates no Thread/Turn. */
 export async function inspectCodex() {

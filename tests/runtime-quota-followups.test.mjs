@@ -5,7 +5,8 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspectClaude, useQuotaIdentitySalt } from '../src/runtime-probe.mjs';
-import { mergeRuntimeQuota, expireRuntimeQuota, applyRuntimeQuota, quotaSignature, mergeReportedRuntimes, sessionQuotaIdentity } from '../src/runtime-quota.mjs';
+import { mergeRuntimeQuota, expireRuntimeQuota, applyRuntimeQuota, quotaSignature, mergeReportedRuntimes, sessionQuotaIdentity, sampleQuotaIdentity } from '../src/runtime-quota.mjs';
+import { roleTokenBalance } from '../public/quota-state.js';
 
 const originalBin = process.env.CLAUDE_BIN;
 test.after(() => { if (originalBin === undefined) delete process.env.CLAUDE_BIN; else process.env.CLAUDE_BIN = originalBin; });
@@ -21,7 +22,7 @@ function fakeClaude(t, auth) {
   writeFileSync(bin, `#!/usr/bin/env node
 const require=(await import("node:module")).createRequire(import.meta.url);
 const a=process.argv.slice(2),auth=${JSON.stringify(auth)};
-if(a[0]==='--version'){console.log('2.1.303 (Claude Code)');process.exit(0);}
+if(a[0]==='--version'){console.log('2.1.303 (Claude Code)');if(auth.vanish)require('node:fs').unlinkSync(process.argv[1]);process.exit(0);}
 if(a[0]==='auth'){if(auth.kill)process.kill(process.pid,'SIGKILL');if(auth.stdout)console.log(auth.stdout);if(auth.stderr)console.error(auth.stderr);process.exit(auth.code);}
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);
  console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{models:[{value:'opus'}]}}}));});
@@ -114,4 +115,40 @@ test('the quota signature ignores sample times, so a resend of the same values c
   const a = report({ quota: { fiveHour: win(40, 0, 3600000) } }), b = report({ quota: { fiveHour: { ...win(40, 0, 3600000), checkedAt: iso(now + 5000) } } });
   assert.equal(quotaSignature(a), quotaSignature(b));
   assert.notEqual(quotaSignature(a), quotaSignature(report({ quota: { fiveHour: win(41, 0, 3600000) } })));
+});
+
+test('one old part greys only itself: fresh windows stay current beside old Codex credits or an old Claude weekly window', () => {
+  const codex = mergeRuntimeQuota(null, { type: 'codex', authReady: true, quotaIdentity: 'id-c', quotaSource: 'session', quota: { fiveHour: win(30, 60000, 3600000), weekly: win(50, 60000, 86400000), credits: { balance: 5, hasCredits: true, unlimited: false, checkedAt: iso(now - 4 * 3600000) } } }, now);
+  assert.equal(codex.quotaStale, false); assert.equal(codex.quota.credits.stale, true); assert.equal(codex.quota.fiveHour.stale, false);
+  const worker = { id: 'n1', runtimes: [codex] };
+  assert.equal(roleTokenBalance({ nodeId: 'n1', runtime: 'codex', model: 'gpt' }, worker), '充足', 'the balance uses the fresh windows, not 未知');
+  const saved = mergeRuntimeQuota(null, report({ quotaSource: 'session', quota: { fiveHour: win(20, 4 * 3600000, 3600000), weekly: win(60, 4 * 3600000, 86400000) } }), now);
+  const claude = mergeRuntimeQuota(saved, report({ quotaSource: 'session', quota: { fiveHour: win(25, 0, 3600000) } }), now);
+  assert.equal(claude.quotaStale, false, 'an event with only five_hour does not leave the runtime stale');
+  assert.equal(claude.quota.fiveHour.stale, false); assert.equal(claude.quota.weekly.stale, true);
+  const aged = expireRuntimeQuota({ ...claude, quota: { ...claude.quota, fiveHour: win(25, 3600000, 5 * 3600000) } }, now + 2.5 * 3600000);
+  assert.equal(aged.quota.fiveHour.stale, true); assert.equal(aged.quotaStale, true, 'once every part is old the runtime is stale');
+  assert.equal(expireRuntimeQuota(claude, now), claude);
+});
+
+test('a session started while the account was unknown has its samples counted once the account is known again', () => {
+  const known = report({ quotaSource: 'session', quota: null });
+  assert.equal(sampleQuotaIdentity(null, known), 'id-a');
+  assert.equal(sampleQuotaIdentity(null, { ...known, authUnknown: true }), null);
+  assert.equal(sampleQuotaIdentity('id-old', known), 'id-old', 'a bound session keeps its own account');
+  const applied = applyRuntimeQuota([known], 'claude', { quotaSource: 'session', quota: { fiveHour: win(10, 0, 3600000) } }, sampleQuotaIdentity(null, known), now)[0];
+  assert.equal(applied.quota.fiveHour.usedPercent, 10);
+});
+
+test('a CLI swapped by a self-update between checks is unknown, not signed out', async t => {
+  fakeClaude(t, { vanish: true, code: 0, stdout: '{}' });
+  const result = await inspectClaude();
+  assert.equal(result.authUnknown, true); assert.equal(result.transient, true);
+});
+
+test('a signed-out Grok or Agy report drops its saved quota; a report merely without quota keeps it greyed', () => {
+  const saved = [{ type: 'grok', authReady: true, quota: { fiveHour: win(50, 0, 3600000) }, quotaStatus: 'ok' }];
+  assert.equal(mergeReportedRuntimes(saved, [{ type: 'grok', authReady: false, quota: null }], now)[0].quota, null);
+  const kept = mergeReportedRuntimes([{ ...saved[0], quota: { fiveHour: win(50, 0, 3600000) } }], [{ type: 'grok', authReady: true, quota: null }], now)[0];
+  assert.equal(kept.quota.fiveHour.usedPercent, 50); assert.equal(kept.quotaStale, true);
 });
