@@ -223,12 +223,15 @@ export function taskBlock(turn,t,{live=false}={}){
  const agents=tasks.filter(x=>x.kind!=='shell').length,shells=tasks.length-agents;
  const box=el('div','nt-tasks'),head=el('div','nt-tasks-head');
  head.append(stepIcon('agent'),el('span','nt-tasks-title',[agents?t(agents===1?'1 subagent':'{n} subagents',{n:agents}):'',shells?t(shells===1?'1 background command':'{n} background commands',{n:shells}):''].filter(Boolean).join(' · ')));
- head.append(el('span',`nt-tasks-count${running?' is-running':''}`,running?t('{n} running',{n:running}):t(tasks.some(x=>status(x)==='unknown')?'Status unknown':'All finished')));
+ // "All finished" only when none failed or was stopped; otherwise say how many did not finish.
+ const unfinished=tasks.filter(x=>['failed','stopped'].includes(status(x))).length;
+ head.append(el('span',`nt-tasks-count${running?' is-running':''}`,running?t('{n} running',{n:running}):tasks.some(x=>status(x)==='unknown')?t('Status unknown'):unfinished?t('{n} failed or stopped',{n:unfinished}):t('All finished')));
  box.append(head);
  for(const x of tasks){
   const state=status(x),row=el('div',`nt-task is-${state}`),name=el('span','nt-task-name',x.description||t(x.kind==='shell'?'Background command':'Subagent'));name.title=x.description||'';
   row.append(stepIcon(x.kind==='shell'?'command':'agent'),name);
-  if(x.agentType){const type=el('span','nt-task-type',x.agentType);type.translate=false;row.append(type);}
+  if(x.agentType){const type=el('span','nt-task-type',x.agentType);type.translate=false;type.title=x.agentType;row.append(type);}
+  if(x.earlier)row.append(el('span','nt-task-type nt-task-earlier',t('Earlier turn')));
   // Claude words progress as "Running <step>"; the state at the end already says it runs.
   const activity=String(x.activity||'').replace(/^Running\s+/,'');
   if(state==='running'&&activity){const now=el('span','nt-task-activity',activity);now.title=activity;row.append(now);}

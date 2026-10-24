@@ -429,6 +429,8 @@ export default {
  "{n} background commands": "{n} 个后台命令",
  "{n} running": "{n} 个运行中",
  "All finished": "全部完成",
+ "{n} failed or stopped": "{n} 个失败或已停止",
+ "Earlier turn": "之前的轮次",
  "Status unknown": "状态未确认",
  "Background command": "后台命令",
  "Subagent": "子代理",
