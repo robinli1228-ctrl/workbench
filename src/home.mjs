@@ -1618,11 +1618,12 @@ wss.on('connection', ws => {
         });
         const worker=db.get('workers',nodeId);
         const discussion=m.discussionCapabilities;
-        db.put('workers', { ...worker, runtimes,...(discussion?{capabilities:{...worker.capabilities,
+        const next={ ...worker, runtimes,...(discussion?{capabilities:{...worker.capabilities,
           discussionProtocol:discussion.discussionProtocol===2?2:0,
           discussionRuntimes:Array.isArray(discussion.discussionRuntimes)?discussion.discussionRuntimes:[],
-          discussionConfigurations:Array.isArray(discussion.discussionConfigurations)?discussion.discussionConfigurations:[]}}:{}) });
-        change();
+          discussionConfigurations:Array.isArray(discussion.discussionConfigurations)?discussion.discussionConfigurations:[]}}:{}) };
+        // A repeated identical report (a quota resend, a reconnect) does not push a state refresh to every open page.
+        if(JSON.stringify(next.runtimes)!==JSON.stringify(worker?.runtimes)||JSON.stringify(next.capabilities)!==JSON.stringify(worker?.capabilities)){db.put('workers',next);change();}
       }
       if(m.type==='execution_config') {
         try {
