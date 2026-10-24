@@ -6,8 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tr } from './i18n.mjs';
 import {hostname} from 'node:os';
-import {handoffDirectory,handoffReadPaths} from './handoff-paths.mjs';
-import {normalizeReadQuery,normalizeFileRead,normalizeReadSelector,readObject,readId,readError} from './node-query-recipes.mjs';
+import {handoffDirectory} from './handoff-paths.mjs';
 
 const exec = promisify(execFile);
 const now = () => new Date().toISOString();
@@ -16,11 +15,6 @@ function env(name, fallback = '') {
   return String(process.env[name] || fallback).trim();
 }
 
-/** New reads have no direct-token fallback; the immutable managed turn must own a file bridge. */
-function managedRead(path,input){
-  if(process.env.WB_READ_TOOLS!=='1'||!process.env.WB_BRIDGE)throw readError('unsupported');
-  return agentRequest(path,{runId:context().runId,input});
-}
 /** wb history search [KEYWORDS] [--role NAME]... [--file PATH] [--since TIME] [--until TIME] [--limit N] [--cursor C] [-- KEYWORDS]
  *  TIME: 30m / 2h / 3d / 1w (that long ago), today / yesterday (local midnight), a date (local; --until covers the whole day)
  *  or a full time. Times are resolved here, on the machine the CLI runs on, and sent to Home as ISO times. */
@@ -54,13 +48,6 @@ export function historySearchInput(args, now = new Date()) {
   return { query: words.join(' '), ...input };
 }
 
-export function inspectReadSource(input){
-  readObject(input,['requestId','sourceNodeId','sourceWorkspace','scopeId']);
-  return managedRead('/api/agent/read-source',{requestId:readId(input.requestId),...normalizeReadSelector(input)});
-}
-export const queryNodeReadOnly=input=>managedRead('/api/agent/node-query',normalizeReadQuery(input));
-export const readDeviceFile=input=>managedRead('/api/agent/file-read',normalizeFileRead(input));
-
 export function context() {
   const projectRoot = env('WB_PROJECT_ROOT');
   const knowledge = env('WB_KNOWLEDGE') || (projectRoot ? join(projectRoot, '.workbench') : '');
@@ -91,63 +78,6 @@ async function ensureKnowledge(dir) {
   return dir;
 }
 
-export async function boot() {
-  const ctx = context();
-  const knowledge = await ensureKnowledge(ctx.knowledge);
-  const last = (await handoffLast().catch(()=>null))?.text||'';
-  return {
-    ok: true,
-    role: ctx.role || null,
-    hop: ctx.hop,
-    knowledge,
-    projectRoot: ctx.projectRoot,
-    lastHandoff: last.slice(0, 2000) || null
-  };
-}
-
-export async function docsList() {
-  const ctx=context();if(ctx.documentViews&&ctx.home&&ctx.runId)return homeFetch('/api/agent/documents',{runId:ctx.runId,action:'list'});
-  const dir = await ensureKnowledge(context().knowledge);
-  const docs = join(dir, 'docs');
-  let names = [];
-  try { names = (await readdir(docs)).filter(n => !n.startsWith('.')); } catch { names = []; }
-  return { docs: names };
-}
-
-export async function docsRead(rel) {
-  const ctx=context();if(ctx.documentViews&&ctx.home&&ctx.runId)return homeFetch('/api/agent/documents',{runId:ctx.runId,action:'read',path:String(rel||'')});
-  const dir = await ensureKnowledge(context().knowledge);
-  const target = resolve(dir, String(rel || ''));
-  if (!inside(dir, target)) throw new Error(tr('wbTools.onlyFilesInsideWorkbenchCan'));
-  const st = await stat(target);
-  if (!st.isFile()) throw new Error(tr('wbTools.notFile'));
-  if (st.size > 200000) throw new Error(tr('wbTools.fileExceeds200kbUseShorter'));
-  return { path: relative(dir, target), text: await readFile(target, 'utf8') };
-}
-
-function gitEnv() {
-  return { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=8' };
-}
-
-async function gitCwd() {
-  const root = context().workspace || context().projectRoot;
-  if (!root) throw new Error(tr('wbTools.wbProjectRootNotSet'));
-  return root;
-}
-
-async function git(args) {
-  const cwd = await gitCwd();
-  const { stdout, stderr } = await exec('git', args, { cwd, timeout: 60000, maxBuffer: 1024 * 1024, env: gitEnv() });
-  return { stdout: stdout.trim(), stderr: stderr.trim(), cwd };
-}
-
-export async function gitStatus() {
-  const { stdout, cwd } = await git(['status', '-sb']);
-  let origin = '';
-  try { origin = (await git(['remote', 'get-url', 'origin'])).stdout; } catch { origin = ''; }
-  return { cwd, origin, status: stdout };
-}
-
 async function homeFetch(pathname, payload) {
   const ctx = context();
   if (!ctx.home) throw new Error(tr('wbTools.wbHomeNotSet'));
@@ -165,12 +95,6 @@ export async function notifySupervisor(action,input) {
   return homeFetch('/api/agent/notify',{runId:context().runId,action,input});
 }
 
-export async function askRole(name, text) {
-  const ctx = context();
-  if (!name || !text) throw new Error(tr('wbTools.usageWbAskRoleName'));
-  return homeFetch('/api/agent/ask', { runId: ctx.runId, role: String(name).replace(/^@/, ''), text: String(text).trim() });
-}
-
 /** The platform handles cross-node communication; local tools neither connect to other CLIs directly nor read their workspaces. */
 /** Optional dispatch fields become labelled lines ahead of the free text; nothing is trimmed, so versions, scope and acceptance survive verbatim. */
 export function composeCallText({goal,scope,input,returns,text}) {
@@ -185,7 +109,7 @@ export async function callRole({ role, roles, kind = 'consult', requestId, text,
   // A soft hint only, measured on the brief itself (not an attached --file): the call is sent unchanged.
   const lengthNote=text.length>1500?tr('wbTools.callTextLong',{chars:text.length}):null;
   if(role!==undefined&&roles!==undefined||roles!==undefined&&(!Array.isArray(roles)||!roles.length||roles.some(r=>typeof r!=='string'||!r.trim())))throw new Error(tr('wbTools.invalidCallTargets'));
-  if (!['consult', 'handoff','direct'].includes(kind)) throw new Error(tr('wbTools.kindMustBeConsultHandoff'));
+  if (!['consult', 'handoff','direct','transfer'].includes(kind)) throw new Error(tr('wbTools.kindMustBeConsultHandoff'));
   if(file!==undefined) {
     const document=await callDocument(file);
     // Quoted JSON remains reference data through language conversion and preserves the exact Unicode text and digest.
@@ -268,13 +192,6 @@ function renderHandoff({ ctx, git, done, files, verify, next, blocked, auto }) {
   return tr('wbTools.handoffRoleTimeRunWorkspace', { p1: ctx.role || 'unknown', p2: now(), p3: ctx.runId || '', p4: ctx.workspace || '', p5: git.branch || '—', p6: git.head || '—', p7: auto ? tr('wbTools.filledInByWorkerFrom') : tr('wbTools.submittedByRole'), p8: (done || tr('wbTools.notProvided')).trim(), p9: String(fileLines).trim(), p10: (verify || tr('wbTools.notProvided2')).trim(), p11: (next || tr('wbTools.nextPersonStartsWithWb')).trim(), p12: (blocked || tr('wbTools.none')).trim() });
 }
 
-export async function handoffLast() {
-  const ctx=context();if(ctx.documentViews&&ctx.home&&ctx.runId){const result=await homeFetch('/api/agent/documents',{runId:ctx.runId,action:'last'});return {ok:true,...result};}
-  const dir = await ensureKnowledge(ctx.knowledge);
-  for(const path of handoffReadPaths(ctx.nodeId,ctx.reviewPrivate,ctx.roleSessionId)){try{const text=await readFile(join(dir,path),'utf8');return {ok:true,path:join(dir,path),text};}catch(e){if(e.code!=='ENOENT')throw e;}}
-  return { ok: false, error: tr('wbTools.noWrittenHandoffYet') };
-}
-
 export async function handoffHasRun(runId, knowledge) {
   if (!runId) return false;
   const dir = join(knowledge || context().knowledge, 'handoffs');
@@ -309,4 +226,5 @@ export async function writeHandoff(fields = {}, override = {}) {
   return { ok: true, path: file, latest: join(handoffs, 'LATEST.md') };
 }
 
-export const helpText = () => [tr('minimal.teamHelp'),tr('minimal.waitHelp'),tr('wbTools.builtInCollaborationToolsWorkbench'),process.env.WB_QUEUE_BATCH==='1'?tr('sessionQueue.passRule'):'',process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('collabSessions.toolHelp'):'',process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wechatChannel.toolGuide'):'',process.env.WB_SOURCE_SYNC==='1'?tr('sourceSync.toolGuide'):'',process.env.WB_READ_TOOLS==='1'?tr('readTools.guide'):''].filter(Boolean).join('\n\n');
+/** Role help lists only the tools this turn can use; the platform assistant also gets its configuration tools. */
+export const helpText = () => [tr('wbTools.builtInCollaborationToolsWorkbench'),process.env.WB_QUEUE_BATCH==='1'?tr('sessionQueue.passRule'):'',process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('collabSessions.toolHelp'):'',process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wechatChannel.toolGuide'):'',process.env.WB_SOURCE_SYNC==='1'?tr('sourceSync.toolGuide'):'',process.env.WB_PLATFORM_ASSISTANT==='1'?tr('wbTools.setupHelp'):''].filter(Boolean).join('\n\n');

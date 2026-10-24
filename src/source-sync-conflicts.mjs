@@ -96,19 +96,18 @@ export class SourceSyncConflicts {
     const request=run.requestId?this.db.get('coordinationRequests',run.requestId):this.db.list('coordinationRequests').find(r=>r.taskId===run.taskId);
     if(request&&(request.status==='waiting_call'||request.continuationRequestId))return;
     const updated={...c,handledRunIds:[...c.handledRunIds||[],runId]};
-    const report=this.db.get('runReports',runId);
-    if(run.status==='succeeded'&&report?.verdict==='passed'&&c.proposal?.runId===runId&&!run.controlLost){
-      // Native exit codes are not a candidate-bound verification contract. Keep the exact proposal for independent review.
+    if(run.status==='succeeded'&&c.proposal?.runId===runId&&!run.controlLost){
+      // Every finished proposal goes to a person: the exact proposal waits for an explicit review.
       this.escalate(updated,'independent_review_required');return;
     }
     if(c.requiresIndependentReview){this.escalate(updated,'independent_review_required');return;}
-    if(run.stopRequested||run.controlLost||report?.verdict==='needs_input'||(c.attempts||0)>=2){this.escalate(updated,'verification_required');return;}
+    if(run.stopRequested||run.controlLost||(c.attempts||0)>=2){this.escalate(updated,'verification_required');return;}
     this.db.put('sourceSyncConflicts',{...updated,status:'open',ownerTaskId:null,assignmentId:null,proposal:null});
   }
   /** Explicit browser review accepts one exact proposal; distribution still rechecks every destination. */
   acceptReview(id,generation,proposalId){
     const c=this.db.get('sourceSyncConflicts',id),run=c?.proposal&&this.db.get('runs',c.proposal.runId);
-    if(!c||c.generation!==generation||c.proposal?.id!==proposalId||c.status!=='needs_input'||c.reason!=='independent_review_required'||run?.status!=='succeeded'||this.db.get('runReports',run.id)?.verdict!=='passed')throw syncError('conflict_changed');
+    if(!c||c.generation!==generation||c.proposal?.id!==proposalId||c.status!=='needs_input'||c.reason!=='independent_review_required'||run?.status!=='succeeded')throw syncError('conflict_changed');
     const reviewed={...c,status:'verifying',review:{kind:'human',proposalId,at:new Date().toISOString()}};this.db.put('sourceSyncConflicts',reviewed);
     const batch=this.sync.resolve(reviewed,c.proposal);return this.db.put('sourceSyncConflicts',{...reviewed,resolutionBatchId:batch.id});
   }

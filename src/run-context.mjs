@@ -63,7 +63,8 @@ export function buildRunContext({run,task,role={},environment={},conversation=nu
 /** Receipts are references for the owner to verify, never results already accepted. */
 function renderReceipts(receipts) {
   if(!receipts?.items?.length)return '';
-  const lines=receipts.items.map(r=>`- [${r.id}] ${JSON.stringify(r.role)} · ${r.verdict}${r.reportRevision?` (report r${r.reportRevision})`:''} · ${r.stage||tr('runContext.receiptNoStage')} · ${r.version||tr('runContext.receiptNoVersion')} · ${r.runStatus?`run ${r.runStatus}`:tr('runContext.receiptNoRun')}${r.files?` · ${tr('runContext.receiptFiles',{count:r.files})}`:''} · ${r.summary||''} · ${r.readCommand}`);
+  // Results are judged from the reply itself; a verdict, stage or version shows only when an older report recorded one.
+  const lines=receipts.items.map(r=>`- ${r.requestId} ${JSON.stringify(r.role)} · ${r.runStatus?`run ${r.runStatus}`:tr('runContext.receiptNoRun')}${r.verdict&&r.verdict!=='unverified'?` · ${r.verdict}`:''}${r.stage?` · ${r.stage}`:''}${r.version?` · ${r.version}`:''}${r.files?` · ${tr('runContext.receiptFiles',{count:r.files})}`:''} · ${r.summary||''}`);
   return tr('runContext.resultReceipts',{p1:lines.join('\n'),p2:receipts.omitted?tr('runContext.resultReceiptsOmitted',{count:receipts.omitted}):''});
 }
 

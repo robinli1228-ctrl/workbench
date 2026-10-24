@@ -14,6 +14,22 @@ import {conversationIdOf,resolveConversationId,assertConversationRecord} from '.
 import {registerResultReceipt,registerCallOutcome} from './result-receipts.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
+/** A task may change owner this many times in a row before the next owner must finish it or hand it to the supervisor. */
+const MAX_TRANSFERS = 8;
+
+/** Owners a task has had before this request: each transfer starts a new root chain whose root records where it came from. */
+export function transferDepth(db, requestId) {
+  let depth = 0, request = db.get('coordinationRequests', requestId);
+  const seen = new Set();
+  while (request && !seen.has(request.id) && seen.size < 200) {
+    seen.add(request.id);
+    const root = db.get('coordinationRequests', request.rootRequestId || request.id) || request;
+    if (!root.transferredFrom) break;
+    depth++;
+    request = db.get('coordinationRequests', root.transferredFrom);
+  }
+  return depth;
+}
 export const BLOCKED_WAKE_MS = 10 * 60000;
 /** Storage errors get this many resume attempts; a wait whose replies settled longer ago than STALE_WAIT_MS is history at Home start. */
 const RESUME_ATTEMPTS = 3;
@@ -80,6 +96,7 @@ export class RoleCalls {
       continuationOf: input.continuationOf || null, deliveryId: input.deliveryId || null,
       ...(input.waitRequestIds?{waitRequestIds:[...input.waitRequestIds]}:{}),...(input.wakeReason?{wakeReason:input.wakeReason}:{}),
       ...(input.sourceSyncBatchId?{sourceSyncBatchId:input.sourceSyncBatchId}:{}),
+      ...(input.transferredFrom?{transferredFrom:input.transferredFrom}:{}),
       planId: input.planId || null, planVersion: input.planVersion || null, stepId: input.stepId || null };
     const fingerprint = JSON.stringify(normalized);
     return this.db.transaction(() => {
@@ -99,8 +116,15 @@ export class RoleCalls {
       // A new call to a role whose CLI cannot work now fails at once, so the caller (often the supervisor) picks another role.
       // Plan stages are created up front and run later; their roles are checked when they actually start.
       if (normalized.kind!=='continuation'&&!input.planId) { const unavailable=cliUnavailable(this.db.get('workers',role.nodeId),role.runtime,role.model); if (unavailable) throw new Error(tr('roleCalls.targetRoleCliUnavailable', { name: role.name, reason: unavailable })); }
-      for (const id of [normalized.parentRequestId, normalized.continuationOf].filter(Boolean)) {
+      for (const id of [normalized.parentRequestId, normalized.continuationOf, normalized.transferredFrom].filter(Boolean)) {
         if (this.db.get('coordinationRequests', id)?.projectId !== input.projectId) throw new Error(tr('roleCalls.sourceCallDoesNotBelong'));
+      }
+      if (normalized.transferredFrom && transferDepth(this.db, normalized.transferredFrom) >= MAX_TRANSFERS) throw new Error(tr('roleCalls.transferChainTooLong'));
+      // A transfer has no parent to check, so the handing-over chain must itself still be live: no cancel, no user redirect.
+      for (let id = normalized.transferredFrom, seen = new Set(); id && !seen.has(id); ) {
+        seen.add(id); const r = this.db.get('coordinationRequests', id);
+        if (!r || r.status === 'cancelled' || r.steeringTaskId) throw new Error(tr('roleCalls.sourceCallHasEndedBeen'));
+        id = r.continuationOf;
       }
       let ancestor = normalized.parentRequestId ? this.db.get('coordinationRequests', normalized.parentRequestId) : null;
       // A new call needs a live source call. A continuation only resumes work already delegated, so an upstream turn that
@@ -116,7 +140,8 @@ export class RoleCalls {
         ancestor = ancestor.parentRequestId ? this.db.get('coordinationRequests', ancestor.parentRequestId) : null;
       }
       const continued = normalized.continuationOf ? this.db.get('coordinationRequests', normalized.continuationOf) : null;
-      const sourceRequest = continued || this.db.get('coordinationRequests', normalized.parentRequestId || '');
+      // A transfer keeps the publication, session and scheduled-job context of the request that handed it over.
+      const sourceRequest = continued || this.db.get('coordinationRequests', normalized.parentRequestId || normalized.transferredFrom || '');
       const sourceTask=this.db.get('tasks',sourceRequest?.taskId||'');
       if (continued) rootRequestId = continued.rootRequestId || continued.id;
       if (input.kind!=='continuation'&&this.db.list('coordinationRequests').filter(r => r.rootRequestId === rootRequestId&&r.kind!=='continuation').length >= 20) throw new Error(tr('roleCalls.collaborationChainHasReached20'));
@@ -134,11 +159,11 @@ export class RoleCalls {
         ...(continued?.callMessageId?{callMessageId:continued.callMessageId}:{}),
         // Publication is independent of charging: necessary continuations retain the original private boundary, including legacy requests.
         explicitPublish:Boolean(sourceRequest?.explicitPublish||sourceRequest?.automaticPropagation||sourceRequest?.continuationBatchId||sourceTask?.explicitPublish||sourceTask?.automaticPropagation||sourceTask?.collaborationBatchId),
-        automaticPropagation: input.kind !== 'continuation' && Boolean(sourceRequest?.collaborationCycleId),
+        automaticPropagation: input.kind !== 'continuation' && !normalized.transferredFrom && Boolean(sourceRequest?.collaborationCycleId),
         sourceInputs:continued?.sourceInputs||[],
         ...sourceConflictContext(continued),
         consultRound:continued ? (continued.consultRound||0)+(['timeout','blocked'].includes(input.wakeReason)?0:1) : 0,
-        scheduledJobId:input.scheduledJobId||continued?.scheduledJobId||this.db.get('coordinationRequests',normalized.parentRequestId||'')?.scheduledJobId||null,
+        scheduledJobId:input.scheduledJobId||continued?.scheduledJobId||this.db.get('coordinationRequests',normalized.parentRequestId||normalized.transferredFrom||'')?.scheduledJobId||null,
         attachments: input.attachments || continued?.attachments || [], execution:input.execution || continued?.execution || null,
         rootRequestId, targetSnapshot: continued?.targetSnapshot || { ...role, revision: role.revision || 1 },
         status: input.kind === 'handoff' ? 'waiting_delivery' : 'queued', currentRunId: null,
@@ -202,7 +227,7 @@ export class RoleCalls {
         ...sourceConflictContext(r),sourceSessionKey,
         continuationRunId: previous?.currentRunId || null,
         requiresCoordination: r.kind !== 'direct', contextPrepared:['consult','continuation'].includes(r.kind), planId: r.planId, planVersion: r.planVersion, stepId: r.stepId,
-        execution:r.execution || null,attachments:r.attachments || [],reportRequired:true,scheduledJobId:r.scheduledJobId||null });
+        execution:r.execution || null,attachments:r.attachments || [],scheduledJobId:r.scheduledJobId||null });
       const next = this.db.put('coordinationRequests', { ...r,sourceInputs,sourceSessionKey, status: 'queued', taskId: task.id, updatedAt: new Date().toISOString() });
       new SessionQueue(this.db).attachRequest(next);
       return next;
@@ -237,7 +262,10 @@ export class RoleCalls {
     const r = this.forRun(run);
     const current=this.db.get('runs',run.id);
     if (!r || !current||terminal.has(current.status)||current.stopRequested||current.roleId!==r.targetRoleId||r.currentRunId&&r.currentRunId!==run.id||callTerminal.has(r.status)||r.continuationRequestId) throw new Error(tr('roleCalls.currentRunCannotWaitFor'));
-    const children=this.dependencies(r),available=new Set(children.map(c=>c.id)),requestIds=options.requestIds??children.map(c=>c.id);
+    const children=this.dependencies(r),available=new Set(children.map(c=>c.id));
+    // wb call stores "<run>:<request-id>"; the short --request-id the role chose names the same call when it is unambiguous.
+    const resolve=id=>{if(typeof id!=='string'||available.has(id))return id;const matches=children.filter(c=>c.id.endsWith(`:${id}`));return matches.length===1?matches[0].id:id;};
+    const requestIds=Array.isArray(options.requestIds)?options.requestIds.map(resolve):options.requestIds??children.map(c=>c.id);
     if (!Array.isArray(requestIds)||!requestIds.length||requestIds.some(id=>!available.has(id))) throw new Error(tr('roleCalls.currentRunHasNoChild'));
     if (typeof summary !== 'string' || !summary.trim() || summary.length > 8000) throw new Error(tr('roleCalls.provideResumeSummary18000'));
     const timeoutSeconds=options.timeoutSeconds??1800;
@@ -449,7 +477,8 @@ export class RoleCalls {
     }
     const ids = new Set([root.id]);
     const all = this.db.list('coordinationRequests').filter(r => r.projectId === root.projectId);
-    for (let i = 0; i < all.length; i++) for (const r of all) if (ids.has(r.parentRequestId) || ids.has(r.continuationOf)) ids.add(r.id);
+    // A transfer that has not started yet goes with the chain that handed it over; once its owner runs, it stands alone.
+    for (let i = 0; i < all.length; i++) for (const r of all) if (ids.has(r.parentRequestId) || ids.has(r.continuationOf) || ids.has(r.transferredFrom) && !r.currentRunId && !callTerminal.has(r.status)) ids.add(r.id);
     // A human steering one role does not authorize interrupting an admitted peer Run, even before launch acknowledgement.
     // Preserve that peer's continuation ancestry and descendants so its late result remains attributable.
     if(preserveRunningChildren) {

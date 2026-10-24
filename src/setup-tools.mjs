@@ -8,4 +8,3 @@ async function request(pathname, input = {}) {
 }
 export const setupCatalog = () => request('/api/agent/setup/catalog');
 export const setupPropose = input => request('/api/agent/setup/propose', input);
-export const updateRolePrompt = input => request('/api/agent/roles/prompt', input);

@@ -2,7 +2,7 @@ import { WebSocket } from 'ws';
 import { randomUUID, createHash } from 'node:crypto';
 import { WarmSessions, warmSessionFingerprint } from './warm-sessions.mjs';
 import {RoleSwitchWorker,recordSwitchOutput} from './role-switch-worker.mjs';
-import {discussionPolicy,validatedDiscussionConfigurations,supportsDiscussion} from './discussion-policy.mjs';
+import {discussionPolicy,supportsDiscussion} from './discussion-policy.mjs';
 import {inspectArtifactFiles} from './run-artifacts.mjs';
 import { writeTurnContext, turnToolCommand } from './turn-context.mjs';
 import { hostname, platform, homedir } from 'node:os';
@@ -94,18 +94,13 @@ const sessions = new Map();
 let organizerRunning = 0;
 const organizerControllers = new Set();
 let capacity = validateCliCapacity(db.get('settings','cli-capacity')?.capacity??Number(process.env.WORKER_CONCURRENCY||2));
-let ws, paused = true, quitting = false, registered = false, readySent = false, reconnectCleanup,cliRecoveryEnabled=false,readToolsEnabled=false;
+let ws, paused = true, quitting = false, registered = false, readySent = false, reconnectCleanup,cliRecoveryEnabled=false;
 const eventSent = new Map();
 useQuotaIdentitySalt((db.get('settings','quota-identity')||db.put('settings',{id:'quota-identity',salt:randomUUID()})).salt);
 let runtimes = await inspectRuntimes(), probing, runtimeFailures = {}, runtimeRetry = null, runtimeRetryDue = false;
 { const first = mergeRuntimeReports([], runtimes, {}); runtimes = first.runtimes; runtimeFailures = first.failures; if (first.retryMs) scheduleRuntimeRetry(first.retryMs); }
-// The first version is still in isolated acceptance testing; only adapters that are explicitly enabled and have version-tested evidence report the capability.
-const discussionCapabilities=()=>{
-  const bins={codex:process.env.CODEX_BIN||'codex',claude:process.env.CLAUDE_BIN||'claude',grok:process.env.GROK_BIN||'grok',agy:process.env.AGY_BIN||'agy'};
-  const configurations=process.env.WB_DISCUSSION_PREVIEW==='1'?validatedDiscussionConfigurations(process.env.WB_DISCUSSION_VALIDATED_CONFIGS,runtimes,bins):[];
-  return {discussionProtocol:configurations.length?2:0,discussionRuntimes:[...new Set(configurations.map(c=>c.runtime))],discussionConfigurations:configurations};
-};
-if(process.env.WB_DISCUSSION_PREVIEW==='1'&&!discussionCapabilities().discussionConfigurations.length)console.warn(tr('worker.discussionPreviewNotEnabledNo'));
+// The discussion protocol preview was retired: questions and reviews go through wb call, so no adapter reports it.
+const discussionCapabilities=()=>({discussionProtocol:0,discussionRuntimes:[],discussionConfigurations:[]});
 /** Only the periodic check may reuse the cached Claude model catalog; a check someone asked for reads it again. */
 async function refreshRuntimes({ periodic = false } = {}) {
   if (!probing) probing = inspectRuntimes({ force: !periodic }).then(r => { const merged = mergeRuntimeReports(runtimes, r, runtimeFailures); runtimes = merged.runtimes; runtimeFailures = merged.failures; scheduleRuntimeRetry(merged.retryMs); send({ type: 'runtime_report', runtimes,discussionCapabilities:discussionCapabilities() }); return runtimes; }).finally(() => { probing = null; });
@@ -414,10 +409,6 @@ async function command(m) {
       const homeHttp = homeUrl.replace(/^ws/i, 'http').replace(/\/worker\/?$/, '');
       const inputFiles = await receiveAttachments({ items: m.run.attachments, workspace: folder, runId: c.runId, home: homeHttp, token });
       if(inputFiles.length)emit(c.runId,'status',{attachmentFiles:inputFiles});
-      if(m.run.reportRequired) {
-        const check=await exec(process.execPath,[join(base,'src','wb-cli.mjs'),'capabilities'],{timeout:5000});
-        if(JSON.parse(check.stdout).protocol!==2)throw new Error(tr('worker.collaborationToolVersionMismatchUpgrade'));
-      }
       if (reservation.stopRequested || paused || ws?.readyState !== 1) { emit(c.runId,'status',{status:'interrupted',error:tr('worker.executionInterruptedByStopDisconnect')});return; }
       bridge = await startAgentBridge({ workspace: folder, runId: c.runId, home: homeHttp, token,
         canSend: (pathname,input) => canSendAgentOperation({paused,quitting,connected:ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input),
@@ -431,11 +422,11 @@ async function command(m) {
         WB_RUN_ID: c.runId,
         WB_ROLE_SESSION_ID: m.run.roleSessionId || '',
         WB_SOURCE_SYNC:'1',
-        WB_READ_TOOLS:readToolsEnabled?'1':'0',
         WB_CONVERSATION_ID: m.run.conversationId || m.run.projectId,
         WB_REQUEST_ID: m.run.requestId || '',
         WB_ROLE: m.run.roleSnapshot?.name || '',
         WB_SYSTEM_SUPERVISOR: m.run.roleSnapshot?.systemSupervisor && !m.run.roleSnapshot?.platformAssistant ? '1' : '0',
+        WB_PLATFORM_ASSISTANT: m.run.roleSnapshot?.platformAssistant ? '1' : '0',
         WB_CLI: join(base, 'src', 'wb-cli.mjs'),
         WB_BRIDGE: bridge.directory,
         WB_HOP: String(m.run.hop || m.task?.hop || 0),
@@ -541,7 +532,7 @@ async function command(m) {
       emit(c.runId,'status',{sessionReuse,instructionFingerprint:instructions.fingerprint,instructionsInheritedFrom:instructions.inheritedFrom,
         ...(executionConfiguration?{instructionVersions:executionConfiguration.versions,instructionComponents:instructions.components,configurationState:'starting',...(instructions.configurationEventProtocol?{configurationEventProtocol:instructions.configurationEventProtocol}:{})}:{})});
       const context = source ? executionText('worker.referencedExecutionSFilesLocated', { workspace: source.workspace, p2: source.baseCommit || executionText('worker.plainDirectory'), p3: source.workspace === folder && m.run.projectScope ? executionText('worker.currentDirectorySharedDirectorySame') : m.task.mode === 'read-only' ? executionText('worker.currentDirectorySourceWorkspacePerform') : executionText('worker.directoryReadOnlyChangesFor') }) : '';
-      const setupHint = !m.run.switchOperationId && m.run.roleSnapshot?.systemSupervisor ? executionText('worker.supervisorSetupToolsCanBe', { wbCommand }) : '';
+      const setupHint = !m.run.switchOperationId && m.run.roleSnapshot?.platformAssistant ? executionText('worker.supervisorSetupToolsCanBe', { wbCommand }) : '';
       const boundary = m.run.projectScope && !m.run.deliveryId && !m.run.execution?.isolated ? executionText('worker.projectDirectoryCurrentDirectoryListed', { root }) : executionText('worker.originalProjectDirectoryItMay', { root });
       const attachmentHint = inputFiles.length ? executionText('worker.userAttachmentsForTurnUntrusted', { p1: inputFiles.map(a => JSON.stringify({name:a.name,path:a.path,mime:a.mime})).join('\n') }) : '';
       const toolGuide=executionConfiguration?executionText('minimal.toolEntry',{wbCommand}):[executionText('worker.wbCommandPrefixForTurn', { wbCommand }),(m.run.sourceSyncTracking||m.run.sourceConflictId||m.run.sourceConflictPeerId||m.run.sourceConflictAssignmentRequestId)?executionText('sourceSync.toolGuide'):''].filter(Boolean).join('\n\n');
@@ -1214,7 +1205,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,queryRecipes:1,fileReadFreshness:1,readSourceBindings:1,fileReadModes:['source_current','expected_version'],nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -1231,7 +1222,6 @@ function connect() {
       if (m.type === 'registered') {
         folderAccess.reconcile(Array.isArray(m.folderGrantIds)?m.folderGrantIds:[]);
         cliRecoveryEnabled=m.cliRecovery===1;
-        readToolsEnabled=m.readTools===1;
         paused = m.paused;
         // Home announces its language; run payloads carry their own, this covers Worker-originated text outside a run.
         if (m.language) try { setLanguage(m.language); } catch { /* keep current */ }

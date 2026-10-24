@@ -18,9 +18,10 @@ const now=()=>new Date().toISOString();
 const short=(text,limit)=>{const value=String(text||'').replace(/\s+/g,' ').trim();return value.length>limit?`${value.slice(0,limit-1)}…`:value;};
 const receiptId=(requestId,runId,revision)=>`rr:${createHash('sha256').update(JSON.stringify([requestId,runId||null,revision||0])).digest('hex').slice(0,32)}`;
 
-/** The owner is the role that issued the call; self-continuations and requests without a caller have no receipt. */
-function ownerOf(db,request) {
-  const parent=request?.parentRequestId?db.get('coordinationRequests',request.parentRequestId):null;
+/** The owner is the role that issued the call; self-continuations and requests without a caller have no receipt.
+ *  A transfer returns no result, but a transfer that never ran (not executed, blocked) is still told to the role that handed it over. */
+function ownerOf(db,request,{outcome=false}={}) {
+  const parent=request?.parentRequestId?db.get('coordinationRequests',request.parentRequestId):outcome&&request?.transferredFrom?db.get('coordinationRequests',request.transferredFrom):null;
   if(!parent?.targetRoleId||parent.projectId!==request.projectId||parent.targetRoleId===request.targetRoleId)return null;
   return parent.targetRoleId;
 }
@@ -64,7 +65,7 @@ function register(db,{run,request,report,refreshOnly}) {
 export function registerCallOutcome(db,request,{outcome,reason='',episode=''}) {
   return db.transaction(()=>{
     if(!request?.id||!OUTCOMES.has(outcome))return null;
-    const ownerRoleId=ownerOf(db,request);
+    const ownerRoleId=ownerOf(db,request,{outcome:true});
     if(!ownerRoleId)return null;
     const id=receiptId(request.id,null,`${outcome}:${episode}`),previous=db.get(KIND,id);
     if(previous)return previous;
@@ -99,7 +100,7 @@ export function ownedReceipts(db,{projectId,roleId,conversationId}) {
 
 const digest=r=>({id:r.id,role:r.sourceRoleName||r.sourceRoleId,requestId:r.requestId,runId:r.runId,item:r.item,verdict:r.verdict||r.outcome||'unverified',
   outcome:r.outcome||null,reportRevision:r.reportRevision,version:r.version,stage:r.stage,runStatus:r.runStatus,summary:r.summary,
-  files:(r.files||[]).length,readCommand:`wb result read ${r.requestId}`});
+  files:(r.files||[]).length,readCommand:`wb history read ${r.requestId}`});
 
 /** At a safe launch point, attach the owner's undelivered receipts (summaries and references only) to this Run's input. */
 export function claimResultReceipts(db,run,{limit=20}={}) {
@@ -174,7 +175,7 @@ export function progressItems(db,{projectId,roleId}) {
       // An acknowledged blocker stays listed with that decision: noting a result never turns it into a pass.
       blocker:blocked?{receiptId:latest.id,verdict:latest.verdict||latest.outcome||'unverified',runStatus:latest.runStatus,summary:latest.summary,decision:latest.verification?.decision||null}:null,
       next:latest.next||null,awaitingVerification:receipts.filter(r=>!r.verification).map(r=>r.id),
-      evidence:receipts.map(r=>({receiptId:r.id,state:r.state,readCommand:`wb result read ${r.requestId}`}))};
+      evidence:receipts.map(r=>({receiptId:r.id,state:r.state,readCommand:`wb history read ${r.requestId}`}))};
   });
 }
 

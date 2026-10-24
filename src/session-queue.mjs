@@ -481,7 +481,7 @@ export function raiseAlert(db, { projectId, sessionId, kind, detail = {}, matter
   }
   const task = db.createTask({ projectId, title: tr('sessionQueue.alertTitle'), prompt: `${tr('sessionQueue.alertIntro')}\n${line}`, model: supervisor.model, mode: supervisor.mode });
   db.put(ALERT, { ...db.get(ALERT, key), taskId: task.id });
-  return db.put('tasks', { ...task, conversationId, origin: 'chat', roleId: supervisor.id, roleSnapshot: supervisor, reportRequired: false, sessionQueueAlert: { sessionId, kinds: [kind] } });
+  return db.put('tasks', { ...task, conversationId, origin: 'chat', roleId: supervisor.id, roleSnapshot: supervisor, sessionQueueAlert: { sessionId, kinds: [kind] } });
 }
 
 /** The matter recovered; crossing the line again later raises a new alert. */
@@ -597,7 +597,7 @@ export class QueuePump {
       const task = this.db.createTask({ projectId: p.projectId, title: `batch ${batch.id.slice(0, 8)}`, prompt: this.render(batch, messages), model: role.model, mode: role.mode });
       this.db.put('tasks', { ...task, conversationId:conversationIdOf(batch), origin: 'chat', roleId: role.id, roleSnapshot: role, sourceMessageId: batch.messageIds.at(-1) || null,
         collaborationSessionId:batch.sessionId,collaborationCycleId:batch.cycleId,
-        reportRequired: false, collaborationBatchId: batch.id,
+        collaborationBatchId: batch.id,
         collaborationBatch: { id: batch.id, key: p.key, projectId: p.projectId, roleId:role.id, deliveryProtocol:2,ownerNodeId: role.nodeId, runtime: role.runtime, reservation: { id: m.reservation.id, generation: m.reservation.generation } } });
       this.db.put(BATCH, { ...this.db.get(BATCH, batch.id), taskId: task.id });
       return this.db.get('tasks', task.id);
@@ -620,7 +620,8 @@ export function reassignRequest(db, calls, projectId, requestId, roleId) {
     if (started) throw new Error(tr('sessionQueue.reassignStarted'));
     calls.cancel(requestId);
     const next = calls.create({ id: `${requestId}:to:${roleId}`.slice(0, 200), projectId, targetRoleId: roleId, kind: request.kind, summary: request.summary,
-      sourceMessageId: request.sourceMessageId, parentRequestId: request.parentRequestId, originNodeId: request.originNodeId });
+      sourceMessageId: request.sourceMessageId, parentRequestId: request.parentRequestId, originNodeId: request.originNodeId,
+      ...(request.transferredFrom ? { transferredFrom: request.transferredFrom } : {}) });
     db.put('coordinationRequests', { ...db.get('coordinationRequests', next.id), reassignedFrom: requestId, ...(request.collaborationSessionId ? { collaborationSessionId: request.collaborationSessionId } : {}) });
     db.put('coordinationRequests', { ...db.get('coordinationRequests', requestId), reassignedTo: next.id });
     return db.get('coordinationRequests', next.id);
