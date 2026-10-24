@@ -1089,6 +1089,7 @@ body.is-list-reordering, body.is-list-reordering * { cursor: grabbing !important
 .role-quota-mark.is-mid { background: var(--warning); }
 .role-quota-mark.is-low { background: var(--danger); }
 .role-quota-mark.is-smile { background: #078653; }
+.role-quota-mark.is-stale { background: var(--muted); }
 .role-badge { padding: 2px 7px; border-radius: 99px; background: #eee; color: #666; font-size: 10px; font-weight: 700; flex-shrink: 0; }
 .role-id-row { display: flex; align-items: center; gap: 4px; min-width: 0; margin-top: 8px; }
 .role-icon {
@@ -3889,7 +3890,9 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .nt-task { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 24px; color: #4b505b; }
 .nt-task > .nt-icon, .nt-tasks-head > .nt-icon { width: 15px; height: 15px; flex: 0 0 15px; }
 .nt-task-name { min-width: 3em; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nt-task-type { flex: none; padding: 0 6px; border-radius: 4px; background: #eef0f4; color: #6b7080; font-size: 11.5px; line-height: 18px; }
+.nt-task-type { flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; border-radius: 4px; background: #eef0f4; color: #6b7080; font-size: 11.5px; line-height: 18px; }
+/* The earlier-turn mark is short and must stay whole. */
+.nt-task-type.nt-task-earlier { flex: none; max-width: none; }
 .nt-task-activity { min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9da2ab; font-size: 12.5px; }
 .nt-task-state { display: inline-flex; align-items: center; gap: 6px; flex: none; margin-left: auto; color: #9da2ab; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .nt-task.is-running .nt-task-state { color: #15803d; }
@@ -3916,3 +3919,6 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .native-agent-option:not(:disabled):hover{background:rgba(99,102,241,.06);border-color:#a5a7ee}
 .native-agent-option:disabled{opacity:.5;cursor:default}
 .native-agent-switch-status{position:absolute;top:100%;right:0;font-size:11px;font-weight:400;color:#73768a;white-space:nowrap}
+.native-identity .native-agent-switch-action{flex:none;height:26px;min-height:26px;padding:0 8px;border:0;border-radius:7px;background:transparent;box-shadow:none;color:var(--accent);font-size:12px;font-weight:500;white-space:nowrap;cursor:pointer}
+.native-identity .native-agent-switch-action:hover:not(:disabled){background:rgba(99,102,241,.08)}
+.native-identity .native-agent-switch-action:disabled{opacity:.55;cursor:default}

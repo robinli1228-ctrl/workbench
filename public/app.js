@@ -383,6 +383,7 @@ async function api(path, options = {}) {
     const message = typeof body === 'object' && body?.error ? body.error : String(body || `HTTP ${response.status}`);
     const error = new Error(message);
     error.status = response.status;
+    if (typeof body?.code === 'string') error.code = body.code;
     error.folderPreparationReleased = body?.folderPreparationReleased === true;
     throw error;
   }
@@ -951,7 +952,7 @@ function renderRoles() {
     const takeover=(app.data.terminalSessions||[]).find(s=>s.projectId===role.projectId&&s.nodeId===role.nodeId);
     if(takeover)activityRow.firstChild.textContent=takeover.processState==='unknown'?'Terminal takeover · process state unverified':takeover.processState==='active'?'Terminal CLI running · return after stopping':'Terminal takeover · refresh to check the process';
     if (configured) {
-      const quota = roleNameQuota(quotaForRole(runtime, worker, role.model));
+      const quota = roleNameQuota(quotaForRole(runtime, worker, role.model), { stale: Boolean(runtime?.quotaStale || runtime?.quotaStatus !== 'ok') });
       if (quota.childElementCount) activityRow.append(quota);
     }
     card.append(agentWatermarkEl(role.runtime), head, ids, activityRow);

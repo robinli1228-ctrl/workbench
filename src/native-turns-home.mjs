@@ -54,7 +54,8 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
   turns.assertExecutable=identity=>switches.assertExecutable(identity);
   turns.handoffFor=identity=>switches.handoffFor(identity);
   switches.recover();
-  const sideSweep=setInterval(()=>sideAsks.sweep(),5*60000);sideSweep.unref?.();
+  // The sweep also retries switch acknowledgements that failed while the Worker stayed connected.
+  const sideSweep=setInterval(()=>{sideAsks.sweep();for(const w of db.list('workers'))if(online(w.id))switches.resume(w.id);},5*60000);sideSweep.unref?.();
   turns.recover();
   // Workers read with no-store; the browser keeps an attachment 10 days, since its ID never names other bytes.
   const file=(res,{item,bytes},disposition=true,cache=false)=>{res.writeHead(200,{'Content-Type':item.mime,'Content-Length':bytes.length,'Cache-Control':cache?MEDIA_CACHE_CONTROL:'private, no-store',
@@ -65,6 +66,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     if(switching){const nodeId=decodeURIComponent(switching[1]);
       if(req.method==='POST'&&!switching[2])json(res,await switches.begin(nodeId,await body(req)));
       else if(req.method==='GET'&&switching[2])json(res,await switches.get(nodeId,decodeURIComponent(switching[2])));
+      else if(req.method==='DELETE'&&switching[2])json(res,await switches.cancel(nodeId,decodeURIComponent(switching[2])));
       else throw Error('Invalid Agent switch action');return true;}
     let m=pathname.match(/^\/api\/agent\/native-turns\/([^/]+)\/([^/]+)$/);
     if(m&&req.method==='GET'){const {owner,id}=turns.attachmentFor(m[1],m[2]);return file(res,await attachments.read(owner,id),false);}
@@ -98,7 +100,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       // A new prompt in the main session: its side question ends, the next one starts from the new state.
       if(!input.control)sideAsks.closeFor(nodeId,input.runtime,input.sessionId);json(res,created,201);return true;}
     // Side question: ask (creates one, or continues ?sideId), read it while it is answered, clear it.
-    if(area==='side'&&!a&&req.method==='POST'){const input=await body(req);switches.assertExecutable({nodeId,...input});json(res,sideAsks.ask(nodeId,worker,input),201);return true;}
+    if(area==='side'&&!a&&req.method==='POST'){const input=await body(req);switches.assertExecutable({...input,nodeId});json(res,sideAsks.ask(nodeId,worker,input),201);return true;}
     if(area==='side'&&a&&!b&&req.method==='GET'){json(res,sideAsks.get(decodeURIComponent(a)));return true;}
     if(area==='side'&&a&&!b&&req.method==='DELETE'){json(res,sideAsks.stop(decodeURIComponent(a)));return true;}
     if(area==='turns'&&a&&b==='stop'&&req.method==='POST'){json(res,turns.stop(nodeId,decodeURIComponent(a)));return true;}

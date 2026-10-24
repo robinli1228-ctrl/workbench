@@ -338,6 +338,39 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   assert.doesNotMatch(texts, /NOTICE/, "the notice's reply is not shown as this turn's");
 });
 
+test('a resident Claude input Claude refuses before its echo ends as not delivered; the process takes the next input', async t => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'wb-native-refused-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bin = join(dir, 'claude');
+  // The first input is refused (its own receipt plus one for another command and one for another session, which must not
+  // settle it); the second is echoed and answered.
+  writeFileSync(bin, `#!/usr/bin/env node
+const a=process.argv.slice(2);const id=a[a.indexOf('--resume')+1];const out=m=>console.log(JSON.stringify(m));let n=0;
+require('node:fs').appendFileSync(${JSON.stringify(join(dir, 'spawns'))},'x');out({type:'system',session_id:id});
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.type!=='user')return;n+=1;
+ if(n===1){out({type:'command_lifecycle',command_uuid:'other',state:'refused',session_id:id});out({type:'command_lifecycle',command_uuid:m.uuid,state:'refused',session_id:'elsewhere'});
+  setTimeout(()=>out({type:'command_lifecycle',command_uuid:m.uuid,state:'refused',session_id:id}),100);return;}
+ out({type:'user',isReplay:true,uuid:m.uuid,message:m.message,session_id:id});
+ out({type:'assistant',message:{content:[{type:'text',text:'ok'}]}});out({type:'result',subtype:'success',session_id:id,result:'ok'});});
+`.replace('#!/usr/bin/env node\n', '#!/usr/bin/env node\nconst require=(await import("node:module")).createRequire(import.meta.url);\n'));
+  writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
+  chmodSync(bin, 0o755);
+  const prior = process.env.CLAUDE_BIN; process.env.CLAUDE_BIN = bin; t.after(() => { if (prior === undefined) delete process.env.CLAUDE_BIN; else process.env.CLAUDE_BIN = prior; });
+  const events = [];
+  const runner = new NativeTurnRunner({ send: m => events.push(m), resolveSession: async () => ({ workspace: dir }),
+    createSession: ({ runtime, cwd, resumeSessionId, emit, keepAlive }) => new CliPrintSession({ cwd, runtime, emit, resumeSessionId, env: process.env, keepAlive }) });
+  t.after(() => runner.stopAll());
+  const ended = id => new Promise(resolve => { const timer = setInterval(() => { const e = events.find(x => x.id === id && ['succeeded', 'failed'].includes(x.event?.status)); if (e) { clearInterval(timer); resolve(e); } }, 20); });
+  const delivery = id => events.filter(e => e.id === id && e.event?.inputDeliveryState).map(e => [e.event.inputDeliveryState, e.event.inputRejection]);
+  await runner.start({ id: 'r1', runtime: 'claude', sessionId: SID, prompt: 'first' });
+  assert.equal((await ended('r1')).event.status, 'failed');
+  assert.deepEqual(delivery('r1'), [['not_delivered', 'refused']], 'writing to the pipe is not delivery; only its own receipt settles it');
+  await runner.start({ id: 'r2', runtime: 'claude', sessionId: SID, prompt: 'second' });
+  assert.equal((await ended('r2')).event.status, 'succeeded');
+  assert.deepEqual(delivery('r2'), [['accepted', undefined]]);
+  assert.equal(readFileSync(join(dir, 'spawns'), 'utf8'), 'x', 'a refusal keeps the resident process');
+});
+
 test('a resident Claude stream-json process receives exact resume, keeps its pid across turns and gets images as content blocks', async t => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'wb-native-resident-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

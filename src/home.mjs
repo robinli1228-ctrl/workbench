@@ -1,5 +1,5 @@
 import {createHomeNativeTurns} from './native-turns-home.mjs';
-import {mergeRuntimeQuota,expireRuntimeQuota} from './runtime-quota.mjs';
+import {mergeReportedRuntimes,expireRuntimeQuota} from './runtime-quota.mjs';
 import {createRemoteAccessSettings} from './remote-access-settings.mjs';
 import http from 'node:http';
 import { sendBufferedResponse } from './http-response.mjs';
@@ -1574,7 +1574,8 @@ wss.on('connection', ws => {
         if (sockets.get(nodeId)?.readyState===1) { ws.close(1008, tr('home.workerAlreadyConnected')); nodeId = null; return; }
         sockets.set(nodeId, ws); clearTimeout(registerTimer);
         const config=db.get('workerConfigs',nodeId),limits=registrationCapacity(m.node,config);
-        db.put('workers', { ...m.node, ...config,...limits,id:nodeId, lastSeen: new Date().toISOString() });
+        // A restarted Worker reports a fresh probe; the saved quota of the same account survives it.
+        db.put('workers', { ...m.node, ...config,...limits,id:nodeId,runtimes:mergeReportedRuntimes(db.get('workers',nodeId)?.runtimes,m.node.runtimes), lastSeen: new Date().toISOString() });
         // Turns the Worker kept running through the disconnect continue; the ones it no longer has ended while it was away.
         nativeTurns.reconnected(nodeId, Array.isArray(m.nativeTurns) ? m.nativeTurns.filter(id => typeof id === 'string').slice(0, 200) : []);
         send(ws, { type: 'registered', retention:retentionPolicy(), folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:m.node.capabilities?.readSourceBindings===1?1:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
@@ -1583,7 +1584,7 @@ wss.on('connection', ws => {
       if(['source_sync_receipt','source_sync_command_ack','source_sync_watch_ack','source_sync_watch_status','source_sync_dirty'].includes(m.type)){
         void sourceSync.message(nodeId,m).catch(e=>send(ws,{type:'error',error:e.message}));return;
       }
-      if (m.type === 'ready') { ws.workerReady = true; void reconcileTerminals(nodeId); dispatch(nodeId); scheduleChat(); collectUsage(nodeId); }
+      if (m.type === 'ready') { ws.workerReady = true; void reconcileTerminals(nodeId); dispatch(nodeId); scheduleChat(); collectUsage(nodeId); nativeTurns.switches.resume(nodeId); }
       if (m.type === 'queue_reservation') { if(queuePump.onReservation(nodeId,m)){change();dispatch(nodeId);} return; }
       if (m.type === 'heartbeat') {ws.lastHeartbeatAt=Date.now();db.put('workers', { ...db.get('workers', nodeId), lastSeen: new Date().toISOString() });}
       if(m.type==='launch_deferred') {
@@ -1605,24 +1606,15 @@ wss.on('connection', ws => {
         scheduleChat();change();
       }
       if (m.type === 'runtime_report') {
-        const prev = db.get('workers', nodeId)?.runtimes || [];
-        const runtimes = (m.runtimes || []).map(rt => {
-          const old = prev.find(p => p.type === rt.type);
-          if(rt.quotaSource==='session')return mergeRuntimeQuota(old,rt);
-          const hasQuota = rt.quota && typeof rt.quota === 'object' && (rt.quota.fiveHour || rt.quota.weekly || rt.quota.groups || rt.quota.credits || rt.quota.remainingPercent != null);
-          if (hasQuota) return rt;
-          if (old?.quota && (old.quota.fiveHour || old.quota.weekly || old.quota.groups || old.quota.credits)) {
-            return { ...rt, quota: old.quota, quotaStatus: old.quotaStatus || 'ok', quotaStale: true };
-          }
-          return rt;
-        });
+        const runtimes = mergeReportedRuntimes(db.get('workers', nodeId)?.runtimes, m.runtimes);
         const worker=db.get('workers',nodeId);
         const discussion=m.discussionCapabilities;
-        db.put('workers', { ...worker, runtimes,...(discussion?{capabilities:{...worker.capabilities,
+        const next={ ...worker, runtimes,...(discussion?{capabilities:{...worker.capabilities,
           discussionProtocol:discussion.discussionProtocol===2?2:0,
           discussionRuntimes:Array.isArray(discussion.discussionRuntimes)?discussion.discussionRuntimes:[],
-          discussionConfigurations:Array.isArray(discussion.discussionConfigurations)?discussion.discussionConfigurations:[]}}:{}) });
-        change();
+          discussionConfigurations:Array.isArray(discussion.discussionConfigurations)?discussion.discussionConfigurations:[]}}:{}) };
+        // A repeated identical report (a quota resend, a reconnect) does not push a state refresh to every open page.
+        if(JSON.stringify(next.runtimes)!==JSON.stringify(worker?.runtimes)||JSON.stringify(next.capabilities)!==JSON.stringify(worker?.capabilities)){db.put('workers',next);change();}
       }
       if(m.type==='execution_config') {
         try {

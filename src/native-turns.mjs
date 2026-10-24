@@ -78,17 +78,22 @@ export function applyNativeTurnEvent(turn,event){
  // the run time measured on the device; later events of one task fill in what it is doing now and how it ended.
  if(event.kind==='task'&&event.task?.id){
   const tk=event.task,id=String(tk.id).slice(0,80),tasks=[...(next.tasks||[])],i=tasks.findIndex(x=>x.id===id),str=(v,n)=>typeof v==='string'?v.slice(0,n):undefined;
-  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',status:'running',startedAt:now()});
+  // One carried over from an earlier turn keeps its device-measured age, so its time counts from when it really started.
+  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',status:'running',
+   startedAt:tk.earlier&&Number.isFinite(tk.elapsedMs)&&tk.elapsedMs>=0?new Date(Date.now()-tk.elapsedMs).toISOString():now(),...(tk.earlier===true?{earlier:true}:{})});
   else if(i>=0&&tasks[i].status==='running'){const x={...tasks[i]};
    if(typeof tk.activity==='string')x.activity=str(tk.activity,200);if(Number.isFinite(tk.toolUses))x.toolUses=tk.toolUses;
    if(['completed','failed','stopped'].includes(tk.status)){x.status=tk.status;x.endedAt=now();if(Number.isFinite(tk.durationMs)&&tk.durationMs>=0)x.durationMs=tk.durationMs;}
    tasks[i]=x;}
-  next.tasks=tasks.slice(-20);
+  // At most 20 rows; finished ones leave first (oldest first), a running one only if all are running.
+  while(tasks.length>20){const j=tasks.findIndex(x=>x.status!=='running');tasks.splice(j<0?0:j,1);}
+  next.tasks=tasks;
  }
  if(event.kind==='log'&&typeof event.text==='string'){push('log',{text:clip(event.text)});if(event.thinking)next.phase='thinking';}
  if(event.kind==='status'){
   // Input acceptance is independent of the task outcome; a later failure cannot undo delivery.
   if(next.inputDeliveryState!=='accepted'&&['accepted','not_delivered'].includes(event.inputDeliveryState))next.inputDeliveryState=event.inputDeliveryState;
+  if(next.runtime==='claude'&&next.inputDeliveryState==='not_delivered'&&['refused','discarded','cancelled'].includes(event.inputRejection))next.inputRejection=event.inputRejection;
   if(event.status&&!(turn.status==='stopping'&&ACTIVE.has(event.status)))next.status=event.status;
   if(event.status==='starting')next.phase='starting';
   if(event.status==='running'&&!next.phase)next.phase='thinking';
@@ -166,7 +171,11 @@ export class NativeTurnsHome{
   if(!turnIdPattern.test(clientTurnId||''))throw Error('Invalid takeover message ID');
   if(control!==null&&!CONTROLS.has(control))throw Error('Unsupported control');
   if(control==='compact'){if(!['claude','codex'].includes(runtime))throw Error('This CLI cannot compact its context here');text=runtime==='claude'?'/compact':'';if(attachmentIds?.length)throw Error('A compaction carries no attachments');}
+  // A model or effort control is exactly its own command; it cannot carry another one (such as /clear) past the checks below.
+  else if(control!==null&&(typeof text!=='string'||!new RegExp(`^/${control} [^\\s]+$`).test(text)||attachmentIds?.length))throw Error('Invalid control message');
   else if(typeof text!=='string'||(!text.trim()&&!attachmentIds?.length))throw Error('Enter a message');
+  // /clear (alias /reset, /new) gives the resident Claude another session ID, which this conversation can no longer follow.
+  if(runtime==='claude'&&control===null&&/^\/(clear|reset|new)(\s|$)/i.test(text.trimStart()))throw Error('Clearing the context starts another session; start a new session here instead');
   if(text.length>MAX_PROMPT)throw Error('Message is too long for a takeover turn');
   const prior=nativeTurnRows(this.db,{clientTurnId,limit:1})[0];
   if(prior){if(prior.nodeId!==nodeId||prior.runtime!==runtime||prior.sessionId!==sessionId||prior.prompt!==text||(prior.control||null)!==control||JSON.stringify((prior.attachments||[]).map(a=>a.id))!==JSON.stringify(attachmentIds||[]))throw Error('Takeover message ID was already used');return nativeTurnView(prior);}
@@ -328,7 +337,8 @@ export class NativeTurnsHome{
    }
    // One failed reply never drops the queue. Two in a row that failed before the CLI produced anything mean the process
    // cannot start (login expired, binary gone): the rest would fail the same way one by one, so they are cancelled with the reason.
-   const silent=t=>t.status==='failed'&&!(t.events||[]).some(e=>['message','text','tool'].includes(e.type));
+   // An explicit per-input rejection is not a startup failure; a later input can still be accepted.
+   const silent=t=>t.status==='failed'&&!(t.runtime==='claude'&&t.inputDeliveryState==='not_delivered'&&['refused','discarded','cancelled'].includes(t.inputRejection))&&!(t.events||[]).some(e=>['message','text','tool'].includes(e.type));
    if(silent(next)){const previous=nativeTurnRows(this.db,{nodeId,runtime:turn.runtime,sessionId:turn.sessionId,limit:10}).find(t=>t.id!==turn.id&&t.endedAt&&t.status!=='cancelled');
     if(previous&&silent(previous))this.cancelWaiting(nodeId,turn.runtime,turn.sessionId,`The CLI did not start twice in a row${next.error?` (${next.error})`:''}; queued messages were not sent`);}
    void this.pump(nodeId,turn.runtime,turn.sessionId);
@@ -443,7 +453,7 @@ export class NativeTurnRunner{
     if(ended)return;
     if(type==='status'&&p.nativeSessionId&&p.nativeSessionId!==m.sessionId){void state.session?.stop();return end('mismatch','The CLI resumed a different native session; stopped');}
     // Delivery receipts need not carry a status; forward them before settling a terminal event.
-    if(type==='status'&&['accepted','not_delivered'].includes(p.inputDeliveryState))this.event(m.id,{kind:'status',inputDeliveryState:p.inputDeliveryState});
+    if(type==='status'&&['accepted','not_delivered'].includes(p.inputDeliveryState))this.event(m.id,{kind:'status',inputDeliveryState:p.inputDeliveryState,...(['refused','discarded','cancelled'].includes(p.inputRejection)?{inputRejection:p.inputRejection}:{})});
     if(type==='status'&&p.status==='reconciling'){this.event(m.id,{kind:'status',status:'stopping',error:p.error});if(this.leases)void this.close(key,'unconfirmed');return;}
     if(type==='status'&&['succeeded','failed','interrupted'].includes(p.status))return end(p.status,p.error);
     if(type==='status'&&p.status)this.event(m.id,{kind:'status',status:p.status});

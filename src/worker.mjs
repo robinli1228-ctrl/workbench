@@ -32,8 +32,8 @@ import {createWorkerNativeAgentSwitch,assertNativeSwitchAccess,nativeAgentSource
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
-import { inspectRuntimes, runtimeIssue, mergeRuntimeReports } from './runtime-probe.mjs';
-import {applyRuntimeQuota} from './runtime-quota.mjs';
+import { inspectRuntimes, runtimeIssue, mergeRuntimeReports, useQuotaIdentitySalt } from './runtime-probe.mjs';
+import {applyRuntimeQuota,quotaSignature,sessionQuotaIdentity,sampleQuotaIdentity} from './runtime-quota.mjs';
 import { writeHandoff } from './wb-tools.mjs';
 import {handoffReadPaths} from './handoff-paths.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
@@ -96,6 +96,7 @@ const organizerControllers = new Set();
 let capacity = validateCliCapacity(db.get('settings','cli-capacity')?.capacity??Number(process.env.WORKER_CONCURRENCY||2));
 let ws, paused = true, quitting = false, registered = false, readySent = false, reconnectCleanup,cliRecoveryEnabled=false,readToolsEnabled=false;
 const eventSent = new Map();
+useQuotaIdentitySalt((db.get('settings','quota-identity')||db.put('settings',{id:'quota-identity',salt:randomUUID()})).salt);
 let runtimes = await inspectRuntimes(), probing, runtimeFailures = {}, runtimeRetry = null, runtimeRetryDue = false;
 { const first = mergeRuntimeReports([], runtimes, {}); runtimes = first.runtimes; runtimeFailures = first.failures; if (first.retryMs) scheduleRuntimeRetry(first.retryMs); }
 // The first version is still in isolated acceptance testing; only adapters that are explicitly enabled and have version-tested evidence report the capability.
@@ -118,8 +119,14 @@ function scheduleRuntimeRetry(ms) {
 const send = m => { if (ws?.readyState === 1) ws.send(JSON.stringify(m)); };
 let quotaReportTimer=null;
 /** Coalesce passive device snapshots; reconnect registration carries the latest values without altering sample time. */
+const quotaSentAt={};
 function receiveRuntimeQuota(type,sample,quotaIdentity) {
-  runtimes=applyRuntimeQuota(runtimes,type,sample,quotaIdentity);
+  const before=runtimes.find(r=>r.type===type);
+  runtimes=applyRuntimeQuota(runtimes,type,sample,sampleQuotaIdentity(quotaIdentity,before));
+  const after=runtimes.find(r=>r.type===type);
+  // Codex repeats the same limits after every response: a changed value goes out at once, a refreshed sample time at most every five minutes.
+  if(after===before||quotaSignature(after)===quotaSignature(before)&&Date.now()-(quotaSentAt[type]||0)<300000)return;
+  quotaSentAt[type]=Date.now();
   if(!quotaReportTimer){quotaReportTimer=setTimeout(()=>{quotaReportTimer=null;send({type:'runtime_report',runtimes});},1000);quotaReportTimer.unref();}
 }
 const configurationQueries=new Map();
@@ -154,8 +161,10 @@ function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalS
 nativeTurns=createWorkerNativeTurns({db,send:m=>send(m),data,homeHttp:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,projectRoot:path=>projectRoot(path),
   isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots()),onQuota:receiveRuntimeQuota});
 const nativeAgentSwitches=createWorkerNativeAgentSwitch({db,nodeId:identity.nodeId,data,projectRoot,runtimes:()=>runtimes,isPaused:()=>paused||quitting,
- sourceBusy:source=>nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}),
- releaseIdle:async source=>{if(nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.size)}))throw Error('Source Agent still has work or process state is unknown');const resident=nativeTurns.resident.get(`${source.runtime}/${source.sessionId}`);if(resident)await nativeTurns.releaseLease(source.runtime,source.sessionId,resident.message.leaseId);},
+ // Only a side question about this session holds its switch; one about another session on the device does not.
+ sourceBusy:source=>nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.busyFor(source.runtime,source.sessionId))}),
+ sideAsking:source=>Boolean(sideAsks?.busyFor(source.runtime,source.sessionId)),
+ releaseIdle:async source=>{if(nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.busyFor(source.runtime,source.sessionId))}))throw Error('Source Agent still has work or process state is unknown');const resident=nativeTurns.resident.get(`${source.runtime}/${source.sessionId}`);if(resident)await nativeTurns.releaseLease(source.runtime,source.sessionId,resident.message.leaseId);},
  query:async(action,path)=>{let response;await query({action,path,id:randomUUID()},message=>{response=message;});if(!response||response.error)throw Error(response?.error||'Native preparation returned no receipt');return response.result;},
  check:claim=>checkTerminalSession(db,{id:claim.id,nodeId:identity.nodeId,projectId:claim.projectId},join(data,'worker.sqlite'),{automatic:true}),
  prepareGrant:op=>folderAccess.local?folderAccess.prepare({operationId:op.id,scope:`native:${op.leaseId}`,path:op.workspace}):null,
@@ -494,7 +503,7 @@ async function command(m) {
       if(session && !warmSessions.alive(session)){await afterProcessExit(session.proc,()=>{});session=null;}
       const sessionReuse=session?'process':m.run.resumeNativeSessionId?'resume':'new';
       if(session)instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,processReused:true,components});
-      if(session)session.reuse(options);else {session=new Session(options);session.quotaIdentity=runtimes.find(r=>r.type===runtimeType)?.quotaIdentity;}
+      if(session)session.reuse(options);else {session=new Session(options);session.quotaIdentity=sessionQuotaIdentity(runtimes.find(r=>r.type===runtimeType));}
       sessions.set(c.runId, session);
       emit(c.runId,'status',{sessionReuse,instructionFingerprint:instructions.fingerprint,instructionsInheritedFrom:instructions.inheritedFrom,
         ...(executionConfiguration?{instructionVersions:executionConfiguration.versions,instructionComponents:instructions.components,configurationState:'starting',...(instructions.configurationEventProtocol?{configurationEventProtocol:instructions.configurationEventProtocol}:{})}:{})});

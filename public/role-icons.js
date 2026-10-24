@@ -322,11 +322,18 @@ let quotaTooltipId = 0;
 let activeQuotaHintCleanup = null;
 
 /** Use the same countdown in hover, accessible labels and the click dialog. */
+/** A sample stays valid until its window resets (Claude reports only when a whole percent changes); its age is shown instead. */
+function quotaAge(checkedAt) {
+  const minutes = Math.floor((Date.now() - Date.parse(checkedAt || '')) / 60000);
+  if (!Number.isFinite(minutes) || minutes < 0) return '';
+  return minutes < 1 ? t('Updated just now') : minutes < 60 ? t('Updated {n} min ago', { n: minutes }) : t('Updated {n} h ago', { n: Math.floor(minutes / 60) });
+}
+
 function quotaDetails(kind, pct, bucket) {
-  const reset = formatQuotaCountdown(bucket.resetsAt, kind === 'Week');
+  const reset = formatQuotaCountdown(bucket.resetsAt, kind === 'Week'), age = quotaAge(bucket.checkedAt);
   return {
     remaining: t('{kind} {pct}% left', { kind: t(kind === 'Week' ? 'Weekly quota' : '5-hour quota'), pct }),
-    reset: reset ? t('Reset in: {time}', { time: reset }) : t('Reset time unavailable')
+    reset: [reset ? t('Reset in: {time}', { time: reset }) : t('Reset time unavailable'), age].filter(Boolean).join(' · ')
   };
 }
 
@@ -376,7 +383,8 @@ export function bindQuotaDetails(mark, getDetails, title = 'Quota details') {
 }
 
 /** Draw only quota windows actually returned by the vendor; unknown quota is not shown as green. */
-export function roleNameQuota(quota) {
+/** A stale snapshot (kept, unconfirmed or old) keeps its number but loses its tone, so it never reads as current. */
+export function roleNameQuota(quota, { stale = false } = {}) {
   const wrap = el('span', 'role-name-quota');
   const add = (kind, bucket, weekly = false) => {
     const known = usableBucket(bucket);
@@ -384,7 +392,8 @@ export function roleNameQuota(quota) {
     const pct = Math.round(remainingPercent(bucket));
     const tone = quotaTone(pct, { weekly, resetsAt: bucket?.resetsAt });
     const windowClass = weekly ? 'is-weekly' : 'is-five-hour';
-    const mark = el('button', `role-quota-mark ${windowClass} is-${tone}`), getDetails = () => quotaDetails(kind, pct, bucket), details = getDetails();
+    const old = stale || bucket?.stale === true;
+    const mark = el('button', `role-quota-mark ${windowClass} is-${old ? 'stale' : tone}`), getDetails = () => { const d = quotaDetails(kind, pct, bucket); return old ? { ...d, remaining: `${d.remaining} · ${t('Not latest')}` } : d; }, details = getDetails();
     mark.type = 'button'; mark.setAttribute('aria-haspopup', 'dialog');
     mark.setAttribute('aria-label', `${details.remaining} · ${details.reset}`);
     bindQuotaDetails(mark, getDetails);

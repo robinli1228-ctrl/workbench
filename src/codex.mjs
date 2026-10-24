@@ -219,7 +219,8 @@ export class CodexSession {
       return;
     }
     const p = m.params || {};
-    if(m.method==='account/updated'){this.emit('quota',{invalidated:true});return;}
+    // The app-server announces its account once when it starts; only a later change of login or plan makes the quota another account's.
+    if(m.method==='account/updated'){const account=JSON.stringify([p.authMode??null,p.planType??null]);if(this.accountState!==undefined&&this.accountState!==account)this.emit('quota',{invalidated:true});this.accountState=account;return;}
     if(m.method==='account/rateLimits/updated') {
       const sample=normalizeRuntimeQuota('codex',m);if(sample)this.emit('quota',sample);
       return;

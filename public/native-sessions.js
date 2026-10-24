@@ -737,7 +737,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    // The usual quota mark stays (same icon as the role cards); the line adds the window, the percent and the time until reset.
    const name=el('span','native-quota-label',t(label));
    if(!usableBucket(bucket)){line.append(name,el('span','native-quota-value is-unknown',t('Unknown')));}
-   else{const rest=until(bucket.resetsAt);line.append(name,roleNameQuota({[key]:bucket}));if(rest)line.append(el('span','native-quota-reset',rest));}
+   else{const rest=until(bucket.resetsAt);line.append(name,roleNameQuota({[key]:bucket},{stale:Boolean(runtime?.quotaStale||runtime?.quotaStatus!=='ok')}));if(rest)line.append(el('span','native-quota-reset',rest));}
    list.append(line);
   }
   section.append(list);

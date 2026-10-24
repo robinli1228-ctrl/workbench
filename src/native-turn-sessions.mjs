@@ -54,33 +54,86 @@ export class NativeCodexSession extends CodexSession {
 
 /** Claude/Agy resident stream-json input, Grok one process per turn. Claude gets images as base64 content blocks. */
 export class NativeCliSession extends CliPrintSession {
-  constructor(options){super(options);this.inputImages=options.inputImages||[];this.closing=false;this.question=null;this.initialized=false;this.awaitingEcho=false;}
+  constructor(options){super(options);this.inputImages=options.inputImages||[];this.controlTurn=options.control||null;this.closing=false;this.question=null;this.initialized=false;this.awaitingEcho=false;}
   args(prompt){return nativeTurnArgs(this.runtime,{cwd:this.cwd,sessionId:this.resumeSessionId,prompt,keepAlive:this.keepAlive,model:this.model,effort:this.effort});}
   get questionsSupported(){return this.keepAlive&&this.runtime==='claude';}
+  /** A turn's control kind must not land on the instance as `control`, which would hide the permission host below. */
+  reuse({control=null,...options}){super.reuse(options);this.controlTurn=control;}
   /** Only a completed native result may keep the CLI; broken transport shutdown must still retire it. */
   receive(message){
     if(message?.type==='rate_limit_event')return super.receive(message);
     if(this.questionsSupported&&message&&typeof message==='object'){
-      if(message.type==='control_response')return;
+      if(message.type==='control_response'){
+        // Claude could not withdraw the input (it already started, or this build cannot): stop the running turn instead.
+        if(this.withdrawing&&message.response?.request_id===this.withdrawing&&!(message.response.subtype==='success'&&message.response.response?.cancelled===true)){this.withdrawing=null;this.interrupt();}
+        return;
+      }
       if(message.type==='control_request')return this.control(message);
       if(message.type==='control_cancel_request'){if(this.question?.requestId===message.request_id){const {id}=this.question;this.question=null;this.emit('question_resolved',{id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});}return;}
     }
     if(this.keepAlive&&this.runtime==='claude'&&message&&typeof message==='object'){
       // The live background-task list is kept between turns too, so a later turn knows what is still running.
-      if(message.type==='system'&&message.subtype==='background_tasks_changed'&&Array.isArray(message.tasks))this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
-      if(!this.done&&!this.awaitingEcho&&message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id)this.task(message);
+      if(message.type==='system'&&message.subtype==='background_tasks_changed'&&!message.parent_tool_use_id&&Array.isArray(message.tasks)){this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
+        for(const id of this.liveTasks?.keys()||[])if(!this.backgroundTasks.has(id))this.liveTasks.delete(id);}
+      if(message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id){
+        this.track(message);
+        // Before the echo only a task this turn already lists (one carried over from an earlier turn) may report on it.
+        if(!this.done&&(!this.awaitingEcho||this.tasks?.has(message.task_id)))this.task(message);
+      }
+      // A rejected queued input has no replay. Only its own negative receipt may settle it without an echo.
+      if(this.awaitingEcho&&!this.done&&!this.stopping&&message.type==='command_lifecycle'&&!message.parent_tool_use_id&&message.command_uuid===this.inputUuid&&message.session_id===this.inputSessionId&&['refused','discarded'].includes(message.state)){
+        this.awaitingEcho=false;
+        this.emit('status',{inputDeliveryState:'not_delivered',inputRejection:message.state});
+        // Discard means the session is ending: retire its process through the existing exit/lease path, never reuse it.
+        if(message.state==='discarded')this.close();
+        return this.finish('failed',`Input not delivered: Claude ${message.state} this message before its echo`);
+      }
+      const own=this.awaitingEcho&&!this.done&&message.type==='command_lifecycle'&&!message.parent_tool_use_id&&message.command_uuid===this.inputUuid&&message.session_id===this.inputSessionId;
+      if(own&&message.state==='started')this.inputStarted=true;
+      // Cancelled before its echo: if it never started, it never reached the model (our stop withdrew it, or the turn that was to
+      // take it died first; stdin inputs are not redelivered), so it ends undelivered. Once started it was taken into a turn
+      // that was aborted: it was delivered, and the turn ends as stopped or failed.
+      if(own&&message.state==='cancelled'){
+        this.awaitingEcho=false;this.withdrawing=null;
+        this.emit('status',this.inputStarted?{inputDeliveryState:'accepted'}:{inputDeliveryState:'not_delivered',...(this.stopping?{}:{inputRejection:'cancelled'})});
+        return this.stopping?this.finish('interrupted'):this.finish('failed',this.inputStarted?'Claude cancelled the turn that took this message':'Input not delivered: Claude cancelled this message before starting it');
+      }
+      // A build that answers a local command without a replay still reports it started and completed; for a slash input only,
+      // those are its start and its end.
+      if(own&&this.slashInput&&['started','completed'].includes(message.state)){this.awaitingEcho=false;this.emit('status',{inputDeliveryState:'accepted'});if(message.state==='completed')return this.finish('succeeded');this.carryLiveTasks();return;}
       // Claude echoes a stdin message (--replay-user-messages) when it starts on it. Until this turn's echo, what it says
       // answers something else it queued first (a background task's completion notice): that output and its result are not
       // this turn's, so they neither show in it nor end it.
       if(message.type==='user'&&message.isReplay){
-        if(message.uuid===this.inputUuid&&!message.parent_tool_use_id&&message.session_id===(this.nativeSessionId||this.resumeSessionId))this.awaitingEcho=false;
+        if(this.awaitingEcho&&message.uuid===this.inputUuid&&!message.parent_tool_use_id&&message.session_id===this.inputSessionId){this.awaitingEcho=false;this.emit('status',{inputDeliveryState:'accepted'});
+          // Tasks started while it was still queued (by the notice answered first) hold this turn open too: list them now.
+          this.carryLiveTasks();
+          // It started before the withdrawal reached Claude: stop it as a running turn.
+          if(this.withdrawing){this.withdrawing=null;this.interrupt();}}
         return;
       }
-      if(this.awaitingEcho&&!this.stopping&&message.type!=='system')return;
+      // While our input is being withdrawn, what Claude says (and its result) is the notice turn's, which keeps running.
+      if(this.awaitingEcho&&(!this.stopping||this.withdrawing)&&message.type!=='system')return;
     }
     // Native Claude interrupts a turn without killing its resident process; only its owner's result confirms that boundary.
     if(!this.done&&this.stopping&&!this.closing&&this.keepAlive&&this.runtime==='claude'&&message?.type==='result'&&!message.parent_tool_use_id)return this.finish('interrupted');
+    // A Workbench control turn (/compact, /model, /effort) ends with its own result; tasks left by other turns are not its work.
+    if(this.controlTurn&&message?.type==='result'&&!message.parent_tool_use_id){const live=this.backgroundTasks;this.backgroundTasks=new Set();
+      this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;this.backgroundTasks=live;}}
     this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;}
+  }
+  /** Process-wide record of the live tasks (they outlive the turn that started them), so a later turn can show what it waits for. */
+  track(m){
+    const id=m.task_id;if(!id)return;const live=this.liveTasks||=new Map();
+    if(m.subtype==='task_started')return void live.set(id,{at:Date.now(),kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80)});
+    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
+    if(status&&!['pending','running'].includes(status))live.delete(id);
+  }
+  /** Live tasks this turn does not list yet, shown as from earlier (a control turn does not wait for them, so it lists none). */
+  carryLiveTasks(){
+    if(this.controlTurn)return;const tasks=this.tasks||=new Map();
+    for(const id of this.backgroundTasks||[]){const info=this.liveTasks?.get(id);if(!info||tasks.has(id))continue;tasks.set(id,{at:info.at,shown:0});
+      this.emit('task',{id,status:'running',kind:info.kind,description:info.description,agentType:info.agentType,earlier:true,elapsedMs:Date.now()-info.at});}
   }
   /** A subagent or background shell of this turn for the page: start, what it is doing now (at most every 5s), end. An end
    * without a start here (a task of an earlier, killed process) is not reported. */
@@ -119,13 +172,20 @@ export class NativeCliSession extends CliPrintSession {
     const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text:prompt},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
     const message=this.runtime==='agy'?{event:'user',message:{role:'user',content}}:{type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
     this.inputAttempted=true;
-    // A prompt waits for its own echo before output counts as its own; a slash command is handled locally and not echoed.
-    this.awaitingEcho=this.keepAlive&&this.runtime==='claude'&&!String(prompt).trimStart().startsWith('/');
+    // Every input waits for its own echo before output counts as its own: Claude 2.1.303 echoes slash commands (/compact,
+    // /model, unknown ones) under their uuid too, and a message that only starts with a path must not end early.
+    this.awaitingEcho=this.keepAlive&&this.runtime==='claude';
+    this.slashInput=String(prompt).trimStart().startsWith('/');
     // Queued background notices are replayed too; UUID identity, not text, binds even repeated prompts to this input.
     if(this.awaitingEcho)message.uuid=this.inputUuid=randomUUID();else this.inputUuid=null;
+    this.inputStarted=false;this.withdrawing=null;
+    this.inputSessionId=message.session_id;
     // Process-wide backgroundTasks still gates completion; this map only owns the current turn's visible tasks.
     this.tasks=new Map();
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error)this.emit('status',{inputDeliveryState:'accepted'});});
+    // Tasks an earlier turn left running still hold this one open: list them here, with the time they have run so far.
+    this.carryLiveTasks();
+    const needsEcho=this.awaitingEcho;
+    this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error&&!needsEcho)this.emit('status',{inputDeliveryState:'accepted'});});
   }
   /** Resident Claude interrupts only the current turn through the stream-json control channel; others end the process. */
   async stop() {
@@ -133,12 +193,16 @@ export class NativeCliSession extends CliPrintSession {
     this.stopping=true;
     if(this.question){const q=this.question;this.question=null;this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'Interrupted by the user.'}}});this.emit('question_resolved',{id:q.id});}
     if(this.keepAlive&&this.runtime==='claude'&&this.proc?.stdin?.writable){
-      try{this.proc.stdin.write(`${JSON.stringify({type:'control_request',request_id:`interrupt-${Date.now()}`,request:{subtype:'interrupt'}})}\n`);}catch{}
+      // Not yet started, the input still waits in Claude's queue: withdraw only it, so it does not run unseen after the stop and
+      // the turn Claude is running for something else (a task notice) goes on. Its 'cancelled' receipt ends the stop.
+      if(this.awaitingEcho&&this.inputUuid&&!this.inputStarted){this.withdrawing=`withdraw-${Date.now()}`;this.write({type:'control_request',request_id:this.withdrawing,request:{subtype:'cancel_async_message',message_uuid:this.inputUuid}});}
+      else this.interrupt();
       clearTimeout(this.interruptTimer);this.interruptTimer=setTimeout(()=>{if(!this.done)this.close();},10000);this.interruptTimer.unref?.();
       return;
     }
     this.close();
   }
+  interrupt(){this.write({type:'control_request',request_id:`interrupt-${Date.now()}`,request:{subtype:'interrupt'}});}
   finish(status,error){clearTimeout(this.interruptTimer);if(this.keepAlive&&this.stopping&&status!=='interrupted')return super.finish('interrupted');return super.finish(status,error);}
   /** After a finished resident turn (including an error result) the process stays; only close() or a live failure ends it. */
   shutdown(){if(this.keepAlive&&this.done&&!this.closing&&this.receiving)return;super.shutdown();}
@@ -147,5 +211,5 @@ export class NativeCliSession extends CliPrintSession {
 
 export function createNativeSession({runtime,cwd,resumeSessionId,emit,keepAlive,attachments=[],inputImages=[],env=process.env,onProcess,beforeInput,model=null,effort=null,control=null}) {
   if(runtime==='codex')return new NativeCodexSession({cwd,writableRoots:[cwd],attachments,emit,resumeSessionId,env,keepAlive,onProcess,beforeInput,model,effort,control});
-  return new NativeCliSession({cwd,runtime,emit,resumeSessionId,env,keepAlive,inputImages,onProcess,beforeInput,model,effort});
+  return new NativeCliSession({cwd,runtime,emit,resumeSessionId,env,keepAlive,inputImages,onProcess,beforeInput,model,effort,control});
 }
