@@ -934,7 +934,7 @@ repository.clone=true 仅在目标不存在时克隆；false 检查已有仓库�
   'roleCalls.deliveryDoesNotBelongProject': '交付不属于此项目',
   'roleCalls.remoteExecutionPaused': '远程执行已暂停',
   'roleCalls.currentRunCannotWaitFor': '当前执行不能等待协作',
-  'roleCalls.currentRunHasNoChild': '当前执行没有子调用',
+  'roleCalls.currentRunHasNoChild': `没有可等待的调用：requestIds 要写本任务用 wb call 派出、还没结束的请求（用 wb call 返回的 requestId 或派活时的 --request-id）；不写 requestIds 就等全部。`,
   'roleCalls.provideResumeSummary18000': '请提供 1–8000 字续接摘要',
   'roleCalls.assistanceResultsContextOnly': `{resumeSummary}
 

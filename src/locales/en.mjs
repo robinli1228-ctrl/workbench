@@ -934,7 +934,7 @@ Partial output (not a delivery): {p3}`,
   'roleCalls.deliveryDoesNotBelongProject': 'The delivery does not belong to this project',
   'roleCalls.remoteExecutionPaused': 'Remote execution is paused',
   'roleCalls.currentRunCannotWaitFor': 'The current run cannot wait for collaboration',
-  'roleCalls.currentRunHasNoChild': 'The current run has no child calls',
+  'roleCalls.currentRunHasNoChild': `No call to wait for: requestIds must name open calls this task sent with wb call (the requestId wb call returned, or the --request-id you gave it); omit requestIds to wait for all of them.`,
   'roleCalls.provideResumeSummary18000': 'Provide a resume summary of 1-8000 characters',
   'roleCalls.assistanceResultsContextOnly': `{resumeSummary}
 

@@ -254,7 +254,10 @@ export class RoleCalls {
     const r = this.forRun(run);
     const current=this.db.get('runs',run.id);
     if (!r || !current||terminal.has(current.status)||current.stopRequested||current.roleId!==r.targetRoleId||r.currentRunId&&r.currentRunId!==run.id||callTerminal.has(r.status)||r.continuationRequestId) throw new Error(tr('roleCalls.currentRunCannotWaitFor'));
-    const children=this.dependencies(r),available=new Set(children.map(c=>c.id)),requestIds=options.requestIds??children.map(c=>c.id);
+    const children=this.dependencies(r),available=new Set(children.map(c=>c.id));
+    // wb call stores "<run>:<request-id>"; the short --request-id the role chose names the same call when it is unambiguous.
+    const resolve=id=>{if(typeof id!=='string'||available.has(id))return id;const matches=children.filter(c=>c.id.endsWith(`:${id}`));return matches.length===1?matches[0].id:id;};
+    const requestIds=Array.isArray(options.requestIds)?options.requestIds.map(resolve):options.requestIds??children.map(c=>c.id);
     if (!Array.isArray(requestIds)||!requestIds.length||requestIds.some(id=>!available.has(id))) throw new Error(tr('roleCalls.currentRunHasNoChild'));
     if (typeof summary !== 'string' || !summary.trim() || summary.length > 8000) throw new Error(tr('roleCalls.provideResumeSummary18000'));
     const timeoutSeconds=options.timeoutSeconds??1800;

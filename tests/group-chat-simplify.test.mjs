@@ -131,3 +131,12 @@ test('wb history read takes a message ID or a run / call ID', () => {
   assert.equal(result.kind, 'result');
   assert.equal(result.content, 'final answer');
 });
+
+test('wb wait accepts the short --request-id the role gave wb call', () => {
+  const e = env();
+  const sent = createAgentCalls(e, e.db.get('runs', 'r1'), { role: 'Checker', kind: 'consult', requestId: 'r1:rev-a', text: 'review it' });
+  assert.equal(sent.requestId, 'r1:rev-a');
+  const waited = e.calls.wait(e.db.get('runs', 'r1'), 'resume after the review', { requestIds: ['rev-a'] });
+  assert.deepEqual(waited.waitRequestIds, ['r1:rev-a']);
+  assert.throws(() => e.calls.wait(e.db.get('runs', 'r1'), 'again', { requestIds: ['nope'] }));
+});
