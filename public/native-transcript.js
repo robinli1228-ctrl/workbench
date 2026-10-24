@@ -184,6 +184,8 @@ export function noteRows(notes,t){
  return [...rows.values()];
 }
 
+/** Largest call plus result a history step rebuilds into its normal view; bigger records are read as raw chunks. */
+const FULL_DETAIL_CHARS=524288;
 /** The activity block: summary line with file chips; the step list opens on click (or stays open while live). */
 export function activityBlock({steps,notes=[],t,live=false,duration='',open=false,onPreview,onDetail,onToggle}){
  const box=el('details','nt-activity');box.open=open;
@@ -195,21 +197,43 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
  summary.append(el('span','nt-caret'),el('span','nt-activity-text',summarizeSteps(steps,t,{duration})||(onlyThinking?`${t('Model is thinking')}${merged[0].count>1?` \u00d7${merged[0].count}`:''}`:t(live?'Working…':'No tool calls'))));
  const chips=fileChips(steps);
  const lazyOpeners=new Map();
- if(chips.length){const row=el('span','nt-chips');for(const {path,step} of chips.slice(0,8)){const chip=el('button','nt-chip');chip.type='button';chip.title=path;chip.append(stepIcon(step.kind),el('span','',basename(path)));if(step.kind==='edit'&&(step.added||step.removed))chip.append(el('span','nt-chip-stat',stat(step.added,step.removed)));chip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();if(step.detailRefs?.length&&onDetail){box.open=true;ensureList();lazyOpeners.get(step)?.();}else onPreview?.(step,path);});row.append(chip);}if(chips.length>8)row.append(el('span','nt-chip-more',`+${chips.length-8}`));summary.append(row);}
+ if(chips.length){const row=el('span','nt-chips');for(const {path,step} of chips.slice(0,8)){const chip=el('button','nt-chip');chip.type='button';chip.title=path;chip.append(stepIcon(step.kind),el('span','',basename(path)));if(step.kind==='edit'&&(step.added||step.removed))chip.append(el('span','nt-chip-stat',stat(step.added,step.removed)));chip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();if(step.detailRefs?.length&&onDetail)void previewLazy(step,path);else onPreview?.(step,path);});row.append(chip);}if(chips.length>8)row.append(el('span','nt-chip-more',`+${chips.length-8}`));summary.append(row);}
  box.append(summary);
  let list=null;
- const lazyDetail=(row,step)=>{
-  const refs=step.detailRefs||[];let refIndex=0,nextOffset=0,body=null,busy=false;
+ // A history step carries only its summary. Its full call and result are read on demand and then shown exactly like a
+ // live step (diff, command and output, file preview). A record too large to rebuild falls back to raw text in chunks.
+ const fullStep=step=>step.fullStep||(step.fullStep=(async()=>{
+  const parts=[];let size=0;
+  for(const ref of step.detailRefs||[]){
+   let offset=0,text='',role=null;
+   do{const page=await onDetail(step,ref,offset);role=page.role;text+=page.text||'';size+=(page.text||'').length;
+    if(size>FULL_DETAIL_CHARS)throw Object.assign(Error('too large'),{tooLarge:true});offset=page.nextOffset;}while(offset!=null);
+   parts.push({role,text});
+  }
+  let call={};try{call=JSON.parse(parts.find(p=>p.role==='tool_call')?.text||'{}');}catch{call={};}
+  return classifyStep({type:'tool_use',id:step.id,name:call.name||step.name,input:call.input,output:parts.find(p=>p.role==='tool_result')?.text||'',is_error:step.failed,status:'completed'},'succeeded');
+ })().catch(error=>{step.fullStep=null;throw error;}));
+ const rawDetail=(row,step,body)=>{
+  const refs=step.detailRefs||[];let refIndex=0,nextOffset=0,busy=false;
   const load=async()=>{if(busy||refIndex>=refs.length)return;busy=true;
-   if(!body){body=el('div','nt-detail');row.append(body);}const status=el('div','nt-detail-note',t('Loading…'));body.append(status);
+   const status=el('div','nt-detail-note',t('Loading…'));body.append(status);
    try{const page=await onDetail(step,refs[refIndex],nextOffset);status.remove();if(nextOffset===0)body.append(el('div','nt-detail-label',t(page.role==='tool_result'?'Output':'Arguments')));const pre=el('pre','nt-code');pre.textContent=page.text||'';body.append(pre);
     if(page.nextOffset!=null){nextOffset=page.nextOffset;const more=el('button','secondary compact',t('Load more'));more.type='button';more.addEventListener('click',()=>{more.remove();void load();});body.append(more);}
     else{refIndex++;nextOffset=0;if(refIndex<refs.length){const more=el('button','secondary compact',t('Load more'));more.type='button';more.addEventListener('click',()=>{more.remove();void load();});body.append(more);}}
-   }catch(error){status.textContent=error?.message||t('Failed');status.className='nt-detail-error';const retry=el('button','secondary compact',t('Retry'));retry.type='button';retry.addEventListener('click',()=>{status.remove();retry.remove();void load();});body.append(retry);}
+   }catch(error){failure(body,error,()=>void load());}
    finally{busy=false;}
   };
-  return ()=>{const openNow=row.classList.toggle('is-open');if(openNow&&!body)void load();};
+  void load();
  };
+ const failure=(body,error,retryFn)=>{const note=el('div','nt-detail-error',t(error?.message||'Failed'));const retry=el('button','secondary compact',t('Retry'));retry.type='button';retry.addEventListener('click',()=>{note.remove();retry.remove();retryFn();});body.append(note,retry);};
+ const lazyDetail=(row,step)=>{
+  let body=null;
+  const show=()=>{const status=el('div','nt-detail-note',t('Loading…'));body.append(status);
+   fullStep(step).then(full=>{status.remove();body.replaceWith(body=stepDetail(full,t));},error=>{status.remove();if(error?.tooLarge)rawDetail(row,step,body);else failure(body,error,show);});};
+  return ()=>{const openNow=row.classList.toggle('is-open');if(openNow&&!body){body=el('div','nt-detail');row.append(body);show();}};
+ };
+ // A preview needs the full step too; if it cannot be rebuilt, the step opens in the list instead.
+ const previewLazy=(step,path)=>fullStep(step).then(full=>onPreview?.(full,path),()=>{box.open=true;ensureList();const open=lazyOpeners.get(step);if(open)open();});
  const ensureList=()=>{if(list)return list;list=el('div','nt-steps');
  for(const step of steps){
   const row=el('div',`nt-step is-${step.kind}${step.failed?' is-failed':''}${step.running?' is-running':''}`);
@@ -219,7 +243,7 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
   row.append(head);
   if(step.detailRefs?.length&&step.error)row.append(el('div','nt-detail-error',step.error));
   const openStep=step.detailRefs?.length&&onDetail?lazyDetail(row,step):()=>{const openNow=row.classList.toggle('is-open');if(openNow&&!row.querySelector('.nt-detail'))row.append(stepDetail(step,t));};lazyOpeners.set(step,openStep);head.addEventListener('click',openStep);
-  if(step.files?.length&&onPreview&&!step.detailRefs?.length){const preview=el('button','nt-step-preview');preview.type='button';preview.title=t('Preview');preview.setAttribute('aria-label',t('Preview'));preview.textContent='↗';preview.addEventListener('click',()=>onPreview(step,step.files[0]));head.append(preview);}
+  if(step.files?.length&&onPreview){const preview=el('button','nt-step-preview');preview.type='button';preview.title=t('Preview');preview.setAttribute('aria-label',t('Preview'));preview.textContent='↗';preview.addEventListener('click',()=>{if(step.detailRefs?.length&&onDetail)void previewLazy(step,step.files[0]);else onPreview(step,step.files[0]);});head.append(preview);}
   list.append(row);
  }
  // Runtime notes, merged: the same note shows once with "×N". The CLI's periodic "model is thinking" signal becomes one
