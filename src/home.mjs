@@ -800,6 +800,14 @@ const server = http.createServer(async (req, res) => {
             if(!sessionId&&['created','all'].includes(scope))return json(res,{items:nativeTurns.switches.decorateCatalog(nodeId,nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem)),partial:scope==='all',offline:true});
             throw Error('Device is offline');
           }
+          const toolDetail=url.searchParams.get('toolDetail'),toolPreview=url.searchParams.get('toolPreview')==='1';
+          if(toolDetail!==null){
+            const offset=Number(url.searchParams.get('detailOffset')||0);
+            if(!sessionId||!toolDetail||toolDetail.length>2048||!Number.isSafeInteger(offset)||offset<0)throw Error('Invalid native tool detail reference');
+            if(worker.capabilities?.nativeToolDetails!==1)throw Error('Upgrade this Worker to read tool details on demand.');
+            return json(res,await workerQuery({nodeId},'native_tool_detail',{runtime,sessionId,record,ref:toolDetail,offset},30000));
+          }
+          if(toolPreview&&worker.capabilities?.nativeToolDetails!==1)throw Error('Upgrade this Worker to read tool details on demand.');
           // Page authoritative cross-project bindings before the Worker catalogue's limit and WebSocket envelope.
           const managed=!sessionId&&['group','all'].includes(scope)?managedNativeSessions(nodeId,runtime):[];
           const offset=Number(url.searchParams.get('offset')||0);
@@ -812,7 +820,7 @@ const server = http.createServer(async (req, res) => {
           if(paged&&worker.capabilities?.nativeHistoryPages!==1)throw Error('Upgrade this Worker to load older native history.');
           if(sessionId&&cursor?.startsWith('home-turns:')){const stored=nativeTurns.switches.historyPage({nodeId,runtime,sessionId},{cursor});if(!stored)throw Error('Conversation history is unavailable');return json(res,stored);}
           const nativeSnapshot=historySnapshot?.startsWith('home-turns:')?null:historySnapshot;
-          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,cursor,snapshot:nativeSnapshot,...(delta&&nativeSnapshot?{delta:true}:{})}:{})},30000);
+          const result=await workerQuery({nodeId},sessionId?'native_session':'native_sessions',{runtime,sessionId,scope,record,managedSessions:page,adoptedSessions:scope==='all'?adoptedNativeSessions(nodeId,runtime):[],...(paged?{historyPage:true,toolPreview,cursor,snapshot:nativeSnapshot,...(delta&&nativeSnapshot?{delta:true}:{})}:{})},30000);
           if(sessionId&&result.previewAvailable===false){const stored=nativeTurns.switches.historyPage({nodeId,runtime,sessionId});if(stored)return json(res,{...result,...stored,workspace:record.workspace,notice:undefined});}
           if(!sessionId&&scope==='group'){
             const bindings=new Map(page.map(record=>[record.sessionId,record.roleBinding]));

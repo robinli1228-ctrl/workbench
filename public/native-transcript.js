@@ -185,7 +185,7 @@ export function noteRows(notes,t){
 }
 
 /** The activity block: summary line with file chips; the step list opens on click (or stays open while live). */
-export function activityBlock({steps,notes=[],t,live=false,duration='',open=false,onPreview,onToggle}){
+export function activityBlock({steps,notes=[],t,live=false,duration='',open=false,onPreview,onDetail,onToggle}){
  const box=el('details','nt-activity');box.open=open;
  const summary=el('summary','nt-activity-summary');
  const merged=noteRows(notes,t),onlyThinking=!steps.length&&merged.length===1&&merged[0].kind==='thinking';
@@ -194,24 +194,40 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
  if(kind)summary.append(stepIcon(kind));
  summary.append(el('span','nt-caret'),el('span','nt-activity-text',summarizeSteps(steps,t,{duration})||(onlyThinking?`${t('Model is thinking')}${merged[0].count>1?` \u00d7${merged[0].count}`:''}`:t(live?'Working…':'No tool calls'))));
  const chips=fileChips(steps);
- if(chips.length){const row=el('span','nt-chips');for(const {path,step} of chips.slice(0,8)){const chip=el('button','nt-chip');chip.type='button';chip.title=path;chip.append(stepIcon(step.kind),el('span','',basename(path)));if(step.kind==='edit'&&(step.added||step.removed))chip.append(el('span','nt-chip-stat',stat(step.added,step.removed)));chip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();onPreview?.(step,path);});row.append(chip);}if(chips.length>8)row.append(el('span','nt-chip-more',`+${chips.length-8}`));summary.append(row);}
+ const lazyOpeners=new Map();
+ if(chips.length){const row=el('span','nt-chips');for(const {path,step} of chips.slice(0,8)){const chip=el('button','nt-chip');chip.type='button';chip.title=path;chip.append(stepIcon(step.kind),el('span','',basename(path)));if(step.kind==='edit'&&(step.added||step.removed))chip.append(el('span','nt-chip-stat',stat(step.added,step.removed)));chip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();if(step.detailRefs?.length&&onDetail){box.open=true;ensureList();lazyOpeners.get(step)?.();}else onPreview?.(step,path);});row.append(chip);}if(chips.length>8)row.append(el('span','nt-chip-more',`+${chips.length-8}`));summary.append(row);}
  box.append(summary);
- const list=el('div','nt-steps');
+ let list=null;
+ const lazyDetail=(row,step)=>{
+  const refs=step.detailRefs||[];let refIndex=0,nextOffset=0,body=null,busy=false;
+  const load=async()=>{if(busy||refIndex>=refs.length)return;busy=true;
+   if(!body){body=el('div','nt-detail');row.append(body);}const status=el('div','nt-detail-note',t('Loading…'));body.append(status);
+   try{const page=await onDetail(step,refs[refIndex],nextOffset);status.remove();if(nextOffset===0)body.append(el('div','nt-detail-label',t(page.role==='tool_result'?'Output':'Arguments')));const pre=el('pre','nt-code');pre.textContent=page.text||'';body.append(pre);
+    if(page.nextOffset!=null){nextOffset=page.nextOffset;const more=el('button','secondary compact',t('Load more'));more.type='button';more.addEventListener('click',()=>{more.remove();void load();});body.append(more);}
+    else{refIndex++;nextOffset=0;if(refIndex<refs.length){const more=el('button','secondary compact',t('Load more'));more.type='button';more.addEventListener('click',()=>{more.remove();void load();});body.append(more);}}
+   }catch(error){status.textContent=error?.message||t('Failed');status.className='nt-detail-error';const retry=el('button','secondary compact',t('Retry'));retry.type='button';retry.addEventListener('click',()=>{status.remove();retry.remove();void load();});body.append(retry);}
+   finally{busy=false;}
+  };
+  return ()=>{const openNow=row.classList.toggle('is-open');if(openNow&&!body)void load();};
+ };
+ const ensureList=()=>{if(list)return list;list=el('div','nt-steps');
  for(const step of steps){
   const row=el('div',`nt-step is-${step.kind}${step.failed?' is-failed':''}${step.running?' is-running':''}`);
   const head=el('button','nt-step-head');head.type='button';const {verb,target,title,stat:s}=stepTitle(step,t);
   head.append(stepIcon(step.kind),el('span','nt-step-verb',verb));const tgt=el('span','nt-step-target',target);tgt.translate=false;if(title)tgt.title=title;head.append(tgt);
   if(s)head.append(el('span','nt-step-stat',s));if(step.failed)head.append(el('span','nt-step-flag',t('Failed')));else if(step.running)head.append(el('span','nt-step-flag is-running',t('Running')));
   row.append(head);
-  head.addEventListener('click',()=>{const openNow=row.classList.toggle('is-open');if(openNow&&!row.querySelector('.nt-detail'))row.append(stepDetail(step,t));});
-  if(step.files?.length&&onPreview){const preview=el('button','nt-step-preview');preview.type='button';preview.title=t('Preview');preview.setAttribute('aria-label',t('Preview'));preview.textContent='↗';preview.addEventListener('click',()=>onPreview(step,step.files[0]));head.append(preview);}
+  if(step.detailRefs?.length&&step.error)row.append(el('div','nt-detail-error',step.error));
+  const openStep=step.detailRefs?.length&&onDetail?lazyDetail(row,step):()=>{const openNow=row.classList.toggle('is-open');if(openNow&&!row.querySelector('.nt-detail'))row.append(stepDetail(step,t));};lazyOpeners.set(step,openStep);head.addEventListener('click',openStep);
+  if(step.files?.length&&onPreview&&!step.detailRefs?.length){const preview=el('button','nt-step-preview');preview.type='button';preview.title=t('Preview');preview.setAttribute('aria-label',t('Preview'));preview.textContent='↗';preview.addEventListener('click',()=>onPreview(step,step.files[0]));head.append(preview);}
   list.append(row);
  }
  // Runtime notes, merged: the same note shows once with "×N". The CLI's periodic "model is thinking" signal becomes one
  // thinking row with a brain icon; older records' "(native progress event received)" suffix is dropped.
  for(const note of noteRows(notes,t)){const row=el('div',`nt-step is-${note.kind}`);const head=el('div','nt-step-head is-static');head.append(stepIcon(note.kind),el('span','nt-step-target',note.text));if(note.count>1)head.append(el('span','nt-step-count',`\u00d7${note.count}`));row.append(head);list.append(row);}
- box.append(list);
- box.addEventListener('toggle',()=>onToggle?.(box.open));
+ box.append(list);return list;};
+ if(open)ensureList();
+ box.addEventListener('toggle',()=>{if(box.open)ensureList();onToggle?.(box.open);});
  return box;
 }
 
@@ -275,13 +291,15 @@ export function createPreviewSheet(host,t,{onSide=null,canSide=()=>Boolean(onSid
  * its call by id; injected user rows (reminders, context) neither start a turn nor split one. A user row that noticeOf
  * names (a background task finishing) stays inside the running turn as a notice part. */
 export function historyTurns(rows,{isPrompt=row=>row.role==='user',noticeOf=()=>''}={}){
- const turns=[],calls=new Map();let turn=null;
+ const turns=[],calls=new Map(),seenRows=new Set();let turn=null;
  const open=()=>{turn={prompt:null,parts:[],endedAt:null};turns.push(turn);return turn;};
  for(const row of rows){
   if(row.role==='user'){if(isPrompt(row)){turn=open();turn.prompt=row;continue;}const notice=noticeOf(row);if(!notice)continue;if(!turn)turn=open();turn.parts.push({kind:'notice',task:notice,timestamp:row.timestamp||null});continue;}
-  if(row.role==='tool_result'){const tool=calls.get(row.callId);if(tool){tool.output=row.output||'';tool.failed=row.failed===true;tool.done=true;}continue;}
+  if((row.role==='tool_call'||row.role==='tool_result')&&row.id&&seenRows.has(row.id))continue;
+  if((row.role==='tool_call'||row.role==='tool_result')&&row.id)seenRows.add(row.id);
+  if(row.role==='tool_result'){const tool=calls.get(row.callId);if(tool){tool.output=row.output||'';tool.failed=row.failed===true;tool.done=true;if(row.detailRef)tool.resultDetailRef=row.detailRef;if(row.errorSummary)tool.errorSummary=row.errorSummary;}continue;}
   if(!turn)turn=open();
-  if(row.role==='tool_call'){const tool={kind:'tool',id:row.callId,name:row.name,input:row.input,output:'',failed:false,done:false,timestamp:row.timestamp||null};calls.set(row.callId,tool);turn.parts.push(tool);}
+  if(row.role==='tool_call'){const tool={kind:'tool',id:row.callId,name:row.name,input:row.input,output:'',failed:false,done:false,timestamp:row.timestamp||null,...(row.toolSummary?{toolSummary:row.toolSummary}:{}),...(row.detailRef?{callDetailRef:row.detailRef}:{})};calls.set(row.callId,tool);turn.parts.push(tool);}
   else if(row.role==='assistant')turn.parts.push({kind:'text',text:row.text||'',timestamp:row.timestamp||null});
   else continue;
   if(row.timestamp)turn.endedAt=row.timestamp;

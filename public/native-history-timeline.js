@@ -12,16 +12,16 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
  jump.onclick=()=>{if(newerAvailable||readError)onLatest?.();scroll.scrollTo({top:scroll.scrollHeight,behavior:'smooth'});};
  actions.append(more,jump);bar.append(actions,note,latest);
  skip.type='button';skip.className='secondary';skip.textContent=t('Continue to earlier session');skip.hidden=true;bar.append(skip);
- let generation=0,chain=[],sections=[],busy=false,failed=null,readError=null,olderNotice=null,newerAvailable=false;
+ let generation=0,chain=[],sections=[],busy=false,failed=null,readError=null,olderNotice=null,newerAvailable=false,updating=false;
  const identity=item=>JSON.stringify([item.nodeId,item.runtime,item.sessionId||item.id]);
  const nextPage=()=>{for(const item of chain){const loaded=sections.find(s=>identity(s.item)===identity(item));if(!loaded||loaded.cursor)return {item,loaded};}return null;};
  // Reuse loaded section nodes; late catalogues can insert an intermediate session without losing older cursors.
  function placeSections(){const ranks=new Map(chain.map((item,i)=>[identity(item),i]));sections.sort((a,b)=>ranks.get(identity(a.item))-ranks.get(identity(b.item)));root.replaceChildren(bar,...sections.toReversed().map(s=>s.block));highlightLatestChatCard(scroll);}
  function section(item){const block=document.createElement('section'),heading=document.createElement('div'),history=document.createElement('div');heading.className='native-history-separator';heading.textContent=label(item);history.className='native-history';block.append(heading,history);return {item,block,history,messages:new Map(),cursor:null,initialized:false,turnStartedAt:null};}
  /** 最新页恢复不应清除更早分页的失败，也不能丢失未读消息断层提示。 */
- function renderNote(){const error=failed?`${label(failed.section.item)}: ${t(failed.error)}`:readError;note.className=error?'workspace-note chat-bubble is-error-card':'workspace-note';note.textContent=error||olderNotice||(newerAvailable?t('Newer messages are available. Refresh latest history to read them.'):'');latest.hidden=!readError&&!newerAvailable;}
+ function renderNote(){const error=failed?`${label(failed.section.item)}: ${t(failed.error)}`:readError;note.className=error?'workspace-note chat-bubble is-error-card':'workspace-note';note.textContent=error||olderNotice||(newerAvailable?t('Newer messages are available. Refresh latest history to read them.'):updating?t('Updating…'):'');latest.hidden=!readError&&!newerAvailable;}
  /** 内容未变时也独立清除读取错误，不重建历史节点或重置分页。 */
- function readSucceeded(){readError=null;renderNote();}
+ function readSucceeded(){readError=null;updating=false;renderNote();}
  function controls(){renderNote();const hasMore=Boolean(sections[0]?.initialized&&nextPage());actions.hidden=!hasMore;more.disabled=busy;moreText.textContent=t(busy?'Loading…':'Load older history');skip.hidden=!failed||!chain.slice(chain.findIndex(item=>identity(item)===identity(failed.section.item))+1).some(item=>{const loaded=sections.find(s=>identity(s.item)===identity(item));return !loaded||loaded.cursor;});skip.disabled=busy;}
  function merge(target,page,{older=false}={}){
   const rows=page.messages||[],prior=[...target.messages.values()];
@@ -63,11 +63,13 @@ export function createNativeHistoryTimeline({scroll,readPage,renderMessage,rende
  // 更早记录只由按钮加载；滚动和触摸仅改变阅读位置，不触发额外历史查询。
  // Page-turn visibility belongs to the selected session; another session's unread pages cannot hide its saved turns.
  return {root,hasOlder:()=>Boolean(sections[0]?.cursor),
-  reset(item,older=[]){generation++;busy=false;failed=readError=olderNotice=null;newerAvailable=false;chain=[item,...older];sections=[section(item)];root.replaceChildren(bar,sections[0].block);controls();},
+  reset(item,older=[]){generation++;busy=false;failed=readError=olderNotice=null;newerAvailable=updating=false;chain=[item,...older];sections=[section(item)];root.replaceChildren(bar,sections[0].block);controls();},
   /** Extend the selected session's lineage without resetting messages, an in-flight page or the reader's scroll. */
   setOlder(item,older){if(!sections.length||identity(sections[0].item)!==identity(item))return;chain=[...new Map([chain[0],...older,...chain.slice(1)].map(value=>[identity(value),value])).values()];controls();},
-  clear(){generation++;busy=false;failed=readError=olderNotice=null;newerAvailable=false;chain=[];sections=[];root.replaceChildren();},
-  showError(error){readError=t(error.message);renderNote();},
+  clear(){generation++;busy=false;failed=readError=olderNotice=null;newerAvailable=updating=false;chain=[];sections=[];root.replaceChildren();},
+  showError(error){updating=false;readError=t(error.message);renderNote();},
+  /** A stale same-session cache remains visible while its replacement is fetched. */
+  showUpdating(){updating=true;readError=null;renderNote();},
   /** A background refresh found more rows than one delta can carry; preserve the reader's loaded pages and cursor. */
   showNewer(){newerAvailable=true;readSucceeded();controls();},
   readSucceeded,

@@ -6,6 +6,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {join,basename,dirname,relative,isAbsolute} from 'node:path';
 import {resumeArgs,managedRunProcessState,terminalOwnsProject,nativeSessionProjectIds} from './terminal-resume.mjs';
 import {isHistoryPrompt} from '../public/history-prompt.js';
+import {classifyStep} from '../public/native-transcript.js';
 import {assertNativeSwitchAccess} from './native-agent-switch-worker.mjs';
 
 const runtimes=new Set(['codex','claude','grok','agy']);
@@ -49,8 +50,8 @@ const clipInput=value=>{
 };
 // Codex custom "exec" calls carry a script; show the command it runs when it can be read, the script otherwise.
 const codexInput=p=>{if(p.type==='local_shell_call')return {command:p.action?.command};if(p.type==='function_call')return p.arguments;const code=typeof p.input==='string'?p.input:'';const cmd=code.match(/exec_command\(\{\s*cmd\s*:\s*(["'`])([\s\S]*?)\1/);return cmd?{command:cmd[2]}:p.input;};
-const call=(callId,name,input,at)=>({role:'tool_call',callId:String(callId||''),name:String(name||'tool'),input:clipInput(input),timestamp:at});
-const result=(callId,output,failed,at)=>({role:'tool_result',callId:String(callId||''),output:clip(toolText(output),4000),failed:failed===true,timestamp:at});
+const call=(callId,name,input,at,full=false)=>({role:'tool_call',callId:String(callId||''),name:String(name||'tool'),input:full?input:clipInput(input),timestamp:at});
+const result=(callId,output,failed,at,full=false)=>({role:'tool_result',callId:String(callId||''),output:full?toolText(output):clip(toolText(output),4000),failed:failed===true,timestamp:at});
 /** The exchange an Agent switch creates its new session with. It is Workbench's, not the person's: history and handoffs omit
  * it. The reply is a fixed sentence so that hiding it can never hide a real answer. */
 export const NATIVE_SWITCH_READY='Workbench Agent switch ready.';
@@ -60,22 +61,22 @@ const LEGACY_SWITCH_HELLO='Create this empty session for a Workbench Agent switc
 const bare=text=>text.replace(/[\s"'`*\u201c\u201d\u2018\u2019.!]+/g,' ').trim().toLowerCase();
 const switchSetup=(role,text)=>role==='user'?[NATIVE_SWITCH_HELLO,LEGACY_SWITCH_HELLO].includes(text):role==='assistant'&&bare(text)===bare(NATIVE_SWITCH_READY);
 /** Conversation rows plus the tool calls and results between them; the page pairs them and shows each turn like a page turn. */
-function messagesFrom(rows,runtime){return rows.flatMap(row=>{
+function messagesFrom(rows,runtime,{fullTools=false}={}){return rows.flatMap(row=>{
  const at=row.timestamp||null,out=[],say=(role,content,extra)=>{const text=bodyText(content);if(text&&!switchSetup(role,text.trim()))out.push({role,text:text.slice(0,12000),timestamp:at,...extra});};
  if(runtime==='claude'){
   // Meta user rows are context Claude Code injects (image descriptions, command caveats), never something the user typed.
   const m=row.isSidechain===true||row.isMeta===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
   // A compaction summary is context Claude Code wrote, not a prompt: the page shows it as a folded system line.
   say(m.role,m.content,row.isCompactSummary===true?{compact:true}:undefined);
-  for(const b of Array.isArray(m.content)?m.content:[]){if(b?.type==='tool_use')out.push(call(b.id,b.name,b.input,at));else if(b?.type==='tool_result')out.push(result(b.tool_use_id,b.content,b.is_error,at));}
+  for(const b of Array.isArray(m.content)?m.content:[]){if(b?.type==='tool_use')out.push(call(b.id,b.name,b.input,at,fullTools));else if(b?.type==='tool_result')out.push(result(b.tool_use_id,b.content,b.is_error,at,fullTools));}
  }else if(runtime==='codex'){
   if(row.type!=='response_item')return [];const p=row.payload||{};
   if(p.type==='message'){if(['user','assistant'].includes(p.role))say(p.role,p.content);}
-  else if(['function_call','custom_tool_call','local_shell_call'].includes(p.type))out.push(call(p.call_id||p.id,p.name||(p.type==='local_shell_call'?'shell':p.type),codexInput(p),at));
-  else if(['function_call_output','custom_tool_call_output','local_shell_call_output'].includes(p.type))out.push(result(p.call_id,p.output,false,at));
+  else if(['function_call','custom_tool_call','local_shell_call'].includes(p.type))out.push(call(p.call_id||p.id,p.name||(p.type==='local_shell_call'?'shell':p.type),fullTools?(p.type==='custom_tool_call'?p.input:p.type==='local_shell_call'?p.action:p.arguments):codexInput(p),at,fullTools));
+  else if(['function_call_output','custom_tool_call_output','local_shell_call_output'].includes(p.type))out.push(result(p.call_id,p.output,false,at,fullTools));
  }else if(runtime==='grok'){
-  if(row.type==='tool_result')out.push(result(row.tool_call_id,row.content,false,at));
-  else if(['user','assistant'].includes(row.type)){say(row.type,row.content);for(const c of Array.isArray(row.tool_calls)?row.tool_calls:[])out.push(call(c.id,c.name||c.function?.name,c.arguments??c.function?.arguments,at));}
+  if(row.type==='tool_result')out.push(result(row.tool_call_id,row.content,false,at,fullTools));
+  else if(['user','assistant'].includes(row.type)){say(row.type,row.content);for(const c of Array.isArray(row.tool_calls)?row.tool_calls:[])out.push(call(c.id,c.name||c.function?.name,c.arguments??c.function?.arguments,at,fullTools));}
  }
  return out;
 });}
@@ -219,6 +220,59 @@ export async function listNativeSessions(runtime,{env=process.env,limit=100,scop
  */
 export const HISTORY_PAGE=Object.freeze({prompts:45,bytes:786432,window:6291456,scan:12582912,line:33554432,lookback:33554432,lookbackChunk:1048576});
 
+const historyHash=value=>createHash('sha256').update(value).digest('hex');
+const historyKey=(runtime,id,file,info)=>historyHash(JSON.stringify([runtime,id,file.path,info.dev,info.ino,info.birthtimeMs]));
+/** Preserve lightweight classification without shipping commands, edits or outputs in collapsed history. */
+function previewTool(row,detailRef){
+ const {input,output,...small}=row;
+ if(row.role==='tool_result')return {...small,detailRef,...(row.failed?{errorSummary:String(output||'').slice(0,160)}:{})};
+ const step=classifyStep({type:'tool_use',id:row.callId,name:row.name,input,status:'completed'},'succeeded');
+ const toolSummary={kind:step.kind,name:row.name,files:step.files||[]};
+ for(const k of ['added','removed'])if(Number.isFinite(step[k]))toolSummary[k]=step[k];
+ for(const [k,max]of [['path',1024],['command',120],['description',120],['query',120],['url',200]])if(typeof step[k]==='string')toolSummary[k]=step[k].slice(0,max);
+ return {...small,detailRef,toolSummary};
+}
+const toolRecordHash=(key,header,digest)=>createHash('sha256').update(key).update(header).update(digest).digest();
+/** Fixed-size opaque references avoid repeating file identities in hundreds of summary rows. */
+function toolReference(key,start,length,index,digest){
+ const token=Buffer.alloc(49);token[0]=1;token.writeBigUInt64BE(BigInt(start),1);token.writeUInt32BE(length,9);token.writeUInt32BE(index,13);
+ toolRecordHash(key,token.subarray(0,17),digest).copy(token,17);return token.toString('base64url');
+}
+/** References bind one parsed tool to its exact JSONL record; offsets never accept a caller's file path. */
+function pageRows(raw,runtime,id,start,key,toolPreview){
+ const found=messagesFrom(jsonLines(raw.toString('utf8')),runtime);
+ const digest=toolPreview?createHash('sha256').update(raw).digest():null;
+ return found.map((row,index)=>{
+  const located={...row,id:`${id}:${start}${index?`:${index}`:''}`,offset:start};
+  if(!toolPreview||!['tool_call','tool_result'].includes(row.role))return located;
+  const detailRef=toolReference(key,start,raw.length,index,digest);
+  return previewTool(located,detailRef);
+ });
+}
+
+/** Read one authenticated history record and return a bounded text chunk; appends are safe, rewrites are rejected. */
+export async function readNativeToolDetail(runtime,id,{env=process.env,record=null,ref,offset=0}={}){
+ if(!idPattern.test(id||'')||typeof ref!=='string'||ref.length>2048||!Number.isSafeInteger(offset)||offset<0)throw Error('Invalid native tool detail reference');
+ const encoded=Buffer.from(ref,'base64url');if(encoded.length!==49||encoded[0]!==1)throw Error('Invalid native tool detail reference');
+ const token={start:Number(encoded.readBigUInt64BE(1)),length:encoded.readUInt32BE(9),index:encoded.readUInt32BE(13)};
+ if(!Number.isSafeInteger(token.start)||token.start<0||token.length<1||token.length>HISTORY_PAGE.line)throw Error('Invalid native tool detail reference');
+ const file=await registeredFile(runtime,id,env,record);if(!file)throw Error('Registered native session history is unavailable; no external histories were scanned');
+ if(!inside(await realpath(file.root),await realpath(file.path)))throw Error('History outside CLI directory');
+ const h=await open(file.path,constants.O_RDONLY|constants.O_NOFOLLOW);
+ try{
+  const info=await h.stat();if(!info.isFile()||token.start+token.length>info.size)throw Error('Native history changed; refresh history before opening tool details.');
+  const bytes=Buffer.alloc(token.length),read=await h.read(bytes,0,bytes.length,token.start);
+  const after=await stat(file.path),digest=createHash('sha256').update(bytes).digest();
+  if(read.bytesRead!==bytes.length||!toolRecordHash(historyKey(runtime,id,file,info),encoded.subarray(0,17),digest).equals(encoded.subarray(17))||after.dev!==info.dev||after.ino!==info.ino)throw Error('Native history changed; refresh history before opening tool details.');
+  const row=messagesFrom(jsonLines(bytes.toString('utf8')),runtime,{fullTools:true})[token.index];
+  if(!row||!['tool_call','tool_result'].includes(row.role))throw Error('Invalid native tool detail reference');
+  const text=row.role==='tool_call'?JSON.stringify({name:row.name,input:row.input},null,2):row.output;
+  if(offset>text.length)throw Error('Invalid native tool detail offset');
+  const end=Math.min(text.length,offset+16384);
+  return {text:text.slice(offset,end),offset,nextOffset:end<text.length?end:null,totalChars:text.length,role:row.role,callId:row.callId};
+ }finally{await h.close();}
+}
+
 /** Whether the buffer holds at least one complete line: a newline before the (possibly newline-terminated) last line. */
 const hasCompleteLine=buffer=>{let end=buffer.length;while(end>0&&[10,13].includes(buffer[end-1]))end--;return end===0||buffer.lastIndexOf(10,end-1)>=0;};
 /**
@@ -283,12 +337,12 @@ async function lineStartAt(h,offset,budget){
 }
 /** Read backwards at line boundaries, pinning the original tail while a live CLI appends.
  * Cursors select offsets only inside this exact vendor file; each page has bounded I/O and wire size. */
-async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{delta=false}={}){
+async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{delta=false,toolPreview=false}={}){
  if(!inside(await realpath(file.root),await realpath(file.path)))throw Error('History outside CLI directory');
  const h=await open(file.path,constants.O_RDONLY|constants.O_NOFOLLOW),hash=value=>createHash('sha256').update(value).digest('hex');
  try{
   const info=await h.stat();if(!info.isFile())throw Error('Not a history file');
-  const key=hash(JSON.stringify([runtime,id,file.path,info.dev,info.ino,info.birthtimeMs]));
+  const key=historyKey(runtime,id,file,info);
   let prior=null,deltaFallback=false;
   const token=cursor||snapshot;if(cursor&&snapshot)throw Error('Invalid native history cursor');
   if(token){try{if(typeof token!=='string'||token.length>2048)throw Error();prior=JSON.parse(Buffer.from(token,'base64url'));if(!prior||typeof prior!=='object'||Array.isArray(prior))throw Error();}catch{throw Error('Invalid native history cursor');}}
@@ -308,14 +362,15 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{
     const buffer=Buffer.alloc(to-start);if(buffer.length)await h.read(buffer,0,buffer.length,start);
     for(let pos=0;pos<buffer.length&&weight<=limits.bytes;){
      const lf=buffer.indexOf(10,pos),lineEnd=lf<0?buffer.length:lf,parsed=jsonLines(buffer.subarray(pos,lineEnd).toString('utf8'));rows.push(...parsed);
-     const found=messagesFrom(parsed,runtime).map((m,index)=>({...m,id:`${id}:${start+pos}${index?`:${index}`:''}`,offset:start+pos}));
+     let recordEnd=lineEnd;while(recordEnd>pos&&buffer[recordEnd-1]===13)recordEnd--;
+     const found=pageRows(buffer.subarray(pos,recordEnd),runtime,id,start+pos,key,toolPreview);
      weight+=Buffer.byteLength(JSON.stringify(found));messages.push(...found);pos=lineEnd+1;
     }
    }
    if(start!==null&&weight<=limits.bytes){
     const tailNow=await tailAt(to),after=await stat(file.path);
     if(after.dev!==info.dev||after.ino!==info.ino||after.size<to)throw Error('Native history changed; reopen the session to read it again.');
-    return {messages,historyPage:1,delta:true,historySnapshot:Buffer.from(JSON.stringify({v:1,key,size:to,end:to,tail:tailNow})).toString('base64url'),
+    return {messages,historyPage:1,...(toolPreview?{toolPreview:1}:{}),delta:true,historySnapshot:Buffer.from(JSON.stringify({v:1,key,size:to,end:to,tail:tailNow})).toString('base64url'),
      ...(rows.length?{sessionConfiguration:sessionConfiguration(rows,runtime)}:{})};
    }
    deltaFallback=true;
@@ -333,11 +388,11 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{
     if(!lineEnd){next=start;break;}
     const lf=buffer.lastIndexOf(10,lineEnd-1),lineStart=lf+1;
     if(lf<0&&start>0)break; // Retry this incomplete leading line from its end on the next page.
-    const found=messagesFrom(jsonLines(buffer.subarray(lineStart,lineEnd).toString('utf8')),runtime).map((m,index)=>({...m,id:`${id}:${start+lineStart}${index?`:${index}`:''}`,offset:start+lineStart}));
+    const found=pageRows(buffer.subarray(lineStart,lineEnd),runtime,id,start+lineStart,key,toolPreview);
     const weight=Buffer.byteLength(JSON.stringify(found));
     // Pages are sized by prompts, not by tool rows, so a turn with many tool calls still reads as one page.
     if(found.length&&(prompts>=limits.prompts||bytes+weight>limits.bytes))break;
-    messages.unshift(...found);bytes+=weight;prompts+=found.filter(m=>m.role==='user').length;next=start+lineStart;pos=Math.max(0,lf);
+    messages.unshift(...found);bytes+=weight;prompts+=found.filter(m=>m.role==='user'&&(!toolPreview||isHistoryPrompt(m.text))).length;next=start+lineStart;pos=Math.max(0,lf);
    }
    if(next===windowEnd)throw Error('A native history record is too large to preview; the original history is unchanged.');
   }
@@ -347,18 +402,18 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{
   const turnStartedAt=midTurn?await promptBefore(h,runtime,next,limits,{key,mark:tailAt}):null;
   const after=await stat(file.path);if(after.dev!==info.dev||after.ino!==info.ino||after.size<size)throw Error('Native history changed; reopen the session to read it again.');
   const encode=offset=>Buffer.from(JSON.stringify({v:1,key,size,end:offset,tail})).toString('base64url');
-  return {messages,historyPage:1,historySnapshot:encode(size),...(deltaFallback?{deltaFallback:true}:{}),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,...(turnStartedAt?{turnStartedAt}:{}),
+  return {messages,historyPage:1,...(toolPreview?{toolPreview:1}:{}),historySnapshot:encode(size),...(deltaFallback?{deltaFallback:true}:{}),hasMore:next>0,nextCursor:next>0?encode(next):null,partial:next>0,...(turnStartedAt?{turnStartedAt}:{}),
    ...(!messages.length&&next>0?{notice:'No displayable messages in this portion. Earlier history remains; click Load older history to continue.'}:{}),
    ...(!cursor?{sessionConfiguration:configuration||sessionConfiguration([],runtime)}:{})};
  }finally{await h.close();}
 }
 
 /** Resume and preview resolve an exact native ID on the selected device, never a filename from the client. */
-export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null,delta=false,pageLimits=HISTORY_PAGE}={}){
+export async function readNativeSession(runtime,id,{env=process.env,record=null,historyPage:paged=false,cursor=null,snapshot=null,delta=false,toolPreview=false,pageLimits=HISTORY_PAGE}={}){
  if(!idPattern.test(id||''))throw Error('Invalid native session ID');
  const file=await registeredFile(runtime,id,env,record);if(!file)throw Error('Registered native session history is unavailable; no external histories were scanned');
  const info=await describe(runtime,file);if(!info.previewAvailable)return {...info,messages:[],notice:'This CLI history format has no text preview. Continue in the native terminal.'};
- if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot,pageLimits,{delta:Boolean(snapshot&&delta)})};
+ if(paged)return {...info,...await historyPage(file,runtime,id,cursor,snapshot,toolPreview?{...pageLimits,prompts:Math.min(15,pageLimits.prompts)}:pageLimits,{delta:Boolean(snapshot&&delta),toolPreview})};
  const window=await readWindow(file.path,file.root,true,524288),rows=jsonLines(window.text),messages=messagesFrom(rows,runtime);
  const texts=messages.filter(m=>m.role==='user'||m.role==='assistant'),from=texts.length>80?messages.indexOf(texts.at(-80)):0;
  return {...info,messages:messages.slice(from),sessionConfiguration:sessionConfiguration(rows,runtime),partial:window.partial||texts.length>80};
