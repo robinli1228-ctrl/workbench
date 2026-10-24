@@ -44,6 +44,11 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
  const inflight=new Map();
  /** Stops only the target's own verified processes, through the ordinary terminal stop. */
  const stopTarget=op=>query('terminal_stop',{id:op.leaseId,nodeId,projectId:`native-tui:${op.leaseId}`});
+ // Status checks (Home polls, the deadline timer, a reconnect) and a cancel run one at a time per switch: each reads the
+ // saved state afresh, so none can save over what another just settled.
+ const queues=new Map();
+ const serial=(id,fn)=>{const run=(queues.get(id)||Promise.resolve()).catch(()=>{}).then(fn);queues.set(id,run);void run.finally(()=>{if(queues.get(id)===run)queues.delete(id);}).catch(()=>{});return run;};
+ const current=op=>db.get('workerNativeAgentSwitches',op.id)||op;
  const view=op=>({operationId:op.id,stage:op.stage,workspace:op.workspace,target:op.target,contextId:op.context?.id,contextHash:op.context?.hash,folderGrant:op.folderGrant||null,error:op.error||null,settled:op.stage==='failed'});
  const save=(op,patch)=>db.put('workerNativeAgentSwitches',{...op,...patch,updatedAt:new Date().toISOString()});
  const fail=(op,error)=>{if(op.grantAttempted)cancelGrant(op);return save(op,{stage:'failed',error});};
@@ -66,28 +71,30 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
   assertNativeSwitchAccess(db,{...input.source,workspace,claimId});
   return {workspace};
  }
- async function status(op,input){
-  // A cancel or the deadline may have settled it while a caller held an older copy.
-  op=db.get('workerNativeAgentSwitches',op.id)||op;
+ function status(op,input){return serial(op.id,()=>checkStatus(current(op),input));}
+ async function checkStatus(op,input){
   if(op.stage==='ready'){
    if(input.commit){if(!same(input.target,op.target)||input.target.entryId!==op.target.entryId)throw Error('Switch commit identity changed');op=save(op,{published:true});}
    return view(op);
   }
   if(op.stage==='failed')return view(op);
   const lease=db.get('terminalSessions',op.leaseId);
+  // A switch from before deadlines were recorded counts from its last update.
+  const late=!inflight.has(op.id)&&Date.now()-Date.parse(op.startRequestedAt||op.updatedAt||0)>=prepareMs,timedOut=`Target Agent did not start within ${Math.round(prepareMs/60000)} minutes; it was stopped`;
   if(!lease){
    // After restart no preparation can continue; the persisted start marker distinguishes an unstarted intent from an unknown launch.
    if(!inflight.has(op.id)&&!op.startRequested)return view(fail(op,'Preparation interrupted before target launch'));
-   return view(op);
+   // No lease means no process was registered for it, so nothing is left running once its deadline has passed.
+   return view(late?fail(op,timedOut):op);
   }
-  const proof=check(lease);
-  if(proof.processState!=='released'){
-   if(!op.startRequestedAt||Date.now()-Date.parse(op.startRequestedAt)<prepareMs)return view(op);
-   try{await stopTarget(op);}catch(error){return view(save(op,{error:error.message}));}
-   return view(fail(op,`Target Agent did not start within ${Math.round(prepareMs/60000)} minutes; it was stopped`));
+  let stopped=false;
+  if(check(lease).processState!=='released'){
+   if(!late)return view(op);
+   try{await stopTarget(op);stopped=true;}catch(error){return view(save(current(op),{error:error.message}));}
   }
-  const entry=db.get('nativeCatalogEntries',op.leaseId);
-  if(lease.exitCode!==0||!entry?.sessionId)return view(fail(op,lease.helloError||'Target Agent did not create a native history'));
+  // A target that finished just as its deadline passed still counts: the stop found nothing to signal.
+  const exited=db.get('terminalSessions',op.leaseId)||lease,entry=db.get('nativeCatalogEntries',op.leaseId);
+  if(exited.exitCode!==0||!entry?.sessionId)return view(fail(op,stopped?timedOut:exited.helloError||'Target Agent did not create a native history'));
   const context=op.context||await makeContext({db,conversation:{id:op.conversationId,workspace:op.workspace},segments:op.segments,recentMessages:op.recentMessages||[],dataDir:data});
   return view(save(op,{stage:'ready',context,target:{runtime:op.targetRuntime,sessionId:entry.sessionId,entryId:entry.id}}));
  }
@@ -99,11 +106,12 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
   if(action==='native_agent_switch_release'){await preflight(input);await releaseIdle(input.source);return {released:true};}
   if(action==='native_agent_switch_status')return op?status(op,input):{stage:'missing',workspace:input.workspace};
   if(action==='native_agent_switch_abort'){
-   if(!op)return view(save({id:input.operationId,...input,stage:'failed',published:false},{error:'Preparation cancelled before receipt'}));const lease=db.get('terminalSessions',op.leaseId);
-   if(op.published)throw Error('Committed switch cannot be aborted');
-   // A person's cancel stops a target that is still starting; a plain abort never signals a process.
-   if(lease&&check(lease).processState!=='released'){if(!input.stop)throw Error('Target process exit is not confirmed');await stopTarget(op);}
-   return view(fail(op,'Preparation cancelled'));
+   if(!op)return view(save({id:input.operationId,...input,stage:'failed',published:false},{error:'Preparation cancelled before receipt'}));
+   return serial(op.id,async()=>{op=current(op);const lease=db.get('terminalSessions',op.leaseId);
+    if(op.published)throw Error('Committed switch cannot be aborted');
+    // A person's cancel stops a target that is still starting; a plain abort never signals a process.
+    if(lease&&check(lease).processState!=='released'){if(!input.stop)throw Error('Target process exit is not confirmed');await stopTarget(op);}
+    return view(fail(current(op),'Preparation cancelled'));});
   }
   if(action!=='native_agent_switch_prepare')throw Error('Invalid Agent switch action');
   if(inflight.has(input.operationId))return inflight.get(input.operationId);
@@ -129,11 +137,12 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
     const timer=setTimeout(()=>{const current=db.get('workerNativeAgentSwitches',op.id);if(current&&!['ready','failed'].includes(current.stage))void status(current,input).catch(()=>{});},prepareMs+1000);timer.unref?.();
     return status(op,input);
    }catch(error){
-    const lease=db.get('terminalSessions',op.leaseId);
+    const lease=db.get('terminalSessions',op.leaseId);op=current(op);
+    if(['ready','failed'].includes(op.stage))return view(op);
     if(!lease&&!op.startRequested)return view(fail(op,error.message));
     // Release only through the existing identity check; this never signals an active or unknown process.
-    try{await query('terminal_release',{id:op.leaseId});return view(fail(op,error.message));}catch{}
-    return view(save(op,{error:error.message}));
+    try{await query('terminal_release',{id:op.leaseId});op=current(op);return view(['ready','failed'].includes(op.stage)?op:fail(op,error.message));}catch{}
+    return view(save(current(op),{error:error.message}));
    }
   })().finally(()=>inflight.delete(input.operationId));inflight.set(input.operationId,promise);return promise;
  }

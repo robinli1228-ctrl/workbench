@@ -14,7 +14,7 @@ const { createWorkerNativeAgentSwitch } = await load('native-agent-switch-worker
 const { nativeSettingsKey } = await load('native-turns.mjs');
 const { Store } = await load('store.mjs');
 const { FolderAccess } = await load('folder-access.mjs');
-const { readNativeSession, NATIVE_SWITCH_HELLO } = await load('native-sessions.mjs');
+const { readNativeSession, NATIVE_SWITCH_HELLO, NATIVE_SWITCH_READY } = await load('native-sessions.mjs');
 const { createNativeAgentContext } = await load('native-agent-context.mjs');
 
 const SOURCE = '0f3a3b2c-1111-4222-8333-444444444444', TARGET = '1f3a3b2c-1111-4222-8333-444444444444';
@@ -76,12 +76,12 @@ test('a cancel waits for the step in flight, then the Worker stops the target an
   assert.equal(conversation.segments.length, 1);
 });
 
-function worker(t, { check, prepareMs = 60000 }) {
+function worker(t, { check, prepareMs = 60000, makeContext, stop = async () => ({}) }) {
   const dir = mkdtempSync(join(tmpdir(), 'wb-switch-worker-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const db = new Store(join(dir, 'worker.sqlite')), calls = [];
   const handler = createWorkerNativeAgentSwitch({ db, nodeId: 'n1', data: dir, projectRoot: async p => p, runtimes: () => [], isPaused: () => false, sourceBusy: () => false,
-    query: async (action, path) => { calls.push({ action, path }); return {}; }, check, prepareMs });
+    query: async (action, path) => { calls.push({ action, path }); return action === 'terminal_stop' ? stop(db, path) : {}; }, check, prepareMs, ...(makeContext ? { makeContext } : {}) });
   const input = { operationId: crypto.randomUUID(), conversationId: 'c1', source: { runtime: 'claude', sessionId: SOURCE }, targetRuntime: 'codex', workspace: '/srv/work/demo' };
   db.put('terminalSessions', { id: input.operationId, nodeId: 'n1', projectId: `native-tui:${input.operationId}`, status: 'active' });
   const save = patch => db.put('workerNativeAgentSwitches', { id: input.operationId, ...input, leaseId: input.operationId, stage: 'preparing', published: false, startRequested: true, ...patch });
@@ -128,17 +128,48 @@ test('the message that creates a switch session is not shown, and a handoff name
   const workspace = '/srv/work/demo', folder = join(dir, 'projects', workspace.replace(/[^a-zA-Z0-9]/g, '-'));
   mkdirSync(folder, { recursive: true });
   const rows = [{ type: 'user', uuid: 'u1', timestamp: '2026-10-24T01:00:00.000Z', cwd: workspace, message: { role: 'user', content: NATIVE_SWITCH_HELLO } },
-    { type: 'assistant', uuid: 'a1', timestamp: '2026-10-24T01:00:01.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'READY' }] } },
-    { type: 'user', uuid: 'u2', timestamp: '2026-10-24T01:01:00.000Z', cwd: workspace, message: { role: 'user', content: 'fix the build' } }];
+    { type: 'assistant', uuid: 'a1', timestamp: '2026-10-24T01:00:01.000Z', message: { role: 'assistant', content: [{ type: 'text', text: NATIVE_SWITCH_READY }] } },
+    { type: 'user', uuid: 'u2', timestamp: '2026-10-24T01:01:00.000Z', cwd: workspace, message: { role: 'user', content: 'fix the build' } },
+    { type: 'assistant', uuid: 'a2', timestamp: '2026-10-24T01:01:05.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'READY' }] } }];
   writeFileSync(join(folder, `${TARGET}.jsonl`), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
   const env = { HOME: dir, CLAUDE_CONFIG_DIR: dir }, record = { id: TARGET, runtime: 'claude', workspace };
   for (const options of [{}, { historyPage: true }]) {
     const page = await readNativeSession('claude', TARGET, { env, record, ...options });
-    assert.deepEqual(page.messages.filter(m => m.role === 'user').map(m => m.text), ['fix the build']);
+    assert.deepEqual(page.messages.map(m => [m.role, m.text]), [['user', 'fix the build'], ['assistant', 'READY']], 'only the fixed setup exchange is hidden');
   }
   const prior = process.env.HOME; process.env.HOME = dir; t.after(() => { process.env.HOME = prior; });
   const context = await createNativeAgentContext({ conversation: { id: 'c1', workspace }, segments: [], dataDir: join(dir, 'data'), readNativeSession: async () => ({ messages: [] }) });
   const line = context.excerpt.split('\n').find(l => l.startsWith('Earlier records'));
   assert.match(line, /"\$HOME"\/'data\/native-agent-context\//);
   assert.equal(line.includes(dir), false, 'the home folder, and so the user name, is not in the handoff');
+});
+
+test('a cancel while a status check is building the handoff is not undone by that check', async t => {
+  let build;const built = new Promise(r => { build = r; });
+  let state = 'active';
+  const { db, handler, input, save } = worker(t, { check: () => ({ processState: state }), makeContext: () => built });
+  save({ startRequestedAt: new Date().toISOString() });
+  state = 'released';
+  db.put('terminalSessions', { ...db.get('terminalSessions', input.operationId), exitCode: 0 });
+  db.put('nativeCatalogEntries', { id: input.operationId, sessionId: TARGET });
+  const checking = handler.handle('native_agent_switch_status', input);
+  await tick();
+  const cancelling = handler.handle('native_agent_switch_abort', { ...input, stop: true });
+  build({ id: 'ctx', hash: 'h', excerpt: '' });
+  assert.equal((await checking).stage, 'ready');
+  assert.equal((await cancelling).stage, 'failed', 'the cancel runs after the check and wins');
+  assert.equal(db.get('workerNativeAgentSwitches', input.operationId).stage, 'failed');
+});
+
+test('a target that finishes just as its deadline passes still counts', async t => {
+  let state = 'active';
+  const { db, handler, input, save } = worker(t, { check: () => ({ processState: state }),
+    makeContext: async () => ({ id: 'ctx', hash: 'h', excerpt: '' }),
+    // The stop finds the target already gone: it exited with its session created.
+    stop: async (store, path) => { state = 'released'; store.put('terminalSessions', { ...store.get('terminalSessions', path.id), exitCode: 0 }); return { released: true, forced: false }; } });
+  save({ startRequestedAt: new Date(Date.now() - 120000).toISOString() });
+  db.put('nativeCatalogEntries', { id: input.operationId, sessionId: TARGET });
+  const view = await handler.handle('native_agent_switch_status', input);
+  assert.equal(view.stage, 'ready');
+  assert.equal(view.target.sessionId, TARGET);
 });

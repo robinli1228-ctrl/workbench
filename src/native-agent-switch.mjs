@@ -59,7 +59,7 @@ export class NativeAgentSwitches{
  /** A person may give up a switch that has not committed. It waits for the step in flight, so a cancel never races a commit;
   * the Worker then stops a target that is still starting and the conversation keeps its current Agent. */
  async cancel(nodeId,id){
-  const op=this.db.get('nativeAgentSwitches',id);if(!op||op.nodeId!==nodeId)throw Error('Agent switch not found');
+  const op=this.db.get('nativeAgentSwitches',id);if(!op||op.nodeId!==nodeId)throw Object.assign(Error('Agent switch not found'),{code:'agent_switch_not_found'});
   if(finished(op))return this.view(op);
   if(!this.online(nodeId))throw Error('Device is offline');
   const prior=this.inflight.get(id);
@@ -67,9 +67,9 @@ export class NativeAgentSwitches{
    return this.accept(current,await this.query(current,'abort',{stop:true}));})().finally(()=>{if(this.inflight.get(id)===promise)this.inflight.delete(id);});
   this.inflight.set(id,promise);return promise;
  }
- /** A Worker that connects again gets every commit acknowledgement it missed and unfinished switches move on, so a lost reply
-  * never leaves the folder locked until someone reopens the page. */
- resume(nodeId){for(const op of this.db.list('nativeAgentSwitches'))if(op.nodeId===nodeId&&(!finished(op)||op.stage==='committed'&&!op.published))void this.get(nodeId,op.id).catch(()=>{});}
+ /** A Worker that connects again gets every commit acknowledgement it missed, and a switch already handed to it is settled,
+  * so a lost reply never leaves the folder locked until someone reopens the page. Earlier stages wait for the page. */
+ resume(nodeId){for(const op of this.db.list('nativeAgentSwitches'))if(op.nodeId===nodeId&&(['preparing','reconciling'].includes(op.stage)||op.stage==='committed'&&!op.published))void this.get(nodeId,op.id).catch(()=>{});}
  payload(op){const c=this.db.get('nativeConversations',op.conversationId),recentMessages=[];let bytes=0;
   // Binary histories cannot supply text. Keep bounded original Home receipts as a labelled fallback, not a summary.
   for(const segment of c.segments.slice(-4).reverse())for(const turn of nativeTurnRows(this.db,{nodeId:op.nodeId,runtime:segment.runtime,sessionId:segment.sessionId,limit:16})){
