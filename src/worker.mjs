@@ -32,8 +32,8 @@ import {createWorkerNativeAgentSwitch,assertNativeSwitchAccess,nativeAgentSource
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
-import { inspectRuntimes, runtimeIssue, mergeRuntimeReports } from './runtime-probe.mjs';
-import {applyRuntimeQuota} from './runtime-quota.mjs';
+import { inspectRuntimes, runtimeIssue, mergeRuntimeReports, useQuotaIdentitySalt } from './runtime-probe.mjs';
+import {applyRuntimeQuota,quotaSignature} from './runtime-quota.mjs';
 import { writeHandoff } from './wb-tools.mjs';
 import {handoffReadPaths} from './handoff-paths.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
@@ -96,6 +96,7 @@ const organizerControllers = new Set();
 let capacity = validateCliCapacity(db.get('settings','cli-capacity')?.capacity??Number(process.env.WORKER_CONCURRENCY||2));
 let ws, paused = true, quitting = false, registered = false, readySent = false, reconnectCleanup,cliRecoveryEnabled=false,readToolsEnabled=false;
 const eventSent = new Map();
+useQuotaIdentitySalt((db.get('settings','quota-identity')||db.put('settings',{id:'quota-identity',salt:randomUUID()})).salt);
 let runtimes = await inspectRuntimes(), probing, runtimeFailures = {}, runtimeRetry = null, runtimeRetryDue = false;
 { const first = mergeRuntimeReports([], runtimes, {}); runtimes = first.runtimes; runtimeFailures = first.failures; if (first.retryMs) scheduleRuntimeRetry(first.retryMs); }
 // The first version is still in isolated acceptance testing; only adapters that are explicitly enabled and have version-tested evidence report the capability.
@@ -118,8 +119,14 @@ function scheduleRuntimeRetry(ms) {
 const send = m => { if (ws?.readyState === 1) ws.send(JSON.stringify(m)); };
 let quotaReportTimer=null;
 /** Coalesce passive device snapshots; reconnect registration carries the latest values without altering sample time. */
+const quotaSentAt={};
 function receiveRuntimeQuota(type,sample,quotaIdentity) {
+  const before=runtimes.find(r=>r.type===type);
   runtimes=applyRuntimeQuota(runtimes,type,sample,quotaIdentity);
+  const after=runtimes.find(r=>r.type===type);
+  // Codex repeats the same limits after every response: a changed value goes out at once, a refreshed sample time at most every five minutes.
+  if(after===before||quotaSignature(after)===quotaSignature(before)&&Date.now()-(quotaSentAt[type]||0)<300000)return;
+  quotaSentAt[type]=Date.now();
   if(!quotaReportTimer){quotaReportTimer=setTimeout(()=>{quotaReportTimer=null;send({type:'runtime_report',runtimes});},1000);quotaReportTimer.unref();}
 }
 const configurationQueries=new Map();

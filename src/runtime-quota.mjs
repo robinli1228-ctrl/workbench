@@ -42,13 +42,17 @@ export function normalizeRuntimeQuota(runtime,raw,now=Date.now()) {
 /** Merge racing probes and session samples per window; unknown identities cannot borrow an old account's quota. */
 export function mergeRuntimeQuota(previous,report,now=Date.now()) {
   if(!['claude','codex'].includes(report?.type))return report;
+  // A check that could not read the account (timeout, exited CLI) keeps the last account's samples, marked unconfirmed;
+  // only a definite sign-out or another account drops them, so one failed check no longer loses the quota for good.
+  if(report.authUnknown&&!report.quotaIdentity&&previous?.type===report.type&&previous.quotaIdentity)report={...report,quotaIdentity:previous.quotaIdentity,quotaUnconfirmed:true};
   const same=previous?.type===report.type&&report.quotaIdentity&&previous.quotaIdentity===report.quotaIdentity;
   const quota={};let latest=0;
   for(const key of WINDOWS) {
     for(const source of [same?previous:null,report]) {
       const w=source?.quotaSource==='session'?source.quota?.[key]:null,time=Date.parse(w?.checkedAt);
       const reset=Date.parse(w?.resetsAt);
-      if(!report.quotaIdentity||!w||!Number.isFinite(time)||time>now+60000||!Number.isFinite(reset)||typeof w.usedPercent!=='number'||!Number.isFinite(w.usedPercent)||w.usedPercent<0||typeof w.remainingPercent!=='number'||!Number.isFinite(w.remainingPercent))continue;
+      // A window past its own reset is unknown until a new sample arrives.
+      if(!report.quotaIdentity||!w||!Number.isFinite(time)||time>now+60000||!Number.isFinite(reset)||reset<=now||typeof w.usedPercent!=='number'||!Number.isFinite(w.usedPercent)||w.usedPercent<0||typeof w.remainingPercent!=='number'||!Number.isFinite(w.remainingPercent))continue;
       if(quota[key]&&Date.parse(quota[key].checkedAt)>=time)continue;
       quota[key]={usedPercent:w.usedPercent,remainingPercent:Math.max(0,100-w.usedPercent),resetsAt:new Date(reset).toISOString(),checkedAt:new Date(time).toISOString()};
     }
@@ -62,24 +66,37 @@ export function mergeRuntimeQuota(previous,report,now=Date.now()) {
   if(quota.credits)latest=Math.max(latest,Date.parse(quota.credits.checkedAt));
   if(quota.fiveHour||quota.weekly)quota.remainingPercent=quota.fiveHour?.remainingPercent??quota.weekly.remainingPercent;
   const incoming=report.quotaSource==='session'&&PARTS.some(key=>report.quota?.[key]&&Date.parse(report.quota[key].checkedAt)>=latest);
-  const invalidated=report.authReady===false||Boolean(same&&previous.quotaInvalidated&&!incoming)||report.quotaInvalidated===true;
-  const stale=!latest||invalidated||PARTS.some(key=>{const w=quota[key];return w&&(now-Date.parse(w.checkedAt)>600000||key!=='credits'&&Date.parse(w.resetsAt)<=now);});
+  const invalidated=report.authReady===false&&!report.authUnknown||Boolean(same&&previous.quotaInvalidated&&!incoming)||report.quotaInvalidated===true;
+  // Claude reports only when a whole percent changes, so a quiet hour is not staleness: a sample stays valid until its window resets.
+  const stale=!latest||invalidated||report.quotaUnconfirmed===true;
   return {...report,quota:latest?quota:null,quotaSource:'session',quotaCheckedAt:latest?new Date(latest).toISOString():null,quotaStatus:latest?'ok':'unavailable',quotaStale:stale,quotaInvalidated:invalidated};
 }
 
 /** Only an adapter bound at startup to this device's current account can update quota, never auth state. */
 export function applyRuntimeQuota(reports,type,sample,identity,now=Date.now()) {
   return reports.map(r=>{
-    if(r.type!==type||!identity||r.quotaIdentity!==identity||r.authReady===false)return r;
+    if(r.type!==type||!identity||r.quotaIdentity!==identity||r.authReady===false&&!r.authUnknown)return r;
     if(sample?.invalidated)return {...r,quotaIdentity:null,quotaInvalidated:true,quotaStale:true};
-    return mergeRuntimeQuota(r,{...r,...sample,quotaInvalidated:false},now);
+    // A live sample from the same account confirms it again after a check that could not read the account.
+    return mergeRuntimeQuota(r,{...r,...sample,quotaInvalidated:false,quotaUnconfirmed:false},now);
   });
 }
 
-/** Reuse Home's heartbeat timer to mark old snapshots, without changing sample timestamps or the browser UI. */
+/** Reuse Home's heartbeat timer: a window past its own reset becomes unknown, the others keep their samples and times. */
 export function expireRuntimeQuota(runtime,now=Date.now()) {
-  if(runtime?.quotaSource!=='session'||runtime.quotaStale)return runtime;
-  const windows=PARTS.map(key=>runtime.quota?.[key]&&{...runtime.quota[key],kind:key}).filter(Boolean);
-  return !windows.length||runtime.quotaInvalidated||runtime.authReady===false||windows.some(w=>!Number.isFinite(Date.parse(w.checkedAt))||now-Date.parse(w.checkedAt)>600000||w.kind!=='credits'&&(!Number.isFinite(Date.parse(w.resetsAt))||Date.parse(w.resetsAt)<=now))
-    ? {...runtime,quotaStale:true}:runtime;
+  if(runtime?.quotaSource!=='session')return runtime;
+  const quota=runtime.quota&&typeof runtime.quota==='object'?runtime.quota:{};
+  const expired=WINDOWS.filter(key=>quota[key]&&!(Date.parse(quota[key].resetsAt)>now));
+  const unusable=Boolean(runtime.quotaInvalidated||runtime.authReady===false&&!runtime.authUnknown);
+  if(!expired.length&&(runtime.quotaStale||!unusable&&PARTS.some(key=>quota[key])))return runtime;
+  const next={...quota};for(const key of expired)delete next[key];
+  if(next.fiveHour||next.weekly)next.remainingPercent=next.fiveHour?.remainingPercent??next.weekly.remainingPercent;else delete next.remainingPercent;
+  const left=PARTS.some(key=>next[key]);
+  return {...runtime,quota:left?next:null,quotaStatus:left?'ok':'unavailable',quotaStale:Boolean(runtime.quotaStale||unusable||!left)};
+}
+
+/** The values a page shows; a resend that changes only sample times compares equal. */
+export function quotaSignature(runtime) {
+  const q=runtime?.quota||{},w=key=>q[key]?[q[key].usedPercent,q[key].resetsAt]:null;
+  return JSON.stringify([runtime?.quotaIdentity||null,runtime?.quotaStale||false,runtime?.quotaInvalidated||false,w('fiveHour'),w('weekly'),q.credits?[q.credits.balance,q.credits.hasCredits,q.credits.unlimited]:null]);
 }

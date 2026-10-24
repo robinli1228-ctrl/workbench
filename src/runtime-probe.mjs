@@ -5,11 +5,15 @@ import {randomUUID,createHash} from 'node:crypto';
 import {mergeRuntimeQuota} from './runtime-quota.mjs';
 import { tr } from './i18n.mjs';
 const exec = promisify(execFile);
-const quotaIdentitySalt=randomUUID();
-/** Report an opaque identity scoped to this Worker lifetime, never an email, account ID or token. */
+let quotaIdentitySalt=randomUUID();
+/** The Worker keeps its salt in its database, so a restart keeps the same identity and Home keeps the saved quota. */
+export function useQuotaIdentitySalt(salt){if(typeof salt==='string'&&salt)quotaIdentitySalt=salt;}
+/** Report an opaque, salted identity, never an email, account ID or token. */
 function quotaIdentity(type,account) {
-  const id=account?.email||account?.emailAddress||account?.accountId;
-  return typeof id==='string'&&id?createHash('sha256').update(JSON.stringify([quotaIdentitySalt,type,id,account.organizationId||account.orgId||null])).digest('hex'):null;
+  const id=account?.email||account?.emailAddress||account?.accountId||account?.orgId||account?.organizationId;
+  // A token-only Claude login names no account; its sign-in method and config folder still identify one login on this device.
+  const key=typeof id==='string'&&id?id:type==='claude'&&account?.loggedIn===true&&typeof account.authMethod==='string'&&account.authMethod?`login:${account.authMethod}:${account.configDirectory||''}`:null;
+  return key?createHash('sha256').update(JSON.stringify([quotaIdentitySalt,type,key,account.organizationId||account.orgId||null])).digest('hex'):null;
 }
 
 /** A single no-inference probe: reads only the version, login state, and model catalog, and creates no Thread/Turn. */
@@ -59,7 +63,7 @@ export async function inspectCodex() {
   } catch (e) {
     // Once account/read has confirmed a missing login, a later transport error must not make the result look transient.
     if (result.authReady === false) result.reason = tr('runtimeProbe.runCodexLoginOnDevice');
-    else { result.reason = tr('runtimeProbe.checkCliOnDeviceThen', { message: e.message }); if (e.transient) result.transient = true; }
+    else { result.reason = tr('runtimeProbe.checkCliOnDeviceThen', { message: e.message }); if (e.transient) result.transient = true; if (result.authReady === undefined) result.authUnknown = true; }
   }
   finally { clearTimeout(timer); lines.close(); proc.stdin.end(); proc.kill(); }
   return result;
@@ -333,9 +337,14 @@ export async function inspectClaude() {
     }
   } catch (e) {
     const text = `${e.message || ''}\n${e.stdout || ''}\n${e.stderr || ''}`;
-    if (looksLoggedOut(text)) {
+    // Signed out, `auth status` exits 1 with its JSON still saying loggedIn false; that is a definite answer.
+    let signedOut = false;
+    try { const out = String(e.stdout || ''), start = out.indexOf('{'), end = out.lastIndexOf('}'); signedOut = start >= 0 && end > start && JSON.parse(out.slice(start, end + 1)).loggedIn === false; } catch {}
+    if (signedOut || looksLoggedOut(text)) {
       return { ...result, authReady: false, reason: tr('runtimeProbe.signInWithClaudeOn') };
     }
+    // A check that timed out or crashed does not know the account: it is retried, and the saved quota is kept meanwhile.
+    result.authUnknown = true; result.transient = true;
   }
   // A third-party Anthropic-compatible service declares its models explicitly on the device, to avoid showing MiMo as Opus by mistake.
   // Claude Code has no stable models subcommand; a positional argument would be treated as a prompt and consume quota.
@@ -366,6 +375,7 @@ export async function inspectClaude() {
   result.authReady = authReady;
   result.available = authReady && models.length > 0;
   result.reason = !result.installed ? result.reason
+    : result.authUnknown ? tr('runtimeProbe.checkCliOnDeviceThen2', { message: tr('runtimeProbe.cliStatusProbeTimedOut') })
     : !authReady ? tr('runtimeProbe.signInWithClaudeOn2')
     : !models.length ? tr('runtimeProbe.cliReturnedNoAvailableModels3')
     : '';
