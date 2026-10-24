@@ -63,7 +63,11 @@ export class NativeCliSession extends CliPrintSession {
   receive(message){
     if(message?.type==='rate_limit_event')return super.receive(message);
     if(this.questionsSupported&&message&&typeof message==='object'){
-      if(message.type==='control_response')return;
+      if(message.type==='control_response'){
+        // Claude could not withdraw the input (it already started, or this build cannot): stop the running turn instead.
+        if(this.withdrawing&&message.response?.request_id===this.withdrawing&&!(message.response.subtype==='success'&&message.response.response?.cancelled===true)){this.withdrawing=null;this.interrupt();}
+        return;
+      }
       if(message.type==='control_request')return this.control(message);
       if(message.type==='control_cancel_request'){if(this.question?.requestId===message.request_id){const {id}=this.question;this.question=null;this.emit('question_resolved',{id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});}return;}
     }
@@ -85,31 +89,38 @@ export class NativeCliSession extends CliPrintSession {
         return this.finish('failed',`Input not delivered: Claude ${message.state} this message before its echo`);
       }
       const own=this.awaitingEcho&&!this.done&&message.type==='command_lifecycle'&&!message.parent_tool_use_id&&message.command_uuid===this.inputUuid&&message.session_id===this.inputSessionId;
-      // Cancelled before its echo, it never reached the model: by our stop (cancel_queued) that is where the stop ends; otherwise
-      // the turn that took it died first (stdin inputs are not redelivered), so it ends undelivered instead of waiting forever.
+      if(own&&message.state==='started')this.inputStarted=true;
+      // Cancelled before its echo: if it never started, it never reached the model (our stop withdrew it, or the turn that was to
+      // take it died first; stdin inputs are not redelivered), so it ends undelivered. Once started it was taken into a turn
+      // that was aborted: it was delivered, and the turn ends as stopped or failed.
       if(own&&message.state==='cancelled'){
-        this.awaitingEcho=false;this.emit('status',{inputDeliveryState:'not_delivered'});
-        return this.stopping?this.finish('interrupted'):this.finish('failed','Input not delivered: Claude cancelled this message before starting it');
+        this.awaitingEcho=false;this.withdrawing=null;
+        this.emit('status',this.inputStarted?{inputDeliveryState:'accepted'}:{inputDeliveryState:'not_delivered',...(this.stopping?{}:{inputRejection:'cancelled'})});
+        return this.stopping?this.finish('interrupted'):this.finish('failed',this.inputStarted?'Claude cancelled the turn that took this message':'Input not delivered: Claude cancelled this message before starting it');
       }
       // A build that answers a local command without a replay still reports it started and completed; for a slash input only,
       // those are its start and its end.
-      if(own&&this.slashInput&&['started','completed'].includes(message.state)){this.awaitingEcho=false;this.emit('status',{inputDeliveryState:'accepted'});if(message.state==='completed')return this.finish('succeeded');return;}
+      if(own&&this.slashInput&&['started','completed'].includes(message.state)){this.awaitingEcho=false;this.emit('status',{inputDeliveryState:'accepted'});if(message.state==='completed')return this.finish('succeeded');this.carryLiveTasks();return;}
       // Claude echoes a stdin message (--replay-user-messages) when it starts on it. Until this turn's echo, what it says
       // answers something else it queued first (a background task's completion notice): that output and its result are not
       // this turn's, so they neither show in it nor end it.
       if(message.type==='user'&&message.isReplay){
         if(this.awaitingEcho&&message.uuid===this.inputUuid&&!message.parent_tool_use_id&&message.session_id===this.inputSessionId){this.awaitingEcho=false;this.emit('status',{inputDeliveryState:'accepted'});
           // Tasks started while it was still queued (by the notice answered first) hold this turn open too: list them now.
-          this.carryLiveTasks();}
+          this.carryLiveTasks();
+          // It started before the withdrawal reached Claude: stop it as a running turn.
+          if(this.withdrawing){this.withdrawing=null;this.interrupt();}}
         return;
       }
-      if(this.awaitingEcho&&!this.stopping&&message.type!=='system')return;
+      // While our input is being withdrawn, what Claude says (and its result) is the notice turn's, which keeps running.
+      if(this.awaitingEcho&&(!this.stopping||this.withdrawing)&&message.type!=='system')return;
     }
     // Native Claude interrupts a turn without killing its resident process; only its owner's result confirms that boundary.
     if(!this.done&&this.stopping&&!this.closing&&this.keepAlive&&this.runtime==='claude'&&message?.type==='result'&&!message.parent_tool_use_id)return this.finish('interrupted');
     // A Workbench control turn (/compact, /model, /effort) ends with its own result; tasks left by other turns are not its work.
-    const live=this.backgroundTasks;if(this.controlTurn&&message?.type==='result'&&!message.parent_tool_use_id)this.backgroundTasks=new Set();
-    this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;this.backgroundTasks=live;}
+    if(this.controlTurn&&message?.type==='result'&&!message.parent_tool_use_id){const live=this.backgroundTasks;this.backgroundTasks=new Set();
+      this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;this.backgroundTasks=live;}}
+    this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;}
   }
   /** Process-wide record of the live tasks (they outlive the turn that started them), so a later turn can show what it waits for. */
   track(m){
@@ -167,6 +178,7 @@ export class NativeCliSession extends CliPrintSession {
     this.slashInput=String(prompt).trimStart().startsWith('/');
     // Queued background notices are replayed too; UUID identity, not text, binds even repeated prompts to this input.
     if(this.awaitingEcho)message.uuid=this.inputUuid=randomUUID();else this.inputUuid=null;
+    this.inputStarted=false;this.withdrawing=null;
     this.inputSessionId=message.session_id;
     // Process-wide backgroundTasks still gates completion; this map only owns the current turn's visible tasks.
     this.tasks=new Map();
@@ -181,13 +193,16 @@ export class NativeCliSession extends CliPrintSession {
     this.stopping=true;
     if(this.question){const q=this.question;this.question=null;this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'Interrupted by the user.'}}});this.emit('question_resolved',{id:q.id});}
     if(this.keepAlive&&this.runtime==='claude'&&this.proc?.stdin?.writable){
-      // Before its echo the input still waits in Claude's queue; cancel_queued drops it, so it does not run unseen after the stop.
-      try{this.proc.stdin.write(`${JSON.stringify({type:'control_request',request_id:`interrupt-${Date.now()}`,request:{subtype:'interrupt',...(this.awaitingEcho?{cancel_queued:true}:{})}})}\n`);}catch{}
+      // Not yet started, the input still waits in Claude's queue: withdraw only it, so it does not run unseen after the stop and
+      // the turn Claude is running for something else (a task notice) goes on. Its 'cancelled' receipt ends the stop.
+      if(this.awaitingEcho&&this.inputUuid&&!this.inputStarted){this.withdrawing=`withdraw-${Date.now()}`;this.write({type:'control_request',request_id:this.withdrawing,request:{subtype:'cancel_async_message',message_uuid:this.inputUuid}});}
+      else this.interrupt();
       clearTimeout(this.interruptTimer);this.interruptTimer=setTimeout(()=>{if(!this.done)this.close();},10000);this.interruptTimer.unref?.();
       return;
     }
     this.close();
   }
+  interrupt(){this.write({type:'control_request',request_id:`interrupt-${Date.now()}`,request:{subtype:'interrupt'}});}
   finish(status,error){clearTimeout(this.interruptTimer);if(this.keepAlive&&this.stopping&&status!=='interrupted')return super.finish('interrupted');return super.finish(status,error);}
   /** After a finished resident turn (including an error result) the process stays; only close() or a live failure ends it. */
   shutdown(){if(this.keepAlive&&this.done&&!this.closing&&this.receiving)return;super.shutdown();}

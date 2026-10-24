@@ -45,7 +45,11 @@ test('a slash command also waits for its echo, or for its own started receipt wh
   r.session.receive({ type: 'command_lifecycle', command_uuid: 'other', state: 'started', session_id: SID });
   r.say('NOTICE');
   assert.equal(r.session.done, false, "another command's start is not this input's");
+  r.sys('task_started', { task_id: 'q1', task_type: 'local_agent', description: 'Queued work' });
+  r.sys('background_tasks_changed', { tasks: [{ task_id: 'q1' }] });
   r.session.receive({ type: 'command_lifecycle', command_uuid: uuid, state: 'started', session_id: SID });
+  assert.deepEqual(r.out.filter(e => e.type === 'task').map(e => [e.payload.id, e.payload.earlier]), [['q1', true]], 'started via its receipt, it lists what holds it open too');
+  r.sys('task_notification', { task_id: 'q1', status: 'completed' }); r.sys('background_tasks_changed', { tasks: [] });
   r.say('Set model');
   assert.equal(r.session.done, true);
   // A plain prompt is never settled by the started receipt alone: its own echo marks where its reply starts.
@@ -92,21 +96,45 @@ test('past 20 tasks the oldest finished rows leave first; a running one stays', 
   assert.equal(turn.tasks.at(-1).id, 's24');
 });
 
-test('a stop before the echo also cancels the queued input; its cancelled receipt is where the stop ends', () => {
+test('a stop before the echo withdraws only this input; the notice turn Claude is running goes on and its result is not this turn\'s', () => {
   const r = resident();
   const uuid = r.turn('hello');
   r.session.stop();
-  assert.equal(r.sent.at(-1).request.subtype, 'interrupt');
-  assert.equal(r.sent.at(-1).request.cancel_queued, true, 'the queued input is dropped, so it never runs unseen');
+  const req = r.sent.at(-1);
+  assert.deepEqual(req.request, { subtype: 'cancel_async_message', message_uuid: uuid }, 'no interrupt: the running notice turn is not ours');
+  r.say('NOTICE');
+  assert.equal(r.session.done, false, "the notice turn's result does not end the stop");
+  r.session.receive({ type: 'control_response', response: { subtype: 'success', request_id: req.request_id, response: { cancelled: true } } });
   r.lc(uuid, 'cancelled');
   assert.deepEqual(r.ended(), ['interrupted']);
   assert.deepEqual(r.delivery(), ['not_delivered']);
-  const next = r.turn('again'); r.echo(next);
-  r.session.stop();
-  assert.equal(r.sent.at(-1).request.cancel_queued, undefined, 'once it runs, only the turn is interrupted');
+  assert.equal(r.out.find(e => e.payload?.inputDeliveryState)?.payload.inputRejection, undefined, 'a stop is not a rejection');
+  assert.ok(!r.out.some(e => e.type === 'message' && /NOTICE/.test(e.payload.text || '')));
 });
 
-test('an input Claude cancels before its echo, without a stop, ends undelivered instead of waiting forever', () => {
+test('if Claude cannot withdraw the input, the stop falls back to interrupting the running turn', () => {
+  const r = resident();
+  r.turn('hello');
+  r.session.stop();
+  const req = r.sent.at(-1);
+  r.session.receive({ type: 'control_response', response: { subtype: 'success', request_id: req.request_id, response: { cancelled: false } } });
+  assert.deepEqual(r.sent.at(-1).request, { subtype: 'interrupt' });
+  r.say('aborted');
+  assert.deepEqual(r.ended(), ['interrupted']);
+  // The echo winning the race against the withdrawal also stops it as a running turn.
+  const s = resident(), uuid = s.turn('again');
+  s.session.stop(); s.echo(uuid);
+  assert.deepEqual(s.sent.at(-1).request, { subtype: 'interrupt' });
+  s.say('aborted');
+  assert.deepEqual(s.ended(), ['interrupted']);
+  assert.deepEqual(s.delivery(), ['accepted']);
+  // Once Claude reported it started, the stop interrupts directly.
+  const u = resident(), id = u.turn('third');
+  u.lc(id, 'started'); u.session.stop();
+  assert.deepEqual(u.sent.at(-1).request, { subtype: 'interrupt' });
+});
+
+test('an input Claude cancels before its echo, without a stop, ends undelivered as a per-input rejection; once started it counts as delivered', () => {
   const r = resident();
   const uuid = r.turn('hello');
   r.lc('other', 'cancelled');
@@ -114,7 +142,14 @@ test('an input Claude cancels before its echo, without a stop, ends undelivered 
   r.lc(uuid, 'cancelled');
   assert.equal(r.session.done, true);
   assert.deepEqual(r.ended(), ['failed']);
-  assert.deepEqual(r.delivery(), ['not_delivered']);
+  assert.equal(r.out.find(e => e.payload?.inputDeliveryState).payload.inputRejection, 'cancelled');
+  let turn = { id: 't', runtime: 'claude', status: 'running', events: [] };
+  turn = applyNativeTurnEvent(turn, { kind: 'status', inputDeliveryState: 'not_delivered', inputRejection: 'cancelled' });
+  assert.equal(turn.inputRejection, 'cancelled', 'Home keeps it, so two in a row are not taken for a CLI that cannot start');
+  const s = resident(), id = s.turn('hello');
+  s.lc(id, 'started'); s.lc(id, 'cancelled');
+  assert.deepEqual(s.ended(), ['failed']);
+  assert.deepEqual(s.delivery(), ['accepted'], 'taken into a turn that was aborted: it reached the model');
 });
 
 test('a slash input whose build gives no echo ends on its own completed receipt', () => {
@@ -179,4 +214,21 @@ test('a reused resident Claude still hosts permission prompts: the turn control 
   r.session.reuse({ emit: () => {}, control: 'model' });
   assert.equal(r.session.controlTurn, 'model');
   assert.equal(typeof r.session.control, 'function');
+});
+
+test("a one-shot Claude keeps the base class's background list (the control-turn override applies only to control results)", () => {
+  const session = new NativeCliSession({ cwd: tmpdir(), runtime: 'claude', keepAlive: false, resumeSessionId: SID, emit() {} });
+  session.receive({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'b1' }], session_id: SID });
+  assert.equal(session.backgroundTasks.size, 1);
+});
+
+test('a control turn is exactly its own command; it cannot carry /clear or another command', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'wb-native-control-'));
+  const db = new Store(join(dir, 'home.sqlite'));
+  t.after(() => { db.close(); rmSync(dir, { recursive: true, force: true }); });
+  const turns = new NativeTurnsHome({ db, send() {}, online: () => true, change() {}, assertIdle() {} });
+  const worker = { id: 'n1', capabilities: { nativeTurns: 3 } }, body = (n, control, text) => ({ runtime: 'claude', sessionId: SID, clientTurnId: `client-ctl-${n}`, control, text });
+  for (const [n, control, text] of [[1, 'model', '/clear'], [2, 'model', '/model x\n/clear'], [3, 'effort', '/model high'], [4, 'model', '/model']]) assert.throws(() => turns.create('n1', worker, body(n, control, text)), /Invalid control message/);
+  assert.doesNotThrow(() => turns.create('n1', worker, body(5, 'model', '/model haiku')));
+  assert.equal(turns.create('n1', worker, body(6, 'compact', '/clear')).prompt, '/compact', 'a compaction always sends /compact');
 });
