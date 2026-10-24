@@ -172,6 +172,8 @@ export class NativeTurnsHome{
   if(control!==null&&!CONTROLS.has(control))throw Error('Unsupported control');
   if(control==='compact'){if(!['claude','codex'].includes(runtime))throw Error('This CLI cannot compact its context here');text=runtime==='claude'?'/compact':'';if(attachmentIds?.length)throw Error('A compaction carries no attachments');}
   else if(typeof text!=='string'||(!text.trim()&&!attachmentIds?.length))throw Error('Enter a message');
+  // /clear (alias /reset, /new) gives the resident Claude another session ID, which this conversation can no longer follow.
+  if(runtime==='claude'&&control===null&&/^\/(clear|reset|new)(\s|$)/i.test(text.trimStart()))throw Error('Clearing the context starts another session; start a new session here instead');
   if(text.length>MAX_PROMPT)throw Error('Message is too long for a takeover turn');
   const prior=nativeTurnRows(this.db,{clientTurnId,limit:1})[0];
   if(prior){if(prior.nodeId!==nodeId||prior.runtime!==runtime||prior.sessionId!==sessionId||prior.prompt!==text||(prior.control||null)!==control||JSON.stringify((prior.attachments||[]).map(a=>a.id))!==JSON.stringify(attachmentIds||[]))throw Error('Takeover message ID was already used');return nativeTurnView(prior);}
