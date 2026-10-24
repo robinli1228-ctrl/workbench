@@ -54,7 +54,10 @@ const LEGACY_SUPERVISOR_DEFAULTS = new Set([
   '3d93b7e8d344da4e1fc565d50cfe541c7073e50238c07d809f705a8014dfb034',
   // Defaults before the supervisor stopped coding and started routing unaddressed messages by peers' state and balance.
   '55ab7467b3ebfd0d14e8e142155ae64b3798b61daad78d5cec5fa34a17e15c1e',
-  '8ab1ec3517d5e91083434ca363fb4a59a25153b2422af339a84d142674d9a137'
+  '8ab1ec3517d5e91083434ca363fb4a59a25153b2422af339a84d142674d9a137',
+  // Defaults before the supervisor took on the simplest tasks itself.
+  'fb1b0d4f6d221456decc6772b6a971ca37fb97981836b6967587bf706367b2d9',
+  '5c5a736260792f1eea3239614c4cdb1528aa3bd714bacabd15840495261fe156'
 ]);
 const LEGACY_PLATFORM_DEFAULTS = new Set([
   '4a7bd0d1a4bedbfd714d1493b7fd6c9a439bfec754a23f43d150a845ff249324',
@@ -69,7 +72,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   '1f60ca54f13ca8da234dd30bef95ba7b19f38d8e4f4b4dd0ab38e07bf9c44f3f',
   // Defaults before the four ask-the-user cases, roles choosing whom to @, and review/sync/error text moving to wb help.
   '4b0fb508e9184a7acb0f42f8a1ad72d48c2728c54335df5895fb46a4163782bf',
-  '1a1c7c92c460eb03cf2cd50d2e28f3f5d70f4bf57b6d5d4156089f1a71e70801'
+  '1a1c7c92c460eb03cf2cd50d2e28f3f5d70f4bf57b6d5d4156089f1a71e70801',
+  // Defaults before every @ had to be handled, reviews in turn, evidence-backed challenge and report only for assigned work.
+  'ab94b6b0f24365f002461752c06a195e7f65602e7c42ba2fb5fa17901f6f5185',
+  '425555463ecd6044365b7ecfec4f40ec07ad996d5587dba08191b2f2be4a5db4'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */
