@@ -392,7 +392,8 @@ export function roleNameQuota(quota, { stale = false } = {}) {
     const pct = Math.round(remainingPercent(bucket));
     const tone = quotaTone(pct, { weekly, resetsAt: bucket?.resetsAt });
     const windowClass = weekly ? 'is-weekly' : 'is-five-hour';
-    const mark = el('button', `role-quota-mark ${windowClass} is-${stale ? 'stale' : tone}`), getDetails = () => { const d = quotaDetails(kind, pct, bucket); return stale ? { ...d, remaining: `${d.remaining} · ${t('Not latest')}` } : d; }, details = getDetails();
+    const old = stale || bucket?.stale === true;
+    const mark = el('button', `role-quota-mark ${windowClass} is-${old ? 'stale' : tone}`), getDetails = () => { const d = quotaDetails(kind, pct, bucket); return old ? { ...d, remaining: `${d.remaining} · ${t('Not latest')}` } : d; }, details = getDetails();
     mark.type = 'button'; mark.setAttribute('aria-haspopup', 'dialog');
     mark.setAttribute('aria-label', `${details.remaining} · ${details.reset}`);
     bindQuotaDetails(mark, getDetails);

@@ -33,7 +33,7 @@ import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
 import { inspectRuntimes, runtimeIssue, mergeRuntimeReports, useQuotaIdentitySalt } from './runtime-probe.mjs';
-import {applyRuntimeQuota,quotaSignature,sessionQuotaIdentity} from './runtime-quota.mjs';
+import {applyRuntimeQuota,quotaSignature,sessionQuotaIdentity,sampleQuotaIdentity} from './runtime-quota.mjs';
 import { writeHandoff } from './wb-tools.mjs';
 import {handoffReadPaths} from './handoff-paths.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
@@ -122,7 +122,7 @@ let quotaReportTimer=null;
 const quotaSentAt={};
 function receiveRuntimeQuota(type,sample,quotaIdentity) {
   const before=runtimes.find(r=>r.type===type);
-  runtimes=applyRuntimeQuota(runtimes,type,sample,quotaIdentity);
+  runtimes=applyRuntimeQuota(runtimes,type,sample,sampleQuotaIdentity(quotaIdentity,before));
   const after=runtimes.find(r=>r.type===type);
   // Codex repeats the same limits after every response: a changed value goes out at once, a refreshed sample time at most every five minutes.
   if(after===before||quotaSignature(after)===quotaSignature(before)&&Date.now()-(quotaSentAt[type]||0)<300000)return;
