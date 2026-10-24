@@ -160,6 +160,9 @@ export class ExecutionPlans {
             this.db.put('executionPlans',{...plan,updatedAt:now()});changed=true;continue;
           }
           if(!requests.some(r=>r.status==='waiting_dependencies')) continue;
+          // Older saved plans predate submit's irreversible-stage ban. Block only undispatched work; an already-running
+          // stage must settle normally, without treating a successful CLI exit as permission to deploy or migrate.
+          if(stage.exclusive||stage.members.some(m=>exclusive.has(m.purpose)))throw new Error(tr('executionPlans.exclusiveStageOutsidePlan'));
           if(stage.status==='pending') {
             if(this.db.list('runs').some(r=>r.projectId===plan.projectId && !terminal.has(r.status))) continue;
             const nodes=[...new Set(plan.stages.flatMap(s=>s.members.map(m=>m.nodeId)))];

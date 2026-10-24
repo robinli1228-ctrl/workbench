@@ -614,3 +614,7 @@ The review-bound store filters before paging, summaries and input assembly, trav
 - Token statistics cover the CLI history that a device's local `ccusage` can recognize. They are not a vendor bill or the remaining account quota, and a device without local history shows 0. A single range covers at most 366 days.
 
 These limitations stay visible, and simulated events, fake online status or static cards are never used in place of real capabilities.
+
+### Group-call simplification compatibility
+
+Whole-task transfer moves ownership without making the recipient a child call. The receiver arranges review and returns the final reply. Role reminders and short wait IDs share the existing call infrastructure. Managed results use final replies instead of `wb report`; a successful execution is not a business acceptance verdict. New stage plans cannot contain migration, deployment or production operations. Before releasing waiting dependencies, the same restriction is checked on persisted older plans, including stages marked running before their requests were dispatched; already-running requests are not cancelled. A blocked irreversible step must be reviewed and assigned separately.

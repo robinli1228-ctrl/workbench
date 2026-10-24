@@ -370,3 +370,5 @@ Project status and planned work are tracked in the issue tracker.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Group-chat roles can transfer whole-task ownership with `wb call --kind transfer`. The receiver arranges its reviews and replies to the user; final replies replace `wb report`. Migration, deployment and production operations must be assigned separately after review, rather than automatically following a stage plan, including plans saved by older versions.

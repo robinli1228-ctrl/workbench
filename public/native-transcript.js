@@ -211,7 +211,14 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
    parts.push({role,text});
   }
   let call={};try{call=JSON.parse(parts.find(p=>p.role==='tool_call')?.text||'{}');}catch{call={};}
-  return classifyStep({type:'tool_use',id:step.id,name:call.name||step.name,input:call.input,output:parts.find(p=>p.role==='tool_result')?.text||'',is_error:step.failed,status:'completed'},'succeeded');
+  const full=classifyStep({type:'tool_use',id:step.id,name:call.name||step.name,input:call.input,output:parts.find(p=>p.role==='tool_result')?.text||'',is_error:step.failed,status:'completed'},'succeeded');
+  // Codex custom tools store raw scripts/patches instead of JSON arguments. Preserve the whole input in the rebuilt
+  // view; extracting only the first command would hide later operations from the person inspecting this history.
+  if(typeof call.input==='string'&&full.args.raw){
+   if(full.kind==='command'&&!full.command)full.command=call.input;
+   if(full.kind==='edit'&&!full.patch&&/apply_patch/i.test(full.name))return classifyStep({...full.item,input:{patch:call.input}},'succeeded');
+  }
+  return full;
  })().catch(error=>{step.fullStep=null;throw error;}));
  const rawDetail=(row,step,body)=>{
   const refs=step.detailRefs||[];let refIndex=0,nextOffset=0,busy=false;
