@@ -3,6 +3,7 @@ import { join, relative, isAbsolute } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { NativeTurnRunner } from './native-turns.mjs';
 import { createNativeSession } from './native-turn-sessions.mjs';
+import { sessionQuotaIdentity } from './runtime-quota.mjs';
 import { readNativeSession, registeredNativeSession, assertNativeSessionIdle } from './native-sessions.mjs';
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { nativeTerminalProject, projectTerminalLock, terminalProcessIdentity, processIdentityKey, checkTerminalSession, stopTerminalSession } from './terminal-resume.mjs';
@@ -108,7 +109,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
       await trim();return {workspace};
     },
     cleanup:id=>uuid.test(id)?rm(join(data,'native-turn-files',id),{recursive:true,force:true}):null,
-    createSession:options=>Object.assign(createNativeSession(options),{quotaIdentity:runtimes().find(r=>r.type===options.runtime)?.quotaIdentity})
+    createSession:options=>Object.assign(createNativeSession(options),{quotaIdentity:sessionQuotaIdentity(runtimes().find(r=>r.type===options.runtime))})
   });
   /** Preparing leases belong to this Runner until preparation settles; generic terminal expiry must not revoke them. */
   runner.check=binding=>{
