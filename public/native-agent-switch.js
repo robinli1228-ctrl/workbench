@@ -10,6 +10,8 @@ export function createNativeAgentSwitchUI({api,getState,onCommitted,onError,t=te
  const busy=item=>pending.has(identity(item))||Boolean(item.conversationBinding?.pendingSwitchId&&!settled.has(item.conversationBinding.pendingSwitchId));
  function remember(id,value){try{sessionStorage.setItem(`workbench.agent-switch.${id}`,JSON.stringify(value));}catch{}}
  async function apply(entry,result,{cancelled=false}={}){
+  // A reply for an entry that was replaced (a later switch on this session) changes nothing.
+  if(pending.get(identity(entry.source))!==entry)return;
   if(result.conversation)entry.conversation=result.conversation;
   if(result.operation?.stage==='committed'){
    clearTimeout(entry.timer);settled.add(entry.id);pending.delete(identity(entry.source));remember(identity(entry.source),null);
@@ -21,17 +23,18 @@ export function createNativeAgentSwitchUI({api,getState,onCommitted,onError,t=te
   onChange();
  }
  function schedule(entry){clearTimeout(entry.timer);if(disposed||entry.polls>=60)return;entry.timer=setTimeout(()=>void poll(entry),1000);}
- async function poll(entry){if(disposed||!pending.has(identity(entry.source)))return;entry.polls++;
-  try{await apply(entry,await api(`/api/native-sessions/${encodeURIComponent(entry.source.nodeId)}/agent-switch/${encodeURIComponent(entry.id)}`));}
-  catch(error){
+ async function poll(entry){if(disposed||entry.cancelling||pending.get(identity(entry.source))!==entry)return;entry.polls++;
+  try{const result=await api(`/api/native-sessions/${encodeURIComponent(entry.source.nodeId)}/agent-switch/${encodeURIComponent(entry.id)}`);if(!entry.cancelling)await apply(entry,result);}
+  catch(error){if(entry.cancelling)return;
    // Home never received this switch (its request was lost): nothing was reserved, so the input unlocks. A switch Home did
    // reserve (a delayed request) still comes back through the conversation's pending ID, so this ID is not marked settled.
    if(error.code==='agent_switch_not_found'){clearTimeout(entry.timer);pending.delete(identity(entry.source));remember(identity(entry.source),null);onChange();return;}
    entry.message=error.message;schedule(entry);onChange();}}
- async function cancel(entry){entry.cancelling=true;onChange();
+ // Polling pauses while a cancel runs: its answer is the one that settles the entry, without an error notice.
+ async function cancel(entry){clearTimeout(entry.timer);entry.cancelling=true;onChange();
   try{await apply(entry,await api(`/api/native-sessions/${encodeURIComponent(entry.source.nodeId)}/agent-switch/${encodeURIComponent(entry.id)}`,{method:'DELETE'}),{cancelled:true});}
   catch(error){if(error.code==='agent_switch_not_found'){clearTimeout(entry.timer);pending.delete(identity(entry.source));remember(identity(entry.source),null);}else{entry.message=error.message;onError(error.message);}}
-  finally{entry.cancelling=false;onChange();}}
+  finally{entry.cancelling=false;if(pending.get(identity(entry.source))===entry)schedule(entry);onChange();}}
  async function choose(item,targetRuntime){
   if(busy(item)||getState().busy)return;
   const entry={id:crypto.randomUUID(),source:{...item,sessionId:item.sessionId||item.id},polls:0,message:'Switching Agent…'};pending.set(identity(item),entry);remember(identity(item),{id:entry.id});onChange();

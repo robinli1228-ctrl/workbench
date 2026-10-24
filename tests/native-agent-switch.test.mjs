@@ -76,12 +76,12 @@ test('a cancel waits for the step in flight, then the Worker stops the target an
   assert.equal(conversation.segments.length, 1);
 });
 
-function worker(t, { check, prepareMs = 60000, makeContext, stop = async () => ({}) }) {
+function worker(t, { check, prepareMs = 60000, makeContext, stop = async () => ({}), sweepMs }) {
   const dir = mkdtempSync(join(tmpdir(), 'wb-switch-worker-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const db = new Store(join(dir, 'worker.sqlite')), calls = [];
   const handler = createWorkerNativeAgentSwitch({ db, nodeId: 'n1', data: dir, projectRoot: async p => p, runtimes: () => [], isPaused: () => false, sourceBusy: () => false,
-    query: async (action, path) => { calls.push({ action, path }); return action === 'terminal_stop' ? stop(db, path) : {}; }, check, prepareMs, ...(makeContext ? { makeContext } : {}) });
+    query: async (action, path) => { calls.push({ action, path }); return action === 'terminal_stop' ? stop(db, path) : {}; }, check, prepareMs, ...(makeContext ? { makeContext } : {}), ...(sweepMs ? { sweepMs } : {}) });
   const input = { operationId: crypto.randomUUID(), conversationId: 'c1', source: { runtime: 'claude', sessionId: SOURCE }, targetRuntime: 'codex', workspace: '/srv/work/demo' };
   db.put('terminalSessions', { id: input.operationId, nodeId: 'n1', projectId: `native-tui:${input.operationId}`, status: 'active' });
   const save = patch => db.put('workerNativeAgentSwitches', { id: input.operationId, ...input, leaseId: input.operationId, stage: 'preparing', published: false, startRequested: true, ...patch });
@@ -128,7 +128,7 @@ test('the message that creates a switch session is not shown, and a handoff name
   const workspace = '/srv/work/demo', folder = join(dir, 'projects', workspace.replace(/[^a-zA-Z0-9]/g, '-'));
   mkdirSync(folder, { recursive: true });
   const rows = [{ type: 'user', uuid: 'u1', timestamp: '2026-10-24T01:00:00.000Z', cwd: workspace, message: { role: 'user', content: NATIVE_SWITCH_HELLO } },
-    { type: 'assistant', uuid: 'a1', timestamp: '2026-10-24T01:00:01.000Z', message: { role: 'assistant', content: [{ type: 'text', text: NATIVE_SWITCH_READY }] } },
+    { type: 'assistant', uuid: 'a1', timestamp: '2026-10-24T01:00:01.000Z', message: { role: 'assistant', content: [{ type: 'text', text: `**${NATIVE_SWITCH_READY.slice(0, -1)}**` }] } },
     { type: 'user', uuid: 'u2', timestamp: '2026-10-24T01:01:00.000Z', cwd: workspace, message: { role: 'user', content: 'fix the build' } },
     { type: 'assistant', uuid: 'a2', timestamp: '2026-10-24T01:01:05.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'READY' }] } }];
   writeFileSync(join(folder, `${TARGET}.jsonl`), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
@@ -161,15 +161,34 @@ test('a cancel while a status check is building the handoff is not undone by tha
   assert.equal(db.get('workerNativeAgentSwitches', input.operationId).stage, 'failed');
 });
 
-test('a target that finishes just as its deadline passes still counts', async t => {
-  let state = 'active';
-  const { db, handler, input, save } = worker(t, { check: () => ({ processState: state }),
-    makeContext: async () => ({ id: 'ctx', hash: 'h', excerpt: '' }),
-    // The stop finds the target already gone: it exited with its session created.
-    stop: async (store, path) => { state = 'released'; store.put('terminalSessions', { ...store.get('terminalSessions', path.id), exitCode: 0 }); return { released: true, forced: false }; } });
+test('a target that had exited as its deadline passed still counts; one that exits only when stopped does not', async t => {
+  for (const exitedFirst of [true, false]) {
+    let state = 'active';
+    const { db, handler, input, save } = worker(t, { check: () => ({ processState: state }),
+      makeContext: async () => ({ id: 'ctx', hash: 'h', excerpt: '' }),
+      stop: async (store, path) => { state = 'released'; store.put('terminalSessions', { ...store.get('terminalSessions', path.id), exitCode: 0 }); return { released: true, forced: false }; } });
+    save({ startRequestedAt: new Date(Date.now() - 120000).toISOString() });
+    // The launcher wrote the exit code but its process was still being recorded when the check ran.
+    if (exitedFirst) db.put('terminalSessions', { ...db.get('terminalSessions', input.operationId), exitCode: 0 });
+    db.put('nativeCatalogEntries', { id: input.operationId, sessionId: TARGET });
+    const view = await handler.handle('native_agent_switch_status', input);
+    assert.equal(view.stage, exitedFirst ? 'ready' : 'failed');
+    if (!exitedFirst) assert.match(view.error, /did not start within/);
+  }
+});
+
+test('cancelling a switch that already failed keeps its own reason', async t => {
+  const { handler, input, save, calls } = worker(t, { check: () => ({ processState: 'released' }) });
+  save({ stage: 'failed', error: 'Target Agent did not start within 5 minutes; it was stopped' });
+  const view = await handler.handle('native_agent_switch_abort', { ...input, stop: true });
+  assert.equal(view.error, 'Target Agent did not start within 5 minutes; it was stopped');
+  assert.equal(calls.length, 0);
+});
+
+test('the deadline is enforced even when nobody asks for the status, e.g. after a Worker restart', async t => {
+  const { db, calls, input, save } = worker(t, { check: () => ({ processState: 'active' }), sweepMs: 30 });
   save({ startRequestedAt: new Date(Date.now() - 120000).toISOString() });
-  db.put('nativeCatalogEntries', { id: input.operationId, sessionId: TARGET });
-  const view = await handler.handle('native_agent_switch_status', input);
-  assert.equal(view.stage, 'ready');
-  assert.equal(view.target.sessionId, TARGET);
+  for (let i = 0; i < 100 && db.get('workerNativeAgentSwitches', input.operationId).stage !== 'failed'; i++) await new Promise(r => setTimeout(r, 10));
+  assert.equal(db.get('workerNativeAgentSwitches', input.operationId).stage, 'failed');
+  assert.equal(calls[0].action, 'terminal_stop');
 });

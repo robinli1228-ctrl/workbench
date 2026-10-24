@@ -40,7 +40,7 @@ export function assertNativeSwitchAccess(db,{runtime,sessionId,workspace,claimId
 }
 
 /** Exact persisted native preparation, reusing the ordinary terminal creation and identity checks. */
-export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtimes,isPaused,sourceBusy,query,check,releaseIdle=async()=>{},prepareGrant=async()=>null,cancelGrant=()=>{},makeContext=createNativeAgentContext,prepareMs=NATIVE_SWITCH_PREPARE_MS,sideAsking=()=>false}){
+export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtimes,isPaused,sourceBusy,query,check,releaseIdle=async()=>{},prepareGrant=async()=>null,cancelGrant=()=>{},makeContext=createNativeAgentContext,prepareMs=NATIVE_SWITCH_PREPARE_MS,sideAsking=()=>false,sweepMs=60000}){
  const inflight=new Map();
  /** Stops only the target's own verified processes, through the ordinary terminal stop. */
  const stopTarget=op=>query('terminal_stop',{id:op.leaseId,nodeId,projectId:`native-tui:${op.leaseId}`});
@@ -49,6 +49,8 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
  const queues=new Map();
  const serial=(id,fn)=>{const run=(queues.get(id)||Promise.resolve()).catch(()=>{}).then(fn);queues.set(id,run);void run.finally(()=>{if(queues.get(id)===run)queues.delete(id);}).catch(()=>{});return run;};
  const current=op=>db.get('workerNativeAgentSwitches',op.id)||op;
+ // The deadline is checked every minute for every started switch, also after a Worker restart or a start that timed out.
+ const sweep=setInterval(()=>{for(const op of db.list('workerNativeAgentSwitches'))if(op.startRequested&&!['ready','failed'].includes(op.stage)&&!inflight.has(op.id))void status(op,{}).catch(()=>{});},sweepMs);sweep.unref?.();
  const view=op=>({operationId:op.id,stage:op.stage,workspace:op.workspace,target:op.target,contextId:op.context?.id,contextHash:op.context?.hash,folderGrant:op.folderGrant||null,error:op.error||null,settled:op.stage==='failed'});
  const save=(op,patch)=>db.put('workerNativeAgentSwitches',{...op,...patch,updatedAt:new Date().toISOString()});
  const fail=(op,error)=>{if(op.grantAttempted)cancelGrant(op);return save(op,{stage:'failed',error});};
@@ -87,14 +89,16 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
    // No lease means no process was registered for it, so nothing is left running once its deadline has passed.
    return view(late?fail(op,timedOut):op);
   }
-  let stopped=false;
+  let stopped=false,exitedFirst=false;
   if(check(lease).processState!=='released'){
    if(!late)return view(op);
+   // A target that had already exited when its deadline passed still counts; one that only exits because it was stopped does not.
+   exitedFirst=Number.isInteger(db.get('terminalSessions',op.leaseId)?.exitCode);
    try{await stopTarget(op);stopped=true;}catch(error){return view(save(current(op),{error:error.message}));}
   }
-  // A target that finished just as its deadline passed still counts: the stop found nothing to signal.
   const exited=db.get('terminalSessions',op.leaseId)||lease,entry=db.get('nativeCatalogEntries',op.leaseId);
-  if(exited.exitCode!==0||!entry?.sessionId)return view(fail(op,stopped?timedOut:exited.helloError||'Target Agent did not create a native history'));
+  if(stopped&&!exitedFirst)return view(fail(op,timedOut));
+  if(exited.exitCode!==0||!entry?.sessionId)return view(fail(op,exited.helloError||'Target Agent did not create a native history'));
   const context=op.context||await makeContext({db,conversation:{id:op.conversationId,workspace:op.workspace},segments:op.segments,recentMessages:op.recentMessages||[],dataDir:data});
   return view(save(op,{stage:'ready',context,target:{runtime:op.targetRuntime,sessionId:entry.sessionId,entryId:entry.id}}));
  }
@@ -109,6 +113,8 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
    if(!op)return view(save({id:input.operationId,...input,stage:'failed',published:false},{error:'Preparation cancelled before receipt'}));
    return serial(op.id,async()=>{op=current(op);const lease=db.get('terminalSessions',op.leaseId);
     if(op.published)throw Error('Committed switch cannot be aborted');
+    // One that already failed keeps its own reason.
+    if(op.stage==='failed')return view(op);
     // A person's cancel stops a target that is still starting; a plain abort never signals a process.
     if(lease&&check(lease).processState!=='released'){if(!input.stop)throw Error('Target process exit is not confirmed');await stopTarget(op);}
     return view(fail(current(op),'Preparation cancelled'));});
@@ -133,8 +139,6 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
     // The launcher uses a no-business-work initialization prompt, not the old request.
     const lease=db.get('terminalSessions',op.leaseId);db.put('terminalSessions',{...lease,nativeSwitchId:op.id});
     op=save(op,{startRequested:true,startRequestedAt:new Date().toISOString()});await query('native_terminal_start',{id:op.leaseId});
-    // Nobody may be asking for its status: the deadline is checked once more when it passes.
-    const timer=setTimeout(()=>{const current=db.get('workerNativeAgentSwitches',op.id);if(current&&!['ready','failed'].includes(current.stage))void status(current,input).catch(()=>{});},prepareMs+1000);timer.unref?.();
     return status(op,input);
    }catch(error){
     const lease=db.get('terminalSessions',op.leaseId);op=current(op);

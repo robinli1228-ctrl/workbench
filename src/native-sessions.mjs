@@ -55,7 +55,10 @@ const result=(callId,output,failed,at)=>({role:'tool_result',callId:String(callI
  * it. The reply is a fixed sentence so that hiding it can never hide a real answer. */
 export const NATIVE_SWITCH_READY='Workbench Agent switch ready.';
 export const NATIVE_SWITCH_HELLO=`Create this empty session for a Workbench Agent switch. Reply exactly "${NATIVE_SWITCH_READY}" and nothing else. Do not use tools, read or modify files, or begin any task. Wait for the next user message.`;
-const switchSetup=(role,text)=>role==='user'?text===NATIVE_SWITCH_HELLO:role==='assistant'&&text.replace(/^"|"$/g,'')===NATIVE_SWITCH_READY;
+// Releases before this one asked for a plain READY; that prompt is hidden too.
+const LEGACY_SWITCH_HELLO='Create this empty session for a Workbench Agent switch. Reply READY only. Do not use tools, read or modify files, or begin any task. Wait for the next user message.';
+const bare=text=>text.replace(/[\s"'`*\u201c\u201d\u2018\u2019.!]+/g,' ').trim().toLowerCase();
+const switchSetup=(role,text)=>role==='user'?[NATIVE_SWITCH_HELLO,LEGACY_SWITCH_HELLO].includes(text):role==='assistant'&&bare(text)===bare(NATIVE_SWITCH_READY);
 /** Conversation rows plus the tool calls and results between them; the page pairs them and shows each turn like a page turn. */
 function messagesFrom(rows,runtime){return rows.flatMap(row=>{
  const at=row.timestamp||null,out=[],say=(role,content,extra)=>{const text=bodyText(content);if(text&&!switchSetup(role,text.trim()))out.push({role,text:text.slice(0,12000),timestamp:at,...extra});};
