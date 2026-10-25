@@ -19,11 +19,16 @@ export function renderSessionQueue(status,{create,roleName,api,refreshState,proj
   return box;
 }
 
-/** Historical sessions only; no mutation controls or review-release shortcuts. */
+/** Historical sessions retain only explicit human release/close, never collection or budget controls. */
 function sessionRow(session,status,{create,roleName,api,refreshState,projectId}) {
   const row=create('div','session-queue-row');
   const cycle=(status.cycles||[]).find(c=>c.rootSessionId===session.id);
   const label=`${session.goal} · ${session.participants.map(roleName).join(', ')}${cycle?` · ${t('Budget')} ${cycle.used}/${cycle.limit}`:''}`;
   row.append(create('span','',label));
+  if(!api)return row;
+  const base=`/api/projects/${encodeURIComponent(projectId)}/collaboration-sessions/${encodeURIComponent(session.id)}`;
+  const act=(text,run)=>{const b=create('button','secondary compact',t(text));b.type='button';b.onclick=async()=>{b.disabled=true;try{await run();await refreshState({quiet:true});}catch(e){alert(e.message);}finally{b.disabled=false;}};row.append(b);};
+  if(session.type==='independent-review'&&!session.reviewReleased)act('Release reviews',()=>api(`${base}/release`,{method:'POST',json:{}}));
+  if(session.state!=='closed')act('End discussion',async()=>{if(confirm(t('End this discussion? Accepted tasks are not cancelled.')))await api(`${base}/close`,{method:'POST',json:{}});});
   return row;
 }

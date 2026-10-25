@@ -1016,7 +1016,13 @@ const server = http.createServer(async (req, res) => {
         res.write('event: change\ndata: {}\n\n'); viewers.add(res);
         req.on('close', () => viewers.delete(res)); return;
       }
-      // Historical collaboration records remain readable. No API can reopen collection or release protected opinions.
+      // Only explicit human close/release survives retirement, including release of an already closed review.
+      const retiredReviewRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/([^/]+)\/(release|close)$/);
+      if(retiredReviewRoute&&req.method==='POST'){
+        const result=collaborationSessions[retiredReviewRoute[3]](retiredReviewRoute[1],decodeURIComponent(retiredReviewRoute[2]));
+        scheduleChat();change();return json(res,result);
+      }
+      // Every other collaboration write remains gone; collection is never reopened.
       if(/^\/api\/projects\/[^/]+\/collaboration-sessions(?:\/|$)/.test(pathname)&&req.method!=='GET')
         return json(res,{error:tr('collabSessions.retired')},410);
       const queueRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/(queue|queue-config)$/);
