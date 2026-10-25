@@ -3987,3 +3987,34 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 /* Shared tool code blocks scroll locally; they must not inherit the old detail page's unbounded pre rule. */
 #run-dialog .run-transcript > *,#run-dialog .run-transcript .nt-activity,#run-dialog .run-transcript .nt-steps,#run-dialog .run-transcript .nt-step { min-width: 0; max-width: 100%; }
 #run-dialog .run-transcript pre.nt-code { max-height: 360px; overflow: auto; max-width: 100%; }
+/* Conversation planning stays inside the existing Outputs inspector and modal surface. */
+.conversation-task-card { margin-bottom: 16px; min-width: 0; }
+.task-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.task-card-heading h3 { margin: 0; }
+.task-closed-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 12px 0; }
+.task-closed-toggle input { width: auto; }
+.task-list-row { width: 100%; text-align: left; }
+.task-list-row strong, .task-list-row small { overflow-wrap: anywhere; white-space: normal; }
+.task-detail-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); min-width: 0; padding: 24px; overflow-y: auto; box-sizing: border-box; }
+.task-detail-dialog .dialog-heading h2 { min-width: 0; overflow-wrap: anywhere; }
+.task-detail-dialog .dialog-heading .icon-button { flex-shrink: 0; margin-left: auto; }
+.task-edit-form, .task-step-fields { display: grid; gap: 14px; min-width: 0; }
+.task-edit-form label { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
+.task-edit-form input, .task-edit-form textarea, .task-edit-form select { width: 100%; min-width: 0; box-sizing: border-box; }
+.task-edit-form input[type="checkbox"] { width: auto; justify-self: start; }
+.task-edit-form .form-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.task-plan { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.task-plan-step { border-top: 1px solid var(--line); padding: 10px 0; }
+.task-plan-step summary { overflow-wrap: anywhere; cursor: pointer; margin-bottom: 10px; }
+.task-form-error { color: var(--danger, #b42318); overflow-wrap: anywhere; }
+.task-change-history, .task-related-messages { margin-top: 24px; min-width: 0; }
+.task-change-history details { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.task-change-history summary { cursor: pointer; overflow-wrap: anywhere; }
+.task-change pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; padding: 8px; background: var(--bg); }
+.task-change { margin-top: 14px; }
+.task-change small { display: block; color: var(--muted); margin-top: 8px; }
+.task-related-messages { display: grid; gap: 8px; }
+@media (max-width: 600px) {
+  .task-detail-dialog { padding: 16px; }
+  .task-edit-form .form-grid { grid-template-columns: minmax(0,1fr); }
+}

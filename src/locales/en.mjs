@@ -1,6 +1,29 @@
 // English message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "collabSessions.retired": "Collaboration sessions are retired. Existing records are read-only; use wb task and wb call for new work.",
+  "conversationTasks.invalid":"Invalid task fields or values.",
+  "conversationTasks.actor":"Task actor is not a project role.",
+  "conversationTasks.owner":"Task owner or plan role must belong to this project.",
+  "conversationTasks.plan":"Invalid plan: use up to 50 steps and a valid zero-based currentStep.",
+  "conversationTasks.status":"Invalid task status.",
+  "conversationTasks.summary":"resultSummary is only allowed when marking the task done.",
+  "conversationTasks.unfinished":"Complete every plan step and select the final step before marking the task done.",
+  "conversationTasks.notFound":"Task not found in this conversation.",
+  "conversationTasks.requestId":"Task creation requires a stable requestId (letters, digits, colon, underscore or hyphen; at most 200 characters).",
+  "conversationTasks.retry":"This task requestId was already used with different input or actor.",
+  "conversationTasks.revision":"Task revision conflict: show the task and retry with its current revision.",
+  "conversationTasks.permission":"Only the task owner, project supervisor or user may change the owner; a transfer must be sent by the task owner.",
+  "conversationTasks.handover":"Changing the owner requires a full, changed description in the same update.",
+  "conversationTasks.noChange":"The update does not change any task field.",
+  "conversationTasks.closed":"A completed or cancelled task cannot be transferred.",
+  "conversationTasks.editFirst":"Before transferring, use wb task update in this run to rewrite the current description with handover information.",
+  "conversationTasks.usage":"Use wb task list, show, create or update.",
+  "conversationTasks.transferReason":"Ownership transferred with the linked call.",
+  "conversationTasks.updated":"Task description has been updated.",
+  "conversationTasks.context":"Conversation task (current Home snapshot). {updated}\n{task}",
+  "conversationTasks.help":"Conversation tasks (Home-only, current chat):\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"Task\",\"description\":\"Full brief\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"Full replacement\",\"reason\":\"handover\"}'\nCreate accepts optional ownerRoleId, status and plan {steps:[{title,description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep} (zero-based). Replace description/plan as a whole. Only done permits resultSummary; all plan steps must be done. Owner changes require a rewritten description and the owner, supervisor or user.\nwb call accepts --task T3: ordinary calls only link; --kind transfer changes the owner and sets in_progress. First rewrite the description with wb task update in this run. Retries must keep the same requestId and input.",
+
   'deviceAdmin.reconnectUnsupported':'Manual reconnection requires a Home-managed reverse SSH tunnel, a saved SSH key and a verifiable Linux Worker.',
   'deviceAdmin.reconnectBusy':'This device has pending or active work, a retained CLI, or another connection operation. Nothing was stopped; try again when it is idle.',
   'deviceAdmin.reconnectUnverified':'Cannot confirm that this Worker is idle. No tunnel was stopped. Check SSH access and finish active sessions first.',
@@ -29,13 +52,13 @@ export default Object.freeze({
   'runReports.submissionConflict': 'This report submission ID already belongs to different content. Query the original receipt or use a new ID for an intentional revision.',
   'runReports.pendingConfirmation': 'Report submission result is pending confirmation. A timeout does not prove failure. Query the receipt with the command below; resubmitting identical content reuses the same ID and must not start a new task.',
   'roleSwitch.crossDevice': 'You selected another device. Cross-device handoff and CLI switching are not currently supported. Original device: {from}; selected device: {to}. To switch only the CLI, keep the original device. These changes were not saved; the original session is unaffected.',
-  'followup.configChanged': 'Follow-up settings changed; reload before saving.',
+  'followup.configChanged': 'Stall reminder settings changed; reload before saving.',
   'followup.noSupervisor': 'Waiting for an enabled project supervisor.',
   'followup.waitingSilence': 'Waiting for the updated chat silence duration.',
   'followup.bindingChanged': 'The verified CLI/device binding differs from the current role; reconcile the role switch before follow-up.',
   'followup.context': `Platform trigger and current task facts (not new user authorization): {context}. Message excerpts below are background; use wb history read for their originals and for the results of related requests.`,
-  'followup.event': '[Workbench event] This project chat has been quiet for about {minutes} minutes. Review recent messages and current tasks to decide whether coordination or help is needed; act within the original authorization, or finish quietly. This follow-up is recorded in the background; use wb note to publish a message if useful. Existing user-confirmation and approval tools remain available. Silence is not consent and does not mean an active task failed.',
-  'followup.invalidConfig': 'Follow-up requires an enabled boolean and an integer silence duration from 1 to 10080 minutes.',
+  'followup.event': '[Workbench stall reminder] This chat has been quiet for about {minutes} minutes with no running or queued work. Platform facts (bounded recent records, not a verdict): {facts}. Check wb history and wb history read <id> for originals, then act within the existing authorization. This is a background task; use wb note only if a public message is needed. Silence is not consent; use the existing confirmation and approval tools.',
+  'followup.invalidConfig': 'Stall reminders require an enabled boolean and an integer silence duration from 1 to 10080 minutes.',
   'roleTemplates.planner': 'Planner',
   'roleTemplates.plannerResponsibility': 'Create and maintain development plans; clarify the proposed solution.',
   'roleTemplates.developer': 'Executor',
@@ -80,7 +103,7 @@ export default Object.freeze({
   'roleSessions.historyTerminalBusy': 'This project is under terminal takeover on the device. Return it to the platform first.',
   'roleSessions.historyWasCleared': 'This role history was cleared. The next execution starts a new session.',
   'collaboration.platform': `Work toward the assigned goal proactively. Use the current task, execution prompt and project rules; responsibilities help peers choose collaborators, not restrict execution.
-Use wb discuss peers to find actual teammates. Ask the planner about the plan and the original implementer about the code. Use available wb collaboration tools to send requests: mentioning a name in prose does not dispatch work. When waiting, yield through the platform and end the turn; resume from its reply.
+Use wb discuss peers to find actual teammates. Ask the planner about the plan and the original implementer about the code. Use wb call to send requests: mentioning a name in prose does not dispatch work. When waiting, yield through the platform and end the turn; resume from its reply.
 Handoffs identify the owner, requirements, exact version, files, verification and remaining issues. Peers may communicate directly. Keep code changes with the original implementer unless explicitly reassigned.
 Resolve findings using evidence, including reasons not to change code, and obtain confirmation from the originating reviewer or tester. Escalate unresolved disagreements or exhausted collaboration budgets to the supervisor without marking the issue resolved.
 Respect project authorization and other people's changes. Test deployments use the authorized test environment, not production by default. Report actual results and gaps concisely; finishing a process, review, test and business acceptance are different outcomes.`,
@@ -352,8 +375,8 @@ After ask is accepted, end the turn immediately to release capacity; if a busine
   // src/execution-plans.mjs
   'executionPlans.executionSchedulingYouOnlyAssign': `Execution scheduling: you only assign, verify, and summarize; you do not write business code or detailed business plans yourself.
 A single @-mentioned working role executes directly; when several are @-mentioned they have been handed to you to evaluate, and you must cover every role the user named. For a complex plan, schedule a planning role first; you must not substitute for it.
-First run wb discuss peers to get the real roles. Use wb call for one instruction to one or more roles, repeating --role for each recipient. For explicit execution order or step dependencies, submit one execution schedule with wb schedule '<JSON>'.
-Use wb timer only when given an explicit wall-clock time or recurrence requirement; it manages only the current project's timed jobs and is different from the stage schedule wb schedule. Run wb timer list first to avoid creating duplicates, and use a stable requestId for write operations. When progress patrols are healthy, the model is not woken; you are notified only on new anomalies; do not set an ordinary work loop as a high-frequency patrol.
+First run wb discuss peers to get the real roles. Use wb call for one instruction to one or more roles, repeating --role for each recipient. For dependencies, record the steps in the task plan and call the next role after checking the previous result.
+Use wb timer only when given an explicit wall-clock time or recurrence requirement; it manages only the current project's timed jobs. Run wb timer list first to avoid creating duplicates, and use a stable requestId for write operations. When progress patrols are healthy, the model is not woken; you are notified only on new anomalies; do not set an ordinary work loop as a high-frequency patrol.
 Format: {"id":"stable-id","reason":"why it is arranged this way","stages":[{"title":"Independent review","mode":"serial","members":[{"role":"role name","purpose":"audit","text":"specific requirements","writeRepositories":[]}]}]}
 mode is parallel or serial; purpose is plan/audit/develop/test/merge/migration/deploy/production. The top-level repositories may list the repository keys actually needed for reading and writing in this run; if omitted, all are prepared; role permissions do not change.
 Default reviews are sequential, one reviewer per serial stage; parallel independent reviews require an explicit user request. Development in different repositories may run in parallel, with writeRepositories listing the repository keys; parallel development in the same module must be followed by a single-member merge stage and testing. Planning, development and testing occupy separate stages; database migration, deployment and production operations run serially and exclusively.
@@ -730,7 +753,7 @@ Work in this turn's workspace by default. Explicit user authorization for other 
   'platformPrompts.doNotReleaseOperateProduction': 'Do not release, operate production systems, or run database migrations on your own.',
   'platformPrompts.handleOnlyAssignmentDoNot': `{discussion}
 
-Handle only this assignment. Do not start other agents on your own; {p2}, and use wb schedule for supervisor orchestration.
+Handle only this assignment. Do not start other agents on your own; {p2}.
 {p3}
 By default, work in the workspace designated by the Worker and the repositories listed for this run. Explicit user authorization extends the scope to specified targets without asking again. Actual runtime permissions still apply: if restricted, seek the required access or hand off to an execution environment that has it. {p4}
 When you need the user to supply information or make a decision, state the specific question and options in your reply, and then end the turn. Replies are not automatically forwarded to WeChat. Only the project supervisor may explicitly use wb notify send before ending the turn when a configured notification channel is enabled. Home binds the real project and supervisor; numbered replies queue to that supervisor without interrupting an active CLI. Do not poll WeChat, hold its credentials, or treat sent/pending as a user answer. Native permissions and Git delivery keep their existing approval boundaries.
@@ -1163,7 +1186,7 @@ Existing output:
   'runContext.questionOnOriginalTaskHas': `The question on the original task has been resolved. Now continue only the unfinished part of the original task and do not repeat questions already asked; this conclusion does not mean business acceptance has passed:
 {p1}`,
   'runContext.text': ', ',
-  'runContext.rolesTurnMustCoverFixed': `Roles this turn must cover (fixed at send time; they do not change when roles are added or renamed): {p1}. Every role on this roster must take part: reach them in turn with wb call, and use wb schedule only when stages are needed; the role field may use the fixed ID. If a role is not configured or unavailable, say so explicitly and do not omit it silently. This roster only specifies the participants; it does not relax parallelism, write or review requirements.`,
+  'runContext.rolesTurnMustCoverFixed': `Roles this turn must cover (fixed at send time; they do not change when roles are added or renamed): {p1}. Every role on this roster must take part: reach them in turn with wb call; the role field may use the fixed ID. If a role is not configured or unavailable, say so explicitly and do not omit it silently. This roster only specifies the participants; it does not relax parallelism, write or review requirements.`,
   'runContext.userChangedDirectionTurnImmediate': 'The user changed direction: this turn is an immediate steer initiated by the user, and the original instruction of this turn governs. Old plans, historical unfinished items, and late collaboration replies are background only and the old arrangement is not continued automatically. Continue in the original session and first verify the actual files and tool state after the interruption; operations already executed are not rolled back automatically.',
   'runContext.excerptCharactersFullTextPass': `
 [excerpt {length}/{totalLength} characters; full text: {readCommand}; pass the returned version when continuing to the next page]`,
@@ -1440,10 +1463,6 @@ New conversation in the terminal is not sent back to the group chat automaticall
   'wbCli.discussionToolsNotEnabledFor': 'Discussion tools are not enabled for this turn',
   'wbCli.onlyProjectSupervisorCanSubmit': 'Only the project supervisor can submit a plan',
   'wbCli.usageWbTimerListWb': 'Usage: wb timer list or wb timer <create|update|pause|resume|delete> \'<JSON>\'',
-  'wbCli.wbScheduleJsonSupervisorSubmits': `{HELP}
-
-Supervisor only:
-wb schedule '<JSON>'  An optional staged execution plan, only when the user or you explicitly need stages; by default transfer the whole task to one owner. A stage advances once all its calls succeed, and the results come back to you to judge when the plan ends; nobody checks conclusions in between, so migration, deployment and production operations cannot be in a plan and are assigned separately after you check. failurePolicy defaults to stop; independent read-only reviews by several roles may form their own stage with collect_reviews (all members audit, no writeRepositories). Permission problems, unknown errors, cancellation or version anomalies stop it; there is no automatic retry.`,
   'wbCli.invalidDuplicateWbCallParameters': 'Invalid or duplicate wb call parameters (only --role may repeat)',
   'wbTools.invalidCallTargets': 'Supply one role or a non-empty roles array of role names/IDs, not both.',
   'wbCli.unknownCommand': `Unknown command {cmd}
@@ -1734,6 +1753,8 @@ Drive the work:
 - Give every message that @-mentions you a substantive reply, or say what you cannot do and why; never just reply "received". With no objections, say "Approved, no objections".
 - When you find a blocker, a risk or someone else's problem, tell the role concerned directly, with your grounds.
 - When a new message arrives, first decide: if it adds to the task in hand, fold it in and carry on; if it is a new task, handle it as a new task.
+- While working, record a new independent task with wb task create as todo, say it is recorded, and continue the current task; handle it afterwards or hand it to the supervisor.
+- Follow the task plan: mark your completed step done, update the task description with the handover, and transfer to the next role in the plan. Mark the whole task done only after its final step.
 - A task transferred to you makes you its owner: drive it to the end yourself, organise its reviews, and reply to the user with the conclusion when done.
 
 Working with others:
@@ -1752,7 +1773,7 @@ Collaborate with wb commands; see wb help for commands and parameters.`,
   'minimal.supervisorTemplate': `You are the project supervisor and own the goal through final completion: assign, follow up, accept and decide without waiting for step-by-step direction.
 You personally do only the simplest things: answer a question directly, check one fact, or a small one- or two-step operation that changes no code. Anything that needs reading several files, writing or changing code, running tests or comparing options goes to other roles.
 
-- Incoming messages: first decide what an unaddressed message is: answer a question you can answer directly; pass an addition to a task in progress to that task's owner; assign a new task to someone under the platform rules. If you cannot tell, say which reading you are acting on; never ask the user "who should do it".
+- Incoming messages: first use wb task list to distinguish updates to existing tasks from new tasks, then decide what an unaddressed message is: answer a question you can answer directly; pass an addition to a task in progress to that task's owner; assign a new task to someone under the platform rules. If you cannot tell, say which reading you are acting on; never ask the user "who should do it".
 - Assigning: transfer a task whole to one role, which owns it to the end: it drives the work, finds its own partners and reviewers, and replies to the user with the conclusion when done; you no longer follow it unless you get a stall reminder. For a long process, write a step-by-step plan and hand it over with the task. When you split one goal across several roles, the results come back to you to combine before you reply to the user.
 - Clearing blockers: when you get a stall reminder, or see someone stuck, failing repeatedly or waiting on each other, investigate fully yourself: look at task status, the group chat, run details and each role's actual progress, find where it is stuck, and do not mistake a temporary lack of output for a hang. Fix what you can directly (reassign, add information, split the task, break a mutual wait); send code changes to other roles; for anything the user must decide, say which step is blocked and what the user needs to do.
 - Replacement: do not retry exhausted quota or authentication failures; retry a temporary error once, and if it still fails hand the work to another available role. First confirm the original task has stopped, and keep the versions and the evidence already produced. A review cannot be taken over by its author, nor a test by its developer.`,
@@ -1805,7 +1826,6 @@ You personally do only the simplest things: answer a question directly, check on
   'collabSessions.supervisorOnly': "Only this project's current supervisor Run may manage collaboration sessions.",
   'collabSessions.invalidAction': "Unknown collaboration-session action.",
   'collabSessions.documentNotReleased': "This document changed after independent review began, or its original version could not be verified. Use the original task attachments; unreleased opinions remain private.",
-  'collabSessions.toolHelp': "Supervisor: wb collaboration list; wb collaboration create|link|add-member|remove-member|release|close JSON. Create includes goal, delivery, background, participants, type and sourceMessageId; link attaches existing taskId or requestId. No automatic broadcast or approval grant.",
   'collabSessions.readOnlyView': "Review-filtered view is read-only.",
   'sessionQueue.secondsMustBeInteger': "Merge times must be integers from 0 to 3600 seconds.",
   'sessionQueue.maxBelowQuiet': "Maximum collection time cannot be shorter than the merge wait.",
@@ -1816,7 +1836,7 @@ You personally do only the simplest things: answer a question directly, check on
   'sessionQueue.batchNotFound': "Batch not found.",
   'sessionQueue.reservationInvalid': "Reservation is no longer valid; the batch stays queued.",
   'sessionQueue.reservationExpired': "Reservation expired; the batch stays queued.",
-  'sessionQueue.passNoBatch': "wb pass only applies to the discussion batch this run is processing.",
+  "sessionQueue.passNoBatch": "Collaboration sessions are retired. Existing records are read-only; use wb task and wb call for new work.",
   'sessionQueue.passExplicitRequest': "This batch contains a request addressed to you; reply with a result, a blocker or a wait instead of passing.",
   'sessionQueue.passAfterReply': "You already replied publicly in this batch; passing would contradict it.",
   'sessionQueue.broadcastNeedsAcknowledgement': "Broadcast for a session is acceptance-only: set enabled, a batch limit of 1-50 and acknowledgeNoBudget:true.",
@@ -1833,7 +1853,6 @@ You personally do only the simplest things: answer a question directly, check on
   'sessionQueue.requestNotFound': "Request not found in this project.",
   'sessionQueue.reassignStarted': "This request has already started; it cannot be reassigned. Stop it explicitly first.",
   'sessionQueue.alert.backlog': "- Session {sessionId}: role {roleId} has {count} queued messages, oldest waiting {minutes} minutes. Consider adjusting participants or reassigning explicit work.",
-  'sessionQueue.passRule': "This turn is a collaboration discussion batch. Reply publicly only with wb note. If you have nothing substantive to add, run wb pass. For requests addressed to you, reply with a result, a blocker or a wait instead.",
   'wechatChannel.channelUnavailable': 'The configured notification account is unavailable. Select an installed channel; existing numbers will not be rebound.',
   'wechatChannel.supervisorOnly': 'Only the fixed supervisor of this project may call the notification tool.',
   'wechatChannel.notificationNotFound': 'This notification does not belong to the current project supervisor.',

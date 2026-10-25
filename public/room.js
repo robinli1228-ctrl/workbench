@@ -1055,6 +1055,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const replyDirection=dialogueReplyDirection(m,messages,data);
     const discussion=discussionDisplay(m,data);
     const row = create('article', `chat-row ${agent ? 'agent' : 'human'}${handoff || replyDirection ? ' is-handoff' : ''}`);
+    row.dataset.messageId=m.id;
     const role = agent ? (data.roles || []).find(r => r.id === m.roleId) || (data.runs || []).find(r => r.id === m.runId)?.roleSnapshot : null;
     if (agent) row.append(avatarFor(role, m.senderName));
     const col = create('div', 'chat-col');
@@ -1617,5 +1618,23 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     finally { savingRole = false; document.querySelector('#role-save').textContent = 'Save role'; renderModelOptions(); }
   });
-  return { refresh, openRoleEditor };
+  async function jumpMessage(target,id){
+    if(target.projectId!==projectId||target.conversationId!==conversationId)return;
+    const owner=scopeId;
+    // Explicit navigation uses the existing paginated history, never a background history scan.
+    for(let page=0;page<100;page++){
+      if(owner!==scopeId)return;
+      const node=[...feed.querySelectorAll('[data-message-id]')].find(n=>n.dataset.messageId===id);
+      if(node){node.tabIndex=-1;node.focus({preventScroll:true});node.scrollIntoView({block:'center'});return;}
+      const history=histories.get(owner);if(!history?.hasMore||!history.nextBefore)break;
+      const before=history.nextBefore;
+      const result=await api(`/api/projects/${encodeURIComponent(target.projectId)}/messages?${new URLSearchParams({conversationId:target.conversationId,before})}`);
+      if(owner!==scopeId)return;
+      const current=histories.get(owner),ids=new Set(current.messages.map(m=>m.id));
+      histories.set(owner,{...current,messages:[...result.messages.filter(m=>!ids.has(m.id)),...current.messages],hasMore:result.hasMore,nextBefore:result.nextBefore});renderMessages();
+      if(result.nextBefore===before)break;
+    }
+    throw new Error(t('Message is not in the loaded history. Use Load older messages to continue.'));
+  }
+  return { refresh, openRoleEditor, jumpMessage };
 }

@@ -106,6 +106,15 @@ export class SessionQueue {
       && !r.requestIds?.length && !r.taskId && !this.db.get('coordinationRequests', r.requestId || '')?.taskId && view.get('roomMessages', r.messageId));
   }
 
+  /** Upgrade only: stop new collection, without pretending an attempted delivery never ran. */
+  retire(){return this.db.transaction(()=>{
+    for(const p of this.db.list('projects'))if(p.features?.collaborationSessions)
+      this.db.put('projects',{...p,features:{...p.features,collaborationSessions:false}});
+    for(const b of this.db.list(BATCH))if(b.status==='reserved'&&b.deliveryAttempted===false&&!b.runId&&!b.activeRunId&&!this.db.get('tasks',b.taskId||'')?.currentRunId)
+      this.#releaseBatch(b,'retired');
+    for(const c of this.db.list(COLLECTOR))if(c.open)this.db.put(COLLECTOR,{...c,open:false,waitingReason:'retired'});
+  });}
+
   /** Fair choice for one role: rotate across ready sessions, starting after the persisted position. */
   pick(projectId, roleId) {
     const config = queueConfig(this.db, projectId), at = this.now();

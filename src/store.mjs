@@ -8,6 +8,7 @@ import { roleWorkspace } from './project-repositories.mjs';
 import { projectRepositories,assertProjectReady } from './project-space.mjs';
 import { projectTerminalLock, terminalOwnsProject } from './terminal-resume.mjs';
 import { RoleSessions,taskConversationId } from './role-sessions.mjs';
+import {ConversationTasks} from './conversation-tasks.mjs';
 import { buildRunContext } from './run-context.mjs';
 import { steeringWaitReason } from './role-steering.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
@@ -46,6 +47,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS events_run ON events(run_id,seq);
       CREATE TABLE IF NOT EXISTS room_message_receipts(seq INTEGER PRIMARY KEY AUTOINCREMENT,message_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,received_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS room_receipts_project ON room_message_receipts(project_id,seq);
+      CREATE INDEX IF NOT EXISTS conversation_task_scope ON records(json_extract(data,'$.projectId'),json_extract(data,'$.conversationId'),json_extract(data,'$.status')) WHERE kind='conversationTasks';
       CREATE INDEX IF NOT EXISTS records_kind_project ON records(kind,json_extract(data,'$.projectId'));
       CREATE INDEX IF NOT EXISTS records_source_command_batch ON records(json_extract(data,'$.projectId'),json_extract(data,'$.batchId')) WHERE kind='sourceSyncCommands';
       CREATE INDEX IF NOT EXISTS records_source_command_pending ON records(json_extract(data,'$.projectId'),json_extract(data,'$.nodeId')) WHERE kind='sourceSyncCommands' AND ${pendingSourceCommand};
@@ -260,6 +262,7 @@ export class Store {
       for (const t of this.list('tasks').filter(t => t.projectId === id)) this.remove('tasks', t.id);
       for (const m of this.list('roomMessages').filter(m => m.projectId === id)) this.remove('roomMessages', m.id);
       for (const c of this.listProject('groupConversations',id)) this.remove('groupConversations',c.id);
+      for(const kind of ['conversationTasks','conversationTaskReads','conversationTaskActivity'])for(const record of this.listProject(kind,id))this.remove(kind,record.id);
       for(const followup of this.listProject('proactiveFollowups',id))this.remove('proactiveFollowups',followup.id);
       // Only explicit project deletion releases its private read evidence; there is no background eviction.
       const readOperations=this.listProject('readOperations',id),readUsage=this.get('readStorageUsage','home');
@@ -375,7 +378,7 @@ export class Store {
         // Results that reached this role since its last accepted turn travel with this input, never as a separate task.
         const receipts=claimResultReceipts(this,run);
         if(receipts)run.resultReceipts={ids:receipts.ids,omitted:receipts.omitted};
-        run.contextPacket=buildRunContext({run,task:{...task,coordinationKind:request?.kind},role:task.roleSnapshot,receipts,
+        run.contextPacket=buildRunContext({run,task:{...task,coordinationKind:request?.kind},role:task.roleSnapshot,receipts,conversationTask:new ConversationTasks(this).forRun(run),
           previousRun:roleSession?.lastRunId?this.get('runs',roleSession.lastRunId):null,
           environment:{cwd:binding.localRoot,repositories:repositories.map(repository=>({key:repository.key,localRoot:repository.localRoot})),attachments:(task.attachments||[]).map(item=>({id:item.id,name:item.name}))},
           conversation:context,organizer:this.get('summaryQueues',`${task.projectId}:${task.conversationId||task.projectId}`),

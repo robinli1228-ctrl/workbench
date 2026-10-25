@@ -94,11 +94,11 @@ test('reassignment is refused once execution started and keeps the original link
   assert.throws(() => reassignRequest(e.db, calls, P, 'req2', 'b'), /started|\u5f00\u59cb/);
 });
 
-test('wb pass guidance is injected only for collaboration batch runs (flag-gated)', () => {
+test('retained collaboration batch runs no longer receive removed pass guidance', () => {
   const base = { id: 'r', roleSnapshot: { name: 'a' }, reportRequired: false };
   for (const minimal of [true, false]) {
     assert.ok(!executionRules(base, { minimal }).includes('wb pass'));
-    assert.ok(executionRules({ ...base, collaborationBatchId: 'b1' }, { minimal }).includes('wb pass'));
+    assert.ok(!executionRules({ ...base, collaborationBatchId: 'b1' }, { minimal }).includes('wb pass'));
   }
 });
 

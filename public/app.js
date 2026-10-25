@@ -1,3 +1,4 @@
+import {createConversationTaskUI} from './conversation-tasks.js';
 import {createDataSettingsUI} from './data-settings.js';
 import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
 import { t, getLanguage, setLanguage, onLanguageChange, syncLanguageWithBackend, dateLocale } from './i18n.js';
@@ -201,6 +202,7 @@ function createMobileDrawers() {
     const wasOpen = document.body.dataset.mobilePanel !== 'chat';
     if (next !== 'chat' && !wasOpen) previousFocus = document.activeElement;
     document.body.dataset.mobilePanel = next;
+    document.dispatchEvent(new Event('workbench:mobile-panel'));
     workspace.inert = next !== 'chat';
     backdrop.hidden = next === 'chat';
     for (const [name, aside] of Object.entries(panels)) {
@@ -274,6 +276,7 @@ function createMobileDrawers() {
 }
 const drawers = createMobileDrawers();
 const inspector=createWorkspaceInspector({api,getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
+const conversationTaskUI=createConversationTaskUI({api,getScope:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),getRoles:()=>[...app.data.roles,...app.data.supervisorRoles],openMessage:async(scope,id)=>{mobilePanel('chat');await room.jumpMessage(scope,id);}});
 const nativeSessionUI=createNativeSessionUI({api,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
 initWorkspaceColumns();
 const mobilePanel = drawers.set;
@@ -564,6 +567,7 @@ async function refreshState({ quiet = false } = {}) {
     reconcileSelection();
     setError('');
     render();
+    void conversationTaskUI.refresh();
     // File queries may wait on a remote Worker and must not block authoritative state refresh or later SSE merging.
     void refreshRunDetails();
     app.lastStateAt = new Date().toISOString();
@@ -603,6 +607,7 @@ function render() {
   renderSettingsDevices();
   renderOnlineDevices();
   inspector.render();
+  conversationTaskUI.sync();
   renderDesktopShortcut();
   renderWorkspace();
   renderTasks();
@@ -662,7 +667,7 @@ function renderExecutionPlans() {
     panel.classList.add('is-dismissible');panel.append(close);
   } else panel.classList.remove('is-dismissible');
   const list=document.createElement('div');list.className='execution-plan-list';details.append(list);
-  const count=document.createElement('p');count.className='execution-plan-count';count.textContent='This round\'s plan · view only; runs automatically once submitted';
+  const count=document.createElement('p');count.className='execution-plan-count';count.textContent='Legacy plan history · read only';
   list.append(count);
   for(const plan of state.plans) {
     const item=document.createElement('section');item.className='execution-plan-item';

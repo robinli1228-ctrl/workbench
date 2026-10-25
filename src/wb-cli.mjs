@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { loadTurnContext } from './turn-context.mjs';
 import { agentRequest } from './agent-bridge.mjs';
 import { setupCatalog, setupPropose } from './setup-tools.mjs';
-import { helpText, historySearchInput, chatPost, notifySupervisor, callRole, waitForRole, requestDelivery } from './wb-tools.mjs';
+import { conversationTask, helpText, historySearchInput, chatPost, notifySupervisor, callRole, waitForRole, requestDelivery } from './wb-tools.mjs';
 import { tr } from './i18n.mjs';
 
 function out(data) {
@@ -22,7 +22,7 @@ function sessionOptions(args) {
   return values;
 }
 
-const COMMANDS=['pass','notify','collaboration','sync','discuss','capabilities','session','setup','history','schedule','timer','note','wait','deliver','call'];
+const COMMANDS=['task','notify','sync','discuss','capabilities','session','setup','history','timer','note','wait','deliver','call'];
 
 export async function main(argv = process.argv.slice(2)) {
   const turnId=argv[0]==='--turn'?argv[1]:undefined;
@@ -34,18 +34,21 @@ export async function main(argv = process.argv.slice(2)) {
     // Long-form guidance that left the platform template: read on demand, no turn context needed.
     if(['help','-h','--help'].includes(cmd)&&['review','sync','errors'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
     if(!cmd||['help','-h','--help'].includes(cmd)||(tail.some(value=>['--help','-h'].includes(value))&&!tail.includes('--'))||(cmd==='deliver'&&sub==='help'))
-      return out(process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wbCli.wbScheduleJsonSupervisorSubmits',{HELP:helpText()}):helpText());
+      return out(helpText());
     if(!COMMANDS.includes(cmd))throw new Error(tr('wbCli.unknownCommand',{cmd,HELP:helpText()}));
     loadTurnContext(process.env,{turnId});
     const supervisor = process.env.WB_SYSTEM_SUPERVISOR === '1';
     const sourceSync=process.env.WB_SOURCE_SYNC==='1';
+    if(cmd==='task'){
+      if(sub==='list'&&(!rest.length||rest.length===2&&rest[0]==='--status'))return out(await conversationTask('list',rest.length?{status:rest[1]}:{}));
+      if(sub==='show'&&rest.length===1)return out(await conversationTask('show',{id:rest[0]}));
+      if(sub==='create'&&rest.length===1)return out(await conversationTask('create',JSON.parse(rest[0])));
+      if(sub==='update'&&rest.length===2)return out(await conversationTask('update',{...JSON.parse(rest[1]),id:rest[0]}));
+      throw new Error(tr('conversationTasks.help'));
+    }
     if (cmd === 'notify') {
       if (!['send','status'].includes(sub) || rest.length !== 1) throw new Error(tr('wechatChannel.toolGuide'));
       return out(await notifySupervisor(sub,sub==='status'?{id:rest[0]}:JSON.parse(rest[0])));
-    }
-    if(cmd==='collaboration') {
-      if(!['list','create','link','add-member','remove-member','release','close'].includes(sub)||rest.length>1)throw new Error(tr('collabSessions.toolHelp'));
-      return out(await agentRequest('/api/agent/collaboration-sessions',{runId:process.env.WB_RUN_ID,action:sub,input:rest.length?JSON.parse(rest[0]):{}}));
     }
     if(cmd==='sync'){
       if(!sourceSync)throw new Error(tr('sourceSync.failure',{code:'worker_unsupported',detail:''}));
@@ -57,12 +60,9 @@ export async function main(argv = process.argv.slice(2)) {
       return out(await agentRequest('/api/agent/discussions',{runId:process.env.WB_RUN_ID,action:'peers',input:rest.length?JSON.parse(rest[0]):{view:'summary'}}));
     }
     if (cmd === 'capabilities') return out({protocol:2,notifications:supervisor?1:0,sourceSyncTools:sourceSync?1:0,sessionTools:1,timerTools:1,transfer:1,
-      tools:[...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),'discuss peers','call','wait','note','timer',
-        ...(supervisor?['notify send','notify status','schedule','collaboration list','collaboration create','collaboration link','collaboration add-member','collaboration remove-member','collaboration release','collaboration close']:[]),
-        ...(process.env.WB_QUEUE_BATCH==='1'?['pass']:[]),'history','history search','history read','history summary','deliver','session current',...(process.env.WB_PLATFORM_ASSISTANT==='1'?['setup catalog','setup propose']:[])]});
-    // Discussion batches belong to collaboration sessions and leave with them.
-    if (cmd === 'pass' && process.env.WB_QUEUE_BATCH === '1') return out(await agentRequest('/api/agent/pass',{runId:process.env.WB_RUN_ID}));
-    if (cmd === 'pass') throw new Error(tr('sessionQueue.passNoBatch'));
+      tools:[...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),'task list','task show','task create','task update','discuss peers','call','wait','note','timer',
+        ...(supervisor?['notify send','notify status']:[]),
+        'history','history search','history read','history summary','deliver','session current',...(process.env.WB_PLATFORM_ASSISTANT==='1'?['setup catalog','setup propose']:[])]});
     if (cmd === 'session' && sub === 'current') return out(await agentRequest('/api/agent/sessions/current',{runId:process.env.WB_RUN_ID}));
     // Configuration cards belong to the platform assistant; project roles read the team with wb discuss peers.
     if (cmd === 'setup' && process.env.WB_PLATFORM_ASSISTANT === '1' && sub === 'catalog') return out(await setupCatalog());
@@ -76,10 +76,6 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'history' && sub === 'summary') return out(await agentRequest('/api/agent/conversation/summary',{runId:process.env.WB_RUN_ID,...sessionOptions(rest)}));
     // Bare wb history lists the latest messages; any other words are search terms, as with wb history search.
     if (cmd === 'history') return out(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(tail)}));
-    if (cmd === 'schedule') {
-      if (!supervisor) throw new Error(tr('wbCli.onlyProjectSupervisorCanSubmit'));
-      return out(await agentRequest('/api/agent/schedule',{...JSON.parse(tail.join(' ')),runId:process.env.WB_RUN_ID}));
-    }
     if (cmd === 'timer') {
       if (sub === 'list' && !rest.length) return out(await agentRequest('/api/agent/timers',{runId:process.env.WB_RUN_ID,action:'list'}));
       if (!['create','update','pause','resume','delete'].includes(sub) || rest.length !== 1) throw new Error(tr('wbCli.usageWbTimerListWb'));
@@ -97,7 +93,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (cmd === 'call') {
       const values = {}, flags = { '--role': 'role', '--kind': 'kind', '--request-id': 'requestId', '--text': 'text', '--file':'file', '--delivery-id': 'deliveryId','--source-sync-batch-id':'sourceSyncBatchId',
-        '--goal':'goal','--scope':'scope','--input':'input','--return':'returns' };
+        '--task':'task','--goal':'goal','--scope':'scope','--input':'input','--return':'returns' };
       for (let i = 0; i < tail.length; i += 2) {
         const key = flags[tail[i]];
         if (!key || tail[i + 1] === undefined || key!=='role'&&values[key] !== undefined) throw new Error(tr('wbCli.invalidDuplicateWbCallParameters'));
