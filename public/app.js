@@ -1,3 +1,4 @@
+import {createConversationTaskUI} from './conversation-tasks.js';
 import {createDataSettingsUI} from './data-settings.js';
 import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
 import { t, getLanguage, setLanguage, onLanguageChange, syncLanguageWithBackend, dateLocale } from './i18n.js';
@@ -268,6 +269,7 @@ function createMobileDrawers() {
 }
 const drawers = createMobileDrawers();
 const inspector=createWorkspaceInspector({api,getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
+const conversationTaskUI=createConversationTaskUI({api,getScope:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),getRoles:()=>[...app.data.roles,...app.data.supervisorRoles],openMessage:async(scope,id)=>{mobilePanel('chat');await room.jumpMessage(scope,id);}});
 const nativeSessionUI=createNativeSessionUI({api,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
 initWorkspaceColumns();
 const mobilePanel = drawers.set;
@@ -558,6 +560,7 @@ async function refreshState({ quiet = false } = {}) {
     reconcileSelection();
     setError('');
     render();
+    void conversationTaskUI.refresh();
     // File queries may wait on a remote Worker and must not block authoritative state refresh or later SSE merging.
     void refreshRunDetails();
     app.lastStateAt = new Date().toISOString();
@@ -597,6 +600,7 @@ function render() {
   renderSettingsDevices();
   renderOnlineDevices();
   inspector.render();
+  conversationTaskUI.sync();
   renderDesktopShortcut();
   renderWorkspace();
   renderTasks();

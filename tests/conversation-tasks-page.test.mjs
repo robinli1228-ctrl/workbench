@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+const load=()=>import('../public/conversation-task-state.js');
+test('task list defaults to unfinished tasks',async()=>{const {taskList}=await load();assert.deepEqual(taskList([{number:1,status:'done'},{number:2,status:'todo'},{number:3,status:'cancelled'},{number:4,status:'in_progress'}]).map(t=>t.number),[2,4]);});
+test('closed tasks can be included without mutating input',async()=>{const {taskList}=await load();const items=[{number:3,status:'done'},{number:1,status:'todo'},{number:2,status:'cancelled'}];assert.deepEqual(taskList(items,true).map(t=>t.number),[1,2,3]);assert.equal(items[0].number,3);});
+test('status labels cover all persisted states and unknown values',async()=>{const {taskStatus}=await load();assert.deepEqual(['todo','in_progress','done','cancelled','unknown'].map(taskStatus),['To do','In progress','Done','Cancelled','Unknown status']);});
+test('current step handles absent plans and zero based position',async()=>{const {taskStep}=await load();assert.equal(taskStep({plan:null}),'');assert.equal(taskStep({plan:{currentStep:1,steps:[{title:'One'},{title:'Two'}]}}),'2/2 · Two');});
+test('update payload contains only changed fields and current revision',async()=>{const {taskPatch}=await load();const task={revision:4,title:'One',description:'Old',ownerRoleId:'role',status:'todo',plan:null};assert.deepEqual(taskPatch(task,{...task,description:'New'}),{revision:4,description:'New'});});
+test('reopening does not send a result summary outside done',async()=>{const {taskPatch}=await load();assert.deepEqual(taskPatch({revision:2,status:'done',resultSummary:'result'},{status:'todo',resultSummary:'result'}),{revision:2,status:'todo'});});
+test('whole plan updates preserve review and handoff fields',async()=>{const {taskPatch}=await load();const plan={currentStep:0,steps:[{title:'Review',review:{roleIds:['r'],count:1,sequential:true},handoffRoleId:'r'}]};assert.deepEqual(taskPatch({revision:1,plan:null},{plan}),{revision:1,plan});});
+test('message IDs and scope are never implicitly changed by form patches',async()=>{const {taskPatch}=await load();assert.deepEqual(taskPatch({revision:1,title:'One'},{title:'One',messageIds:['other'],conversationId:'other'}),{revision:1});});

@@ -1509,6 +1509,8 @@ const server = http.createServer(async (req, res) => {
     const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/send-state.js':'send-state.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
     Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
     files['/workspace-inspector.js']='workspace-inspector.js';
+    files['/conversation-tasks.js']='conversation-tasks.js';
+    files['/conversation-task-state.js']='conversation-task-state.js';
     files['/source-sync.js']='source-sync.js';
     files['/quota-state.js']='quota-state.js';
     files['/chat-card-state.js']='chat-card-state.js';
