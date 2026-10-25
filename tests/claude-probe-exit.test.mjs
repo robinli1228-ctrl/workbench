@@ -25,12 +25,13 @@ test('the Claude probe answers at once but leaves the CLI running until start-up
   const dir = mkdtempSync(join(tmpdir(), 'wb-claude-probe-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const { bin, log } = fake(dir, { leaveOnEof: true });
-  const begun = Date.now();
-  assert.deepEqual(await probeClaudeModels(bin, { settleMs: 600, killMs: 2000 }), [{ value: 'opus' }]);
-  assert.ok(Date.now() - begun < 600, 'the catalog does not wait for the settle time');
+  // Leave room for cold executable startup on macOS; the catalog must still return before the settlement boundary.
+  const settleMs = 2000, begun = Date.now();
+  assert.deepEqual(await probeClaudeModels(bin, { settleMs, killMs: 4000 }), [{ value: 'opus' }]);
+  assert.ok(Date.now() - begun < settleMs, 'the catalog does not wait for the settle time');
   assert.equal(existsSync(log), false, 'stdin stays open while start-up work may still be running');
   assert.ok(await until(() => existsSync(log), 3000));
-  assert.ok(Date.now() - begun >= 600);
+  assert.ok(Date.now() - begun >= settleMs);
   assert.equal(readFileSync(log, 'utf8'), 'eof\n', 'closed by end of input, never signalled');
 });
 

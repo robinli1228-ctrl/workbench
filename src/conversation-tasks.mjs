@@ -32,19 +32,21 @@ export class ConversationTasks {
     if(!actor?.runId||this.db.get('roles',actor.roleId)?.projectId!==scope.projectId)fail('actor',403);
     return {type:'role',roleId:actor.roleId,runId:actor.runId};
   }
-  role(scope,id){if(id!==null&&(typeof id!=='string'||this.db.get('roles',id)?.projectId!==scope.projectId||this.db.get('roles',id)?.archivedAt))fail('owner');return id;}
-  plan(scope,value){
+  // Keep archived roles only in unchanged historical references; new assignments still require an active project role.
+  role(scope,id,retained=false){if(id!==null&&(typeof id!=='string'||this.db.get('roles',id)?.projectId!==scope.projectId||(!retained&&this.db.get('roles',id)?.archivedAt)))fail('owner');return id;}
+  plan(scope,value,previous=null){
     if(value===null)return null;
     keys(value,['steps','currentStep']);
     if(!Array.isArray(value.steps)||value.steps.length>50||!Number.isInteger(value.currentStep)||value.currentStep<0||value.currentStep>=Math.max(1,value.steps.length))fail('plan');
-    const steps=value.steps.map(step=>{
+    const steps=value.steps.map((step,index)=>{
+      const before=previous?.steps?.[index];
       keys(step,['title','description','roleId','collaborators','review','handoffRoleId','status']);
       const result={...step,title:text(step.title,200),status:step.status||'todo'};
       if(!['todo','in_progress','done'].includes(result.status))fail('plan');
       if(step.description!==undefined)text(step.description,2000,true);
-      for(const key of ['roleId','handoffRoleId'])if(step[key]!==undefined)this.role(scope,step[key]);
-      if(step.collaborators!==undefined){if(!Array.isArray(step.collaborators)||step.collaborators.length>20)fail('plan');step.collaborators.forEach(id=>this.role(scope,id));}
-      if(step.review!==undefined){keys(step.review,['roleIds','count','sequential']);if(!Array.isArray(step.review.roleIds)||step.review.roleIds.length>20||!Number.isInteger(step.review.count)||step.review.count<0||step.review.count>20||typeof step.review.sequential!=='boolean')fail('plan');step.review.roleIds.forEach(id=>this.role(scope,id));}
+      for(const key of ['roleId','handoffRoleId'])if(step[key]!==undefined)this.role(scope,step[key],before?.[key]===step[key]);
+      if(step.collaborators!==undefined){if(!Array.isArray(step.collaborators)||step.collaborators.length>20)fail('plan');step.collaborators.forEach(id=>this.role(scope,id,before?.collaborators?.includes(id)));}
+      if(step.review!==undefined){keys(step.review,['roleIds','count','sequential']);if(!Array.isArray(step.review.roleIds)||step.review.roleIds.length>20||!Number.isInteger(step.review.count)||step.review.count<0||step.review.count>20||typeof step.review.sequential!=='boolean')fail('plan');step.review.roleIds.forEach(id=>this.role(scope,id,before?.review?.roleIds?.includes(id)));}
       return result;
     });
     if(JSON.stringify(value).length>16000)fail('plan');
@@ -55,8 +57,8 @@ export class ConversationTasks {
     for(const key of fields)if(Object.hasOwn(input,key))value[key]=structuredClone(input[key]);
     text(value.title,200);text(value.description,12000);
     if(!statuses.includes(value.status))fail('status');
-    this.role(scope,value.ownerRoleId);
-    value.plan=this.plan(scope,value.plan);
+    this.role(scope,value.ownerRoleId,current.ownerRoleId===value.ownerRoleId);
+    value.plan=this.plan(scope,value.plan,current.plan);
     if(!Array.isArray(value.messageIds)||value.messageIds.length>100||new Set(value.messageIds).size!==value.messageIds.length)fail('invalid');
     for(const id of value.messageIds)assertConversationRecord(scope,this.db.get('roomMessages',id));
     if(Object.hasOwn(input,'resultSummary')){if(value.status!=='done')fail('summary');text(input.resultSummary,8000,true);}
