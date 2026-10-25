@@ -1,6 +1,6 @@
 import {t,dateLocale,onLanguageChange} from './i18n.js';
 import {setActionIcon} from './role-icons.js';
-import {taskList,taskStatus,taskStep,taskPatch} from './conversation-task-state.js';
+import {taskList,taskStatus,taskStep,taskPatch,taskCardVisible} from './conversation-task-state.js';
 const el=(tag,cls='',text)=>Object.assign(document.createElement(tag),{className:cls,...(text===undefined?{}:{textContent:text})});
 const raw=node=>{node.setAttribute('translate','no');return node;};
 const date=value=>value?new Date(value).toLocaleString(dateLocale()):'—';
@@ -31,7 +31,10 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
     if(!list.children.length)list.append(el('p','workspace-note',t('No tasks to show.')));
   }
   async function refresh(){
-    sync();if(!scope?.projectId||!host.getClientRects().length)return;if(pending){again=true;return;}
+    sync();if(!scope?.projectId)return;
+    const ancestors=[];for(let node=host;node;node=node.parentElement){const style=getComputedStyle(node);ancestors.push({hidden:node.hidden,display:style.display,visibility:style.visibility});}
+    if(!taskCardVisible({hasRects:host.getClientRects().length>0,mobile:matchMedia('(max-width: 1000px)').matches,mobilePanel:document.body.dataset.mobilePanel,ancestors}))return;
+    if(pending){again=true;return;}
     const version=generation,target={...scope};pending=true;
     try{const result=await api(`${url(target)}?${new URLSearchParams({conversationId:target.conversationId,status:'all'})}`);
       if(version!==generation)return;items=result;notice.textContent='';render();
@@ -138,8 +141,10 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
     };
   }
   // Hidden inspectors have no task traffic. Opening one reads once through the same refresh path.
-  for(const control of document.querySelectorAll('#inspector-tab-artifacts, #mobile-roles, #toggle-inspector, [data-mode=groups]'))control.addEventListener('click',()=>queueMicrotask(refresh));
+  for(const control of document.querySelectorAll('#inspector-tab-artifacts, #toggle-inspector, [data-mode=groups]'))control.addEventListener('click',()=>queueMicrotask(refresh));
   for(const tab of document.querySelectorAll('.inspector-tabs [role=tab]'))tab.addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))queueMicrotask(refresh);});
+  document.addEventListener('workbench:mobile-panel',()=>queueMicrotask(refresh));
+  document.querySelector('.node-sidebar')?.addEventListener('transitionend',event=>{if(event.target===event.currentTarget&&event.propertyName==='transform')void refresh();});
   add.onclick=()=>open(null);closed.onchange=render;onLanguageChange(()=>render());
   return {sync,refresh};
 }

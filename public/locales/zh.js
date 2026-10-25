@@ -7,6 +7,8 @@ export default {
   "Collaboration history · collection disabled": "协作历史 · 收集已停用",
   "Collaboration sessions are retired. Existing records are read-only.": "协作会话已停用，已有记录只读保留。",
   "Legacy plan history · read only": "旧计划历史 · 只读",
+  "Yes":"是",
+  "No":"否",
 
 
   "Task list":"任务列表",

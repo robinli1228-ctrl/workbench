@@ -196,6 +196,7 @@ function createMobileDrawers() {
     const wasOpen = document.body.dataset.mobilePanel !== 'chat';
     if (next !== 'chat' && !wasOpen) previousFocus = document.activeElement;
     document.body.dataset.mobilePanel = next;
+    document.dispatchEvent(new Event('workbench:mobile-panel'));
     workspace.inert = next !== 'chat';
     backdrop.hidden = next === 'chat';
     for (const [name, aside] of Object.entries(panels)) {

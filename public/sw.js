@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v185-task-driven-heartbeat';
+const CACHE = 'agent-workbench-static-v187-task-card-merge';
 const STATIC = [
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
