@@ -10,7 +10,6 @@ const now=()=>new Date().toISOString();
 const effects=new Set(['plan','audit','develop','test','merge','migration','deploy','production']);
 const exclusive=new Set(['migration','deploy','production']);
 
-export const schedulingRules = () => tr('executionPlans.executionSchedulingYouOnlyAssign');
 
 /** A lightweight stage plan reuses the call queue; the supervisor does the judging, and the state machine handles only verified execution facts. */
 export class ExecutionPlans {

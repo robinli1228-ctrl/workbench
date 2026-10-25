@@ -57,7 +57,7 @@ import { DeviceAdmin } from './device-admin.mjs';
 import { PlatformAssistant } from './platform-assistant.mjs';
 import { TokenUsage, createTokenUsageBackgroundCollector } from './token-usage.mjs';
 import { Attachments, AttachmentTransfers } from './attachments.mjs';
-import { ExecutionPlans, schedulingRules } from './execution-plans.mjs';
+import { ExecutionPlans } from './execution-plans.mjs';
 import { History } from './history.mjs';
 import { archiveHistoricalReceipts } from './result-receipts.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
@@ -279,10 +279,7 @@ async function dispatch(nodeId) {
     const storedTask = run.inputTask||db.get('tasks', run.taskId);
     // Minimal turns get the execution rules once, from the Worker's executionInstructions; adding them here too repeated them.
     const basePrompt=runWithLanguage('en',()=>[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal||run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n'));
-    const rulesText = runWithLanguage('en',()=>schedulingRules());
-    // The timer line is matched in both languages; it is dropped for Workers without timer tools.
-    const schedulingRulesText = db.get('workers',nodeId)?.capabilities?.timerTools===1 ? rulesText : rulesText.replace(/^(?:Use wb timer only when given an explicit wall-clock time or recurrence requirement; |\u53ea\u6709\u6536\u5230\u660e\u786e\u7684\u5899\u949f\u65f6\u95f4\/\u5468\u671f\u9700\u6c42\u624d\u7528 wb timer\uff1b).*\n/m,'');
-    const supervisorInstructions=runWithLanguage('en',()=>!minimal&&!run.switchOperationId&&(!run.turnPurpose||run.turnPurpose==='task')&&run.roleSnapshot?.systemSupervisor && !run.roleSnapshot.platformAssistant ? tr('home.supervisorWorkingConventions', { supervisorPrompt: legacyExecutionPrompt(normalizePlatformSettings(db.get('settings', 'main')).supervisorPrompt,'supervisor'), schedulingRules: schedulingRulesText }):'');
+    const supervisorInstructions=runWithLanguage('en',()=>!minimal&&!run.switchOperationId&&(!run.turnPurpose||run.turnPurpose==='task')&&run.roleSnapshot?.systemSupervisor && !run.roleSnapshot.platformAssistant ? tr('home.supervisorWorkingConventions', { supervisorPrompt: legacyExecutionPrompt(normalizePlatformSettings(db.get('settings', 'main')).supervisorPrompt,'supervisor') }):'');
     // New Workers put the fixed Supervisor conventions in the stable rules area; old Workers still receive the full original format, so rolling upgrades do not lose rules.
     const stableInstructions=db.get('workers',nodeId)?.capabilities?.stableInstructions===1;
     const task = c.launchInput?.task||{...storedTask,prompt:supervisorInstructions&&!stableInstructions?`${basePrompt}\n\n${supervisorInstructions}`:basePrompt,

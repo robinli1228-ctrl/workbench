@@ -173,28 +173,28 @@ export class RoleDiscussions {
   recover() {
     return this.db.transaction(()=>{
       let changed=false;
-      const reason=tr('roleDiscussions.protocolRetired'),at=now(),taskIds=new Set(),threadIds=new Set(),deliveryIds=new Set();
+      const reason=tr('roleDiscussions.protocolRetired'),at=now();
+      const activeRuns=this.db.list('runs').filter(run=>!terminal.has(run.status));
+      const activeRunIds=new Set(activeRuns.map(run=>run.id));
+      const activeTaskIds=new Set(activeRuns.flatMap(run=>[run.taskId,run.businessTaskId]).filter(Boolean));
       for(const intent of this.db.list('discussionIntents'))if(['queued','blocked'].includes(intent.status)){
         this.db.put('discussionIntents',{...intent,status:'cancelled',waitingReason:null,error:reason,updatedAt:at});
-        if(intent.taskId)taskIds.add(intent.taskId);changed=true;
+        changed=true;
       }
       for(const thread of this.db.list('discussionThreads'))if(thread.status==='open'){
-        this.db.put('discussionThreads',{...thread,status:'cancelled',reason,revision:(thread.revision||0)+1,updatedAt:at});threadIds.add(thread.id);changed=true;
+        this.db.put('discussionThreads',{...thread,status:'cancelled',reason,revision:(thread.revision||0)+1,updatedAt:at});changed=true;
       }
       for(const delivery of this.db.list('discussionDeliveries'))if(!['consumed','cancelled','superseded','failed'].includes(delivery.status)){
-        this.db.put('discussionDeliveries',{...delivery,status:'cancelled',waitingReason:null,error:reason,updatedAt:at});deliveryIds.add(delivery.id);changed=true;
+        this.db.put('discussionDeliveries',{...delivery,status:'cancelled',waitingReason:null,error:reason,updatedAt:at});changed=true;
       }
       for(const task of this.db.list('tasks')){
-        if(!taskIds.has(task.id)&&!task.discussionWait&&!task.discussionResumeBlocked&&task.status!=='waiting_discussion')continue;
-        taskIds.add(task.id);
+        if(!task.discussionWait&&!task.discussionResumeBlocked&&task.status!=='waiting_discussion')continue;
+        // A saved continuation intent or wait must not interrupt an existing business turn.
+        if(activeRunIds.has(task.currentRunId)||activeTaskIds.has(task.id))continue;
         const settled=['done','completed','cancelled','failed','awaiting_acceptance'].includes(task.status);
         this.db.put('tasks',{...task,...(!settled?{status:'cancelled',cancelReason:reason}:{}),discussionWait:null,discussionResumeBlocked:null,waitingReason:null,updatedAt:at});changed=true;
         const request=task.requestId?this.db.get('coordinationRequests',task.requestId):null;
         if(request&&!['succeeded','failed','cancelled'].includes(request.status))this.db.put('coordinationRequests',{...request,status:'cancelled',cancelReason:reason,waitingReason:null,updatedAt:at});
-      }
-      for(const run of this.db.list('runs'))if(!terminal.has(run.status)&&!run.stopRequested&&
-        (taskIds.has(run.taskId)||taskIds.has(run.businessTaskId)||deliveryIds.has(run.discussionDeliveryId)||threadIds.has(run.discussionThreadId))){
-        this.db.requestStop(run.id,`discussion-retired:${run.id}`);changed=true;
       }
       return {changed};
     });
