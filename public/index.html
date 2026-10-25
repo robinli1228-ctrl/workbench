@@ -230,18 +230,7 @@
                 </section>
                 <section class="settings-block" aria-labelledby="session-queue-heading">
                   <h3 id="session-queue-heading">Collaboration session queue</h3>
-                  <p class="workspace-note">Off by default. Collect messages outside busy CLIs. Broadcast remains restricted to isolated test projects.</p>
-                  <form id="session-queue-config-form" class="form-grid">
-                    <label class="checkbox-label full-width"><input type="checkbox" name="enabled">Enable collaboration sessions</label>
-                    <label>Merge wait (seconds)<input type="number" name="quietSeconds" min="0" max="3600" step="1" required></label>
-                    <label>Maximum collection (seconds)<input type="number" name="maxSeconds" min="0" max="3600" step="1" required></label>
-                    <label>New cycle batch budget<input type="number" name="budgetBatches" min="1" max="1000" step="1"></label>
-                    <label>Backlog message threshold<input type="number" name="backlogMessages" min="1" max="10000" step="1" required></label>
-                    <label>Backlog wait (seconds)<input type="number" name="backlogWaitSeconds" min="60" max="86400" step="1" required></label>
-                    <p class="workspace-note full-width">Leave budget empty to require a user grant. Existing cycles keep their usage and need a separate additional grant.</p>
-                    <div class="form-actions full-width"><button type="submit" class="primary">Save queue settings</button></div>
-                  </form>
-                  <p id="session-queue-config-feedback" class="form-feedback" role="status" hidden></p>
+                  <p class="workspace-note">Collaboration sessions are retired. Existing records are read-only.</p>
                 </section>
                 <section class="settings-block project-timer-link"><div><h3>Scheduled Jobs</h3><p class="workspace-note">View and adjust scheduled dispatches and progress checks for the current project.</p></div><button class="secondary" id="open-project-timers" type="button">Manage scheduled jobs</button></section>
                 </div>

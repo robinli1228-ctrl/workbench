@@ -660,7 +660,7 @@ function renderExecutionPlans() {
     panel.classList.add('is-dismissible');panel.append(close);
   } else panel.classList.remove('is-dismissible');
   const list=document.createElement('div');list.className='execution-plan-list';details.append(list);
-  const count=document.createElement('p');count.className='execution-plan-count';count.textContent='This round\'s plan · view only; runs automatically once submitted';
+  const count=document.createElement('p');count.className='execution-plan-count';count.textContent='Legacy plan history · read only';
   list.append(count);
   for(const plan of state.plans) {
     const item=document.createElement('section');item.className='execution-plan-item';

@@ -4,16 +4,15 @@ import { randomUUID } from 'node:crypto';
 import { tr } from './i18n.mjs';
 
 // Paths a role's wb command may reach; Home re-checks each request against the run and its role.
-const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/schedule', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary',
-  '/api/agent/discussions', '/api/agent/pass', '/api/agent/collaboration-sessions', '/api/agent/source-sync', '/api/agent/notify']);
+const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary',
+  '/api/agent/discussions', '/api/agent/source-sync', '/api/agent/notify']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** Dispatch pause must not swallow accepted work's conclusions; new work and write operations remain blocked. */
 export function allowsPausedAgentOperation(pathname,input={}) {
   return new Set(['/api/agent/wait','/api/agent/note','/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary']).has(pathname)
     ||pathname==='/api/agent/conversation-tasks'&&['list','show'].includes(input.action)
-    ||pathname==='/api/agent/discussions'&&input.action==='peers'
-    ||pathname==='/api/agent/pass'||pathname==='/api/agent/collaboration-sessions'&&input.action==='list';
+    ||pathname==='/api/agent/discussions'&&input.action==='peers';
 }
 
 /**

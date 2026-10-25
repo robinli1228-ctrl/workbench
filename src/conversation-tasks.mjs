@@ -14,6 +14,18 @@ const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('h
 /** Home-only planning records, distinct from executable tasks. Every entry point has an explicit conversation lens. */
 export class ConversationTasks {
   constructor(db){this.db=db;}
+  /** One small Home-only aggregate per chat. Upgrade initializes it once; mutations update it in their transaction. */
+  activity(context){
+    const scope=this.scope(context),id=JSON.stringify([scope.projectId,scope.conversationId]);
+    const previous=this.db.get('conversationTaskActivity',id);if(previous)return previous;
+    const counts=this.db.db.prepare("SELECT COUNT(*) AS total,COALESCE(SUM(json_extract(data,'$.status') IN ('todo','in_progress')),0) AS open FROM records WHERE kind='conversationTasks' AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.conversationId')=?").get(scope.projectId,scope.conversationId);
+    return this.db.put('conversationTaskActivity',{id,...scope,...counts,version:0});
+  }
+  persist(record,previous=null){
+    const activity=this.activity(record),open=t=>Number(Boolean(t&&['todo','in_progress'].includes(t.status)));
+    this.db.put('conversationTaskActivity',{...activity,total:activity.total+Number(!previous),open:activity.open+open(record)-open(previous),version:activity.version+1});
+    return this.db.put('conversationTasks',record);
+  }
   scope(context){return {projectId:context.projectId,conversationId:resolveConversationId(this.db,context.projectId,context.conversationId)};}
   actor(scope,actor){
     if(actor?.user===true)return {type:'user'};
@@ -73,7 +85,7 @@ export class ConversationTasks {
     const number=this.list(scope,{status:'all'}).reduce((n,t)=>Math.max(n,t.number),0)+1,time=new Date().toISOString();
     const record={...value,...scope,id,number,revision:1,descriptionRevision:1,requestId:input.requestId,createFingerprint:fingerprint,createdAt:time,updatedAt:time,
       history:[{revision:1,at:time,actor:who,reason:input.reason===undefined?'':text(input.reason,1000,true),changes:Object.fromEntries(fields.map(k=>[k,{from:null,to:value[k]}]))}]};
-    return this.db.put('conversationTasks',record);
+    return this.persist(record);
   });}
   update(context,id,input,actor){return this.db.transaction(()=>{
     const scope=this.scope(context),who=this.actor(scope,actor),current=this.show(scope,id);keys(input,[...fields,'revision','reason']);
@@ -86,8 +98,8 @@ export class ConversationTasks {
     const changes=Object.fromEntries(fields.filter(k=>JSON.stringify(current[k])!==JSON.stringify(value[k])).map(k=>[k,{from:current[k],to:value[k]}]));
     if(!Object.keys(changes).length)fail('noChange');
     const revision=current.revision+1,time=new Date().toISOString();
-    return this.db.put('conversationTasks',{...value,revision,descriptionRevision:changes.description?revision:current.descriptionRevision,updatedAt:time,
-      history:[...current.history,{revision,at:time,actor:who,reason:input.reason===undefined?'':text(input.reason,1000,true),changes}]});
+    return this.persist({...value,revision,descriptionRevision:changes.description?revision:current.descriptionRevision,updatedAt:time,
+      history:[...current.history,{revision,at:time,actor:who,reason:input.reason===undefined?'':text(input.reason,1000,true),changes}]},current);
   });}
   /** Shared planning data cannot serve as a side channel for unreleased reviewer content. */
   visible(record,run){const view=reviewView(this.db,{projectId:run.projectId,roleId:run.roleId});return !record.history.some(h=>h.actor.runId&&view.get('runs',h.actor.runId)?.reviewRedacted);}
@@ -108,9 +120,9 @@ export class ConversationTasks {
     const edit=task.history.findLast(h=>h.changes.description);
     if(!edit||edit.revision===1||edit.actor.runId!==run.id||edit.actor.roleId!==run.roleId)fail('editFirst');
     const revision=task.revision+1,time=new Date().toISOString();
-    return this.db.put('conversationTasks',{...task,ownerRoleId:targetRoleId,status:'in_progress',revision,updatedAt:time,
+    return this.persist({...task,ownerRoleId:targetRoleId,status:'in_progress',revision,updatedAt:time,
       history:[...task.history,{revision,at:time,actor:{type:'role',roleId:run.roleId,runId:run.id},reason:tr('conversationTasks.transferReason'),
-        changes:{ownerRoleId:{from:task.ownerRoleId,to:targetRoleId},status:{from:task.status,to:'in_progress'}}}]});
+        changes:{ownerRoleId:{from:task.ownerRoleId,to:targetRoleId},status:{from:task.status,to:'in_progress'}}}]},task);
   }
   /** Explicit --task calls and their continuations only; unrelated turns of the same owner inherit nothing. */
   forRun(run){

@@ -19,16 +19,18 @@ export function executionRules(run,{minimal=false}={}) {
   const discussion=discussionInstructions(run);
   if(discussion&&run.turnPurpose&&run.turnPurpose!=='task')return discussion;
   const purpose=run.execution?.purpose;
-  // wb pass guidance only for collaboration batch runs, which exist only when the project flag is on.
-  const passRule=run.collaborationBatchId||run.continuationBatchId?tr('sessionQueue.passRule'):'';
-  if(minimal)return [passRule,purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):'',
+  if(minimal)return [purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):'',
     ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):'',
     ['audit','review'].includes(purpose)?tr('platformPrompts.independentReviewBoundary'):''].filter(Boolean).join('\n');
-  return tr('platformPrompts.handleOnlyAssignmentDoNot', { discussion, p2: tr('platformPrompts.useWbCallForRole'), p3: run.roleSnapshot?.systemSupervisor?tr('platformPrompts.workingRolesMayConsultDiscuss'):'', p4: purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):tr('platformPrompts.unlessMergeStageScheduledDo'), p5: ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):tr('platformPrompts.doNotReleaseOperateProduction'), p6: ''  })+(passRule?`\n${passRule}`:'');
+  return tr('platformPrompts.handleOnlyAssignmentDoNot', { discussion, p2: tr('platformPrompts.useWbCallForRole'), p3: run.roleSnapshot?.systemSupervisor?tr('platformPrompts.workingRolesMayConsultDiscuss'):'', p4: purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):tr('platformPrompts.unlessMergeStageScheduledDo'), p5: ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):tr('platformPrompts.doNotReleaseOperateProduction'), p6: ''  });
 }
 const DEFAULT_FIELD_LIMIT = 128;
 // Match only exact previous EN/ZH defaults; custom edits must survive prompt upgrades.
 const LEGACY_SUPERVISOR_DEFAULTS = new Set([
+  // Exact defaults before task-driven collaboration.
+  '9fd60d14949af20883ae03e75daf592f86e323b4be329bfb4f0d166d56f438ba',
+  '542d638a7020bbad92a8a4ed48f0f78e3b3f0de565a656b7df6a024300e13be5',
+
   'b70469e34eb2fc33bb75bad89ee5be8fdd4e1a79a9c76980d9e3c4f255fdf799',
   '8f2563680caa7f54a98bef237606618631e486a2e149e6b393a407b8c3fafba4',
   'd9aa330ed0fb40ce9ae07c94125427c03a92da70248d7c8e952f15d93ea754b1',
@@ -62,6 +64,10 @@ const LEGACY_SUPERVISOR_DEFAULTS = new Set([
   '891c4412e1ff62d8ca3264e1627dc12b10678a2025b0cafaa907384b48751bb0'
 ]);
 const LEGACY_PLATFORM_DEFAULTS = new Set([
+  // Exact defaults before task-driven collaboration.
+  '13d2e34a3a5a8fd0cbe946442693a46e8601a49be87751623acad8dfe7ec3d4b',
+  '5470aa8edaecde124ea8c024d4929a92ff091fe5939353b57559ac645e719cc9',
+
   '4a7bd0d1a4bedbfd714d1493b7fd6c9a439bfec754a23f43d150a845ff249324',
   '1b15541e57fced0e26eaf3f6b601629e3099cd8a292d8196fcbfcfa38b88d2a9',
   '45204542deb0ef8dc50cf0793405c91417f586d7b8af901158c658667a2b82fe',

@@ -4,6 +4,9 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  "Collaboration history · collection disabled": "协作历史 · 收集已停用",
+  "Collaboration sessions are retired. Existing records are read-only.": "协作会话已停用，已有记录只读保留。",
+  "Legacy plan history · read only": "旧计划历史 · 只读",
 
 
   "Task list":"任务列表",

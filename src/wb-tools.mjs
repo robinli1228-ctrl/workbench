@@ -235,4 +235,4 @@ export async function writeHandoff(fields = {}, override = {}) {
 }
 
 /** Role help lists only the tools this turn can use; the platform assistant also gets its configuration tools. */
-export const helpText = () => [tr('wbTools.builtInCollaborationToolsWorkbench'),tr('conversationTasks.help'),process.env.WB_QUEUE_BATCH==='1'?tr('sessionQueue.passRule'):'',process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('collabSessions.toolHelp'):'',process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wechatChannel.toolGuide'):'',process.env.WB_SOURCE_SYNC==='1'?tr('sourceSync.toolGuide'):'',process.env.WB_PLATFORM_ASSISTANT==='1'?tr('wbTools.setupHelp'):''].filter(Boolean).join('\n\n');
+export const helpText = () => [tr('wbTools.builtInCollaborationToolsWorkbench'),tr('conversationTasks.help'),process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wechatChannel.toolGuide'):'',process.env.WB_SOURCE_SYNC==='1'?tr('sourceSync.toolGuide'):'',process.env.WB_PLATFORM_ASSISTANT==='1'?tr('wbTools.setupHelp'):''].filter(Boolean).join('\n\n');
