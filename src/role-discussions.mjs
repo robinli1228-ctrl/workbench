@@ -169,7 +169,7 @@ export class RoleDiscussions {
     });
   }
 
-  /** Retire saved protocol waits once at startup. Never turn them into ready work or pretend a process exited. */
+  /** Retire intents/threads/deliveries at Home startup and each Rooms.schedule; clear task waits only without a nonterminal run. Never requestStop, rerun roles or fabricate process exit. */
   recover() {
     return this.db.transaction(()=>{
       let changed=false;

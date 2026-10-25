@@ -264,4 +264,4 @@ MIT。见 [LICENSE](LICENSE)。
 
 ### 协作收尾清理
 
-用 `wb task` 管理群聊任务，`wb call`/`wb wait` 派活和登记依赖，`wb note` 发群聊通知。被请教或审核时，结论写在最终回复里，不要再用 `wb note` 重复。report、schedule、collaboration 和 pass 命令已停用；历史报告仍在运行详情里显示。Home 启动时取消旧讨论意图、未关闭线程及其等待中的任务，不重放旧协议；活动进程仍须确认停止后才释放会话。旧报告型微信提问关闭，不再重发；总管明确发起的通知仍可用。
+用 `wb task` 管理群聊任务，`wb call`/`wb wait` 派活和登记依赖，`wb note` 发群聊通知。被请教或审核时，结论写在最终回复里，不要再用 `wb note` 重复。report、schedule、collaboration 和 pass 命令已停用；历史报告仍在运行详情里显示。`RoleDiscussions.recover()` 在 Home 启动事务中以及每次 `rooms.schedule()` 时运行。queued/blocked 意图只取消自身，不因此取消任务；开放线程和未完成投递被取消。带 `discussionWait`、`discussionResumeBlocked` 或 `waiting_discussion` 的任务，只有在没有关联的非终态 Run 时才取消并清除等待；Run 结束后的下一次调度即清除等待。已收尾任务保留原状态。恢复过程不调用 `requestStop`，不重跑任何角色，也不释放活动进程的会话租约。旧报告型微信提问关闭，不再重发；总管明确发起的通知仍可用。
