@@ -1,3 +1,4 @@
+import {ConversationTasks} from './conversation-tasks.mjs';
 import {createHash} from 'node:crypto';
 import {isSupervisorName} from './default-roles.mjs';
 import {tr} from './i18n.mjs';
@@ -27,7 +28,7 @@ export function createAgentCalls({db,calls,rooms},run,input) {
     const id=input.requestId||'';
     if(typeof id!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(id))throw new Error(tr('roleCalls.invalidCallId'));
     if(typeof input.text!=='string'||!input.text.trim()||input.text.length>12000)throw new Error(tr('roleCalls.callSummaryMustBe1'));
-    const messageId=`call:${id}`,fingerprint=JSON.stringify({runId:run.id,targets:targets.map(r=>r.id).sort(),kind,text:input.text,deliveryId:input.deliveryId||null,sourceSyncBatchId:input.sourceSyncBatchId||null});
+    const messageId=`call:${id}`,fingerprint=JSON.stringify({runId:run.id,targets:targets.map(r=>r.id).sort(),kind,text:input.text,deliveryId:input.deliveryId||null,sourceSyncBatchId:input.sourceSyncBatchId||null,...(input.task!==undefined?{task:input.task}:{})});
     const existing=db.get('roomMessages',messageId);
     const response=message=>{
       const requestIds=message.requestIds||[message.requestId];
@@ -45,6 +46,8 @@ export function createAgentCalls({db,calls,rooms},run,input) {
     if(!parent)throw new Error(tr('home.currentExecutionHasNoRole'));
     // Only an owner hands a task over: a consulted or delegated role answers its caller, and a plan stage stays in its plan.
     if(transfer&&(parent.parentRequestId||run.planId||parent.planId))throw new Error(tr('roleCalls.transferNotOwner'));
+    const taskList=new ConversationTasks(db),linked=input.task===undefined?null:taskList.show(run,input.task);
+    if(linked&&!taskList.visible(linked,run))throw new Error(tr('conversationTasks.notFound'));
     const recipients=[],requests=targets.map(target=>{
       if(target.archivedAt)throw new Error(tr('home.targetRoleArchivedCannotBe'));
       let role=target,summary=input.text;
@@ -62,8 +65,9 @@ export function createAgentCalls({db,calls,rooms},run,input) {
         :calls.create({id:requestId,projectId:run.projectId,targetRoleId:role.id,parentRequestId:parent.id,sourceRunId:run.id,originNodeId:run.nodeId,
           sourceMessageId:run.sourceMessageId,kind,summary,deliveryId:input.deliveryId,sourceSyncBatchId:input.sourceSyncBatchId,attachments:run.attachments||[],
           ...(kind==='consult'?{}:{planId:run.planId,planVersion:run.planVersion,stepId:run.stepId,execution:run.execution})});
+      if(linked&&transfer)taskList.transfer(run,linked.id,role.id);
       recipients.push({id:role.id,name:role.name});
-      return db.put('coordinationRequests',{...request,callMessageId:messageId});
+      return db.put('coordinationRequests',{...request,...(linked?{conversationTaskId:linked.id}:{}),callMessageId:messageId});
     });
     if(existing)return response(existing);
     const toRoles=[...new Map(recipients.map(r=>[r.id,r])).values()];

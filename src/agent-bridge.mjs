@@ -4,13 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { tr } from './i18n.mjs';
 
 // Paths a role's wb command may reach; Home re-checks each request against the run and its role.
-const allowed = new Set(['/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/schedule', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary',
+const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/schedule', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary',
   '/api/agent/discussions', '/api/agent/pass', '/api/agent/collaboration-sessions', '/api/agent/source-sync', '/api/agent/notify']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** Dispatch pause must not swallow accepted work's conclusions; new work and write operations remain blocked. */
 export function allowsPausedAgentOperation(pathname,input={}) {
   return new Set(['/api/agent/wait','/api/agent/note','/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary']).has(pathname)
+    ||pathname==='/api/agent/conversation-tasks'&&['list','show'].includes(input.action)
     ||pathname==='/api/agent/discussions'&&input.action==='peers'
     ||pathname==='/api/agent/pass'||pathname==='/api/agent/collaboration-sessions'&&input.action==='list';
 }
@@ -43,7 +44,11 @@ async function withRetry(send) {
 /** Sender identity belongs to the persisted Run; target role/session identifiers remain valid tool input. */
 const identityKeys=['sender','senderId','senderName','senderRoleId','fromRoleId','sourceRoleId','ownerRoleId','author','authorId','authorRoleId','authorName','speaker','speakerRoleId','collaborationSessionId','batchId','runtimeIdentity'];
 /** Project, role, Run and (later) batch come from the trusted runtime; identity-looking fields are rejected at any nesting depth. */
-export function assertAgentSender(input) {
+export function assertAgentSender(input,pathname) {
+  // ownerRoleId here is a target, never the sender. All other identity fields stay forbidden at every depth.
+  if(pathname==='/api/agent/conversation-tasks'&&['create','update'].includes(input?.action)&&input.input&&typeof input.input==='object'&&!Array.isArray(input.input)){
+    const {ownerRoleId,...rest}=input.input;input={...input,input:rest};
+  }
   if (['projectId','nodeId'].some(key=>Object.hasOwn(input||{},key)) || hasIdentityKey(input,0))
     throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));
 }
@@ -114,7 +119,7 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend,
             const path = join(directory, file), info = await lstat(path);
             if (!info.isFile() || info.size > 65536) throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
             const input = JSON.parse(await readFile(path, 'utf8'));
-            assertAgentSender(input.payload);
+            assertAgentSender(input.payload,input.pathname);
             const block=blockReason?blockReason(input.pathname,input.payload):canSend(input.pathname,input.payload)?null:'run_ended';
             if (block) throw Object.assign(new Error(blockMessage(block)),{code:block});
             if(input.payload?.runId&&input.payload.runId!==runId)throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));

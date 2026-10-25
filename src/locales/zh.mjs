@@ -1,6 +1,28 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "conversationTasks.invalid":"任务字段或值无效。",
+  "conversationTasks.actor":"操作身份不是本项目角色。",
+  "conversationTasks.owner":"任务负责人或计划角色必须属于本项目。",
+  "conversationTasks.plan":"计划无效：最多 50 步，currentStep 从 0 开始且必须有效。",
+  "conversationTasks.status":"任务状态无效。",
+  "conversationTasks.summary":"只有标记任务完成时才能填写 resultSummary。",
+  "conversationTasks.unfinished":"标记任务完成前必须完成全部计划步骤并定位到最后一步。",
+  "conversationTasks.notFound":"本群聊中没有此任务。",
+  "conversationTasks.requestId":"创建任务需要稳定的 requestId（字母、数字、冒号、下划线或连字符，最多 200 字符）。",
+  "conversationTasks.retry":"该任务 requestId 已被其他输入或身份使用。",
+  "conversationTasks.revision":"任务版本冲突：先查看任务，再用当前 revision 重试。",
+  "conversationTasks.permission":"只有任务负责人、项目总管或用户能修改负责人；转交必须由任务负责人发起。",
+  "conversationTasks.handover":"修改负责人时，必须在同一次更新中整段重写任务说明。",
+  "conversationTasks.noChange":"此次更新没有改变任务字段。",
+  "conversationTasks.closed":"已完成或取消的任务不能转交。",
+  "conversationTasks.editFirst":"转交前必须在本轮用 wb task update 重写当前任务说明，写入交接信息。",
+  "conversationTasks.usage":"使用 wb task list、show、create 或 update。",
+  "conversationTasks.transferReason":"随关联派单转交负责人。",
+  "conversationTasks.updated":"任务说明已更新。",
+  "conversationTasks.context":"群聊任务（Home 当前快照）。{updated}\n{task}",
+  "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{title,description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。说明/计划整段替换。只有 done 可写 resultSummary，全部计划步骤必须已完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交前先在本轮用 wb task update 重写说明。重试须保持相同 requestId 和输入。",
+
   'deviceAdmin.reconnectUnsupported':'手动重连需要 Home 管理的反向 SSH 隧道、已保存的 SSH 密钥及可核验的 Linux Worker。',
   'deviceAdmin.reconnectBusy':'该设备有待处理或运行中的任务、常驻 CLI，或正在执行其他连接操作。未停止任何任务，请空闲后重试。',
   'deviceAdmin.reconnectUnverified':'无法确认该 Worker 当前空闲，未停止隧道。请检查 SSH 连接，并先结束活动会话。',

@@ -11,6 +11,7 @@ import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypt
 import { WebSocketServer } from 'ws';
 import { Store, terminal } from './store.mjs';
 import {ProjectTeamCopy,projectCopyView} from './project-team-copy.mjs';
+import {ConversationTasks} from './conversation-tasks.mjs';
 import {GroupConversations,conversationIdOf,conversationView,agentConversationInput,resolveConversationId,assertConversationRecord,groupConversationIdOfSession} from './group-conversations.mjs';
 import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
 import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
@@ -605,6 +606,13 @@ const server = http.createServer(async (req, res) => {
       }
       if((pathname.startsWith('/api/agent/source-inputs/')||pathname.startsWith('/api/agent/source-candidates/'))&&await sourceSync.inputHttp(req,res,pathname))return;
       if(await sourceSync.browserHttp(req,res,pathname))return;
+      const conversationTasksRoute=pathname.match(/^\/api\/projects\/([^/]+)\/conversation-tasks$/);
+      if(conversationTasksRoute&&['GET','POST','PUT'].includes(req.method)){
+        const api=new ConversationTasks(db),projectId=conversationTasksRoute[1];
+        if(req.method==='GET'){const scope={projectId,conversationId:url.searchParams.get('conversationId')??undefined};return json(res,url.searchParams.has('id')?api.show(scope,url.searchParams.get('id')):api.list(scope,{status:url.searchParams.get('status')??undefined}));}
+        const {conversationId,id,...input}=await body(req),scope={projectId,conversationId};
+        const result=req.method==='POST'?api.create(scope,input,{user:true}):api.update(scope,id,input,{user:true});change();return json(res,result,req.method==='POST'?201:200);
+      }
       const conversationsRoute=pathname.match(/^\/api\/projects\/([^/]+)\/conversations$/);
       const copyPreviewRoute=pathname.match(/^\/api\/projects\/([^/]+)\/team-copy\/preview$/);
       if(copyPreviewRoute&&req.method==='GET')return json(res,projectTeamCopy.preview(copyPreviewRoute[1],{roleOrder:url.searchParams.has('roleOrder')?JSON.parse(url.searchParams.get('roleOrder')):undefined}));
@@ -961,7 +969,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (pathname.startsWith('/api/agent/') && req.method === 'POST') {
         const b = await body(req);
-        assertAgentSender(b);
+        assertAgentSender(b,pathname);
         const run = db.get('runs', b.runId);
         // wb report was removed: results are the final reply, judged by whoever assigned the work.
         if(pathname==='/api/agent/report')throw new Error(tr('home.reportRemoved'));
@@ -1006,6 +1014,12 @@ const server = http.createServer(async (req, res) => {
         }
         if (pathname === '/api/agent/note') {
           const r = rooms.agentNote(run, b.text); change(); return json(res, r, 201);
+        }
+        if(pathname==='/api/agent/conversation-tasks'){
+          if(Object.keys(b).some(k=>!['runId','action','input'].includes(k)))throw new Error(tr('conversationTasks.invalid'));
+          const result=new ConversationTasks(db).agent(run,b.action,b.input);
+          if(['create','update'].includes(b.action))change();
+          return json(res,result);
         }
         if (pathname === '/api/agent/calls') {
           const result=createAgentCalls({db,calls,rooms},run,b);

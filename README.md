@@ -372,3 +372,9 @@ Project status and planned work are tracked in the issue tracker.
 MIT. See [LICENSE](LICENSE).
 
 Group-chat roles can transfer whole-task ownership with `wb call --kind transfer`. The receiver arranges its reviews and replies to the user; final replies replace `wb report`. Migration, deployment and production operations must be assigned separately after review, rather than automatically following a stage plan, including plans saved by older versions.
+
+### Conversation task records
+
+`wb task list`, `show T3`, `create '<JSON>'` and `update T3 '<JSON>'` manage a Home-only task list for the current group chat. Creation needs a stable `requestId`; updates need the current `revision`. These records neither start work nor interrupt a running role. Use `wb help` for field limits and plan shape.
+
+`wb call --task T3` associates an explicit call with the task. Ordinary calls keep the owner; `--kind transfer` changes it atomically to the recipient and sets `in_progress`. The owner must first rewrite the full description using `wb task update` in that same run. Linked calls and their continuations receive the current task description/plan; a later turn marks a description changed since that role last received it. Task-list UI and task-based heartbeat policies are not included yet.

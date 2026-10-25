@@ -1,6 +1,28 @@
 // English message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "conversationTasks.invalid":"Invalid task fields or values.",
+  "conversationTasks.actor":"Task actor is not a project role.",
+  "conversationTasks.owner":"Task owner or plan role must belong to this project.",
+  "conversationTasks.plan":"Invalid plan: use up to 50 steps and a valid zero-based currentStep.",
+  "conversationTasks.status":"Invalid task status.",
+  "conversationTasks.summary":"resultSummary is only allowed when marking the task done.",
+  "conversationTasks.unfinished":"Complete every plan step and select the final step before marking the task done.",
+  "conversationTasks.notFound":"Task not found in this conversation.",
+  "conversationTasks.requestId":"Task creation requires a stable requestId (letters, digits, colon, underscore or hyphen; at most 200 characters).",
+  "conversationTasks.retry":"This task requestId was already used with different input or actor.",
+  "conversationTasks.revision":"Task revision conflict: show the task and retry with its current revision.",
+  "conversationTasks.permission":"Only the task owner, project supervisor or user may change the owner; a transfer must be sent by the task owner.",
+  "conversationTasks.handover":"Changing the owner requires a full, changed description in the same update.",
+  "conversationTasks.noChange":"The update does not change any task field.",
+  "conversationTasks.closed":"A completed or cancelled task cannot be transferred.",
+  "conversationTasks.editFirst":"Before transferring, use wb task update in this run to rewrite the current description with handover information.",
+  "conversationTasks.usage":"Use wb task list, show, create or update.",
+  "conversationTasks.transferReason":"Ownership transferred with the linked call.",
+  "conversationTasks.updated":"Task description has been updated.",
+  "conversationTasks.context":"Conversation task (current Home snapshot). {updated}\n{task}",
+  "conversationTasks.help":"Conversation tasks (Home-only, current chat):\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"Task\",\"description\":\"Full brief\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"Full replacement\",\"reason\":\"handover\"}'\nCreate accepts optional ownerRoleId, status and plan {steps:[{title,description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep} (zero-based). Replace description/plan as a whole. Only done permits resultSummary; all plan steps must be done. Owner changes require a rewritten description and the owner, supervisor or user.\nwb call accepts --task T3: ordinary calls only link; --kind transfer changes the owner and sets in_progress. First rewrite the description with wb task update in this run. Retries must keep the same requestId and input.",
+
   'deviceAdmin.reconnectUnsupported':'Manual reconnection requires a Home-managed reverse SSH tunnel, a saved SSH key and a verifiable Linux Worker.',
   'deviceAdmin.reconnectBusy':'This device has pending or active work, a retained CLI, or another connection operation. Nothing was stopped; try again when it is idle.',
   'deviceAdmin.reconnectUnverified':'Cannot confirm that this Worker is idle. No tunnel was stopped. Check SSH access and finish active sessions first.',
