@@ -34,7 +34,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   function showFollowup(value){
     followupConfig=value;followupForm.elements.enabled.checked=value.enabled;followupForm.elements.silenceMinutes.value=value.silenceMinutes;
     const execution=value.execution;
-    followupStatus.textContent=execution?[t(execution.progress?.label||execution.status),execution.waitingReason||execution.error||''].filter(Boolean).join(' · '):value.waitingReason||t(value.enabled?(value.anchorMessageId?'Waiting for chat silence':'Waiting for a new complete message'):'Proactive follow-up is off');
+    followupStatus.textContent=execution?[t(execution.progress?.label||execution.status),execution.waitingReason||execution.error||''].filter(Boolean).join(' · '):value.waitingReason||t(value.enabled?(value.anchorMessageId?'Waiting for chat silence':'Waiting for a new complete message'):'Stall reminders are off');
     viewFollowup.disabled=!execution?.taskId;
   }
   async function loadFollowup(){
@@ -54,27 +54,6 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   document.querySelector('#refresh-followup').addEventListener('click',()=>void loadFollowup());
   viewFollowup.addEventListener('click',()=>{const execution=followupConfig?.execution;if(followupProject===getProject()?.id&&execution?.taskId)openTask?.(execution.taskId,execution.runId);});
   const option = (label, value) => { const o = create('option', '', label); o.value = value; return o; };
-  const queueForm=document.querySelector('#session-queue-config-form'),queueFeedback=document.querySelector('#session-queue-config-feedback');
-  let queueVersion=0,queueConfig=null,queueProject=null;
-  const queueFields=['quietSeconds','maxSeconds','budgetBatches','backlogMessages','backlogWaitSeconds'];
-  const queueDisabled=value=>{for(const element of queueForm.elements)element.disabled=value;};
-  const showQueue=value=>{queueConfig=value;queueForm.elements.enabled.checked=value.enabled;for(const key of queueFields)queueForm.elements[key].value=value[key]??'';};
-  async function loadQueue(){
-    const id=getProject()?.id,version=++queueVersion;if(!id)return;queueProject=id;queueConfig=null;queueDisabled(true);queueFeedback.hidden=true;
-    try{const value=await api(`/api/projects/${encodeURIComponent(id)}/collaboration-sessions/queue-config`);if(version===queueVersion&&getProject()?.id===id)showQueue(value);}
-    catch(error){if(version===queueVersion&&getProject()?.id===id){queueFeedback.textContent=error.message;queueFeedback.hidden=false;}}
-    finally{if(version===queueVersion&&getProject()?.id===id)queueDisabled(!queueConfig);}
-  }
-  queueForm.addEventListener('submit',async event=>{
-    event.preventDefault();const id=queueProject,version=queueVersion;if(!queueConfig||id!==getProject()?.id)return;
-    const input={enabled:queueForm.elements.enabled.checked,version:queueConfig.version};
-    for(const key of queueFields)input[key]=key==='budgetBatches'&&!queueForm.elements[key].value?null:Number(queueForm.elements[key].value);
-    queueDisabled(true);queueFeedback.hidden=true;
-    try{const value=await api(`/api/projects/${encodeURIComponent(id)}/collaboration-sessions/queue-config`,{method:'POST',json:input});if(version!==queueVersion||getProject()?.id!==id)return;showQueue(value);await refreshState({quiet:true});queueFeedback.textContent=t('Saved');queueFeedback.hidden=false;}
-    catch(error){if(version===queueVersion&&getProject()?.id===id){queueFeedback.textContent=error.message;queueFeedback.hidden=false;}}
-    finally{if(version===queueVersion&&getProject()?.id===id)queueDisabled(!queueConfig);}
-  });
-
   function activeRoot(path) {
     if (!path) return null;
     return [...allowedRoots].filter(r => path === r || path.startsWith(r.endsWith('/') ? r : `${r}/`)).sort((a, b) => b.length - a.length)[0] || null;
@@ -242,7 +221,6 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     busy = false;
     settingsId = p.id; savedUrl = p.repoUrl || '';
     void loadFollowup();
-    void loadQueue();
     form.elements.name.value = p.name || '';
     form.elements.description.value = p.description || '';
     form.elements.collaborationWaitReleaseMinutes.value = p.collaborationWaitReleaseMinutes || 40;

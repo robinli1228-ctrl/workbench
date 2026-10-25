@@ -103,7 +103,7 @@ export function composeCallText({goal,scope,input,returns,text}) {
   return [...fields.map(([key,value])=>`${tr(`wbTools.callField.${key}`)}: ${value.trim()}`),...(text?[text]:[])].join('\n')||text;
 }
 
-export async function callRole({ role, roles, kind = 'consult', requestId, text, file, deliveryId,sourceSyncBatchId,goal,scope,input,returns }) {
+export async function callRole({ role, roles, kind = 'consult', requestId, text, file, deliveryId,sourceSyncBatchId,task,goal,scope,input,returns }) {
   text=composeCallText({goal,scope,input,returns,text});
   if ((!role && !roles) || !text || !requestId) throw new Error(tr('wbTools.roleTextStableRequestId'));
   // A soft hint only, measured on the brief itself (not an attached --file): the call is sent unchanged.
@@ -117,7 +117,7 @@ export async function callRole({ role, roles, kind = 'consult', requestId, text,
   }
   if(text.length>12000)throw new Error(tr('wbTools.callDocumentTooLong'));
   const result=await homeFetch('/api/agent/calls', { runId: context().runId, ...(roles===undefined?{role}:{roles}), kind,
-    requestId: `${context().runId}:${requestId}`, text, deliveryId,sourceSyncBatchId });
+    requestId: `${context().runId}:${requestId}`, text, deliveryId,sourceSyncBatchId,...(task===undefined?{}:{task}) });
   return lengthNote&&result&&typeof result==='object'?{...result,lengthNote}:result;
 }
 
@@ -148,6 +148,14 @@ export async function callDocument(file,ctx=context()) {
   try{text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);}catch{throw new Error(tr('wbTools.callDocumentNotText'));}
   if(text.includes('\0'))throw new Error(tr('wbTools.callDocumentNotText'));
   return {path:relative(owner,target),bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),text};
+}
+
+export async function conversationTask(action,input={}) {
+  if(action==='create'){
+    if(typeof input.requestId!=='string'||!input.requestId)throw new Error(tr('conversationTasks.requestId'));
+    input={...input,requestId:`${context().runId}:${input.requestId}`};
+  }
+  return homeFetch('/api/agent/conversation-tasks',{runId:context().runId,action,input});
 }
 
 export async function waitForRole(summary,options={}) {
@@ -227,4 +235,4 @@ export async function writeHandoff(fields = {}, override = {}) {
 }
 
 /** Role help lists only the tools this turn can use; the platform assistant also gets its configuration tools. */
-export const helpText = () => [tr('wbTools.builtInCollaborationToolsWorkbench'),process.env.WB_QUEUE_BATCH==='1'?tr('sessionQueue.passRule'):'',process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('collabSessions.toolHelp'):'',process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wechatChannel.toolGuide'):'',process.env.WB_SOURCE_SYNC==='1'?tr('sourceSync.toolGuide'):'',process.env.WB_PLATFORM_ASSISTANT==='1'?tr('wbTools.setupHelp'):''].filter(Boolean).join('\n\n');
+export const helpText = () => [tr('wbTools.builtInCollaborationToolsWorkbench'),tr('conversationTasks.help'),process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wechatChannel.toolGuide'):'',process.env.WB_SOURCE_SYNC==='1'?tr('sourceSync.toolGuide'):'',process.env.WB_PLATFORM_ASSISTANT==='1'?tr('wbTools.setupHelp'):''].filter(Boolean).join('\n\n');

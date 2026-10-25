@@ -4,9 +4,9 @@ import {customExecutionPrompt} from './platform-prompts.mjs';
 import {relative,isAbsolute} from 'node:path';
 
 /** Disclose actual startup versions and exceptional directory boundaries; neither a retained cwd nor an external mapping means the project was updated. */
-export function executionEnvironmentHint({cwd,projectRoot,boundary,repositories=[],inputRepositoryVersions=[]}) {
+export function executionEnvironmentHint({cwd,projectRoot,boundary,repositories=[],inputRepositoryVersions=[],sharedDocs=null}) {
   const external=repositories.filter(r=>{if(!r.localRoot)return false;const path=relative(cwd,r.localRoot);return path==='..'||path.startsWith('../')||path.startsWith('..\\')||isAbsolute(path);});
-  return [cwd!==projectRoot?boundary:'',external.length?tr('minimal.externalRepositories',{repositories:JSON.stringify(external.map(r=>({key:r.key,localRoot:r.localRoot})))}):'',
+  return [sharedDocs?tr('minimal.sharedReportDirectory',{path:sharedDocs}):'',cwd!==projectRoot?boundary:'',external.length?tr('minimal.externalRepositories',{repositories:JSON.stringify(external.map(r=>({key:r.key,localRoot:r.localRoot})))}):'',
     inputRepositoryVersions.length?tr('minimal.inputRepositoryVersions',{cwd,versions:JSON.stringify(inputRepositoryVersions)}):''].filter(Boolean).join('\n');
 }
 

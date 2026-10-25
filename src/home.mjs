@@ -11,6 +11,7 @@ import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypt
 import { WebSocketServer } from 'ws';
 import { Store, terminal } from './store.mjs';
 import {ProjectTeamCopy,projectCopyView} from './project-team-copy.mjs';
+import {ConversationTasks} from './conversation-tasks.mjs';
 import {GroupConversations,conversationIdOf,conversationView,agentConversationInput,resolveConversationId,assertConversationRecord,groupConversationIdOfSession} from './group-conversations.mjs';
 import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
 import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
@@ -24,8 +25,8 @@ import { ConversationContext } from './conversation-context.mjs';
 import { renderRunPrompt } from './run-context.mjs';
 import { buildTeamContext, renderTeamContext } from './team-context.mjs';
 import { Rooms } from './rooms.mjs';
-import { CollaborationSessions, reviewView, reviewDocumentAllowed, setCollaborationSessionsEnabled } from './collaboration-sessions.mjs';
-import { SessionQueue, QueuePump, queueConfig, setQueueConfig, setSessionBroadcast, setTestProject, grantBudget, reassignRequest } from './session-queue.mjs';
+import { CollaborationSessions, reviewView, reviewDocumentAllowed } from './collaboration-sessions.mjs';
+import { SessionQueue, QueuePump, queueConfig, reassignRequest } from './session-queue.mjs';
 import { renderBatch } from './session-queue-worker.mjs';
 import { listRoleTemplates, saveRoleTemplate, restoreRoleTemplate } from './role-templates.mjs';
 import { Coordinator } from './coordinator.mjs';
@@ -33,7 +34,7 @@ import { RoleCalls } from './role-calls.mjs';
 import {createAgentCalls} from './agent-calls.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
-import {recentProjectArtifacts} from './run-artifacts.mjs';
+import {recentProjectArtifacts,recordedArtifactPath} from './run-artifacts.mjs';
 import {ProjectFiles} from './project-files.mjs';
 import {MediaStreams,MEDIA_CACHE_CONTROL,cachedMediaAllowed} from './media-streams.mjs';
 import {MediaCache} from './media-cache.mjs';
@@ -123,23 +124,8 @@ const steering = new RoleSteering(db,calls);
 const history = new History(db);
 const sessionTools = new SessionTools(db);
 const collaborationSessions = new CollaborationSessions(db);
+new SessionQueue(db).retire();
 
-/** Freeze shared document versions before independent reviewers run; a child cannot rebase onto already protected opinions. */
-async function reviewDocumentBaselines(projectId,input) {
-  if(input.type!=='independent-review')return [];
-  const prior=input.id?db.get('collaborationSessions',input.id):null;
-  if(prior?.projectId===projectId)return prior.documentBaselines||[];
-  const parent=input.parentSessionId?db.get('collaborationSessions',input.parentSessionId):null;
-  if(parent?.projectId===projectId&&parent.type==='independent-review'&&!parent.reviewReleasedAt)return parent.documentBaselines||[];
-  const nodes=[...new Set((input.participants||[]).map(item=>db.get('roles',typeof item==='string'?item:item.roleId)).filter(role=>role?.projectId===projectId).map(role=>role.nodeId).filter(Boolean))];
-  const snapshots=await Promise.all(nodes.map(async nodeId=>{
-    const root=db.get('workspaces',`${projectId}:${nodeId}`)?.localRoot;
-    if(!root)return [];
-    try{const result=await workerQuery({nodeId,projectId},'collaboration_documents',{root,action:'snapshot'},15000);return result.files.map(file=>({...file,nodeId}));}
-    catch{return [];}// Unavailable baselines deny unknown documents later; they never grant access to new opinions.
-  }));
-  return snapshots.flat();
-}
 const conversationContext = new ConversationContext(db);
 conversationContext.recover();
 for(const task of db.list('tasks').filter(task=>task.origin==='chat'&&task.status==='ready'&&task.contextState==='pending'))db.put('tasks',{...task,contextState:null});
@@ -380,7 +366,7 @@ function snapshot(scope=null) {
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
-    sessionQueues:Object.fromEntries(db.list('projects').filter(p=>p.features?.collaborationSessions===true).map(p=>[p.id,new SessionQueue(db).status(p.id)])),
+    sessionQueues:Object.fromEntries(db.list('projects').filter(p=>db.listProject('collaborationSessions',p.id).length).map(p=>[p.id,new SessionQueue(db).status(p.id)])),
     cliRecoveries:db.list('cliRecoveries').filter(r=>!['ready','resolved'].includes(r.state)).map(({binding,fingerprint,...record})=>record),
     sourceSyncSummaries:db.list('projects').map(p=>({id:p.id,projectId:p.id,enabled:sourceSync.sync.config(p.id).enabled,conflicts:db.listProject('sourceSyncConflicts',p.id).filter(c=>!['resolved','cancelled'].includes(c.status)).length})),
     terminalSessions: db.list('terminalSessions').filter(s=>!['released','cancelled'].includes(s.status)).map(s=>terminalLaunchView({...s,roleId:s.roleId||(s.runId?db.get('runs',s.runId)?.roleId:null)})),
@@ -605,6 +591,13 @@ const server = http.createServer(async (req, res) => {
       }
       if((pathname.startsWith('/api/agent/source-inputs/')||pathname.startsWith('/api/agent/source-candidates/'))&&await sourceSync.inputHttp(req,res,pathname))return;
       if(await sourceSync.browserHttp(req,res,pathname))return;
+      const conversationTasksRoute=pathname.match(/^\/api\/projects\/([^/]+)\/conversation-tasks$/);
+      if(conversationTasksRoute&&['GET','POST','PUT'].includes(req.method)){
+        const api=new ConversationTasks(db),projectId=conversationTasksRoute[1];
+        if(req.method==='GET'){const scope={projectId,conversationId:url.searchParams.get('conversationId')??undefined};return json(res,url.searchParams.has('id')?api.show(scope,url.searchParams.get('id')):api.list(scope,{status:url.searchParams.get('status')??undefined}));}
+        const {conversationId,id,...input}=await body(req),scope={projectId,conversationId};
+        const result=req.method==='POST'?api.create(scope,input,{user:true}):api.update(scope,id,input,{user:true});change();return json(res,result,req.method==='POST'?201:200);
+      }
       const conversationsRoute=pathname.match(/^\/api\/projects\/([^/]+)\/conversations$/);
       const copyPreviewRoute=pathname.match(/^\/api\/projects\/([^/]+)\/team-copy\/preview$/);
       if(copyPreviewRoute&&req.method==='GET')return json(res,projectTeamCopy.preview(copyPreviewRoute[1],{roleOrder:url.searchParams.has('roleOrder')?JSON.parse(url.searchParams.get('roleOrder')):undefined}));
@@ -961,7 +954,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (pathname.startsWith('/api/agent/') && req.method === 'POST') {
         const b = await body(req);
-        assertAgentSender(b);
+        assertAgentSender(b,pathname);
         const run = db.get('runs', b.runId);
         // wb report was removed: results are the final reply, judged by whoever assigned the work.
         if(pathname==='/api/agent/report')throw new Error(tr('home.reportRemoved'));
@@ -990,7 +983,6 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/agent/sessions/current') return json(res,sessionTools.current(run));
         if (pathname === '/api/agent/conversation/summary') return json(res,new SessionTools(readView).chatSummary(run,b));
         if (pathname === '/api/agent/setup/catalog' && run.roleSnapshot?.platformAssistant) return json(res, assistant.catalog(run));
-        if (pathname === '/api/agent/schedule') { const p=executionPlans.submit(run,b);change();return json(res,{planId:p.id,status:p.status,note:tr('home.waitScheduledEndCurrentTurn')},201); }
         if (pathname === '/api/agent/timers') {
           if (db.get('workers',run.nodeId)?.capabilities?.timerTools!==1) throw new Error(tr('home.upgradeCurrentWorkerUseScheduled'));
           const result=timerAgent.execute(run,b.action,Object.fromEntries(Object.entries(b).filter(([key])=>!['runId','action'].includes(key))));
@@ -998,14 +990,14 @@ const server = http.createServer(async (req, res) => {
           return json(res,result);
         }
         if (pathname === '/api/agent/setup/propose' && run.roleSnapshot?.platformAssistant) return json(res, assistant.propose(run,b));
-        if (pathname === '/api/agent/pass') { const result=new SessionQueue(db).pass(run);change();return json(res,result); }
-        if (pathname === '/api/agent/collaboration-sessions') {
-          if(b.action==='create'&&db.get('projects',run.projectId)?.supervisorRoleId!==run.roleId)throw new Error(tr('collabSessions.supervisorOnly'));
-          const baselines=b.action==='create'?await reviewDocumentBaselines(run.projectId,b.input||{}):[];
-          const result=new CollaborationSessions(db).agent(run,b.action,b.input,baselines);change();return json(res,result);
-        }
         if (pathname === '/api/agent/note') {
           const r = rooms.agentNote(run, b.text); change(); return json(res, r, 201);
+        }
+        if(pathname==='/api/agent/conversation-tasks'){
+          if(Object.keys(b).some(k=>!['runId','action','input'].includes(k)))throw new Error(tr('conversationTasks.invalid'));
+          const result=new ConversationTasks(db).agent(run,b.action,b.input);
+          if(['create','update'].includes(b.action))change();
+          return json(res,result);
         }
         if (pathname === '/api/agent/calls') {
           const result=createAgentCalls({db,calls,rooms},run,b);
@@ -1024,29 +1016,21 @@ const server = http.createServer(async (req, res) => {
         res.write('event: change\ndata: {}\n\n'); viewers.add(res);
         req.on('close', () => viewers.delete(res)); return;
       }
-      const collabFlagRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/feature$/);
-      if(collabFlagRoute&&req.method==='POST'){const p=setCollaborationSessionsEnabled(db,collabFlagRoute[1],(await body(req)).enabled);change();return json(res,{enabled:p.features.collaborationSessions});}
+      // Only explicit human close/release survives retirement, including release of an already closed review.
+      const retiredReviewRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/([^/]+)\/(release|close)$/);
+      if(retiredReviewRoute&&req.method==='POST'){
+        const result=collaborationSessions[retiredReviewRoute[3]](retiredReviewRoute[1],decodeURIComponent(retiredReviewRoute[2]));
+        scheduleChat();change();return json(res,result);
+      }
+      // Every other collaboration write remains gone; collection is never reopened.
+      if(/^\/api\/projects\/[^/]+\/collaboration-sessions(?:\/|$)/.test(pathname)&&req.method!=='GET')
+        return json(res,{error:tr('collabSessions.retired')},410);
       const queueRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/(queue|queue-config)$/);
       if(queueRoute&&req.method==='GET')return json(res,queueRoute[2]==='queue'?new SessionQueue(db).status(queueRoute[1]):queueConfig(db,queueRoute[1]));
-      if(queueRoute&&queueRoute[2]==='queue-config'&&req.method==='POST'){const c=setQueueConfig(db,queueRoute[1],await body(req));change();return json(res,c);}
       const collabListRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions$/);
       if(collabListRoute&&req.method==='GET')return json(res,{items:collaborationSessions.list(collabListRoute[1])});
-      if(collabListRoute&&req.method==='POST'){const input=await body(req),baselines=await reviewDocumentBaselines(collabListRoute[1],input);const s=collaborationSessions.create(collabListRoute[1],input,{kind:'human'},baselines);change();return json(res,s,201);}
       const reassignRoute=pathname.match(/^\/api\/projects\/([^/]+)\/requests\/([^/]+)\/reassign$/);
       if(reassignRoute&&req.method==='POST'){const r=reassignRequest(db,calls,reassignRoute[1],decodeURIComponent(reassignRoute[2]),(await body(req)).roleId);scheduleChat();change();return json(res,r);}
-      const testProjectRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/test-project$/);
-      if(testProjectRoute&&req.method==='POST'){const p=setTestProject(db,testProjectRoute[1],(await body(req)).enabled);change();return json(res,{testProject:p.testProject});}
-      const grantRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/([^/]+)\/budget$/);
-      if(grantRoute&&req.method==='POST'){const c=grantBudget(db,grantRoute[1],grantRoute[2],await body(req),{kind:'human'});change();return json(res,c);}
-      const broadcastRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/([^/]+)\/broadcast$/);
-      if(broadcastRoute&&req.method==='POST'){const r=setSessionBroadcast(db,broadcastRoute[1],broadcastRoute[2],await body(req));change();return json(res,r);}
-      const collabActionRoute=pathname.match(/^\/api\/projects\/([^/]+)\/collaboration-sessions\/([^/]+)\/(members\/add|members\/remove|link|release|close)$/);
-      if(collabActionRoute&&req.method==='POST'){
-        const [,projectId,id,action]=collabActionRoute,input=await body(req);
-        const s=action==='members/add'?collaborationSessions.addMember(projectId,id,input):action==='members/remove'?collaborationSessions.removeMember(projectId,id,input)
-          :action==='link'?collaborationSessions.link(projectId,id,input):collaborationSessions[action](projectId,id);
-        change();return json(res,s);
-      }
       const discussionBudgetRoute=pathname.match(/^\/api\/projects\/([^/]+)\/discussions\/budget$/);
       if(discussionBudgetRoute&&req.method==='POST') {
         const result=discussions.extendBudget({kind:'human',projectId:discussionBudgetRoute[1]},await body(req));change();return json(res,result);
@@ -1417,7 +1401,15 @@ const server = http.createServer(async (req, res) => {
           const events=db.events(r.id,after,limit===null?-1:limit+1);
           return json(res, { events:limit===null?events:events.slice(0,limit),...(limit===null?{}:{hasMore:events.length>limit,runState:{status:r.status,lastSeq:r.lastSeq,finishedAt:r.finishedAt}}) });
         }
-        if(['file','document'].includes(m[2])){const ref=projectFiles.reference(r,url.searchParams.get('path'));if(ref&&!projectFiles.legacyReadable(r))return json(res,await projectFiles.read(r.projectId,ref.scopeId,ref.path,{metadata:url.searchParams.get('metadata')==='1'}));}
+        if(['file','document'].includes(m[2])){
+          const path=url.searchParams.get('path');
+          if(url.searchParams.get('source')==='recorded'){
+            if(db.get('workers',r.nodeId)?.capabilities?.recordedArtifacts!==1)throw Error('Upgrade the source Worker to read recorded artifacts.');
+            const homeRecordedPath=recordedArtifactPath(db,r,path);
+            return json(res,await workerQuery(r,'artifact_source',{path,homeRecordedPath,metadata:url.searchParams.get('metadata')==='1',expectedHash:url.searchParams.get('sha256'),expectedCommit:url.searchParams.get('commit')},30000));
+          }
+          const ref=projectFiles.reference(r,path);if(ref&&!projectFiles.legacyReadable(r))return json(res,await projectFiles.read(r.projectId,ref.scopeId,ref.path,{metadata:url.searchParams.get('metadata')==='1'}));
+        }
         const result = await workerQuery(r, m[2], url.searchParams.get('path'),m[2]==='document'?30000:10000);
         return json(res, result);
       }
@@ -1495,6 +1487,8 @@ const server = http.createServer(async (req, res) => {
     const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/send-state.js':'send-state.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
     Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
     files['/workspace-inspector.js']='workspace-inspector.js';
+    files['/conversation-tasks.js']='conversation-tasks.js';
+    files['/conversation-task-state.js']='conversation-task-state.js';
     files['/source-sync.js']='source-sync.js';
     files['/quota-state.js']='quota-state.js';
     files['/chat-card-state.js']='chat-card-state.js';

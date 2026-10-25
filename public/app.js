@@ -1,6 +1,10 @@
+import {createConversationTaskUI} from './conversation-tasks.js';
 import {createDataSettingsUI} from './data-settings.js';
 import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
 import { t, getLanguage, setLanguage, onLanguageChange, syncLanguageWithBackend, dateLocale } from './i18n.js';
+import {activityBlock,classifyStep,createPreviewSheet} from './native-transcript.js';
+import stepZh from './locales/native-takeover-zh.js';
+import {renderMarkdown} from './markdown.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {createNativeSessionUI} from './native-sessions.js';
 import {createListOrder} from './list-order.js';
@@ -27,7 +31,7 @@ import { projectSpaceUI } from './project-space.js';
 import { tokenUsageUI } from './token-usage.js';
 import { createScheduledJobsUI } from './scheduled-jobs.js';
 import { formatGitVersionStatus, formatProjectGitSummary } from './git-version.js';
-import { partitionRunLog, displayRunInput, contextUsageLabel, mergeRunEvents, shouldShowFinalResult, toolStatusLabel, stripAnsi, taskRunDisplayStatus } from './run-log-data.js';
+import { runTimeline, formatTokenMillions, partitionRunLog, displayRunInput, contextUsageLabel, mergeRunEvents, shouldShowFinalResult, toolStatusLabel, stripAnsi, taskRunDisplayStatus } from './run-log-data.js';
 import { planDismissKey, planDockState, planMemberLabel, planStageActivity, planActivity } from './plan-dock.js';
 import {createWorkspaceInspector,initWorkspaceColumns} from './workspace-inspector.js';
 import {applyStateUpdate} from './state-data.js';
@@ -65,6 +69,7 @@ const dom = {
   projectForm: document.querySelector('#project-form'),
   runDialog: document.querySelector('#run-dialog'),
   runTitle: document.querySelector('#run-dialog-title'),
+  runSession: document.querySelector('#run-dialog-session'),
   runCreated: document.querySelector('#run-dialog-created'),
   runStatus: document.querySelector('#run-dialog-status'),
   taskList: document.querySelector('#task-list'),
@@ -143,6 +148,8 @@ const roleRefresh=createRoleRefresh({api,refreshState,getData:()=>({...app.data,
   button:document.querySelector('#refresh-role-status'),feedback:document.querySelector('#role-refresh-feedback'),onUpdate:()=>renderRoles()});
 const liveScene=createLiveScene({api,getProjectId:()=>app.selectedProjectId,onNewSession:role=>nativeSessionUI.openNew({nodeId:role.nodeId,runtime:role.runtime}),onResumeSession:role=>openRoleTerminal(role)});
 const runOriginal=createHistoryViewer({api,inline:true});
+const runStepText=(key,params={})=>getLanguage()==='zh'&&stepZh[key]?stepZh[key].replace(/\{(\w+)\}/g,(_,k)=>String(params[k]??'')):t(key,params);
+const runPreview=createPreviewSheet(dom.runDialog,runStepText);
 let originalRunSnapshot=null;
 const room = createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice(projectId, nodeId) {
   if (app.data.projects.some(p => p.id === projectId)) { app.selectedProjectId=projectId;openSettings('project'); }
@@ -195,6 +202,7 @@ function createMobileDrawers() {
     const wasOpen = document.body.dataset.mobilePanel !== 'chat';
     if (next !== 'chat' && !wasOpen) previousFocus = document.activeElement;
     document.body.dataset.mobilePanel = next;
+    document.dispatchEvent(new Event('workbench:mobile-panel'));
     workspace.inert = next !== 'chat';
     backdrop.hidden = next === 'chat';
     for (const [name, aside] of Object.entries(panels)) {
@@ -268,6 +276,7 @@ function createMobileDrawers() {
 }
 const drawers = createMobileDrawers();
 const inspector=createWorkspaceInspector({api,getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
+const conversationTaskUI=createConversationTaskUI({api,getScope:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),getRoles:()=>[...app.data.roles,...app.data.supervisorRoles],openMessage:async(scope,id)=>{mobilePanel('chat');await room.jumpMessage(scope,id);}});
 const nativeSessionUI=createNativeSessionUI({api,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
 initWorkspaceColumns();
 const mobilePanel = drawers.set;
@@ -558,6 +567,7 @@ async function refreshState({ quiet = false } = {}) {
     reconcileSelection();
     setError('');
     render();
+    void conversationTaskUI.refresh();
     // File queries may wait on a remote Worker and must not block authoritative state refresh or later SSE merging.
     void refreshRunDetails();
     app.lastStateAt = new Date().toISOString();
@@ -597,6 +607,7 @@ function render() {
   renderSettingsDevices();
   renderOnlineDevices();
   inspector.render();
+  conversationTaskUI.sync();
   renderDesktopShortcut();
   renderWorkspace();
   renderTasks();
@@ -656,7 +667,7 @@ function renderExecutionPlans() {
     panel.classList.add('is-dismissible');panel.append(close);
   } else panel.classList.remove('is-dismissible');
   const list=document.createElement('div');list.className='execution-plan-list';details.append(list);
-  const count=document.createElement('p');count.className='execution-plan-count';count.textContent='This round\'s plan · view only; runs automatically once submitted';
+  const count=document.createElement('p');count.className='execution-plan-count';count.textContent='Legacy plan history · read only';
   list.append(count);
   for(const plan of state.plans) {
     const item=document.createElement('section');item.className='execution-plan-item';
@@ -1562,7 +1573,8 @@ function renderTaskDetail() {
   const oldPanel = dom.taskDetail.querySelector('.run-tab-panel');
   const oldTab = oldPanel?.getAttribute('aria-labelledby');
   const oldFilesOpen = dom.taskDetail.querySelector('.run-workspace-files')?.open;
-  const openToolIds = [...dom.taskDetail.querySelectorAll('.run-tool-card[open]')].map(card => card.dataset.toolId);
+  const openTools = new Map([...dom.taskDetail.querySelectorAll('.nt-activity[open]')].map(card => [card.dataset.toolId,[...card.querySelectorAll('.nt-step')].flatMap((row,i)=>row.classList.contains('is-open')?[i]:[])]));
+  const inputRulesOpen=dom.taskDetail.querySelector('.run-input-rules')?.open;
   const oldScroll = dom.taskDetail.scrollTop;
   const followTail = oldPanel && dom.taskDetail.scrollHeight - oldScroll - dom.taskDetail.clientHeight < 72;
   const oldRunId = app.detailRunId;
@@ -1571,6 +1583,7 @@ function renderTaskDetail() {
   if (!task) {
     dom.runTitle.textContent = 'Conversation Log';
     dom.runCreated.textContent = '';
+    dom.runSession.replaceChildren();
     dom.runStatus.replaceChildren();
     const placeholder = create('div', 'detail-placeholder');
     placeholder.append(create('span', '', '↗'), create('p', '', 'Select a run record in the conversation to view details'));
@@ -1581,7 +1594,9 @@ function renderTaskDetail() {
   const latestRun = getDetailRun(task.id);
   dom.runTitle.textContent = latestRun?.inputTask?.title||task.title;
   dom.runTitle.title = dom.runTitle.textContent;
-  dom.runCreated.textContent = t('Created {time}', { time: formatTime(task.createdAt) });
+  dom.runCreated.textContent = formatTime(task.createdAt);
+  dom.runSession.replaceChildren(create('span','',t('Session ID')),create('span','run-session-short',latestRun?.threadId?`…${latestRun.threadId.slice(-8)}`:t('Not available')));
+  if(latestRun?.threadId){dom.runSession.title=latestRun.threadId;dom.runSession.append(runCopyButton(latestRun.threadId));}else dom.runSession.removeAttribute('title');
   dom.runStatus.replaceChildren(statusChip(taskDisplayStatus(task, latestRun)));
 
   renderRunToolbar(task, latestRun);
@@ -1594,7 +1609,11 @@ function renderTaskDetail() {
   app.detailRunId = latestRun?.id || null;
   const panel = dom.taskDetail.querySelector('.run-tab-panel');
   if (oldFilesOpen && oldRunId === app.detailRunId && oldTab === 'run-tab-artifacts') panel?.querySelector('.run-workspace-files')?.setAttribute('open', '');
-  if (oldRunId === app.detailRunId && oldTab === 'run-tab-tools') for (const card of panel?.querySelectorAll('.run-tool-card') || []) if (openToolIds.includes(card.dataset.toolId)) card.open = true;
+  if(oldRunId===app.detailRunId&&oldTab===`run-tab-${app.detailTab}`){
+    if(inputRulesOpen)panel?.querySelector('.run-input-rules')?.setAttribute('open','');
+    for(const card of panel?.querySelectorAll('.nt-activity')||[]){const steps=openTools.get(card.dataset.toolId);if(!steps)continue;card.open=true;card.dispatchEvent(new Event('toggle'));for(const i of steps)card.querySelectorAll('.nt-step-head')[i]?.click();}
+  }
+  if(oldRunId!==app.detailRunId)runPreview.close();
   const activeRun = latestRun && !['succeeded', 'failed', 'interrupted'].includes(latestRun.status);
   if (panel && app.detailTab === 'output' && activeRun && (!oldPanel || oldTab !== 'run-tab-output')) dom.taskDetail.scrollTop = dom.taskDetail.scrollHeight;
   else if (panel && oldPanel && oldRunId === app.detailRunId && oldTab !== `run-tab-${app.detailTab}`) dom.taskDetail.scrollTop = 0;
@@ -1663,33 +1682,31 @@ function renderRunResult(result) {
   return section;
 }
 
+/** Copy always uses the original value, even when the visible ID or input is abbreviated. */
+function runCopyButton(value) {
+  const button=create('button','icon-button run-copy');button.type='button';setActionIcon(button,'copy','Copy');
+  button.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(value);button.title=t('Copied');}catch{button.title=t('Copy failed');}});
+  return button;
+}
+
 function renderRunSummary(run) {
-  const summary = create('div', 'run-summary');
-  const usage = formatUsage(run.usage);
-  const items = [
-    ['Git baseline', run.baseCommit || 'Plain folder / not registered yet'],
-    ...(run.inputRepositoryVersions?.length?[['Actual input version',run.inputRepositoryVersions.map(item=>`${item.key}: ${item.commit||t('Plain folder / not registered yet')}${item.dirty?` (${t('Uncommitted changes')})`:''}`).join('\n')]]:[]),
-    ['Workspace', run.workspace || 'Not registered'],
-    ['Session', run.threadId || 'Not registered'],
-    ['Token', usage || 'Not available']
-  ];
-  for (const [label, value] of items) {
-    const item = create('div', 'summary-item');
-    item.append(create('span', '', label), create('strong', '', value));
-    item.title = value;
-    summary.append(item);
+  const summary=create('div','run-summary run-usage');
+  const label=create('span','run-usage-label',run.roleSnapshot?.runtime==='codex'?'Token · Session cumulative':'Token');
+  label.title=t('Cached input is included in input. 1 M = 1,000,000 tokens.');summary.append(label);
+  const raw=run.usage,usage=raw&&typeof raw==='object'?raw:{totalTokens:raw};
+  for(const [key,legacy,name] of [['inputTokens','input_tokens','Input'],['cachedInputTokens','cached_input_tokens','Cached input'],['outputTokens','output_tokens','Output'],['totalTokens','total_tokens','Total']]){
+    const value=usage[key]??usage[legacy],item=create('span',`run-usage-item${key==='totalTokens'?' is-total':''}`);
+    const amount=formatTokenMillions(value);item.append(create('span','',name),create('strong','',amount??t('Not available')));if(amount)item.title=String(value);summary.append(item);
   }
-  if (run.error) summary.append(create('div', 'inline-error full-width', run.error));
-  return summary;
+  if(run.error)summary.append(create('div','inline-error full-width',run.error));return summary;
 }
 
 /** The conversation log groups input, output, tools, artifacts and stored original text of the same Run. */
 function renderRunTabs(task, run) {
   const logs = partitionRunLog(app.events);
   const tabs = [
-    ['input', 'Prompt input'],
-    ['output', t('CLI output{v}', { v: logs.output.length ? ` ${logs.output.length}` : '' })],
-    ['tools', t('Tool calls{v}', { v: logs.tools.length ? ` ${logs.tools.length}` : '' })],
+    ['input', 'Input'],
+    ['output', 'Run record'],
     ['artifacts', 'Artifacts'],
     ['original', 'Result original']
   ];
@@ -1700,6 +1717,7 @@ function renderRunTabs(task, run) {
   for (const [key, label] of tabs) {
     const button = create('button', `run-tab${app.detailTab === key ? ' active' : ''}`, label);
     button.type = 'button';
+    const icon=create('span','run-tab-icon');icon.innerHTML=UI_ICON[{input:'original',output:'log',artifacts:'folder',original:'original'}[key]]||UI_ICON.original;button.prepend(icon);
     button.id = `run-tab-${key}`;
     button.setAttribute('role', 'tab');
     button.setAttribute('aria-selected', String(app.detailTab === key));
@@ -1716,13 +1734,12 @@ function renderRunTabs(task, run) {
   panel.setAttribute('role', 'tabpanel');
   panel.setAttribute('aria-labelledby', `run-tab-${app.detailTab}`);
   if (app.detailTab === 'input') panel.append(renderRunInput(task, logs.input,run));
-  if (app.detailTab === 'output') panel.append(renderRunOutput(run, logs.output));
-  if (app.detailTab === 'tools') panel.append(renderRunTools(run, logs.tools));
+  if (app.detailTab === 'output') panel.append(renderRunOutput(run, app.events));
   if (app.detailTab === 'artifacts') panel.append(renderRunArtifacts(run));
   if (app.detailTab === 'original') {
     if(!run)panel.append(create('p','run-log-note','Task has not started yet'));
     else {
-      panel.append(runOriginal.element());
+      const original=runOriginal.element(),copy=original.parts.copy;setActionIcon(copy,'copy','Copy full text');copy.classList.add('run-copy');original.querySelector('.dialog-heading').append(copy);panel.append(original);
       const snapshot={id:run.id,result:run.result,error:run.error,status:run.status};
       if(!originalRunSnapshot||Object.keys(snapshot).some(key=>snapshot[key]!==originalRunSnapshot[key])) {
         originalRunSnapshot=snapshot;
@@ -1742,56 +1759,28 @@ function renderRunInput(task, snapshot,run) {
   if (!input.complete) section.append(create('p', 'run-log-note', 'The full CLI input was not saved for this past run; below is only the recorded task request.'));
   else section.append(create('p', 'run-log-note', 'This is the input the platform sent to the CLI this round; it excludes history kept by the CLI itself and vendor built-in prompts.'));
   if(input.instructionsInheritedFrom)section.append(create('p','run-log-note',t('Fixed rules are inherited from the original session run {instructionsInheritedFrom} and are not appended again this round; execution boundaries and tool entries are still shown in full below.', { instructionsInheritedFrom: input.instructionsInheritedFrom })));
-  if (input.instructions) {
-    section.append(create('h3', '', 'Platform and Role Work Instructions'), create('pre', 'run-log-pre', input.instructions));
-  }
+  const card=create('div','run-input-card'),head=create('div','run-input-head');
+  head.append(create('h3','',input.complete?'Actual input this round':'Task request'),runCopyButton(input.prompt||''));
+  card.append(head,create('pre','run-log-pre',input.prompt||'No execution request provided'));section.append(card);
+  if(input.instructions){const rules=create('details','run-input-rules'),heading=create('summary','','Platform and Role Work Instructions');rules.append(heading,create('pre','run-log-pre',input.instructions),runCopyButton(input.instructions));section.append(rules);}
   if(input.configurationUpdate)section.append(create('h3','','Native configuration update event'),create('pre','run-log-pre',input.configurationUpdate));
-  section.append(create('h3', '', input.complete ? 'Actual input this round' : 'Task request'), create('pre', 'run-log-pre', input.prompt || 'No execution request provided'));
   return section;
 }
 
+/** Reuse the Sessions transcript's expandable steps; no user messages or sender header in a Run. */
 function renderRunOutput(run, events) {
-  const section = create('section', 'run-log-content run-output');
-  if (!events.length && !run?.result) section.append(create('div', 'event-empty', run ? 'Waiting for CLI output…' : 'Task has not started yet'));
-  let text = '';
-  const flushText = () => { if (text) { section.append(create('pre', 'run-log-pre run-output-text', simplifiedCliOutput(text))); text = ''; } };
-  for (const event of events) {
-    if (event.type === 'text') { text += stripAnsi(eventPayloadText(event)); continue; }
-    flushText();
-    const block = create('div', `run-output-entry${event.type === 'error' ? ' error' : ''}`);
-    block.append(create('small', '', `${event.type === 'error' ? t('Error') : event.type === 'log' ? t('CLI log') : t('Reply')} · ${formatTime(event.createdAt)}`),
-      create('pre', 'run-log-pre', simplifiedCliOutput(stripAnsi(eventPayloadText(event)))));
-    section.append(block);
+  const section=create('section','run-log-content run-transcript native-session-content');
+  const rows=runTimeline(events);
+  const appendText=(value)=>{const body=create('div','markdown-body run-reply');body.append(renderMarkdown(simplifiedCliOutput(value)));section.append(body);};
+  if(!rows.length&&!run?.result)section.append(create('div','event-empty',run?'Waiting for CLI output…':'Task has not started yet'));
+  for(const row of rows){
+    if(row.kind==='tools'){
+      const block=activityBlock({steps:row.tools.map(tool=>{const step=classifyStep(tool.item,run?.status);if(tool.item.query!=null){step.args={...step.args,query:step.args.query??tool.item.query};if(step.kind==='web'&&!step.url)step.url=typeof tool.item.query==='string'?tool.item.query:JSON.stringify(tool.item.query);if(step.kind==='search'&&!step.query)step.query=tool.item.query;}return step;}),t:runStepText,onPreview:(step,path)=>runPreview.open(step,path)});
+      block.dataset.toolId=String(row.tools[0].item.id||row.seq);section.append(block);
+    }else if(row.kind==='text')appendText(row.text);
+    else{const entry=create('div',`run-transcript-note${row.kind==='error'?' is-error':''}`);entry.append(create('span','',row.kind==='error'?'Error':'CLI log'),create('pre','',simplifiedCliOutput(row.text)));section.append(entry);}
   }
-  flushText();
-  if (shouldShowFinalResult(run?.result, events)) section.append(renderRunResult(run.result));
-  return section;
-}
-
-function renderRunTools(run, tools) {
-  const section = create('section', 'run-log-content run-tools');
-  if (!tools.length) { section.append(create('div', 'event-empty', 'No tool calls this round')); return section; }
-  for (const tool of tools) {
-    const item = tool.item;
-    const card = create('details', 'run-tool-card');
-    card.dataset.toolId = String(item.id || `seq:${tool.seq}`);
-    const title = item.name || item.command || item.query || item.type || 'Tool';
-    const summary = create('summary');
-    summary.append(create('strong', '', title), create('span', '', toolStatusLabel(item, run?.status)), create('time', '', formatTime(tool.updatedAt || tool.createdAt)));
-    card.append(summary);
-    const fields = [
-      ['Command', item.command], ['Arguments', item.input], ['Changes', item.changes],
-      ['Query', item.query], ['Output', item.aggregatedOutput], ['Result', item.results]
-    ];
-    for (const [label, value] of fields) {
-      if (value == null || value === '') continue;
-      const detail = create('div', 'run-tool-field');
-      detail.append(create('h4', '', label), create('pre', 'run-log-pre', stripAnsi(typeof value === 'string' ? value : safeJson(value))));
-      card.append(detail);
-    }
-    if (item.exitCode != null) card.append(create('p', 'run-log-note', t('Exit code {exitCode}', { exitCode: item.exitCode })));
-    section.append(card);
-  }
+  if(shouldShowFinalResult(run?.result,partitionRunLog(events).output))appendText(run.result);
   return section;
 }
 
@@ -2197,7 +2186,8 @@ document.querySelector('#close-history').addEventListener('click', () => documen
 document.querySelector('#close-device-edit').addEventListener('click', () => document.querySelector('#device-edit-dialog').close());
 document.querySelector('#device-edit-dialog').addEventListener('close', () => document.querySelector('#device-edit-content').replaceChildren());
 document.querySelector('#close-run').addEventListener('click', () => { dom.runDialog.close(); app.requestVersion++; });
-dom.runDialog.addEventListener('close',()=>{runOriginal.close();originalRunSnapshot=null;});
+dom.runDialog.addEventListener('keydown',event=>{if(event.key==='Escape'&&dom.runDialog.classList.contains('has-preview')){event.preventDefault();runPreview.close();}});
+dom.runDialog.addEventListener('close',()=>{runPreview.close();runOriginal.close();originalRunSnapshot=null;});
 document.querySelector('#refresh-state').addEventListener('click', () => {if(nativeSessionUI.active()){nativeSessionUI.refresh();return;}void roleRefresh.refreshTerminals().catch(error=>setError(error.message));});
 document.querySelector('#close-file-dialog').addEventListener('click', () => dom.fileDialog.close());
 dom.fileDialog.addEventListener('close', () => { app.fileReadVersion++; });

@@ -54,6 +54,16 @@ export function artifactCandidates(run,events=[],messages=[],registered=null) {
   return [...found.values()];
 }
 
+/** Home may retain tool evidence after Worker event cleanup; only a saved Run reference can authorize the source path. */
+export function recordedArtifactPath(db,run,path,knownCandidates=null){
+  if(!run?.workspace||typeof path!=='string'||!path||path.length>4096)throw Error('artifact_source_invalid_request');
+  const wanted=resolve(run.workspace,path);
+  const candidates=knownCandidates||artifactCandidates(run,db.events(run.id),db.listProject('roomMessages',run.projectId).filter(m=>m.runId===run.id));
+  const found=candidates.find(item=>resolve(run.workspace,item.path)===wanted);
+  if(!found)throw Error('artifact_source_path_not_recorded');
+  return resolve(run.workspace,found.path);
+}
+
 /** Query a bounded set of recent runs without walking the whole workspace; for the same device and path only the latest record is shown. */
 export async function recentProjectArtifacts(db,projectId,query,online,projectFiles=null) {
   if(!db.get('projects',projectId))throw new Error(tr('runArtifacts.projectNotFound'));
@@ -64,19 +74,25 @@ export async function recentProjectArtifacts(db,projectId,query,online,projectFi
     if(!prior||file.writtenAt&&(!prior.writtenAt||file.writtenAt>prior.writtenAt))candidates.set(key,{...file,run,ref});
   }
   if(projectFiles){
-    const selected=[...candidates.values()].slice(0,100),items=[];let deviceError=null;
+    const selected=[...candidates.values()].slice(0,100),items=[],deviceErrors=new Map();
     for(let i=0;i<selected.length;i+=4)await Promise.all(selected.slice(i,i+4).map(async c=>{
-      let local,error=null;
+      let local,error=null,readNode=c.run.nodeId;
       try{
-        if(!c.ref)throw new Error(tr('runArtifacts.filePathNotAccessible'));
-        if(deviceError)throw deviceError;
-        if(projectFiles.legacyReadable(c.run)){
+        if(c.ref&&!projectFiles.legacyReadable(c.run))readNode=projectFiles.config?.(projectId)?.displayNodeId||`shared:${projectId}`;
+        if(deviceErrors.has(readNode))throw deviceErrors.get(readNode);
+        if(!c.ref){
+          if(db.get('workers',c.run.nodeId)?.capabilities?.recordedArtifacts!==1)throw new Error(tr('runArtifacts.filePathNotAccessible'));
+          if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
+          const source=await query(c.run,'artifact_source',{path:c.path,homeRecordedPath:recordedArtifactPath(db,c.run,c.path,[c]),metadata:true},15000);
+          local={...source,nodeId:c.run.nodeId,shared:false,syncState:'source',relativePath:null};
+        }
+        if(c.ref&&projectFiles.legacyReadable(c.run)){
           if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
           const result=await query(c.run,'artifact_files',[c.path],5000),info=result?.files?.find(f=>f.path===c.path);
           if(!info||info.error)throw new Error(info?.error||tr('runArtifacts.deviceReturnedNoFileInformation'));
           local={...info,path:resolve(c.run.workspace,c.path),nodeId:c.run.nodeId,shared:false,syncState:'disabled',relativePath:null};
-        }else local=await projectFiles.read(projectId,c.ref.scopeId,c.ref.path,{metadata:true});
-      }catch(e){error=e.message;if(/timed? out|timeout|offline|closed|disconnected|\u8d85\u65f6|\u79bb\u7ebf/i.test(error))deviceError=e;}
+        }else if(c.ref)local=await projectFiles.read(projectId,c.ref.scopeId,c.ref.path,{metadata:true});
+      }catch(e){error=e.message;if(/timed? out|timeout|offline|closed|disconnected|\u8d85\u65f6|\u79bb\u7ebf/i.test(error))deviceErrors.set(readNode,e);}
       items.push({...local,projectId,runId:c.run.id,originNodeId:c.run.nodeId,originPath:resolve(c.run.workspace,c.path),
         scopeId:c.ref?.scopeId||null,relativePath:local?.shared===false?null:c.ref?.path||null,path:local?.path||null,shared:local?.shared??Boolean(c.ref),
         name:basename(c.path),type:extname(c.path).slice(1).toUpperCase()||'FILE',recordedAt:c.writtenAt||c.run.updatedAt||c.run.createdAt,

@@ -1,5 +1,6 @@
-const CACHE = 'agent-workbench-static-v182-lazy-native-tools';
+const CACHE = 'agent-workbench-static-v189-integrated-run-details';
 const STATIC = [
+  '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
   '/group-conversations.js',
   '/model-usage.js',

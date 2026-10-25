@@ -1,6 +1,29 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "collabSessions.retired": "协作会话已停用，已有记录只读保留；新工作使用 wb task 和 wb call。",
+  "conversationTasks.invalid":"任务字段或值无效。",
+  "conversationTasks.actor":"操作身份不是本项目角色。",
+  "conversationTasks.owner":"任务负责人或计划角色必须属于本项目。",
+  "conversationTasks.plan":"计划无效：最多 50 步，currentStep 从 0 开始且必须有效。",
+  "conversationTasks.status":"任务状态无效。",
+  "conversationTasks.summary":"只有标记任务完成时才能填写 resultSummary。",
+  "conversationTasks.unfinished":"标记任务完成前必须完成全部计划步骤并定位到最后一步。",
+  "conversationTasks.notFound":"本群聊中没有此任务。",
+  "conversationTasks.requestId":"创建任务需要稳定的 requestId（字母、数字、冒号、下划线或连字符，最多 200 字符）。",
+  "conversationTasks.retry":"该任务 requestId 已被其他输入或身份使用。",
+  "conversationTasks.revision":"任务版本冲突：先查看任务，再用当前 revision 重试。",
+  "conversationTasks.permission":"只有任务负责人、项目总管或用户能修改负责人；转交必须由任务负责人发起。",
+  "conversationTasks.handover":"修改负责人时，必须在同一次更新中整段重写任务说明。",
+  "conversationTasks.noChange":"此次更新没有改变任务字段。",
+  "conversationTasks.closed":"已完成或取消的任务不能转交。",
+  "conversationTasks.editFirst":"转交前必须在本轮用 wb task update 重写当前任务说明，写入交接信息。",
+  "conversationTasks.usage":"使用 wb task list、show、create 或 update。",
+  "conversationTasks.transferReason":"随关联派单转交负责人。",
+  "conversationTasks.updated":"任务说明已更新。",
+  "conversationTasks.context":"群聊任务（Home 当前快照）。{updated}\n{task}",
+  "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{title,description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。说明/计划整段替换。只有 done 可写 resultSummary，全部计划步骤必须已完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交前先在本轮用 wb task update 重写说明。重试须保持相同 requestId 和输入。",
+
   'deviceAdmin.reconnectUnsupported':'手动重连需要 Home 管理的反向 SSH 隧道、已保存的 SSH 密钥及可核验的 Linux Worker。',
   'deviceAdmin.reconnectBusy':'该设备有待处理或运行中的任务、常驻 CLI，或正在执行其他连接操作。未停止任何任务，请空闲后重试。',
   'deviceAdmin.reconnectUnverified':'无法确认该 Worker 当前空闲，未停止隧道。请检查 SSH 连接，并先结束活动会话。',
@@ -29,13 +52,13 @@ export default Object.freeze({
   'runReports.submissionConflict': '此报告提交编号已用于不同内容。请查询原回执；确需修订报告时使用新的编号。',
   'runReports.pendingConfirmation': '报告提交结果待确认，超时不代表提交失败。请用下方命令查询回执；再次提交相同内容会复用原编号，不应因此重新派工。',
   'roleSwitch.crossDevice': '你已选择另一台设备，当前不支持跨设备交接并切换 CLI。原设备：{from}；所选设备：{to}。如只需切换 CLI，请保留原设备。此次修改未保存，原会话不受影响。',
-  'followup.configChanged': '主动跟进设置已变更，请刷新后再保存。',
+  'followup.configChanged': '停滞提醒设置已变更，请刷新后再保存。',
   'followup.noSupervisor': '等待可用且已启用的项目总管。',
   'followup.waitingSilence': '等待达到更新后的静默时长。',
   'followup.bindingChanged': '已核验的 CLI／设备绑定与当前角色不一致，请先核对角色切换状态。',
   'followup.context': `平台触发与当前任务事实（不构成用户新增授权）：{context}。以下消息摘录仅作背景，可通过 wb history read 查看原文和关联请求的结果。`,
-  'followup.event': '【Workbench 平台事件】项目群聊已静默约 {minutes} 分钟。请结合近期对话和当前任务，判断是否需要继续协同或帮助用户推进；有需要就按原授权处理，没有需要可以保持沉默。本次跟进仅记后台，需要公开消息时使用 wb note；用户确认和审批仍用已有入口。静默不代表用户同意，也不代表活动任务失败。',
-  'followup.invalidConfig': '主动跟进开关须为布尔值，静默时间须为 1 至 10080 的整数分钟。',
+  'followup.event': '【Workbench 停滞提醒】本群已静默约 {minutes} 分钟，当前没有运行或排队的工作。平台事实（有界近期记录，不代表结论）：{facts}。用 wb history 和 wb history read 编号查看原文，再按原有授权推进。本次为后台任务，需要公开说话时才用 wb note。静默不代表用户同意，确认和审批仍用已有入口。',
+  'followup.invalidConfig': '停滞提醒开关须为布尔值，静默时间须为 1 至 10080 的整数分钟。',
   'roleTemplates.planner': '计划',
   'roleTemplates.plannerResponsibility': '制定和维护开发计划，解答方案问题。',
   'roleTemplates.developer': '执行',
@@ -352,8 +375,8 @@ ask 接受后马上结束回合释放容量；已经提交业务报告则结束�
   // src/execution-plans.mjs
   'executionPlans.executionSchedulingYouOnlyAssign': `执行调度：你只分配、核对和汇总，不直接写业务代码或详细业务计划。
 一个 @ 工作角色直接执行；多个 @ 已交给你评估，必须覆盖用户点名的所有角色。复杂计划先安排规划角色，不能自己替代。
-先 wb discuss peers 获取真实角色。同一条指令发给一个或多个角色用 wb call，每个接收人重复一个 --role；需要明确执行顺序或步骤依赖时，用 wb schedule '<JSON>' 提交一次执行安排。
-只有收到明确的墙钟时间/周期需求才用 wb timer；它只管理当前项目定时任务，和阶段安排 wb schedule 不同。先 wb timer list 避免重复创建，写操作使用稳定 requestId。进度巡检健康时不唤醒模型，有新异常才通知你；不要把普通工作循环设为高频巡检。
+先 wb discuss peers 获取真实角色。同一条指令发给一个或多个角色用 wb call，每个接收人重复一个 --role；有步骤依赖时记在任务计划中，核对前一步结果后再派下一步。
+只有收到明确的墙钟时间/周期需求才用 wb timer；它只管理当前项目定时任务。先 wb timer list 避免重复创建，写操作使用稳定 requestId。进度巡检健康时不唤醒模型，有新异常才通知你；不要把普通工作循环设为高频巡检。
 格式：{"id":"稳定编号","reason":"为什么这样安排","stages":[{"title":"独立审核","mode":"serial","members":[{"role":"角色名","purpose":"audit","text":"具体要求","writeRepositories":[]}]}]}
 mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migration/deploy/production。顶层 repositories 可列出本次实际需要读写的仓库 key，省略则全部准备；角色权限不改变。
 审核默认依次执行，每位审核者一个串行阶段；仅在用户明确要求时安排独立并行审核。不同仓库开发可并行，writeRepositories 填仓库 key；同一模块并行开发必须紧跟一个单人 merge 阶段再测试。计划、开发、测试各占独立阶段；数据库迁移、部署、生产操作只能串行独占。
@@ -730,7 +753,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'platformPrompts.doNotReleaseOperateProduction': '不得自行发布、操作生产系统或进行数据库迁移。',
   'platformPrompts.handleOnlyAssignmentDoNot': `{discussion}
 
-仅处理本次指派。不要自行启动其他 Agent，{p2}，主管编排使用 wb schedule。
+仅处理本次指派。不要自行启动其他 Agent，{p2}。
 {p3}
 默认在 Worker 指定工作区及本次列出的仓库内操作；用户明确授权时可扩展到指定目标，不重复询问。实际运行权限仍生效，受限时申请所需权限或交给具备权限的执行环境。{p4}
 需要用户补充信息或拍板时，在回复里写清具体问题与选项，然后结束本轮。回复不自动转发微信；配置并启用通知渠道后，仅项目总管可在结束本轮前显式调用 wb notify send。Home 绑定真实项目和总管，带编号的回复排入该总管队列，不打断活动 CLI。不轮询微信、不持有凭据，不把发送成功或 pending 当成用户答复。原生权限与 Git 交付保持原审批边界。
@@ -1163,7 +1186,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'runContext.questionOnOriginalTaskHas': `原任务问题已解决，现在只继续原任务未完成部分，不重复已完成的发问；此结论不代表业务验收通过：
 {p1}`,
   'runContext.text': '、',
-  'runContext.rolesTurnMustCoverFixed': `本轮必须覆盖的角色（发送时固定，不随新增、改名变化）：{p1}。名单上的每个角色都要参与：用 wb call 依次找他们，需要分阶段时才用 wb schedule；角色字段可用固定 ID。未配置或不可用时明确说明，不能静默遗漏。该名单只规定参与者，不放宽并行、写入或审核要求。`,
+  'runContext.rolesTurnMustCoverFixed': `本轮必须覆盖的角色（发送时固定，不随新增、改名变化）：{p1}。名单上的每个角色都要参与：用 wb call 依次找他们；角色字段可用固定 ID。未配置或不可用时明确说明，不能静默遗漏。该名单只规定参与者，不放宽并行、写入或审核要求。`,
   'runContext.userChangedDirectionTurnImmediate': '用户调整了方向：本轮是用户主动的立即引导，以本轮原始指令为准。旧计划、历史未完成事项和迟到协作回复仅作背景，不自动继续旧安排。沿用原会话，先核对中断后实际文件和工具状态；已执行的操作不会自动回滚。',
   'runContext.excerptCharactersFullTextPass': `
 [节选 {length}/{totalLength} 字符；全文：{readCommand}；续页携带返回的 version]`,
@@ -1440,10 +1463,6 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'wbCli.discussionToolsNotEnabledFor': '当前回合未启用讨论工具',
   'wbCli.onlyProjectSupervisorCanSubmit': '只有项目主管可提交计划',
   'wbCli.usageWbTimerListWb': '用法: wb timer list 或 wb timer <create|update|pause|resume|delete> \'<JSON>\'',
-  'wbCli.wbScheduleJsonSupervisorSubmits': `{HELP}
-
-总管专用：
-wb schedule '<JSON>'  可选的分阶段执行计划，只在用户或你明确要分阶段时用；默认整件转交给一个负责人。一段的派活都成功后自动进入下一段，全部结束后结果交回你判断；中间没有人核对结论，所以迁移、部署、生产操作不能放进计划，要等你核对后单独派。failurePolicy 默认 stop；几位角色只读独立审核可单独一段并选 collect_reviews（成员都是 audit，不写仓库）。权限问题、未知错误、取消或版本异常会停下，不自动重试。`,
   'wbCli.invalidDuplicateWbCallParameters': 'wb call 参数无效或重复（仅 --role 可以重复）',
   'wbTools.invalidCallTargets': '请提供一个 role 或非空的 roles 角色名称/ID 数组，不能同时提供。',
   'wbCli.unknownCommand': `未知命令 {cmd}
@@ -1734,6 +1753,8 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 每个 @ 你的消息都要实质回复，或说明做不了及原因；不要只回“收到”，没有意见就说“通过，无意见”。
 - 发现阻塞、风险或别人的问题，直接告诉相关角色并说明依据。
 - 收到新消息时先判断：是对你手上任务的补充，就并入继续做；是新的任务，就按新任务处理。
+- 手上有任务时收到独立的新任务：用 wb task create 记为待办，回复已记下，继续当前任务；做完后处理待办，或交总管派人。
+- 按任务计划做事：完成自己负责的步骤后标记该步骤完成，更新任务说明里的交接内容，再转交给下一步角色；只有最后一步完成才把整个任务标为完成。
 - 转交给你的任务，你就是负责人：自己推进到底，组织审核，做完直接回复用户结论。
 
 找人协作：
@@ -1752,7 +1773,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'minimal.supervisorTemplate': `你是项目总管，对目标的最终完成负责：派工、跟进、验收、拍板，不等用户逐步指挥。
 你只亲自做最简单的事：直接回答问题、查一个事实、一两步就能完成且不改代码的小操作。要读多个文件、写或改代码、跑测试、比较方案的，都派给其他角色。
 
-- 接消息：没点名的消息先判断是什么：能答的问题直接答；是某个进行中任务的补充，转给那个任务的负责人；是新任务，按平台规则选人派出。判断不了时说明你按哪种理解处理，不反问用户“想让谁来”。
+- 接消息：先用 wb task list 判断是修改已有任务还是新任务。没点名的消息先判断是什么：能答的问题直接答；是某个进行中任务的补充，转给那个任务的负责人；是新任务，按平台规则选人派出。判断不了时说明你按哪种理解处理，不反问用户“想让谁来”。
 - 派任务：任务整件转交给一个角色，由它负责到底：自主推进、自己找人沟通和审核，做完直接回复用户结论；你不再跟进，除非收到停滞提醒。流程长的任务，先列好分步计划一起交给它。把一个目标拆给几个角色时，结果回到你汇总后再回复用户。
 - 解决卡点：收到停滞提醒，或发现有人卡住、反复失败、互相等待时，由你亲自全面查清：看任务状态、群聊记录、运行详情和各角色的实际进展，找出卡在哪里，不把暂时没有输出当成卡死。能直接解决的自己处理（重新派人、补充信息、拆小任务、解除互相等待）；要改代码的派给其他角色；需要用户决定的，说清卡在哪一步、要用户做什么。
 - 替换：额度用尽或鉴权失败不重复重试；临时错误重试一次仍失败，再交给其他可用角色。先确认原任务已经停止，保留版本和已完成的证据。审核不能由作者本人替补，测试不能由开发者本人替补。`,
@@ -1765,6 +1786,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 整套测试或大型编译交执行跑属于开发阶段的自测，不算独立测试。较长的清单或证据写进文件，用 wb call --file 附上，或放在 .workbench/docs 并写明路径和哈希。`,
   'wbTools.helpErrors': `工具报错以 [code] 开头：run_reconciling、home_disconnected 表示请求没有执行，用同一请求编号重试；run_stopping、run_ended、paused 表示本次已结束，本轮不再重试。`,
   'minimal.identity': '当前通过 Workbench 执行，角色为 {name}（角色 ID：{roleId}）。可按需使用协作工具，通过 wb help 发现入口。',
+  'minimal.sharedReportDirectory': '共享报告目录（绝对路径）：{path}。获准公开的报告写入这里，不要写到仓库相对路径的 .workbench/docs 或临时工作区。未公开审核材料仍须保密；此路径不授予额外写权限。',
   'minimal.inputRepositoryVersions': '任务启动时的实际输入（工作目录 {cwd}）：{versions}。commit 是执行目录 HEAD；boundCommit 仅是当前项目的对照，不代表旧会话内的代码。代码任务先核对指定版本和这些实际路径，不静默更新旧目录。',
   'platformPrompts.independentReviewBoundary': `独立审核只读。核对指定版本，报告问题位置、触发条件、影响及证据，修复后核对新版本。结论写在回复里：通过、需要修改、无法核实或需要用户决定；只有非阻塞建议时才算通过。`,
   'executionWorkspace.resumeRepositoryMissing': '无法在旧会话目录中定位仓库 {key}，未改用当前项目副本。请核对原目录，或明确准备新会话。',
@@ -1804,7 +1826,6 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'collabSessions.supervisorOnly': "只有本项目当前总管 Run 可以管理协作会话。",
   'collabSessions.invalidAction': "未知协作会话操作。",
   'collabSessions.documentNotReleased': "该文档在独立审核开始后发生变化，或无法核验原始版本。请使用原任务附件；未释放的审核意见仍受保护。",
-  'collabSessions.toolHelp': "总管：wb collaboration list；wb collaboration create|link|add-member|remove-member|release|close JSON。create 提供 goal、delivery、background、participants、type、sourceMessageId；link 关联现有 taskId 或 requestId。不自动广播、不增加授权。",
   'collabSessions.readOnlyView': "审核隔离视图为只读。",
   'sessionQueue.secondsMustBeInteger': "合并时间必须是 0 到 3600 秒之间的整数。",
   'sessionQueue.maxBelowQuiet': "最长收集时间不能小于合并等待时间。",
@@ -1815,7 +1836,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'sessionQueue.batchNotFound': "批次不存在。",
   'sessionQueue.reservationInvalid': "预留已失效，批次继续在平台排队。",
   'sessionQueue.reservationExpired': "预留已过期，批次继续在平台排队。",
-  'sessionQueue.passNoBatch': "wb pass 只适用于本次执行正在处理的讨论批次。",
+  "sessionQueue.passNoBatch": "协作会话已停用，已有记录只读保留；新工作使用 wb task 和 wb call。",
   'sessionQueue.passExplicitRequest': "本批包含交给你的明确请求，请回复结果、说明阻塞或登记等待，不能选择不发言。",
   'sessionQueue.passAfterReply': "你已在本批公开回复，不能再登记不发言。",
   'sessionQueue.broadcastNeedsAcknowledgement': "会话广播仅用于验收：需提供 enabled、1 到 50 的批次上限，并设置 acknowledgeNoBudget:true。",
@@ -1832,7 +1853,6 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'sessionQueue.requestNotFound': "本项目中不存在该请求。",
   'sessionQueue.reassignStarted': "该请求已开始执行，不能改派。请先明确停止。",
   'sessionQueue.alert.backlog': "- 会话 {sessionId}：角色 {roleId} 积压 {count} 条消息，最早已等待 {minutes} 分钟。可考虑调整参与范围或改派明确任务。",
-  'sessionQueue.passRule': "本轮是协作讨论批次。公开发言只用 wb note；没有实质补充时运行 wb pass。对明确交给你的请求，回复结果、说明阻塞或登记等待。",
   'wechatChannel.channelUnavailable': '通知账号未配置或已不可用，请选择已安装的渠道；已有编号不会改绑。',
   'wechatChannel.supervisorOnly': '只有本项目的固定总管可以调用通知工具。',
   'wechatChannel.notificationNotFound': '该通知不属于当前项目总管。',

@@ -912,6 +912,15 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     });
   }
 
+  /** 仅显示消息或任务当时的模型记录，避免角色改配置后误标历史。 */
+  function appendModelLabel(header, model) {
+    if (typeof model !== 'string' || !model.trim()) return;
+    const label = create('span', 'chat-model-label', model.trim());
+    label.translate = false;
+    label.title = `${t('Model')}: ${model.trim()}`;
+    header.append(label);
+  }
+
   function renderApprovalsInline(run) {
     const list = (data.approvals || []).filter(a => a.runId === run.id && ['pending', 'waiting'].includes(a.status));
     if (!list.length) return null;
@@ -951,6 +960,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       const line = create('div', 'chat-name handoff-wait-line', `@${role.name || t('Role')} · ${label}`);
       line.translate = false;
       const header=create('div','chat-message-header');header.append(create('div','chat-name',role.name||t('Role')));
+      appendModelLabel(header,run?.model||run?.roleSnapshot?.model||role.model);
       const bubble=setChatCardState(create('div','chat-bubble'),'waiting'),footer=create('div','chat-card-footer'),actions=create('div','chat-card-actions');
       line.className='chat-message-text';actions.append(iconAction('live','Log',()=>openTask(task.id,run.id)));footer.append(create('span','chat-card-kind',t('Waiting')),actions);bubble.append(line,footer);col.append(header,bubble);
       row.append(col);
@@ -968,7 +978,9 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const sentAt = run?.startedAt || run?.createdAt || task.createdAt;
     const time = create('time', '', formatTime(sentAt));
     if (sentAt) time.dateTime = sentAt;
-    header.append(nameLine, time);
+    header.append(nameLine);
+    appendModelLabel(header,run?.model||run?.roleSnapshot?.model||role.model);
+    header.append(time);
     col.append(header);
     const bubble = setChatCardState(create('div', 'chat-bubble is-live-card'),progress.state);
     // Home resolves the immediate call before pagination; older Homes can still resolve visible call cards locally.
@@ -1043,6 +1055,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const replyDirection=dialogueReplyDirection(m,messages,data);
     const discussion=discussionDisplay(m,data);
     const row = create('article', `chat-row ${agent ? 'agent' : 'human'}${handoff || replyDirection ? ' is-handoff' : ''}`);
+    row.dataset.messageId=m.id;
     const role = agent ? (data.roles || []).find(r => r.id === m.roleId) || (data.runs || []).find(r => r.id === m.runId)?.roleSnapshot : null;
     if (agent) row.append(avatarFor(role, m.senderName));
     const col = create('div', 'chat-col');
@@ -1054,7 +1067,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     if(agent)sender.setAttribute('translate','no');
     if(agent)sender.title=m.senderName||'';
     // Name and send time share the line above the card; the card itself starts with the reply quote, if any.
-    header.append(sender, time);
+    header.append(sender);
+    if (agent) {
+      const run=data.runs?.find(r=>r.id===m.runId);
+      appendModelLabel(header,run?.model||run?.roleSnapshot?.model||m.model);
+    }
+    header.append(time);
     col.append(header);
     const bubble = create('div', `chat-bubble${handoff || replyDirection ? ' handoff-card' : ''}`);
     const top = create('div', 'chat-bubble-top');
@@ -1121,6 +1139,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const header=create('div','chat-message-header'),line=create('div','chat-message-text',t(progress.detail));
     line.setAttribute('role','status');line.title=progress.reason||request.error||request.resumeError?.message||'';
     header.append(create('div','chat-name',role.name||t('Role')));
+    appendModelLabel(header,task?.roleSnapshot?.model);
     if(at){const time=create('time','',formatTime(at));time.dateTime=at;header.append(time);}
     const bubble=setChatCardState(create('div','chat-bubble'),progress.state),footer=create('div','chat-card-footer'),actions=create('div','chat-card-actions');
     bubble.append(line);if(line.title)bubble.append(create('div','chat-message-text',line.title));
@@ -1599,5 +1618,23 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }
     finally { savingRole = false; document.querySelector('#role-save').textContent = 'Save role'; renderModelOptions(); }
   });
-  return { refresh, openRoleEditor };
+  async function jumpMessage(target,id){
+    if(target.projectId!==projectId||target.conversationId!==conversationId)return;
+    const owner=scopeId;
+    // Explicit navigation uses the existing paginated history, never a background history scan.
+    for(let page=0;page<100;page++){
+      if(owner!==scopeId)return;
+      const node=[...feed.querySelectorAll('[data-message-id]')].find(n=>n.dataset.messageId===id);
+      if(node){node.tabIndex=-1;node.focus({preventScroll:true});node.scrollIntoView({block:'center'});return;}
+      const history=histories.get(owner);if(!history?.hasMore||!history.nextBefore)break;
+      const before=history.nextBefore;
+      const result=await api(`/api/projects/${encodeURIComponent(target.projectId)}/messages?${new URLSearchParams({conversationId:target.conversationId,before})}`);
+      if(owner!==scopeId)return;
+      const current=histories.get(owner),ids=new Set(current.messages.map(m=>m.id));
+      histories.set(owner,{...current,messages:[...result.messages.filter(m=>!ids.has(m.id)),...current.messages],hasMore:result.hasMore,nextBefore:result.nextBefore});renderMessages();
+      if(result.nextBefore===before)break;
+    }
+    throw new Error(t('Message is not in the loaded history. Use Load older messages to continue.'));
+  }
+  return { refresh, openRoleEditor, jumpMessage };
 }

@@ -13,7 +13,7 @@ function excerpt(message,limit) {
 }
 
 /** Pin this turn's instruction and the organizer version; only material with a clear source enters the prompt. */
-export function buildRunContext({run,task,role={},environment={},conversation=null,messages=[],deliveries=[],references=[],completion=null,previousRun=null,organizer=null,receipts=null}) {
+export function buildRunContext({run,task,role={},environment={},conversation=null,messages=[],deliveries=[],references=[],completion=null,previousRun=null,organizer=null,receipts=null,conversationTask=null}) {
   const instruction=String(task?.prompt||'');
   if(run.backgroundFollowup){
     const visible=messages.filter(m=>m.visibility!=='internal'&&['human','agent'].includes(m.sender));
@@ -36,6 +36,7 @@ export function buildRunContext({run,task,role={},environment={},conversation=nu
     roleSessionId:run.roleSessionId||null,runId:run.id,discussionResolution:task?.discussionResolution||null,
     source:{kind:run.backgroundFollowup?'platform':task?.coordinationKind&&task.coordinationKind!=='direct'?'role_call':'human',messageId:run.sourceMessageId||null,requestId:run.requestId||null},
     followup:run.backgroundFollowup?{...run.proactiveFollowup,state:run.followupState||[]}:null,
+    ...(conversationTask?{conversationTask}:{}),
     instruction,schedulingRoster:(task?.schedulingRoster||[]).map(r=>({id:r.id,name:r.name})),steering:task?.steering||null,rules:{roleRevision:role.revision||null},environment,
     context:{status:conversation?.version?(uncovered.length||conversation.partialThrough?'supplemented':'ready'):'unavailable',version:conversation?.version||null,
       organizer:organizer?{status:organizer.status,error:organizer.error||null,retryAt:organizer.retryAt||null}:null,
@@ -70,7 +71,8 @@ function renderReceipts(receipts) {
 
 /** The source text is not rewritten by the summarizer; the background carries a coverage range and a fallback marker so it is not mistaken for a new instruction. */
 export function renderRunPrompt(packet,{minimal=false}={}) {
-  if(minimal)return [packet.instruction,
+  const taskContext=packet.conversationTask?tr('conversationTasks.context',{updated:packet.conversationTask.updated?tr('conversationTasks.updated'):'',task:JSON.stringify(packet.conversationTask)}):'';
+  if(minimal)return [packet.instruction,taskContext,
     packet.followup?tr('followup.context',{context:JSON.stringify(packet.followup)}):'',
     packet.steering?tr('runContext.userChangedDirectionTurnImmediate'):'',
     packet.discussionResolution?tr('runContext.questionOnOriginalTaskHas',{p1:JSON.stringify(packet.discussionResolution)}):'',
@@ -79,6 +81,7 @@ export function renderRunPrompt(packet,{minimal=false}={}) {
     ...(packet.deliveries||[]).map(item=>`${item.id} ${item.commit||''} ${item.summary||''}`),
     packet.completion?tr('runContext.explicitCompletionRequirement',{completion:packet.completion}):'',renderReceipts(packet.receipts)].filter(Boolean).join('\n\n');
   const lines=[tr('runContext.originalInstructionForTurnVerbatim', { instruction: packet.instruction })];
+  if(taskContext)lines.push(taskContext);
   if(packet.followup)lines.push(tr('followup.context',{context:JSON.stringify(packet.followup)}));
   if(packet.discussionResolution)lines.push(tr('runContext.questionOnOriginalTaskHas', { p1: JSON.stringify(packet.discussionResolution) }));
   if(packet.schedulingRoster?.length)lines.push(tr('runContext.rolesTurnMustCoverFixed', { p1: packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(tr('runContext.text')) }));

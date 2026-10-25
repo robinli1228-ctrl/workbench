@@ -218,30 +218,19 @@
                 </div>
                 <div id="project-panel-coordination" data-project-settings-panel="coordination" role="tabpanel" aria-labelledby="project-tab-coordination" tabindex="0" hidden>
                 <section class="settings-block" aria-labelledby="followup-heading">
-                  <h3 id="followup-heading">Supervisor proactive follow-up</h3>
-                  <p class="workspace-note">After chat silence, the supervisor checks once and decides whether to help. No new messages means no repeated wake-ups. Disabling does not stop work already started.</p>
+                  <h3 id="followup-heading">Stall reminders</h3>
+                  <p class="workspace-note">Enabled by default, after 10 quiet minutes. Completed final replies need no reminder; no new messages means no repeated wake-ups. Disabling does not stop work already started.</p>
                   <form id="proactive-followup-form" class="form-grid">
-                    <label class="checkbox-label full-width"><input type="checkbox" name="enabled">Enable supervisor follow-up</label>
+                    <label class="checkbox-label full-width"><input type="checkbox" name="enabled">Enable stall reminders</label>
                     <label>Silence duration (minutes)<input type="number" name="silenceMinutes" min="1" max="10080" step="1" value="10" required></label>
-                    <div class="form-actions full-width"><button type="submit" class="primary">Save follow-up settings</button></div>
+                    <div class="form-actions full-width"><button type="submit" class="primary">Save stall reminder settings</button></div>
                   </form>
-                  <div class="followup-status-row"><p class="workspace-note" id="followup-status" role="status"></p><span class="followup-tools"><button type="button" class="secondary" id="refresh-followup">Refresh follow-up status</button><button type="button" class="secondary" id="view-followup" disabled>View latest follow-up</button></span></div>
+                  <div class="followup-status-row"><p class="workspace-note" id="followup-status" role="status"></p><span class="followup-tools"><button type="button" class="secondary" id="refresh-followup">Refresh stall reminder status</button><button type="button" class="secondary" id="view-followup" disabled>View latest stall reminder</button></span></div>
                   <p id="followup-feedback" class="form-feedback" role="status" hidden></p>
                 </section>
                 <section class="settings-block" aria-labelledby="session-queue-heading">
                   <h3 id="session-queue-heading">Collaboration session queue</h3>
-                  <p class="workspace-note">Off by default. Collect messages outside busy CLIs. Broadcast remains restricted to isolated test projects.</p>
-                  <form id="session-queue-config-form" class="form-grid">
-                    <label class="checkbox-label full-width"><input type="checkbox" name="enabled">Enable collaboration sessions</label>
-                    <label>Merge wait (seconds)<input type="number" name="quietSeconds" min="0" max="3600" step="1" required></label>
-                    <label>Maximum collection (seconds)<input type="number" name="maxSeconds" min="0" max="3600" step="1" required></label>
-                    <label>New cycle batch budget<input type="number" name="budgetBatches" min="1" max="1000" step="1"></label>
-                    <label>Backlog message threshold<input type="number" name="backlogMessages" min="1" max="10000" step="1" required></label>
-                    <label>Backlog wait (seconds)<input type="number" name="backlogWaitSeconds" min="60" max="86400" step="1" required></label>
-                    <p class="workspace-note full-width">Leave budget empty to require a user grant. Existing cycles keep their usage and need a separate additional grant.</p>
-                    <div class="form-actions full-width"><button type="submit" class="primary">Save queue settings</button></div>
-                  </form>
-                  <p id="session-queue-config-feedback" class="form-feedback" role="status" hidden></p>
+                  <p class="workspace-note">Collaboration sessions are retired. Existing records are read-only.</p>
                 </section>
                 <section class="settings-block project-timer-link"><div><h3>Scheduled Jobs</h3><p class="workspace-note">View and adjust scheduled dispatches and progress checks for the current project.</p></div><button class="secondary" id="open-project-timers" type="button">Manage scheduled jobs</button></section>
                 </div>
@@ -514,6 +503,7 @@
           <div class="worker-list role-list" id="role-list"></div>
         </section>
         <section class="inspector-panel" id="inspector-artifacts" role="tabpanel" aria-labelledby="inspector-tab-artifacts" hidden>
+          <section id="conversation-task-card" class="native-side-card conversation-task-card" aria-label="Task list"></section>
           <p class="artifact-list-note" id="artifacts-note" role="status"></p>
           <div id="recent-artifact-list" class="recent-artifact-list"></div>
         </section>
@@ -521,7 +511,6 @@
           <section class="inspector-devices" aria-label="Device Management"><div class="artifact-section-heading"><h3>Device Management</h3><div><button class="icon-button" id="manage-inspector-devices" type="button" aria-label="Manage devices" title="Manage devices"></button><button class="icon-button pause-button" id="pause-remote" type="button" disabled aria-label="Pause remote" title="Pause remote"></button></div></div><div class="sidebar-online-devices" id="sidebar-online-devices" aria-label="Quick access to online devices"></div><div id="inspector-device-list"></div></section>
           <section id="project-git-summary" class="project-git-summary" aria-label="Current project Git version" hidden></section>
           <section id="source-sync-panel" class="inspector-devices source-sync-panel" aria-label="Source sync" hidden></section>
-          <section class="inspector-devices" id="local-project-files"><h3>Local project files</h3><p class="workspace-note" id="local-project-files-note"></p><div id="local-project-files-list"></div></section>
         </section>
         <div class="inspector-tabs" role="tablist" aria-label="Right panel sections">
           <button id="inspector-tab-roles" type="button" role="tab" aria-label="Roles" title="Roles" aria-selected="true" aria-controls="inspector-roles"></button>
@@ -615,7 +604,7 @@
     </dialog>
 
     <dialog id="history-dialog"><div class="dialog-heading"><h2>Execution History</h2><button class="icon-button" id="close-history" type="button" aria-label="Close execution history">×</button></div><div class="task-list" id="task-list"></div></dialog>
-    <dialog id="run-dialog" aria-labelledby="run-dialog-title"><div class="dialog-heading run-dialog-heading"><div class="run-dialog-heading-content"><h2 id="run-dialog-title">Conversation Log</h2><div class="run-dialog-meta"><time id="run-dialog-created"></time><span id="run-dialog-status"></span></div></div><button class="icon-button" id="close-run" type="button" aria-label="Close conversation log">×</button></div><article class="detail-column" id="task-detail"></article></dialog>
+    <dialog id="run-dialog" aria-labelledby="run-dialog-title"><div class="dialog-heading run-dialog-heading"><div class="run-dialog-heading-content"><h2 id="run-dialog-title">Conversation Log</h2><div class="run-dialog-meta"><span id="run-dialog-session"></span><time id="run-dialog-created"></time><span id="run-dialog-status"></span></div></div><button class="icon-button" id="close-run" type="button" aria-label="Close conversation log">×</button></div><article class="detail-column" id="task-detail"></article></dialog>
     <dialog id="device-edit-dialog" class="device-edit-dialog" aria-labelledby="device-edit-title">
       <div class="dialog-heading"><h2 id="device-edit-title">Edit Device</h2><button class="icon-button" id="close-device-edit" type="button" aria-label="Close device editor">×</button></div>
       <div id="device-edit-content"></div>

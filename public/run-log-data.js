@@ -42,6 +42,33 @@ export function partitionRunLog(events = []) {
   return result;
 }
 
+/** Token 只换显示单位；缺失值保持未知，小于两位小数的非零用量不显示成零。 */
+export function formatTokenMillions(value) {
+  if (value == null || value === '' || !Number.isFinite(Number(value)) || Number(value) < 0) return null;
+  const count=Number(value);
+  return count>0&&count<10000?'<0.01 M':`${(count/1000000).toFixed(2)} M`;
+}
+
+/** 保留首个工具事件的位置并合并后续状态；输入只出现在独立输入页。 */
+export function runTimeline(events = []) {
+  const logs=partitionRunLog(events),rows=[];
+  const entries=[...logs.output.map(event=>({seq:event.seq,event})),...logs.tools.map(tool=>({seq:tool.seq,tool}))].sort((a,b)=>(a.seq||0)-(b.seq||0));
+  for(const entry of entries){
+    const last=rows.at(-1);
+    if(entry.tool){
+      if(last?.kind==='tools')last.tools.push(entry.tool);
+      else rows.push({kind:'tools',seq:entry.seq,tools:[entry.tool]});
+      continue;
+    }
+    const event=entry.event,payload=event.payload||{},text=stripAnsi(typeof payload==='string'?payload:payload.text||payload.message||JSON.stringify(payload));
+    if(!text)continue;
+    const kind=event.type==='error'?'error':event.type==='log'?'log':'text';
+    if(last?.kind==='text'&&kind==='text'&&event.type==='text'&&last.streaming)last.text+=text;
+    else if(!(kind==='text'&&last?.kind==='text'&&last.text===text))rows.push({kind,seq:entry.seq,text,streaming:event.type==='text',createdAt:event.createdAt});
+  }
+  return rows;
+}
+
 /** When an old Run has no input snapshot, show only the original task request; do not pass it off as the full CLI input. */
 export function displayRunInput(task, input) {
   if (input && typeof input.prompt === 'string') return { instructions: input.instructions || '', prompt: input.prompt, complete: true, instructionsInheritedFrom:input.instructionsInheritedFrom||null,configurationUpdate:input.configurationUpdate||'' };

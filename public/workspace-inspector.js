@@ -6,7 +6,8 @@ import {sideButton,canOpenSide} from './side-preview.js';
 
 const el=(tag,className,text)=>Object.assign(document.createElement(tag),{className:className||'',...(text!==undefined?{textContent:text}:{})});
 const date=value=>value?new Date(value).toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'Modified time unknown';
-const fileState=file=>file.error?t('Read failed'):file.syncState==='conflict'?t('Sync conflict'):file.path
+const sourceVersion=file=>file.readMode==='recorded'?[t(file.versionEvidence==='recorded_commit'?'Recorded commit':'Source workspace snapshot; execution-time version not recorded'),file.sourceCommit?.slice(0,12),file.sha256?`SHA256 ${file.sha256.slice(0,12)}`:''].filter(Boolean).join(' · '):'';
+const fileState=file=>file.error?t('Read failed'):file.readMode==='recorded'?t('Read-only source file'):file.syncState==='conflict'?t('Sync conflict'):file.path
   ?[t('Available on Mac'),file.syncState==='disabled'?t('Sync disabled'):file.syncState==='pending'?t('Sync pending'):null].filter(Boolean).join(' · ')
   :t(file.syncState==='disabled'?'Sync disabled':file.syncState==='pending'?'Waiting for local synchronization':'Local file not found.');
 
@@ -22,8 +23,6 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
   const refresh=document.querySelector('#refresh-artifacts');refresh.innerHTML=UI_ICON.refresh;
   const manage=document.querySelector('#manage-inspector-devices');manage.innerHTML=UI_ICON.settings||UI_ICON.project;manage.addEventListener('click',openDevices);
   let selected='roles',projectId=null,generation=0,detailVersion=0,loadedAt=0,busy=false;
-  let resourcesLoadedAt=0,resourcesBusy=false;
-  const localList=document.querySelector('#local-project-files-list'),localNote=document.querySelector('#local-project-files-note');
   document.querySelector('#close-artifact-detail').addEventListener('click',()=>dialog.close());
   // Sessions page (desktop): "Open on the right" pins the file text beside the chat; shown once the text has loaded.
   let sideItem=null;const side=sideButton('icon-button artifact-detail-side',t('Open on the right'),()=>sideItem,{before:()=>dialog.close()});side.hidden=true;
@@ -33,13 +32,13 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
     const version=++detailVersion;
     document.querySelector('#artifact-detail-title').textContent=file.name;
     const worker=getData().workers.find(w=>w.id===file.nodeId);
-    document.querySelector('#artifact-detail-meta').textContent=`${file.type} · ${fileState(file)}${worker?` · ${worker.name}`:''}\n${file.path||''}`;
+    document.querySelector('#artifact-detail-meta').textContent=`${file.type} · ${fileState(file)}${worker?` · ${worker.name}`:''}\n${file.path||''}${sourceVersion(file)?`\n${sourceVersion(file)}`:''}`;
     content.textContent='Reading file…';side.hidden=true;sideItem=null;dialog.showModal();
     if(!file.shared&&!file.path){content.textContent=file.error||t('Local file not found.');return;}
     // An older Worker may only lack the metadata query; the existing content API still works, so details are not blocked.
     const path=file.relativePath||file.path,markdown=/\.(md|markdown)$/i.test(path),text=/\.(md|markdown|txt)$/i.test(path);
     try{
-      const result=await api(file.shared?`/api/projects/${encodeURIComponent(file.projectId)}/local-file?${new URLSearchParams({scopeId:file.scopeId,path})}`:`/api/runs/${encodeURIComponent(file.runId)}/${text?'document':'file'}?path=${encodeURIComponent(path)}`);
+      const result=await api(file.shared?`/api/projects/${encodeURIComponent(file.projectId)}/local-file?${new URLSearchParams({scopeId:file.scopeId,path})}`:`/api/runs/${encodeURIComponent(file.runId)}/${text?'document':'file'}?${new URLSearchParams({path,...(file.readMode==='recorded'?{source:'recorded',sha256:file.sha256,...(file.sourceCommit?{commit:file.sourceCommit}:{})}:{})})}`);
       if(version!==detailVersion||!dialog.open)return;
       if(result.shared){document.querySelector('#artifact-detail-meta').textContent=`${fileState(result)}\n${result.path||''}`;
         if(result.content===null){content.textContent=t(result.preview==='binary'?'Binary file; preview unavailable.':result.preview==='too_large'?(result.reason==='serialized_response_limit'?'Text preview exceeds the serialized response size limit.':'Local file exceeds the 600 KB text preview limit.'):result.syncState==='pending'?'Waiting for local synchronization':'Local file not found.');return;}}
@@ -49,16 +48,6 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
       if(result.syncState==='conflict'||result.syncState==='pending')content.prepend(el('p','workspace-note',t(result.syncState==='conflict'?'Conflict detected; showing actual local file.':'Showing local changes; synchronization pending.')));
     }catch(error){if(version===detailVersion&&dialog.open)content.textContent=t('Unable to preview online: {message}. File info is kept; view it in the workspace of the corresponding device.', { message: error.message });}
   }
-  async function loadResources(force=false){
-    if(selected!=='resources'||!projectId||resourcesBusy||!force&&Date.now()-resourcesLoadedAt<10000)return;
-    const version=generation,id=projectId;resourcesBusy=true;
-    localNote.textContent=t('Reading actual files on the selected Mac.');
-    try{const result=await api(`/api/projects/${encodeURIComponent(id)}/local-files`);if(version!==generation)return;
-      localList.replaceChildren();localNote.textContent=result.errors?.length?result.errors.map(e=>e.error).join(' · '):t(result.partial?'Showing a bounded selection of local files.':'Reading actual files on the selected Mac.');
-      for(const file of result.items){const row=el('button','artifact-row'),body=el('span','artifact-row-body');row.type='button';body.append(el('strong','',file.name),el('small','artifact-local-path',file.path||''));body.lastChild.setAttribute('translate','no');body.append(el('small','',fileState(file)));row.append(body);row.addEventListener('click',()=>void detail(file));localList.append(row);}
-      if(!result.items.length)localList.append(el('p','workspace-note',t('No local project files available.')));
-    }catch(error){if(version===generation)localNote.textContent=t('Local files unavailable: {message}',{message:error.message});}finally{if(version===generation){resourcesBusy=false;resourcesLoadedAt=Date.now();}}
-  }
   /** One project-output row; the Sessions panel reuses it so both views open files through the same detail dialog. */
   function artifactRow(file){
     const button=el('button','artifact-row');button.type='button';
@@ -67,7 +56,8 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
     if(file.modifiedAt)body.append(el('small','',t('Local modified: {time}',{time:date(file.modifiedAt)})));
     if(file.path){const path=el('small','artifact-local-path',file.path);path.setAttribute('translate','no');body.append(path);}
     body.append(el('small',file.error||file.syncState==='conflict'?'artifact-warning':'',fileState(file)));
-    if(file.error)body.append(el('small','artifact-warning',file.error));
+    if(sourceVersion(file))body.append(el('small','artifact-local-path',`${getData().workers.find(w=>w.id===file.nodeId)?.name||file.nodeId} · ${sourceVersion(file)}`));
+    if(file.error)body.append(el('small','artifact-warning',t(file.error)));
     button.title=`${file.path||''}\n${file.source}${file.roleName?` · ${file.roleName}`:''}`;
     button.append(type,body);button.addEventListener('click',()=>void detail(file));
     return button;
@@ -92,14 +82,14 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
     document.querySelector('#inspector-role-actions').hidden=name!=='roles';
     refresh.hidden=name!=='artifacts';
     tabs.forEach((tab,i)=>{const active=names[i]===name;tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;});
-    void load();void loadResources();sourceSync.render();
+    void load();sourceSync.render();
   }
   tabs.forEach((tab,i)=>{tab.addEventListener('click',()=>select(names[i]));tab.addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?names.length-1:(i+(event.key==='ArrowRight'?1:-1)+names.length)%names.length;select(names[next]);tabs[next].focus();}});});
   refresh.addEventListener('click',()=>void load(true));
   return {artifactRow,render(){
     sourceSync.render();
     const next=getProject()?.id||null;
-    if(next!==projectId){projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;resourcesLoadedAt=0;resourcesBusy=false;localList.replaceChildren();localNote.textContent='';busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
+    if(next!==projectId){projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
     const devices=document.querySelector('#inspector-device-list');devices.replaceChildren();
     for(const worker of getData().workers||[]){
       const row=el('button','inspector-device-row'),local=workerKind(worker)==='local';row.type='button';
@@ -109,7 +99,7 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
       row.addEventListener('click',()=>local?void openProjectFolder(worker,row):openDevices());devices.append(row);
     }
     if(!devices.childElementCount)devices.append(el('p','artifact-list-note','No devices registered'));
-    void load();void loadResources();
+    void load();
   }};
 }
 
