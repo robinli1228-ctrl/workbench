@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v183-conversation-task-card';
+const CACHE = 'agent-workbench-static-v186-task-card-visibility';
 const STATIC = [
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',

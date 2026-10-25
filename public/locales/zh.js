@@ -4,6 +4,8 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  "Yes":"是",
+  "No":"否",
 
 
   "Task list":"任务列表",

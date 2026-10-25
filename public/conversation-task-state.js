@@ -10,3 +10,9 @@ export function taskPatch(current,draft){
   }
   return patch;
 }
+
+/** Rectangles alone do not imply visibility: mobile drawers retain layout while off-screen. */
+export function taskCardVisible({hasRects,mobile,mobilePanel,ancestors=[]}){
+  return Boolean(hasRects)&&(!mobile||mobilePanel==='roles')
+    &&!ancestors.some(node=>node.hidden||node.display==='none'||['hidden','collapse'].includes(node.visibility));
+}
