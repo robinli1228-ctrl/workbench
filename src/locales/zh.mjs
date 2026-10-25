@@ -1,6 +1,9 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "roleDiscussions.protocolRetired": "旧讨论协议已取消，不会自动重跑。",
+  "wechatChannel.reportQuestionRetired": "旧报告提问已停用，历史记录保留。",
+
   "collabSessions.retired": "协作会话已停用，已有记录只读保留；新工作使用 wb task 和 wb call。",
   "conversationTasks.invalid":"任务字段或值无效。",
   "conversationTasks.actor":"操作身份不是本项目角色。",
@@ -47,10 +50,6 @@ export default Object.freeze({
   'conversations.invalidTitle': '群聊名称须包含 1 至 80 个字符。',
   'conversations.retryConflict': '此新建请求已使用过，重试参数不一致。',
   'sourceSync.preparationScan': '启动前文件核验：{scopes} 个范围，{files} 个文件，耗时 {seconds} 秒；{unavailable} 个范围不可用（不生成修改归属证据）。',
-  'runReports.invalidSubmissionId': '报告提交编号无效。',
-  'runReports.superseded': '此次提交已保存为第 {revision} 版；当前已有第 {currentRevision} 版。未将旧结论覆盖回去。',
-  'runReports.submissionConflict': '此报告提交编号已用于不同内容。请查询原回执；确需修订报告时使用新的编号。',
-  'runReports.pendingConfirmation': '报告提交结果待确认，超时不代表提交失败。请用下方命令查询回执；再次提交相同内容会复用原编号，不应因此重新派工。',
   'roleSwitch.crossDevice': '你已选择另一台设备，当前不支持跨设备交接并切换 CLI。原设备：{from}；所选设备：{to}。如只需切换 CLI，请保留原设备。此次修改未保存，原会话不受影响。',
   'followup.configChanged': '停滞提醒设置已变更，请刷新后再保存。',
   'followup.noSupervisor': '等待可用且已启用的项目总管。',
@@ -984,8 +983,6 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'roleDiscussions.waitingForDiscussionTurnEnd': '等待讨论回合结束',
   'roleDiscussions.originalBusinessCallHasEnded': '原业务调用已结束',
   'roleDiscussions.stillWaitingForOriginalBusiness': '仍在等待原业务子调用或计划收尾',
-  'roleDiscussions.questionSessionNoLongerValid': '问题或会话已失效',
-  'roleDiscussions.answerConsumingTurnEndedAbnormally2': '答复消费回合异常，结论已保留；请核对日志与实际改动后继续，或停止原任务',
   'roleDiscussions.userStoppedDiscussion': '用户停止讨论',
   'roleDiscussions.clarificationStoppedReplyManuallyMark': '答疑已停止，可人工回复或标记已处理',
   'roleDiscussions.clarificationStoppedReplyOriginalQuestion': '答疑已停止；请回复原问题、标记已处理，或停止原任务',
@@ -1155,9 +1152,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'rooms.notStarted': '未启动：{message}',
   'rooms.noteMustBe18000': '留言 1–8000 字',
   'rooms.currentRunInvalid': '当前执行无效',
-  'rooms.yourConfirmationNeededReplyBy': `需要你确认：{summary}
 
-请引用本条消息回复，也可回复对应微信编号。`,
   'rooms.runHasEndedRuntimeReturned': '执行已结束，Runtime 未返回文字结果。',
   'rooms.runStopped': '执行已停止',
   'rooms.runFailed': '执行失败',
@@ -1239,15 +1234,6 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'runMonitor.deviceOfflineExecutionStateNeeds': '设备离线，执行现场待核对；不会自动重派',
   'runMonitor.noRunEventsForOver': '超过 10 分钟无运行事件，可能仍在工具执行；请检查日志和进程',
   // src/run-reports.mjs
-  'runReports.reportCanOnlyBeSubmitted': '只能为当前活动执行提交报告',
-  'runReports.businessReportNotRecordedDiscussion': '未登记业务报告：当前正在讨论或已发问等待。请按本轮要求 reply/resolve 后结束，等待中的业务回合直接结束；需要用户补充的信息留给原业务续接回合报告。',
-  'runReports.verdictMustBePassedFailed': 'verdict 必须为 passed/failed/blocked/needs_input',
-  'runReports.reportSummaryMustBe1': '报告摘要需为 1–3000 字',
-  'runReports.placeholderNotEvidence': '报告须填写实际结论与证据，不能提交 test、TODO 等占位内容。查看格式请使用 wb help，不要用业务结论探测接口。',
-  'runReports.verificationEvidenceAllowsAtMost': '验证证据最多 20 条，每条 1500 字',
-  'runReports.passedVerdictMustIncludeActual': '通过结论必须附实际验证证据；无法验证请用 blocked',
-  'runReports.nextStepMustBeAt': '下一步最多 1000 字',
-  'runReports.businessVerdictRecordedEndTurn': '报告已保存。此回执已确认登记，无需再次提交或查询尚在运行的本轮是否已结束。若本次分工已完成，请给出最终回复并结束本轮，Home 随后记录运行结束；仍有未完成事项请如实说明。',
   // src/runtime-guidance.mjs
   'runtimeGuidance.whenGrokCallsWbUse': 'Grok 调用 wb 使用一条独立命令，不与其他 shell 命令拼接。',
   'runtimeGuidance.collaborationToolsConfiguredCurrentSession': `协作工具已配置，用法见 wb help。当前会话 wb session current；最近群聊记录 wb history；搜索 wb history 关键词；消息或执行、调用结果原文 wb history read 编号；群聊整理 wb history summary。长文按 nextOffset 与 version 继续读取，不假装已读全文。
@@ -1548,11 +1534,13 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
 wb discuss peers     查看团队：每个角色的职能、设备、是否空闲、token 余额；加 '{"view":"detail"}' 看各自正在做的任务和最近消息
 wb call --role 角色 --kind consult|direct|transfer --request-id 稳定编号 --text 说明
                      consult：请教或请人审核；direct：派一个子任务。这两种的结果都回到你这里，需要时用 wb wait 等。
+                     被请教或审核时，结论写在最终回复里，不要再用 wb note 重复。
                      transfer：整件转交。对方成为负责人，自己推进、找人审核，做完直接回复用户；结果不再交回你，你这一轮可以直接结束。
                      重复 --role 可把同一段说明发给几个角色，各自处理。可选 --goal、--scope、--input、--return 写成带标签的几行放在说明前面；--file 路径 附上项目里的一个 UTF-8 文件（带 SHA256）。说明最多 12000 字。重试用同一个编号和内容。
                      --kind handoff --delivery-id 编号：配合 wb deliver 的跨设备提交派活。
 wb wait "续接摘要"   登记你在等哪些派出的结果，然后结束本轮；结果都回来、超时（默认 30 分钟）或对方 10 分钟仍无法开始时，平台叫醒你。也可 wb wait '{"summary":"...","requestIds":["编号"],"timeoutSeconds":1800}'
 wb note 文字         在群里留一句话，不派活
+                     被请教或审核时，结论写在最终回复里，不要再用 wb note 重复。
 wb history [关键词] [--role 角色] [--file 路径] [--since 时间] [--until 时间] [--limit N] [--cursor C]
                      不带关键词列出最近的群聊记录；带关键词搜索。时间写法：30m、2h、3d、today、2026-10-20
 wb history read 编号 [offset] [version]
@@ -1586,7 +1574,6 @@ wb help sync | wb help review | wb help errors
   'wechatChannel.followUpClosedOnWeb': '已在网页关闭跟进',
   'wechatChannel.wechatRecordNotFound': '微信记录不存在',
   'wechatChannel.wechatRecordClosedDoesNot': '微信记录已关闭或不存在',
-  'wechatChannel.repliedOnWeb': '已在网页回复',
   'wechatChannel.pleaseReplyWithNumberIt': `{summary}
 {p2}
 请带本条编号回复。未答复持续等待；若已在网页引用此问题回答，迟到回复不执行。首次回答后本编号可继续下指令23小时，之后重新获取项目入口。`,
@@ -1598,9 +1585,6 @@ wb help sync | wb help review | wb help errors
 {p2}
 原审批到期时间：{expiresAt}；过期的旧回复不会授权。`,
   'wechatChannel.originalApprovalWasHandledExpired': '原审批已处理、过期或执行已结束',
-  'wechatChannel.originalRunRecordDoesNot': '原执行记录不存在',
-  'wechatChannel.discussionRoundNotBusinessConfirmation': '讨论回合不是业务确认入口，请以原任务问题为准',
-  'wechatChannel.originalQuestionWasUpdatedHandled': '原问题已更新或处理',
   'wechatChannel.wechatRequestCancelled': '微信请求已取消',
   'wechatChannel.viewFullOperationOnWeb': '请到网页查看完整操作后审批',
   'wechatChannel.approvalReplySubmittedWebShows': '已提交审批答复，执行结果以网页为准',
@@ -1878,10 +1862,6 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 另有 {count} 条结果未列出，用 wb history 查看。`,
   'runContext.receiptNoStage': '阶段未知',
   'runContext.receiptNoVersion': '版本未知',
-  'runReports.invalidVersion': 'version 必须是完整的 40 位小写提交 SHA',
-  'runReports.invalidStage': 'stage 只能是 implemented、reviewed、tested、merged 或 deployed',
-  'runReports.stageNeedsVersion': 'merged 和 deployed 报告必须在 version 写明准确的提交 SHA',
-  'runReports.invalidItem': 'item 只能是 1–120 个字母、数字、冒号、点、下划线或连字符',
   'resultReceipts.invalidReceipt': '结果回执编号无效',
   'resultReceipts.notFound': '找不到属于当前角色的结果回执',
   'resultReceipts.superseded': '这条回执已被更新的报告版本取代，请核对 {id}',
@@ -1896,9 +1876,6 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'resultReceipts.cancelledReason': '调用在产生结果前已取消',
   'runContext.receiptNoRun': '未执行',
   'runContext.receiptFiles': `附 {count} 个文件`,
-  'runReports.otherRun': '这份提交已由执行 {runId} 保存，本次执行没有再保存',
-  'runReports.invalidFiles': 'files 只能列出 1–3 个不重复的 UTF-8 文本文件，合计不超过 48000 字节，整个报告请求不超过 60 KB；主控会重新核对每个文件的大小和 SHA256',
-  'runReports.fileNotFound': '找不到你有权读取的该执行、请求或路径对应的报告附件',
   'wbTools.callFieldEmpty': '给出的 --goal、--scope、--input、--return 不能为空',
   'wbTools.callTextLong': '已原样发出。这段派工有 {chars} 个字符，控制在约 1500 字符内更易读；但不能为了缩短而删掉版本、授权范围或验收标准',
   'wbTools.callField.goal': '目标',

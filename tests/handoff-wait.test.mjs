@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { Store } from '../src/store.mjs';
 import { Rooms, handoffOnly } from '../src/rooms.mjs';
 import { RoleCalls } from '../src/role-calls.mjs';
-import { saveRunReport } from '../src/run-reports.mjs';
 import * as roomUI from '../public/room.js';
 const { handoffWaitState } = roomUI;
 
@@ -37,13 +36,13 @@ test('waiting on a handoff marks the run and suppresses its result message', () 
   assert.equal(e.db.get('runs', 'r1').result, 'Dispatched to @Executor; waiting.', 'the reply stays in run details');
 });
 
-test('a question for the user is still published while waiting', () => {
+test('a historical report does not replace the actual final reply while waiting', () => {
   const e = env();
   e.calls.wait(e.db.get('runs', 'r1'), 'resume');
   e.db.put('runReports', { id: 'r1', runId: 'r1', verdict: 'needs_input', summary: 'Choose A or B' });
   e.finish();
   assert.equal(results(e.db).length, 1);
-  assert.match(results(e.db)[0].text, /Choose A or B/);
+  assert.equal(results(e.db)[0].text, 'Dispatched to @Executor; waiting.');
 });
 
 test('failed or stopped turns are always published', () => {
@@ -61,11 +60,11 @@ test('turns without a wait keep their normal result message', () => {
   assert.equal(results(e.db).length, 1);
 });
 
-test('explicit business reports survive a handoff wait without changing normal reply text', () => {
+test('saved historical reports survive a handoff wait without changing normal reply text', () => {
   for (const verdict of ['failed', 'blocked', 'passed', 'needs_input']) {
     for (const timing of ['before', 'after']) {
       const e = env(), summary = verdict === 'needs_input' ? 'Choose the invoice recovery policy' : `Invoice reconciliation verdict: ${verdict}`;
-      const report = () => saveRunReport(e.db, e.db.get('runs', 'r1'), { submissionId: `${verdict}-${timing}`, verdict, summary, evidence: ['Verified invoice reconciliation against the saved ledger'] });
+      const report = () => e.db.put('runReports', { id:'r1', projectId:P, revision:1, verdict, summary, evidence:['Verified saved ledger'] });
       if (timing === 'before') report();
       e.calls.wait(e.db.get('runs', 'r1'), 'resume after Executor replies');
       if (timing === 'after') report();

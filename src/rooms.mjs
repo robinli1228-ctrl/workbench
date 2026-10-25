@@ -554,19 +554,18 @@ export class Rooms {
   complete(run) {
     if (!run?.roleId || !terminal.has(run.status)||run.discussionDeliveryId||run.switchOperationId) return;
     // Discussion bodies stay private even on failure. Only a distinct technical notice may be public.
-    if (run.explicitPublish && run.status === 'succeeded' && this.db.get('runReports',run.id)?.verdict!=='needs_input') return;
+    if (run.explicitPublish && run.status === 'succeeded') return;
     const id = `result-${run.id}`;
     if (this.db.get('roomMessages', id)) return;
     this.db.transaction(() => {
       const report = this.db.get('runReports', run.id);
-      const question = report?.verdict === 'needs_input' ? tr('rooms.yourConfirmationNeededReplyBy', { summary: report.summary }) : '';
       const quiet=privateFollowup(this.db,run)||handoffOnly(run,report);
-      if(quiet&&!question)return;
-      const text = quiet||(run.explicitPublish||run.handoffWait&&question)&&run.status==='succeeded'?question:run.status === 'succeeded' ? (run.result || question || tr('rooms.runHasEndedRuntimeReturned'))
+      if(quiet)return;
+      const text = run.status === 'succeeded' ? (run.result || tr('rooms.runHasEndedRuntimeReturned'))
         : tr('rooms.text', { p1: run.status === 'interrupted' ? tr('rooms.runStopped') : tr('rooms.runFailed'), p2: cliFailureText(run.error) || tr('rooms.seeRunDetails'), p3: !run.explicitPublish && run.result ? tr('rooms.existingOutput', { result: run.result }) : '' });
       const source=this.replySourceFor(run);
       this.db.put('roomMessages', { id, projectId: run.projectId, conversationId:conversationIdOf(run), sender: 'agent', senderName: run.roleSnapshot.name,
-        ...(run.explicitPublish?{kind:question?'user_question':'technical_notice'}:{}),
+        ...(run.explicitPublish?{kind:'technical_notice'}:{}),
         roleId: run.roleId, text, replyToId: source?.id||null,
         runId: run.id, taskIds: [], createdAt: now() });
       this.touch(run.projectId,conversationIdOf(run));

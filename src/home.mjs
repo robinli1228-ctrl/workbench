@@ -450,8 +450,8 @@ function workerQuery(run, action, path, timeout = 10000) {
   const id = randomUUID();
   return new Promise((resolveQuery, reject) => {
     const timer = setTimeout(() => { queries.delete(id); reject(new Error(tr('home.nodeQueryTimedOut'))); }, timeout);
-    queries.set(id, { nodeId: run.nodeId,readProtocol:['source_inspect','source_read','read_query'].includes(action),resolve: value => { clearTimeout(timer); resolveQuery(value); }, reject: e => { clearTimeout(timer); reject(e); } });
-    const projectId=['source_read','source_inspect','read_query'].includes(action)?path?.source?.projectId||run.projectId:run.projectId||path?.projectId;
+    queries.set(id, { nodeId: run.nodeId,resolve: value => { clearTimeout(timer); resolveQuery(value); }, reject: e => { clearTimeout(timer); reject(e); } });
+    const projectId=run.projectId||path?.projectId;
     const folderAccess=projectId&&['native_agents_md','native_agents_md_write'].includes(action)?folderAccessFor(db,run.nodeId,`project:${projectId}`):(action.startsWith('native_')||action.startsWith('media_')&&path?.runtime)?nativeFolderAccess(db,run.nodeId,path?.runtime,path?.sessionId,path?.entryId)||folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:path?.managedProjectIds?.length===1?`project:${path.managedProjectIds[0]}`:null):folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:null);
     send(sockets.get(run.nodeId), { type: 'query', id, runId: run.id, projectId,folderAccess,action, path, language: getLanguage() });
   });
@@ -1247,7 +1247,7 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'GET') return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(rooms.messages(m[1],url.searchParams.get('before'),url.searchParams.get('conversationId')??undefined,url.searchParams.get('afterReceipt')))),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
         if (req.method === 'POST') {
           const input = await body(req);
-          const r = db.transaction(() => { const message = rooms.post(m[1], input); wechat.webReply(message); return message; });
+          const r = db.transaction(() => { const message = rooms.post(m[1], input); return message; });
           scheduleChat(); change(); return json(res, r, 201);
         }
       }
@@ -1617,7 +1617,7 @@ wss.on('connection', ws => {
       if (m.type === 'command_ack') { const c = db.get('commands', m.id); if (c?.nodeId === nodeId&&!c.acked) {db.put('commands', { ...c, acked: true,ackedAt:new Date().toISOString() });change();} }
       if (m.type === 'reply') { const q = queries.get(m.id); if (q?.nodeId === nodeId) {
         queries.delete(m.id);
-        if(m.error){const error=new Error(m.error);if(q.readProtocol&&typeof m.error==='string'&&/^[a-z_]{1,64}$/.test(m.error))error.code=m.error;q.reject(error);}
+        if(m.error){const error=new Error(m.error);q.reject(error);}
         else q.resolve(m.result);
       } }
     } catch (e) { send(ws, { type: 'error', error: e.message }); }

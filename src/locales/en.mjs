@@ -1,6 +1,9 @@
 // English message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "roleDiscussions.protocolRetired": "The retired discussion protocol was cancelled; no automatic rerun.",
+  "wechatChannel.reportQuestionRetired": "Report-based questions are retired; the historical record is kept.",
+
   "collabSessions.retired": "Collaboration sessions are retired. Existing records are read-only; use wb task and wb call for new work.",
   "conversationTasks.invalid":"Invalid task fields or values.",
   "conversationTasks.actor":"Task actor is not a project role.",
@@ -47,10 +50,6 @@ export default Object.freeze({
   'conversations.invalidTitle': 'Chat title must contain 1 to 80 characters.',
   'conversations.retryConflict': 'This creation request was already used with different arguments.',
   'sourceSync.preparationScan': 'Pre-input file verification: {scopes} scopes, {files} files, {seconds}s; {unavailable} unavailable scopes (no attribution evidence).',
-  'runReports.invalidSubmissionId': 'Invalid report submission ID.',
-  'runReports.superseded': 'This submission was saved as revision {revision}; revision {currentRevision} is now current. The older conclusion was not restored.',
-  'runReports.submissionConflict': 'This report submission ID already belongs to different content. Query the original receipt or use a new ID for an intentional revision.',
-  'runReports.pendingConfirmation': 'Report submission result is pending confirmation. A timeout does not prove failure. Query the receipt with the command below; resubmitting identical content reuses the same ID and must not start a new task.',
   'roleSwitch.crossDevice': 'You selected another device. Cross-device handoff and CLI switching are not currently supported. Original device: {from}; selected device: {to}. To switch only the CLI, keep the original device. These changes were not saved; the original session is unaffected.',
   'followup.configChanged': 'Stall reminder settings changed; reload before saving.',
   'followup.noSupervisor': 'Waiting for an enabled project supervisor.',
@@ -984,8 +983,6 @@ Assistance results (context only):
   'roleDiscussions.waitingForDiscussionTurnEnd': 'Waiting for the discussion turn to end',
   'roleDiscussions.originalBusinessCallHasEnded': 'The original business call has ended',
   'roleDiscussions.stillWaitingForOriginalBusiness': 'Still waiting for the original business child calls or plan wrap-up',
-  'roleDiscussions.questionSessionNoLongerValid': 'The question or session is no longer valid',
-  'roleDiscussions.answerConsumingTurnEndedAbnormally2': 'The answer-consuming turn ended abnormally; the conclusion is preserved. Verify the logs and actual changes and then continue, or stop the original task',
   'roleDiscussions.userStoppedDiscussion': 'The user stopped the discussion',
   'roleDiscussions.clarificationStoppedReplyManuallyMark': 'Clarification stopped; reply manually or mark it as handled',
   'roleDiscussions.clarificationStoppedReplyOriginalQuestion': 'Clarification stopped; reply to the original question, mark it as handled, or stop the original task',
@@ -1155,9 +1152,7 @@ Assistance results (context only):
   'rooms.notStarted': 'Not started: {message}',
   'rooms.noteMustBe18000': 'A note must be 1-8000 characters',
   'rooms.currentRunInvalid': 'The current run is invalid',
-  'rooms.yourConfirmationNeededReplyBy': `Your confirmation is needed: {summary}
 
-Reply by quoting this message, or reply with the matching WeChat number.`,
   'rooms.runHasEndedRuntimeReturned': 'The run has ended; the runtime returned no text result.',
   'rooms.runStopped': 'Run stopped',
   'rooms.runFailed': 'Run failed',
@@ -1239,15 +1234,6 @@ Attachments: {p1} (the body does not include the attachments' full text)`,
   'runMonitor.deviceOfflineExecutionStateNeeds': 'Device is offline; the execution state needs to be verified. It will not be re-dispatched automatically',
   'runMonitor.noRunEventsForOver': 'No run events for over 10 minutes; a tool may still be executing. Check the logs and processes',
   // src/run-reports.mjs
-  'runReports.reportCanOnlyBeSubmitted': 'A report can only be submitted for a currently active run',
-  'runReports.businessReportNotRecordedDiscussion': 'Business report not recorded: a discussion is in progress or a question is awaiting an answer. Finish after reply/resolve as this turn requires; a waiting business turn simply ends; information needed from the user is left to the original business continuation turn to report.',
-  'runReports.verdictMustBePassedFailed': 'verdict must be passed/failed/blocked/needs_input',
-  'runReports.reportSummaryMustBe1': 'Report summary must be 1-3000 characters',
-  'runReports.placeholderNotEvidence': 'A report needs an actual conclusion and evidence, not test/TODO placeholders. Use wb help to inspect the format without submitting a business verdict.',
-  'runReports.verificationEvidenceAllowsAtMost': 'Verification evidence allows at most 20 items of up to 1500 characters each',
-  'runReports.passedVerdictMustIncludeActual': 'A passed verdict must include actual verification evidence; use blocked if it cannot be verified',
-  'runReports.nextStepMustBeAt': 'Next step must be at most 1000 characters',
-  'runReports.businessVerdictRecordedEndTurn': 'Report saved. This acknowledgement confirms registration; do not resubmit or query whether your still-running turn has ended. If this assignment is complete, give its final reply and end the turn; Home records the run end afterwards. Keep any unfinished work explicit.',
   // src/runtime-guidance.mjs
   'runtimeGuidance.whenGrokCallsWbUse': ' When Grok calls wb, use one standalone command and do not chain it with other shell commands.',
   'runtimeGuidance.collaborationToolsConfiguredCurrentSession': `Collaboration tools are configured; see wb help. Current session: wb session current; recent group-chat records: wb history; search: wb history TERMS; original text of a message or of a run or call result: wb history read ID; group chat digest: wb history summary. Continue reading long text with nextOffset and version; do not pretend you read the whole text.
@@ -1548,11 +1534,13 @@ Conclusions only; no process logs (history is available via \`wb history search\
 wb discuss peers     The team: each role's responsibility, device, whether it is idle, token balance; add '{"view":"detail"}' for the tasks each is on and recent messages
 wb call --role ROLE --kind consult|direct|transfer --request-id STABLE_ID --text BRIEF
                      consult: ask a question or request a review; direct: assign a subtask. Both results come back to you; use wb wait when you need them.
+                     When consulted or reviewing, put your conclusion in the final reply; do not repeat it with wb note.
                      transfer: hand the task over whole. The other role becomes its owner, drives it, organises reviews and replies to the user when done; the result does not come back to you, so you may end this turn.
                      Repeat --role to send the same brief to several roles, each handling it separately. Optional --goal, --scope, --input and --return become labelled lines ahead of the brief; --file PATH attaches one UTF-8 project file with its SHA256. Briefs are at most 12000 characters. Retry with the same ID and content.
                      --kind handoff --delivery-id ID: assign work on a commit delivered across devices with wb deliver.
 wb wait "RESUME SUMMARY"  Register which of your calls you are waiting for, then end the turn; the platform wakes you when all results are back, on timeout (30 minutes by default), or when one still cannot start after 10 minutes. Or wb wait '{"summary":"...","requestIds":["ID"],"timeoutSeconds":1800}'
 wb note TEXT         Leave a line in the group chat without assigning work
+                     When consulted or reviewing, put your conclusion in the final reply; do not repeat it with wb note.
 wb history [TERMS] [--role ROLE] [--file PATH] [--since TIME] [--until TIME] [--limit N] [--cursor C]
                      Without terms, list the latest group-chat records; with terms, search. TIME: 30m, 2h, 3d, today, 2026-10-20
 wb history read ID [offset] [version]
@@ -1586,7 +1574,6 @@ A retained process puts --turn RUN_ID before the current-turn tool entry.`,
   'wechatChannel.followUpClosedOnWeb': 'Follow-up closed on the web',
   'wechatChannel.wechatRecordNotFound': 'WeChat record not found',
   'wechatChannel.wechatRecordClosedDoesNot': 'WeChat record is closed or does not exist',
-  'wechatChannel.repliedOnWeb': 'Replied on the web',
   'wechatChannel.pleaseReplyWithNumberIt': `{summary}
 {p2}
 Please reply with this number. It keeps waiting until you reply; if you have already answered this question by reference on the web, a late reply will not be executed. After the first answer, this number can be used to give further instructions for 23 hours, after which please get a new project entry.`,
@@ -1598,9 +1585,6 @@ Reply only "Approve" or "Reject".`,
 {p2}
 Original approval expires at: {expiresAt}; expired old replies will not grant authorization.`,
   'wechatChannel.originalApprovalWasHandledExpired': 'The original approval was handled, expired, or the execution has ended',
-  'wechatChannel.originalRunRecordDoesNot': 'The original run record does not exist',
-  'wechatChannel.discussionRoundNotBusinessConfirmation': 'A discussion round is not a business confirmation entry; refer to the original task question',
-  'wechatChannel.originalQuestionWasUpdatedHandled': 'The original question was updated or handled',
   'wechatChannel.wechatRequestCancelled': 'WeChat request cancelled',
   'wechatChannel.viewFullOperationOnWeb': 'View the full operation on the web before approving',
   'wechatChannel.approvalReplySubmittedWebShows': 'Approval reply submitted; the web shows the execution result',
@@ -1878,10 +1862,6 @@ You personally do only the simplest things: answer a question directly, check on
 {count} more results are not listed; see them with wb history.`,
   'runContext.receiptNoStage': 'stage unknown',
   'runContext.receiptNoVersion': 'version unknown',
-  'runReports.invalidVersion': 'version must be a full 40-character lowercase commit SHA',
-  'runReports.invalidStage': 'stage must be one of implemented, reviewed, tested, merged or deployed',
-  'runReports.stageNeedsVersion': 'merged and deployed reports must name the exact commit SHA in version',
-  'runReports.invalidItem': 'item must be 1-120 letters, digits, colons, dots, underscores or hyphens',
   'resultReceipts.invalidReceipt': 'Invalid result receipt ID',
   'resultReceipts.notFound': 'Result receipt not found for this role',
   'resultReceipts.superseded': 'This receipt was superseded by a newer report revision; verify {id} instead',
@@ -1896,9 +1876,6 @@ You personally do only the simplest things: answer a question directly, check on
   'resultReceipts.cancelledReason': 'The call was cancelled before it produced a result',
   'runContext.receiptNoRun': 'not executed',
   'runContext.receiptFiles': `{count} attached file(s)`,
-  'runReports.otherRun': 'This submission was already saved by execution {runId}; it was not saved again for this execution',
-  'runReports.invalidFiles': 'files must name 1-3 distinct UTF-8 text files, at most 48000 bytes together and a report request of at most 60 KB; Home re-checks every size and SHA256',
-  'runReports.fileNotFound': 'No attached report file you may read was found for that execution, request or path',
   'wbTools.callFieldEmpty': '--goal, --scope, --input and --return must not be empty when given',
   'wbTools.callTextLong': 'Sent unchanged. The brief has {chars} characters; under about 1500 reads faster, but never cut the version, the authorised scope or the acceptance criteria to get there',
   'wbTools.callField.goal': 'Goal',

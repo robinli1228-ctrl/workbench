@@ -17,8 +17,6 @@ import {validateCliCapacity,reservedTerminalSlots} from './device-capacity.mjs';
 import { readRunDocument } from './run-document.mjs';
 import {readProjectFile,listProjectFiles} from './project-file-read.mjs';
 import {budgetReadReply} from './read-query-response.mjs';
-import {inspectReadSource,readSourceCurrent} from './cross-device-read-worker.mjs';
-import {executeReadQuery,normalizeFileRead,normalizeReadQuery,readError} from './node-query-recipes.mjs';
 import { CodexSession } from './codex.mjs';
 import { CliPrintSession } from './cli-print-session.mjs';
 import { supportedPermissionScopes, workerPermissionScopes, PERMISSION_CONTRACT_VERSION } from './role-permissions.mjs';
@@ -651,7 +649,7 @@ async function query(m,emit=send) {
     try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
   }
   const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write','native_session_branch','native_session_delete'].includes(m.action)&&!(m.action==='native_session_delete'&&m.path?.dryRun===true);
-  const guarded=['source_inspect','source_read','read_query','project_file','file','document','collaboration_documents'].includes(m.action);
+  const guarded=['project_file','file','document','collaboration_documents'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
     if(m.action.startsWith('native_agent_switch_')){send({type:'reply',id:m.id,result:await nativeAgentSwitches.handle(m.action,m.path)});return;}
@@ -668,39 +666,6 @@ async function query(m,emit=send) {
         releaseTerminalSession(db,m.path.operationId);
       }
       reply(folderAccess.cancel(m.path));return;
-    }
-    if(['source_inspect','source_read','read_query'].includes(m.action)){
-      const source=m.path?.source;
-      if(!source)throw readError('invalid_read_request');
-      const proof=await inspectReadSource({db,descriptor:source,projectRoot,nodeId:identity.nodeId});
-      if(m.action==='source_inspect'){reply(proof);return;}
-      if(!Number.isSafeInteger(source.generation)||source.generation<1||JSON.stringify(proof)!==JSON.stringify(source.proof))throw readError('configuration_changed');
-      let result;
-      if(m.action==='source_read'){
-        const input=normalizeFileRead(m.path.input);
-        if(input.sourceNodeId!==source.sourceNodeId||input.scopeId!==source.scopeId||input.sourceWorkspace.workspaceId!==source.workspaceId||input.sourceWorkspace.generation!==source.generation)throw readError('source_workspace_mismatch');
-        result=await readSourceCurrent({source,input});
-      }else{
-        const request=normalizeReadQuery(m.path.input);
-        if(request.params.scopeId!==source.scopeId||request.params.sourceWorkspace.workspaceId!==source.workspaceId||request.params.sourceWorkspace.generation!==source.generation)throw readError('source_workspace_mismatch');
-        result=await executeReadQuery({request,source,
-          workspaceCheck:async()=>{
-            let git=null;
-            try{
-              const options={cwd:source.root,timeout:1000,maxBuffer:16000,env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}};
-              const top=(await exec('git',['rev-parse','--show-toplevel'],options)).stdout.trim();
-              if(await realpath(top)===source.root)git={head:(await exec('git',['rev-parse','HEAD'],options)).stdout.trim(),branch:(await exec('git',['rev-parse','--abbrev-ref','HEAD'],options)).stdout.trim()};
-            }catch{}
-            return {exists:true,git};
-          },
-          observeSession:()=>{
-            const run=db.get('runs',source.sourceRunId);
-            return cliRecovery.observe({projectId:run.projectId,roleId:run.roleId,taskId:run.taskId,roleSessionId:run.roleSessionId,nativeSessionId:run.nativeSession?.id,priorRunId:run.id});
-          }});
-        result={...result,workspaceId:source.workspaceId,generation:source.generation,scopeId:source.scopeId,scopeGeneration:source.scopeGeneration,proof};
-      }
-      if(JSON.stringify(await inspectReadSource({db,descriptor:source,projectRoot,nodeId:identity.nodeId}))!==JSON.stringify(proof))throw readError('configuration_changed');
-      reply(result);return;
     }
     if(m.action==='queue_verification'){
       const input=m.path,r=db.get('runs',input?.runId||'');
@@ -1185,7 +1150,7 @@ async function query(m,emit=send) {
       };
       await walk(root, 0); send({ type: 'reply', id: m.id, result: { files } });
     }
-  } catch (e) { send(guarded?budgetReadReply({id:m.id,error:['source_inspect','source_read','read_query'].includes(m.action)?e.code||'read_failed':e.message}).message:{type:'reply',id:m.id,error:e.message}); }
+  } catch (e) { send(guarded?budgetReadReply({id:m.id,error:e.message}).message:{type:'reply',id:m.id,error:e.message}); }
   finally {if(modifies)db.remove('sourceSyncOperations',m.id);}
 }
 // Reconcile saved startup identities after restart; PID reuse never authorizes a signal or native resume.

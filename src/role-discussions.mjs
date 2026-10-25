@@ -7,7 +7,7 @@ import {executionConflict} from './execution-workspace.mjs';
 import {discussionPolicy,supportsDiscussion,discussionTargetStatus} from './discussion-policy.mjs';
 import {buildTeamContext} from './team-context.mjs';
 import {conversationIdOf,groupConversationIdOfSession,assertConversationRecord} from './group-conversations.mjs';
-import { tr, isMessage } from './i18n.mjs';
+import { tr } from './i18n.mjs';
 import {roleSwitchWaitReason} from './role-switch-policy.mjs';
 import {waitDependencies,collaborationQueueView,discussionCollaborationTask} from './coordination-wait.mjs';
 import {followupFor} from './proactive-followup.mjs';
@@ -169,34 +169,32 @@ export class RoleDiscussions {
     });
   }
 
-  /** No timeout-based cancellation; repair state and invalidate deliveries without replaying a missed answer that may already have had side effects. */
+  /** Retire saved protocol waits once at startup. Never turn them into ready work or pretend a process exited. */
   recover() {
     return this.db.transaction(()=>{
       let changed=false;
-      for(const original of this.db.list('discussionDeliveries')) {
-        const run=this.db.get('runs',original.processingRunId||'');
-        if(run)changed=this.finishRun(run.id).changed||changed;
-        const delivery=this.db.get('discussionDeliveries',original.id),thread=this.db.get('discussionThreads',delivery.threadId),task=this.db.get('tasks',delivery.taskId);
-        const message=this.db.get('discussionMessages',delivery.messageId),session=this.db.get('roleSessions',delivery.recipientSessionId);
-        const valid=thread?.status==='open'&&task&&task.status!=='cancelled'&&thread.directionRevision===(task.directionRevision||1)&&task.discussionWait?.questionId===thread.currentQuestionId
-          &&thread.currentQuestionId===(message?.kind==='question'?message.id:message?.replyTo)&&session?.status!=='archived'&&session;
-        if(!valid&&!['consumed','cancelled','superseded'].includes(delivery.status)) {
-          const status=run&&!terminal.has(run.status)?'reconciling':'superseded';
-          if(delivery.status!==status||!isMessage(delivery.error,'roleDiscussions.questionSessionNoLongerValid')){this.db.put('discussionDeliveries',{...delivery,status,error:tr('roleDiscussions.questionSessionNoLongerValid'),updatedAt:now()});changed=true;}
-          if(run&&!terminal.has(run.status)&&!run.stopRequested)this.db.requestStop(run.id,`discussion-stale:${run.id}`);
-          continue;
-        }
-        // A weakly controlled turn may already have made changes; even if an old record is marked effectsKnown, it must not be replayed automatically on that basis.
+      const reason=tr('roleDiscussions.protocolRetired'),at=now(),taskIds=new Set(),threadIds=new Set(),deliveryIds=new Set();
+      for(const intent of this.db.list('discussionIntents'))if(['queued','blocked'].includes(intent.status)){
+        this.db.put('discussionIntents',{...intent,status:'cancelled',waitingReason:null,error:reason,updatedAt:at});
+        if(intent.taskId)taskIds.add(intent.taskId);changed=true;
       }
-      for(const intent of this.db.list('discussionIntents').filter(i=>['queued','blocked'].includes(i.status))) {
-        const task=this.db.get('tasks',intent.taskId),thread=this.db.get('discussionThreads',intent.threadId),session=this.db.get('roleSessions',thread?.ownerSessionId);
-        if(!task||task.status==='cancelled'||intent.directionRevision!==(task.directionRevision||1)||thread?.status!=='resolved'||session?.status==='archived') {this.db.put('discussionIntents',{...intent,status:'cancelled',updatedAt:now()});changed=true;continue;}
-        const after=this.db.get('runs',intent.afterRunId);
-        if(intent.status==='queued'&&terminal.has(after?.status)&&after.status!=='succeeded'&&!resumeConfirmed(this.db,intent,after)) {
-          const reason=tr('roleDiscussions.answerConsumingTurnEndedAbnormally2');
-          this.db.put('discussionIntents',{...intent,status:'blocked',waitingReason:reason,updatedAt:now()});
-          this.db.put('tasks',{...task,status:'blocked',waitingReason:reason,discussionResumeBlocked:{threadId:thread.id,afterRunId:after.id}});changed=true;
-        }
+      for(const thread of this.db.list('discussionThreads'))if(thread.status==='open'){
+        this.db.put('discussionThreads',{...thread,status:'cancelled',reason,revision:(thread.revision||0)+1,updatedAt:at});threadIds.add(thread.id);changed=true;
+      }
+      for(const delivery of this.db.list('discussionDeliveries'))if(!['consumed','cancelled','superseded','failed'].includes(delivery.status)){
+        this.db.put('discussionDeliveries',{...delivery,status:'cancelled',waitingReason:null,error:reason,updatedAt:at});deliveryIds.add(delivery.id);changed=true;
+      }
+      for(const task of this.db.list('tasks')){
+        if(!taskIds.has(task.id)&&!task.discussionWait&&!task.discussionResumeBlocked&&task.status!=='waiting_discussion')continue;
+        taskIds.add(task.id);
+        const settled=['done','completed','cancelled','failed','awaiting_acceptance'].includes(task.status);
+        this.db.put('tasks',{...task,...(!settled?{status:'cancelled',cancelReason:reason}:{}),discussionWait:null,discussionResumeBlocked:null,waitingReason:null,updatedAt:at});changed=true;
+        const request=task.requestId?this.db.get('coordinationRequests',task.requestId):null;
+        if(request&&!['succeeded','failed','cancelled'].includes(request.status))this.db.put('coordinationRequests',{...request,status:'cancelled',cancelReason:reason,waitingReason:null,updatedAt:at});
+      }
+      for(const run of this.db.list('runs'))if(!terminal.has(run.status)&&!run.stopRequested&&
+        (taskIds.has(run.taskId)||taskIds.has(run.businessTaskId)||deliveryIds.has(run.discussionDeliveryId)||threadIds.has(run.discussionThreadId))){
+        this.db.requestStop(run.id,`discussion-retired:${run.id}`);changed=true;
       }
       return {changed};
     });

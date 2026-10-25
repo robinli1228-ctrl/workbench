@@ -4,7 +4,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
 import { terminal } from './store.mjs';
-import { acceptsBusinessReport } from './run-reports.mjs';
 import { tr } from './i18n.mjs';
 import {conversationIdOf,resolveConversationId} from './group-conversations.mjs';
 
@@ -138,7 +137,7 @@ export class WechatChannel {
     this.db.put('wechatSettings',{...settings,channelHealth:{...settings.channelHealth,[channelId]:{...settings.channelHealth?.[channelId],...value}}});
   }
   /** The idempotency UUID is saved before sending; after a timeout, the same client_request_id is still submitted to the Hub. */
-  create({ sourceKey, kind, projectId, roleId, runId, approvalId, approvalFingerprint, remoteApproval, reportRevision, summary, channelId, requestText }) {
+  create({ sourceKey, kind, projectId, roleId, runId, approvalId, approvalFingerprint, remoteApproval, summary, channelId, requestText }) {
     const source=runId?this.db.get('runs',runId):null;
     if(runId&&source?.projectId!==projectId)throw new Error(tr('conversations.recordMismatch'));
     const conversationId=resolveConversationId(this.db,projectId,source?conversationIdOf(source):undefined);
@@ -147,7 +146,7 @@ export class WechatChannel {
     const project = this.db.get('projects', projectId), role = this.db.get('roles', roleId);
     if (!project || project.systemConfig || role?.projectId !== projectId) throw new Error(tr('wechatChannel.invalidWechatTargetProjectRole'));
     const text = `[${project.name}] @${role.name}\n${summary}`;
-    const link = this.db.put('wechatLinks', { id: randomUUID(), sourceKey, kind, projectId, conversationId, roleId, runId, approvalId, approvalFingerprint, remoteApproval, reportRevision,
+    const link = this.db.put('wechatLinks', { id: randomUUID(), sourceKey, kind, projectId, conversationId, roleId, runId, approvalId, approvalFingerprint, remoteApproval,
       conversationRef: `wb:${runId || projectId}`, summary: text.length > 1800 ? tr('wechatChannel.questionLongSeeFullContent', { p1: text.slice(0, 1800) }) : text,
       channelId: channelId || this.status().channelId, requestText, state: 'pending', createdAt: this.now(), lastSeq: 0 });
     this.change(); return link;
@@ -168,19 +167,8 @@ export class WechatChannel {
     this.setHealth(row.channelId || this.defaultChannelId,{authBlocked:false});
     this.db.put('wechatSettings', { ...this.settings(), authBlocked: false }); this.change();
   }
-  /** Only a web answer that explicitly references the same question ends the follow-up; messages from other roles or projects do not count as a reply. */
-  webReply(message) {
-    const runId = message.replyToId?.startsWith('result-') ? message.replyToId.slice(7) : null;
-    const report = runId ? this.db.get('runReports', runId) : null;
-    if (report?.projectId === message.projectId && report.verdict === 'needs_input') {
-      this.db.put('wechatResolvedQuestions', { id: runId, projectId: message.projectId, revision: report.revision, messageId: message.id, resolvedAt: this.now() });
-    }
-    for (const link of this.db.list('wechatLinks')) {
-      if (link.kind === 'question' && link.projectId === message.projectId && message.replyToId === `result-${link.runId}` && link.state !== 'closed') this.close(link.id, tr('wechatChannel.repliedOnWeb'));
-    }
-  }
   discover() {
-    // Notifications now require an explicit supervisor tool call. Old links remain consumable.
+    // Notifications require an explicit supervisor tool call. Saved notifications and approvals remain consumable.
   }
   current(id) {
     const link = this.db.get('wechatLinks', id);
@@ -197,13 +185,8 @@ export class WechatChannel {
         this.close(id, tr('wechatChannel.originalApprovalWasHandledExpired')); return null;
       }
     }
-    if (link.kind === 'question') {
-      const report = this.db.get('runReports', link.runId);
-      const run=this.db.get('runs',link.runId);
-      if(!run){this.close(id,tr('wechatChannel.originalRunRecordDoesNot'));return null;}
-      if(!acceptsBusinessReport(run)){this.close(id,tr('wechatChannel.discussionRoundNotBusinessConfirmation'));return null;}
-      if (report?.verdict !== 'needs_input' || report.revision !== link.reportRevision || this.db.get('wechatResolvedQuestions', link.runId)?.revision === link.reportRevision) { this.close(id, tr('wechatChannel.originalQuestionWasUpdatedHandled')); return null; }
-    }
+    // Report-based questions are historical only; close through the normal remote cancellation path.
+    if (link.kind === 'question') {this.close(id,tr('wechatChannel.reportQuestionRetired'));return null;}
     return link;
   }
   checkRemote(row, link) {
@@ -273,7 +256,7 @@ export class WechatChannel {
       this.change();
     }
   }
-  /** Background polling for a single Home; ordinary questions are not invalidated by elapsed time, process exit, or restart. */
+  /** Background polling for a single Home; notification replies survive process exit or restart. */
   async tick() {
     if (this.busy || !this.configured || !this.settings().enabled) return;
     this.busy = true;
