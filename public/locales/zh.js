@@ -4,6 +4,12 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Run record': '运行记录',
+  'Total': '合计',
+  'Token · Session cumulative': 'Token · 会话累计',
+  'Cached input': '缓存输入',
+  'Cached input is included in input. 1 M = 1,000,000 tokens.': '缓存输入包含在输入中。1 M = 100 万 Token。',
+
   'REMOTE ACCESS':'远程访问',
   'Remote Access':'远程访问',
   'Update the remote access service before editing server settings.':'请先更新独立中转服务，再修改服务器设置。',
