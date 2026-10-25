@@ -34,7 +34,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   function showFollowup(value){
     followupConfig=value;followupForm.elements.enabled.checked=value.enabled;followupForm.elements.silenceMinutes.value=value.silenceMinutes;
     const execution=value.execution;
-    followupStatus.textContent=execution?[t(execution.progress?.label||execution.status),execution.waitingReason||execution.error||''].filter(Boolean).join(' · '):value.waitingReason||t(value.enabled?(value.anchorMessageId?'Waiting for chat silence':'Waiting for a new complete message'):'Proactive follow-up is off');
+    followupStatus.textContent=execution?[t(execution.progress?.label||execution.status),execution.waitingReason||execution.error||''].filter(Boolean).join(' · '):value.waitingReason||t(value.enabled?(value.anchorMessageId?'Waiting for chat silence':'Waiting for a new complete message'):'Stall reminders are off');
     viewFollowup.disabled=!execution?.taskId;
   }
   async function loadFollowup(){
