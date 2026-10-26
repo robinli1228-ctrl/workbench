@@ -79,12 +79,17 @@ export async function recentProjectArtifacts(db,projectId,query,online,projectFi
   if(!db.get('projects',projectId))throw new Error(tr('runArtifacts.projectNotFound'));
   const runs=db.list('runs').filter(r=>r.projectId===projectId&&r.workspace).sort((a,b)=>String(b.updatedAt||b.createdAt).localeCompare(String(a.updatedAt||a.createdAt)));
   const messages=db.list('roomMessages').filter(m=>m.projectId===projectId),candidates=new Map();
-  for(const run of runs.slice(0,40))for(const file of artifactCandidates(run,db.events(run.id),messages.filter(m=>m.runId===run.id),projectFiles?path=>projectFiles.reference(run,path):null)) {
+  for(const run of runs.slice(0,40)) {
+    const replies=messages.filter(m=>m.runId===run.id),registered=projectFiles?path=>projectFiles.reference(run,path):null;
+    // References are independent evidence even when this same run also wrote the file; reading still uses the write record.
+    const mentioned=new Set(artifactCandidates(run,[],replies,registered).map(file=>file.path));
+    for(const file of artifactCandidates(run,db.events(run.id),replies,registered)) {
     const ref=projectFiles?.reference(run,file.path),key=ref?`${ref.scopeId}:${ref.path}`:`${run.nodeId}:${resolve(run.workspace,file.path)}`,prior=candidates.get(key);
     // The write record (or the newest run) still decides how the file is read; the newest mention is kept beside it.
-    const mention=file.writtenAt?null:{at:run.finishedAt||run.updatedAt||run.createdAt,run};
+    const mention=mentioned.has(file.path)?{at:run.finishedAt||run.updatedAt||run.createdAt,run}:null;
     const base=!prior||file.writtenAt&&(!prior.writtenAt||file.writtenAt>prior.writtenAt)?{...file,run,ref}:prior;
     candidates.set(key,{...base,mention:[prior?.mention,mention].filter(Boolean).sort((a,b)=>String(b.at).localeCompare(String(a.at)))[0]||null});
+  }
   }
   if(projectFiles){
     const selected=[...candidates.values()].slice(0,100),items=[],deviceErrors=new Map();
