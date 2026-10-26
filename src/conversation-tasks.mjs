@@ -118,9 +118,10 @@ export class ConversationTasks {
     const task=this.show(run,id);if(!this.visible(task,run))fail('notFound',404);
     if(task.ownerRoleId!==run.roleId)fail('permission',403);
     if(['done','cancelled'].includes(task.status))fail('closed');
-    // Only the most recent description rewrite counts; a later user/peer edit invalidates the old handover.
+    // Only the most recent description rewrite counts; a later user/peer edit invalidates the old handover. A task this
+    // run created itself already carries a description written now, so it can be handed over at once.
     const edit=task.history.findLast(h=>h.changes.description);
-    if(!edit||edit.revision===1||edit.actor.runId!==run.id||edit.actor.roleId!==run.roleId)fail('editFirst');
+    if(!edit||edit.actor.runId!==run.id||edit.actor.roleId!==run.roleId)fail('editFirst');
     const revision=task.revision+1,time=new Date().toISOString();
     return this.persist({...task,ownerRoleId:targetRoleId,status:'in_progress',revision,updatedAt:time,
       history:[...task.history,{revision,at:time,actor:{type:'role',roleId:run.roleId,runId:run.id},reason:tr('conversationTasks.transferReason'),

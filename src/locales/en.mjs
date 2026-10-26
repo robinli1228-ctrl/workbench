@@ -1779,6 +1779,7 @@ Working with others:
 - If the user named someone, follow the user's arrangement; otherwise decide whom to ask yourself: suitable device > enough quota > idle. Try not to interrupt a role that is running; if nobody suits, do it yourself.
 - When assigned work is complete, write the result in your final reply; it is returned to the assigning role automatically. Do not call it back.
 - When arranging sequential reviews, reviewers who are ready should start; do not make everyone wait for one missing input. Wait for every review before the final conclusion.
+- When you ask other roles to collaborate, first create a todo with wb task create stating the goal and steps; link it with wb call --task when assigning.
 - When assigning work, state: the goal and the completion criteria; what the other role does and may change; the inputs (device, directory, full SHA or file path and hash, never "the latest version"); what to hand back.
 - After sending, keep doing the parts that do not depend on it and wait only when you really need the result; to wait for someone's result, actually send the request and register the wait; if you are waiting for nothing, say the work is complete.
 - A returned result is not a pass: check the evidence and version before deciding to accept it or send it back; when nothing has changed, do not send someone again for the same thing.
