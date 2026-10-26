@@ -180,7 +180,7 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
 }
 
 /** Show existing dispatches without creating a separate queue; request retries reuse the ID to avoid repeated interruptions. */
-function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued}) {
+function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued,getConversationId}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
   // The displayed queue owns these tasks until its next render, including while a drag is active.
   let displayedTaskIds=new Set();
@@ -215,15 +215,15 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     const starting=task=>!task.steering&&!task.waitingReason&&!data.settings?.paused&&!data.chatQueuePaused&&!busyRoles.has(task.roleId)
       &&firstForRole.get(task.roleId)===task.id&&Date.now()-Date.parse(task.createdAt)<30000;
     tasks=tasks.filter(task=>!starting(task));
-    const conversation=tasks[0]?.conversationId||projectId;
+    const conversation=getConversationId()||projectId;
     // Open waits of this chat sit in the queue at the slot their wake will run in; they hold nothing back and can be dragged.
-    const waits=tasks.length?(data.queuedWaits||[]).filter(w=>w.projectId===projectId&&w.conversationId===conversation):[];
+    const waits=(data.queuedWaits||[]).filter(w=>w.projectId===projectId&&w.conversationId===conversation);
     const roleName=id=>(data.roles||[]).find(r=>r.id===id)?.name||t('Role');
     const items=[...tasks.map(task=>({id:task.id,task,key:queueKey(task)})),...waits.map(wait=>({id:wait.id,wait,key:wait.queueOrder}))]
       .sort((a,b)=>Number(Boolean(b.task?.steering))-Number(Boolean(a.task?.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||a.key-b.key);
     displayedTaskIds=new Set(tasks.map(task=>task.id));
     list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&items.length>1);
-    panel.hidden=!tasks.length;list.replaceChildren();
+    panel.hidden=!items.length;list.replaceChildren();
     const title=create('span','message-queue-title',t('Queue · {v}', { v: items.length }));
     // Pause/resume at the right of the title, as on the Sessions queue: paused messages wait after the running replies end.
     const paused=Boolean(data.chatQueuePaused)&&tasks.length>0,head=[title];panel.classList.toggle('is-paused',paused);
@@ -301,7 +301,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
 export function createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice, openSideAsk }) {
   const historyViewer=createHistoryViewer({api});
   const cliRecoveryUI=createCliRecoveryUI({api,refreshState,getData:()=>data,create});
-  const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued});
+  const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued,getConversationId:()=>conversationId});
   const feed = document.querySelector('#chat-feed');
   // Configuration, plans and messages share one scroll area so status cards do not permanently crowd out the body.
   const scroller = document.querySelector('#chat-scroll');
