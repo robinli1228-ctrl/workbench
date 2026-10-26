@@ -169,14 +169,15 @@ async function describe(runtime,file){
  if(!inside(await realpath(file.root),await realpath(file.path)))throw Error('History outside CLI directory');
  const sidecars=runtime==='grok'?await Promise.all(['prompt_context.json','summary.json'].map(async name=>{try{return fileStamp(await lstat(join(dirname(file.path),name)));}catch(error){return error.code;}})):[];
  const key=JSON.stringify([runtime,file.root,file.path]),stamp=JSON.stringify([fileStamp(info),...sidecars]),prior=descriptionCache.get(key);
- if(prior&&prior.stamp===stamp&&Date.now()-prior.at<20000){remember(descriptionCache,key,prior,500);return {...await prior.value};}
- const entry={at:Date.now(),stamp,value:describeUncached(runtime,{...file,modifiedAt:info.mtime.toISOString()})};remember(descriptionCache,key,entry,500);
+ if(prior&&prior.stamp===stamp){remember(descriptionCache,key,prior,500);return {...await prior.value};}
+ const historyRevision=createHash('sha256').update(stamp).digest('hex');
+ const entry={stamp,value:describeUncached(runtime,{...file,modifiedAt:info.mtime.toISOString()}).then(value=>({...value,historyRevision}))};remember(descriptionCache,key,entry,500);
  try{return {...await entry.value};}catch(error){if(descriptionCache.get(key)===entry)descriptionCache.delete(key);throw error;}
 }
 
 const nativeView=(history,{nodeId=null,runtime=history?.runtime,origin='vendor',title=null,createdAt=null,id=history?.id,sessionId=history?.id,status=history?'ready':'missing_history',workspace=null,exactLastScan=null,branchOf=null}={})=>({
  id,...(origin==='dialog'?{entryId:id}:{}),nodeId,runtime,sessionId:sessionId||null,title:title||history?.title||sessionId||id,
- createdAt:createdAt||null,modifiedAt:history?.modifiedAt||createdAt||null,workspace:workspace||history?.workspace||null,origin,status,
+ createdAt:createdAt||null,modifiedAt:history?.modifiedAt||createdAt||null,historyRevision:history?.historyRevision||null,workspace:workspace||history?.workspace||null,origin,status,
  hasHistory:Boolean(history),previewAvailable:Boolean(history?.previewAvailable),canReopen:origin==='dialog'&&status==='draft',canResume:Boolean(history)&&!['active','prepared'].includes(status),exactLastScan,...(branchOf?.sessionId?{branchOf:{sessionId:branchOf.sessionId}}:{}),...(history?.error?{error:history.error}:{})
 });
 

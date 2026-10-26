@@ -50,3 +50,7 @@
 | [plan-source-sync-outputs](plan-source-sync-outputs.md) | Opt-in source/output policy, preview privacy, limit evidence and device-specific handoffs | Implemented locally with isolated verification; not deployed or enabled on business projects |
 
 Start with the README, then ARCHITECTURE. Read the PRD when you need the full product scope. ARCHITECTURE describes the actual code only and never treats a plan as a feature. Design documents may describe intended behavior; where they disagree with the code, the code is the fact.
+
+- [简单双端文件同步需求](design-unified-project-content.md)：用户确认的修改时间/大小比较、双方修改时哈希核对、冲突副本和30天审计记录规则；设计文档，不代表已部署。
+
+- [本地修改与 PR 覆盖核对](local-change-audit-20261026.md)：遗漏、已覆盖/替代内容和本轮验证边界。

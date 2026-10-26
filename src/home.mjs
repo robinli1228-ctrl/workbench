@@ -362,7 +362,7 @@ function snapshot(scope=null) {
   }
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,queuePause:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
+  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {nativeCatalogCache:1,roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,queuePause:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -512,7 +512,7 @@ function reconcileTerminals(nodeId) {
   return Promise.all([...projects].filter(terminalScopeExists).map(id=>refreshProjectTerminals(id,{automatic:true}))).then(()=>folderPreparations.cleanup(nodeId)).catch(error=>console.error('Terminal reconciliation failed:',error.message));
 }
 const nativeCatalogRecords=(nodeId,runtime)=>db.list('nativeCatalogEntries').filter(entry=>entry.nodeId===nodeId&&entry.runtime===runtime);
-const nativeCatalogItem=entry=>({id:entry.id,entryId:entry.id,nodeId:entry.nodeId,runtime:entry.runtime,sessionId:entry.sessionId||null,title:entry.title,createdAt:entry.createdAt,modifiedAt:entry.modifiedAt||entry.createdAt,workspace:entry.workspace||null,origin:'dialog',status:entry.status||'awaiting_native_id',hasHistory:entry.hasHistory===true,previewAvailable:entry.previewAvailable===true,canReopen:entry.status==='draft',canResume:entry.hasHistory===true&&!['active','prepared'].includes(entry.status),exactLastScan:entry.exactLastScan||null});
+const nativeCatalogItem=entry=>({id:entry.id,entryId:entry.id,nodeId:entry.nodeId,runtime:entry.runtime,sessionId:entry.sessionId||null,title:entry.title,createdAt:entry.createdAt,modifiedAt:entry.modifiedAt||entry.createdAt,historyRevision:entry.historyRevision||null,workspace:entry.workspace||null,origin:'dialog',status:entry.status||'awaiting_native_id',hasHistory:entry.hasHistory===true,previewAvailable:entry.previewAvailable===true,canReopen:entry.status==='draft',canResume:entry.hasHistory===true&&!['active','prepared'].includes(entry.status),exactLastScan:entry.exactLastScan||null});
 function managedNativeSessions(nodeId,runtime){
   const items=new Map();for(const session of db.list('roleSessions')){
     if(session.nodeId!==nodeId||session.runtime!==runtime||session.historyClearedAt||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/.test(session.nativeSessionId||''))continue;
@@ -539,7 +539,7 @@ function ownedNativeSession(nodeId,runtime,sessionId){
   return nativeCatalogRecords(nodeId,runtime).find(r=>r.sessionId===sessionId)||managedNativeSessions(nodeId,runtime).find(r=>r.sessionId===sessionId)||adoptedNativeSessions(nodeId,runtime).find(r=>r.sessionId===sessionId)||null;
 }
 function cacheNativeCatalog(items,nodeId,runtime){
-  db.transaction(()=>{for(const item of items||[]){if(item.origin!=='dialog'||item.nodeId!==nodeId||item.runtime!==runtime||!item.entryId)continue;const current=db.get('nativeCatalogEntries',item.entryId);if(current?.nodeId!==nodeId||current.runtime!==runtime)continue;db.put('nativeCatalogEntries',{...current,sessionId:item.sessionId||null,title:item.title,workspace:item.workspace||current.workspace,status:item.status,hasHistory:item.hasHistory===true,previewAvailable:item.previewAvailable===true,exactLastScan:item.exactLastScan||current.exactLastScan||null,modifiedAt:item.modifiedAt||current.modifiedAt});}});
+  db.transaction(()=>{for(const item of items||[]){if(item.origin!=='dialog'||item.nodeId!==nodeId||item.runtime!==runtime||!item.entryId)continue;const current=db.get('nativeCatalogEntries',item.entryId);if(current?.nodeId!==nodeId||current.runtime!==runtime)continue;db.put('nativeCatalogEntries',{...current,sessionId:item.sessionId||null,title:item.title,workspace:item.workspace||current.workspace,status:item.status,hasHistory:item.hasHistory===true,previewAvailable:item.previewAvailable===true,exactLastScan:item.exactLastScan||current.exactLastScan||null,modifiedAt:item.modifiedAt||current.modifiedAt,historyRevision:item.historyRevision||null});}});
 }
 /** Stopping is an explicit human action, scoped to the saved lease rather than arbitrary browser-supplied PIDs. */
 async function returnTerminal(claim,action) {
@@ -786,6 +786,21 @@ const server = http.createServer(async (req, res) => {
           if(worker.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
           const record=sessionId?ownedNativeSession(nodeId,runtime,sessionId):null;
           if(sessionId&&!record)throw Error('Session is not registered with Workbench');
+          // First paint reads registered Home entries; normal Worker verification still enforces file access.
+          if(!sessionId&&url.searchParams.get('cached')==='1'){
+            if(!['codex','claude','grok','agy'].includes(runtime))throw Error('Unsupported CLI');
+            let items;
+            if(scope==='group')items=managedNativeSessions(nodeId,runtime).map(entry=>({...entry,id:entry.sessionId,nodeId,runtime,origin:'managed'}));
+            else {
+              items=nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem);
+              if(scope==='all'){
+                const seen=new Set([...items.map(item=>item.sessionId),...managedNativeSessions(nodeId,runtime).map(item=>item.sessionId)]);
+                items.push(...adoptedNativeSessions(nodeId,runtime).filter(entry=>!seen.has(entry.sessionId)).map(entry=>({...entry,id:entry.sessionId,nodeId,origin:'takeover'})));
+              }
+            }
+            items.sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||'')));
+            return json(res,{items:nativeTurns.switches.decorateCatalog(nodeId,items.slice(0,100)),cached:true,partial:items.length>100,offline:!online(nodeId)});
+          }
           if(!online(nodeId)){
             // Offline All can show cached independent entries, but must not imply complete native history.
             if(!sessionId&&['created','all'].includes(scope))return json(res,{items:nativeTurns.switches.decorateCatalog(nodeId,nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem)),partial:scope==='all',offline:true});

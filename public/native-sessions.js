@@ -1,7 +1,7 @@
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
-import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON,quotaForRole,roleNameQuota} from './role-icons.js';
+import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON,quotaForRole,roleNameQuota,bindDescriptionNotes} from './role-icons.js';
 import {usableBucket,parseQuotaResetDate} from './quota-state.js';
 import {createListOrder} from './list-order.js';
 import {groupNativeSessions,readNativeSessionPages} from './native-session-groups.js';
@@ -292,12 +292,15 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  gear.addEventListener('click',()=>{if(selected)openSessionSettings(selected);});gear.hidden=true;(document.querySelector('#toggle-inspector')||document.querySelector('#connection-note'))?.before(gear);
  const filters=el('div','native-session-filters'),device=el('select'),tool=el('select');device.setAttribute('aria-label',t('Session device'));tool.setAttribute('aria-label',t('Agent tool'));filters.append(device,tool);list.before(filters);
  const note=el('p','workspace-note');list.before(note);note.classList.add('native-session-note');
+ bindDescriptionNotes(mode.querySelector('[data-mode="sessions"]'),[note],{key:'sessions',visible:()=>document.body.dataset.navigationMode==='sessions',watch:[document.body]});
  // A narrowed left column (dragged below ~230px, or collapsed) drops the device/tool filters; the list keeps the width.
  const sidebar=document.querySelector('#project-sidebar');if(sidebar&&'ResizeObserver' in window)new ResizeObserver(()=>{filters.classList.toggle('is-narrow',sidebar.getBoundingClientRect().width<205);}).observe(sidebar);
  let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue=(()=>{try{const saved=sessionStorage.getItem('agent-workbench.navigation-mode');return saved==='groups'||saved==='sessions'?saved:'sessions';}catch{return 'sessions';}})(),lastRefresh=0,listSignature='',detailSignature='',detailMeta='';
  const active=()=>modeValue==='sessions';
  const endpoint=nodeId=>`/api/native-sessions/${encodeURIComponent(nodeId)}`;
  const key=item=>item?`${item.nodeId}/${item.runtime}/${item.entryId||item.id}`:'';
+ const historyReadStamps=new Map();let historyLoading=null;
+ const historyStamp=item=>JSON.stringify([nativeId(item),item.historyRevision||item.modifiedAt||null,item.hasHistory,item.previewAvailable,item.workspace]);
  const SELECTION_KEY='agent-workbench.native-session'; // per tab, like agent-workbench.project for the group chat
  // Which side the left column shows; a reload keeps it (per tab), a new tab starts on Sessions.
  const MODE_KEY='agent-workbench.navigation-mode';
@@ -526,13 +529,15 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   list.scrollTop=scroll;
  }
  /** Fetch at most two device catalogues at a time; one unavailable device must not hide the others. */
- async function load({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet){items=[];resetDetail();renderList();note.textContent=t('Loading native sessions…');}
+ async function load({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet)note.textContent=t('Loading native sessions…');
   // Both device filters and All include registered independent entries plus managed role history.
   const scopes=['created','group'].includes(device.value)?[device.value]:['all','group'];
   const jobs=workers().flatMap(w=>(tool.value==='all'?Object.keys(names):[tool.value]).filter(runtime=>device.value==='created'||w.runtimes?.some(r=>r.type===runtime&&r.available&&r.supported!==false)).flatMap(runtime=>scopes.map(scope=>({nodeId:w.id,runtime,scope})))),results=[],errors=[],failedJobs=new Set();let partial=false,index=0;
   // Publish complete catalogue snapshots as they arrive; a slow peer cannot block selecting already-read history.
   const owned=item=>['dialog','managed','takeover'].includes(item.origin);
-  const previous=quiet?items.filter(owned):[],ordered=values=>[...new Map(values.filter(owned).map(item=>[key(item),item])).values()].sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||''))||key(a).localeCompare(key(b)));
+  const matchesJob=(item,job)=>item.nodeId===job.nodeId&&item.runtime===job.runtime&&(job.scope==='group'?item.origin==='managed':job.scope==='created'?item.origin==='dialog':item.origin!=='managed');
+  const previous=items.filter(item=>owned(item)&&jobs.some(job=>matchesJob(item,job))),ordered=values=>[...new Map(values.filter(owned).map(item=>[key(item),item])).values()].sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||''))||key(a).localeCompare(key(b)));
+  items=ordered(previous);if(selected&&!jobs.some(job=>matchesJob(selected,job)))resetDetail();renderList();
   const updateLineage=()=>{if(!selected)return;const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(selected)));if(group){const chain=[group.latest,...group.history];timeline.setOlder(selected,chain.slice(chain.findIndex(row=>key(row)===key(selected))+1));}};
   // Like the group chat: reopen the session viewed last in this tab; only a settled list with nothing remembered falls
   // back to its top row. A selection already made is never replaced, and a partial catalogue never pre-empts the remembered one.
@@ -540,12 +545,21 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    let wanted=null;try{wanted=sessionStorage.getItem(SELECTION_KEY);}catch{}
    const next=(wanted&&items.find(item=>key(item)===wanted))||(settled?listOrder.ordered(groupNativeSessions(items),group=>group.id.startsWith('conversation:')?group.id:key(group.latest))[0]?.latest:null);
    if(next)void read(next);};
+  // 首次/切换筛选先显示 Home 保存的目录；不等待远端，也不把预览当成新鲜的历史核验。
+  if((!quiet||!previous.length)&&getData().capabilities?.nativeCatalogCache===1){
+   await Promise.all(jobs.map(async job=>{try{
+    const result=await api(`${endpoint(job.nodeId)}?${new URLSearchParams({runtime:job.runtime,scope:job.scope,cached:'1'})}`);
+    if(ticket!==version||!active()||result.cached!==true)return;
+    previous.push(...(result.items||[]).map(item=>({...item,nodeId:job.nodeId})));items=ordered(previous);updateLineage();renderList();
+   }catch{/* Worker refresh below reports authoritative errors; existing rows stay visible. */}}));
+   if(ticket!==version||!active())return;
+  }
   await Promise.all(Array.from({length:Math.min(2,jobs.length)},async()=>{while(index<jobs.length&&ticket===version&&active()){const job=jobs[index++];try{const result=await readNativeSessionPages((offset,revision)=>api(`${endpoint(job.nodeId)}?${new URLSearchParams({runtime:job.runtime,scope:job.scope,offset:String(offset),revision})}`),()=>ticket===version&&active());if(ticket!==version||!active())return;results.push(...result.items.map(item=>({...item,nodeId:job.nodeId})));partial||=result.partial;items=ordered([...previous,...results]);updateLineage();renderList();autoSelect();}catch(e){failedJobs.add(`${job.nodeId}/${job.runtime}/${job.scope}`);errors.push(`${workerName(job.nodeId)}: ${t(e.message)}`);}}}));
   if(ticket!==version||!active())return;loading=false;
-  if(quiet)results.push(...items.filter(item=>owned(item)&&failedJobs.has(`${item.nodeId}/${item.runtime}/${scopes.length>1?(item.origin==='managed'?'group':'all'):scopes[0]}`)&&!results.some(r=>key(r)===key(item))));
+  results.push(...items.filter(item=>owned(item)&&failedJobs.has(`${item.nodeId}/${item.runtime}/${scopes.length>1?(item.origin==='managed'?'group':'all'):scopes[0]}`)&&!results.some(r=>key(r)===key(item))));
   items=ordered(results);
   note.textContent=errors.length?[t('Some devices could not be read.'),...new Set(errors)].join(' '):t(partial?'Showing recent sessions. Updates automatically.':items.length?'':'No sessions in this filter. Create one using the top-right button.');
-  if(selected){const next=items.find(item=>key(item)===key(selected));if(next){selected={...selected,...next};if(quiet&&!dialog.open)void read(selected,{quiet:true});}else resetDetail();}renderList();autoSelect(true);
+  if(selected){const next=items.find(item=>key(item)===key(selected));if(next){const sameNative=nativeId(next)===nativeId(selected);selected={...selected,...next};renderTitle();if(!dialog.open&&!(historyLoading?.key===key(selected)&&historyLoading.sessionId===nativeId(next)&&historyLoading.ticket===detailVersion)&&(!quiet||historyReadStamps.get(key(selected))!==historyStamp(next)))void read(selected,{quiet:sameNative});}else resetDetail();}renderList();autoSelect(true);
   // A mutation/focus refresh arriving during a read must run after that older snapshot settles.
   if(pendingRefresh)void load({quiet:true});
  }
@@ -647,16 +661,16 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  /** Errors that mean the saved snapshot no longer fits the history file. */
  const staleCopy=error=>/changed|Invalid native history cursor/i.test(error?.message||'');
  async function read(item,{quiet=false}={}){if(item.conversationBinding){const group=groupNativeSessions(items).find(g=>g.id===`conversation:${item.conversationBinding.id}`);if(group)item=group.latest;}
-  const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
+  const ticket=++detailVersion;historyLoading={key:key(item),sessionId:nativeId(item),ticket};selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
   const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];
   const restart=()=>{timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));detailSignature=detailMeta='';};
   if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);}
-  const id=nativeId(item),readable=id&&item.hasHistory!==false,current=()=>ticket===detailVersion&&active()&&key(selected)===key(item);
+  const id=nativeId(item),readable=id&&item.hasHistory!==false,current=()=>ticket===detailVersion&&active()&&key(selected)===key(item)&&nativeId(selected)===id;
   /** Draw a page: a full one (opening, or a fallback) or rows appended since the last read (`delta`). */
   const present=(base,page,{quietly})=>{
    const delta=Boolean(page?.delta);
    const value=readable?{...base,...page,...(delta?{notice:undefined,sessionConfiguration:mergeConfiguration(base.sessionConfiguration,page.sessionConfiguration)}:{}),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:base;
-   selected=value;timeline.readSucceeded();
+   selected=value;historyReadStamps.delete(key(item));historyReadStamps.set(key(item),historyStamp(item));while(historyReadStamps.size>16)historyReadStamps.delete(historyReadStamps.keys().next().value);timeline.readSucceeded();
    // What the session looks like apart from its rows: a refresh with no new rows still redraws when this changed
    // (a rename, a new binding), and otherwise leaves everything as it is (only the snapshot moved on).
    const meta=JSON.stringify({...value,messages:undefined,historySnapshot:undefined,nextCursor:undefined,hasMore:undefined,partial:undefined,delta:undefined});
@@ -682,13 +696,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
      catch(error){
       // The history was rewritten since the copy: forget it and read the latest page as usual. Other errors (device offline)
       // leave the copy on screen with the error under it.
-      if(!staleCopy(error)){if(current())timeline.showError(error);return;}
+      if(!staleCopy(error)){if(current()){historyReadStamps.delete(key(item));timeline.showError(error);}return;}
       if(!current())return;
       forgetPage(key(item));page=null;timeline.showUpdating();
      }
      if(!current())return;
      if(page?.delta){present(selected,page,{quietly:true});rememberPage(item,page,{appended:true,baseSnapshot:saved.historySnapshot});return;}
-     if(!page){try{page=await readPage(item,null,null);}catch(error){if(current())timeline.showError(error);return;}if(!current())return;}
+     if(!page){try{page=await readPage(item,null,null);}catch(error){if(current()){historyReadStamps.delete(key(item));timeline.showError(error);}return;}if(!current())return;}
      restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));
      present(item,page,{quietly:false});rememberPage(item,page);return;
     }
@@ -699,7 +713,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(quiet&&page.deltaFallback){timeline.showNewer();return;}
    present(item,page,{quietly:quiet});
    if(page.delta)rememberPage(item,page,{appended:true,baseSnapshot});else rememberPage(item,page);
-  }catch(e){if(staleCopy(e))forgetPage(key(item));if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
+  }catch(e){if(staleCopy(e))forgetPage(key(item));if(ticket===detailVersion){historyReadStamps.delete(key(item));if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}finally{if(historyLoading?.ticket===ticket)historyLoading=null;}
  }
  /** Full text of one prompt in the group chat's reading layer; nothing stays on the page when it is closed. */
  let promptDialog=null;
@@ -1432,7 +1446,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(orderable&&!turn.steer){row.dataset.orderId=turn.id;const grip=el('span','message-queue-grip');grip.innerHTML=GRIP;grip.title=t('Drag to reorder');row.append(grip);}
     const text=turn.prompt||(turn.attachments||[]).map(a=>a.name).join(', '),title=el('strong','',`${i+1}. ${text}`);title.title=text;title.translate=false;info.append(title);
     if(turn.createdAt){const when=el('time','message-queue-time',clock(turn.createdAt));when.dateTime=turn.createdAt;when.title=time(turn.createdAt);when.translate=false;info.append(when);}row.append(info);
-    const busy=queuePending.has(turn.id)||turn.steer,steer=el('button',`icon-button message-queue-steer${busy?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(turn.steer?'Interrupting and starting this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
+    const busy=queuePending.has(turn.id),steer=el('button',`icon-button message-queue-steer${busy||turn.steer?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(busy?'Interrupting and starting this message':turn.steer?'Refresh session state and retry this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
     steer.onclick=async()=>{queuePending.add(turn.id);queueSignature='';renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
     row.append(steer);
     if(queueState){const edit=iconButton('edit','Edit: back to the input box',()=>void editQueued(turn),'message-queue-edit');edit.disabled=busy||Boolean(operation().editing);row.append(edit);}

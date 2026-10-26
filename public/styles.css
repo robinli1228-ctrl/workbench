@@ -1070,6 +1070,16 @@ body.is-list-reordering, body.is-list-reordering * { cursor: grabbing !important
   padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink);
   font-size: 12px; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; box-shadow: 0 5px 18px rgb(0 0 0 / 14%);
 }
+.description-note-source { display: none !important; }
+.description-heading { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.inspector-header > .description-heading { flex: 1; }
+.inspector-header .description-heading h2 { flex: 0 1 auto; }
+.app-shell .description-heading .description-note-button { display: inline-grid; place-items: center; flex: 0 0 20px; width: 20px; height: 24px; min-height: 24px; margin: 0; padding: 0; border: 0; border-radius: 5px; background: transparent; cursor: help; }
+.app-shell .description-heading .description-note-button[hidden] { display: none; }
+.app-shell .description-heading .description-note-button::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #078653; box-shadow: 0 0 0 3px rgb(7 134 83 / 9%); }
+.app-shell .description-heading .description-note-button:hover { background: rgb(7 134 83 / 7%); }
+.app-shell .description-heading .description-note-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.description-note-tooltip { pointer-events: auto; max-width: min(360px, calc(100vw - 16px)); max-height: min(360px, 50vh); overflow: auto; }
 .quota-dialog { width: min(420px, calc(100vw - 32px)); }
 .quota-reset-detail { overflow-wrap: anywhere; }
 .role-context-ring {

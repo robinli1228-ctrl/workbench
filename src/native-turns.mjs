@@ -417,6 +417,12 @@ export class NativeTurnRunner{
  /** CLI slots: each resident process counts once, plus per-turn processes that are not resident. */
  get size(){return this.resident.size+[...this.turns.values()].filter(t=>!t.resident).length;}
  holds(runtime,sessionId){return this.resident.has(`${runtime}/${sessionId}`)||[...this.turns.values()].some(t=>t.key===`${runtime}/${sessionId}`);}
+ /** Refresh reports the retained process and in-flight preparation separately; a failed preparation never owns the old CLI. */
+ snapshot(runtime,sessionId,leaseId){
+  const key=`${runtime}/${sessionId}`,entry=this.resident.get(key),matching=entry?.message?.leaseId===leaseId;
+  return {activeIds:[...this.turns.entries()].filter(([,t])=>t.key===key&&t.message.leaseId===leaseId).map(([id])=>id),
+   reusable:Boolean(matching&&alive(entry.session)&&!entry.closing),closing:Boolean(matching&&(entry.closing||this.closing.has(key)))};
+ }
  event(id,event){this.post({type:'native_turn_event',id,event:{...event,...(typeof event.text==='string'?{text:event.text.slice(-MAX_TEXT)}:{}),...(event.item?{item:boundedItem(event.item)}:{})}});}
  /** A production lease remains occupied until its exact process tree has exited. */
  close(key,reason){const entry=this.resident.get(key);if(!entry)return this.closing.get(key);clearTimeout(entry.timer);entry.closing=true;
@@ -432,9 +438,11 @@ export class NativeTurnRunner{
   let ended=false;
   const end=(status,error)=>{if(ended)return;ended=true;this.turns.delete(m.id);void Promise.resolve().then(()=>this.cleanup?.(m.id)).catch(()=>{});
    const entry=this.resident.get(key);
+   // Preparation may fail before reuse() attaches this turn. The old idle CLI still belongs to its lease.
+   const retained=Boolean(entry&&state.resident&&!state.session&&alive(entry.session)&&!entry.closing&&(!this.leases||entry.session.done));
    if(entry&&entry.session===state.session){if(alive(entry.session)&&status!=='mismatch'&&(!this.leases||entry.session.done)){entry.busy=null;this.idle(key);}else this.close(key,status==='mismatch'?'mismatch':'exited');}
    else if(!state.resident){if(this.leases){if(state.acquired)void this.leases.retire(m,state.session).catch(()=>{});else this.leases.rejected?.(m);}else state.session?.shutdown?.();}
-   this.event(m.id,{kind:'status',status:status==='mismatch'?'failed':status,...(error?{error}:{}),resident:Boolean(entry&&entry.session===state.session&&!entry.closing&&alive(entry.session)&&(!this.leases||entry.session.done))});};
+   this.event(m.id,{kind:'status',status:status==='mismatch'?'failed':status,...(error?{error}:{}),resident:retained||Boolean(entry&&entry.session===state.session&&!entry.closing&&alive(entry.session)&&(!this.leases||entry.session.done))});};
   state.finish=end;
   try{
    if(!NATIVE_TURN_RUNTIMES.includes(m.runtime)||!idPattern.test(m.sessionId||''))throw Error('Invalid native session');

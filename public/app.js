@@ -21,7 +21,7 @@ import { createRoomUI, createRoleRefresh } from './room.js';
 import { projectSettings } from './project-settings.js';
 import {createGroupConversationUI} from './group-conversations.js';
 import {createProjectTeamCopyUI} from './project-team-copy.js';
-import { agentIconEl, agentWatermarkEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl, closeIcon } from './role-icons.js';
+import { agentIconEl, agentWatermarkEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl, closeIcon, bindDescriptionNotes } from './role-icons.js';
 import { activateSettingsTab, normalizeSettingsTab, settingsView, initProjectSettingsTabs } from './settings-page.js';
 import { supervisorSettings } from './supervisor-settings.js';
 import { roleTemplatesUI } from './role-templates.js';
@@ -120,7 +120,10 @@ const app = {
 };
 app.view = 'workspace';
 app.settingsTab = 'devices';
-const projectOrder=createListOrder({container:dom.projectList,scope:'projects',onEnd:()=>renderProjects(),onError:setError});
+const groupListNote=create('p','workspace-note');groupListNote.id='group-list-note';groupListNote.hidden=true;dom.projectList.before(groupListNote);
+bindDescriptionNotes(document.querySelector('#navigation-mode [data-mode="groups"]'),[groupListNote],{key:'groups',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body]});
+bindDescriptionNotes(document.querySelector('#inspector-title'),[document.querySelector('#role-refresh-feedback'),document.querySelector('#role-sidebar-note')],{key:'roles',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body,document.querySelector('#inspector-roles')]});
+const projectOrder=createListOrder({container:dom.projectList,scope:'projects',onEnd:()=>renderProjects(),onError:message=>{groupListNote.textContent=message;groupListNote.hidden=false;setError(message);}});
 const roleOrder=createListOrder({container:dom.roleList,scope:()=>`roles:${app.selectedProjectId||''}`,onEnd:()=>renderRoles(),onError:setError});
 
 const statusLabels = {
