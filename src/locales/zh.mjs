@@ -1,6 +1,9 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "sourceSync.metadataTwoDevices": "简单模式需要目录范围和恰好两台已升级的设备。",
+  "sourceSync.metadataBaseline": "待建立同步基线；不会覆盖已有文件。",
+  "sourceSync.invalidMetadata": "文件元数据回执无效。",
   "collabSessions.retired": "协作会话已停用，已有记录只读保留；新工作使用 wb task 和 wb call。",
   "conversationTasks.invalid":"任务字段或值无效。",
   "conversationTasks.actor":"操作身份不是本项目角色。",
@@ -77,7 +80,7 @@ export default Object.freeze({
   "sourceSync.failure": "源代码同步：{code} {detail}",
   "sourceSync.systemName": "源代码同步",
   "sourceSync.continuedReceipt": "继续使用同一任务拥有的工作目录，原先已核对的源码输入为：{versions}。你上一轮的修改保留，不会被初始快照覆盖。请重读当前文件；这份回执不表示修改后的产物仍等于初始输入。",
-  "sourceSync.toolGuide": "源码工具：wb sync status [JSON]；wb sync read {\"conflictId\":\"...\"} 查看 expectedHashes 和所有设备版本，可指定 side=\"base\" 或所列版本的 endpointId（设备 ID 仅在版本唯一时可用）、offset/limit 分页读正文；wb sync request {\"requestId\":\"...\",\"targetNodeIds\":[\"...\"],\"repositoryIds\":[\"...\"]}；wb sync assign {\"conflictId\":\"...\",\"generation\":1,\"roleId\":\"...\"}（仅主管）；wb sync propose {\"requestId\":\"...\",\"conflictId\":\"...\",\"generation\":1,\"expectedHashes\":{},\"rationale\":\"...\",\"evidence\":[\"...\"]}（仅当前修复负责人，先运行检查）。候选采集是异步的，结束本轮前用 wb sync status {\"candidateId\":\"...\"} 核对 proposed 或 blocked。工具不会启用尚未启用的项目。同步请求可能等待写入回合结束。目录批次（scopeKind=directory）只同步文件，禁止把其 ID 填入 wb call --source-sync-batch-id 或计划阶段 sourceSyncBatchId。文档依赖用 wb sync status 和目标路径、哈希核对；wb sync status {\"path\":\"相对路径\"} 返回各设备的哈希和观察时间，以及总体状态 consistent（一致）、in_transit（传输中）、conflict（冲突）或 unknown（未知），离线设备记为未知，不算没到；需要时结束写入回合，在后续回合检查。这两个代码输入字段只接受受支持的版本输入批次，不是通用的文件就绪依赖。正式代码审核和测试使用已批准的固定 commit 交付。排队不等于送达，不得悄悄使用旧文件。",
+  "sourceSync.toolGuide": "源码工具：wb sync status [JSON]；wb sync read {\"conflictId\":\"...\"} 查看 expectedHashes 和所有设备版本，可指定 side=\"base\" 或所列版本的 endpointId（设备 ID 仅在版本唯一时可用）、offset/limit 分页读正文；wb sync request {\"requestId\":\"...\",\"targetNodeIds\":[\"...\"],\"repositoryIds\":[\"...\"]}；wb sync assign {\"conflictId\":\"...\",\"generation\":1,\"roleId\":\"...\"}（仅主管）；wb sync propose {\"requestId\":\"...\",\"conflictId\":\"...\",\"generation\":1,\"expectedHashes\":{},\"rationale\":\"...\",\"evidence\":[\"...\"]}（仅当前修复负责人，先运行检查）。候选采集是异步的，结束本轮前用 wb sync status {\"candidateId\":\"...\"} 核对 proposed 或 blocked。工具不会启用尚未启用的项目。同步请求可能等待写入回合结束。目录批次（scopeKind=directory）只同步文件，禁止把其 ID 填入 wb call --source-sync-batch-id 或计划阶段 sourceSyncBatchId。文档依赖用 wb sync status 核对目标路径及对应模式的确认方式；wb sync status {\"path\":\"相对路径\"} 在旧哈希模式下返回各设备的哈希和观察时间，以及总体状态 consistent（一致）、in_transit（传输中）、conflict（冲突）或 unknown（未知），离线设备记为未知，不算没到；需要时结束写入回合，在后续回合检查。这两个代码输入字段只接受受支持的版本输入批次，不是通用的文件就绪依赖。正式代码审核和测试使用已批准的固定 commit 交付。排队不等于送达，不得悄悄使用旧文件。 简单元数据模式的单文件状态改为 confirmation=metadata_and_receipts、hashComputed=false；设备属性是确认历史，不是字节相等证明。核对所记代次和回执，不得虚构哈希一致。",
   "sourceSync.assignmentTask": "文件 {path} 存在源码冲突 {id}，原因：{reason}。请通过 wb sync status/read 和当前团队名单核对信息，找到合适的修改者，用 wb sync assign 明确指派修复。不要亲自改文件，也不要根据角色名称猜作者。",
   "sourceSync.peerTask": "文件 {path} 存在源码冲突 {id}，唯一修复负责人为 {owner}。请通过 wb sync read 查阅双方版本，在本任务结果中说明你的原始意图和依据。这是解释请求，不是第二份修改任务；不要修改冲突文件。",
   "sourceSync.repairTask": `解决源码冲突 {id}，轮次 {generation}，文件 {path}。预期版本：{hashes}。对方说明任务：{peerTaskId}。先用 wb sync read 查看基线和双方内容，按需查询历史、向同伴核实意图，只在专用修复目录修改这个文件。不得覆盖原设备目录，也不提交或推送 Git。运行相关检查后，用 wb sync propose 提交候选、理由和证据，并在回复里说明验证结果。提交候选不等于同步完成，平台还会复核版本和接收回执，处理结果一律交用户复核。需要补充需求、修改其他文件或独立审核时，在回复里说明，不要猜测。`,

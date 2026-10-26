@@ -56,7 +56,7 @@ export class SourceSyncWatch {
     let periodicScans=0,pauseSpent=0;
     try{for(const scope of this.db.get('sourceSyncWatchConfig','main')?.scopes||[]){
       const id=key(scope),t=this.clock(),last=this.checked.get(id),hint=this.hints.get(id);
-      const cadence=this.cadence(id),full=this.fullChecked.get(id),fullHash=force||full===undefined||t-full>=cadence.fullHash,metadataDue=last===undefined||t-last>=cadence.metadata;
+      const cadence=this.cadence(id),full=this.fullChecked.get(id),fullHash=scope.detection!=='metadata'&&(force||full===undefined||t-full>=cadence.fullHash),metadataDue=last===undefined||t-last>=cadence.metadata;
       if(!force&&t<(this.retryAt.get(id)||0))continue;
       if(!fullHash&&!metadataDue&&(!hint||t-hint.last<500&&t-hint.first<2000))continue;
       if(this.blocked(scope.projectId))continue;
@@ -73,7 +73,7 @@ export class SourceSyncWatch {
         const observation={...this.observations.get(id),fullHash,metrics:{}};
         const manifest=await captureDirectorySnapshot({...scope,root:binding.root,baselineEntries:old?.entries||{},background:true,busy:()=>this.busy(scope.projectId),observation,
           cancelled,
-          ...(!fullHash&&!metadataDue&&!hint?.unknown?{changedPaths:[...hint.paths]}:{})});
+          ...(!force&&!fullHash&&!metadataDue&&hint&&!hint.unknown?{changedPaths:[...hint.paths]}:{})});
         if(this.closed)break;
         // Configuration changed during the asynchronous scan: discard the old generation's observation.
         if(!current())continue;
@@ -97,6 +97,7 @@ export class SourceSyncWatch {
   /** Verified receipts advance observation hashes; other edits remain detectable without timestamp arbitration. */
   received(command,result){
     if(command.scopeKind!=='directory'||command.action!=='apply')return;const id=key(command),old=this.db.get('sourceSyncWatchStates',id);if(!old?.entries)return;
+    if(command.detection==='metadata'){this.invalidate(id);this.hint(id);return;}
     const entries={...old.entries};for(const file of result.files||[]){if(!['applied','unchanged'].includes(file.status))continue;const change=command.changes.find(c=>c.path===file.path);if(change&&(entryEqual(entries[file.path]||null,change.before)||entryEqual(entries[file.path]||null,change.after))){if(change.after)entries[file.path]=change.after;else delete entries[file.path];}}
     this.db.put('sourceSyncWatchStates',{...old,entries,digest:manifestDigest(entries,command.scopePolicy)});
     // A verified apply changes only these paths. Fence any in-flight scan without restarting the full-hash clock.

@@ -1,3 +1,4 @@
+import {statMetadata,metadataDigest} from './source-sync-metadata.mjs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {constants,lstat} from 'node:fs';
@@ -51,6 +52,16 @@ export async function sourceFilePath(root,path,{createParents=false,policy={}}={
     if(i<parts.length-1&&await exists(join(current,'.git')))throw syncError('nested_repository',path);
   }
   return {path:current,missing:false,stat:info};
+}
+
+/** Stat-only observations never read business bytes or turn an I/O failure into deletion. */
+export async function readSourceMetadata(root,path,policy={}) {
+  const checked=await sourceFilePath(root,path,{policy});
+  if(checked.missing)return {exists:false};
+  const s=await pathStat(checked.path,{bigint:true});
+  if(!s.isFile()||s.nlink!==1n)throw syncError('unsafe_file',path);
+  if(s.size>BigInt(SOURCE_SYNC_LIMITS.fileBytes))throw syncLimitError('file_too_large','file',SOURCE_SYNC_LIMITS.fileBytes,Number(s.size),path);
+  return statMetadata(s);
 }
 
 /** Capture stable bytes from a no-follow descriptor; never infer stability from mtime alone. */
@@ -228,7 +239,7 @@ export async function captureDirectorySnapshot(options) {
   else await walk(root);
   const captured=await captureSourceEntries(paths,async path=>{
     let value;
-    try{value=await readSourceFile(root,path,policy,observation?{cached:observation.fullHash||partial?null:cached.get(path),metrics:observation.metrics,walked:!partial}:null);}
+    try{value=options.detection==='metadata'?{entry:await readSourceMetadata(root,path,policy)}:await readSourceFile(root,path,policy,observation?{cached:observation.fullHash||partial?null:cached.get(path),metrics:observation.metrics,walked:!partial}:null);}
     catch(e){
       // A file this device never synchronized and that exceeds the per-file limit is recorded as oversize, not a batch
       // failure; it stays viewable through on-demand media reads. A previously synchronized file still blocks (Home fences it).
@@ -238,17 +249,18 @@ export async function captureDirectorySnapshot(options) {
       if(e.code==='unsafe_file'&&partial){const now=await pathStat(join(root,path)).catch(()=>null);if(!now||now.isSymbolicLink()||!now.isFile()){excluded.push({path,reason:now?.isSymbolicLink()?'symlink':'special_file'});delete entries[path];nextCache.delete(path);return undefined;}}
       throw e;
     }
-    if(!value.entry){if(partial){delete entries[path];nextCache.delete(path);return undefined;}throw syncError('source_busy',path);}
-    if(!entryEqual(value.entry,options.baselineEntries?.[path]||null))changedBytes+=value.entry.size;
+    if(!value.entry||value.entry.exists===false){if(partial){delete entries[path];nextCache.delete(path);return undefined;}throw syncError('source_busy',path);}
+    if(options.detection!=='metadata'&&!entryEqual(value.entry,options.baselineEntries?.[path]||null))changedBytes+=value.entry.size;
     if(changedBytes>SOURCE_SYNC_LIMITS.batchBytes)throw syncLimitError('batch_too_large','batch',SOURCE_SYNC_LIMITS.batchBytes,changedBytes,path);
-    if(options.blobRoot&&!metadataOnly)await saveSourceBlob(options.blobRoot,value.bytes);
+    if(options.blobRoot&&!metadataOnly&&options.detection!=='metadata')await saveSourceBlob(options.blobRoot,value.bytes);
     if(observation)nextCache.set(path,{metadata:value.metadata,entry:value.entry});
     return value.entry;
   },{background:options.background===true,busy:options.busy,cancelled:options.cancelled,yieldControl:options.yieldControl,cooperate});
   for(let i=0;i<paths.length;i++)if(captured[i]!==undefined)entries[paths[i]]=captured[i];
   if(cooperate)await cooperate('manifest',1,true);
-  const digest=manifestDigest(entries,policy);
+  if(options.detection==='metadata'){const finalRoot=await pathStat(root,{bigint:true});if(finalRoot.ino!==rootInfo.ino||finalRoot.dev!==rootInfo.dev)throw syncError('binding_changed');}
+  const digest=options.detection==='metadata'?metadataDigest(entries,policy):manifestDigest(entries,policy);
   // Publish the cache only with a complete successful observation, never a failed/partial traversal.
   if(observation){observation.cache=nextCache;observation.signature=signature;observation.snapshot={entries,excluded};observation.directories=directories;}
-  return {repositoryId:options.repositoryId,generation:options.generation,scopeKind:'directory',scopePolicy:policy,capturePolicy:outputs?OUTPUT_SYNC_CAPTURE_POLICY:DIRECTORY_SYNC_CAPTURE_POLICY,...(metadataOnly?{metadataOnly:true,newlyIncluded:paths.filter(path=>excludedSourcePath(path,{...policy,contentMode:'source-only'})||!(policy.sharedDocs&&path.startsWith('.workbench/docs/'))&&isIgnored(path))}:{}),baseCommit:null,entries,digest,excluded};
+  return {repositoryId:options.repositoryId,generation:options.generation,scopeKind:'directory',scopePolicy:policy,...(options.detection==='metadata'?{detection:'metadata',metadataOnly:true,rootIdentity:`${rootInfo.dev}:${rootInfo.ino}`}:{}),capturePolicy:outputs?OUTPUT_SYNC_CAPTURE_POLICY:DIRECTORY_SYNC_CAPTURE_POLICY,...(metadataOnly?{metadataOnly:true,newlyIncluded:paths.filter(path=>excludedSourcePath(path,{...policy,contentMode:'source-only'})||!(policy.sharedDocs&&path.startsWith('.workbench/docs/'))&&isIgnored(path))}:{}),baseCommit:null,entries,digest,excluded};
 }
