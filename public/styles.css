@@ -2775,8 +2775,8 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .project-sidebar .navigation-mode { align-self: flex-end; }
 .project-sidebar .navigation-mode button { padding-bottom: 10px; }
 
-/* Selected group chats and native sessions keep the ordinary row surface, hairline border and shadow: no tinted fill,
-   ring, glow or left rail. The accent title and project icon mark the selection; hover and focus-visible are unchanged. */
+/* Selected group chats and native sessions keep the ordinary white surface; the shared selection marker below
+   adds emphasis without shifting their text or changing the running indicator. */
 #project-list .project-item.active, #native-session-list .project-item.active,
 #project-list .project-item.active.is-running, #native-session-list .project-item.active.is-running {
   border-color: var(--card-hairline); background: var(--card-surface); box-shadow: var(--card-shadow);
@@ -3433,6 +3433,21 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 /* ---- Left lists: running state is a small spinner under the device (second line, right column) ---- */
 #project-list .project-item, #native-session-list .project-item { padding-right: 12px; }
 #project-list .project-item.is-running::before, #native-session-list .project-item.is-running::before { content: none; animation: none; }
+/* 左侧色标独立于运行状态；绝对定位不改变卡片和文字的尺寸。 */
+#project-list .project-item.active::after, #native-session-list .project-item.active::after,
+#project-list .project-item.active.is-running::after, #native-session-list .project-item.active.is-running::after {
+  content: ''; display: block; position: absolute; left: 6px; right: auto; top: 14px; bottom: 14px;
+  width: 3px; height: auto; border-radius: 3px; background: var(--accent);
+  box-shadow: none; opacity: 1; transform: none; animation: none; pointer-events: none;
+}
+@media (min-width: 1001px) {
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active::before,
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item.active::before { content: none; }
+  body[data-project-sidebar="collapsed"] #project-list .project-item.active::after,
+  body[data-project-sidebar="collapsed"] #native-session-list .project-item.active::after {
+    display: block; left: 1px; top: 12px; bottom: auto; width: 2px; height: 16px;
+  }
+}
 .project-item-copy.has-status { display: grid; grid-template-columns: minmax(0, 1fr) 18px; grid-template-rows: auto auto; column-gap: 8px; row-gap: 2px; align-items: center; }
 .project-item-copy.has-status > strong { grid-column: 1; grid-row: 1; min-width: 0; }
 .project-item-copy.has-status > .list-device-slot { grid-column: 2; grid-row: 1; justify-self: center; position: relative; width: 18px; height: 18px; overflow: visible; }
