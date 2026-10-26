@@ -18,7 +18,7 @@ import { steeringWaitReason } from './role-steering.mjs';
 import { ConversationContext } from './conversation-context.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followup.mjs';
-import {collaborationQueueView,discussionCollaborationTask,legacyContinuationFeedback} from './coordination-wait.mjs';
+import {legacyContinuationFeedback,waitQueueKey} from './coordination-wait.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -26,17 +26,11 @@ const now = () => new Date().toISOString();
  *  An explicit business report is substantive output, even when the same turn also registered a wait. */
 export function handoffOnly(run,report=run?.report){return run?.status==='succeeded'&&Boolean(run.handoffWait?.requestId)&&!['passed','failed','blocked','needs_input'].includes(report?.verdict);}
 
-/** Give a result continuation priority once at a turn boundary; after that, ordinary messages go first in their original FIFO order. */
 /** Arrival time, or the slot the user dragged the queued item into; priority ranks still come first. */
 export const queueKey=t=>Number.isFinite(t.queueOrder)?t.queueOrder:(Date.parse(t.createdAt)||0);
-/** Queue label for a task held behind a collaboration wait. */
-export function collabWaitReason(check,role) {
-  if(check.yieldActive)return tr('collabWait.yieldRunning',{role});
-  if(check.stalled)return tr('collabWait.stalled',{role});
-  return tr('collabWait.queued',{role,minutes:Math.max(1,check.minutesLeft||0)});
-}
-export function orderRoleQueue(tasks,priorityUsed,discussionUsed=()=>false,humanFirst=()=>false) {
-  const rank=t=>t.steering||t.collaborationYield ? -1 : (t.discussionDeliveryId||t.discussionIntentId) ? (discussionUsed(t.roleSnapshot?.nodeId)?1:0) : t.continuationRunId && !priorityUsed(t.roleId) ? 0 : t.scheduledJobId||t.proactiveInitial ? 2 : humanFirst(t) ? 0.5 : 1;
+/** Steering first, then queue order; a wake holds the slot of the wait it ends, so dragging the wait moves the wake too. */
+export function orderRoleQueue(tasks,discussionUsed=()=>false) {
+  const rank=t=>t.steering ? -1 : (t.discussionDeliveryId||t.discussionIntentId) ? (discussionUsed(t.roleSnapshot?.nodeId)?1:0) : t.scheduledJobId||t.proactiveInitial ? 2 : 1;
   return [...tasks].sort((a,b)=>rank(a)-rank(b)||queueKey(a)-queueKey(b));
 }
 /** Reordering permutes the queued items' existing keys, so other projects' items keep their relative positions. */
@@ -409,13 +403,35 @@ export class Rooms {
   }
 
   /** Only items still waiting in this chat's queue can be reordered; running or finished work keeps its history. */
+  /** Queued messages and open waits ("wait:<request>") share one order; a wait's slot is where its wake will run. */
   reorderQueue(projectId, input) {
-    const taskIds=Array.isArray(input?.taskIds)?input.taskIds.filter(id=>typeof id==='string'):[];
+    let taskIds=Array.isArray(input?.taskIds)?input.taskIds.filter(id=>typeof id==='string'):[];
     if(!taskIds.length||taskIds.length>500)throw new Error(tr('rooms.queueOrderMismatch'));
     return this.db.transaction(()=>{
-      const tasks=taskIds.map(id=>this.db.get('tasks',id));
-      if(tasks.some(t=>!t||t.projectId!==projectId||t.origin!=='chat'||t.status!=='ready'||t.currentRunId))throw new Error(tr('rooms.queueOrderMismatch'));
-      for(const [id,queueOrder] of reorderedQueueKeys(tasks,taskIds))this.db.put('tasks',{...this.db.get('tasks',id),queueOrder});
+      const task=id=>{const value=this.db.get('tasks',id);return value&&{...value};};
+      const items=taskIds.map(id=>{
+        if(!id.startsWith('wait:'))return task(id);
+        const request=this.db.get('coordinationRequests',id.slice(5));
+        if(request?.status==='waiting_call'&&!request.continuationRequestId&&!request.steeringTaskId)
+          return {...request,id,isWait:true,queueOrder:waitQueueKey(request),requestId:request.id};
+        // A wait that woke between render and drop has handed its slot to its wake: move the wake instead, if it has not
+        // started; one that ended any other way is dropped from the order.
+        const wake=request?.continuationRequestId?this.db.get('coordinationRequests',request.continuationRequestId):null;
+        const next=wake?.taskId?task(wake.taskId):null;
+        return next?.status==='ready'&&!next.currentRunId?next:request?{dropped:true,projectId:request.projectId}:null;
+      }).filter(item=>!(item?.dropped&&item.projectId===projectId));
+      if(!items.length)return {taskIds:[]};
+      if(items.some(t=>!t))throw new Error(tr('rooms.queueOrderMismatch'));
+      const conversation=conversationIdOf(items[0]);
+      if(new Set(items.map(i=>i.id)).size!==items.length||items.some(t=>t.projectId!==projectId||conversationIdOf(t)!==conversation
+        ||(!t.isWait&&(t.origin!=='chat'||t.status!=='ready'||t.currentRunId))))throw new Error(tr('rooms.queueOrderMismatch'));
+      taskIds=items.map(item=>item.id);
+      const byId=new Map(items.map(item=>[item.id,item]));
+      for(const [id,queueOrder] of reorderedQueueKeys(items,taskIds)) {
+        const item=byId.get(id);
+        if(item.isWait)this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',item.requestId),queueOrder});
+        else this.db.put('tasks',{...this.db.get('tasks',id),queueOrder});
+      }
       return {taskIds};
     });
   }
@@ -445,7 +461,7 @@ export class Rooms {
       const belongs=value=>value?.projectId===projectId&&conversationIdOf(value)===conversationId;
       if(!belongs(selected)||!belongs(message)||message.sender!=='human'||!message.taskIds?.includes(taskId))throw new Error(tr('rooms.queueEditUnavailable'));
       const tasks=message.taskIds.map(id=>this.db.get('tasks',id));
-      const editable=task=>belongs(task)&&task.origin==='chat'&&task.sourceMessageId===message.id&&!task.currentRunId&&!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination&&!task.steering&&!task.collaborationYield;
+      const editable=task=>belongs(task)&&task.origin==='chat'&&task.sourceMessageId===message.id&&!task.currentRunId&&!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination&&!task.steering;
       const replay=tasks.every(task=>editable(task)&&task.status==='cancelled'&&task.queueEditId===commandId);
       if(!replay&&tasks.some(task=>!editable(task)||task.status!=='ready'))throw new Error(tr('rooms.queueEditUnavailable'));
       if(!replay){for(const task of tasks)this.db.put('tasks',{...this.cancel(task.id),queueEditId:commandId});this.touch(projectId,conversationId);}
@@ -468,22 +484,17 @@ export class Rooms {
     // A paused queue that has emptied (sent, recalled or cancelled) un-pauses itself.
     const paused=new Set();
     for(const pause of this.db.list('chatQueuePauses')){if(candidates.some(t=>!t.currentRunId&&t.projectId===pause.projectId&&conversationIdOf(t)===pause.conversationId))paused.add(pause.conversationId);else{this.db.remove('chatQueuePauses',pause.id);changed=true;}}
-    const collaboration=collaborationQueueView(this.db);
-    // After a stalled collaboration is released, the human's own queued messages go ahead of other ordinary work.
-    for (let task of orderRoleQueue(candidates,id=>this.db.get('roleQueueTurns',id)?.priorityUsed,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed)) {
+    for (let task of orderRoleQueue(candidates,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed)) {
       if(!task.discussionDeliveryId&&!task.discussionIntentId&&followupFor(this.db,task)){task=new ProactiveFollowup(this.db).prepareStart(task.id);if(!task){changed=true;continue;}}
       const discussion=Boolean(task.discussionDeliveryId||task.discussionIntentId);
       const kind=task.discussionDeliveryId?'discussionDeliveries':'discussionIntents',recordId=task.discussionDeliveryId||task.discussionIntentId;
       const role = effectiveExecutionRole(this.db,task), worker = this.db.get('workers', role.nodeId);
-      const collaborationTask=discussion?discussionCollaborationTask(this.db,this.db.get('tasks',task.businessTaskId),role.id):{...task,roleId:role.id};
-      const collaborationCheck=collaboration.forTask(collaborationTask);
       const active = this.db.activeRuns();
       const reason = this.db.get('settings', 'main')?.paused ? tr('rooms.remoteExecutionPaused')
         : !discussion&&!task.steering&&paused.has(conversationIdOf(task)) ? tr('rooms.queuePaused')
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)
-        : !task.steering&&!collaborationCheck.allowed ? collabWaitReason(collaborationCheck,role.name)
         : !task.contextPrepared ? tr('rooms.organizingConversation')
         : (task.sourceConflictId||task.sourceConflictPeerId||task.sourceConflictAssignmentRequestId)&&worker?.capabilities?.sourceSyncTools!==1 ? tr('sourceSync.failure',{code:'worker_unsupported',detail:''})
         : sourceInputWaitReason(this.db,task,role.nodeId) ? tr('sourceSync.failure',{code:sourceInputWaitReason(this.db,task,role.nodeId),detail:''})
@@ -524,7 +535,6 @@ export class Rooms {
         if(task.discussionDeliveryId){const delivery=this.db.get('discussionDeliveries',task.discussionDeliveryId);this.db.startDiscussionRun({deliveryId:delivery.id,commandId:`discussion:${delivery.id}:${delivery.recoveryCount}`,nodeId:role.nodeId},{online:isReady});}
         else if(task.discussionIntentId)this.db.resumeDiscussionTask({intentId:task.discussionIntentId,commandId:`resume:${task.discussionIntentId}`,nodeId:role.nodeId},{online:isReady});
         else if(!this.db.startTask(task.id, { commandId: `chat-${task.id}`, nodeId: role.nodeId })){changed=true;continue;}
-        this.db.put('roleQueueTurns',{id:role.id,priorityUsed:Boolean(task.continuationRunId)});
         this.db.put('discussionQueueTurns',{id:role.nodeId,priorityUsed:discussion});
         nodes.add(role.nodeId); changed = true;
       } catch (error) {

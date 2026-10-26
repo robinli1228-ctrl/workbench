@@ -2,7 +2,6 @@ import {terminal} from './store.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import { tr } from './i18n.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
-import {collaborationQueueView} from './coordination-wait.mjs';
 
 /** A steer is a persisted stop barrier; the same native session cannot be resumed until the stop is confirmed. */
 export function steeringWaitReason(db,task) {
@@ -19,52 +18,8 @@ export function steeringWaitReason(db,task) {
 export class RoleSteering {
   constructor(db,calls) {this.db=db;this.calls=calls;}
 
-  /** Shared admission checks: only a saved, unstarted human message in this chat can be moved. */
-  humanQueuedTask(projectId,taskId,conversationId) {
-    const task=this.db.get('tasks',taskId);
-    if(!task||task.projectId!==projectId)throw new Error(tr('roleSteering.messageDoesNotBelongCurrent'));
-    assertConversationRecord({projectId,conversationId},task);
-    const message=this.db.get('roomMessages',task.sourceMessageId);
-    if(task.origin!=='chat'||task.status!=='ready'||task.currentRunId||message?.sender!=='human'||!message.taskIds?.includes(task.id)||task.scheduledJobId||task.planId||task.continuationRunId)throw new Error(tr('roleSteering.onlyHumanMessagesHaveNot'));
-    return task;
-  }
-
-  /** "Handle this first": the waiting collaboration keeps its requests, replies, plan and native history; nothing is stopped. */
-  yieldWaiting(projectId,taskId,commandId,input={}) {
-    const conversationId=resolveConversationId(this.db,projectId,input.conversationId);
-    if(typeof commandId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(commandId))throw new Error(tr('roleSteering.invalidSteeringId'));
-    return this.db.transaction(()=>{
-      const prior=this.db.get('tasks',taskId);
-      if(prior?.collaborationYield) {
-        if(prior.collaborationYield.commandId!==commandId)throw new Error(tr('collabWait.yieldPending'));
-        return prior.collaborationYield;
-      }
-      const view=collaborationQueueView(this.db);
-      const queued=this.db.get('tasks',taskId);
-      if(!queued||queued.projectId!==projectId)throw new Error(tr('roleSteering.messageDoesNotBelongCurrent'));
-      assertConversationRecord({projectId,conversationId},queued);
-      // One override at a time: a yielded task that is still queued, running, or waiting on its own collaboration blocks another.
-      if(view.activeYield(queued))throw new Error(tr('collabWait.yieldPending'));
-      const check=view.forTask(queued);
-      if(check.allowed)throw new Error(tr('collabWait.notWaiting'));
-      // Human messages may go first at any time; other queued work only once the wait is marked stalled.
-      let task;
-      try{task=this.humanQueuedTask(projectId,taskId,conversationId);}
-      catch(error){
-        if(!check.stalled)throw new Error(tr('collabWait.stalledOnly'));
-        if(queued.origin!=='chat'||queued.status!=='ready'||queued.currentRunId)throw error;
-        task=queued;
-      }
-      if(task.steering)throw new Error(tr('roleSteering.messageHasAlreadyStartedImmediate'));
-      const collaborationYield={commandId,actor:'human',rootRequestId:check.state?.rootRequestId||null,createdAt:new Date().toISOString()};
-      this.db.put('tasks',{...task,collaborationYield,waitingReason:tr('collabWait.yielded')});
-      return collaborationYield;
-    });
-  }
-
   request(projectId,taskId,commandId,input={}) {
     const conversationId=resolveConversationId(this.db,projectId,input.conversationId);
-    if(input.mode==='yield_wait')return this.yieldWaiting(projectId,taskId,commandId,input);
     if(typeof commandId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(commandId))throw new Error(tr('roleSteering.invalidSteeringId'));
     return this.db.transaction(()=>{
       let task=this.db.get('tasks',taskId);
@@ -84,19 +39,17 @@ export class RoleSteering {
       if(input.roleSessionId&&active.some(r=>r.roleSessionId!==input.roleSessionId))throw new Error(tr('conversations.recordMismatch'));
       if(active.some(r=>r.nodeId!==task.roleSnapshot.nodeId||r.roleSnapshot?.runtime!==task.roleSnapshot.runtime))throw new Error(tr('roleSteering.roleDeviceCliHasChanged'));
       if(task.requestId && this.db.get('coordinationRequests',task.requestId)?.status!=='queued')throw new Error(tr('roleSteering.messageStateHasChangedRefresh'));
-      // Replacing a waiting collaboration cancels it; an old client must not do that without saying so.
-      // Only an explicit human steering click opts into replacing the protected wait; ordinary sends never do.
-      if(!collaborationQueueView(this.db).forTask(task).allowed&&!(input.mode==='replace'&&input.confirmReplaceWait===true))throw new Error(tr('collabWait.steerDuringWait'));
       const stopped=new Set(active.map(r=>r.id)), blocked=new Set(), planIds=new Set();
       const discussions=new RoleDiscussions(this.db);
       const pendingDiscussionTasks=new Set(this.db.list('discussionIntents').filter(i=>i.projectId===projectId&&['queued','blocked'].includes(i.status)).map(i=>i.taskId));
       for(const prior of this.db.list('tasks').filter(t=>t.projectId===projectId&&conversationIdOf(t)===conversationId&&t.roleId===task.roleId&&t.id!==taskId&&(t.discussionWait||pendingDiscussionTasks.has(t.id)))) {
         for(const id of discussions.invalidateTask(prior.id,{reason:tr('roleSteering.userChangedDirection'),directionRevision:(prior.directionRevision||1)+1}).stopRunIds)stopped.add(id);
       }
-      // A role waiting for child results also needs its old continuation revoked, not just the current process stopped.
+      // Steering interrupts only the turn that is running. An open wait is left alone: it stays in the queue and its wake
+      // runs in its own slot afterwards.
       for(const run of active) this.calls.forRun(run);
       const requests=this.db.list('coordinationRequests').filter(r=>r.projectId===projectId&&conversationIdOf(r)===conversationId&&r.targetRoleId===task.roleId&&r.taskId!==taskId&&
-        (active.some(run=>run.id===r.currentRunId)||r.status==='waiting_call'));
+        active.some(run=>run.id===r.currentRunId));
       for(const request of requests) {
         for(const id of this.calls.cancel(request.id,{preserveRunningChildren:true}))stopped.add(id);
         let current=request;
@@ -118,7 +71,7 @@ export class RoleSteering {
       for(const id of stopped)this.db.requestStop(id,`steer:${taskId}:${id}`);
       const steering={commandId,waitForRunIds:[...stopped],planIds:[...planIds],createdAt:new Date().toISOString()};
       task=this.db.get('tasks',taskId);
-      this.db.put('tasks',{...task,steering,collaborationYield:null,contextPrepared:true,contextState:'excerpt',waitingReason:stopped.size?tr('roleSteering.interruptingWaitingForOldRun2'):tr('roleSteering.continueWithNewInstructionFirst')});
+      this.db.put('tasks',{...task,steering,contextPrepared:true,contextState:'excerpt',waitingReason:stopped.size?tr('roleSteering.interruptingWaitingForOldRun2'):tr('roleSteering.continueWithNewInstructionFirst')});
       return steering;
     });
   }

@@ -1414,7 +1414,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
     d.pending={clientTurnId:sameSend(d.rejected?.payload,payload)?d.rejected.clientTurnId:crypto.randomUUID(),...payload};}
    delete d.rejected;d.sendState='sending';const sent=d.pending;save();op.sending=true;render();
-   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});if(!d.pending?.control)sideAsk.mainPrompted(value);drafts[draftId(id)]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
+   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});drafts[draftId(id)]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
    catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;}op.message=t(error.message);}
    finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[draftId(id)]?.pending&&drafts[draftId(id)].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}
@@ -1506,7 +1506,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  }
  /** Segmented buttons share one mode transition; selecting the active side does not reload history. */
  const switches=[...mode.querySelectorAll('button[data-mode]')];
- function selectMode(value){if(!['groups','sessions'].includes(value)||value===modeValue)return;modeValue=value;try{sessionStorage.setItem(MODE_KEY,value);}catch{}for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===value));document.body.dataset.navigationMode=value;if(active())populate();else{version++;detailVersion++;loading=pendingRefresh=false;takeover.detach();dialog.close();}onModeChange();if(active())void load();}
+ // 离开会话会卸载输入区；同时使渲染标记失效，返回时即使历史未变也要重新挂载。
+ function selectMode(value){if(!['groups','sessions'].includes(value)||value===modeValue)return;modeValue=value;try{sessionStorage.setItem(MODE_KEY,value);}catch{}for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===value));document.body.dataset.navigationMode=value;if(active())populate();else{version++;detailVersion++;loading=pendingRefresh=false;takeover.detach();detailSignature=detailMeta='';dialog.close();}onModeChange();if(active())void load();}
  for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===modeValue));document.body.dataset.navigationMode=modeValue;
  for(const control of switches)control.addEventListener('click',()=>selectMode(control.dataset.mode));
  mode.addEventListener('keydown',event=>{const index=event.key==='ArrowLeft'||event.key==='Home'?0:event.key==='ArrowRight'||event.key==='End'?1:null;if(index===null)return;event.preventDefault();switches[index].focus();selectMode(switches[index].dataset.mode);});

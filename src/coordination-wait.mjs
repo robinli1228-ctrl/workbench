@@ -51,19 +51,27 @@ export function currentContinuation(db,requestId) {
 }
 
 /** The dependency identities are original calls, not replacement teammate tasks created by a timeout. */
-export function waitDependencies(db,request) {
+/**
+ * The calls a wait depends on. With uncarried, a call that settled while its owner was busy with an earlier result is
+ * included until a wake has carried it; only an explicit wb wait for that call uses this, so it never reappears by itself.
+ */
+export function waitDependencies(db,request,{uncarried=false}={}) {
   if(!request)return [];
   const selected=request.status==='waiting_call'&&Array.isArray(request.waitRequestIds),ids=new Set(request.waitRequestIds||[]);
   if(!selected) {
-    const owners=new Set([request.id]);let ancestor=request;
+    const owners=new Set([request.id]),reported=new Set(),legacy=new Set();let ancestor=request;
     while(ancestor.continuationOf) {
       const previous=db.get('coordinationRequests',ancestor.continuationOf);
       assertConversationRecord(request,previous);
       if(!previous||previous.projectId!==request.projectId||previous.targetRoleId!==request.targetRoleId||owners.has(previous.id))throw new Error('Invalid dependency ownership chain.');
       owners.add(previous.id);ancestor=previous;
+      // What an earlier wake already carried; a wait recorded before wake events counts as having carried all its calls.
+      const carried=previous.waitEvent?.requestIds||previous.waitRequestIds;
+      if(Array.isArray(carried))carried.forEach(id=>reported.add(id));else legacy.add(previous.id);
     }
     for(const child of db.list('coordinationRequests').filter(r=>owners.has(r.parentRequestId)&&!r.continuationOf))
-      if(child.parentRequestId===request.id||!['succeeded','failed','cancelled'].includes(currentContinuation(db,child.id)?.status))ids.add(child.id);
+      if(child.parentRequestId===request.id||!['succeeded','failed','cancelled'].includes(currentContinuation(db,child.id)?.status)
+        ||uncarried&&!reported.has(child.id)&&!legacy.has(child.parentRequestId))ids.add(child.id);
   }
   return [...ids].map(id=>{
     const child=db.get('coordinationRequests',id);
@@ -81,82 +89,38 @@ export function dependencySnapshot(db,requestId) {
     summary:String(r.reportSummary||r.result||r.error||'').slice(0,1500),readCommand:`wb history read ${r.id}`})):[];
 }
 
-export const COLLAB_RELEASE_DEFAULT_MINUTES=40;
 const settledStatuses=new Set(['succeeded','failed','cancelled']);
-const stamp=value=>Date.parse(value||'')||0;
 /** The first request of an owner's continuation chain identifies one collaboration, however many times it resumed. */
 export function collaborationRoot(db,request) {
   let current=request;const seen=new Set();
   while(current?.continuationOf&&!seen.has(current.id)){seen.add(current.id);const previous=db.get('coordinationRequests',current.continuationOf);if(!previous)break;current=previous;}
   return current||null;
 }
-export function releaseMinutes(project) {
-  const value=project?.collaborationWaitReleaseMinutes;
-  return Number.isSafeInteger(value)&&value>=5&&value<=1440?value:COLLAB_RELEASE_DEFAULT_MINUTES;
+/** Where an open wait sits in its chat's queue: the slot it was given (or dragged to), else the time the wait began. */
+export const waitQueueKey=request=>Number.isFinite(request.queueOrder)?request.queueOrder:(Date.parse(request.waitStartedAt||request.updatedAt||request.createdAt)||0);
+
+/** Waits recorded before queue slots existed get the slot they began in, once, before a wake could move their updatedAt. */
+export function stampWaitSlots(db) {
+  let stamped=0;
+  for(const r of db.schedulableRequests())if(r.status==='waiting_call'&&!Number.isFinite(r.queueOrder)){
+    db.put('coordinationRequests',{...r,queueOrder:Date.parse(r.waitStartedAt||r.updatedAt||r.createdAt)||Date.now()});stamped++;
+  }
+  return stamped;
 }
 
-/** Replies retain their task owner; a child's clarification uses its real caller chain, never the asking role's yield grant. */
-export function discussionCollaborationTask(db,task,roleId) {
-  if(task.roleId===roleId)return task;
-  let request=db.get('coordinationRequests',task.requestId||'');const seen=new Set();
-  while(request&&!seen.has(request.id)) {
-    seen.add(request.id);assertConversationRecord(task,request);
-    if(request.targetRoleId===roleId)return {...task,roleId,requestId:request.id,collaborationYield:null};
-    request=db.get('coordinationRequests',request.continuationOf||request.parentRequestId||'');
-  }
-  return {...task,roleId,requestId:null,collaborationYield:null};
-}
-
-/** Read-only view of roles whose own collaboration is unfinished: a formal call wait, its pending continuation, or a formal
- *  discussion wait. Unrelated same-role tasks in the same chat stay queued. Nothing is released automatically: after the
- *  project's no-progress window the chain is marked stalled and any queued task may then be let through by a human.
- *  A human "handle this first" runs that task's whole chain before the waiting owner resumes, one at a time. */
-export function collaborationQueueView(db,time=Date.now()) {
-  const heads=[...db.schedulableRequests(),...db.pendingCallResults().filter(r=>r.status==='running')];
-  const states=[],seen=new Set();
-  const push=(base,progressAt,waiting)=>{
-    const minutes=releaseMinutes(db.get('projects',base.projectId)),releaseAt=progressAt+minutes*60000;
-    const rootTask=db.get('tasks',base.rootTaskId||'');
-    states.push({...base,progressAt:new Date(progressAt).toISOString(),releaseAt:new Date(releaseAt).toISOString(),
-      stalled:waiting&&time>=releaseAt,released:false,releaseMinutes:minutes,yielded:Boolean(rootTask?.collaborationYield)});
-  };
-  for(const head of heads) {
-    if(seen.has(head.id)||head.steeringTaskId||!head.targetRoleId)continue;seen.add(head.id);
-    const waiting=head.status==='waiting_call'&&!head.continuationRequestId;
-    if(!waiting&&!(head.kind==='continuation'&&head.continuationOf&&!settledStatuses.has(head.status)))continue;
-    if(db.get('tasks',head.taskId||'')?.status==='cancelled')continue;
-    const root=collaborationRoot(db,head);
-    let dependencies=[];try{dependencies=waiting?waitDependencies(db,head):[];}catch{dependencies=[];}
-    const progressAt=Math.max(stamp(head.updatedAt),stamp(head.createdAt),stamp(head.waitEvent?.observedAt),...dependencies.map(d=>Math.max(stamp(d.updatedAt),stamp(d.createdAt))));
-    push({projectId:head.projectId,conversationId:conversationIdOf(head),roleId:head.targetRoleId,rootRequestId:root?.id||head.id,rootTaskId:root?.taskId||null,
-      currentRequestId:head.id,taskId:head.taskId||null,phase:waiting?(head.resumeError?.kind==='transient'?'resume_retrying':'waiting_reply'):head.currentRunId?'processing_reply':'resume_queued',
-      waitingRequestIds:dependencies.filter(d=>!settledStatuses.has(d.status)).map(d=>d.id)},progressAt,waiting);
-  }
-  // Formal discussion waits protect the asking role just like call waits; its resume arrives as a discussion turn.
-  for(const task of db.tasksWaitingForDiscussion()) {
-    const request=task.requestId?db.get('coordinationRequests',task.requestId):null,root=request?collaborationRoot(db,request):null;
-    if(root&&states.some(s=>s.rootRequestId===root.id))continue;
-    push({projectId:task.projectId,conversationId:conversationIdOf(task),roleId:task.roleId,rootRequestId:root?.id||`task:${task.id}`,rootTaskId:root?.taskId||task.id,
-      currentRequestId:request?.id||null,taskId:task.id,phase:'waiting_discussion',waitingRequestIds:[]},
-      Math.max(stamp(task.updatedAt),stamp(task.createdAt),stamp(task.discussionWait?.since)),true);
-  }
-  const queuedYields=db.chatTasks(['ready','in_progress']).filter(t=>t.collaborationYield);
-  const sameScope=(a,b)=>a.projectId===b.projectId&&conversationIdOf(a)===conversationIdOf(b)&&a.roleId===b.roleId;
-  const scope=task=>states.filter(s=>sameScope(s,task));
-  const rootOf=task=>{const request=task.requestId?db.get('coordinationRequests',task.requestId):null;return request?collaborationRoot(db,request)?.id:`task:${task.id}`;};
-  /** A yield stays active until its task and any collaboration it started have settled. */
-  const activeYield=task=>queuedYields.find(t=>sameScope(t,task))||scope(task).find(s=>s.yielded)||null;
-  return {states,activeYield,
-    forTask(task) {
-      const own=scope(task),yieldTask=queuedYields.find(t=>sameScope(t,task)),yieldChain=own.find(s=>s.yielded);
-      if(task.collaborationYield)return {allowed:true,yielded:true};
-      const root=rootOf(task);
-      if(yieldChain&&yieldChain.rootRequestId===root)return {allowed:true,own:true};
-      // While a human-chosen task (or the chain it started) is running, even the waiting owner's continuation waits.
-      if(yieldTask||yieldChain)return {allowed:false,yieldActive:true,state:yieldChain||own[0]||null,minutesLeft:null};
-      if(!own.length)return {allowed:true};
-      if(own.some(s=>s.rootRequestId===root))return {allowed:true,own:true};
-      const next=own.reduce((a,b)=>stamp(a.releaseAt)<=stamp(b.releaseAt)?a:b);
-      return {allowed:false,state:next,stalled:own.some(s=>s.stalled),minutesLeft:Math.max(0,Math.ceil((stamp(next.releaseAt)-time)/60000))};
-    }};
+/**
+ * Open waits, shown in their chat's queue so the user can see and reorder them. A wait never holds back the items behind
+ * it; when its results arrive, the wake takes the wait's slot (see RoleCalls.reconcile) and runs in that order.
+ */
+export function queuedWaits(db) {
+  // A wait whose own caller was cancelled or redirected closes without a wake (RoleCalls.resume), so it is not listed.
+  const closing=r=>{const source=r.parentRequestId?db.get('coordinationRequests',r.parentRequestId):null;return Boolean(source&&(source.status==='cancelled'||source.steeringTaskId));};
+  return db.schedulableRequests().filter(r=>r.status==='waiting_call'&&!r.continuationRequestId&&!r.steeringTaskId&&r.targetRoleId
+    &&db.get('tasks',r.taskId||'')?.status!=='cancelled'&&!closing(r)).map(r=>{
+    let dependencies=[];try{dependencies=waitDependencies(db,r);}catch{dependencies=[];}
+    const open=dependencies.filter(d=>!settledStatuses.has(d.status));
+    return {id:`wait:${r.id}`,requestId:r.id,projectId:r.projectId,conversationId:conversationIdOf(r),roleId:r.targetRoleId,roleName:db.get('roles',r.targetRoleId)?.name||r.targetSnapshot?.name||null,queueOrder:waitQueueKey(r),
+      since:r.waitStartedAt||r.updatedAt||null,deadlineAt:r.waitDeadlineAt||null,total:dependencies.length,
+      waitingFor:open.map(d=>({requestId:d.id,roleId:d.targetRoleId,roleName:d.targetSnapshot?.name||db.get('roles',d.targetRoleId||'')?.name||null}))};
+  });
 }

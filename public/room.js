@@ -180,7 +180,7 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
 }
 
 /** Show existing dispatches without creating a separate queue; request retries reuse the ID to avoid repeated interruptions. */
-function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued}) {
+function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued,getConversationId}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
   // The displayed queue owns these tasks until its next render, including while a drag is active.
   let displayedTaskIds=new Set();
@@ -212,17 +212,19 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     // to wait. It shows as the role's starting card instead of in the queue (for at most 30s, so a stuck one comes back here).
     const busyRoles=new Set((data.runs||[]).filter(r=>r.projectId===projectId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)).map(r=>r.roleId));
     const firstForRole=new Map();for(const task of [...tasks].sort((a,b)=>queueKey(a)-queueKey(b)))if(!firstForRole.has(task.roleId))firstForRole.set(task.roleId,task.id);
-    const starting=task=>!task.steering&&!task.waitingReason&&!task.collaborationYield&&!data.settings?.paused&&!data.chatQueuePaused&&!busyRoles.has(task.roleId)
+    const starting=task=>!task.steering&&!task.waitingReason&&!data.settings?.paused&&!data.chatQueuePaused&&!busyRoles.has(task.roleId)
       &&firstForRole.get(task.roleId)===task.id&&Date.now()-Date.parse(task.createdAt)<30000;
     tasks=tasks.filter(task=>!starting(task));
+    const conversation=getConversationId()||projectId;
+    // Open waits of this chat sit in the queue at the slot their wake will run in; they hold nothing back and can be dragged.
+    const waits=(data.queuedWaits||[]).filter(w=>w.projectId===projectId&&w.conversationId===conversation);
+    const roleName=id=>(data.roles||[]).find(r=>r.id===id)?.name||t('Role');
+    const items=[...tasks.map(task=>({id:task.id,task,key:queueKey(task)})),...waits.map(wait=>({id:wait.id,wait,key:wait.queueOrder}))]
+      .sort((a,b)=>Number(Boolean(b.task?.steering))-Number(Boolean(a.task?.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||a.key-b.key);
     displayedTaskIds=new Set(tasks.map(task=>task.id));
-    list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&tasks.length>1);
-    const conversation=tasks[0]?.conversationId||projectId;
-    // Home's own projection decides who is protected; the browser only labels it and never guesses from an idle CLI.
-    const waits=(data.collaborationWaits||[]).filter(w=>w.projectId===projectId&&(!tasks.length||tasks.some(t=>(t.conversationId||t.projectId)===w.conversationId&&t.roleId===w.roleId)));
-    const protectedRole=task=>waits.find(w=>!w.released&&w.roleId===task.roleId&&w.conversationId===(task.conversationId||task.projectId));
-    panel.hidden=!tasks.length;list.replaceChildren();
-    const title=create('span','message-queue-title',t('Queue · {v}', { v: tasks.length }));
+    list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&items.length>1);
+    panel.hidden=!items.length;list.replaceChildren();
+    const title=create('span','message-queue-title',t('Queue · {v}', { v: items.length }));
     // Pause/resume at the right of the title, as on the Sessions queue: paused messages wait after the running replies end.
     const paused=Boolean(data.chatQueuePaused)&&tasks.length>0,head=[title];panel.classList.toggle('is-paused',paused);
     if(paused)head.push(create('span','message-queue-paused',t('Paused')));
@@ -236,36 +238,29 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       head.push(toggle);
     }
     summary.replaceChildren(...head);
-    for(const [i,task] of tasks.entries()) {
+    for(const [i,item] of items.entries()) {
+      if(item.wait) {
+        const wait=item.wait,row=create('div','message-queue-item is-wait'),info=create('div','message-queue-info');
+        if(data.capabilities?.queueOrder){row.dataset.orderId=wait.id;row.title=t('Long press to drag and reorder');}
+        const names=[...new Set(wait.waitingFor.map(w=>w.roleName||roleName(w.roleId)))].join(t(', '));
+        // Without a readable dependency list (or in the moment before the wake exists) say only that it waits.
+        const label=wait.waitingFor.length?t('Waiting for results from {names} ({open}/{total} still out); the reply runs here when they are back',{names,open:wait.waitingFor.length,total:wait.total})
+          :t('Waiting for results; the reply runs here when they are back');
+        const title=create('strong','',`${i+1}. @${wait.roleName||roleName(wait.roleId)} · ${label}`);title.title=label;
+        info.append(title);row.append(info);list.append(row);continue;
+      }
+      const task=item.task;
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
       if(data.capabilities?.queueOrder&&!task.steering&&!steeringPending.has(task.id)){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
       const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||t('Role')} · ${task.title||task.prompt}`);title.title=task.prompt||task.title;
       info.append(title);row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
       const human=!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination;
-      if(human&&!task.steering&&!task.collaborationYield){
+      if(human&&!task.steering){
         const edit=create('button','icon-button message-queue-edit');edit.type='button';edit.innerHTML=UI_ICON.edit;edit.title='Return queued message to input';edit.setAttribute('aria-label',t('Return queued message to input'));
         edit.disabled=pending.has(task.id);edit.onclick=async()=>{pending.add(task.id);edit.disabled=true;try{await editQueued(task);}finally{pending.delete(task.id);edit.disabled=false;}};row.append(edit);
       }
-      const guard=protectedRole(task),scopeOf=x=>(x.conversationId||x.projectId)===(task.conversationId||task.projectId)&&x.roleId===task.roleId;
-      const yieldBusy=tasks.some(x=>x.id!==task.id&&x.collaborationYield&&scopeOf(x))||waits.some(w=>w.yielded&&scopeOf(w));
-      if(!human&&guard?.stalled&&data.capabilities?.collaborationWait&&(guard||task.collaborationYield)) {
-        // Handle this first keeps the waiting collaboration; it never stops or cancels anything.
-        // Same icon style as steer and cancel on this row; the label lives in the tooltip and aria-label.
-        const first=create('button',`icon-button message-queue-first${task.collaborationYield?' is-active':''}`);first.type='button';first.innerHTML=UI_ICON.priority;
-        first.setAttribute('aria-label',task.collaborationYield?t('Handling first'):t('Handle this first'));
-        first.title=task.collaborationYield?t('Handling first'):t('Run this message before the waiting collaboration; the collaboration and its replies are kept and continue afterwards');
-        first.disabled=Boolean(task.collaborationYield)||yieldBusy||pending.has(task.id)||data.settings?.paused;
-        if(yieldBusy&&!task.collaborationYield)first.title=t('Another item for this role is being handled first; wait until it and its collaboration finish');
-        first.onclick=async()=>{
-          pending.add(task.id);first.disabled=true;
-          if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
-          try {await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'yield_wait',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});await refreshState({quiet:true});}
-          catch(error){setError(error.message);}
-          finally{pending.delete(task.id);}
-        };
-        row.append(first);
-      } else if(human) {
+      if(human) {
         const run=runs.get(task.currentRunId),stopped=(task.steering?.waitForRunIds||[]).map(id=>runs.get(id));
         const error=task.steering?(task.error||run?.error||stopped.find(r=>r?.status==='reconciling')?.error):steeringErrors.get(task.id);
         const busy=(Boolean(task.steering)||steeringPending.has(task.id))&&!error;
@@ -273,14 +268,14 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
         const steer=create('button',`icon-button message-queue-steer${busy?' is-active':''}${error?' is-error':''}`);steer.type='button';
         steer.setAttribute('aria-busy',String(busy));steer.setAttribute('aria-label',error?t('Steering needs attention'):t(busy?'Steering':'Steer now'));
         steer.innerHTML=busy?'<svg class="message-queue-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>':error?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></svg>':'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
-        steer.title=error?t('Steering needs attention: {reason}',{reason:error}):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):t('Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept');
+        steer.title=error?t('Steering needs attention: {reason}',{reason:error}):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):busyRoles.has(task.roleId)?t('Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept'):t('Run this message first; nothing is interrupted, and a pending wait keeps its place in the queue');
         steer.disabled=Boolean(task.steering)||pending.has(task.id)||data.settings?.paused||!(data.capabilities?.roleSteering>=2);
         if(!(data.capabilities?.roleSteering>=2))steer.title='Steer now becomes available after the service is upgraded';
         steer.onclick=async()=>{
           pending.add(task.id);steeringPending.add(task.id);steeringErrors.delete(task.id);setError('');view.update(lastData,currentProject);
           if(!commands.has(task.id))commands.set(task.id,crypto.randomUUID());
           try {
-            const receipt=await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'replace',confirmReplaceWait:true,commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});
+            const receipt=await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'replace',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});
             // A successful stop request stays busy even if the following workspace refresh fails.
             const current=lastData.tasks?.find(t=>t.id===task.id);if(current)current.steering=receipt;
             await refreshState({quiet:true});
@@ -306,7 +301,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
 export function createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice, openSideAsk }) {
   const historyViewer=createHistoryViewer({api});
   const cliRecoveryUI=createCliRecoveryUI({api,refreshState,getData:()=>data,create});
-  const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued});
+  const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued,getConversationId:()=>conversationId});
   const feed = document.querySelector('#chat-feed');
   // Configuration, plans and messages share one scroll area so status cards do not permanently crowd out the body.
   const scroller = document.querySelector('#chat-scroll');
@@ -1039,6 +1034,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         catch (e) { setError(e.message); b.disabled = false; }
       }));
     }
+    if(run&&['starting','running','waiting_user'].includes(run.status)&&['claude','codex'].includes(run.nativeSession?.runtime||run.runtime||role.runtime)&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk({id:`running:${run.id}`,sideRunId:run.id,projectId:task.projectId,conversationId:task.conversationId||task.projectId})));
     if (run) actions.push(iconAction('live', 'Log', () => openTask(task.id,run.id)));
     // Status and actions sit inside the card, the same footer as finished messages.
     // The footer names the stage: queued, the CLI getting ready (workspace, start, resume), then thinking, the step it is
