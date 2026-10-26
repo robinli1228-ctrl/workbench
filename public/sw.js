@@ -1,4 +1,4 @@
-const CACHE = 'workbench-metadata-baseline-s2-20261026';
+const CACHE = 'agent-workbench-static-v190-metadata-baseline-s2';
 const STATIC = [
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',

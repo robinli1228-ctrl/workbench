@@ -23,9 +23,21 @@ export class SourceSyncInitialization {
     const job={id,projectId,repositoryId:input.repositoryId,generation:c.generation,configRevision:c.revision,mode:input.mode,sourceNodeId:input.sourceNodeId||c.nodeIds[0],paths,cutoff:this.db.db.prepare("SELECT COALESCE(MAX(rowid),0) AS n FROM records WHERE kind='sourceSyncMetadataBaselines' AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.repositoryId')=? AND json_extract(data,'$.generation')=?").get(projectId,input.repositoryId,c.generation).n,fingerprint,status:'running',cursor:'',processed:0,attempt:0,createdAt:now()};
     this.db.put('sourceSyncInitializations',job);this.home.change();return job;
   });}
-  resume(projectId,id){const j=this.db.get('sourceSyncInitializations',id);if(j?.projectId!==projectId||j.status!=='paused')throw syncError('batch_changed');if(this.config(projectId,j.repositoryId).generation!==j.generation)throw syncError('configuration_changed');const b=this.db.get('sourceSyncBatches',j.batchId);if(b&&!b.metadataCleanedAt)throw syncError('sync_busy');return this.db.put('sourceSyncInitializations',{...j,status:'running',batchId:null,attempt:j.attempt+1,reason:null});}
+  resume(projectId,id,input={}){return this.db.transaction(()=>{
+    const j=this.db.get('sourceSyncInitializations',id);if(j?.projectId!==projectId)throw syncError('batch_changed');
+    const c=this.config(projectId,j.repositoryId);
+    if(input.confirmed!==true||input.revision!==c.revision||!/^[-\w]{1,100}$/.test(input.requestId||''))throw syncError('confirmation_required');
+    if(c.generation!==j.generation)throw syncError('configuration_changed');
+    const requestId=contentHash(JSON.stringify([projectId,id,input.requestId])),fingerprint=contentHash(JSON.stringify(input));
+    const prior=this.db.get('sourceSyncInitializationResumes',requestId);
+    if(prior){if(prior.fingerprint!==fingerprint)throw syncError('request_conflict');return j;}
+    if(j.status!=='paused')throw syncError('batch_changed');
+    const b=j.batchId?this.db.get('sourceSyncBatches',j.batchId):null;if(b&&!b.metadataCleanedAt)throw syncError('sync_busy');
+    this.db.put('sourceSyncInitializationResumes',{id:requestId,projectId,jobId:id,fingerprint,createdAt:now()});
+    const result=this.db.put('sourceSyncInitializations',{...j,status:'running',batchId:null,attempt:j.attempt+1,reason:null});this.home.change();return result;
+  });}
   tick(){
-    const jobs=this.db.db.prepare("SELECT data FROM records WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.status')='running' AND id>? ORDER BY id LIMIT 8").all(this.cursor||'').map(r=>JSON.parse(r.data));this.cursor=jobs.at(-1)?.id||'';
+    const jobs=this.db.db.prepare("SELECT data FROM records INDEXED BY records_metadata_init WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.status')='running' AND id>? ORDER BY id LIMIT 8").all(this.cursor||'').map(r=>JSON.parse(r.data));this.cursor=jobs.at(-1)?.id||'';
     for(let j of jobs){
       const c=this.sync.config(j.projectId);if(!c.enabled||c.generation!==j.generation){this.db.put('sourceSyncInitializations',{...j,status:'paused',reason:'configuration_changed'});continue;}
       if(j.batchId){const b=this.db.get('sourceSyncBatches',j.batchId);if(!terminal.has(b?.status))continue;

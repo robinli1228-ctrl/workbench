@@ -9,6 +9,7 @@ export default {
   "Establish sync baseline": "建立同步基线",
   "Baseline initialization": "基线初始化",
   "paths processed": "条路径已处理",
+  "Resume this initialization? Remaining paths may overwrite files using the original selection.": "继续此初始化？剩余路径可能按原选择覆盖文件。",
   "Resume initialization": "继续初始化",
   "Files may differ. Metadata alone does not prove equality. Nothing is written until you confirm an operation.": "文件可能不同。元数据不能证明内容一致；确认操作前不会写入。",
   "All currently pending paths in this scope": "此范围当前所有待建立基线的路径",

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {readFile,writeFile,stat} from 'node:fs/promises';
 import {join} from 'node:path';
 import {fixture} from './metadata-fixture.mjs';
+const resumeInput=f=>({confirmed:true,revision:f.home.sync.config('p').revision,requestId:'xxxxx-resume'});
+function expireCopies(f,id){const c=f.db.get('sourceSyncConflicts',id);f.db.put('sourceSyncConflicts',{...c,copiesNextCheckAt:'2000-01-01T00:00:00.000Z'});}
 const scope='project-files:p';
 const start=(f,mode='verify',extra={})=>f.home.baselines.start('p',{requestId:'xxxxx',repositoryId:scope,revision:f.home.sync.config('p').revision,confirmed:true,all:true,mode,...extra});
 async function drain(f){for(let n=0;n<20;n++){await f.home.tick();await f.pump();}}
@@ -28,7 +30,7 @@ test('S11 selected paths leave other pending paths untouched',async t=>{
  const f=await fixture(t,{initial:true});await f.write('a','left','other.txt');await f.write('b','right','other.txt');await f.sync();start(f,'overwrite',{sourceNodeId:'a',all:false,paths:['file.txt']});await drain(f);assert.equal(await readFile(join(f.dir,'b','other.txt'),'utf8'),'right');assert.equal(f.home.baselines.pending('p',scope).items.length,1);
 });
 test('S15 shared versions and unresolved conflicts protect content',async t=>{
- const f=await fixture(t,{initial:true});start(f);await drain(f);let c=f.db.list('sourceSyncConflicts')[0];const entry=c.sides[1].entry;f.db.put('sourceSyncVersions',{id:'xxxxx-version',projectId:'p',entries:{'saved.txt':entry}});const b=f.home.sync.resolve(c,{id:'human',entry:c.sides[0].entry,sourceNodeId:'a',sourceRoot:join(f.dir,'a')});await drain(f);assert.equal(f.db.get('sourceSyncBatches',b.id).status,'completed');assert.equal(await f.home.storage.has('p',entry),true);f.db.remove('sourceSyncVersions','xxxxx-version');await drain(f);assert.equal(await f.home.storage.has('p',entry),false);
+ const f=await fixture(t,{initial:true});start(f);await drain(f);let c=f.db.list('sourceSyncConflicts')[0];const entry=c.sides[1].entry;f.db.put('sourceSyncVersions',{id:'xxxxx-version',projectId:'p',entries:{'saved.txt':entry}});const b=f.home.sync.resolve(c,{id:'human',entry:c.sides[0].entry,sourceNodeId:'a',sourceRoot:join(f.dir,'a')});await drain(f);assert.equal(f.db.get('sourceSyncBatches',b.id).status,'completed');assert.equal(await f.home.storage.has('p',entry),true);f.db.remove('sourceSyncVersions','xxxxx-version');expireCopies(f,c.id);await drain(f);assert.equal(await f.home.storage.has('p',entry),false);
 });
 test('S11 initialization resumes persisted job without repeating an applied write',async t=>{
  const f=await fixture(t,{initial:true});f.busy.b=true;const j=start(f,'overwrite',{sourceNodeId:'a'});await drain(f);assert.notEqual(f.db.get('sourceSyncInitializations',j.id).status,'completed');f.busy.b=false;const C=f.home.baselines.constructor;f.home.baselines=new C(f.home);await drain(f);const before=await stat(join(f.dir,'b','file.txt'),{bigint:true});await drain(f);assert.equal((await stat(join(f.dir,'b','file.txt'),{bigint:true})).mtimeNs,before.mtimeNs);assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'completed');
@@ -37,7 +39,7 @@ test('S11 initialization resumes persisted job without repeating an applied writ
 test('S11 multiple bounded pages resume and leave new pending paths outside the confirmed selection',async t=>{
  const f=await fixture(t);for(let i=0;i<102;i++){const p=`xxxxx-${String(i).padStart(3,'0')}.txt`;await f.write('a','same',p);await f.write('b','same',p);}await f.sync();
  const page=f.home.baselines.pending('p',scope,{limit:50});assert.equal(page.items.length,50);assert.ok(page.next);assert.equal(f.home.baselines.pending('p',scope,{after:page.next,limit:50}).items.length,50);
- const j=start(f);await drain(f);const batches=f.db.listProject('sourceSyncBatches','p').filter(b=>b.kind==='initialize');assert.equal(batches.length,2);assert.ok(batches.every(b=>b.initialization.paths.length<=100));assert.equal(f.db.get('sourceSyncInitializations',j.id).processed,102);
+ const j=start(f);await f.write('a','later-a','xxxxx-later.txt');await f.write('b','later-b','xxxxx-later.txt');await f.sync();await drain(f);assert.ok(f.home.baselines.pending('p',scope).items.some(r=>r.path==='xxxxx-later.txt'));const batches=f.db.listProject('sourceSyncBatches','p').filter(b=>b.kind==='initialize');assert.equal(batches.length,2);assert.ok(batches.every(b=>b.initialization.paths.length<=100));assert.equal(f.db.get('sourceSyncInitializations',j.id).processed,102);
 });
 test('migration fences hash mode before enabling metadata and does not reuse unproven evidence',async t=>{
  const f=await fixture(t,{initial:true,detection:null});let c=f.home.sync.config('p');assert.notEqual(c.detection,'metadata');f.home.sync.configure('p',{revision:c.revision,enabled:false});
@@ -48,8 +50,8 @@ test('S15 another unresolved conflict and in-progress read retain shared copies'
  const f=await fixture(t,{initial:true});start(f);await drain(f);const c=f.db.list('sourceSyncConflicts')[0],side=c.sides[0],other={...c,id:'xxxxx-unresolved',path:'other.txt'};f.db.put('sourceSyncConflicts',other);
  f.home.sync.resolve(c,{id:'human',entry:side.entry,sourceNodeId:side.nodeId,sourceRoot:side.root});await drain(f);assert.ok(await f.home.storage.has('p',side.entry));
  f.db.remove('sourceSyncConflicts',other.id);f.db.put('sourceSyncBatches',{id:'xxxxx-active',projectId:'p',detection:'metadata',status:'reading'});f.db.put('sourceSyncCommands',{id:'xxxxx-read',projectId:'p',batchId:'xxxxx-active',detection:'metadata',status:'completed',result:{files:[{entry:side.entry}]}});
- await f.home.cleanupMetadataConflicts();await f.home.cleanupMetadataConflicts();assert.ok(await f.home.storage.has('p',side.entry));
- f.db.remove('sourceSyncCommands','xxxxx-read');f.db.remove('sourceSyncBatches','xxxxx-active');await drain(f);assert.equal(await f.home.storage.has('p',side.entry),false);
+ expireCopies(f,c.id);await f.home.cleanupMetadataConflicts();await f.home.cleanupMetadataConflicts();assert.ok(await f.home.storage.has('p',side.entry));
+ f.db.remove('sourceSyncCommands','xxxxx-read');f.db.remove('sourceSyncBatches','xxxxx-active');expireCopies(f,c.id);await drain(f);assert.equal(await f.home.storage.has('p',side.entry),false);
 });
 
 test('S11 browser routes enforce confirmation and return bounded metadata pages',async t=>{
@@ -61,21 +63,21 @@ test('S11 browser routes enforce confirmation and return bounded metadata pages'
 test('S11 explicit retry after cancellation resumes the pending initialization',async t=>{
  const f=await fixture(t,{initial:true});f.busy.b=true;const j=start(f,'overwrite',{sourceNodeId:'a'});await drain(f);const batch=f.db.get('sourceSyncBatches',f.db.get('sourceSyncInitializations',j.id).batchId);f.home.sync.cancel('p',batch.id,batch.revision);for(const c of f.db.listSourceSyncCommands({batchId:batch.id,pending:true}))f.clients[c.nodeId].cancel(c.id);f.busy.b=false;for(let i=0;i<100&&Object.values(f.clients).some(c=>c.inFlight.size);i++)await new Promise(r=>setTimeout(r,5));await drain(f);assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'paused');
  // A later explicit initialization is separate from replaying the cancelled operation.
- f.home.baselines.resume('p',j.id);await drain(f);assert.equal(await f.read('b'),'a');assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'completed');
+ f.home.baselines.resume('p',j.id,resumeInput(f));await drain(f);assert.equal(await f.read('b'),'a');assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'completed');
 });
 test('S11 cancelling after preservation resumes without losing protected initial versions',async t=>{
  const f=await fixture(t,{initial:true}),execute=f.clients.b.execute.bind(f.clients.b);let cancelled=false;
  f.clients.b.execute=async m=>{const c=f.db.get('sourceSyncCommands',m.commandId);if(!cancelled&&c.action==='apply'){cancelled=true;const b=f.db.get('sourceSyncBatches',c.batchId);f.home.sync.cancel('p',b.id,b.revision);f.clients.b.cancel(c.id);return;}return execute(m);};
- const j=start(f,'overwrite',{sourceNodeId:'a'});await drain(f);assert.equal(await f.read('b'),'b');assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'paused');f.home.baselines.resume('p',j.id);await drain(f);assert.equal(await f.read('b'),'a');assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'completed');
+ const j=start(f,'overwrite',{sourceNodeId:'a'});await drain(f);assert.equal(await f.read('b'),'b');assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'paused');f.home.baselines.resume('p',j.id,resumeInput(f));await drain(f);assert.equal(await f.read('b'),'a');assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'completed');
 });
 test('S11 uncertain recovery pauses initialization and rejects premature resume',async t=>{
- const f=await fixture(t,{initial:true});const j=start(f);f.home.baselines.tick();const job=f.db.get('sourceSyncInitializations',j.id),b=f.db.get('sourceSyncBatches',job.batchId);f.db.put('sourceSyncBatches',{...b,status:'blocked'});f.home.baselines.tick();f.home.baselines.tick();assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'paused');assert.throws(()=>f.home.baselines.resume('p',j.id),e=>e.code==='sync_busy');assert.equal(await f.read('b'),'b');
+ const f=await fixture(t,{initial:true});const j=start(f);f.home.baselines.tick();const job=f.db.get('sourceSyncInitializations',j.id),b=f.db.get('sourceSyncBatches',job.batchId);f.db.put('sourceSyncBatches',{...b,status:'blocked'});f.home.baselines.tick();f.home.baselines.tick();assert.equal(f.db.get('sourceSyncInitializations',j.id).status,'paused');assert.throws(()=>f.home.baselines.resume('p',j.id,resumeInput(f)),e=>e.code==='sync_busy');assert.equal(await f.read('b'),'b');
 });
 test('S11 batch planning respects combined byte limit before reading either device',async t=>{
  const f=await fixture(t,{initial:true});const row=f.home.baselines.pending('p',scope).items[0];for(let i=0;i<3;i++)f.db.put('sourceSyncMetadataBaselines',{...row,id:`xxxxx-${i}`,path:`xxxxx-${i}.txt`,endpoints:{a:{...row.endpoints.a,size:19*1024*1024},b:{...row.endpoints.b,size:19*1024*1024}}});const j=start(f);f.home.baselines.tick();const b=f.db.get('sourceSyncBatches',f.db.get('sourceSyncInitializations',j.id).batchId);assert.equal(b.initialization.paths.length,3);assert.ok(!b.initialization.paths.includes('xxxxx-2.txt'));assert.equal(f.db.listSourceSyncCommands({batchId:b.id,action:'read'}).length,0);
 });
-test('S15 cleanup retries after reference removal and keeps conflict history references',async t=>{
- const f=await fixture(t,{initial:true});start(f);await drain(f);const c=f.db.list('sourceSyncConflicts')[0],side=c.sides[0];f.db.put('sourceSyncConflictHistory',{...c,id:'xxxxx-history'});f.home.sync.resolve(c,{id:'human',entry:side.entry,sourceNodeId:side.nodeId,sourceRoot:side.root});await drain(f);assert.ok(await f.home.storage.has('p',side.entry));f.db.remove('sourceSyncConflictHistory','xxxxx-history');f.home.conflictCleanupCursor=undefined;await f.home.cleanupMetadataConflicts();assert.equal(await f.home.storage.has('p',side.entry),false);
+test('S15 cleanup retries after reference removal and keeps legacy conflict history references',async t=>{
+ const f=await fixture(t,{initial:true});start(f);await drain(f);const c=f.db.list('sourceSyncConflicts')[0],side=c.sides[0];f.db.put('sourceSyncConflictHistory',{...c,id:'xxxxx-history',detection:undefined});f.home.sync.resolve(c,{id:'human',entry:side.entry,sourceNodeId:side.nodeId,sourceRoot:side.root});await drain(f);assert.ok(await f.home.storage.has('p',side.entry));f.db.remove('sourceSyncConflictHistory','xxxxx-history');expireCopies(f,c.id);f.home.conflictCleanupCursor=undefined;await f.home.cleanupMetadataConflicts();assert.equal(await f.home.storage.has('p',side.entry),false);
 });
 test('S11 initialization batch and job pointer commit atomically',async t=>{
  const f=await fixture(t,{initial:true});start(f);const put=f.db.put.bind(f.db);f.db.put=(kind,value)=>{if(kind==='sourceSyncInitializations'&&value.batchId)throw Error('xxxxx commit interrupted');return put(kind,value);};assert.throws(()=>f.home.baselines.tick());f.db.put=put;assert.equal(f.db.listProject('sourceSyncBatches','p').filter(b=>b.kind==='initialize').length,0);await drain(f);

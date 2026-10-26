@@ -71,9 +71,14 @@ export class SourceSyncHome {
     }
   }finally{this.ticking=false;}}
   async cleanupMetadataConflicts(){
-    const rows=this.db.db.prepare("SELECT data FROM records WHERE kind='sourceSyncConflicts' AND json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status')='resolved' AND json_extract(data,'$.copiesReleasedAt') IS NULL AND id>? ORDER BY id LIMIT 16").all(this.conflictCleanupCursor||'').map(r=>JSON.parse(r.data));
+    const rows=this.db.db.prepare("SELECT data FROM records INDEXED BY records_metadata_conflict_gc WHERE kind='sourceSyncConflicts' AND json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status')='resolved' AND json_extract(data,'$.copiesReleasedAt') IS NULL AND id>? ORDER BY id LIMIT 16").all(this.conflictCleanupCursor||'').map(r=>JSON.parse(r.data));
     this.conflictCleanupCursor=rows.at(-1)?.id||'';
-    for(const c of rows)this.storage.releaseConflictCopies(c);
+    for(const c of rows){
+      // Inspect at most one page per tick; retained references are expensive to scan, so retry hourly.
+      if(Date.parse(c.copiesNextCheckAt)>Date.now()||!c.resolutionBatchId||!this.db.get('sourceSyncBatches',c.resolutionBatchId)?.metadataCleanedAt)continue;
+      const checked=Date.now();this.db.put('sourceSyncConflicts',{...c,copiesCheckedAt:new Date(checked).toISOString(),copiesNextCheckAt:new Date(checked+3600000).toISOString()});
+      this.storage.releaseConflictCopies(c);
+    }
   }
   async cleanupMetadataBatches(){
     const batches=this.db.metadataCleanupBatches(this.metadataCleanupCursor||'');
@@ -267,7 +272,7 @@ export class SourceSyncHome {
     else if(req.method==='GET'&&route==='pending'){const q=new URL(req.url,'http://localhost').searchParams;value=this.baselines.pending(projectId,q.get('repositoryId'),{after:q.get('after')||'',limit:q.get('limit')});}
     else if(req.method==='GET'&&route==='initializations')value=this.db.db.prepare("SELECT data FROM records WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.projectId')=? ORDER BY rowid DESC LIMIT 20").all(projectId).map(r=>JSON.parse(r.data));
     else if(req.method==='POST'&&route==='initializations')value=this.baselines.start(projectId,await body(req,100000));
-    else if(req.method==='POST'&&/^initializations\/[a-f0-9]{64}\/resume$/.test(route))value=this.baselines.resume(projectId,route.split('/')[1]);
+    else if(req.method==='POST'&&/^initializations\/[a-f0-9]{64}\/resume$/.test(route))value=this.baselines.resume(projectId,route.split('/')[1],await body(req,100000));
     else if(req.method==='GET'&&route==='config')value=this.sync.config(projectId);
     else if(req.method==='PUT'&&route==='config')value=this.sync.configure(projectId,await body(req,100000));
     else if(req.method==='POST'&&route==='preview')value=this.sync.preview(projectId,await body(req,100000));

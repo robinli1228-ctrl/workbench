@@ -41,7 +41,7 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
     }
     if(state.config.enabled&&state.config.detection==='metadata'){
       panel.append(button('Establish sync baseline',initialize));
-      for(const j of state.initializations||[]){const row=el('div','source-sync-row');row.append(el('small','workspace-note',`${t('Baseline initialization')} · ${status(j.status)} · ${j.processed} ${t('paths processed')}${j.reason?' · '+issue(j.reason):''}`));if(j.status==='paused')row.append(button('Resume initialization',b=>act(()=>api(endpoint()+'/initializations/'+j.id+'/resume',{}),b)));panel.append(row);}
+      for(const j of state.initializations||[]){const row=el('div','source-sync-row');row.append(el('small','workspace-note',`${t('Baseline initialization')} · ${status(j.status)} · ${j.processed} ${t('paths processed')}${j.reason?' · '+issue(j.reason):''}`));if(j.status==='paused')row.append(button('Resume initialization',b=>{if(!confirm(t('Resume this initialization? Remaining paths may overwrite files using the original selection.')))return;return act(()=>api(endpoint()+'/initializations/'+j.id+'/resume',{confirmed:true,revision:state.config.revision,requestId:crypto.randomUUID()}),b);}));panel.append(row);}
     }
     for(const b of state.batches.slice(-4).reverse()){
       const row=el('div','source-sync-row');row.append(el('span','',status(b.status)));const meta=el('small','workspace-note',`${b.id.slice(0,8)}${b.reason?' · '+issue(b.reason,b.limit):''}`);meta.setAttribute('translate','no');row.append(meta);
