@@ -22,7 +22,7 @@ import {newTerminalBinding,publishNewTerminal} from './role-terminal.mjs';
 import {RoleSwitches,roleSwitchView} from './role-switches.mjs';
 import {RoleSwitchRuntime} from './role-switch-runtime.mjs';
 import { ConversationContext } from './conversation-context.mjs';
-import { renderRunPrompt } from './run-context.mjs';
+import { renderRunPrompt,renderRunInputParts } from './run-context.mjs';
 import { buildTeamContext, renderTeamContext } from './team-context.mjs';
 import { Rooms } from './rooms.mjs';
 import { CollaborationSessions, reviewView, reviewDocumentAllowed } from './collaboration-sessions.mjs';
@@ -59,7 +59,7 @@ import { TokenUsage, createTokenUsageBackgroundCollector } from './token-usage.m
 import { Attachments, AttachmentTransfers } from './attachments.mjs';
 import { ExecutionPlans, schedulingRules } from './execution-plans.mjs';
 import { History } from './history.mjs';
-import { archiveHistoricalReceipts } from './result-receipts.mjs';
+import { archiveHistoricalReceipts, wakeCallOutcomes } from './result-receipts.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
@@ -278,7 +278,11 @@ async function dispatch(nodeId) {
     }
     const storedTask = run.inputTask||db.get('tasks', run.taskId);
     // Minimal turns get the execution rules once, from the Worker's executionInstructions; adding them here too repeated them.
-    const basePrompt=runWithLanguage('en',()=>[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal||run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n'));
+    // Minimal turns follow the language pack the launch is sent in; legacy Workers keep the English wrapping.
+    const promptLanguage=minimal?c.launchInput?.language??getLanguage():'en';
+    const basePrompt=runWithLanguage(promptLanguage,()=>[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal||run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n'));
+    // Named parts let a current Worker put the message first and title each platform addition; older Workers use the prompt.
+    const inputParts=minimal&&run.contextPacket&&!run.switchOperationId?runWithLanguage(promptLanguage,()=>renderRunInputParts(run.contextPacket)):null;
     const rulesText = runWithLanguage('en',()=>schedulingRules());
     // The timer line is matched in both languages; it is dropped for Workers without timer tools.
     const schedulingRulesText = db.get('workers',nodeId)?.capabilities?.timerTools===1 ? rulesText : rulesText.replace(/^(?:Use wb timer only when given an explicit wall-clock time or recurrence requirement; |\u53ea\u6709\u6536\u5230\u660e\u786e\u7684\u5899\u949f\u65f6\u95f4\/\u5468\u671f\u9700\u6c42\u624d\u7528 wb timer\uff1b).*\n/m,'');
@@ -286,7 +290,7 @@ async function dispatch(nodeId) {
     // New Workers put the fixed Supervisor conventions in the stable rules area; old Workers still receive the full original format, so rolling upgrades do not lose rules.
     const stableInstructions=db.get('workers',nodeId)?.capabilities?.stableInstructions===1;
     const task = c.launchInput?.task||{...storedTask,prompt:supervisorInstructions&&!stableInstructions?`${basePrompt}\n\n${supervisorInstructions}`:basePrompt,
-      runtimeInstructions:stableInstructions?supervisorInstructions:''};
+      runtimeInstructions:stableInstructions?supervisorInstructions:'',...(inputParts?{inputParts}:{})};
     const storedProject = db.get('projects', run.projectId);
     const project = { ...storedProject, repoUrl: run.repositoryUrl ?? storedProject.repoUrl };
     const request = run.requestId ? db.get('coordinationRequests', run.requestId) : db.list('coordinationRequests').find(r => r.currentRunId === run.id);
@@ -419,6 +423,8 @@ function scheduleChatTurn() {
       }
     }catch(error){chatScheduleError(error,request.id);}
   }
+  try {if(wakeCallOutcomes(db,(receipt,text)=>rooms.postSystemTask(receipt.projectId,{id:`outcome-${receipt.id.replace(/^rr:/,'')}`,conversationId:receipt.conversationId,
+    roleId:receipt.ownerRoleId,text,source:{kind:'call_outcome',receiptId:receipt.id}})))change();}catch(error){console.error('Call outcome wake:',error.message);}
   try {if(proactiveFollowup.tick())change();}catch(error){console.error('Proactive follow-up:',error.message);}
   try {if(dueRoleCompactions(db,{online:id=>online(id)&&sockets.get(id).workerReady,send:(nodeId,payload)=>send(sockets.get(nodeId),payload)}))change();}catch(error){console.error('Role compaction:',error.message);}
   for(const task of db.chatTasks(['ready']))prepareChatContext(task);

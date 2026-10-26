@@ -42,7 +42,7 @@ import { normalizeRemoteDesktopUrl } from './remote-desktop.mjs';
 import { validateLaunch, afterProcessExit, recordDeliveryResult, recoverDeliveryCommands, continuationSource } from './worker-coordinator.mjs';
 import {CliSessionRecovery,driverIdentity} from './cli-session-recovery.mjs';
 import { publishDelivery, receiveDelivery } from './git-delivery.mjs';
-import { composeAgentInstructions, englishExecutionRules } from './platform-prompts.mjs';
+import { composeAgentInstructions, englishExecutionRules, executionRules } from './platform-prompts.mjs';
 import { runtimeGuidance } from './runtime-guidance.mjs';
 import { prepareSupervisorDirectory, setupRepository } from './setup-workspace.mjs';
 import { startAgentBridge, agentProcessEnv, canSendAgentOperation, agentOperationBlock } from './agent-bridge.mjs';
@@ -63,7 +63,7 @@ import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseli
 import { runOrganizer } from './conversation-organizer.mjs';
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
-import { executionText, traditionalInput } from './input-language.mjs';
+import { executionText, traditionalInput, sentText } from './input-language.mjs';
 import {SourceSyncClient} from './source-sync-transport.mjs';
 import {syncError} from './source-sync-manifest.mjs';
 import {SourceProvenanceTracker} from './source-sync-provenance.mjs';
@@ -538,9 +538,17 @@ async function command(m) {
       const attachmentHint = inputFiles.length ? executionText('worker.userAttachmentsForTurnUntrusted', { p1: inputFiles.map(a => JSON.stringify({name:a.name,path:a.path,mime:a.mime})).join('\n') }) : '';
       const toolGuide=executionConfiguration?executionText('minimal.toolEntry',{wbCommand}):[executionText('worker.wbCommandPrefixForTurn', { wbCommand }),(m.run.sourceSyncTracking||m.run.sourceConflictId||m.run.sourceConflictPeerId||m.run.sourceConflictAssignmentRequestId)?executionText('sourceSync.toolGuide'):''].filter(Boolean).join('\n\n');
       const taskPrompt=[m.task.prompt,executionConfiguration?.dependencyEvents?.length?executionText('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):''].filter(Boolean).join('\n\n');
-      const environmentHint=executionEnvironmentHint({cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
-      const input = createRunInput({ minimal:Boolean(executionConfiguration),environmentHint,configurationUpdate:instructions.configurationUpdate,taskPrompt, boundary, context, runtimeGuidance:toolGuide, setupHint, attachmentHint,
-        executionInstructions:m.run.switchOperationId?'Read-only CLI handoff maintenance. Return the requested final answer; do not execute business work or write handoff files.':englishExecutionRules(m.run,{minimal:Boolean(executionConfiguration)}),roleInstructions:instructions.instructions,sourceInputs:sourceInputReceipts });
+      const environmentHint=executionEnvironmentHint({cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,readOnly:m.task.mode==='read-only'||['audit','review'].includes(m.run.execution?.purpose),assigned:Boolean(m.run.deliveryId||source),sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
+      // A Home that sends named parts gets the ordered layout: message and attachments first, then each titled addition.
+      const parts=executionConfiguration&&m.task.inputParts?.message?m.task.inputParts:null;
+      const turn=parts?{message:parts.message,home:Array.isArray(parts.home)?parts.home:[],attachments:inputFiles.map(a=>({name:a.name,path:a.path})),
+        dependencies:executionConfiguration.dependencyEvents?.length?executionText('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):'',
+        wb:sentText('turnInput.wb',{wbCommand}),rulesKey:m.run.turnPurpose&&m.run.turnPurpose!=='task'?'protocol':'stage'}:null;
+      const input = createRunInput({ minimal:Boolean(executionConfiguration),turn,environmentHint,configurationUpdate:instructions.configurationUpdate,taskPrompt, boundary, context:context.trim(), runtimeGuidance:toolGuide, setupHint, attachmentHint,
+        executionInstructions:m.run.switchOperationId?'Read-only CLI handoff maintenance. Return the requested final answer; do not execute business work or write handoff files.':executionConfiguration?executionRules(m.run,{minimal:true}):englishExecutionRules(m.run,{minimal:false}),roleInstructions:instructions.instructions,sourceInputs:sourceInputReceipts });
+      // The page shows every fixed component, including those inherited from the session and not re-sent this turn.
+      if(components)input.fixed={runtime:runtimeType,sent:Boolean(instructions.instructions),inheritedFrom:instructions.inheritedFrom||null,
+        components:Object.fromEntries(Object.entries(components).map(([name,text])=>[name,{text,version:instructions.components?.[name]?.version||null}]))};
       if(instructions.inheritedFrom)input.instructionsInheritedFrom=instructions.inheritedFrom;
       await checkNativeDriver(m);
       if(db.get('runs',c.runId)?.stopRequested||session.stopping||paused||quitting||ws?.readyState!==1){session.shutdown();await afterProcessExit(session.proc,()=>{});await provenance?.finish();sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.interruptedByStopDisconnectBefore2')});return;}

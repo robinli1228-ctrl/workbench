@@ -69,6 +69,48 @@ function renderReceipts(receipts) {
   return tr('runContext.resultReceipts',{p1:lines.join('\n'),p2:receipts.omitted?tr('runContext.resultReceiptsOmitted',{count:receipts.omitted}):''});
 }
 
+/**
+ * Who this turn's message comes from. Adopted root requests ("task:<id>") carry no caller, so the source message decides;
+ * a wait continuation, a stall or timer reminder and other system tasks are the platform's own.
+ */
+export function turnOrigin(db,task,request) {
+  if(task?.steering)return {kind:'human'};
+  const seen=new Set();
+  for(let r=request;r&&!seen.has(r.id);r=r.reassignedFrom?db.get('coordinationRequests',r.reassignedFrom):null) {
+    seen.add(r.id);
+    if(r.kind==='continuation')return {kind:'platform'};
+    if(!r.sourceRunId&&!r.parentRequestId&&!r.transferredFrom)continue;
+    // The caller's run may have been purged; the request it was answering still names the same role.
+    const caller=(r.sourceRunId&&db.get('runs',r.sourceRunId)?.roleSnapshot?.name)
+      ||(r.parentRequestId&&db.get('coordinationRequests',r.parentRequestId)?.targetSnapshot?.name)
+      ||(r.transferredFrom&&db.get('coordinationRequests',r.transferredFrom)?.targetSnapshot?.name)||null;
+    return {kind:'role',name:caller};
+  }
+  if(task?.scheduledJobId)return {kind:'platform'};
+  const source=task?.sourceMessageId?db.get('roomMessages',task.sourceMessageId):null;
+  if(source?.sender==='system')return {kind:'platform'};
+  if(source?.sender==='agent')return {kind:'role',name:source.senderName||null};
+  return {kind:'human'};
+}
+
+/** The message and the platform's additions, each addition named so the Worker can title it and the page can show it apart. */
+export function renderRunInputParts(packet) {
+  const origin=packet.origin||{kind:'human'};
+  const reference=item=>`- ${JSON.stringify(item.author)} [${item.id}]:\n${item.text}${item.truncated?`\n  wb history read ${item.id}`:''}`;
+  const home=[
+    packet.steering&&['steering',tr('runContext.userChangedDirectionTurnImmediate')],
+    packet.conversationTask&&['task',[packet.conversationTask.updated?tr('conversationTasks.updated'):'',JSON.stringify(packet.conversationTask)].filter(Boolean).join('\n')],
+    packet.followup&&['followup',tr('followup.context',{context:JSON.stringify(packet.followup)})],
+    packet.discussionResolution&&['discussion',tr('runContext.questionOnOriginalTaskHas',{p1:JSON.stringify(packet.discussionResolution)})],
+    packet.schedulingRoster?.length&&['roster',tr('runContext.rolesTurnMustCoverFixed',{p1:packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(', ')})],
+    packet.references?.length&&['references',packet.references.map(reference).join('\n')],
+    packet.deliveries?.length&&['deliveries',packet.deliveries.map(item=>`- ${item.id} ${item.commit||''} ${item.summary||''}`.trim()).join('\n')],
+    packet.completion&&['completion',String(packet.completion)]
+  ].filter(Boolean).map(([key,text])=>({key,text}));
+  // The Worker writes the origin label in the sent script, keeping the role name exactly as configured.
+  return {message:{origin,text:packet.instruction},home};
+}
+
 /** The source text is not rewritten by the summarizer; the background carries a coverage range and a fallback marker so it is not mistaken for a new instruction. */
 export function renderRunPrompt(packet,{minimal=false}={}) {
   const taskContext=packet.conversationTask?tr('conversationTasks.context',{updated:packet.conversationTask.updated?tr('conversationTasks.updated'):'',task:JSON.stringify(packet.conversationTask)}):'';
@@ -79,7 +121,7 @@ export function renderRunPrompt(packet,{minimal=false}={}) {
     packet.schedulingRoster?.length?tr('runContext.rolesTurnMustCoverFixed',{p1:packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(', ')}):'',
     ...(packet.references||[]).map(item=>`${JSON.stringify(item.author)} [${item.id}]:\n${item.text}${item.truncated?`\n${item.readCommand}`:''}`),
     ...(packet.deliveries||[]).map(item=>`${item.id} ${item.commit||''} ${item.summary||''}`),
-    packet.completion?tr('runContext.explicitCompletionRequirement',{completion:packet.completion}):'',renderReceipts(packet.receipts)].filter(Boolean).join('\n\n');
+    packet.completion?tr('runContext.explicitCompletionRequirement',{completion:packet.completion}):''].filter(Boolean).join('\n\n');
   const lines=[tr('runContext.originalInstructionForTurnVerbatim', { instruction: packet.instruction })];
   if(taskContext)lines.push(taskContext);
   if(packet.followup)lines.push(tr('followup.context',{context:JSON.stringify(packet.followup)}));

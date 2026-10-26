@@ -3957,11 +3957,16 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 #run-dialog .run-transcript-note pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 var(--font-mono); color: #67738b; }
 #run-dialog .run-transcript-note.is-error { border-color: #f0d8d8; background: #fff4f4; color: #b75757; }
 #run-dialog .run-transcript-note.is-error pre { color: inherit; }
-#run-dialog .run-input-card,#run-dialog .run-input-rules,#run-dialog .run-artifact-report,#run-dialog .run-workspace-files,#run-dialog .run-original { background: #fff; border: 1px solid #e2e7ef; border-radius: 9px; overflow: hidden; }
+#run-dialog .run-input-card,#run-dialog .run-input-rules,#run-dialog .run-input-group,#run-dialog .run-artifact-report,#run-dialog .run-workspace-files,#run-dialog .run-original { background: #fff; border: 1px solid #e2e7ef; border-radius: 9px; overflow: hidden; }
 #run-dialog .run-input-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #edf0f5; }
 #run-dialog .run-input-head h3 { margin: 0; color: #58657d; }
-#run-dialog .run-input-card .run-log-pre,#run-dialog .run-input-rules .run-log-pre { padding: 17px 20px; border: 0; border-radius: 0; background: #fff; color: #59637a; font: 13px/1.9 var(--font-sans, sans-serif); }
-#run-dialog .run-input-rules > summary,#run-dialog .run-workspace-files > summary { padding: 16px; color: #65718b; cursor: pointer; font-size: 13px; }
+#run-dialog .run-input-card .run-log-pre,#run-dialog .run-input-rules .run-log-pre,#run-dialog .run-input-group .run-log-pre { padding: 17px 20px; border: 0; border-radius: 0; background: #fff; color: #59637a; font: 13px/1.9 var(--font-sans, sans-serif); }
+#run-dialog .run-input-rules > summary,#run-dialog .run-input-group > summary,#run-dialog .run-workspace-files > summary { padding: 16px; color: #65718b; cursor: pointer; font-size: 13px; }
+#run-dialog .run-input-card > h3 { margin: 0; padding: 12px 16px; border-bottom: 1px solid #edf0f5; color: #58657d; }
+#run-dialog .run-input-group > summary { overflow-wrap: anywhere; }
+#run-dialog .run-input-group .run-log-pre + .run-log-pre { border-top: 1px solid #edf0f5; }
+#run-dialog .run-input-group > h4 { margin: 0; padding: 12px 20px 0; color: #65718b; font-size: 12px; font-weight: 600; }
+#run-dialog .run-input-group > .run-log-note { margin: 0; padding: 0 20px 4px; }
 #run-dialog .run-artifact-report { padding: 16px 20px; }
 #run-dialog .run-artifact-report p { font-size: 13px; line-height: 1.8; color: #6c778b; }
 #run-dialog .run-workspace-files .subsection { border: 0; margin: 0; padding: 12px 16px; }

@@ -19,9 +19,10 @@ export function executionRules(run,{minimal=false}={}) {
   const discussion=discussionInstructions(run);
   if(discussion&&run.turnPurpose&&run.turnPurpose!=='task')return discussion;
   const purpose=run.execution?.purpose;
+  // Plans refuse deploy, migration and production stages, so a minimal turn names only merge and review boundaries;
+  // what a review must contain is already in the platform prompt, so only the read-only, pinned-version part is repeated.
   if(minimal)return [purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):'',
-    ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):'',
-    ['audit','review'].includes(purpose)?tr('platformPrompts.independentReviewBoundary'):''].filter(Boolean).join('\n');
+    ['audit','review'].includes(purpose)?tr('turnInput.reviewStage'):''].filter(Boolean).join('\n');
   return tr('platformPrompts.handleOnlyAssignmentDoNot', { discussion, p2: tr('platformPrompts.useWbCallForRole'), p3: run.roleSnapshot?.systemSupervisor?tr('platformPrompts.workingRolesMayConsultDiscuss'):'', p4: purpose==='merge'?tr('platformPrompts.scheduledMergeStageYouMay'):tr('platformPrompts.unlessMergeStageScheduledDo'), p5: ['deploy','migration','production'].includes(purpose)?tr('platformPrompts.exclusiveStageOnlyTargetsOperations'):tr('platformPrompts.doNotReleaseOperateProduction'), p6: ''  });
 }
 const DEFAULT_FIELD_LIMIT = 128;

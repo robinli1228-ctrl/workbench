@@ -71,8 +71,20 @@ export function runTimeline(events = []) {
 
 /** When an old Run has no input snapshot, show only the original task request; do not pass it off as the full CLI input. */
 export function displayRunInput(task, input) {
-  if (input && typeof input.prompt === 'string') return { instructions: input.instructions || '', prompt: input.prompt, complete: true, instructionsInheritedFrom:input.instructionsInheritedFrom||null,configurationUpdate:input.configurationUpdate||'' };
-  return { instructions: '', prompt: task?.prompt || '', complete: false };
+  if (input && typeof input.prompt === 'string') return { instructions: input.instructions || '', prompt: input.prompt, complete: true, instructionsInheritedFrom:input.instructionsInheritedFrom||null,configurationUpdate:input.configurationUpdate||'',
+    groups:runInputGroups(input),fixed:input.fixed&&typeof input.fixed==='object'?input.fixed:null };
+  return { instructions: '', prompt: task?.prompt || '', complete: false, groups:null, fixed:null };
+}
+
+/** Split a recorded input by the ranges the Worker wrote when it built it; records without valid ranges are not guessed at. */
+export function runInputGroups(input) {
+  const prompt=typeof input?.prompt==='string'?input.prompt:'',sections=Array.isArray(input?.sections)?input.sections:null;
+  if(!sections?.length)return null;
+  let last=0;
+  for(const s of sections)if(!Number.isInteger(s?.start)||!Number.isInteger(s.end)||s.start<last||s.end<s.start||s.end>prompt.length)return null;else last=s.end;
+  const groups={message:[],home:[],worker:[]};
+  for(const s of sections)if(groups[s.group])groups[s.group].push({key:String(s.key||''),text:prompt.slice(s.start,s.end)});
+  return groups;
 }
 
 /** Use the context frozen at dispatch time; do not rewrite history logs with later-updated summaries. */
