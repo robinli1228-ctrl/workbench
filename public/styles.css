@@ -166,6 +166,7 @@ body[data-workspace-view="settings"] #show-project-settings { display: none; }
 .runtime-settings-summary:has(.runtime-delete-button) { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 .device-delete-button, .runtime-delete-button { white-space: nowrap; flex-shrink: 0; }
 .runtime-settings-summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.runtime-version { margin-left: 8px; color: var(--muted); font-size: 11px; font-weight: 400; }
 .runtime-state { color: var(--muted); font-size: 11px; font-weight: 750; }
 .runtime-state.is-ready { color: var(--green-dark); }
 .runtime-state.is-unavailable { color: #9a4e32; }
@@ -3716,7 +3717,7 @@ audio.side-preview-media { background: transparent; }
 
 /* Side question tab: the preview panel's frame with a chat inside and a composer at the bottom. */
 .native-session-sidebar .native-side-panel.is-ask { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-.native-side-ask { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.native-side-ask { display: flex; flex: 1; flex-direction: column; min-height: 0; background: #fff; }
 .native-ask-body { display: block; padding: 12px 16px 16px; }
 .native-ask-body > .side-preview-empty { margin-top: 18vh; }
 .native-ask-body .nt-row { margin-bottom: 14px; }
@@ -3731,7 +3732,7 @@ audio.side-preview-media { background: transparent; }
 .native-ask-usage, .native-ask-restarted { margin: 8px 0 0; color: var(--text-faint, #8a91a0); font-size: 12px; }
 .native-ask-restarted { margin: 0 0 12px; }
 .native-ask-note { margin: 0; padding: 6px 16px; color: var(--danger); font-size: 12.5px; }
-.native-ask-form { flex: none; padding: 10px 12px 12px; border-top: 1px solid var(--card-hairline, var(--line)); background: #f8fafd; }
+.native-ask-form.chat-composer { flex: none; padding: 10px 12px 12px; border-top: 0; background: transparent; }
 .native-ask-form .chat-input-field { display: flex; flex-direction: column; align-items: stretch; }
 /* Side question input: the model picker's type size, three lines tall, scrolling past about seven. */
 .native-ask-form .chat-input-field textarea { flex: none; width: 100%; height: 70px; min-height: 70px; max-height: 150px; padding: 10px 12px 4px; font-size: 12.5px; line-height: 1.6; scrollbar-width: thin; }
@@ -4018,3 +4019,14 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
   .task-detail-dialog { padding: 16px; }
   .task-edit-form .form-grid { grid-template-columns: minmax(0,1fr); }
 }
+
+/* Group cards share the Sessions side-chat body and composer in the existing inspector. */
+#inspector-ask:not([hidden]) { display: flex; flex-direction: column; padding: 0; overflow: hidden; min-height: 0; }
+.group-ask-source { flex: none; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.group-ask-source strong { font-size: 13px; }
+.group-ask-quote { margin: 8px 0; padding: 8px 10px; border-left: 3px solid #c4c7f3; background: #f2f3f8; border-radius: 0 8px 8px 0; font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.group-ask-source .workspace-note { margin: 0; font-size: 11px; }
+
+.native-side-ask[hidden] { display: none; }
+
+.group-ask-scope { padding: 16px; }

@@ -8,6 +8,7 @@ import { assertNativeSessionIdle } from './native-sessions.mjs';
 import { nativeTerminalProject, projectTerminalLock } from './terminal-resume.mjs';
 import {folderAccessFor,nativeFolderAccess} from './folder-access.mjs';
 import {createHomeSideAsks} from './native-side-ask-home.mjs';
+import {groupSideAskSource} from './group-side-ask.mjs';
 import {NativeAgentSwitches} from './native-agent-switch.mjs';
 
 /**
@@ -62,6 +63,14 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     ...(disposition?{'Content-Disposition':`${item.mime.startsWith('image/')?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(item.name)}`}:{})});res.end(bytes);return true;};
   /** Returns true when the request belonged to the takeover API. Authentication has already been checked by home.mjs. */
   async function http(req,res,{pathname,url,json,body}) {
+    const group=pathname.match(/^\/api\/projects\/([^/]+)\/messages\/([^/]+)\/side$/);
+    if(group&&['GET','POST'].includes(req.method)){
+      const input=req.method==='POST'?await body(req):{},source=groupSideAskSource(db,{projectId:decodeURIComponent(group[1]),messageId:decodeURIComponent(group[2]),conversationId:input.conversationId||url.searchParams.get('conversationId')||decodeURIComponent(group[1]),online});
+      if(req.method==='GET'){json(res,source);return true;}
+      switches.assertExecutable(source);
+      json(res,sideAsks.ask(source.nodeId,db.get('workers',source.nodeId),{sideId:input.sideId,runtime:source.runtime,sessionId:source.sessionId,prompt:input.prompt,model:input.model||source.model,attachmentIds:input.attachmentIds
+        }, {key:JSON.stringify([source.projectId,source.conversationId,source.messageId]),record:{runtime:source.runtime,sessionId:source.sessionId,workspace:source.workspace},workspace:source.workspace,context:`Selected group-chat card (${source.senderName}):\n${source.quote}\n\nDiscuss this card using the original session's current context. This is a separate read-only side question; do not send messages, dispatch work or change the original conversation.`}),201);return true;
+    }
     const switching=pathname.match(/^\/api\/native-sessions\/([^/]+)\/agent-switch(?:\/([^/]+))?$/);
     if(switching){const nodeId=decodeURIComponent(switching[1]);
       if(req.method==='POST'&&!switching[2])json(res,await switches.begin(nodeId,await body(req)));

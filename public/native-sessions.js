@@ -5,6 +5,7 @@ import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON,quo
 import {usableBucket,parseQuotaResetDate} from './quota-state.js';
 import {createListOrder} from './list-order.js';
 import {groupNativeSessions,readNativeSessionPages} from './native-session-groups.js';
+import {createSideAsk} from './native-side-ask.js';
 import {createNativeAgentSwitchUI} from './native-agent-switch.js';
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
@@ -982,111 +983,6 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   card.append(ctx);
   const feedback=takeover.feedback(value);if(feedback)card.append(el('p','global-error',feedback));
  }
- /**
-  * Side question tab. A blank chat on open; each question runs read-only on a temporary copy of the session (Claude: its
-  * last 10 turns) and never reaches it. Nothing is kept: the brush in the panel header clears it, and so do switching sessions, a new
-  * prompt in the main session, an hour without use and two hours of age. Switching to another right-side tab keeps it.
-  */
- function createSideAsk(){
-  const root=el('div','native-side-ask');
-  // The clear button sits in the right panel's header, shown while this tab is selected.
-  const clear=iconButton('brush','Clear this side question',()=>void reset({tell:true}),'native-ask-clear');
-  const body=el('div','side-preview-body native-ask-body'),note=el('p','workspace-note native-ask-note');note.hidden=true;
-  const form=el('form','chat-composer native-takeover-form native-ask-form'),bar=el('div','chat-input-bar'),field=el('div','chat-input-field'),tray=el('div','chat-attachments native-takeover-tray');tray.hidden=true;
-  const attach=el('button','native-attach');attach.type='button';attach.title=t('Upload an image or file');attach.setAttribute('aria-label',t('Upload file'));attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
-  const model=el('select','native-ask-model');model.setAttribute('aria-label',t('Model for side questions'));
-  const input=el('textarea');input.rows=3;input.placeholder=t('Ask a quick question that does not interrupt the main session…');input.setAttribute('aria-label',t('Side question'));
-  const send=el('button','primary chat-send');send.type='submit';setActionIcon(send,'send',t('Send'));
-  const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
-  // Text on top, a tool row under it: attach and model on the left, send on the right.
-  const tools=el('div','native-ask-tools'),gap=el('span','native-ask-tools-gap');tools.append(attach,model,gap,send);
-  field.append(tray,input,tools);bar.append(field);form.append(bar);root.append(body,note,form);
-  let session=null,sideId=null,view=null,pending=false,poll=null,signature='',files=[],uploads=0,notice='',generation=0;
-  const sessionKey=value=>value?key(value):'';
-  const live=q=>['queued','starting','running','waiting_user','stopping'].includes(q?.status);
-  const NOTES={main_prompt:'The main session has a new prompt; side questions start over.',main_session_moved:'The main session has a new prompt; side questions start over.',idle:'Closed after an hour without use.',expired:'Closed two hours after it began.',replaced:'Closed because another side question started.',device_disconnected:'The device disconnected; the side question was closed.',restart:'The device restarted; the side question was closed.'};
-  function available(value){const worker=getData().workers?.find(w=>w.id===value?.nodeId);return Boolean(value&&['claude','codex'].includes(value.runtime)&&worker?.capabilities?.nativeSideAsk===1&&nativeId(value)&&value.workspace);}
-  function fillModels(){
-   const worker=getData().workers?.find(w=>w.id===session?.nodeId),runtime=worker?.runtimes?.find(r=>r.type===session?.runtime),main=takeover.settings().model||session?.sessionConfiguration?.model||'';
-   const keep=model.value;model.replaceChildren();const follow=el('option','',main||t('Follow the session'));follow.value='';model.append(follow);
-   for(const m of runtime?.models||[]){if(m.id===main)continue;const o=el('option','',m.name||m.id);o.value=m.id;model.append(o);}
-   model.value=[...model.options].some(o=>o.value===keep)?keep:'';
-  }
-  function setNote(text){note.hidden=!text;note.textContent=text?t(text):'';}
-  function render(){
-   if(!session)return;
-   const questions=view?.questions||[];const sig=JSON.stringify([sessionKey(session),questions.map(q=>[q.id,q.status,q.text.length,q.events.length,q.error,q.endedAt]),notice,pending,uploads,files.map(f=>f.id)]);
-   const busy=pending||questions.some(live);send.disabled=busy||uploads>0||(!input.value.trim()&&!files.length);attach.disabled=busy;clear.disabled=!sideId&&!questions.length&&!pending&&!uploads;
-   tray.replaceChildren();for(const f of files){const chip=el('div','attachment-card attachment-file-card');chip.title=f.name;const open=el('span','attachment-open');open.append(el('span','attachment-name',f.name),el('small','',formatBytes(f.size)));chip.append(open,closeIcon(button('',()=>{files=files.filter(x=>x.id!==f.id);render();},'attachment-remove'),t('Remove attachment')));tray.append(chip);}
-   if(uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
-   if(sig===signature)return;signature=sig;
-   body.replaceChildren();
-   if(notice)body.append(el('p','workspace-note native-ask-restarted',t(notice)));
-   if(!questions.length){const empty=el('div','side-preview-empty');const icon=el('span','side-preview-empty-icon');icon.innerHTML=UI_ICON.sideAsk;empty.append(icon,el('p','',t('Ask a quick question that does not interrupt the main session. The answer stays here only, and is gone once you clear it or the main session moves on.')));body.append(empty);return;}
-   for(const q of questions){
-    const files=q.attachments?.length?el('div','chat-attachments native-turn-files'):null;if(files)for(const a of q.attachments)files.append(el('span','attachment-name native-ask-file',a.name));
-    const user=chatRow('user',q.prompt,session.runtime,q.createdAt,files);
-    const content=el('div','nt-turn');content.append(turnContent(q,session,{live:live(q),open:live(q)}));
-    if(live(q))content.append(workingLine(q));
-    const reply=chatRow('assistant',replyText(q),session.runtime,q.endedAt||q.createdAt,null,live(q)?'running':q.status==='succeeded'?'completed':'error',session,{content});
-    if(q.endedAt)reply.querySelector('.nt-reply-foot')?.append(el('span','nt-duration',t('Took {duration}',{duration:elapsedText(q.createdAt,new Date(q.endedAt).getTime())})));
-    if(!live(q))footNote(reply,endNote(q));
-    body.append(user,reply);
-   }
-   const usage=[...questions].reverse().find(q=>q.contextUsage?.usedTokens)?.contextUsage?.usedTokens;
-   if(usage)body.append(el('p','workspace-note native-ask-usage',t('Context about {tokens} tokens',{tokens:usage>=1000?`${Math.round(usage/1000)}k`:usage})));
-   body.scrollTop=body.scrollHeight;
-  }
-  function stopPoll(){clearInterval(poll);poll=null;}
-  function startPoll(){if(poll)return;poll=setInterval(()=>void refresh(),1000);}
-  async function refresh(){
-   if(!session||!sideId)return stopPoll();const asked=sideId,owner=sessionKey(session),ticket=generation;
-   try{const next=await api(`${endpoint(session.nodeId)}/side/${encodeURIComponent(asked)}`);if(ticket!==generation||sideId!==asked||sessionKey(session)!==owner)return;
-    if(next.closed){sideId=null;view=null;notice=NOTES[next.reason]||'';stopPoll();render();return;}
-    view=next;notice=next.restarted?'The main session has a new prompt; side questions start over.':notice;if(!next.questions.some(live))stopPoll();render();}
-   catch(error){if(ticket===generation&&sideId===asked&&sessionKey(session)===owner)setNote(error.message);}
-  }
-  async function reset({tell=false,reason=''}={}){
-   stopPoll();generation++;const old=sideId,owner=session;sideId=null;view=null;files=[];pending=false;uploads=0;notice=reason?NOTES[reason]||'':'';signature='';setNote('');
-   if(tell&&old&&owner)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(old)}`,{method:'DELETE'}).catch(()=>{});
-   render();
-  }
-  async function ask(){
-   if(!session||pending)return;const prompt=input.value;if(!prompt.trim()&&!files.length)return;
-   // Every async result belongs to the original session and this opening of its side panel, even after A -> B -> A.
-   const owner=session,ticket=generation,current=()=>ticket===generation&&sessionKey(session)===sessionKey(owner);
-   pending=true;setNote('');render();
-   try{const next=await api(`${endpoint(owner.nodeId)}/side`,{method:'POST',json:{sideId,runtime:owner.runtime,sessionId:nativeId(owner),prompt,model:model.value||null,attachmentIds:files.map(f=>f.id)}});
-    if(!current()){if(next.id)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(next.id)}`,{method:'DELETE'}).catch(()=>{});return;}
-    if(next.id!==sideId&&sideId&&view?.questions?.length)notice='The main session has a new prompt; side questions start over.';
-    sideId=next.id;view=next;input.value='';files=[];startPoll();}
-   catch(error){if(current())setNote(error.message);}
-   finally{if(current()){pending=false;render();}}
-  }
-  async function upload(list){
-   if(!session)return;const list2=[...list],owner=session,ticket=generation,current=()=>ticket===generation&&sessionKey(session)===sessionKey(owner);
-   if(files.length+uploads+list2.length>6){setNote('At most 6 attachments per message');return;}
-   if(list2.some(f=>!f.size||f.size>20*1024*1024)){setNote('Attachments cannot be empty; each file is limited to 20 MB');return;}
-   uploads+=list2.length;render();
-   for(const file of list2){if(!current())break;
-    try{const item=await api(`${endpoint(owner.nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});
-     if(!current()){void api(`${endpoint(owner.nodeId)}/attachments/${encodeURIComponent(item.id)}`,{method:'DELETE'}).catch(()=>{});return;}
-     files.push({id:item.id,name:item.name,mime:item.mime,size:item.size});}
-    catch(error){if(current())setNote(error.message);}finally{if(current()){uploads--;render();}}}
-  }
-  form.addEventListener('submit',e=>{e.preventDefault();void ask();});
-  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=`${Math.min(150,Math.max(70,input.scrollHeight))}px`;render();});
-  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!send.disabled){e.preventDefault();void ask();}});
-  input.addEventListener('paste',e=>{const list=[...(e.clipboardData?.files||[])];if(list.length){e.preventDefault();void upload(list);}});
-  attach.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
-  return {root,clear,available,
-   /** A different session starts a blank side question (the old one is closed); the same session keeps it. */
-   attach(value){if(sessionKey(value)!==sessionKey(session)){const previous=session;void reset({tell:Boolean(previous)});session=value;}else session=value;fillModels();render();},
-   detach(){void reset({tell:true});session=null;},
-   /** The main session got a new prompt from this page: the side question starts over. */
-   mainPrompted(value){if(session&&sessionKey(value)===sessionKey(session)&&(sideId||view?.questions?.length||pending))void reset({reason:'main_prompt'});}
-  };
- }
  const takeover=createTakeover();
  const agentSwitchUI=createNativeAgentSwitchUI({api,t,getState:()=>({busy:!selected||takeover.switchBusy(selected)}),
   onChange:()=>{if(selected){const panel=sidePanels.overview.querySelector('[data-native-controls]');if(panel)delete panel.dataset.signature;takeover.render();renderSessionControls(selected);}},
@@ -1098,7 +994,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    for(const s of segments)if(!items.some(i=>i.nodeId===conversation.nodeId&&i.runtime===s.runtime&&i.sessionId===s.sessionId))items.push({id:s.entryId||s.sessionId,...s,nodeId:conversation.nodeId,title:conversation.title,workspace:conversation.workspace,origin:'dialog',hasHistory:true,canResume:s.id===current.id,conversationBinding:conversation});
    const group=groupNativeSessions(items).find(g=>g.id===`conversation:${conversation.id}`);takeover.bindConversation(group.latest);listSignature='';renderList();if(viewing)await read(group.latest);
   }});
- const sideAsk=createSideAsk();sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);sideAsk.clear.hidden=sideTab!=='ask';sideHeader.append(sideAsk.clear);
+ const sideAsk=createSideAsk({api,getData,getModel:()=>takeover.settings().model});sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);sideAsk.clear.hidden=sideTab!=='ask';sideHeader.append(sideAsk.clear);
  const folderOpen=iconButton('folder','Working folder',()=>openFolder(),'native-folder-open');folderOpen.hidden=sideTab!=='outputs';sideHeader.append(folderOpen);
  // Sessions opened on this page with "Allow all": once the headless first turn has produced history, chat here without a separate takeover confirmation.
  const pageOpened=new Set();

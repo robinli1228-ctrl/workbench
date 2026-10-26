@@ -661,7 +661,7 @@ const server = http.createServer(async (req, res) => {
       if (wechatProject && req.method === 'POST') {
         const link = wechat.openProject(wechatProject[1]); void wechat.tick().catch(() => {}); return json(res, { id: link.id }, 201);
       }
-      if(pathname.includes('native-')&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
+      if((pathname.includes('native-')||/^\/api\/agent\/side-asks\/[^/]+\/[^/]+$/.test(pathname)||/^\/api\/projects\/[^/]+\/messages\/[^/]+\/side$/.test(pathname))&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
       const nativeGit=pathname.match(/^\/api\/native-sessions\/([^/]+)\/git$/);
       if(nativeGit&&req.method==='GET'){
         // Read-only Git facts for the session's own registered working folder; the browser never supplies a path.
@@ -1509,6 +1509,8 @@ const server = http.createServer(async (req, res) => {
     files['/role-templates.js']='role-templates.js';
     files['/i18n.js']='i18n.js';
     files['/output-language.js']='output-language.js';
+    files['/native-side-ask.js']='native-side-ask.js';
+    files['/group-side-ask.js']='group-side-ask.js';
     files['/native-sessions.js']='native-sessions.js';
     files['/native-agent-switch.js']='native-agent-switch.js';
     files['/native-transcript.js']='native-transcript.js';
