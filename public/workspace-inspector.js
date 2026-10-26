@@ -1,3 +1,4 @@
+import {createGroupSideAsk} from './group-side-ask.js';
 import { t, dateLocale } from './i18n.js';
 import {renderMarkdown} from './markdown.js';
 import {UI_ICON,deviceIconEl,workerDisplayName,workerKind} from './role-icons.js';
@@ -12,16 +13,17 @@ const fileState=file=>file.error?t('Read failed'):file.readMode==='recorded'?t('
   :t(file.syncState==='disabled'?'Sync disabled':file.syncState==='pending'?'Waiting for local synchronization':'Local file not found.');
 
 /** Reuses existing file reading; late responses must not overwrite new content after switching projects or closing the dialog. */
-export function createWorkspaceInspector({api,getProject,getData,openDevices,openProjectFolder}) {
+export function createWorkspaceInspector({api,getProject,getData,openDevices,openProjectFolder,onError=()=>{},onSideAskOpen=()=>{},getConversationId=()=>getProject()?.id}) {
   const sourceSync=sourceSyncPanel({api,getProject,getData});
-  const names=['roles','artifacts','resources'],titles={roles:'Role Settings',artifacts:'Recent Outputs',resources:'Resources'};
+  const names=['roles','artifacts','resources','ask'],titles={roles:'Role Settings',artifacts:'Recent Outputs',resources:'Resources',ask:'Side question'};
   const panels=Object.fromEntries(names.map(name=>[name,document.querySelector(`#inspector-${name}`)]));
   const tabs=[...document.querySelectorAll('.inspector-tabs [role="tab"]')],list=document.querySelector('#recent-artifact-list'),note=document.querySelector('#artifacts-note');
-  const tabIcons={roles:UI_ICON.roles,artifacts:UI_ICON.original,resources:UI_ICON.project};
+  const tabIcons={roles:UI_ICON.roles,artifacts:UI_ICON.original,resources:UI_ICON.project,ask:UI_ICON.sideAsk};
   tabs.forEach((tab,i)=>{tab.innerHTML=tabIcons[names[i]];tab.querySelector('svg').setAttribute('aria-hidden','true');});
   const dialog=document.querySelector('#artifact-detail-dialog'),content=document.querySelector('#artifact-detail-content');
   const refresh=document.querySelector('#refresh-artifacts');refresh.innerHTML=UI_ICON.refresh;
   const manage=document.querySelector('#manage-inspector-devices');manage.innerHTML=UI_ICON.settings||UI_ICON.project;manage.addEventListener('click',openDevices);
+  const sideAsk=createGroupSideAsk({api,getData,onError,getScope:()=>[getProject()?.id,getConversationId()],show(){select('ask');onSideAskOpen();}});
   let selected='roles',projectId=null,generation=0,detailVersion=0,loadedAt=0,busy=false;
   document.querySelector('#close-artifact-detail').addEventListener('click',()=>dialog.close());
   // Sessions page (desktop): "Open on the right" pins the file text beside the chat; shown once the text has loaded.
@@ -76,7 +78,7 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
     finally{if(version===generation){busy=false;refresh.disabled=false;}}
   }
   function select(name){
-    selected=name;for(const [key,panel] of Object.entries(panels))panel.hidden=key!==name;
+    selected=name;sideAsk.clear.hidden=name!=='ask';for(const [key,panel] of Object.entries(panels))panel.hidden=key!==name;
     document.querySelector('#inspector-title').textContent=titles[name];
     document.querySelector('#node-sidebar').setAttribute('aria-label',titles[name]);
     document.querySelector('#inspector-role-actions').hidden=name!=='roles';
@@ -86,10 +88,10 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
   }
   tabs.forEach((tab,i)=>{tab.addEventListener('click',()=>select(names[i]));tab.addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?names.length-1:(i+(event.key==='ArrowRight'?1:-1)+names.length)%names.length;select(names[next]);tabs[next].focus();}});});
   refresh.addEventListener('click',()=>void load(true));
-  return {artifactRow,render(){
-    sourceSync.render();
+  return {artifactRow,openSideAsk:message=>sideAsk.open(message),render(){
+    sourceSync.render();sideAsk.syncScope();
     const next=getProject()?.id||null;
-    if(next!==projectId){projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
+    if(next!==projectId){if(selected==='ask')select('roles');projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
     const devices=document.querySelector('#inspector-device-list');devices.replaceChildren();
     for(const worker of getData().workers||[]){
       const row=el('button','inspector-device-row'),local=workerKind(worker)==='local';row.type='button';

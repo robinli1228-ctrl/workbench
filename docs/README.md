@@ -50,3 +50,5 @@
 | [plan-source-sync-outputs](plan-source-sync-outputs.md) | Opt-in source/output policy, preview privacy, limit evidence and device-specific handoffs | Implemented locally with isolated verification; not deployed or enabled on business projects |
 
 Start with the README, then ARCHITECTURE. Read the PRD when you need the full product scope. ARCHITECTURE describes the actual code only and never treats a plan as a feature. Design documents may describe intended behavior; where they disagree with the code, the code is the fact.
+
+- [群聊卡片侧聊实施与验收](plan-group-side-ask.md) — 复用 Sessions 的 Claude/Codex 临时侧聊，未部署。

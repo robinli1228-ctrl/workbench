@@ -1,5 +1,6 @@
-const CACHE = 'agent-workbench-static-v189-integrated-run-details';
+const CACHE = 'agent-workbench-static-v190-group-side-ask';
 const STATIC = [
+  '/native-side-ask.js', '/group-side-ask.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
   '/group-conversations.js',

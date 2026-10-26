@@ -151,7 +151,7 @@ const runOriginal=createHistoryViewer({api,inline:true});
 const runStepText=(key,params={})=>getLanguage()==='zh'&&stepZh[key]?stepZh[key].replace(/\{(\w+)\}/g,(_,k)=>String(params[k]??'')):t(key,params);
 const runPreview=createPreviewSheet(dom.runDialog,runStepText);
 let originalRunSnapshot=null;
-const room = createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice(projectId, nodeId) {
+const room = createRoomUI({ api, openSideAsk:message=>inspector.openSideAsk(message), refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice(projectId, nodeId) {
   if (app.data.projects.some(p => p.id === projectId)) { app.selectedProjectId=projectId;openSettings('project'); }
 } });
 // Icons are for utility actions only (close, add, edit, refresh, settings). Commit actions such as send, save, prepare and delete
@@ -275,7 +275,7 @@ function createMobileDrawers() {
   return { set, isMobile: () => media.matches };
 }
 const drawers = createMobileDrawers();
-const inspector=createWorkspaceInspector({api,getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
+const inspector=createWorkspaceInspector({api,onError:setError,getConversationId:()=>app.selectedConversationId||app.selectedProjectId,onSideAskOpen:()=>{setInspectorMode('shown');mobilePanel('roles');},getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
 const conversationTaskUI=createConversationTaskUI({api,getScope:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),getRoles:()=>[...app.data.roles,...app.data.supervisorRoles],openMessage:async(scope,id)=>{mobilePanel('chat');await room.jumpMessage(scope,id);}});
 const nativeSessionUI=createNativeSessionUI({api,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
 initWorkspaceColumns();

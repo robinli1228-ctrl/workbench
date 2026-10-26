@@ -302,7 +302,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
 }
 
 /** The chat only handles display and user actions; role selection, idempotency and scheduling are validated by Home. */
-export function createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice }) {
+export function createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice, openSideAsk }) {
   const historyViewer=createHistoryViewer({api});
   const cliRecoveryUI=createCliRecoveryUI({api,refreshState,getData:()=>data,create});
   const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued});
@@ -1115,6 +1115,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);b.disabled=false;}
     }));
     actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text));
+    if(agent&&m.runId&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk(m)));
     // Execution originals live in the Run details; ordinary messages still resolve to their own stored text.
     if(!m.runId||discussion||handoff)actions.push(iconAction('original','Original',()=>void historyViewer.open(m.projectId,'message',m.id,m.conversationId||m.projectId).catch(e=>setError(e.message))));
     if (m.runId) {

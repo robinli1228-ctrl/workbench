@@ -4018,3 +4018,14 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
   .task-detail-dialog { padding: 16px; }
   .task-edit-form .form-grid { grid-template-columns: minmax(0,1fr); }
 }
+
+/* Group cards share the Sessions side-chat body and composer in the existing inspector. */
+#inspector-ask:not([hidden]) { display: flex; flex-direction: column; padding: 0; overflow: hidden; min-height: 0; }
+.group-ask-source { flex: none; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.group-ask-source strong { font-size: 13px; }
+.group-ask-quote { margin: 8px 0; padding: 8px 10px; border-left: 3px solid #c4c7f3; background: #f2f3f8; border-radius: 0 8px 8px 0; font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.group-ask-source .workspace-note { margin: 0; font-size: 11px; }
+
+.native-side-ask[hidden] { display: none; }
+
+.group-ask-scope { padding: 16px; }

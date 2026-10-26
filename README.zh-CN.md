@@ -1,5 +1,7 @@
 [English](README.md) | 简体中文
 
+群聊 Agent 卡片新增临时“侧边聊天”（Claude / Codex），复用会话页的输入、附件和只读侧聊机制。引用选中的卡片，使用原会话当前上下文，不回写群聊或主会话。需要 Home 与 Worker 同时支持新能力；本分支尚未部署。
+
 # Agent 协作工作台
 
 一个自托管的项目群聊工作台，把你已有的 AI 编程 CLI 和订阅组织成协作团队。Codex、Claude Code、Grok Build、Antigravity 可以作为不同角色，在 Mac 或服务器执行；Home 保存记录、维护协作状态，Worker 驱动真实的原生 CLI。

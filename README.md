@@ -8,6 +8,8 @@ A self-hosted project group chat for the AI coding CLIs and subscriptions you al
 
 > Development preview (`0.4.0`), for a single trusted operator or a small trusted team. Workbench does not proxy model APIs or replace native instructions, login or tools.
 
+Group-chat Agent cards can open a temporary **Side question** in the right panel (Claude and Codex). It reuses the Sessions composer and read-only side-session runner, quotes the selected card and uses the original native session’s current context. Home and Worker must both support group side questions. This branch is not deployed.
+
 ## What the current version provides
 
 - **Role-based collaboration.** Direct user assignments, supervisor coordination and role-to-role consultation through one `wb` entry. Keep role responsibilities separate from optional execution prompts; discover team, history, reports and user-confirmation tools on demand.

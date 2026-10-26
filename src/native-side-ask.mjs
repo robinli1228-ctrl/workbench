@@ -178,6 +178,7 @@ export class SideAsks{
    const parent=await this.parentState(runtime,sessionId,record,this.env);
    if(state.closing)return;
    if(!parent.workspace)throw Error('The main session has no working folder yet');
+   if(m.expectedWorkspace&&parent.workspace!==m.expectedWorkspace)throw Error('The original session working folder has changed');
    let r=this.record(sideId);
    // The main session has a newer prompt than the one this side question started from (or this Worker restarted and lost
    // the temporary session): start a fresh side session and say so.
@@ -186,6 +187,7 @@ export class SideAsks{
     if(state.closing)return;r=null;this.event(sideId,questionId,{kind:'restarted'});
    }
    else if(!r&&m.followUp)this.event(sideId,questionId,{kind:'restarted'});
+   const fresh=!r;
    if(!r){
     r={id:sideId,runtime,sessionId,cwd:parent.workspace,parentPromptId:parent.id,createdAt:new Date(this.clock()).toISOString()};
     if(runtime==='claude'){
@@ -201,7 +203,7 @@ export class SideAsks{
    const files=await this.receiveFiles(m);
    if(state.closing)return;
    const others=files.filter(f=>runtime!=='codex'||!f.mime?.startsWith('image/'));
-   const prompt=[m.prompt||'',others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
+   const prompt=[fresh&&m.context?m.context:'',m.prompt||'',others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
    let ended=false;
    const end=async(status,error)=>{
     if(ended)return;ended=true;if(this.running.get(sideId)===state)this.running.delete(sideId);

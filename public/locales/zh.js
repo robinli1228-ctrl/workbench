@@ -4,6 +4,23 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'This side question belongs to another group chat. Return to that chat to continue, or clear it here.': '这次侧聊属于另一个群聊。返回原群聊可继续，也可以在这里清空。',
+  'Choose an Agent card to start a side question': '点击 Agent 消息卡片的侧聊图标开始',
+  "Side question": "侧边聊天",
+  "Side question with {name}": "与 {name} 侧聊",
+  "Uses the original session’s current context, not a snapshot of this card.": "使用原会话当前上下文，并非这张卡片当时的快照。",
+  "Switch side questions? The current draft or answer will be cleared. The main task will keep running.": "切换侧聊将清空当前草稿或停止侧聊回答，主任务继续运行。确定切换吗？",
+  "This message is not available for side questions": "这条消息不能打开侧聊",
+  "The original execution is unavailable": "原执行记录不可用",
+  "The original session or working folder is unavailable": "原会话或工作目录不可用",
+  "Side questions work with Claude and Codex sessions": "侧聊暂时只支持 Claude 和 Codex",
+  "Upgrade this Worker to ask side questions": "此设备的 Worker 尚不支持侧聊",
+  "Device is offline": "设备离线，请连接后再试",
+  "Device is offline or side questions are unavailable": "设备离线或暂不支持侧聊",
+  "The original session working folder has changed": "原会话的工作目录已变化，无法打开这张卡片的侧聊",
+  "This card has no text to discuss": "这张卡片没有可讨论的正文",
+  "This card is too long for a side question": "这张卡片内容过长，暂时无法用于侧聊",
+
   'Run record': '运行记录',
   'Total': '合计',
   'Token · Session cumulative': 'Token · 会话累计',
