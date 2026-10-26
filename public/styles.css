@@ -3161,12 +3161,15 @@ body[data-navigation-mode="sessions"] #connection-note { display: none !importan
 .native-file-dir { direction: ltr; }
 .native-output-list, .native-project-output-list, .native-file-list { min-width: 0; max-width: 100%; }
 
-/* Send (and Stop on the sessions page) is an icon button inside the input field, bottom-aligned beside the text. */
+/* Bare Send/Stop icons retain their click area and accessible labels without a button surface. */
 .chat-input-field { grid-template-columns: 36px minmax(0, 1fr) 40px; }
-.chat-input-field .chat-send { grid-column: 3; align-self: end; display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; margin: 4px 4px 4px 0; padding: 0; border: 0; border-radius: 9px; box-shadow: none; }
+.chat-input-field .chat-send { grid-column: 3; align-self: end; display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; margin: 4px 4px 4px 0; padding: 0; border: 0; border-radius: 9px; box-shadow: none; background: transparent; color: var(--accent); }
+.chat-input-field .chat-send:hover:not(:disabled) { background: transparent; box-shadow: none; }
 .chat-input-field .chat-send svg { width: 18px; height: 18px; }
 .chat-input-field .chat-send:disabled { opacity: .45; }
-.chat-input-field .chat-send.danger { background: var(--danger); color: #fff; }
+.chat-input-field .chat-send.danger, .chat-input-field .chat-send.danger:hover:not(:disabled) { background: transparent; color: var(--danger); }
+.chat-input-field .chat-send.danger svg { width: 24px; height: 24px; }
+.chat-input-field .chat-send.danger rect { fill: rgb(217 45 67 / 14%); }
 .chat-input-field #chat-attach, .native-takeover-form .native-attach { align-self: end; }
 .native-takeover-form .chat-input-field { grid-template-columns: 36px minmax(0, 1fr) 40px; align-items: end; }
 .native-takeover-form .native-attach { margin: 2px 0 2px 2px; height: 32px; min-height: 32px; width: 32px; }
