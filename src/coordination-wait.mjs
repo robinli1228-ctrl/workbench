@@ -55,15 +55,20 @@ export function waitDependencies(db,request) {
   if(!request)return [];
   const selected=request.status==='waiting_call'&&Array.isArray(request.waitRequestIds),ids=new Set(request.waitRequestIds||[]);
   if(!selected) {
-    const owners=new Set([request.id]);let ancestor=request;
+    const owners=new Set([request.id]),reported=new Set(),legacy=new Set();let ancestor=request;
     while(ancestor.continuationOf) {
       const previous=db.get('coordinationRequests',ancestor.continuationOf);
       assertConversationRecord(request,previous);
       if(!previous||previous.projectId!==request.projectId||previous.targetRoleId!==request.targetRoleId||owners.has(previous.id))throw new Error('Invalid dependency ownership chain.');
       owners.add(previous.id);ancestor=previous;
+      // What an earlier wake already carried; a wait recorded before wake events counts as having carried all its calls.
+      const carried=previous.waitEvent?.requestIds||previous.waitRequestIds;
+      if(Array.isArray(carried))carried.forEach(id=>reported.add(id));else legacy.add(previous.id);
     }
+    // A call that settled while the owner was busy with an earlier result stays waitable until a wake carries it.
     for(const child of db.list('coordinationRequests').filter(r=>owners.has(r.parentRequestId)&&!r.continuationOf))
-      if(child.parentRequestId===request.id||!['succeeded','failed','cancelled'].includes(currentContinuation(db,child.id)?.status))ids.add(child.id);
+      if(child.parentRequestId===request.id||!['succeeded','failed','cancelled'].includes(currentContinuation(db,child.id)?.status)
+        ||!reported.has(child.id)&&!legacy.has(child.parentRequestId))ids.add(child.id);
   }
   return [...ids].map(id=>{
     const child=db.get('coordinationRequests',id);

@@ -1569,6 +1569,7 @@ wb call --role 角色 --kind consult|direct|transfer --request-id 稳定编号 -
                      重复 --role 可把同一段说明发给几个角色，各自处理。可选 --goal、--scope、--input、--return 写成带标签的几行放在说明前面；--file 路径 附上项目里的一个 UTF-8 文件（带 SHA256）。说明最多 12000 字。重试用同一个编号和内容。
                      --kind handoff --delivery-id 编号：配合 wb deliver 的跨设备提交派活。
 wb wait "续接摘要"   登记你在等哪些派出的结果，然后结束本轮；结果都回来、超时（默认 30 分钟）或对方 10 分钟仍无法开始时，平台叫醒你。也可 wb wait '{"summary":"...","requestIds":["编号"],"timeoutSeconds":1800}'
+                     列出的几个请求要全部返回才叫醒你；想先处理先回来的，就只等那一个（requestIds 只写它的编号），处理完再等下一个。
 wb note 文字         在群里留一句话，不派活
 wb history [关键词] [--role 角色] [--file 路径] [--since 时间] [--until 时间] [--limit N] [--cursor C]
                      不带关键词列出最近的群聊记录；带关键词搜索。时间写法：30m、2h、3d、today、2026-10-20

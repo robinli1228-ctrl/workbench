@@ -1569,6 +1569,7 @@ wb call --role ROLE --kind consult|direct|transfer --request-id STABLE_ID --text
                      Repeat --role to send the same brief to several roles, each handling it separately. Optional --goal, --scope, --input and --return become labelled lines ahead of the brief; --file PATH attaches one UTF-8 project file with its SHA256. Briefs are at most 12000 characters. Retry with the same ID and content.
                      --kind handoff --delivery-id ID: assign work on a commit delivered across devices with wb deliver.
 wb wait "RESUME SUMMARY"  Register which of your calls you are waiting for, then end the turn; the platform wakes you when all results are back, on timeout (30 minutes by default), or when one still cannot start after 10 minutes. Or wb wait '{"summary":"...","requestIds":["ID"],"timeoutSeconds":1800}'
+                     You are woken only when every listed request is back; to handle whichever returns first, wait on that one alone (only its ID in requestIds), then wait for the next.
 wb note TEXT         Leave a line in the group chat without assigning work
 wb history [TERMS] [--role ROLE] [--file PATH] [--since TIME] [--until TIME] [--limit N] [--cursor C]
                      Without terms, list the latest group-chat records; with terms, search. TIME: 30m, 2h, 3d, today, 2026-10-20
