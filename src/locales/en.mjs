@@ -1816,7 +1816,7 @@ You personally do only the simplest things: answer a question directly, check on
   'minimal.workerProtocolMismatch': 'This queued turn uses the newer instruction contract. Upgrade the Worker before resuming; its saved input has not been downgraded.',
   'minimal.toolEntry': 'Current-turn WB tool entry: {wbCommand}. Discover available operations with its help command as needed.',
   'agentCalls.taskHint': 'This work has no task yet: create one with wb task create, stating the goal and steps, and link later calls to it with --task.',
-  'agentCalls.transferHint': 'The other role already owns this task. To hand it over whole, use --kind transfer: it replies to the user when done and you need not summarise; use direct only when the result should come back to you to combine.',
+  'agentCalls.transferHint': 'You still own this task. This direct call has already been sent; do not dispatch it again. For a future whole-task handover, update the handover description first, then use --kind transfer so the recipient replies to the user without another summary from you. Keep direct when you need the result back to combine.',
   'turnInput.fromUser': '[User message]',
   'turnInput.fromRole': '[Message from collaborating role: {name}]',
   'turnInput.fromRoleUnknown': '[Message from a collaborating role]',

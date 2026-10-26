@@ -1,5 +1,5 @@
-// wb call answers with a short hint when work goes out without a task, or when the supervisor gives a task to its
-// owner with direct instead of transfer. The call itself is sent unchanged.
+// wb call answers with a short hint for untracked work or a supervisor delegating its own task.
+// The hint never changes the call that was already sent.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../src/store.mjs';
@@ -43,11 +43,9 @@ test('a role already working on a linked task gets no task hint', () => {
   assert.equal(e.call({ role: 'Checker', kind: 'direct' }).hint, undefined);
 });
 
-test('the supervisor giving a task to its owner with direct is pointed to transfer', () => {
-  const e = env('sup');
-  e.task('c');
-  const direct = e.call({ role: 'Checker', kind: 'direct', task: 'T1' });
-  assert.equal(direct.hint, tr('agentCalls.transferHint'));
-  assert.ok(direct.requestId, 'the call is still sent');
-  assert.equal(e.call({ role: 'Builder', kind: 'direct', task: 'T1' }).hint, undefined, 'not when the target is not the owner');
+test('transfer hint is actionable only for a task the supervisor still owns',()=>{
+ const e=env('sup');e.task('sup');const direct=e.call({role:'Checker',kind:'direct',task:'T1'});assert.equal(direct.hint,tr('agentCalls.transferHint'));
+ const next=env('sup');next.task('sup');assert.ok(next.call({role:'Checker',kind:'transfer',task:'T1'}).requestId);assert.equal(next.db.list('conversationTasks')[0].ownerRoleId,'c');
+ const owned=env('sup');owned.task('c');assert.equal(owned.call({role:'Checker',kind:'direct',task:'T1'}).hint,undefined);
+ const delegated=env('sup');delegated.task('sup');const r=delegated.db.get('coordinationRequests','task:t1');delegated.db.put('coordinationRequests',{...r,parentRequestId:'parent'});assert.equal(delegated.call({role:'Checker',kind:'direct',task:'T1'}).hint,undefined);
 });

@@ -79,8 +79,8 @@ export function createAgentCalls({db,calls,rooms},run,input) {
     const hints=[];
     // Work handed to others should be tracked as a task; consultations and reviews are not.
     if(['direct','transfer'].includes(kind)&&!linked&&!parent.conversationTaskId)hints.push(tr('agentCalls.taskHint'));
-    // The supervisor giving a task to its owner with direct gets the result back and answers the user a second time.
-    if(kind==='direct'&&run.roleSnapshot?.systemSupervisor&&linked&&targets.length===1&&linked.ownerRoleId===targets[0].id)hints.push(tr('agentCalls.transferHint'));
+    // Only an owning root turn can transfer; do not suggest a handover that the permission checks would reject.
+    if(kind==='direct'&&run.roleSnapshot?.systemSupervisor&&linked&&targets.length===1&&linked.ownerRoleId===run.roleId&&targets[0].id!==run.roleId&&!parent.parentRequestId&&!run.planId&&!parent.planId&&!['done','cancelled'].includes(linked.status))hints.push(tr('agentCalls.transferHint'));
     const result=response(message);
     return hints.length?{...result,hint:hints.join(' ')}:result;
   });
