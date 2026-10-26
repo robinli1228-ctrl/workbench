@@ -1116,8 +1116,6 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     }));
     actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text));
     if(agent&&m.runId&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk(m)));
-    // Execution originals live in the Run details; ordinary messages still resolve to their own stored text.
-    if(!m.runId||discussion||handoff)actions.push(iconAction('original','Original',()=>void historyViewer.open(m.projectId,'message',m.id,m.conversationId||m.projectId).catch(e=>setError(e.message))));
     if (m.runId) {
       const run = data.runs?.find(r => r.id === m.runId);
       if (run) actions.push(iconAction('live', 'Log', () => openTask(run.taskId,run.id)));
