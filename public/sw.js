@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v189-integrated-run-details';
+const CACHE = 'agent-workbench-static-v196-turn-input-sections';
 const STATIC = [
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
