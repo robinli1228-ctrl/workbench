@@ -1366,9 +1366,16 @@ function appendRuntimeModels(parent, worker, runtime) {
   const details = create('details', `runtime-settings${runtime.available ? ' is-available' : ''}`);
   const summary = create('summary', 'runtime-settings-summary');
   const label = runtime.label || runtime.type || 'Runtime';
+  const name = create('strong', '', label);
+  // Show the reported CLI version beside its name; keep the complete vendor/build string in the tooltip.
+  const rawVersion = typeof runtime.version === 'string' ? runtime.version.trim() : '';
+  const number = rawVersion.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/)?.[0];
+  const version = create('span', 'runtime-version', number ? `v${number}` : rawVersion || t('Version unknown'));
+  version.title = rawVersion || t('Version unknown');
+  name.append(version);
   summary.append(
     agentIconEl(runtime.type, label),
-    create('strong', '', label),
+    name,
     create('span', `runtime-state ${runtime.available ? 'is-ready' : 'is-unavailable'}`, runtime.available ? 'Available' : 'Unavailable')
   );
   if (!runtime.available) summary.append(platformUI.deleteRuntimeButton(worker,runtime));

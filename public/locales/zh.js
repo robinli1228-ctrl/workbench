@@ -4,6 +4,7 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Version unknown': '版本未知',
   'This side question belongs to another group chat. Return to that chat to continue, or clear it here.': '这次侧聊属于另一个群聊。返回原群聊可继续，也可以在这里清空。',
   'Choose an Agent card to start a side question': '点击 Agent 消息卡片的侧聊图标开始',
   "Side question": "侧边聊天",

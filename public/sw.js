@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v191-group-side-ask-composer';
+const CACHE = 'agent-workbench-static-v192-cli-version-label';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
