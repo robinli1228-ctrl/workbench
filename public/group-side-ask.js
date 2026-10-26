@@ -17,10 +17,10 @@ export function createGroupSideAsk({api,getData,show,onError,getScope}){
    if(chat.hasUnsentOrBusy()&&!window.confirm(t('Switch side questions? The current draft or answer will be cleared. The main task will keep running.')))return;
    const scope=JSON.stringify(getScope());loading=true;chat.setSourceLoading(true);
    try{
-    const sideEndpoint=`/api/projects/${encodeURIComponent(message.projectId)}/messages/${encodeURIComponent(message.id)}/side`;
+    const sideEndpoint=`/api/projects/${encodeURIComponent(message.projectId)}/${message.sideRunId?'runs':'messages'}/${encodeURIComponent(message.sideRunId||message.id)}/side`;
     const value=await api(`${sideEndpoint}?${new URLSearchParams({conversationId:message.conversationId||message.projectId})}`);
     if(scope!==JSON.stringify(getScope()))return;
-    hint.hidden=false;key=next;sourceScope=JSON.stringify([value.projectId,value.conversationId]);chat.attach({...value,sourceKey:key,sideEndpoint});name.textContent=t('Side question with {name}',{name:value.senderName});quote.textContent=value.quote;quote.title=value.quote;syncScope();show();chat.focus();
+    hint.textContent=t(value.previousRunId?'Based on the previous completed question and reply. Files are still current.':'Uses the original session’s current context, not a snapshot of this card.');hint.hidden=false;key=next;sourceScope=JSON.stringify([value.projectId,value.conversationId]);chat.attach({...value,sourceKey:key,sideEndpoint});name.textContent=t('Side question with {name}',{name:value.senderName});quote.textContent=value.quote;quote.title=value.quote;syncScope();show();chat.focus();
    }catch(error){onError(error.message);}finally{loading=false;chat.setSourceLoading(false);}
   }
  };

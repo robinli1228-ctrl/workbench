@@ -43,7 +43,7 @@ export function createHomeSideAsks({send,online,attachments=null,owner=nodeId=>n
   const items=body.attachmentIds?.length&&attachments?attachments.resolve(owner(nodeId),body.attachmentIds.slice(0,6)):[];
   const question={id:randomUUID(),prompt,text:'',status:'queued',phase:null,events:[],attachments:items,createdAt:stamp()};
   const followUp=side.questions.length>0;side.questions.push(question);
-  send(nodeId,{type:'side_ask',sideId:side.id,questionId:question.id,runtime,sessionId,prompt,model,followUp,...(source?.context?{context:source.context,record:source.record,expectedWorkspace:source.workspace}:{}),attachments:items.map(({id,name,mime,size,sha256})=>({id,name,mime,size,sha256}))});
+  send(nodeId,{type:'side_ask',sideId:side.id,questionId:question.id,runtime,sessionId,prompt,model,followUp,...(source?.context?{context:source.context,record:source.record,expectedWorkspace:source.workspace,...(source.snapshot?{snapshot:source.snapshot}:{})}:{}),attachments:items.map(({id,name,mime,size,sha256})=>({id,name,mime,size,sha256}))});
   change();return view(side);
  }
  function get(sideId){const side=sides.get(sideId);if(side)return view(side);const c=closed.get(sideId);return {id:sideId,closed:true,reason:c?.reason||'closed'};}

@@ -79,6 +79,9 @@ export default {
   'Reading changed files':'读取变化的文件',
   'Clearing transfer staging':'清理传输暂存',
 
+  'Based on the previous completed question and reply. Files are still current.': '基于上一轮已完成的提问和回复，文件仍为当前版本。',
+  'The previous completed reply is unavailable': '暂无可用的上一轮已完成回复',
+  'Upgrade this Worker to ask about the previous completed turn': '请升级此设备的 Worker 后再使用上一轮侧聊',
   'Version unknown': '版本未知',
   'This side question belongs to another group chat. Return to that chat to continue, or clear it here.': '这次侧聊属于另一个群聊。返回原群聊可继续，也可以在这里清空。',
   'Choose an Agent card to start a side question': '点击 Agent 消息卡片的侧聊图标开始',

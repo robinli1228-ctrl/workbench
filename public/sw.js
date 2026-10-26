@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v197-sidebar-selection';
+const CACHE = 'agent-workbench-static-v198-running-side-question';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',

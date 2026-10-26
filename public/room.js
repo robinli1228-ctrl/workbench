@@ -1039,6 +1039,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
         catch (e) { setError(e.message); b.disabled = false; }
       }));
     }
+    if(run&&['starting','running','waiting_user'].includes(run.status)&&['claude','codex'].includes(run.nativeSession?.runtime||run.runtime||role.runtime)&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk({id:`running:${run.id}`,sideRunId:run.id,projectId:task.projectId,conversationId:task.conversationId||task.projectId})));
     if (run) actions.push(iconAction('live', 'Log', () => openTask(task.id,run.id)));
     // Status and actions sit inside the card, the same footer as finished messages.
     // The footer names the stage: queued, the CLI getting ready (workspace, start, resume), then thinking, the step it is

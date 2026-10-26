@@ -8,7 +8,7 @@ A self-hosted project group chat for the AI coding CLIs and subscriptions you al
 
 > Development preview (`0.4.0`), for a single trusted operator or a small trusted team. Workbench does not proxy model APIs or replace native instructions, login or tools.
 
-Group-chat Agent cards can open a temporary **Side question** in the right panel (Claude and Codex). It reuses the Sessions composer and read-only side-session runner, quotes the selected card and uses the original native session’s current context. Home and Worker must both support group side questions. This branch is not deployed.
+Group-chat Agent cards can open a temporary **Side question** in the right panel (Claude and Codex). It reuses the Sessions composer and read-only side-session runner, quotes the selected card and uses the original native session’s current context. Home and Worker must both support group side questions. Running Claude/Codex cards can also ask from the previous completed public question/reply in that same native session. This bounded saved reference excludes the running turn; ordinary completed-card side questions retain their existing context. This branch is not deployed.
 
 Sending a new native-session message or retrying **Steer** checks the retained Worker process first (requires `nativeTakeoverRefresh:1`). Verified idle processes are reused; verified exits free the old lease. A connection failure or unknown process identity leaves the queue intact and shows an error instead of bypassing ownership checks.
 

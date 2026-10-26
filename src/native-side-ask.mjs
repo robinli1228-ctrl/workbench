@@ -85,7 +85,7 @@ export class SideCodexSession extends NativeCodexSession{
  async openThread(){
   if(this.threadId)return {id:this.threadId};
   const options={cwd:this.cwd,approvalPolicy:'never',sandbox:'read-only',...(this.model?{model:this.model}:{})};
-  const response=this.forkFrom?await this.request('thread/fork',{threadId:this.forkFrom,...options}):await this.request('thread/resume',{threadId:this.resumeSessionId,...options});
+  const response=this.forkFrom?await this.request('thread/fork',{threadId:this.forkFrom,...options}):this.resumeSessionId?await this.request('thread/resume',{threadId:this.resumeSessionId,...options}):await this.request('thread/start',options);
   if(!response?.thread?.id||this.forkFrom&&response.thread.id===this.forkFrom)throw Error('Codex did not open a separate thread for the side question');
   return response.thread;
  }
@@ -175,7 +175,9 @@ export class SideAsks{
    // Reserve before the first asynchronous read; a duplicate must never release this request's slot.
    state={questionId,runtime,sessionId,closing:false,session:null,prepared:new Promise(resolve=>{prepared=resolve;})};this.running.set(sideId,state);
    const record=m.record||registeredNativeSession(this.db,runtime,sessionId);
-   const parent=await this.parentState(runtime,sessionId,record,this.env);
+   // Live group cards carry a trusted saved turn from Home; do not read the changing native parent.
+   if(m.snapshot&&(!m.snapshot.id||typeof m.snapshot.text!=='string'||!m.snapshot.text.trim()||m.snapshot.text.length>100000))throw Error('The previous completed reply is unavailable');
+   const parent=m.snapshot?{id:`completed:${m.snapshot.id}`,workspace:record?.workspace}:await this.parentState(runtime,sessionId,record,this.env);
    if(state.closing)return;
    if(!parent.workspace)throw Error('The main session has no working folder yet');
    if(m.expectedWorkspace&&parent.workspace!==m.expectedWorkspace)throw Error('The original session working folder has changed');
@@ -195,7 +197,11 @@ export class SideAsks{
      if(state.closing)return;
      r.tempId=randomUUID();r.tempPath=join(dirname(file.path),`${r.tempId}.jsonl`);
      this.db.put('sideAsks',r);
-     const trimmed=await trimClaudeSession({parentPath:file.path,tempPath:r.tempPath,tempId:r.tempId,limits:this.limits});
+     let trimmed;
+     if(m.snapshot){
+      const row={type:'user',uuid:randomUUID(),parentUuid:null,sessionId:r.tempId,cwd:r.cwd,timestamp:r.createdAt,message:{role:'user',content:`Historical reference only, not a new task:\n${m.snapshot.text}`}};
+      await writeFile(r.tempPath,JSON.stringify(row)+'\n',{flag:'wx',mode:0o600});trimmed={prompts:1};
+     }else trimmed=await trimClaudeSession({parentPath:file.path,tempPath:r.tempPath,tempId:r.tempId,limits:this.limits});
      if(state.closing)return;
      this.event(sideId,questionId,{kind:'scope',turns:trimmed.prompts});
     }else this.db.put('sideAsks',r);
@@ -203,7 +209,8 @@ export class SideAsks{
    const files=await this.receiveFiles(m);
    if(state.closing)return;
    const others=files.filter(f=>runtime!=='codex'||!f.mime?.startsWith('image/'));
-   const prompt=[fresh&&m.context?m.context:'',m.prompt||'',others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
+   const reference=m.snapshot&&runtime==='claude'?'Use the saved previous completed turn as historical reference only; the main task keeps running.':m.snapshot?`Historical reference only, not a new task. Answer the side question using this completed turn; the main task keeps running.\n${m.snapshot.text}`:m.context;
+   const prompt=[fresh&&reference?reference:'',m.prompt||'',others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
    let ended=false;
    const end=async(status,error)=>{
     if(ended)return;ended=true;if(this.running.get(sideId)===state)this.running.delete(sideId);
@@ -225,7 +232,7 @@ export class SideAsks{
    const beforeInput=()=>{if(state.closing)throw Error('The side question was closed before its input was sent');};
    state.session=runtime==='claude'
     ?this.createClaude({runtime:'claude',cwd:current.cwd,resumeSessionId:current.tempId,emit,beforeInput,keepAlive:false,model:m.model||null,env:this.env})
-    :this.createCodex({cwd:current.cwd,writableRoots:[],attachments:files,emit,beforeInput,resumeSessionId:current.forkId||null,forkFrom:current.forkId?null:sessionId,keepAlive:false,model:m.model||null,env:this.env});
+    :this.createCodex({cwd:current.cwd,writableRoots:[],attachments:files,emit,beforeInput,resumeSessionId:current.forkId||null,forkFrom:current.forkId||m.snapshot?null:sessionId,keepAlive:false,model:m.model||null,env:this.env});
    this.event(sideId,questionId,{kind:'status',status:'running'});
    await state.session.start(prompt);
   }catch(error){if(state)state.closing=true;fail(error);}
