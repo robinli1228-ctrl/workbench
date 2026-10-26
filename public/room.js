@@ -1,7 +1,7 @@
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
-import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
+import { renderMarkdown, renderMessageMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
 import { linkMedia, openImageLightbox, markImageOpener, fileGlyph } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
@@ -847,7 +847,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   /** Chat prose is simplified for display only; copying and the Original view retain the complete stored text. */
   /** Media files named in a reply open in the shared viewer; bytes stay on the device that ran the turn until requested. */
   const mediaContext=runId=>runId?{key:`run:${runId}`,describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`)}:null;
-  const renderLinkedMarkdown=(text,runId)=>previewDocumentLinks(localizeDocumentLinks(linkMedia(linkRunDocuments(renderMarkdown(simplifiedCliOutput(text)),runId),mediaContext(runId)),runId,api));
+  const renderLinkedMarkdown=(text,runId)=>previewDocumentLinks(localizeDocumentLinks(linkMedia(linkRunDocuments(renderMessageMarkdown(simplifiedCliOutput(text)),runId),mediaContext(runId)),runId,api));
   function replyPreview(text, markdown = true, runId = null, key = '') {
     const preview = create('div', 'chat-reply-preview');
     preview.dataset.previewKey = `${projectId}:${key}`;
