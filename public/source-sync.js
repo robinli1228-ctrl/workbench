@@ -1,3 +1,4 @@
+import {auditQuery,auditSummary,auditFields} from './source-sync-audit.js';
 import {t,onLanguageChange} from './i18n.js';
 import {setActionIcon} from './role-icons.js';
 
@@ -27,7 +28,7 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
   async function act(fn,b){if(action)return;action=true;if(b)b.disabled=true;const e=epoch;try{await fn();if(e===epoch){await load(true);await refreshState();}}catch(error){if(e===epoch){const note=el('p','workspace-note',error.message);note.setAttribute('role','alert');panel.append(note);}}finally{action=false;if(b?.isConnected)b.disabled=false;}}
   function draw(){
     panel.replaceChildren();if(!state)return;
-    const h=el('div','source-sync-heading');h.append(el('h3','',t('Project file sync')),setActionIcon(button('Configure project file sync',configure),'settings',t('Configure project file sync')));panel.append(h,el('p','workspace-note',t(state.config.enabled?'Enabled':'Disabled')));
+    const h=el('div','source-sync-heading');h.append(el('h3','',t('Project file sync')),setActionIcon(button('Configure project file sync',configure),'settings',t('Configure project file sync')));panel.append(h,el('p','workspace-note',t(state.config.enabled?'Enabled':'Disabled')),button('Sync records',auditRecords));
     panel.append(el('p','workspace-note',t('Saved code, documents and resources; Git delivery remains separate.')),el('p','workspace-note',t(state.config.contentMode==='source-and-outputs'?'Source and outputs':'Source only')));
     if(state.config.detection==='metadata')panel.append(el('p','workspace-note',t('Simple mode: metadata and completion receipts; equal time and size can miss content changes.')));
     if(state.config.mode==='continuous')panel.append(el('p','workspace-note',t('Automatic two-way sync continues while this page is closed.')),el('p','workspace-note',`${t('Local display device')}: ${name(state.config.displayNodeId)}`));
@@ -41,7 +42,7 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
     }
     if(state.config.enabled&&state.config.detection==='metadata'){
       panel.append(button('Establish sync baseline',initialize));
-      for(const j of state.initializations||[]){const row=el('div','source-sync-row');row.append(el('small','workspace-note',`${t('Baseline initialization')} · ${status(j.status)} · ${j.processed} ${t('paths processed')}${j.reason?' · '+issue(j.reason):''}`));if(j.status==='paused')row.append(button('Resume initialization',b=>{if(!confirm(t('Resume this initialization? Remaining paths may overwrite files using the original selection.')))return;return act(()=>api(endpoint()+'/initializations/'+j.id+'/resume',{confirmed:true,revision:state.config.revision,requestId:crypto.randomUUID()}),b);}));panel.append(row);}
+      panel.append(button('Initialization jobs',initializationJobs));
     }
     for(const b of state.batches.slice(-4).reverse()){
       const row=el('div','source-sync-row');row.append(el('span','',status(b.status)));const meta=el('small','workspace-note',`${b.id.slice(0,8)}${b.reason?' · '+issue(b.reason,b.limit):''}`);meta.setAttribute('translate','no');row.append(meta);
@@ -50,6 +51,42 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
       panel.append(row);
     }
     for(const c of state.conflicts.filter(c=>!['resolved','cancelled'].includes(c.status))){const row=el('div','source-sync-row');const open=button(c.path,()=>detail(c.id));open.setAttribute('translate','no');row.append(open,el('small','workspace-note',status(c.status)));panel.append(row);}
+  }
+  async function initializationJobs(){
+    const {body,note,id,v}=modal('Initialization jobs');const list=el('div');let after='',next=null,busy=false;
+    const more=button('Next page',()=>{after=next||'';return page();});more.disabled=true;
+    body.append(button('Refresh',()=>{after='';return page();}),list,more);
+    async function page(){if(busy)return;busy=true;more.disabled=true;try{const r=await api(endpoint(id)+'/initializations?'+new URLSearchParams({after}));if(!valid(id,v))return;next=r.next;list.replaceChildren();
+      for(const j of r.items){const row=el('div','source-sync-row');row.append(el('span','',`${status(j.status)} · ${j.processed||0} ${t('paths processed')}`),el('small','workspace-note',j.createdAt||''));
+        if(j.reason)row.append(el('small','workspace-note',issue(j.reason)));
+        if(j.status==='paused')row.append(button('Resume initialization',async b=>{if(!window.confirm(t('Resume this initialization? Remaining paths may overwrite files using the original selection.')))return;b.disabled=true;try{const c=await api(endpoint(id)+'/config');if(!valid(id,v))return;await api(endpoint(id)+'/initializations/'+j.id+'/resume',{confirmed:true,revision:c.revision,requestId:crypto.randomUUID()});if(valid(id,v))await page();}catch(e){if(valid(id,v))note.textContent=e.message;}finally{b.disabled=false;}}));list.append(row);
+      }note.textContent=r.items.length?'':t('No records');
+    }catch(e){if(valid(id,v))note.textContent=e.message;}finally{busy=false;if(valid(id,v))more.disabled=!next;}}
+    await page();
+  }
+  async function auditRecords(){
+    const {body,note,id,v}=modal('Sync records'),filters=el('form'),list=el('div');let after='',next=null,sequence=0;
+    const controls={};for(const [key,label,type] of [['path','Relative path (exact)','text'],['device','Device ID','text'],['from','From (local time)','datetime-local'],['to','To (local time)','datetime-local']]){const field=el('label','',t(label)),input=el('input');input.type=type;input.setAttribute('aria-label',t(label));controls[key]=input;field.append(input);filters.append(field);}
+    const field=el('label','',t('Status')),select=el('select');select.setAttribute('aria-label',t('Status'));for(const [value,label] of [['','All'],['syncing','Syncing'],['succeeded','Succeeded'],['failed','Failed']]){const option=el('option','',t(label));option.value=value;select.append(option);}controls.status=select;field.append(select);filters.append(field);
+    const more=button('Next page',()=>{after=next||'';return page();});more.disabled=true;
+    filters.addEventListener('submit',e=>{e.preventDefault();after='';void page();});filters.append(button('Apply filters',()=>{after='';return page();}));
+    body.append(el('p','workspace-note',t('Records expire after 30 days. Times use Home; file times are shown unchanged.')),filters,list,more);
+    async function page(){const request=++sequence;more.disabled=true;const q=Object.fromEntries(Object.entries(controls).map(([k,input])=>[k,['from','to'].includes(k)&&input.value?new Date(input.value).toISOString():input.value]));try{const r=await api(endpoint(id)+'/audit?'+auditQuery(q,after));if(!valid(id,v)||request!==sequence)return;next=r.next;list.replaceChildren();for(const item of r.items){const summary=auditSummary(item),row=el('div','source-sync-row');const open=button(summary.path,()=>auditDetail(item.recordId));open.setAttribute('translate','no');row.append(open,el('span','',`${t(summary.action)} · ${t(summary.status)}`),el('small','workspace-note',`${name(item.sourceDevice)} → ${name(item.targetDevice)} · ${item.recordedAt}`));list.append(row);}note.textContent=r.items.length?'':t('No records');more.disabled=!next;}catch(e){if(valid(id,v)&&request===sequence)note.textContent=e.message;}}
+    await page();
+  }
+  async function auditDetail(recordId){
+    const {body,note,id,v}=modal('Sync record details');let after='',next=null,sequence=0;
+    const fields=el('div'),chain=el('div'),more=button('More attempts',()=>{after=next||'';return page();});more.disabled=true;
+    body.append(button('Back to records',auditRecords),fields,el('h3','',t('Retry chain')),chain,more);
+    async function page(){const request=++sequence;try{const r=await api(endpoint(id)+'/audit/'+encodeURIComponent(recordId)+'?'+new URLSearchParams({after}));if(!valid(id,v)||request!==sequence)return;
+      const summary=auditSummary(r.record);fields.replaceChildren(el('p','',`${t(summary.action)} · ${t(summary.status)} · ${name(r.record.sourceDevice)} → ${name(r.record.targetDevice)}`));
+      for(const [label,value] of auditFields(r.record)){const section=el('div');section.append(el('strong','',t(label)));const text=el('pre','artifact-code',typeof value==='object'?JSON.stringify(value,null,2):t(String(value??'—')));text.style.whiteSpace='pre-wrap';text.style.overflowWrap='anywhere';text.setAttribute('translate','no');section.append(text);fields.append(section);}
+      if(r.record.conflictId)fields.append(button('Open conflict',()=>detail(r.record.conflictId)));
+      if(r.record.retryOf)fields.append(button('Previous attempt',()=>auditDetail(r.record.retryOf)));
+      chain.replaceChildren();for(const attempt of r.retries.items)chain.append(button(`${attempt.attempt} · ${attempt.recordedAt} · ${t(auditSummary(attempt).status)}`,()=>auditDetail(attempt.recordId)));
+      next=r.retries.next;more.disabled=!next;note.textContent=t('Expired attempts may no longer be available.');
+    }catch(e){if(valid(id,v))note.textContent=e.message;}}
+    await page();
   }
   async function initialize(){
     const {body,note,id,v}=modal('Establish sync baseline');const config=state.config;let after='',next=null,items=[],selected=new Set();

@@ -1,3 +1,4 @@
+import {initializationPage} from './source-sync-audit.mjs';
 import {SourceSyncInitialization} from './source-sync-initialization.mjs';
 import {Readable} from 'node:stream';
 import {validateMetadataCapture,contentEqual} from './source-sync-metadata.mjs';
@@ -35,12 +36,13 @@ function receiptEnvelope(commandId,result){
 
 /** The existing Home listener transports content; scoped transfer credentials never enter model input. */
 export class SourceSyncHome {
-  constructor({db,data,online,socket,change,rooms,query}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change});this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;this.baselines=new SourceSyncInitialization(this);
+  constructor({db,data,online,socket,change,rooms,query,now=Date.now}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change,now});this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;this.baselines=new SourceSyncInitialization(this);
     this.conflicts=new SourceSyncConflicts({db,rooms,sync:this.sync,reachability:role=>online(role.nodeId)&&db.get('workers',role.nodeId)?.capabilities?.sourceSyncTools===1&&!runtimeIssue(db.get('workers',role.nodeId),role.runtime,role.model)});
     this.agent=new SourceSyncAgent({db,sync:this.sync,conflicts:this.conflicts,storage:this.storage,query});
   }
   busy(projectId,nodeId){return this.db.listSourceSyncCommands({projectId,nodeId,action:'apply',pending:true}).length>0;}
   async tick(){if(this.ticking)return;this.ticking=true;try{
+    this.sync.audit.cleanup();
     await this.cleanupMetadataBatches();
     this.baselines.tick();
     await this.cleanupMetadataConflicts();
@@ -96,7 +98,7 @@ export class SourceSyncHome {
       if(cleanups.some(c=>c.result?.status!=='completed'))continue;
       try{await this.storage.scoped(b.id).cleanup(b.projectId);}catch(e){if(e.code==='sync_busy')continue;throw e;}
       const current=this.db.get('sourceSyncBatches',b.id),cleanedAt=new Date().toISOString();
-      this.db.put('sourceSyncBatches',{...current,metadataCleanedAt:cleanedAt,...(current.status==='cleaning'?{status:current.conflictIds.length||current.pendingMetadata?.length?'partial_conflict':'completed',updatedAt:cleanedAt}:{})});
+      this.db.put('sourceSyncBatches',{...current,metadataCleanedAt:cleanedAt,...(current.status==='cleaning'?{status:current.conflictIds.length||current.pendingMetadata?.length?'partial_conflict':'completed',updatedAt:cleanedAt}:{})});this.sync.audit.observe(this.db.get('sourceSyncBatches',b.id));
     }
   }
   /** Persist each observation once and coalesce later saves; file notifications never invoke a model. */
@@ -260,17 +262,21 @@ export class SourceSyncHome {
       const allowed=['read','stage'].includes(c.action)?(this.db.get('sourceSyncUploadReceipts',c.id)?.result.files||[]).map(f=>f.entry).filter(Boolean):c.action==='capture'&&bundle?entries(bundle):(c.changes||[]).map(x=>x.after).filter(Boolean);
       const storage=c.detection==='metadata'?this.storage.scoped(c.batchId):this.storage;
       const entry=allowed.find(e=>e.hash===m[3]);if(!entry)throw syncError('blob_not_in_command');
+      const payloadPath=c.action==='apply'?c.changes?.find(x=>x.after?.hash===entry.hash)?.path:this.db.get('sourceSyncUploadReceipts',c.id)?.result.files?.find(x=>x.entry?.hash===entry.hash)?.path;
+      if(req.method==='PUT'&&c.detection==='metadata'&&payloadPath){let bytes=0,counted=false;req.on('data',chunk=>bytes+=chunk.length);req.pause();const count=()=>{if(!counted){counted=true;this.sync.audit.transferred(c,payloadPath,bytes);}};req.once('end',count);req.once('close',count);}
       if(req.method==='PUT'&&['capture','read','stage'].includes(c.action)){if(c.detection==='metadata'&&(c.result||retiring(batch)||['cleaning','completed','partial_conflict'].includes(batch.status))){req.resume();json(res,{stored:false,terminal:true});return true;}if(bundle?.manifest.metadataOnly)throw syncError('preview_metadata_only');json(res,await storage.receive(c.projectId,entry,req));return true;}
-      if(req.method==='GET'&&c.action==='apply'){const bytes=await storage.read(c.projectId,entry.hash);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':bytes.length,'Cache-Control':'no-store'});res.end(bytes);return true;}
+      if(req.method==='GET'&&c.action==='apply'){const bytes=await storage.read(c.projectId,entry.hash);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':bytes.length,'Cache-Control':'no-store'});res.end(bytes);this.sync.audit.transferred(c,payloadPath,bytes.length);return true;}
     }
     throw syncError('invalid_sync_action');
   }
   async browserHttp(req,res,pathname){const m=pathname.match(/^\/api\/projects\/([^/]+)\/source-sync(?:\/(.*))?$/);if(!m)return false;
     const projectId=m[1],route=m[2]||'';if(!this.db.get('projects',projectId))throw syncError('project_missing');
     let value;
-    if(req.method==='GET'&&!route)value={...this.sync.status(projectId),initializations:this.db.db.prepare("SELECT data FROM records WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.projectId')=? ORDER BY rowid DESC LIMIT 20").all(projectId).map(r=>JSON.parse(r.data))};
+    if(req.method==='GET'&&!route)value=this.sync.status(projectId);
     else if(req.method==='GET'&&route==='pending'){const q=new URL(req.url,'http://localhost').searchParams;value=this.baselines.pending(projectId,q.get('repositoryId'),{after:q.get('after')||'',limit:q.get('limit')});}
-    else if(req.method==='GET'&&route==='initializations')value=this.db.db.prepare("SELECT data FROM records WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.projectId')=? ORDER BY rowid DESC LIMIT 20").all(projectId).map(r=>JSON.parse(r.data));
+    else if(req.method==='GET'&&route==='initializations')value=initializationPage(this.db,projectId,Object.fromEntries(new URL(req.url,'http://localhost').searchParams));
+    else if(req.method==='GET'&&route==='audit')value=this.sync.audit.list(projectId,Object.fromEntries(new URL(req.url,'http://localhost').searchParams));
+    else if(req.method==='GET'&&/^audit\/[-a-f0-9]+$/.test(route))value=this.sync.audit.detail(projectId,route.split('/')[1],Object.fromEntries(new URL(req.url,'http://localhost').searchParams));
     else if(req.method==='POST'&&route==='initializations')value=this.baselines.start(projectId,await body(req,100000));
     else if(req.method==='POST'&&/^initializations\/[a-f0-9]{64}\/resume$/.test(route))value=this.baselines.resume(projectId,route.split('/')[1],await body(req,100000));
     else if(req.method==='GET'&&route==='config')value=this.sync.config(projectId);

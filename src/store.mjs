@@ -50,6 +50,16 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_metadata_journal_batch ON records(json_extract(data,'$.batchId')) WHERE kind='sourceSyncJournals';
       CREATE INDEX IF NOT EXISTS records_metadata_worker_batch ON records(json_extract(data,'$.command.batchId')) WHERE kind='sourceSyncCommands';
       CREATE INDEX IF NOT EXISTS records_sync_journal_command ON records(json_extract(data,'$.commandId')) WHERE kind='sourceSyncJournals';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_state_finish ON records(json_extract(data,'$.finishedAt'),id) WHERE kind='sourceSyncAuditStates' AND json_extract(data,'$.status') IN ('succeeded','failed');
+      CREATE INDEX IF NOT EXISTS records_sync_audit_head_state ON records(json_extract(data,'$.stateId')) WHERE kind='sourceSyncAuditHeads';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_expiry ON records(json_extract(data,'$.expiresAt'),id) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_project ON records(json_extract(data,'$.projectId'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_path ON records(json_extract(data,'$.projectId'),json_extract(data,'$.relativePath'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_source ON records(json_extract(data,'$.projectId'),json_extract(data,'$.sourceDevice'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_target ON records(json_extract(data,'$.projectId'),json_extract(data,'$.targetDevice'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_status ON records(json_extract(data,'$.projectId'),json_extract(data,'$.status'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_operation ON records(json_extract(data,'$.projectId'),json_extract(data,'$.operationId'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_metadata_init_project ON records(json_extract(data,'$.projectId'),json_extract(data,'$.createdAt') DESC,id DESC) WHERE kind='sourceSyncInitializations';
       CREATE INDEX IF NOT EXISTS records_metadata_init ON records(id) WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.status')='running';
       CREATE INDEX IF NOT EXISTS records_metadata_conflict_gc ON records(id) WHERE kind='sourceSyncConflicts' AND json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status')='resolved' AND json_extract(data,'$.copiesReleasedAt') IS NULL;
       CREATE INDEX IF NOT EXISTS records_metadata_scope ON records(json_extract(data,'$.projectId'),json_extract(data,'$.repositoryId'),json_extract(data,'$.generation'),json_extract(data,'$.path')) WHERE kind='sourceSyncMetadataBaselines';
@@ -255,7 +265,7 @@ export class Store {
       if(this.list('roleSwitches').some(op=>op.projectId===id&&(!switchSettled(op)||!op.steps.released)))throw new Error('Project still has an unsettled CLI switch.');
       if(this.listProject('sourceSyncCommands',id).some(c=>!c.result))throw syncError('sync_busy');
       for(const c of this.listProject('sourceSyncCommands',id))this.put('sourceSyncTombstones',{id:c.id,nodeId:c.nodeId,projectId:id,generation:c.generation,deletedAt:now()});
-      for(const kind of ['sourceSyncMetadataScopes','sourceSyncMetadataBaselines','sourceSyncConfigs','sourceSyncManifests','sourceSyncVersions','sourceSyncDevices','sourceSyncBatches','sourceSyncConflicts','sourceSyncConflictHistory','sourceSyncCandidates','sourceSyncProvenance','sourceSyncCommands','sourceSyncReceipts','sourceSyncUploads','sourceSyncUploadReceipts','sourceSyncWatchStates','sourceSyncWatchNotices'])for(const r of this.listProject(kind,id))this.remove(kind,r.id);
+      for(const kind of ['sourceSyncAudit','sourceSyncAuditStates','sourceSyncAuditHeads','sourceSyncInitializations','sourceSyncInitializationResumes','sourceSyncMetadataScopes','sourceSyncMetadataBaselines','sourceSyncConfigs','sourceSyncManifests','sourceSyncVersions','sourceSyncDevices','sourceSyncBatches','sourceSyncConflicts','sourceSyncConflictHistory','sourceSyncCandidates','sourceSyncProvenance','sourceSyncCommands','sourceSyncReceipts','sourceSyncUploads','sourceSyncUploadReceipts','sourceSyncWatchStates','sourceSyncWatchNotices'])for(const r of this.listProject(kind,id))this.remove(kind,r.id);
       if(this.list('discussionThreads').some(t=>t.projectId===id&&t.status==='open')
         ||this.list('discussionDeliveries').some(d=>d.projectId===id&&['queued','dispatched','runtime_accepted','reconciling'].includes(d.status))
         ||this.list('discussionIntents').some(i=>i.projectId===id&&i.status==='queued'))throw new Error(tr('store.projectStillHasUnfinishedDiscussions'));

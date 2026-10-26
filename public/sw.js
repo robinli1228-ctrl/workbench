@@ -1,6 +1,4 @@
 const CACHE = 'agent-workbench-static-v196-integration';
-const STATIC = [
-  '/native-side-ask.js', '/group-side-ask.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
   '/group-conversations.js',

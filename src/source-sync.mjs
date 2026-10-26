@@ -1,3 +1,4 @@
+import {SourceSyncAudit} from './source-sync-audit.mjs';
 import {SourceSyncMetadata} from './source-sync-metadata-home.mjs';
 import {randomBytes} from 'node:crypto';
 import {SOURCE_SYNC_CAPTURE_POLICY,SOURCE_SYNC_LIMITS,validateSourceCapture,contentHash,manifestDigest,compareEntry,entryEqual,linkSourceMoves,syncError} from './source-sync-manifest.mjs';
@@ -10,7 +11,7 @@ const identity=(...parts)=>contentHash(JSON.stringify(parts));
 
 /** Home owns metadata only; no filesystem or model operation runs inside its SQLite transactions. */
 export class SourceSync {
-  constructor({db,online=()=>false,change=()=>{}}){Object.assign(this,{db,online,change});this.metadata=new SourceSyncMetadata(this);}
+  constructor({db,online=()=>false,change=()=>{},now=Date.now}){Object.assign(this,{db,online,change});this.metadata=new SourceSyncMetadata(this);this.audit=new SourceSyncAudit({db,now});}
   config(projectId){return this.db.get('sourceSyncConfigs',projectId)||{id:projectId,projectId,enabled:false,revision:0,generation:0};}
   /** A source is a workspace endpoint, not just a device; isolated outputs remain distinct from registered receivers. */
   side(projectId,repositoryId,nodeId,entry,origin={},unknown=false){
@@ -160,7 +161,7 @@ export class SourceSync {
         if(!f||!['applied','unchanged','conflict'].includes(f.status)||f.status!=='conflict'&&!entryEqual(f.after,change.after))throw syncError('invalid_receipt');}
     }
   }
-  acceptReceipt(nodeId,receipt){return this.db.transaction(()=>{
+  acceptReceipt(nodeId,receipt){return this.db.transaction(()=>{try{
     const command=this.db.get('sourceSyncCommands',receipt.commandId);
     if(!command||command.nodeId!==nodeId)throw syncError('receipt_owner_mismatch');
     const batch=this.db.get('sourceSyncBatches',command.batchId);if(!batch||batch.status==='cancelled'&&!(command.detection==='metadata'&&command.action==='cleanup'))return {discarded:true};
@@ -188,10 +189,11 @@ export class SourceSync {
       if(batch.status!=='blocked'&&captures.every(c=>c.result?.status==='completed'))this.prepare(batch);
     }else this.finish(batch);
     this.change();return result;
+    }finally{const c=this.db.get('sourceSyncCommands',receipt.commandId);if(c?.nodeId===nodeId)this.audit.observe(this.db.get('sourceSyncBatches',c.batchId));}
   });}
   /** Failed preflight preserves exact candidate evidence and releases the conflict from its distribution-only state. */
   blockPreparation(batch,reason,details={}){
-    this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason,...details});
+    this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason,...details});this.audit.observe(this.db.get('sourceSyncBatches',batch.id));
     if(['resolution','evidence'].includes(batch.kind)){
       const conflict=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);
       if(conflict?.generation===batch.conflictGeneration)this.db.put('sourceSyncConflicts',{...conflict,status:'needs_input',reason});
@@ -330,6 +332,6 @@ export class SourceSync {
   }
   cancel(projectId,id,revision){const b=this.db.get('sourceSyncBatches',id);if(b?.projectId!==projectId||b.revision!==revision)throw syncError('batch_changed');
     const pending=this.db.listSourceSyncCommands({projectId,batchId:id,pending:true}).length>0;
-    const next=this.db.put('sourceSyncBatches',{...b,status:pending?'cancelling':'cancelled',revision:b.revision+1});this.change();return next;}
+    const next=this.db.put('sourceSyncBatches',{...b,status:pending?'cancelling':'cancelled',revision:b.revision+1});this.audit.observe(next);this.change();return next;}
   status(projectId){const config=this.config(projectId);return {config,watchers:this.records('sourceSyncWatchStates',projectId),batches:this.records('sourceSyncBatches',projectId).slice(-50).map(({fingerprint,bindings,metadataOperations,...b})=>({...b,...(b.pendingMetadata?{pendingMetadataCount:b.pendingMetadata.length,pendingMetadata:b.pendingMetadata.slice(0,20)}:{})})),conflicts:this.records('sourceSyncConflicts',projectId).slice(-100)};}
 }
