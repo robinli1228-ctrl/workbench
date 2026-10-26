@@ -538,7 +538,7 @@ async function refreshState({ quiet = false } = {}) {
     app.selectedProjectId=app.stateCache.projectId;app.selectedConversationId=app.stateCache.conversationId||app.selectedProjectId;
     app.data = {
       capabilities: data.capabilities || {},
-      collaborationWaits: data.collaborationWaits || [],
+      queuedWaits: data.queuedWaits || [],
       conversations:data.conversations||[],
       projectCopies:data.projectCopies||[],
       projects: Array.isArray(data.projects) ? data.projects : [],

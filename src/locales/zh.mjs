@@ -1569,6 +1569,7 @@ wb call --role 角色 --kind consult|direct|transfer --request-id 稳定编号 -
                      重复 --role 可把同一段说明发给几个角色，各自处理。可选 --goal、--scope、--input、--return 写成带标签的几行放在说明前面；--file 路径 附上项目里的一个 UTF-8 文件（带 SHA256）。说明最多 12000 字。重试用同一个编号和内容。
                      --kind handoff --delivery-id 编号：配合 wb deliver 的跨设备提交派活。
 wb wait "续接摘要"   登记你在等哪些派出的结果，然后结束本轮；结果都回来、超时（默认 30 分钟）或对方 10 分钟仍无法开始时，平台叫醒你。也可 wb wait '{"summary":"...","requestIds":["编号"],"timeoutSeconds":1800}'
+                     列出的几个请求要全部返回才叫醒你；想先处理先回来的，就只等那一个（requestIds 只写它的编号），处理完再等下一个。
 wb note 文字         在群里留一句话，不派活
 wb history [关键词] [--role 角色] [--file 路径] [--since 时间] [--until 时间] [--limit N] [--cursor C]
                      不带关键词列出最近的群聊记录；带关键词搜索。时间写法：30m、2h、3d、today、2026-10-20
@@ -1921,20 +1922,11 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wechatChannel.requestConflict': '该通知 requestId 已用于不同内容，新消息请使用新编号。',
   'wechatChannel.notificationTargetChanged': '原项目总管已不可用或发生变更，已关闭编号且未改派。',
   'wechatChannel.toolGuide': '仅项目总管可用：wb notify send \'{"requestId":"stable-id","text":"问题或通知，最多1600字符"}\'；wb notify status MESSAGE_ID。Home 使用已配置的平台和账号，从本轮执行身份确定真实项目及总管，不得指定其他项目或收件角色；消息自动标明所属项目。启用仅开放工具，不自动转发报告或审批。超时后使用相同 requestId 和内容重试；状态区分排队、发送及错误，不把发送当作已读。带编号的回复排入原项目总管队列，不打断运行中的 CLI。原生权限、仓库配置及 Git 交付保持原审批边界。',
-  'collabWait.queued': "{role} 正在等待协作结果，本条消息排队中。约 {minutes} 分钟内仍无进展会标记为卡住；用户消息可点击“引导”打断该角色，处理这条消息",
-  'collabWait.notWaiting': "该角色当前没有在等待协作结果，消息会按正常顺序执行",
-  'collabWait.yieldPending': "该角色已有一条消息设为先处理，请等它完成后再操作",
-  'collabWait.steerDuringWait': "该角色正在等待协作结果，需要明确确认才能打断；请刷新后点击用户消息上的“引导”",
-  'collabWait.yielded': "本条消息先处理；正在等待的协作会保留，之后继续",
-  'collabWait.invalidMinutes': "协作等待自动放行时间必须是 5 到 1440 之间的整数分钟",
   'rolePermissions.invalid': "未知的权限范围：{scope}",
   'rolePermissions.worker_unsupported': "该设备的 Worker 尚不支持按角色设置权限；请升级 Worker，或保留当前权限",
   'rolePermissions.scope_unsupported': "该设备上的这个 CLI 不支持权限范围 {scope}",
   'rolePermissions.terminalApprovalUnsupported': "角色终端无法把审批回传到 Workbench；请把该角色切换到其他权限范围后再打开终端",
   'rolePermissions.selectScope': "请为该角色选择权限范围",
-  'collabWait.stalled': "{role} 的协作已长时间没有进展，需要处理；本条消息会继续排队，直到你明确使用对应的队列操作",
-  'collabWait.yieldRunning': "{role} 正在先处理另一条消息；本条要等它和原先等待的协作都结束后再执行",
-  'collabWait.stalledOnly': "等待被标记为卡住之前，只有你发的消息可以先处理",
   'runContext.resultReceipts': `你派出的请求有结果回来了（只表示收到，不等于通过；核对回复内容和版本后再决定接受还是退回，全文用 wb history read 请求编号）：
 {p1}{p2}`,
   'runContext.resultReceiptsOmitted': `

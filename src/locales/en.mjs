@@ -1569,6 +1569,7 @@ wb call --role ROLE --kind consult|direct|transfer --request-id STABLE_ID --text
                      Repeat --role to send the same brief to several roles, each handling it separately. Optional --goal, --scope, --input and --return become labelled lines ahead of the brief; --file PATH attaches one UTF-8 project file with its SHA256. Briefs are at most 12000 characters. Retry with the same ID and content.
                      --kind handoff --delivery-id ID: assign work on a commit delivered across devices with wb deliver.
 wb wait "RESUME SUMMARY"  Register which of your calls you are waiting for, then end the turn; the platform wakes you when all results are back, on timeout (30 minutes by default), or when one still cannot start after 10 minutes. Or wb wait '{"summary":"...","requestIds":["ID"],"timeoutSeconds":1800}'
+                     You are woken only when every listed request is back; to handle whichever returns first, wait on that one alone (only its ID in requestIds), then wait for the next.
 wb note TEXT         Leave a line in the group chat without assigning work
 wb history [TERMS] [--role ROLE] [--file PATH] [--since TIME] [--until TIME] [--limit N] [--cursor C]
                      Without terms, list the latest group-chat records; with terms, search. TIME: 30m, 2h, 3d, today, 2026-10-20
@@ -1921,20 +1922,11 @@ You personally do only the simplest things: answer a question directly, check on
   'wechatChannel.requestConflict': 'This notification requestId was already used with different text. Use a new ID for a new message.',
   'wechatChannel.notificationTargetChanged': 'The original project supervisor is unavailable or changed; this number was closed without reassignment.',
   'wechatChannel.toolGuide': 'Project supervisor only: wb notify send \'{"requestId":"stable-id","text":"Question or notification, at most 1600 characters"}\'; wb notify status MESSAGE_ID. The Home uses the configured platform/account and derives the real project and supervisor from this turn; never supply another project or recipient. The message automatically identifies its project. Enabling the tool does not auto-forward reports or approvals. Reuse the same requestId and text after a timeout; status shows queued/sent/error, not guaranteed receipt. Numbered replies queue to the original project supervisor without interrupting a running CLI. Native permissions, repository configuration and Git delivery keep their existing approval boundaries.',
-  'collabWait.queued': "{role} is waiting for collaboration results; this message is queued. If there is no progress for about {minutes} more min the wait is marked stalled. For a human message, click Steer to interrupt the role and handle that message",
-  'collabWait.notWaiting': "This role is not waiting for collaboration results; the message will run in normal order",
-  'collabWait.yieldPending': "Another message for this role has already been set to go first; wait until it finishes",
-  'collabWait.steerDuringWait': "This role is waiting for collaboration results. Explicit confirmation is required to interrupt it; refresh and click Steer on the human message",
-  'collabWait.yielded': "Handling this message first; the waiting collaboration is kept and resumes afterwards",
-  'collabWait.invalidMinutes': "The collaboration wait release time must be a whole number of minutes from 5 to 1440",
   'rolePermissions.invalid': "Unknown permission scope: {scope}",
   'rolePermissions.worker_unsupported': "The device Worker does not support per-role permission scopes yet; upgrade it or keep the current permissions",
   'rolePermissions.scope_unsupported': "Permission scope {scope} is not available for this CLI on this device",
   'rolePermissions.terminalApprovalUnsupported': "A role terminal cannot send approvals back to Workbench; open it after switching the role to another permission scope",
   'rolePermissions.selectScope': "Choose a permission scope for this role",
-  'collabWait.stalled': "{role}'s collaboration has made no progress for a while and needs attention; this message stays queued until you explicitly use its queue action",
-  'collabWait.yieldRunning': "Another message for {role} is being handled first; this one runs after it and the waiting collaboration finish",
-  'collabWait.stalledOnly': "Only human messages can go first before the wait is marked stalled",
   'runContext.resultReceipts': `Results of calls you sent have come back (received, not passed: check each reply and its version before accepting it or sending it back; full text with wb history read REQUEST_ID):
 {p1}{p2}`,
   'runContext.resultReceiptsOmitted': `

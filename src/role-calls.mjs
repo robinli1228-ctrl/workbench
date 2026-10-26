@@ -7,7 +7,7 @@ import {outcomeFor,runFailureKind} from './run-reports.mjs';
 import { tr } from './i18n.mjs';
 import {freezeSourceInputs,sourceInputBatch,sourceConflictContext} from './source-sync-input.mjs';
 import {createHash} from 'node:crypto';
-import {currentContinuation,waitDependencies,continuationFeedback} from './coordination-wait.mjs';
+import {currentContinuation,waitDependencies,continuationFeedback,waitQueueKey} from './coordination-wait.mjs';
 import {SessionQueue} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
@@ -232,6 +232,8 @@ export class RoleCalls {
         sourceSyncBatchId:r.sourceSyncBatchId,sourceInputs,
         ...sourceConflictContext(r),sourceSessionKey,
         continuationRunId: previous?.currentRunId || null,
+        // A wake runs in the queue slot its wait held (or was dragged to), not after everything that arrived meanwhile.
+        ...(r.kind==='continuation'&&previous?{queueOrder:waitQueueKey(previous)}:{}),
         requiresCoordination: r.kind !== 'direct', contextPrepared:['consult','continuation'].includes(r.kind), planId: r.planId, planVersion: r.planVersion, stepId: r.stepId,
         execution:r.execution || null,attachments:r.attachments || [],scheduledJobId:r.scheduledJobId||null });
       const next = this.db.put('coordinationRequests', { ...r,sourceInputs,sourceSessionKey, status: 'queued', taskId: task.id, updatedAt: new Date().toISOString() });
@@ -268,9 +270,10 @@ export class RoleCalls {
     const r = this.forRun(run);
     const current=this.db.get('runs',run.id);
     if (!r || !current||terminal.has(current.status)||current.stopRequested||current.roleId!==r.targetRoleId||r.currentRunId&&r.currentRunId!==run.id||callTerminal.has(r.status)||r.continuationRequestId) throw new Error(tr('roleCalls.currentRunCannotWaitFor'));
-    const children=this.dependencies(r),available=new Set(children.map(c=>c.id));
+    // A call that settled while this role handled an earlier result can still be named; omitting requestIds waits for open calls only.
+    const children=this.dependencies(r),waitable=waitDependencies(this.db,r,{uncarried:true}),available=new Set(waitable.map(c=>c.id));
     // wb call stores "<run>:<request-id>"; the short --request-id the role chose names the same call when it is unambiguous.
-    const resolve=id=>{if(typeof id!=='string'||available.has(id))return id;const matches=children.filter(c=>c.id.endsWith(`:${id}`));return matches.length===1?matches[0].id:id;};
+    const resolve=id=>{if(typeof id!=='string'||available.has(id))return id;const matches=waitable.filter(c=>c.id.endsWith(`:${id}`));return matches.length===1?matches[0].id:id;};
     const requestIds=Array.isArray(options.requestIds)?options.requestIds.map(resolve):options.requestIds??children.map(c=>c.id);
     if (!Array.isArray(requestIds)||!requestIds.length||requestIds.some(id=>!available.has(id))) throw new Error(tr('roleCalls.currentRunHasNoChild'));
     if (typeof summary !== 'string' || !summary.trim() || summary.length > 8000) throw new Error(tr('roleCalls.provideResumeSummary18000'));
@@ -281,8 +284,10 @@ export class RoleCalls {
       if(JSON.stringify([...new Set(requestIds)].sort())!==JSON.stringify([...(r.waitRequestIds||requestIds)].sort()))throw new Error(tr('minimal.invalidWait'));
       return r;
     }
+    // The wait takes its slot in the chat's queue now; the wake inherits it, unless the user drags the wait elsewhere.
+    const startedAt=new Date().toISOString();
     const next=this.db.put('coordinationRequests', { ...r, currentRunId: run.id, status: 'waiting_call', resumeSummary: summary.trim(),
-      waitRequestIds:[...new Set(requestIds)],waitDeadlineAt:new Date(Date.now()+timeoutSeconds*1000).toISOString(),updatedAt:new Date().toISOString() });
+      waitRequestIds:[...new Set(requestIds)],waitDeadlineAt:new Date(Date.now()+timeoutSeconds*1000).toISOString(),waitStartedAt:startedAt,queueOrder:Date.parse(startedAt),updatedAt:startedAt });
     // The handoff cards already tell the room what this turn did; its own final reply stays in run details.
     this.db.put('runs',{...current,handoffWait:{requestId:r.id,requestIds:[...new Set(requestIds)],at:new Date().toISOString()}});
     new SessionQueue(this.db).settleRequest(next);return next;
