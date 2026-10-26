@@ -19,7 +19,7 @@ test('reordering permutes the existing keys of the dragged items only', () => {
   assert.ok(queueKey(after.find(t => t.id === 'c')) < queueKey(after.find(t => t.id === 'a')));
 });
 
-test('steering and continuation priority still come before a manual order', () => {
+test('steering still comes before a manual order', () => {
   const steer = task('s', 9, { steering: true }), early = task('e', 1, { queueOrder: 0 });
   assert.equal(orderRoleQueue([early, steer], () => false)[0].id, 's');
 });

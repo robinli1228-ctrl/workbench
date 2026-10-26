@@ -5,7 +5,7 @@ import {SIDE_ASK_LIMITS,SIDE_ASK_RUNTIMES} from './native-side-ask.mjs';
 /**
  * Home side of side questions: held in memory only (a Home restart forgets them), one side question at a time across the
  * Sessions page. A question is a small turn-shaped record so the page renders it like a reply; the Worker owns the
- * temporary session and removes it when Home closes the side question, when it expires, or when the main session moves on.
+ * temporary session and removes it when Home closes the side question, or when it expires.
  */
 const SIDE_ID=/^[a-f0-9-]{36}$/;
 export function createHomeSideAsks({send,online,attachments=null,owner=nodeId=>nodeId,change=()=>{},clock=Date.now,limits=SIDE_ASK_LIMITS}){
@@ -19,8 +19,6 @@ export function createHomeSideAsks({send,online,attachments=null,owner=nodeId=>n
   if(tell&&online(side.nodeId))send(side.nodeId,{type:'side_ask_close',sideId});
   change();return true;
  }
- /** A new prompt in the main session ends its side question: the next one starts from the new state. */
- function closeFor(nodeId,runtime,sessionId,reason='main_prompt'){for(const side of [...sides.values()])if(side.nodeId===nodeId&&side.runtime===runtime&&side.sessionId===sessionId)close(side.id,reason);}
  function ask(nodeId,worker,body={},source=null){
   const {runtime,sessionId}=body,prompt=typeof body.prompt==='string'?body.prompt:'';
   if(!SIDE_ASK_RUNTIMES.has(runtime))throw Error('Side questions work with Claude and Codex sessions');
@@ -36,14 +34,14 @@ export function createHomeSideAsks({send,online,attachments=null,owner=nodeId=>n
   if(!side){
    // One side question at a time: opening another closes the rest.
    for(const other of [...sides.keys()])close(other,'replaced');
-   // Asked as a follow-up of a side question that has since closed (the main session moved on, it expired): say it started over.
+   // Asked as a follow-up of a side question that has since closed (it expired or was closed): say it started over.
    side={id:randomUUID(),nodeId,runtime,sessionId,sourceKey:source?.key||null,createdAt:stamp(),lastUsedAt:stamp(),questions:[],turns:null,restarted:Boolean(body.sideId)};sides.set(side.id,side);
   }
   const model=typeof body.model==='string'&&body.model.length<=120?body.model:null;side.model=model;side.lastUsedAt=stamp();
   const items=body.attachmentIds?.length&&attachments?attachments.resolve(owner(nodeId),body.attachmentIds.slice(0,6)):[];
   const question={id:randomUUID(),prompt,text:'',status:'queued',phase:null,events:[],attachments:items,createdAt:stamp()};
   const followUp=side.questions.length>0;side.questions.push(question);
-  send(nodeId,{type:'side_ask',sideId:side.id,questionId:question.id,runtime,sessionId,prompt,model,followUp,...(source?.context?{context:source.context,record:source.record,expectedWorkspace:source.workspace}:{}),attachments:items.map(({id,name,mime,size,sha256})=>({id,name,mime,size,sha256}))});
+  send(nodeId,{type:'side_ask',sideId:side.id,questionId:question.id,runtime,sessionId,prompt,model,followUp,...(source?.context?{context:source.context,record:source.record,expectedWorkspace:source.workspace,...(source.snapshot?{snapshot:source.snapshot}:{})}:{}),attachments:items.map(({id,name,mime,size,sha256})=>({id,name,mime,size,sha256}))});
   change();return view(side);
  }
  function get(sideId){const side=sides.get(sideId);if(side)return view(side);const c=closed.get(sideId);return {id:sideId,closed:true,reason:c?.reason||'closed'};}
@@ -69,6 +67,6 @@ export function createHomeSideAsks({send,online,attachments=null,owner=nodeId=>n
  function sweep(){const now=clock();for(const side of [...sides.values()]){if(now-Date.parse(side.lastUsedAt)>=limits.idleMs)close(side.id,'idle');else if(now-Date.parse(side.createdAt)>=limits.maxAgeMs)close(side.id,'expired');}}
  /** A Worker that goes away takes its side sessions with it. */
  function disconnected(nodeId){for(const side of [...sides.values()])if(side.nodeId===nodeId)close(side.id,'device_disconnected',{tell:false});}
- return {ask,get,stop,close,closeFor,receive,attachmentFor,sweep,disconnected,size:()=>sides.size,
+ return {ask,get,stop,close,receive,attachmentFor,sweep,disconnected,size:()=>sides.size,
   busy:(nodeId,runtime,sessionId)=>[...sides.values()].some(s=>s.nodeId===nodeId&&s.runtime===runtime&&s.sessionId===sessionId&&s.questions.some(q=>!['succeeded','failed','interrupted','cancelled','stopped'].includes(q.status)))};
 }

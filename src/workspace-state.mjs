@@ -71,6 +71,8 @@ export function workspaceState(snapshot,requestedProjectId,requestedConversation
   state.roleSessions=sessions.filter(s=>s.projectId===projectId&&groupConversationIdOfSession(s)===conversationId);
   for(const key of ['discussionThreads','discussionDeliveries'])state[key]=state[key].filter(belongs);
   state.runAlerts=state.runAlerts.filter(r=>runIds.has(r.id));
+  // Only this chat's open waits; other projects' waits would leak request ids and change every page's state.
+  state.queuedWaits=(snapshot.queuedWaits||[]).filter(belongs);
   const taskIds=new Set(state.tasks.map(t=>t.id));state.cliRecoveries=state.cliRecoveries.filter(r=>taskIds.has(r.taskId||r.id));
   return {projectId,conversationId,state};
 }

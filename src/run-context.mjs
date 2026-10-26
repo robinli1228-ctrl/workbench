@@ -93,12 +93,15 @@ export function turnOrigin(db,task,request) {
   return {kind:'human'};
 }
 
+/** The direction-change notice is true only when the steer stopped a running turn; a steer that just went first changed nothing. */
+const interrupted=packet=>Boolean(packet.steering&&(!Array.isArray(packet.steering.waitForRunIds)||packet.steering.waitForRunIds.length));
+
 /** The message and the platform's additions, each addition named so the Worker can title it and the page can show it apart. */
 export function renderRunInputParts(packet) {
   const origin=packet.origin||{kind:'human'};
   const reference=item=>`- ${JSON.stringify(item.author)} [${item.id}]:\n${item.text}${item.truncated?`\n  wb history read ${item.id}`:''}`;
   const home=[
-    packet.steering&&['steering',tr('runContext.userChangedDirectionTurnImmediate')],
+    interrupted(packet)&&['steering',tr('runContext.userChangedDirectionTurnImmediate')],
     packet.conversationTask&&['task',[packet.conversationTask.updated?tr('conversationTasks.updated'):'',JSON.stringify(packet.conversationTask)].filter(Boolean).join('\n')],
     packet.followup&&['followup',tr('followup.context',{context:JSON.stringify(packet.followup)})],
     packet.discussionResolution&&['discussion',tr('runContext.questionOnOriginalTaskHas',{p1:JSON.stringify(packet.discussionResolution)})],
@@ -116,7 +119,7 @@ export function renderRunPrompt(packet,{minimal=false}={}) {
   const taskContext=packet.conversationTask?tr('conversationTasks.context',{updated:packet.conversationTask.updated?tr('conversationTasks.updated'):'',task:JSON.stringify(packet.conversationTask)}):'';
   if(minimal)return [packet.instruction,taskContext,
     packet.followup?tr('followup.context',{context:JSON.stringify(packet.followup)}):'',
-    packet.steering?tr('runContext.userChangedDirectionTurnImmediate'):'',
+    interrupted(packet)?tr('runContext.userChangedDirectionTurnImmediate'):'',
     packet.discussionResolution?tr('runContext.questionOnOriginalTaskHas',{p1:JSON.stringify(packet.discussionResolution)}):'',
     packet.schedulingRoster?.length?tr('runContext.rolesTurnMustCoverFixed',{p1:packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(', ')}):'',
     ...(packet.references||[]).map(item=>`${JSON.stringify(item.author)} [${item.id}]:\n${item.text}${item.truncated?`\n${item.readCommand}`:''}`),
@@ -127,7 +130,7 @@ export function renderRunPrompt(packet,{minimal=false}={}) {
   if(packet.followup)lines.push(tr('followup.context',{context:JSON.stringify(packet.followup)}));
   if(packet.discussionResolution)lines.push(tr('runContext.questionOnOriginalTaskHas', { p1: JSON.stringify(packet.discussionResolution) }));
   if(packet.schedulingRoster?.length)lines.push(tr('runContext.rolesTurnMustCoverFixed', { p1: packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(tr('runContext.text')) }));
-  if(packet.steering)lines.unshift(tr('runContext.userChangedDirectionTurnImmediate'));
+  if(interrupted(packet))lines.unshift(tr('runContext.userChangedDirectionTurnImmediate'));
   const context={...packet.context};
   const showMessage=item=>tr('runContext.text3', { id: item.id, author: JSON.stringify(item.author), text: item.text, p4: item.truncated?tr('runContext.excerptCharactersFullTextPass', { length: item.text.length, totalLength: item.totalLength, readCommand: item.readCommand }):'', p5: item.attachments?.length?tr('runContext.attachmentsBodyDoesNotInclude', { p1: item.attachments.map(a=>a.name).join(tr('runContext.text2')) }):'' });
   if(packet.inheritedContext) {

@@ -8,7 +8,7 @@ import { assertNativeSessionIdle } from './native-sessions.mjs';
 import { nativeTerminalProject, projectTerminalLock } from './terminal-resume.mjs';
 import {folderAccessFor,nativeFolderAccess} from './folder-access.mjs';
 import {createHomeSideAsks} from './native-side-ask-home.mjs';
-import {groupSideAskSource} from './group-side-ask.mjs';
+import {groupSideAskSource,groupSideAskPreviousSource} from './group-side-ask.mjs';
 import {NativeAgentSwitches} from './native-agent-switch.mjs';
 
 /**
@@ -96,13 +96,13 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     ...(disposition?{'Content-Disposition':`${item.mime.startsWith('image/')?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(item.name)}`}:{})});res.end(bytes);return true;};
   /** Returns true when the request belonged to the takeover API. Authentication has already been checked by home.mjs. */
   async function http(req,res,{pathname,url,json,body}) {
-    const group=pathname.match(/^\/api\/projects\/([^/]+)\/messages\/([^/]+)\/side$/);
+    const group=pathname.match(/^\/api\/projects\/([^/]+)\/(messages|runs)\/([^/]+)\/side$/);
     if(group&&['GET','POST'].includes(req.method)){
-      const input=req.method==='POST'?await body(req):{},source=groupSideAskSource(db,{projectId:decodeURIComponent(group[1]),messageId:decodeURIComponent(group[2]),conversationId:input.conversationId||url.searchParams.get('conversationId')||decodeURIComponent(group[1]),online});
+      const input=req.method==='POST'?await body(req):{},source=(group[2]==='runs'?groupSideAskPreviousSource:groupSideAskSource)(db,{projectId:decodeURIComponent(group[1]),[group[2]==='runs'?'runId':'messageId']:decodeURIComponent(group[3]),conversationId:input.conversationId||url.searchParams.get('conversationId')||decodeURIComponent(group[1]),online});
       if(req.method==='GET'){json(res,source);return true;}
       switches.assertExecutable(source);
       json(res,sideAsks.ask(source.nodeId,db.get('workers',source.nodeId),{sideId:input.sideId,runtime:source.runtime,sessionId:source.sessionId,prompt:input.prompt,model:input.model||source.model,attachmentIds:input.attachmentIds
-        }, {key:JSON.stringify([source.projectId,source.conversationId,source.messageId]),record:{runtime:source.runtime,sessionId:source.sessionId,workspace:source.workspace},workspace:source.workspace,context:`Selected group-chat card (${source.senderName}):\n${source.quote}\n\nDiscuss this card using the original session's current context. This is a separate read-only side question; do not send messages, dispatch work or change the original conversation.`}),201);return true;
+        }, {key:JSON.stringify([source.projectId,source.conversationId,source.anchorRunId?`run:${source.anchorRunId}`:source.messageId]),snapshot:source.snapshot,record:{runtime:source.runtime,sessionId:source.sessionId,workspace:source.workspace},workspace:source.workspace,context:`Selected group-chat card (${source.senderName}):\n${source.quote}\n\nDiscuss this card using the original session's current context. This is a separate read-only side question; do not send messages, dispatch work or change the original conversation.`}),201);return true;
     }
     const switching=pathname.match(/^\/api\/native-sessions\/([^/]+)\/agent-switch(?:\/([^/]+))?$/);
     if(switching){const nodeId=decodeURIComponent(switching[1]);
@@ -140,8 +140,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');if(input.control&&worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to compact a native session');
       await refresh(nodeId,input.runtime,input.sessionId);
       const credential=input.control?null:await gitCredential(turns.settings(nodeId,input.runtime,input.sessionId));const created=turns.create(nodeId,worker,input,{gitCredential:credential});
-      // A new prompt in the main session: its side question ends, the next one starts from the new state.
-      if(!input.control)sideAsks.closeFor(nodeId,input.runtime,input.sessionId);json(res,created,201);return true;}
+      json(res,created,201);return true;}
     // Side question: ask (creates one, or continues ?sideId), read it while it is answered, clear it.
     if(area==='side'&&!a&&req.method==='POST'){const input=await body(req);switches.assertExecutable({...input,nodeId});json(res,sideAsks.ask(nodeId,worker,input),201);return true;}
     if(area==='side'&&a&&!b&&req.method==='GET'){json(res,sideAsks.get(decodeURIComponent(a)));return true;}

@@ -39,7 +39,7 @@ import {ProjectFiles} from './project-files.mjs';
 import {MediaStreams,MEDIA_CACHE_CONTROL,cachedMediaAllowed} from './media-streams.mjs';
 import {MediaCache} from './media-cache.mjs';
 import { RoleSteering } from './role-steering.mjs';
-import { collaborationQueueView } from './coordination-wait.mjs';
+import { queuedWaits, stampWaitSlots } from './coordination-wait.mjs';
 import { WorkspaceStateFeed, workspaceScope, WORKSPACE_SUMMARY } from './workspace-state.mjs';
 import { pageSummaries } from './workspace-summaries.mjs';
 import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
@@ -125,6 +125,7 @@ const history = new History(db);
 const sessionTools = new SessionTools(db);
 const collaborationSessions = new CollaborationSessions(db);
 new SessionQueue(db).retire();
+stampWaitSlots(db);
 
 const conversationContext = new ConversationContext(db);
 conversationContext.recover();
@@ -367,7 +368,7 @@ function snapshot(scope=null) {
   }
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {nativeCatalogCache:1,roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,queuePause:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
+  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {nativeCatalogCache:1,roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,queuePause:1}, homePlatform: process.platform, queuedWaits: queuedWaits(db), projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -667,7 +668,7 @@ const server = http.createServer(async (req, res) => {
       if (wechatProject && req.method === 'POST') {
         const link = wechat.openProject(wechatProject[1]); void wechat.tick().catch(() => {}); return json(res, { id: link.id }, 201);
       }
-      if((pathname.includes('native-')||/^\/api\/agent\/side-asks\/[^/]+\/[^/]+$/.test(pathname)||/^\/api\/projects\/[^/]+\/messages\/[^/]+\/side$/.test(pathname))&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
+      if((pathname.includes('native-')||/^\/api\/agent\/side-asks\/[^/]+\/[^/]+$/.test(pathname)||/^\/api\/projects\/[^/]+\/(?:messages|runs)\/[^/]+\/side$/.test(pathname))&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
       const nativeGit=pathname.match(/^\/api\/native-sessions\/([^/]+)\/git$/);
       if(nativeGit&&req.method==='GET'){
         // Read-only Git facts for the session's own registered working folder; the browser never supplies a path.
@@ -1275,7 +1276,7 @@ const server = http.createServer(async (req, res) => {
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/steer$/)) && req.method === 'POST') {
         const input=await body(req),result=steering.request(m[1],m[2],input.commandId,input);
-        // A non-destructive yield stops nothing; only a replacing steer has runs to wait for.
+        // A steer for a role that is only waiting stops nothing; only an interrupted running turn has runs to wait for.
         for(const id of result.waitForRunIds||[])dispatch(db.get('runs',id).nodeId);
         scheduleChat();change();return json(res,result);
       }

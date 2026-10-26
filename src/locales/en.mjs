@@ -25,7 +25,7 @@ export default Object.freeze({
   "conversationTasks.transferReason":"Ownership transferred with the linked call.",
   "conversationTasks.updated":"Task description has been updated.",
   "conversationTasks.context":"Conversation task (current Home snapshot). {updated}\n{task}",
-  "conversationTasks.help":"Conversation tasks (Home-only, current chat):\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"Task\",\"description\":\"Full brief\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"Full replacement\",\"reason\":\"handover\"}'\nCreate accepts optional ownerRoleId, status and plan {steps:[{title,description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep} (zero-based). Replace description/plan as a whole. Only done permits resultSummary; all plan steps must be done. Owner changes require a rewritten description and the owner, supervisor or user.\nwb call accepts --task T3: ordinary calls only link; --kind transfer changes the owner and sets in_progress. First rewrite the description with wb task update in this run. Retries must keep the same requestId and input.",
+  "conversationTasks.help":"Conversation tasks (Home-only, current chat):\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"Task\",\"description\":\"Full brief\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"Full replacement\",\"reason\":\"handover\"}'\nCreate accepts optional ownerRoleId, status and plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep} (zero-based). Each step has one required description (up to 4000 characters), no separate step title; the task-level title/description are unchanged. Replace description/plan as a whole. Only done permits resultSummary; all plan steps must be done. Owner changes require a rewritten description and the owner, supervisor or user.\nwb call accepts --task T3: ordinary calls only link; --kind transfer changes the owner and sets in_progress. First rewrite the description with wb task update in this run. Retries must keep the same requestId and input.\nStep update example: wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"Check both fixed inputs and record differences.\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"Clarify the step\"}'. The plan is a full replacement: retain all other needed steps and their settings.",
 
   'deviceAdmin.reconnectUnsupported':'Manual reconnection requires a Home-managed reverse SSH tunnel, a saved SSH key and a verifiable Linux Worker.',
   'deviceAdmin.reconnectBusy':'This device has pending or active work, a retained CLI, or another connection operation. Nothing was stopped; try again when it is idle.',
@@ -1569,6 +1569,7 @@ wb call --role ROLE --kind consult|direct|transfer --request-id STABLE_ID --text
                      Repeat --role to send the same brief to several roles, each handling it separately. Optional --goal, --scope, --input and --return become labelled lines ahead of the brief; --file PATH attaches one UTF-8 project file with its SHA256. Briefs are at most 12000 characters. Retry with the same ID and content.
                      --kind handoff --delivery-id ID: assign work on a commit delivered across devices with wb deliver.
 wb wait "RESUME SUMMARY"  Register which of your calls you are waiting for, then end the turn; the platform wakes you when all results are back, on timeout (30 minutes by default), or when one still cannot start after 10 minutes. Or wb wait '{"summary":"...","requestIds":["ID"],"timeoutSeconds":1800}'
+                     You are woken only when every listed request is back; to handle whichever returns first, wait on that one alone (only its ID in requestIds), then wait for the next.
 wb note TEXT         Leave a line in the group chat without assigning work
 wb history [TERMS] [--role ROLE] [--file PATH] [--since TIME] [--until TIME] [--limit N] [--cursor C]
                      Without terms, list the latest group-chat records; with terms, search. TIME: 30m, 2h, 3d, today, 2026-10-20
@@ -1771,7 +1772,6 @@ Drive the work:
 - Give every message that @-mentions you a substantive reply, or say what you cannot do and why; never just reply "received". With no objections, say "Approved, no objections".
 - When you find a blocker, a risk or someone else's problem, tell the role concerned directly, with your grounds.
 - When a new message arrives, first decide: if it adds to the task in hand, fold it in and carry on; if it is a new task, handle it as a new task.
-- While working, record a new independent task with wb task create as todo, say it is recorded, and continue the current task; handle it afterwards or hand it to the supervisor.
 - Follow the task plan: mark your completed step done, update the task description with the handover, and transfer to the next role in the plan. Mark the whole task done only after its final step.
 - A task transferred to you makes you its owner: drive it to the end yourself, organise its reviews, and reply to the user with the conclusion when done.
 
@@ -1779,6 +1779,7 @@ Working with others:
 - If the user named someone, follow the user's arrangement; otherwise decide whom to ask yourself: suitable device > enough quota > idle. Try not to interrupt a role that is running; if nobody suits, do it yourself.
 - When assigned work is complete, write the result in your final reply; it is returned to the assigning role automatically. Do not call it back.
 - When arranging sequential reviews, reviewers who are ready should start; do not make everyone wait for one missing input. Wait for every review before the final conclusion.
+- When you ask other roles to collaborate, first create a todo with wb task create stating the goal and steps; link it with wb call --task when assigning.
 - When assigning work, state: the goal and the completion criteria; what the other role does and may change; the inputs (device, directory, full SHA or file path and hash, never "the latest version"); what to hand back.
 - After sending, keep doing the parts that do not depend on it and wait only when you really need the result; to wait for someone's result, actually send the request and register the wait; if you are waiting for nothing, say the work is complete.
 - A returned result is not a pass: check the evidence and version before deciding to accept it or send it back; when nothing has changed, do not send someone again for the same thing.
@@ -1921,20 +1922,11 @@ You personally do only the simplest things: answer a question directly, check on
   'wechatChannel.requestConflict': 'This notification requestId was already used with different text. Use a new ID for a new message.',
   'wechatChannel.notificationTargetChanged': 'The original project supervisor is unavailable or changed; this number was closed without reassignment.',
   'wechatChannel.toolGuide': 'Project supervisor only: wb notify send \'{"requestId":"stable-id","text":"Question or notification, at most 1600 characters"}\'; wb notify status MESSAGE_ID. The Home uses the configured platform/account and derives the real project and supervisor from this turn; never supply another project or recipient. The message automatically identifies its project. Enabling the tool does not auto-forward reports or approvals. Reuse the same requestId and text after a timeout; status shows queued/sent/error, not guaranteed receipt. Numbered replies queue to the original project supervisor without interrupting a running CLI. Native permissions, repository configuration and Git delivery keep their existing approval boundaries.',
-  'collabWait.queued': "{role} is waiting for collaboration results; this message is queued. If there is no progress for about {minutes} more min the wait is marked stalled. For a human message, click Steer to interrupt the role and handle that message",
-  'collabWait.notWaiting': "This role is not waiting for collaboration results; the message will run in normal order",
-  'collabWait.yieldPending': "Another message for this role has already been set to go first; wait until it finishes",
-  'collabWait.steerDuringWait': "This role is waiting for collaboration results. Explicit confirmation is required to interrupt it; refresh and click Steer on the human message",
-  'collabWait.yielded': "Handling this message first; the waiting collaboration is kept and resumes afterwards",
-  'collabWait.invalidMinutes': "The collaboration wait release time must be a whole number of minutes from 5 to 1440",
   'rolePermissions.invalid': "Unknown permission scope: {scope}",
   'rolePermissions.worker_unsupported': "The device Worker does not support per-role permission scopes yet; upgrade it or keep the current permissions",
   'rolePermissions.scope_unsupported': "Permission scope {scope} is not available for this CLI on this device",
   'rolePermissions.terminalApprovalUnsupported': "A role terminal cannot send approvals back to Workbench; open it after switching the role to another permission scope",
   'rolePermissions.selectScope': "Choose a permission scope for this role",
-  'collabWait.stalled': "{role}'s collaboration has made no progress for a while and needs attention; this message stays queued until you explicitly use its queue action",
-  'collabWait.yieldRunning': "Another message for {role} is being handled first; this one runs after it and the waiting collaboration finish",
-  'collabWait.stalledOnly': "Only human messages can go first before the wait is marked stalled",
   'runContext.resultReceipts': `Results of calls you sent have come back (received, not passed: check each reply and its version before accepting it or sending it back; full text with wb history read REQUEST_ID):
 {p1}{p2}`,
   'runContext.resultReceiptsOmitted': `

@@ -73,7 +73,7 @@ function worker(t, { runtime = 'claude', prompts = { id: 'p1' } } = {}) {
   return { dir, db, sent, created, deleted, asks, ask, prompts, advance: ms => { now += ms; } };
 }
 
-test('Claude: the first question makes the temporary session, follow-ups resume it read-only, a newer main prompt starts over', async t => {
+test('Claude: the first question makes the temporary session, follow-ups resume it read-only, a newer main prompt preserves the branch', async t => {
   const w = worker(t);
   await w.ask(1);
   const first = w.db.get('sideAsks', uuid(1));
@@ -85,12 +85,12 @@ test('Claude: the first question makes the temporary session, follow-ups resume 
   await w.ask(2, { followUp: true });
   assert.equal(w.created[1].options.resumeSessionId, first.tempId, 'the follow-up continues the same temporary session');
   assert.equal(w.asks.size, 0, 'no process stays after an answer');
-  // The main session moved on: the next question closes the old copy and makes a new one.
+  // The main session moved on: the follow-up keeps the same independent copy.
   w.prompts.id = 'p2';
   await w.ask(3, { followUp: true });
   const second = w.db.get('sideAsks', uuid(1));
-  assert.notEqual(second.tempId, first.tempId); assert.equal(existsSync(first.tempPath), false);
-  assert.ok(w.sent.some(m => m.questionId === uuid(103) && m.event.kind === 'restarted'));
+  assert.equal(second.tempId, first.tempId); assert.equal(existsSync(first.tempPath), true);
+  assert.equal(w.sent.some(m => m.questionId === uuid(103) && m.event.kind === 'restarted'), false);
   // Clearing removes the copy and the record.
   await w.asks.close(uuid(1));
   assert.equal(existsSync(second.tempPath), false); assert.ok(!w.db.get('sideAsks', uuid(1)));
@@ -134,7 +134,7 @@ test('a second question while one is being answered, an Agy session or a full de
   assert.match(w.sent.at(-1).event.error, /capacity is full/);
 });
 
-test('Home keeps side questions in memory only: one at a time, closed by a new main prompt, idle or age', () => {
+test('Home keeps side questions in memory only: one at a time, closed explicitly, by idle or age', () => {
   const sent = [];let now = Date.parse('2026-10-21T08:00:00Z');
   const home = createHomeSideAsks({ send: (nodeId, m) => sent.push({ nodeId, ...m }), online: () => true, clock: () => now });
   const worker = { id: 'n1', capabilities: { nativeSideAsk: 1 } };
@@ -157,9 +157,9 @@ test('Home keeps side questions in memory only: one at a time, closed by a new m
   const b = home.ask('n1', worker, { runtime: 'codex', sessionId: 'thread-2', prompt: 'other?' });
   assert.equal(home.get(a.id).closed, true); assert.equal(home.get(a.id).reason, 'replaced');
   assert.ok(sent.some(m => m.type === 'side_ask_close' && m.sideId === a.id));
-  // A new prompt in the main session closes its side question; asking again starts over and says so.
-  home.closeFor('n1', 'codex', 'thread-2');
-  assert.equal(home.get(b.id).reason, 'main_prompt');
+  // Explicit clearing closes the side question; asking again starts over and says so.
+  home.stop(b.id);
+  assert.equal(home.get(b.id).reason, 'cleared');
   const c = home.ask('n1', worker, { sideId: b.id, runtime: 'codex', sessionId: 'thread-2', prompt: 'again?' });
   assert.notEqual(c.id, b.id); assert.equal(c.restarted, true);
   // Idle for an hour.

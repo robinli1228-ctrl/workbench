@@ -25,7 +25,7 @@ export default Object.freeze({
   "conversationTasks.transferReason":"随关联派单转交负责人。",
   "conversationTasks.updated":"任务说明已更新。",
   "conversationTasks.context":"群聊任务（Home 当前快照）。{updated}\n{task}",
-  "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{title,description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。说明/计划整段替换。只有 done 可写 resultSummary，全部计划步骤必须已完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交前先在本轮用 wb task update 重写说明。重试须保持相同 requestId 和输入。",
+  "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。每步只填一个必填 description（步骤说明，最多4000字），不再填写步骤 title；任务自身的 title/description 不变。说明/计划整段替换。只有 done 可写 resultSummary，全部计划步骤必须已完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交前先在本轮用 wb task update 重写说明。重试须保持相同 requestId 和输入。\n步骤更新示例：wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"核对两端固定输入版本，并记录差异。\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"完善步骤说明\"}'。plan 为完整替换，必须保留仍需执行的其他步骤和配置。",
 
   'deviceAdmin.reconnectUnsupported':'手动重连需要 Home 管理的反向 SSH 隧道、已保存的 SSH 密钥及可核验的 Linux Worker。',
   'deviceAdmin.reconnectBusy':'该设备有待处理或运行中的任务、常驻 CLI，或正在执行其他连接操作。未停止任何任务，请空闲后重试。',
@@ -1569,6 +1569,7 @@ wb call --role 角色 --kind consult|direct|transfer --request-id 稳定编号 -
                      重复 --role 可把同一段说明发给几个角色，各自处理。可选 --goal、--scope、--input、--return 写成带标签的几行放在说明前面；--file 路径 附上项目里的一个 UTF-8 文件（带 SHA256）。说明最多 12000 字。重试用同一个编号和内容。
                      --kind handoff --delivery-id 编号：配合 wb deliver 的跨设备提交派活。
 wb wait "续接摘要"   登记你在等哪些派出的结果，然后结束本轮；结果都回来、超时（默认 30 分钟）或对方 10 分钟仍无法开始时，平台叫醒你。也可 wb wait '{"summary":"...","requestIds":["编号"],"timeoutSeconds":1800}'
+                     列出的几个请求要全部返回才叫醒你；想先处理先回来的，就只等那一个（requestIds 只写它的编号），处理完再等下一个。
 wb note 文字         在群里留一句话，不派活
 wb history [关键词] [--role 角色] [--file 路径] [--since 时间] [--until 时间] [--limit N] [--cursor C]
                      不带关键词列出最近的群聊记录；带关键词搜索。时间写法：30m、2h、3d、today、2026-10-20
@@ -1771,7 +1772,6 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 每个 @ 你的消息都要实质回复，或说明做不了及原因；不要只回“收到”，没有意见就说“通过，无意见”。
 - 发现阻塞、风险或别人的问题，直接告诉相关角色并说明依据。
 - 收到新消息时先判断：是对你手上任务的补充，就并入继续做；是新的任务，就按新任务处理。
-- 手上有任务时收到独立的新任务：用 wb task create 记为待办，回复已记下，继续当前任务；做完后处理待办，或交总管派人。
 - 按任务计划做事：完成自己负责的步骤后标记该步骤完成，更新任务说明里的交接内容，再转交给下一步角色；只有最后一步完成才把整个任务标为完成。
 - 转交给你的任务，你就是负责人：自己推进到底，组织审核，做完直接回复用户结论。
 
@@ -1779,6 +1779,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 用户点名了就按用户的安排；没点名时自己判断找谁：设备合适 > 余额充足 > 空闲。正在运行的尽量不打断，没有合适的人就自己做。
 - 被派的活做完后，结果写在最终回复里，会自动交回派活的人；不要再反过来 call 它。
 - 安排多人依次审核时，已经准备好的人先开始，不因为某一位的材料没到就全部等着；最终结论要等所有人都审完。
+- 要别的角色协同时，先用 wb task create 建一个待办，写清目标和步骤；派活时用 wb call --task 关联它。
 - 派活写清：目标和完成标准；对方做什么、能改什么；输入（设备、目录、完整 SHA 或文件路径与哈希，不说“最新版本”）；要交回什么。
 - 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。
 - 结果回来不等于通过：核对证据和版本后再决定接受还是退回；结果没有变化，不为同一件事再派人。
@@ -1921,20 +1922,11 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wechatChannel.requestConflict': '该通知 requestId 已用于不同内容，新消息请使用新编号。',
   'wechatChannel.notificationTargetChanged': '原项目总管已不可用或发生变更，已关闭编号且未改派。',
   'wechatChannel.toolGuide': '仅项目总管可用：wb notify send \'{"requestId":"stable-id","text":"问题或通知，最多1600字符"}\'；wb notify status MESSAGE_ID。Home 使用已配置的平台和账号，从本轮执行身份确定真实项目及总管，不得指定其他项目或收件角色；消息自动标明所属项目。启用仅开放工具，不自动转发报告或审批。超时后使用相同 requestId 和内容重试；状态区分排队、发送及错误，不把发送当作已读。带编号的回复排入原项目总管队列，不打断运行中的 CLI。原生权限、仓库配置及 Git 交付保持原审批边界。',
-  'collabWait.queued': "{role} 正在等待协作结果，本条消息排队中。约 {minutes} 分钟内仍无进展会标记为卡住；用户消息可点击“引导”打断该角色，处理这条消息",
-  'collabWait.notWaiting': "该角色当前没有在等待协作结果，消息会按正常顺序执行",
-  'collabWait.yieldPending': "该角色已有一条消息设为先处理，请等它完成后再操作",
-  'collabWait.steerDuringWait': "该角色正在等待协作结果，需要明确确认才能打断；请刷新后点击用户消息上的“引导”",
-  'collabWait.yielded': "本条消息先处理；正在等待的协作会保留，之后继续",
-  'collabWait.invalidMinutes': "协作等待自动放行时间必须是 5 到 1440 之间的整数分钟",
   'rolePermissions.invalid': "未知的权限范围：{scope}",
   'rolePermissions.worker_unsupported': "该设备的 Worker 尚不支持按角色设置权限；请升级 Worker，或保留当前权限",
   'rolePermissions.scope_unsupported': "该设备上的这个 CLI 不支持权限范围 {scope}",
   'rolePermissions.terminalApprovalUnsupported': "角色终端无法把审批回传到 Workbench；请把该角色切换到其他权限范围后再打开终端",
   'rolePermissions.selectScope': "请为该角色选择权限范围",
-  'collabWait.stalled': "{role} 的协作已长时间没有进展，需要处理；本条消息会继续排队，直到你明确使用对应的队列操作",
-  'collabWait.yieldRunning': "{role} 正在先处理另一条消息；本条要等它和原先等待的协作都结束后再执行",
-  'collabWait.stalledOnly': "等待被标记为卡住之前，只有你发的消息可以先处理",
   'runContext.resultReceipts': `你派出的请求有结果回来了（只表示收到，不等于通过；核对回复内容和版本后再决定接受还是退回，全文用 wb history read 请求编号）：
 {p1}{p2}`,
   'runContext.resultReceiptsOmitted': `

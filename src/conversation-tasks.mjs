@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {conversationIdOf,resolveConversationId,assertConversationRecord,agentConversationInput} from './group-conversations.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {tr} from './i18n.mjs';
+import {stepDescription,MAX_STEP_DESCRIPTION} from '../public/conversation-task-state.js';
 
 const statuses=['todo','in_progress','done','cancelled'];
 const fields=['title','description','plan','ownerRoleId','status','resultSummary','messageIds'];
@@ -10,6 +11,8 @@ const object=value=>value&&typeof value==='object'&&!Array.isArray(value);
 const text=(value,limit,empty=false)=>{if(typeof value!=='string'||value.length>limit||(!empty&&!value.trim()))fail('invalid');return value;};
 const keys=(value,allowed)=>{if(!object(value)||Object.keys(value).some(k=>!allowed.includes(k)))fail('invalid');};
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+/** Tools and new run inputs expose one step description; historical records remain verbatim. */
+const taskView=record=>record.plan?{...record,plan:{...record.plan,steps:record.plan.steps.map(({title,...step})=>({...step,description:stepDescription({title,...step})}))}}:record;
 
 /** Home-only planning records, distinct from executable tasks. Every entry point has an explicit conversation lens. */
 export class ConversationTasks {
@@ -41,15 +44,16 @@ export class ConversationTasks {
     const steps=value.steps.map((step,index)=>{
       const before=previous?.steps?.[index];
       keys(step,['title','description','roleId','collaborators','review','handoffRoleId','status']);
-      const result={...step,title:text(step.title,200),status:step.status||'todo'};
+      if(step.title!==undefined)text(step.title,200);
+      if(step.description!==undefined)text(step.description,MAX_STEP_DESCRIPTION,true);
+      const {title,...rest}=step,result={...rest,description:text(stepDescription(step),MAX_STEP_DESCRIPTION),status:step.status||'todo'};
       if(!['todo','in_progress','done'].includes(result.status))fail('plan');
-      if(step.description!==undefined)text(step.description,2000,true);
       for(const key of ['roleId','handoffRoleId'])if(step[key]!==undefined)this.role(scope,step[key],before?.[key]===step[key]);
       if(step.collaborators!==undefined){if(!Array.isArray(step.collaborators)||step.collaborators.length>20)fail('plan');step.collaborators.forEach(id=>this.role(scope,id,before?.collaborators?.includes(id)));}
       if(step.review!==undefined){keys(step.review,['roleIds','count','sequential']);if(!Array.isArray(step.review.roleIds)||step.review.roleIds.length>20||!Number.isInteger(step.review.count)||step.review.count<0||step.review.count>20||typeof step.review.sequential!=='boolean')fail('plan');step.review.roleIds.forEach(id=>this.role(scope,id,before?.review?.roleIds?.includes(id)));}
       return result;
     });
-    if(JSON.stringify(value).length>16000)fail('plan');
+    if(JSON.stringify({steps,currentStep:value.currentStep}).length>16000)fail('plan');
     return {steps,currentStep:value.currentStep};
   }
   validate(scope,input,current={}){
@@ -58,7 +62,8 @@ export class ConversationTasks {
     text(value.title,200);text(value.description,12000);
     if(!statuses.includes(value.status))fail('status');
     this.role(scope,value.ownerRoleId,current.ownerRoleId===value.ownerRoleId);
-    value.plan=this.plan(scope,value.plan,current.plan);
+    const normalizedPlan=this.plan(scope,value.plan,current.plan);
+    if(Object.hasOwn(input,'plan'))value.plan=normalizedPlan;
     if(!Array.isArray(value.messageIds)||value.messageIds.length>100||new Set(value.messageIds).size!==value.messageIds.length)fail('invalid');
     for(const id of value.messageIds)assertConversationRecord(scope,this.db.get('roomMessages',id));
     if(Object.hasOwn(input,'resultSummary')){if(value.status!=='done')fail('summary');text(input.resultSummary,8000,true);}
@@ -107,10 +112,10 @@ export class ConversationTasks {
   visible(record,run){const view=reviewView(this.db,{projectId:run.projectId,roleId:run.roleId});return !record.history.some(h=>h.actor.runId&&view.get('runs',h.actor.runId)?.reviewRedacted);}
   agent(run,action,input={}){
     agentConversationInput(run,input);const scope=this.scope(run),actor={roleId:run.roleId,runId:run.id};
-    if(action==='list'){keys(input,['status']);return this.list(scope,input).filter(t=>this.visible(t,run));}
-    if(action==='show'){keys(input,['id']);const value=this.show(scope,input.id);if(!this.visible(value,run))fail('notFound',404);return value;}
-    if(action==='create')return this.create(scope,input,actor);
-    if(action==='update'){const {id,...patch}=input,value=this.show(scope,id);if(!this.visible(value,run))fail('notFound',404);return this.update(scope,id,patch,actor);}
+    if(action==='list'){keys(input,['status']);return this.list(scope,input).filter(t=>this.visible(t,run)).map(taskView);}
+    if(action==='show'){keys(input,['id']);const value=this.show(scope,input.id);if(!this.visible(value,run))fail('notFound',404);return taskView(value);}
+    if(action==='create')return taskView(this.create(scope,input,actor));
+    if(action==='update'){const {id,...patch}=input,value=this.show(scope,id);if(!this.visible(value,run))fail('notFound',404);return taskView(this.update(scope,id,patch,actor));}
     fail('usage');
   }
   /** Called inside createAgentCalls' transaction, after admission succeeds. No partial ownership on a rejected call. */
@@ -118,9 +123,10 @@ export class ConversationTasks {
     const task=this.show(run,id);if(!this.visible(task,run))fail('notFound',404);
     if(task.ownerRoleId!==run.roleId)fail('permission',403);
     if(['done','cancelled'].includes(task.status))fail('closed');
-    // Only the most recent description rewrite counts; a later user/peer edit invalidates the old handover.
+    // Only the most recent description rewrite counts; a later user/peer edit invalidates the old handover. A task this
+    // run created itself already carries a description written now, so it can be handed over at once.
     const edit=task.history.findLast(h=>h.changes.description);
-    if(!edit||edit.revision===1||edit.actor.runId!==run.id||edit.actor.roleId!==run.roleId)fail('editFirst');
+    if(!edit||edit.actor.runId!==run.id||edit.actor.roleId!==run.roleId)fail('editFirst');
     const revision=task.revision+1,time=new Date().toISOString();
     return this.persist({...task,ownerRoleId:targetRoleId,status:'in_progress',revision,updatedAt:time,
       history:[...task.history,{revision,at:time,actor:{type:'role',roleId:run.roleId,runId:run.id},reason:tr('conversationTasks.transferReason'),
@@ -133,7 +139,7 @@ export class ConversationTasks {
     assertConversationRecord(run,request);
     const task=this.show(run,request.conversationTaskId);if(!this.visible(task,run))return null;
     const id=digest([task.id,run.roleId]),previous=this.db.get('conversationTaskReads',id);
-    const value={id:task.id,number:task.number,title:task.title,description:task.description,plan:task.plan,status:task.status,ownerRoleId:task.ownerRoleId,revision:task.revision,
+    const value={id:task.id,number:task.number,title:task.title,description:task.description,plan:taskView(task).plan,status:task.status,ownerRoleId:task.ownerRoleId,revision:task.revision,
       updated:Boolean(previous&&previous.descriptionRevision!==task.descriptionRevision)};
     this.db.put('conversationTaskReads',{id,projectId:run.projectId,conversationId:conversationIdOf(run),roleId:run.roleId,conversationTaskId:task.id,descriptionRevision:task.descriptionRevision,runId:run.id});
     return value;

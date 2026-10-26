@@ -66,6 +66,9 @@ const LEGACY_SUPERVISOR_DEFAULTS = new Set([
   '891c4412e1ff62d8ca3264e1627dc12b10678a2025b0cafaa907384b48751bb0'
 ]);
 const LEGACY_PLATFORM_DEFAULTS = new Set([
+  // Defaults before roles were asked to create a task when asking others to collaborate.
+  '72db3f515e9e9b9f7ed2bcbf26ef0683008f4a6d9e3280a30645097bb3b3c6ab',
+  '96802b0aa862bc80cb8a8b4e14104b66092a579df76aa7db345c8a566554d578',
   'ee2e0467fca2b86c8434affc53faa7ab5542dc2ff2a757180ec4d0438ccdd781',
   '68b63bf13a5e802f548cb41cf502402df12bfe0838c7e2cf69acf4f732ff38e3',
   // Exact defaults before task-driven collaboration.
