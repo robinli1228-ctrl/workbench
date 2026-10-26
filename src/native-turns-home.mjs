@@ -140,8 +140,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');if(input.control&&worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to compact a native session');
       await refresh(nodeId,input.runtime,input.sessionId);
       const credential=input.control?null:await gitCredential(turns.settings(nodeId,input.runtime,input.sessionId));const created=turns.create(nodeId,worker,input,{gitCredential:credential});
-      // A new prompt in the main session: its side question ends, the next one starts from the new state.
-      if(!input.control)sideAsks.closeFor(nodeId,input.runtime,input.sessionId);json(res,created,201);return true;}
+      json(res,created,201);return true;}
     // Side question: ask (creates one, or continues ?sideId), read it while it is answered, clear it.
     if(area==='side'&&!a&&req.method==='POST'){const input=await body(req);switches.assertExecutable({...input,nodeId});json(res,sideAsks.ask(nodeId,worker,input),201);return true;}
     if(area==='side'&&a&&!b&&req.method==='GET'){json(res,sideAsks.get(decodeURIComponent(a)));return true;}

@@ -13,7 +13,7 @@ import {isHistoryPrompt} from '../public/history-prompt.js';
  *   question in plan mode, deleted when the side question closes.
  * - Codex: thread/fork with a read-only sandbox, resumed per question, thread/delete when it closes.
  * Nothing is kept: a side question closes when the page clears it, after an hour without use, two hours after it began,
- * when the main session has a newer prompt (the next question starts a fresh one), and on every Worker start. The record
+ * and on every Worker start. Main-session updates do not change an existing branch. The record
  * below only names the temporary files and threads so they can be removed; it holds no question or answer.
  */
 export const SIDE_ASK_RUNTIMES=new Set(['claude','codex']);
@@ -109,7 +109,7 @@ async function deleteCodexThreadOnce(threadId,{bin=process.env.CODEX_BIN||'codex
  finally{clearTimeout(timer);kill();}
 }
 
-/** The newest prompt of a session: a side question whose parent moved on starts over. */
+/** Read the parent context only when creating a new independent side branch. */
 async function latestPrompt(runtime,sessionId,record,env){
  const page=await readNativeSession(runtime,sessionId,{env,record,historyPage:true});
  const prompt=[...page.messages].reverse().find(m=>m.role==='user'&&isHistoryPrompt(m.text));
@@ -174,21 +174,19 @@ export class SideAsks{
    this.canStart(m);
    // Reserve before the first asynchronous read; a duplicate must never release this request's slot.
    state={questionId,runtime,sessionId,closing:false,session:null,prepared:new Promise(resolve=>{prepared=resolve;})};this.running.set(sideId,state);
-   const record=m.record||registeredNativeSession(this.db,runtime,sessionId);
-   // Live group cards carry a trusted saved turn from Home; do not read the changing native parent.
-   if(m.snapshot&&(!m.snapshot.id||typeof m.snapshot.text!=='string'||!m.snapshot.text.trim()||m.snapshot.text.length>100000))throw Error('The previous completed reply is unavailable');
-   const parent=m.snapshot?{id:`completed:${m.snapshot.id}`,workspace:record?.workspace}:await this.parentState(runtime,sessionId,record,this.env);
-   if(state.closing)return;
-   if(!parent.workspace)throw Error('The main session has no working folder yet');
-   if(m.expectedWorkspace&&parent.workspace!==m.expectedWorkspace)throw Error('The original session working folder has changed');
    let r=this.record(sideId);
-   // The main session has a newer prompt than the one this side question started from (or this Worker restarted and lost
-   // the temporary session): start a fresh side session and say so.
-   if(r&&(r.cleanupPending||r.parentPromptId!==parent.id||r.sessionId!==sessionId)){
+   // An existing branch keeps its own context; only cleanup or an explicit source change recreates it.
+   if(r&&(r.cleanupPending||r.sessionId!==sessionId||r.runtime!==runtime)){
     if(!await this.cleanup(sideId))throw Error('The previous side question could not be cleaned up; try again shortly');
     if(state.closing)return;r=null;this.event(sideId,questionId,{kind:'restarted'});
    }
    else if(!r&&m.followUp)this.event(sideId,questionId,{kind:'restarted'});
+   const record=r?null:m.record||registeredNativeSession(this.db,runtime,sessionId);
+   if(m.snapshot&&(!m.snapshot.id||typeof m.snapshot.text!=='string'||!m.snapshot.text.trim()||m.snapshot.text.length>100000))throw Error('The previous completed reply is unavailable');
+   const parent=r?{id:r.parentPromptId,workspace:r.cwd}:m.snapshot?{id:`completed:${m.snapshot.id}`,workspace:record?.workspace}:await this.parentState(runtime,sessionId,record,this.env);
+   if(state.closing)return;
+   if(!parent.workspace)throw Error('The main session has no working folder yet');
+   if(m.expectedWorkspace&&parent.workspace!==m.expectedWorkspace)throw Error('The original session working folder has changed');
    const fresh=!r;
    if(!r){
     r={id:sideId,runtime,sessionId,cwd:parent.workspace,parentPromptId:parent.id,createdAt:new Date(this.clock()).toISOString()};

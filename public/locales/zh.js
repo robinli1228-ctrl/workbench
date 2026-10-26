@@ -87,7 +87,7 @@ export default {
   'Choose an Agent card to start a side question': '点击 Agent 消息卡片的侧聊图标开始',
   "Side question": "侧边聊天",
   "Side question with {name}": "与 {name} 侧聊",
-  "Uses the original session’s current context, not a snapshot of this card.": "使用原会话当前上下文，并非这张卡片当时的快照。",
+  "Starts from the original session’s context; later main-session messages do not change this side conversation.": "从原会话上下文开始；主会话后续消息不影响这次侧聊。",
   "Switch side questions? The current draft or answer will be cleared. The main task will keep running.": "切换侧聊将清空当前草稿或停止侧聊回答，主任务继续运行。确定切换吗？",
   "This message is not available for side questions": "这条消息不能打开侧聊",
   "The original execution is unavailable": "原执行记录不可用",

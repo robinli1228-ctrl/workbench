@@ -80,7 +80,7 @@ export function createSideAsk({api,getData,getModel=()=>null}){
    if(sig===signature)return;signature=sig;
    body.replaceChildren();
    if(notice)body.append(el('p','workspace-note native-ask-restarted',t(notice)));
-   if(!questions.length){const empty=el('div','side-preview-empty');const icon=el('span','side-preview-empty-icon');icon.innerHTML=UI_ICON.sideAsk;empty.append(icon,el('p','',t('Ask a quick question that does not interrupt the main session. The answer stays here only, and is gone once you clear it or the main session moves on.')));body.append(empty);return;}
+   if(!questions.length){const empty=el('div','side-preview-empty');const icon=el('span','side-preview-empty-icon');icon.innerHTML=UI_ICON.sideAsk;empty.append(icon,el('p','',t('An independent side conversation. New messages in the main session do not interrupt it. It is temporary and can be cleared here.')));body.append(empty);return;}
    for(const q of questions){
     const files=q.attachments?.length?el('div','chat-attachments native-turn-files'):null;if(files)for(const a of q.attachments)files.append(el('span','attachment-name native-ask-file',a.name));
     body.append(...questionRows(q,session,files,live(q),preview,api));
@@ -95,7 +95,7 @@ export function createSideAsk({api,getData,getModel=()=>null}){
    if(!session||!sideId)return stopPoll();const asked=sideId,owner=sessionKey(session),ticket=generation;
    try{const next=await api(`${endpoint(session.nodeId)}/side/${encodeURIComponent(asked)}`);if(ticket!==generation||sideId!==asked||sessionKey(session)!==owner)return;
     if(next.closed){sideId=null;view=null;notice=NOTES[next.reason]||'';stopPoll();render();return;}
-    view=next;notice=next.restarted?'The main session has a new prompt; side questions start over.':notice;if(!next.questions.some(live))stopPoll();render();}
+    view=next;notice=next.restarted?'The previous side conversation is unavailable; a new one has started.':notice;if(!next.questions.some(live))stopPoll();render();}
    catch(error){if(ticket===generation&&sideId===asked&&sessionKey(session)===owner)setNote(error.message);}
   }
   async function reset({tell=false,reason=''}={}){
@@ -111,7 +111,7 @@ export function createSideAsk({api,getData,getModel=()=>null}){
    pending=true;input.disabled=true;model.disabled=true;setNote('');render();
    try{const next=await api(owner.sideEndpoint||`${endpoint(owner.nodeId)}/side`,{method:'POST',json:{...(owner.messageId?{conversationId:owner.conversationId}:{}),sideId,runtime:owner.runtime,sessionId:nativeId(owner),prompt,model:model.value||null,attachmentIds:files.map(f=>f.id)}});
     if(!current()){if(next.id)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(next.id)}`,{method:'DELETE'}).catch(()=>{});return;}
-    if(next.id!==sideId&&sideId&&view?.questions?.length)notice='The main session has a new prompt; side questions start over.';
+    if(next.id!==sideId&&sideId&&view?.questions?.length)notice='The previous side conversation is unavailable; a new one has started.';
     sideId=next.id;view=next;input.value='';files=[];startPoll();}
    catch(error){if(current())setNote(error.message);}
    finally{if(current()){pending=false;input.disabled=false;model.disabled=false;render();}}
@@ -138,8 +138,6 @@ export function createSideAsk({api,getData,getModel=()=>null}){
    focus:()=>input.focus(),
    /** A different session starts a blank side question (the old one is closed); the same session keeps it. */
    attach(value){if(sessionKey(value)!==sessionKey(session)){const previous=session;void reset({tell:Boolean(previous)});input.value='';session=value;signature='';}else session=value;fillModels();render();},
-   detach(){void reset({tell:true});session=null;input.value='';body.replaceChildren();},
-   /** The main session got a new prompt from this page: the side question starts over. */
-   mainPrompted(value){if(session&&sessionKey(value)===sessionKey(session)&&(sideId||view?.questions?.length||pending))void reset({reason:'main_prompt'});}
+   detach(){void reset({tell:true});session=null;input.value='';body.replaceChildren();}
   };
  }
