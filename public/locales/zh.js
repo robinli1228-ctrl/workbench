@@ -4,6 +4,8 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Update to current default': '更新为新默认',
+  'Retired commands on line {line}: {commands}. Results belong in the final reply.': '第 {line} 行含已取消命令：{commands}。结果请写在最终回复里。',
   'Run record': '运行记录',
   'Total': '合计',
   'Token · Session cumulative': 'Token · 会话累计',

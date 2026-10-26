@@ -1,3 +1,4 @@
+import {renderRetiredCommandWarning} from './retired-commands.js';
 import {createConversationTaskUI} from './conversation-tasks.js';
 import {createDataSettingsUI} from './data-settings.js';
 import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
@@ -1302,12 +1303,37 @@ function renderSupervisorDefaultChoices(values = {}) {
   );
 }
 
+function renderRetiredPromptSettings(settings) {
+  for(const [field,id] of [['platformPrompt','platform-prompt-summary'],['supervisorPrompt','supervisor-prompt-summary']]) {
+    const summary=document.getElementById(id);
+    let box=summary.parentElement.querySelector('[data-retired-warning]');
+    if(!box){box=create('div','workspace-note');box.dataset.retiredWarning=field;summary.after(box);}
+    box.replaceChildren();
+    const warning=create('p','');
+    if(renderRetiredCommandWarning(warning,settings[field],t)) {
+      box.append(warning);
+      const button=create('button','secondary compact','Update to current default');button.type='button';
+      const revision=settings.promptsRevision||0;
+      button.addEventListener('click',async()=>{
+        button.disabled=true;
+        try {app.data.settings=await api('/api/settings/prompts',{method:'POST',json:{[field]:app.data.promptDefaults[field],promptsRevision:revision}});renderPlatformPrompts();}
+        catch(error){warning.textContent=error.message;button.disabled=false;}
+      });box.append(button);
+    }
+    const textarea=dom.promptsForm.elements[field];
+    let editorWarning=textarea.parentElement.querySelector('[data-retired-warning]');
+    if(!editorWarning){editorWarning=create('p','workspace-note');editorWarning.dataset.retiredWarning=field;textarea.after(editorWarning);textarea.addEventListener('input',()=>renderRetiredCommandWarning(editorWarning,textarea.value,t));}
+    renderRetiredCommandWarning(editorWarning,textarea.value,t);
+  }
+}
+
 function renderPlatformPrompts() {
   if (!dom.promptsForm) return;
   const settings = app.data.settings || {};
   dom.promptsForm.elements.platformPrompt.value = settings.platformPrompt ?? app.data.promptDefaults?.platformPrompt ?? '';
   dom.promptsForm.elements.supervisorPrompt.value = settings.supervisorPrompt ?? app.data.promptDefaults?.supervisorPrompt ?? '';
   renderSupervisorDefaultChoices(settings);
+  renderRetiredPromptSettings(settings);
   dom.promptsUpdated.textContent = settings.promptsUpdatedAt ? t('Last saved: {time}', { time: formatTime(settings.promptsUpdatedAt) }) : 'Not saved separately; using the default';
   document.querySelector('#platform-prompt-summary').textContent = dom.promptsForm.elements.platformPrompt.value.trim() || 'Not set; using the platform default rules.';
   document.querySelector('#supervisor-prompt-summary').textContent = dom.promptsForm.elements.supervisorPrompt.value.trim() || 'Not set; using the default supervisor instructions.';
@@ -1353,6 +1379,7 @@ function openPromptEditor(mode) {
   if(mode==='supervisor-prompt')openSettings('prompts');
   renderPlatformPrompts();
   dom.promptsDialog.dataset.editMode = mode;
+  dom.promptsDialog.dataset.promptsRevision=String(app.data.settings?.promptsRevision||0);
   for (const section of dom.promptsForm.querySelectorAll('[data-prompt-field]')) section.hidden = mode === 'supervisor-prompt' ? section.dataset.promptField !== 'supervisor' : mode === 'platform' ? section.dataset.promptField !== 'platform' : section.dataset.promptField === 'platform';
   document.querySelector('#restore-platform-prompts').textContent = mode !== 'platform' ? 'Restore default prompts' : 'Restore defaults';
   document.querySelector('#platform-prompts-dialog-title').textContent = {
@@ -2272,6 +2299,7 @@ document.querySelector('#restore-platform-prompts')?.addEventListener('click', (
   const mode = dom.promptsDialog.dataset.editMode;
   if (mode === 'platform') dom.promptsForm.elements.platformPrompt.value = app.data.promptDefaults?.platformPrompt || '';
   if (mode === 'supervisor' || mode === 'supervisor-prompt') dom.promptsForm.elements.supervisorPrompt.value = app.data.promptDefaults?.supervisorPrompt || '';
+  for(const field of ['platformPrompt','supervisorPrompt'])dom.promptsForm.elements[field].dispatchEvent(new Event('input'));
   dom.promptsFeedback.textContent = 'Prompts have been restored to their defaults; click "Save settings" to apply.';
   dom.promptsFeedback.hidden = false;
 });
@@ -2282,7 +2310,7 @@ dom.promptsForm?.addEventListener('submit', async event => {
   button.disabled = true;
   dom.promptsFeedback.hidden = true;
   try {
-    app.data.settings = await api('/api/settings/prompts', { method: 'POST', json: dom.promptsDialog.dataset.editMode==='supervisor-prompt'?{supervisorPrompt:values.supervisorPrompt}:values });
+    app.data.settings = await api('/api/settings/prompts', { method: 'POST', json: {...(dom.promptsDialog.dataset.editMode==='supervisor-prompt'?{supervisorPrompt:values.supervisorPrompt}:values),promptsRevision:Number(dom.promptsDialog.dataset.promptsRevision)} });
     renderSupervisorDefaultChoices(app.data.settings);
     dom.promptsUpdated.textContent = t('Last saved: {time}', { time: formatTime(app.data.settings.promptsUpdatedAt) });
     dom.promptsDialog.close();

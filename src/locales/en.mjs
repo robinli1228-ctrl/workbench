@@ -127,6 +127,13 @@ During independent review, submit your own conclusions first; the requester orga
   'collaboration.testerInstructions': `Test the delivered work against the original requirements. First verify that the intended version is deployed and reachable in the authorized test environment; prepare that environment when authorized or request deployment from the implementer or supervisor.
 For web flows, normally use Playwright to simulate real human navigation, clicks, input and confirmation. Cover the main path and relevant error and boundary cases; check the observable result rather than only a script exit code.
 Send failures, reproduction steps, expected/actual behavior, version and evidence to the original implementer. Discuss disputed results, involve the planner when expected behavior is unclear, and re-test fixes. Report what actually passed and what was not tested, distinguishing test data from real business writes.`,
+  'wbCli.retired.report': 'wb report is retired. Write the result in your final reply; the assigning role will receive it.',
+  'wbCli.retired.schedule': 'wb schedule is retired. Record dependent steps in the task plan with wb task, verify each result, then assign the next step. Use wb timer only for explicit timing requirements.',
+  'wbCli.retired.collaboration': 'wb collaboration is retired. Use wb task and wb call.',
+  'wbCli.retired.pass': 'wb pass is retired. If you have nothing to add, say so in your final reply.',
+  'platformPrompts.retiredCommandGuidance': 'Commands such as wb report and wb schedule are retired; results belong in the final reply.',
+  'platformPrompts.promptRevisionConflict': 'Prompt revision changed; reload before saving.',
+  'roleCalls.returnToWaitingCaller': 'The assigning role is waiting for your result. Write it in your final reply; do not call it back.',
   'wbTools.deliveryUsage': 'Usage: wb deliver [--review] <request-id> <full-commit-sha|auto> <summary>\nUse auto to capture the current HEAD of every repository in this Run. An explicit SHA is supported for an unambiguous single repository. --review publishes only a fixed review ref and receives it in an independent directory, without advancing project baselines; Home and participating Workers must support review deliveries. Without --review, development delivery keeps its baseline advancement. Registration is not publication or acceptance; source success and Worker checks still apply. Uncommitted files are not transferred. Help does not submit a request.',
   'gitDelivery.projectDeliveryRequiresAuto': 'This Run contains multiple repositories. Use wb deliver <request-id> auto <summary> to request delivery of their exact commits; one SHA cannot identify all repositories.',
   'coordinator.dynamicPlanningRules': 'There is no pre-bound planner role. Decide whether this task needs planning, and select the appropriate collaborator from the current full roster using responsibilities, relevant context and availability. Respect an explicit user assignment; do not infer a permanent planning or execution binding from a display name or historical configuration.',
@@ -1759,6 +1766,8 @@ Drive the work:
 
 Working with others:
 - If the user named someone, follow the user's arrangement; otherwise decide whom to ask yourself: suitable device > enough quota > idle. Try not to interrupt a role that is running; if nobody suits, do it yourself.
+- When assigned work is complete, write the result in your final reply; it is returned to the assigning role automatically. Do not call it back.
+- When arranging sequential reviews, reviewers who are ready should start; do not make everyone wait for one missing input. Wait for every review before the final conclusion.
 - When assigning work, state: the goal and the completion criteria; what the other role does and may change; the inputs (device, directory, full SHA or file path and hash, never "the latest version"); what to hand back.
 - After sending, keep doing the parts that do not depend on it and wait only when you really need the result; to wait for someone's result, actually send the request and register the wait; if you are waiting for nothing, say the work is complete.
 - A returned result is not a pass: check the evidence and version before deciding to accept it or send it back; when nothing has changed, do not send someone again for the same thing.

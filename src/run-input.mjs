@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { executionText as tr, traditionalInput } from './input-language.mjs';
-import {customExecutionPrompt} from './platform-prompts.mjs';
+import {customExecutionPrompt,retiredCommandGuidance} from './platform-prompts.mjs';
 import {relative,isAbsolute} from 'node:path';
 
 /** Disclose actual startup versions and exceptional directory boundaries; neither a retained cwd nor an external mapping means the project was updated. */
@@ -13,7 +13,7 @@ export function executionEnvironmentHint({cwd,projectRoot,boundary,repositories=
 /** Runtime instructions contain only trusted identity and configured execution text, not directory duties or live inventory. */
 export function executionInstructionComponents({run,configuration}) {
   return {identity:tr('minimal.identity',{name:run.roleSnapshot?.name||'',roleId:run.roleId}),
-    platform:traditionalInput(customExecutionPrompt(configuration.platformPrompt)),role:traditionalInput(configuration.roleInstructions??''),
+    platform:traditionalInput(customExecutionPrompt(configuration.platformPrompt)),role:traditionalInput(retiredCommandGuidance(configuration.roleInstructions)),
     supervisor:traditionalInput(customExecutionPrompt(configuration.supervisorPrompt,'supervisor'))};
 }
 

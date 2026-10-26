@@ -127,6 +127,13 @@ export default Object.freeze({
   'collaboration.testerInstructions': `根据原始要求测试交付物。先确认对应版本已经部署到获准的测试环境且可访问；有授权时准备该环境，否则明确请求实现者或总管安排部署。
 页面流程通常使用 Playwright 模拟人的导航、点击、输入和确认，覆盖主路径及相关异常、边界场景，检查实际操作结果，而非只看脚本退出码。
 把失败步骤、预期与实际、版本和证据反馈原实现者。对争议结果共同核对，预期行为不明确时找计划角色确认，修复后复测。报告真实通过项和未测试项，区分测试数据与真实业务写入。`,
+  'wbCli.retired.report': 'wb report 已取消。结果直接写在最终回复里，派活的人会收到。',
+  'wbCli.retired.schedule': 'wb schedule 已停用。步骤依赖记在 wb task 的任务计划里，核对前一步结果后再派下一步；只有明确的时间需求才用 wb timer。',
+  'wbCli.retired.collaboration': 'wb collaboration 已停用。请用 wb task 和 wb call。',
+  'wbCli.retired.pass': 'wb pass 已停用。没有可补充的内容，就在最终回复里说明。',
+  'platformPrompts.retiredCommandGuidance': 'wb report、wb schedule 等命令已取消，结果以最终回复为准。',
+  'platformPrompts.promptRevisionConflict': '提示词版本已变化，请刷新后再保存。',
+  'roleCalls.returnToWaitingCaller': '派活的人正在等你的结果，直接写在最终回复里即可，不要再 call 它。',
   'wbTools.deliveryUsage': '用法：wb deliver [--review] <请求编号> <完整提交SHA|auto> <说明>\n使用 auto 读取本轮所有仓库的当前 HEAD；仅有一个明确仓库时也可指定完整 SHA。--review 只发布固定审核分支，并在独立目录接收，不推进项目基线；Home 和参与设备的 Worker 均须支持审核交付。不加 --review 时，开发交付保留原有基线推进行为。登记不等于发布或验收，仍须源执行成功及 Worker 校验；不传送未提交文件。查看帮助不会提交申请。',
   'gitDelivery.projectDeliveryRequiresAuto': '本轮包含多个仓库，请使用 wb deliver <请求编号> auto <说明> 申请交付各仓库的确定提交；不能用一个 SHA 代表全部仓库。',
   'coordinator.dynamicPlanningRules': '项目不预绑定计划角色。每轮先判断是否需要规划，再根据当前完整角色名单、同伴职能、相关上下文和可用状态选择合适对象。用户明确点名时按指定执行；不能从角色显示名称或历史配置推断永久的计划或执行绑定。',
@@ -1759,6 +1766,8 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 
 找人协作：
 - 用户点名了就按用户的安排；没点名时自己判断找谁：设备合适 > 余额充足 > 空闲。正在运行的尽量不打断，没有合适的人就自己做。
+- 被派的活做完后，结果写在最终回复里，会自动交回派活的人；不要再反过来 call 它。
+- 安排多人依次审核时，已经准备好的人先开始，不因为某一位的材料没到就全部等着；最终结论要等所有人都审完。
 - 派活写清：目标和完成标准；对方做什么、能改什么；输入（设备、目录、完整 SHA 或文件路径与哈希，不说“最新版本”）；要交回什么。
 - 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。
 - 结果回来不等于通过：核对证据和版本后再决定接受还是退回；结果没有变化，不为同一件事再派人。

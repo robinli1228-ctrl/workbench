@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v189-integrated-run-details';
+const CACHE = 'agent-workbench-static-v190-integrated-run-details';
 const STATIC = [
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
@@ -17,7 +17,7 @@ const STATIC = [
   '/history-prompt.js',
   '/history-cache.js',
   '/data-settings.js',
-  '/', '/styles.css', '/app.js', '/native-sessions.js', '/list-order.js', '/select-controls.js', '/mention-input.js', '/context-usage.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png',
+  '/', '/styles.css', '/retired-commands.js', '/app.js', '/native-sessions.js', '/list-order.js', '/select-controls.js', '/mention-input.js', '/context-usage.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png',
   '/platform-admin.js', '/configuration-information.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',
   '/markdown.js', '/media.js', '/project-settings.js', '/role-icons.js', '/settings-page.js',
   '/supervisor-settings.js', '/elapsed.js', '/send-state.js', '/permission-scope.js', '/role-templates.js', '/role-switch.js', '/role-history.js', '/project-setup.js', '/history-view.js', '/scheduled-jobs.js',
