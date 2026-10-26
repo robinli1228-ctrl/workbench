@@ -3953,10 +3953,6 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 #run-dialog .run-reply > :first-child { margin-top: 0; }
 #run-dialog .run-reply > :last-child { margin-bottom: 0; }
 #run-dialog .run-transcript .nt-detail { max-width: 100%; }
-#run-dialog .run-transcript-note { border: 1px solid #e2e7ef; border-radius: 8px; background: #f1f4f9; padding: 12px 15px; color: #8893a6; font-size: 11px; }
-#run-dialog .run-transcript-note pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 var(--font-mono); color: #67738b; }
-#run-dialog .run-transcript-note.is-error { border-color: #f0d8d8; background: #fff4f4; color: #b75757; }
-#run-dialog .run-transcript-note.is-error pre { color: inherit; }
 #run-dialog .run-input-card,#run-dialog .run-input-rules,#run-dialog .run-artifact-report,#run-dialog .run-workspace-files,#run-dialog .run-original { background: #fff; border: 1px solid #e2e7ef; border-radius: 9px; overflow: hidden; }
 #run-dialog .run-input-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #edf0f5; }
 #run-dialog .run-input-head h3 { margin: 0; color: #58657d; }

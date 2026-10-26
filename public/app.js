@@ -1775,10 +1775,10 @@ function renderRunOutput(run, events) {
   if(!rows.length&&!run?.result)section.append(create('div','event-empty',run?'Waiting for CLI output…':'Task has not started yet'));
   for(const row of rows){
     if(row.kind==='tools'){
-      const block=activityBlock({steps:row.tools.map(tool=>{const step=classifyStep(tool.item,run?.status);if(tool.item.query!=null){step.args={...step.args,query:step.args.query??tool.item.query};if(step.kind==='web'&&!step.url)step.url=typeof tool.item.query==='string'?tool.item.query:JSON.stringify(tool.item.query);if(step.kind==='search'&&!step.query)step.query=tool.item.query;}return step;}),t:runStepText,onPreview:(step,path)=>runPreview.open(step,path)});
-      block.dataset.toolId=String(row.tools[0].item.id||row.seq);section.append(block);
+      const block=activityBlock({steps:row.tools.map(tool=>{const step=classifyStep(tool.item,run?.status);if(tool.item.query!=null){step.args={...step.args,query:step.args.query??tool.item.query};if(step.kind==='web'&&!step.url)step.url=typeof tool.item.query==='string'?tool.item.query:JSON.stringify(tool.item.query);if(step.kind==='search'&&!step.query)step.query=tool.item.query;}return step;}),notes:row.notes.map(note=>({...note,text:simplifiedCliOutput(note.text)})),t:runStepText,onPreview:(step,path)=>runPreview.open(step,path)});
+      block.dataset.toolId=String(row.seq);section.append(block);
     }else if(row.kind==='text')appendText(row.text);
-    else{const entry=create('div',`run-transcript-note${row.kind==='error'?' is-error':''}`);entry.append(create('span','',row.kind==='error'?'Error':'CLI log'),create('pre','',simplifiedCliOutput(row.text)));section.append(entry);}
+    else section.append(create('div','nt-error',simplifiedCliOutput(row.text)));
   }
   if(shouldShowFinalResult(run?.result,partitionRunLog(events).output))appendText(run.result);
   return section;
