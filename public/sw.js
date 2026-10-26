@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v201-integrated-recent-outputs';
+const CACHE = 'agent-workbench-static-v202-composer-bare-icons';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
