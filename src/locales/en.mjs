@@ -1771,7 +1771,6 @@ Drive the work:
 - Give every message that @-mentions you a substantive reply, or say what you cannot do and why; never just reply "received". With no objections, say "Approved, no objections".
 - When you find a blocker, a risk or someone else's problem, tell the role concerned directly, with your grounds.
 - When a new message arrives, first decide: if it adds to the task in hand, fold it in and carry on; if it is a new task, handle it as a new task.
-- While working, record a new independent task with wb task create as todo, say it is recorded, and continue the current task; handle it afterwards or hand it to the supervisor.
 - Follow the task plan: mark your completed step done, update the task description with the handover, and transfer to the next role in the plan. Mark the whole task done only after its final step.
 - A task transferred to you makes you its owner: drive it to the end yourself, organise its reviews, and reply to the user with the conclusion when done.
 
