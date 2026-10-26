@@ -18,7 +18,7 @@ import { steeringWaitReason } from './role-steering.mjs';
 import { ConversationContext } from './conversation-context.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followup.mjs';
-import {collaborationQueueView,discussionCollaborationTask} from './coordination-wait.mjs';
+import {collaborationQueueView,discussionCollaborationTask,legacyContinuationFeedback} from './coordination-wait.mjs';
 
 const now = () => new Date().toISOString();
 
@@ -297,7 +297,7 @@ export class Rooms {
     return { id, exists: Boolean(message && message.projectId === projectId && conversationIdOf(message) === conversationId && message.visibility !== 'internal') };
   }
 
-  /** Resolve the immediate public request, not the ancestral user input; continuation links never cross chats. */
+  /** Quote the triggering feedback on result continuations without changing task origin or crossing chat/private boundaries. */
   replySourceFor(record) {
     const get=(kind,id)=>{
       const value=id?this.db.get(kind,id):null;
@@ -307,9 +307,11 @@ export class Rooms {
     while(request){
       if(seen.has(request.id))return null;
       seen.add(request.id);
-      const call=get('roomMessages',request.callMessageId||`call:${request.id}`);
-      if(call)return call;
-      if(request.callMessageId)return null;
+      if(request.kind!=='continuation'){
+        const call=get('roomMessages',request.callMessageId||`call:${request.id}`);
+        if(call)return call;
+        if(request.callMessageId)return null;
+      }
       if(request.reassignedFrom){
         const previous=get('coordinationRequests',request.reassignedFrom);
         if(!previous||previous.reassignedTo!==request.id)return null;
@@ -318,7 +320,13 @@ export class Rooms {
       if(request.kind!=='continuation')return request.parentRequestId||['consult','handoff'].includes(request.kind)?null:get('roomMessages',record.sourceMessageId);
       const previous=get('coordinationRequests',request.continuationOf);
       if(!previous||previous.targetRoleId!==request.targetRoleId)return null;
-      request=previous;
+      if(request.wakeReason!=='results')return null;
+      const feedback=Object.hasOwn(request,'continuationFeedback')?request.continuationFeedback:legacyContinuationFeedback(this.db,request,previous);
+      if(!feedback)return null;
+      const sourceRun=get('runs',feedback.runId),sourceRequest=get('coordinationRequests',feedback.requestId);
+      if(!sourceRun||!sourceRequest||sourceRun.requestId!==sourceRequest.id||sourceRun.roleId!==sourceRequest.targetRoleId||!terminal.has(sourceRun.status))return null;
+      const result=get('roomMessages',`result-${sourceRun.id}`);
+      return result?.runId===sourceRun.id&&result.sender==='agent'&&result.roleId===sourceRun.roleId?result:null;
     }
     return record.requestId?null:get('roomMessages',record.sourceMessageId);
   }

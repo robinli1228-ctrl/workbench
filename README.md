@@ -10,7 +10,7 @@ A self-hosted project group chat for the AI coding CLIs and subscriptions you al
 
 ## What the current version provides
 
-- **Role-based collaboration.** Direct user assignments, supervisor coordination and role-to-role consultation through one `wb` entry. Keep role responsibilities separate from optional execution prompts; discover team, history, reports and user-confirmation tools on demand.
+- **Role-based collaboration.** Direct user assignments, supervisor coordination and role-to-role consultation through one `wb` entry. Keep role responsibilities separate from optional execution prompts; discover team, history, reports and user-confirmation tools on demand. Result-driven continuations quote the public feedback that woke the role, while retaining the original user-task source; legacy quote corrections are read-only.
 - **External conversation queues.** Opt-in V3 sessions collect outside busy CLIs and deliver merged batches only at a verified input boundary. Original requests, waits and late replies stay linked; necessary resumption does not consume a new propagation charge. Explicit `wb note` / `wb chat post` publishes discussion output, while native streams and final answers remain in execution details.
 - **Isolated admission failures.** Invalid code-input batches are rejected before calls are queued. Legacy unstarted requests retain a visible not-executed result instead of crashing Home or retrying forever; directory-sync receipts remain separate from fixed-version code delivery.
 - **Independent review.** Workbench history, derived inputs and managed document reads remain isolated until explicit release. This is not an OS sandbox and cannot erase previously seen native context.
