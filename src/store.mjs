@@ -246,16 +246,14 @@ export class Store {
     return this.put('projects', { id, name: name.trim(), root, description, repoUrl: repository?.url || '', repository, createdAt: now() });
   }
   /** Project metadata never changes any node's Git remote or account credentials. */
-  updateProject(id, { name, description = '', repoUrl = '', collaborationWaitReleaseMinutes }) {
+  // collaborationWaitReleaseMinutes from older clients is ignored: waits no longer hold the queue back.
+  updateProject(id, { name, description = '', repoUrl = '' }) {
     assertProjectReady(this,id);
     const p = this.get('projects', id); if (!p) throw new Error(tr('store.projectNotFound'));
     if (typeof name !== 'string' || !name.trim()) throw new Error(tr('store.projectNameRequired2'));
     if (typeof description !== 'string' || description.length > 12000) throw new Error(tr('store.descriptionMustBeAtMost'));
-    // Omitted keeps the saved value; older clients that do not send it cannot reset it.
-    if (collaborationWaitReleaseMinutes!==undefined && !(Number.isSafeInteger(collaborationWaitReleaseMinutes)&&collaborationWaitReleaseMinutes>=5&&collaborationWaitReleaseMinutes<=1440)) throw new Error(tr('collabWait.invalidMinutes'));
     const repository = giteeRepository(repoUrl);
-    return this.put('projects', { ...p, name: name.trim(), description, repoUrl: repository?.url || '', repository,
-      ...(collaborationWaitReleaseMinutes!==undefined?{collaborationWaitReleaseMinutes}:{}) });
+    return this.put('projects', { ...p, name: name.trim(), description, repoUrl: repository?.url || '', repository });
   }
   deleteProject(id) {
     return this.transaction(() => {

@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v196-integration';
+const CACHE = 'agent-workbench-static-v197-queue-waits';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',

@@ -48,7 +48,7 @@ test('a call that finished during an earlier review can still be waited for and 
   assert.doesNotMatch(first.summary, /done .*B/);
 
   finish(e, b); // B finishes while the owner is still reviewing A
-  assert.deepEqual(dependencySnapshot(e.db, first.id).map(d => d.requestId), [b], 'the turn sees that B is back');
+  assert.deepEqual(dependencySnapshot(e.db, first.id), [], 'a settled call does not resurface by itself');
   const waiting = e.calls.wait(e.db.get('runs', 'r2'), 'now B', { requestIds: ['B'] });
   assert.equal(waiting.status, 'waiting_call', 'waiting for a call that already finished is accepted');
   e.db.put('runs', { ...e.db.get('runs', 'r2'), status: 'succeeded' });
@@ -58,4 +58,17 @@ test('a call that finished during an earlier review can still be waited for and 
   assert.doesNotMatch(second.summary, /done .*A/, 'A is not carried again');
   assert.throws(() => e.calls.wait(e.db.get('runs', 'r3'), 'again', { requestIds: [a] }), /requestIds/, 'a call already carried cannot be waited for again');
   assert.deepEqual(dependencySnapshot(e.db, second.id), [], 'nothing is left to report');
+});
+
+test('a default wait covers open calls only, so a result the owner skipped is not added silently', () => {
+  const e = env(), run = () => e.db.get('runs', 'r1');
+  const a = createAgentCalls(e, run(), { role: 'Builder', kind: 'direct', requestId: 'A', text: 'build A' }).requestId;
+  const b = createAgentCalls(e, run(), { role: 'Builder', kind: 'direct', requestId: 'B', text: 'build B' }).requestId;
+  e.calls.wait(run(), 'A first', { requestIds: [a] });
+  e.db.put('runs', { ...run(), status: 'succeeded' });
+  finish(e, b); finish(e, a);
+  const first = startContinuation(e, 'task:t1', 'r2');
+  const c = createAgentCalls(e, e.db.get('runs', 'r2'), { role: 'Builder', kind: 'direct', requestId: 'C', text: 'build C' }).requestId;
+  const waiting = e.calls.wait(e.db.get('runs', 'r2'), 'wait for what is open');
+  assert.deepEqual(waiting.waitRequestIds, [c], 'B finished earlier and is not swept into the default wait');
 });

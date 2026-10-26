@@ -1427,6 +1427,8 @@ body:has(#platform-prompts-dialog[open]) .settings-page { overflow: hidden; }
 .message-queue summary { cursor: pointer; color: var(--accent-dark); font-weight: 600; }
 .message-queue-list { max-height: min(180px, 25dvh); overflow-y: auto; }
 .message-queue-item { display: flex; gap: 8px; align-items: center; padding-top: 8px; }
+/* An open wait holds a slot but is not a message: lighter, no actions. */
+.message-queue-item.is-wait strong { font-weight: 500; color: var(--text-muted, #7a8599); }
 .message-queue-info { flex: 1; min-width: 0; display: grid; gap: 3px; }
 .message-queue-info strong, .message-queue-info span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .message-queue-info span { color: var(--muted); }
@@ -2706,8 +2708,6 @@ body .project-sidebar .sidebar-heading .new-conversation-button { flex: none; }
 .is-live-card div.chat-live-reply { cursor: default; }
 
 /* Buttons: icon-only for utility actions, text-only for commits; a row never mixes them, and buttons keep clear of the text beside them. */
-.message-queue-item .message-queue-first.is-active { color: var(--accent); background: var(--accent-tint); }
-.message-queue-item .message-queue-first.is-active:disabled { opacity: 1; }
 .message-queue-item .message-queue-steer.is-active { color: var(--accent); background: var(--accent-tint); opacity: 1; }
 .message-queue-item .message-queue-steer.is-error { color: var(--danger, #b42318); opacity: 1; }
 .message-queue-spinner { animation: role-refresh-spin 1.2s linear infinite; }
