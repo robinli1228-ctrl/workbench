@@ -261,3 +261,5 @@ MIT。见 [LICENSE](LICENSE)。
 `wb task list`、`show T3`、`create '<JSON>'` 和 `update T3 '<JSON>'` 管理仅存于 Home 的当前群聊任务列表。创建需要稳定的 `requestId`，更新需要当前 `revision`。这些记录不会自动派活或打断正在执行的角色。字段限制和计划结构见 `wb help`。
 
 `wb call --task T3` 将显式派单关联到任务。普通派单保留负责人；`--kind transfer` 在同一事务中将负责人改为接收方，并设为 `in_progress`。负责人必须先在本轮用 `wb task update` 整段重写说明。关联派单及其续接收到当前任务说明和计划；若说明在该角色上次收到后改变，下一轮会标注。任务列表页面卡片已包含；按任务状态判断的心跳在后续步骤实现。
+
+审核交付支持仓库子集：`wb deliver 编号 auto 说明 --review --repo KEY`（可重复 `--repo`）。未指定仓库的审核 SHA 必须仅存在于一个本地仓库。普通交付仍须包含全部仓库。只发布、绑定并以 detached 审核工作树接收所选仓库；未选仓库的未提交修改不阻塞审核交付。交付卡片列出仓库 key 并标注部分交付。

@@ -69,7 +69,7 @@ export async function publishProjectDelivery(repositories, delivery) {
 
 /** Build a pinned independent directory; review reception neither requires nor changes a clean baseline. */
 export async function receiveProjectDelivery(root, runId, repositories, delivery) {
-  if (!Array.isArray(delivery.items) || delivery.items.length !== repositories.length || new Set(delivery.items.map(r=>r.id)).size !== repositories.length) throw new Error(tr('projectDelivery.projectRepositorySetHasChanged'));
+  if (!Array.isArray(delivery.items) || !delivery.items.length || (delivery.purpose !== 'review' && delivery.items.length !== repositories.length) || new Set(delivery.items.map(r=>r.id)).size !== delivery.items.length) throw new Error(tr('projectDelivery.projectRepositorySetHasChanged'));
   if (!/^[a-f0-9-]{36}$/.test(runId) || !/^refs\/heads\/agent-delivery\/[a-f0-9]{32}$/.test(delivery.ref)) throw new Error(tr('projectDelivery.invalidDeliveryParameters'));
   const parent = join(root,'.worktrees'); await mkdir(parent,{recursive:true});
   if (!within(await realpath(root),await realpath(parent))) throw new Error(tr('projectDelivery.deliveryDirectoryOutBounds'));
