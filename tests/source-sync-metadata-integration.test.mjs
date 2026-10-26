@@ -119,6 +119,12 @@ test('terminal metadata: Worker recovery wait keeps Home quota until resolved; r
   assert.ok((await stat(join(f.clients.a.blobRoot,'metadata',b.id))).isDirectory());
   assert.equal(f.db.get('sourceSyncBatches',b.id).metadataCleanedAt,undefined);
   db.put('sourceSyncJournals',{...db.get('sourceSyncJournals','uncertain'),status:'conflict'});
+  const {cleanupMetadataFiles}=await import('../src/source-sync-metadata-files.mjs'),{statMetadata}=await import('../src/source-sync-metadata.mjs');
+  const appliedOld=join(f.dir,'a','.xxxxx-applied.old'),appliedNew=join(f.dir,'a','.xxxxx-applied.new');
+  await writeFile(appliedOld,'applied old');await writeFile(appliedNew,'applied new');
+  db.put('sourceSyncJournals',{id:'applied',commandId:'applied-command',projectId:'p',batchId:b.id,detection:'metadata',status:'applied',backupPath:appliedOld,tempPath:appliedNew,before:statMetadata(await stat(appliedOld,{bigint:true})),temp:statMetadata(await stat(appliedNew,{bigint:true}))});
+  assert.equal((await cleanupMetadataFiles({id:'guard-test',projectId:'p',batchId:b.id,journalCommands:['interrupted','applied-command']},db,join(f.clients.a.blobRoot,'metadata',b.id))).status,'completed');
+  await assert.rejects(stat(appliedOld),{code:'ENOENT'});await assert.rejects(stat(appliedNew),{code:'ENOENT'});
   await retire(f);await assertRetired(f,b);
   assert.equal(await readFile(backupPath,'utf8'),'old');assert.equal(await readFile(tempPath,'utf8'),'new');
 });
