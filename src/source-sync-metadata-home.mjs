@@ -46,12 +46,12 @@ export class SourceSyncMetadata {
         const base=baselineMap.get(path);if(b.kind==='initialize'&&!base?.pending)continue;const decision=base?.pending?'baseline_required':decideMetadata(base?{a:base.endpoints[a],b:base.endpoints[bnode]}:null,{a:op.observed[a],b:op.observed[bnode]});
         if(decision==='baseline_required'&&b.kind!=='initialize'){pending.push({repositoryId,path,reason:'metadata_baseline_required'});this.db.put('sourceSyncMetadataBaselines',{...base,id:key(b,repositoryId,path),projectId:b.projectId,repositoryId,generation:b.generation,path,pending:true,revision:base?.revision||0,endpoints:op.observed});continue;}
         if(decision==='unchanged')continue;
-        if(decision==='absent'){this.baseline(b,op,op.observed);continue;}
+        if(decision==='absent'){this.baseline(b,op,op.observed);this.sync.audit.record(b,op,{status:'succeeded',phase:'verified',action:'confirm_equal',targetAfter:{exists:false}});continue;}
         op.decision=decision==='baseline_required'?(b.initialization.mode==='overwrite'?'initialize_overwrite':'compare'):decision;op.source=decision==='a'?a:decision==='b'?bnode:null;op.target=op.source===a?bnode:a;operations.push(op);
       }
     }
     const readBytes=operations.reduce((n,o)=>n+(o.source?o.observed[o.source].size||0:Object.values(o.observed).reduce((sum,m)=>sum+(m.size||0),0)),0);if(readBytes>SOURCE_SYNC_LIMITS.batchBytes){this.sync.blockPreparation(b,'batch_too_large');return;}
-    const next={...b,metadataOperations:operations,pendingMetadata:pending,conflictIds:[...conflictIds],status:'reading'};this.db.put('sourceSyncBatches',next);
+    const next={...b,metadataOperations:operations,pendingMetadata:pending,conflictIds:[...conflictIds],status:'reading'};this.db.put('sourceSyncBatches',next);this.sync.audit.observe(next);
     for(const binding of b.bindings){const paths=operations.filter(o=>o.repositoryId===binding.repositoryId&&(o.source?o.source===binding.nodeId:true)&&o.observed[binding.nodeId].exists).map(o=>({path:o.path,expected:o.observed[binding.nodeId],compare:!o.source}));if(paths.length)this.sync.command(b,binding,'read',{paths});}
     this.advance(next);
   }
@@ -60,7 +60,7 @@ export class SourceSyncMetadata {
     const captures=this.sync.captures(b,c.repositoryId),observed=Object.fromEntries(captures.map(x=>[x.nodeId,x.result.manifest.entries[c.path]||absent()]));
     if(captures.some(x=>x.result.manifest.excluded.some(e=>c.path===e.path||c.path.startsWith(e.path.replace(/\/$/,'')+'/')))){this.sync.blockPreparation(b,'source_scope_changed');return;}
     const op={repositoryId:c.repositoryId,path:c.path,observed,decision:'resolution'};
-    const next=this.db.put('sourceSyncBatches',{...b,status:'reading',metadataOperations:[op],pendingMetadata:[]});
+    const next=this.db.put('sourceSyncBatches',{...b,status:'reading',metadataOperations:[op],pendingMetadata:[]});this.sync.audit.observe(next);
     for(const binding of b.bindings)if(observed[binding.nodeId]?.exists)this.sync.command(b,binding,'read',{paths:[{path:c.path,expected:observed[binding.nodeId],compare:true}]});
     this.advance(next);
   }

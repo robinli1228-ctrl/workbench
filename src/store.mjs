@@ -50,6 +50,14 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_metadata_journal_batch ON records(json_extract(data,'$.batchId')) WHERE kind='sourceSyncJournals';
       CREATE INDEX IF NOT EXISTS records_metadata_worker_batch ON records(json_extract(data,'$.command.batchId')) WHERE kind='sourceSyncCommands';
       CREATE INDEX IF NOT EXISTS records_sync_journal_command ON records(json_extract(data,'$.commandId')) WHERE kind='sourceSyncJournals';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_expiry ON records(json_extract(data,'$.expiresAt'),id) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_project ON records(json_extract(data,'$.projectId'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_path ON records(json_extract(data,'$.projectId'),json_extract(data,'$.relativePath'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_source ON records(json_extract(data,'$.projectId'),json_extract(data,'$.sourceDevice'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_target ON records(json_extract(data,'$.projectId'),json_extract(data,'$.targetDevice'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_status ON records(json_extract(data,'$.projectId'),json_extract(data,'$.status'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_operation ON records(json_extract(data,'$.projectId'),json_extract(data,'$.operationId'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_metadata_init_project ON records(json_extract(data,'$.projectId'),json_extract(data,'$.createdAt') DESC,id DESC) WHERE kind='sourceSyncInitializations';
       CREATE INDEX IF NOT EXISTS records_metadata_init ON records(id) WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.status')='running';
       CREATE INDEX IF NOT EXISTS records_metadata_conflict_gc ON records(id) WHERE kind='sourceSyncConflicts' AND json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status')='resolved' AND json_extract(data,'$.copiesReleasedAt') IS NULL;
       CREATE INDEX IF NOT EXISTS records_metadata_scope ON records(json_extract(data,'$.projectId'),json_extract(data,'$.repositoryId'),json_extract(data,'$.generation'),json_extract(data,'$.path')) WHERE kind='sourceSyncMetadataBaselines';

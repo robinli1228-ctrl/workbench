@@ -1,5 +1,6 @@
-const CACHE = 'agent-workbench-static-v190-metadata-baseline-s2';
+const CACHE = 'agent-workbench-static-v190-metadata-audit-s3';
 const STATIC = [
+  '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
   '/group-conversations.js',
