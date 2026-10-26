@@ -1815,6 +1815,8 @@ You personally do only the simplest things: answer a question directly, check on
   'executionWorkspace.inputVersionMismatch': 'Repository {key} does not match the required input version: expected {expected}, actual {actual}. The retained directory and history were preserved; deliver the required version into an appropriate execution workspace.',
   'minimal.workerProtocolMismatch': 'This queued turn uses the newer instruction contract. Upgrade the Worker before resuming; its saved input has not been downgraded.',
   'minimal.toolEntry': 'Current-turn WB tool entry: {wbCommand}. Discover available operations with its help command as needed.',
+  'agentCalls.taskHint': 'This work has no task yet: create one with wb task create, stating the goal and steps, and link later calls to it with --task.',
+  'agentCalls.transferHint': 'You still own this task. This direct call has already been sent; do not dispatch it again. For a future whole-task handover, update the handover description first, then use --kind transfer so the recipient replies to the user without another summary from you. Keep direct when you need the result back to combine.',
   'turnInput.fromUser': '[User message]',
   'turnInput.fromRole': '[Message from collaborating role: {name}]',
   'turnInput.fromRoleUnknown': '[Message from a collaborating role]',

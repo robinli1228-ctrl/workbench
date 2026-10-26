@@ -1815,6 +1815,8 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'executionWorkspace.inputVersionMismatch': '仓库 {key} 与要求的输入版本不一致：要求 {expected}，实际 {actual}。旧目录与历史已保留，请将指定版本交付到合适的执行目录。',
   'minimal.workerProtocolMismatch': '该排队回合使用新版指令契约，请升级 Worker 后续接；已保存的输入没有被降级或重写。',
   'minimal.toolEntry': '本轮 WB 工具入口：{wbCommand}。按需使用其 help 命令查询可用操作。',
+  'agentCalls.taskHint': '这件事还没有任务：建议用 wb task create 建一个，写清目标和步骤，之后派活用 --task 关联它。',
+  'agentCalls.transferHint': '这个任务仍由你负责。本次 direct 已发送，不要重复派发；以后如需整件交给对方，先更新交接说明，再用 --kind transfer，它完成后会直接回复用户，你无需再次汇总；需要结果回到你这里汇总时继续用 direct。',
   'turnInput.fromUser': '【用户消息】',
   'turnInput.fromRole': '【协同角色消息：{name}】',
   'turnInput.fromRoleUnknown': '【协同角色消息】',
