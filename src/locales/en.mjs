@@ -1829,7 +1829,7 @@ You personally do only the simplest things: answer a question directly, check on
   'turnInput.envMissing': 'Repositories missing on this device: {keys}',
   'turnInput.envSharedDocs': 'Shared report directory: {path} (only reports that may be published; keep unpublished review material out of it)',
   'turnInput.reviewStage': 'This stage is an independent review: read-only, check the assigned version.',
-  'turnInput.wb': 'Invoke as: {wbCommand}. Run wb help for usage.',
+  'turnInput.wb': 'Invoke as: {wbCommand}',
   'resultReceipts.outcomeWake': 'The request {requestId} you {action} to {role} {outcome}: {reason}. Decide whether to reassign it, add information, or tell the user; read the details with wb history read {requestId}.',
   'resultReceipts.wakeTransfer': 'transferred',
   'resultReceipts.wakeCall': 'sent',

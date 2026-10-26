@@ -1829,7 +1829,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'turnInput.envMissing': '本机缺少仓库：{keys}',
   'turnInput.envSharedDocs': '共享报告目录：{path}（只放可以公开的报告；未公开的审核材料不要放这里）',
   'turnInput.reviewStage': '本阶段是独立审核：只读，核对指定版本。',
-  'turnInput.wb': '调用方式：{wbCommand}。具体用法运行 wb help。',
+  'turnInput.wb': '调用方式：{wbCommand}',
   'resultReceipts.outcomeWake': '你{action}给 {role} 的请求 {requestId} {outcome}：{reason}。请决定重新派人、补充信息，或告诉用户；详情用 wb history read {requestId} 查看。',
   'resultReceipts.wakeTransfer': '转交',
   'resultReceipts.wakeCall': '派',
