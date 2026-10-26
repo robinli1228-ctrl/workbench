@@ -1610,6 +1610,7 @@ function renderTaskDetail() {
   const oldFilesOpen = dom.taskDetail.querySelector('.run-workspace-files')?.open;
   const openTools = new Map([...dom.taskDetail.querySelectorAll('.nt-activity[open]')].map(card => [card.dataset.toolId,[...card.querySelectorAll('.nt-step')].flatMap((row,i)=>row.classList.contains('is-open')?[i]:[])]));
   const inputRulesOpen=dom.taskDetail.querySelector('.run-input-rules')?.open;
+  const inputGroupsOpen=[...dom.taskDetail.querySelectorAll('.run-input-group[open]')].map(box=>box.dataset.group);
   const oldScroll = dom.taskDetail.scrollTop;
   const followTail = oldPanel && dom.taskDetail.scrollHeight - oldScroll - dom.taskDetail.clientHeight < 72;
   const oldRunId = app.detailRunId;
@@ -1646,6 +1647,7 @@ function renderTaskDetail() {
   if (oldFilesOpen && oldRunId === app.detailRunId && oldTab === 'run-tab-artifacts') panel?.querySelector('.run-workspace-files')?.setAttribute('open', '');
   if(oldRunId===app.detailRunId&&oldTab===`run-tab-${app.detailTab}`){
     if(inputRulesOpen)panel?.querySelector('.run-input-rules')?.setAttribute('open','');
+    for(const key of inputGroupsOpen)panel?.querySelector(`.run-input-group[data-group="${key}"]`)?.setAttribute('open','');
     for(const card of panel?.querySelectorAll('.nt-activity')||[]){const steps=openTools.get(card.dataset.toolId);if(!steps)continue;card.open=true;card.dispatchEvent(new Event('toggle'));for(const i of steps)card.querySelectorAll('.nt-step-head')[i]?.click();}
   }
   if(oldRunId!==app.detailRunId)runPreview.close();
@@ -1786,19 +1788,68 @@ function renderRunTabs(task, run) {
   return wrapper;
 }
 
+const RUN_INPUT_LABELS={steering:'Direction change',task:'Current task',followup:'Reminder facts',discussion:'Discussion conclusion',roster:'Roles that must take part',
+  references:'Related messages',deliveries:'Related deliveries',completion:'Completion requirement',dependencies:'Dependency status',sourceWorkspace:'Referenced execution directory',
+  sourceInputs:'Cross-device synced input',environment:'Environment',stage:'Stage boundary',wb:'wb command'};
+const RUN_INPUT_FIXED=[['identity','Identity'],['platform','Platform prompt'],['role','Role instructions'],['supervisor','Supervisor prompt']];
+const RUN_INPUT_METHOD={claude:'Claude system prompt (--append-system-prompt)',codex:'Codex developer instructions',grok:'Grok rules (--rules)',agy:'Agy: first message of the session'};
+
 function renderRunInput(task, snapshot,run) {
   const section = create('section', 'run-log-content');
   const input = displayRunInput(task, snapshot);
-  const contextNote=contextUsageLabel(run?.contextPacket?.context);
+  if(input.groups)return renderGroupedRunInput(section,input);
+  // Minimal turns do not send the conversation context, so the dispatch-time context line would describe input that was never sent.
+  const contextNote=run?.minimalInstructions===1?'':contextUsageLabel(run?.contextPacket?.context);
   if(contextNote)section.append(create('p','run-log-note',contextNote));
   if (!input.complete) section.append(create('p', 'run-log-note', 'The full CLI input was not saved for this past run; below is only the recorded task request.'));
-  else section.append(create('p', 'run-log-note', 'This is the input the platform sent to the CLI this round; it excludes history kept by the CLI itself and vendor built-in prompts.'));
+  // Only a regular minimal turn recorded before sections existed is "older"; maintenance turns and turns without a context packet never have them.
+  else section.append(create('p', 'run-log-note', run?.minimalInstructions===1&&run.contextPacket&&!run.switchOperationId?'Older record without sections; shown as one block.':'This is the input the platform sent to the CLI this round; it excludes history kept by the CLI itself and vendor built-in prompts.'));
   if(input.instructionsInheritedFrom)section.append(create('p','run-log-note',t('Fixed rules are inherited from the original session run {instructionsInheritedFrom} and are not appended again this round; execution boundaries and tool entries are still shown in full below.', { instructionsInheritedFrom: input.instructionsInheritedFrom })));
   const card=create('div','run-input-card'),head=create('div','run-input-head');
   head.append(create('h3','',input.complete?'Actual input this round':'Task request'),runCopyButton(input.prompt||''));
   card.append(head,create('pre','run-log-pre',input.prompt||'No execution request provided'));section.append(card);
   if(input.instructions){const rules=create('details','run-input-rules'),heading=create('summary','','Platform and Role Work Instructions');rules.append(heading,create('pre','run-log-pre',input.instructions),runCopyButton(input.instructions));section.append(rules);}
   if(input.configurationUpdate)section.append(create('h3','','Native configuration update event'),create('pre','run-log-pre',input.configurationUpdate));
+  return section;
+}
+
+/** Message first and open; then Home's and the Worker's additions and the platform prompts, each collapsed and named. */
+function renderGroupedRunInput(section,input) {
+  const head=create('div','run-input-head');
+  // Copy what the CLI actually received: Agy gets the instruction message in front, Claude and Grok a configuration update.
+  const runtime=input.fixed?.runtime,sent=[runtime==='agy'?input.instructions:['claude','grok'].includes(runtime)?input.configurationUpdate:'',input.prompt].filter(Boolean).join('\n\n');
+  head.append(create('p','run-log-note','This is the input the platform sent to the CLI this round; it excludes history kept by the CLI itself and vendor built-in prompts.'),runCopyButton(sent));
+  section.append(head);
+  const message=create('div','run-input-card');
+  message.append(create('h3','','This round\'s message'),create('pre','run-log-pre',input.groups.message.map(part=>part.text).join('\n\n')||t('No execution request provided')));
+  section.append(message);
+  const group=(key,title,parts)=>{
+    if(!parts.length)return;
+    const box=create('details','run-input-group');box.dataset.group=key;
+    box.append(create('summary','',t(title,{names:parts.map(part=>t(RUN_INPUT_LABELS[part.key]||part.key)).join(t(', '))})));
+    for(const part of parts)box.append(create('pre','run-log-pre',part.text));
+    section.append(box);
+  };
+  group('home','Home additions: {names}',input.groups.home);
+  group('worker','Worker additions: {names}',input.groups.worker);
+  const components=input.fixed?.components||null;
+  const present=components?RUN_INPUT_FIXED.filter(([name])=>components[name]?.text):[];
+  if(present.length||input.instructions||input.configurationUpdate) {
+    const box=create('details','run-input-group');box.dataset.group='fixed';
+    const names=present.length?present.map(([,label])=>t(label)):[t('Platform and Role Work Instructions')];
+    if(input.configurationUpdate)names.push(t('Configuration update'));
+    box.append(create('summary','',t('Platform prompts: {names}',{names:names.join(t(', '))})));
+    if(present.length) {
+      const method=RUN_INPUT_METHOD[input.fixed.runtime];
+      box.append(create('p','run-log-note',[input.fixed.sent?t('Sent this round.'):t('Kept from the session; not re-sent this round.'),method?t('Delivered as: {method}',{method:t(method)}):''].filter(Boolean).join(' ')));
+      for(const [name,label] of present){
+        const version=components[name].version;
+        box.append(create('h4','',version?t('{label} · version {version}',{label:t(label),version:version.slice(0,8)}):t(label)),create('pre','run-log-pre',components[name].text));
+      }
+    }else if(input.instructions)box.append(create('pre','run-log-pre',input.instructions));
+    if(input.configurationUpdate)box.append(create('h4','',t('Configuration update sent this round')),create('pre','run-log-pre',input.configurationUpdate));
+    section.append(box);
+  }
   return section;
 }
 

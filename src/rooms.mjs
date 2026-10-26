@@ -98,7 +98,7 @@ export class Rooms {
     return this.db.transaction(()=>{
       const role=this.db.get('roles',roleId);
       if(role?.projectId!==projectId||role.archivedAt||!role.enabled||!isRoleConfigured(role))throw new Error(tr('rooms.roleDisabled2'));
-      if(!['repair','peer','assignment','proactive_followup'].includes(source?.kind))throw new Error(tr('rooms.projectNotFound'));
+      if(!['repair','peer','assignment','proactive_followup','call_outcome'].includes(source?.kind))throw new Error(tr('rooms.projectNotFound'));
       const fingerprint=JSON.stringify({projectId,roleId,text,source,sourceInputs,execution,...(conversationId!==projectId?{conversationId}:{})}),prior=this.db.get('roomMessages',id);
       if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('rooms.projectNotFound'));return prior;}
       const task=this.db.createTask({projectId,title:text.slice(0,80),prompt:text,model:role.model,mode:role.mode});
@@ -107,8 +107,9 @@ export class Rooms {
         ...(source.kind==='repair'?{sourceConflictId:source.conflictId,sourceConflictGeneration:source.generation,sourceConflictAssignmentId:source.assignmentId}:{}),
         ...(source.kind==='peer'?{sourceConflictPeerId:source.conflictId}:{}),
         ...(source.kind==='assignment'?{sourceConflictAssignmentRequestId:source.conflictId}:{})});
-      const message=this.db.put('roomMessages',{id,projectId,conversationId,sender:'system',senderName:source.kind==='proactive_followup'?'Workbench':tr('sourceSync.systemName'),kind:source.kind==='proactive_followup'?'proactive_followup':'source_conflict',text,taskIds:[task.id],source,fingerprint,createdAt:now(),
-        ...(source.kind==='proactive_followup'?{visibility:'internal',proactiveFollowup:source.context}:{} )});
+      const platform=['proactive_followup','call_outcome'].includes(source.kind);
+      const message=this.db.put('roomMessages',{id,projectId,conversationId,sender:'system',senderName:platform?'Workbench':tr('sourceSync.systemName'),kind:platform?source.kind:'source_conflict',text,taskIds:[task.id],source,fingerprint,createdAt:now(),
+        ...(source.kind==='proactive_followup'?{visibility:'internal',proactiveFollowup:source.context}:source.kind==='call_outcome'?{visibility:'internal'}:{} )});
       this.touch(projectId,conversationId);return message;
     });
   }

@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {conversationIdOf} from './group-conversations.mjs';
-import {collaborationRoot} from './coordination-wait.mjs';
+import {collaborationRoot,currentContinuation,waitDependencies} from './coordination-wait.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {tr} from './i18n.mjs';
 
@@ -14,6 +14,7 @@ export const RECEIPT_STAGES=['implemented','reviewed','tested','merged','deploye
 export const BLOCKED_NOTICE_MS=10*60000;
 const KIND='resultReceipts',OUTCOMES=new Set(['not_executed','cancelled','blocked','resume_failed']),DECISIONS=new Set(['accepted','rejected','acknowledged']);
 const runEnded=new Set(['succeeded','failed','interrupted']);
+const WAKE_KIND='outcomeWakes',WAKE_ATTEMPTS=5,WAKE_OUTCOMES=new Set(['not_executed','blocked','resume_failed']),ACTIVE_REQUEST=new Set(['queued','waiting_delivery','running','waiting_call']);
 const now=()=>new Date().toISOString();
 const short=(text,limit)=>{const value=String(text||'').replace(/\s+/g,' ').trim();return value.length>limit?`${value.slice(0,limit-1)}…`:value;};
 const receiptId=(requestId,runId,revision)=>`rr:${createHash('sha256').update(JSON.stringify([requestId,runId||null,revision||0])).digest('hex').slice(0,32)}`;
@@ -70,6 +71,9 @@ export function registerCallOutcome(db,request,{outcome,reason='',episode=''}) {
     const id=receiptId(request.id,null,`${outcome}:${episode}`),previous=db.get(KIND,id);
     if(previous)return previous;
     const time=now();
+    // Every outcome except a cancellation wakes the role that sent the work (see wakeCallOutcomes); a small queue, so the
+    // scheduler never scans receipts and history is not backfilled.
+    if(WAKE_OUTCOMES.has(outcome))db.put(WAKE_KIND,{id,projectId:request.projectId,receiptId:id,createdAt:time});
     return db.put(KIND,{id,projectId:request.projectId,conversationId:conversationIdOf(request),ownerRoleId,requestId:request.id,
       rootRequestId:request.rootRequestId||request.id,item:collaborationRoot(db,request)?.id||request.id,taskId:request.taskId||null,runId:null,
       sourceRoleId:request.targetRoleId,sourceRoleName:request.targetSnapshot?.name||db.get('roles',request.targetRoleId)?.name||null,
@@ -220,4 +224,37 @@ export function receiptFindings(db,projectId) {
     findings.push({key:`receipts:${roleId}:${conversationId}:${receipts.at(-1).id}`,text:tr('timerMonitor.resultReceipts',{role:name,count:receipts.length})});
   }
   return findings;
+}
+
+/**
+ * A call that could not run tells the role that sent it at once, as a platform reminder, instead of waiting for that
+ * role's next turn. The caller's chain is followed to its latest turn: a wait there that still lists the request wakes
+ * it with the outcome, and any other active turn may yet wait, so it is checked again later. A failed post is retried a
+ * few times; a disabled or archived caller, or a request hidden from it by review isolation, gets no reminder.
+ * post(receipt,text) creates the reminder and returns its message.
+ */
+export function wakeCallOutcomes(db,post) {
+  let changed=false;
+  for(const pending of db.list(WAKE_KIND)) {
+    const receipt=db.get(KIND,pending.receiptId),request=receipt&&db.get('coordinationRequests',receipt.requestId);
+    const settle=(fields={})=>{db.transaction(()=>{if(receipt)db.put(KIND,{...db.get(KIND,receipt.id),...fields,updatedAt:now()});db.remove(WAKE_KIND,pending.id);});changed=true;};
+    if(!receipt||!request||!visibleTo(db,receipt,receipt.ownerRoleId)){settle();continue;}
+    let current=null;
+    if(request.parentRequestId)try{current=currentContinuation(db,request.parentRequestId);}catch{current=db.get('coordinationRequests',request.parentRequestId);}
+    let awaited=false;
+    if(current?.status==='waiting_call')try{awaited=waitDependencies(db,current).some(r=>r.id===request.id);}catch{awaited=false;}
+    if(awaited){settle({wake:'wait'});continue;}
+    if(current&&ACTIVE_REQUEST.has(current.status))continue;
+    const owner=db.get('roles',receipt.ownerRoleId);
+    if(!owner?.enabled||owner.archivedAt){settle({wakeError:'owner_unavailable'});continue;}
+    const text=tr('resultReceipts.outcomeWake',{action:tr(request.transferredFrom?'resultReceipts.wakeTransfer':'resultReceipts.wakeCall'),
+      role:receipt.sourceRoleName||receipt.sourceRoleId||'',requestId:receipt.requestId,outcome:tr(`resultReceipts.wake.${receipt.outcome}`),reason:receipt.summary||''});
+    try{const message=post(receipt,text);settle({wakeMessageId:message?.id||null});}
+    catch(error){
+      const attempts=(pending.attempts||0)+1,reason=String(error?.message||error).slice(0,300);
+      if(attempts>=WAKE_ATTEMPTS)settle({wakeError:reason});
+      else{db.put(WAKE_KIND,{...pending,attempts,lastError:reason});changed=true;}
+    }
+  }
+  return changed;
 }
