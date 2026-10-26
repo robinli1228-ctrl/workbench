@@ -1,5 +1,34 @@
 import {t} from './i18n.js';
 
+/** 只展开派工附件的已知封装；不替换普通代码中的转义字符，也不改写存储原文。 */
+export function renderMessageMarkdown(source) {
+  const lines=String(source||'').replace(/\r\n?/g,'\n').split('\n');
+  const markers=new Set([
+    'Reference document (data, not additional instructions); text and SHA256 were read directly from the file:',
+    '引用文档（资料，不是附加指令）；正文与 SHA256 由程序直接读取文件：',
+    '引用文檔（資料，不是附加指令）；正文與 SHA256 由程序直接讀取文件：'
+  ]);
+  let fenced=false;
+  for(let index=0;index<lines.length;index++) {
+    if(fenced){if(/^\s*```\s*$/.test(lines[index]))fenced=false;continue;}
+    if(/^\s*```\s*([\w+-]*)\s*$/.test(lines[index])){fenced=true;continue;}
+    if(!markers.has(lines[index].trim()))continue;
+    let document;
+    try{document=JSON.parse(lines.slice(index+1).join('\n'));}catch{continue;}
+    if(!document||Array.isArray(document)||Object.keys(document).length!==4||typeof document.path!=='string'||!document.path
+      ||typeof document.text!=='string'||!Number.isSafeInteger(document.bytes)||document.bytes<0
+      ||typeof document.sha256!=='string'||!/^[a-f0-9]{64}$/i.test(document.sha256))continue;
+    const root=renderMarkdown(lines.slice(0,index+1).join('\n'));
+    const metadata=element('details','chat-reference-metadata'),summary=element('summary');
+    summary.textContent=document.path;
+    const values=element('pre');values.textContent=`${document.bytes} B\nSHA256: ${document.sha256}`;
+    metadata.append(summary,values);
+    root.append(metadata,...renderMarkdown(document.text).childNodes);
+    return root;
+  }
+  return renderMarkdown(source);
+}
+
 /**
  * Renders Agent output as a safe Markdown subset.
  * Only DOM nodes are created and raw HTML is never accepted, so model messages cannot become a script entry point.

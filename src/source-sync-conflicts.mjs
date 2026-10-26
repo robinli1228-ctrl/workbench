@@ -25,7 +25,7 @@ export class SourceSyncConflicts {
   open(input){const old=this.db.get('sourceSyncConflicts',input.id);return old||this.db.put('sourceSyncConflicts',input);}
   tick(){
     if(this.db.get('settings','main')?.paused)return;
-    for(const conflict of this.db.list('sourceSyncConflicts').filter(c=>c.status==='open')){
+    for(const conflict of this.db.list('sourceSyncConflicts').filter(c=>c.status==='open'&&c.detection!=='metadata')){
       const config=this.db.get('sourceSyncConfigs',conflict.projectId);if(!config?.enabled||config.generation!==conflict.syncGeneration)continue;
       if(this.db.activeRuns().some(r=>r.sourceConflictId===conflict.id))continue;
       if((conflict.staleCount||0)>=2){this.escalate(conflict,'repeated_stale_proposal');continue;}
@@ -44,7 +44,7 @@ export class SourceSyncConflicts {
   escalate(c,reason){
     const supervisorId=this.db.get('projects',c.projectId)?.supervisorRoleId;
     const supervisor=supervisorId?this.db.get('roles',supervisorId):null;
-    if(reason!=='independent_review_required'&&supervisor?.enabled&&!supervisor.archivedAt&&isRoleConfigured(supervisor)&&this.db.get('workspaces',`${c.projectId}:${supervisor.nodeId}`)){
+    if(c.detection!=='metadata'&&reason!=='independent_review_required'&&supervisor?.enabled&&!supervisor.archivedAt&&isRoleConfigured(supervisor)&&this.db.get('workspaces',`${c.projectId}:${supervisor.nodeId}`)){
       const id=`sync-assignment-${c.id}-${c.generation}`,prior=this.db.get('roomMessages',id);
       if(!prior)this.rooms.postSystemTask(c.projectId,{id,roleId:supervisor.id,source:{kind:'assignment',conflictId:c.id,generation:c.generation},
         text:tr('sourceSync.assignmentTask',{id:c.id,path:c.path,reason})});

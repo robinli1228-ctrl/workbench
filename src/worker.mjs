@@ -42,7 +42,7 @@ import { normalizeRemoteDesktopUrl } from './remote-desktop.mjs';
 import { validateLaunch, afterProcessExit, recordDeliveryResult, recoverDeliveryCommands, continuationSource } from './worker-coordinator.mjs';
 import {CliSessionRecovery,driverIdentity} from './cli-session-recovery.mjs';
 import { publishDelivery, receiveDelivery } from './git-delivery.mjs';
-import { composeAgentInstructions, englishExecutionRules } from './platform-prompts.mjs';
+import { composeAgentInstructions, englishExecutionRules, executionRules } from './platform-prompts.mjs';
 import { runtimeGuidance } from './runtime-guidance.mjs';
 import { prepareSupervisorDirectory, setupRepository } from './setup-workspace.mjs';
 import { startAgentBridge, agentProcessEnv, canSendAgentOperation, agentOperationBlock } from './agent-bridge.mjs';
@@ -63,7 +63,7 @@ import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseli
 import { runOrganizer } from './conversation-organizer.mjs';
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
-import { executionText, traditionalInput } from './input-language.mjs';
+import { executionText, traditionalInput, sentText } from './input-language.mjs';
 import {SourceSyncClient} from './source-sync-transport.mjs';
 import {syncError} from './source-sync-manifest.mjs';
 import {SourceProvenanceTracker} from './source-sync-provenance.mjs';
@@ -538,9 +538,17 @@ async function command(m) {
       const attachmentHint = inputFiles.length ? executionText('worker.userAttachmentsForTurnUntrusted', { p1: inputFiles.map(a => JSON.stringify({name:a.name,path:a.path,mime:a.mime})).join('\n') }) : '';
       const toolGuide=executionConfiguration?executionText('minimal.toolEntry',{wbCommand}):[executionText('worker.wbCommandPrefixForTurn', { wbCommand }),(m.run.sourceSyncTracking||m.run.sourceConflictId||m.run.sourceConflictPeerId||m.run.sourceConflictAssignmentRequestId)?executionText('sourceSync.toolGuide'):''].filter(Boolean).join('\n\n');
       const taskPrompt=[m.task.prompt,executionConfiguration?.dependencyEvents?.length?executionText('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):''].filter(Boolean).join('\n\n');
-      const environmentHint=executionEnvironmentHint({cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
-      const input = createRunInput({ minimal:Boolean(executionConfiguration),environmentHint,configurationUpdate:instructions.configurationUpdate,taskPrompt, boundary, context, runtimeGuidance:toolGuide, setupHint, attachmentHint,
-        executionInstructions:m.run.switchOperationId?'Read-only CLI handoff maintenance. Return the requested final answer; do not execute business work or write handoff files.':englishExecutionRules(m.run,{minimal:Boolean(executionConfiguration)}),roleInstructions:instructions.instructions,sourceInputs:sourceInputReceipts });
+      const environmentHint=executionEnvironmentHint({cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,readOnly:m.task.mode==='read-only'||['audit','review'].includes(m.run.execution?.purpose),assigned:Boolean(m.run.deliveryId||source),sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
+      // A Home that sends named parts gets the ordered layout: message and attachments first, then each titled addition.
+      const parts=executionConfiguration&&m.task.inputParts?.message?m.task.inputParts:null;
+      const turn=parts?{message:parts.message,home:Array.isArray(parts.home)?parts.home:[],attachments:inputFiles.map(a=>({name:a.name,path:a.path})),
+        dependencies:executionConfiguration.dependencyEvents?.length?executionText('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):'',
+        wb:sentText('turnInput.wb',{wbCommand}),rulesKey:m.run.turnPurpose&&m.run.turnPurpose!=='task'?'protocol':'stage'}:null;
+      const input = createRunInput({ minimal:Boolean(executionConfiguration),turn,environmentHint,configurationUpdate:instructions.configurationUpdate,taskPrompt, boundary, context:context.trim(), runtimeGuidance:toolGuide, setupHint, attachmentHint,
+        executionInstructions:m.run.switchOperationId?'Read-only CLI handoff maintenance. Return the requested final answer; do not execute business work or write handoff files.':executionConfiguration?executionRules(m.run,{minimal:true}):englishExecutionRules(m.run,{minimal:false}),roleInstructions:instructions.instructions,sourceInputs:sourceInputReceipts });
+      // The page shows every fixed component, including those inherited from the session and not re-sent this turn.
+      if(components)input.fixed={runtime:runtimeType,sent:Boolean(instructions.instructions),inheritedFrom:instructions.inheritedFrom||null,
+        components:Object.fromEntries(Object.entries(components).map(([name,text])=>[name,{text,version:instructions.components?.[name]?.version||null}]))};
       if(instructions.inheritedFrom)input.instructionsInheritedFrom=instructions.inheritedFrom;
       await checkNativeDriver(m);
       if(db.get('runs',c.runId)?.stopRequested||session.stopping||paused||quitting||ws?.readyState!==1){session.shutdown();await afterProcessExit(session.proc,()=>{});await provenance?.finish();sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.interruptedByStopDisconnectBefore2')});return;}
@@ -655,6 +663,7 @@ async function query(m,emit=send) {
   const guarded=['source_inspect','source_read','read_query','project_file','file','document','artifact_source','collaboration_documents'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
+    if(m.action==='native_takeover_state'){reply(nativeTurns.refresh(m.path));return;}
     if(m.action.startsWith('native_agent_switch_')){send({type:'reply',id:m.id,result:await nativeAgentSwitches.handle(m.action,m.path)});return;}
     if(m.action==='folder_grant_prepare'){
       if(paused)throw Error('Remote execution is paused');
@@ -1207,7 +1216,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

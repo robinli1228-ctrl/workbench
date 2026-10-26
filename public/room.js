@@ -1,7 +1,8 @@
+import {renderRetiredCommandWarning} from './retired-commands.js';
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
-import { renderMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
+import { renderMarkdown, renderMessageMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
 import { linkMedia, openImageLightbox, markImageOpener, fileGlyph } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
@@ -10,7 +11,7 @@ import { createHistoryViewer } from './history-view.js';
 import {createRoleSwitchUI} from './role-switch.js';
 import {createRoleHistoryTabs} from './role-history.js';
 import {createCliRecoveryUI} from './cli-recovery.js';
-import {createListOrder} from './list-order.js';
+import {createListOrder,orderedItems,readListOrder} from './list-order.js';
 import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
 import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
@@ -302,7 +303,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
 }
 
 /** The chat only handles display and user actions; role selection, idempotency and scheduling are validated by Home. */
-export function createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice }) {
+export function createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice, openSideAsk }) {
   const historyViewer=createHistoryViewer({api});
   const cliRecoveryUI=createCliRecoveryUI({api,refreshState,getData:()=>data,create});
   const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued});
@@ -317,6 +318,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   const quoteBar = document.querySelector('#chat-quote');
   const roleDialog = document.querySelector('#role-dialog');
   const roleForm = document.querySelector('#role-form');
+  const roleCommandWarnings={};
+  for(const key of ['responsibility','instructions']) {
+    const warning=create('p','workspace-note full-width');warning.dataset.retiredWarning=key;
+    roleForm.elements[key].after(warning);roleCommandWarnings[key]=warning;
+    roleForm.elements[key].addEventListener('input',()=>renderRetiredCommandWarning(warning,roleForm.elements[key].value,t));
+  }
   roleForm.prepend(create('p','workspace-note full-width','Role and project settings apply to every chat in this project.'));
   const roleHistory=createRoleHistoryTabs({getConversationId:()=>conversationId,host:roleDialog,settings:roleForm,getData:()=>data,getRole:()=>editingRoleSnapshot,api,refreshState,create,formatTime,openTask});
   const cliSwitch=createRoleSwitchUI({api,refreshState});
@@ -847,7 +854,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   /** Chat prose is simplified for display only; copying and the Original view retain the complete stored text. */
   /** Media files named in a reply open in the shared viewer; bytes stay on the device that ran the turn until requested. */
   const mediaContext=runId=>runId?{key:`run:${runId}`,describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`)}:null;
-  const renderLinkedMarkdown=(text,runId)=>previewDocumentLinks(localizeDocumentLinks(linkMedia(linkRunDocuments(renderMarkdown(simplifiedCliOutput(text)),runId),mediaContext(runId)),runId,api));
+  const renderLinkedMarkdown=(text,runId)=>previewDocumentLinks(localizeDocumentLinks(linkMedia(linkRunDocuments(renderMessageMarkdown(simplifiedCliOutput(text)),runId),mediaContext(runId)),runId,api));
   function replyPreview(text, markdown = true, runId = null, key = '') {
     const preview = create('div', 'chat-reply-preview');
     preview.dataset.previewKey = `${projectId}:${key}`;
@@ -1115,8 +1122,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
       try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);b.disabled=false;}
     }));
     actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text));
-    // Execution originals live in the Run details; ordinary messages still resolve to their own stored text.
-    if(!m.runId||discussion||handoff)actions.push(iconAction('original','Original',()=>void historyViewer.open(m.projectId,'message',m.id,m.conversationId||m.projectId).catch(e=>setError(e.message))));
+    if(agent&&m.runId&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk(m)));
     if (m.runId) {
       const run = data.runs?.find(r => r.id === m.runId);
       if (run) actions.push(iconAction('live', 'Log', () => openTask(run.taskId,run.id)));
@@ -1173,7 +1179,11 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     // One timeline, one key: trigger time. Messages carry the server's order; a running role's card sits where its run was
     // triggered (the same place its reply will take), so nothing moves once placed. Queued work is not in the timeline.
     const entries=[],orderOf=m=>String(m.orderAt||m.createdAt||'');
-    messages.forEach((m,i)=>entries.push({at:orderOf(m),rank:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)}));
+    messages.forEach((m,i)=>{
+      // Hide only wholly queued user inputs; keep the original record available for quotes and multi-role replies.
+      if(m.sender==='human'&&m.taskIds?.length&&m.taskIds.every(id=>messageQueue.hasTask(id)))return;
+      entries.push({at:orderOf(m),rank:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)});
+    });
     for(const item of notices)entries.push({at:String(item.request.createdAt||item.at||''),rank:1,seq:0,node:()=>renderResumeNotice(item.request,item.at)});
     const liveTasks=new Map();
     for(const m of messages)for(const id of m.taskIds||[]){const task=data.tasks?.find(t=>t.id===id);if(task)liveTasks.set(task.id,task);}
@@ -1288,10 +1298,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const supervisorRole = project?.supervisorRoleId ? (data.supervisorRoles || []).find(r => r.id === project.supervisorRoleId) : null;
     const supervisor = supervisorRole ? { ...supervisorRole, name: t('Supervisor@@roleCard') } : null;
     const supervisorMatches = supervisor && (!q || supervisor.name.toLowerCase().includes(q) || 'supervisor'.startsWith(q) || '\u603b\u7ba1'.includes(q));
-    const roles = projectRoles().filter(r => !q || r.name.toLowerCase().includes(q));
+    const roles = orderedItems(projectRoles(),readListOrder(`roles:${projectId}`)).filter(r => !q || r.name.toLowerCase().includes(q));
     const everyone = !q || 'everyone'.includes(q) || 'all'.startsWith(q);
-    // The supervisor comes first, then @everyone, then the other roles.
-    mentionChoices = [...(supervisorMatches ? [supervisor] : []), ...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...roles];
+    // Keep @everyone above the roles; role candidates follow the sidebar's pinned supervisor and saved card order.
+    mentionChoices = [...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...(supervisorMatches ? [supervisor] : []), ...roles];
     if (!mentionChoices.length) { hideMentionMenu(); return; }
     mentionIndex = Math.min(mentionIndex, mentionChoices.length - 1);
     mentionMenu.replaceChildren();
@@ -1431,6 +1441,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     presets.disabled = Boolean(role);
     document.querySelector('#role-archive').hidden = !role;
     for (const key of ['name', 'mode', 'responsibility', 'instructions']) roleForm.elements[key].value = value[key] ?? (key === 'mode' ? 'workspace-write' : '');
+    for(const key of ['responsibility','instructions'])renderRetiredCommandWarning(roleCommandWarnings[key],roleForm.elements[key].value,t);
     roleForm.elements.preset.value = rolePreset(role?.templateKey)?.key || 'custom';
     preferredModel = value.model || '';
     preferredRuntime = role?.runtime || 'codex';

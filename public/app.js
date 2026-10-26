@@ -1,3 +1,5 @@
+import {deliveryRepositorySummary} from './delivery-summary.js';
+import {renderRetiredCommandWarning} from './retired-commands.js';
 import {createConversationTaskUI} from './conversation-tasks.js';
 import {createDataSettingsUI} from './data-settings.js';
 import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
@@ -21,7 +23,7 @@ import { createRoomUI, createRoleRefresh } from './room.js';
 import { projectSettings } from './project-settings.js';
 import {createGroupConversationUI} from './group-conversations.js';
 import {createProjectTeamCopyUI} from './project-team-copy.js';
-import { agentIconEl, agentWatermarkEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl, closeIcon } from './role-icons.js';
+import { agentIconEl, agentWatermarkEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl, closeIcon, bindDescriptionNotes } from './role-icons.js';
 import { activateSettingsTab, normalizeSettingsTab, settingsView, initProjectSettingsTabs } from './settings-page.js';
 import { supervisorSettings } from './supervisor-settings.js';
 import { roleTemplatesUI } from './role-templates.js';
@@ -120,7 +122,10 @@ const app = {
 };
 app.view = 'workspace';
 app.settingsTab = 'devices';
-const projectOrder=createListOrder({container:dom.projectList,scope:'projects',onEnd:()=>renderProjects(),onError:setError});
+const groupListNote=create('p','workspace-note');groupListNote.id='group-list-note';groupListNote.hidden=true;dom.projectList.before(groupListNote);
+bindDescriptionNotes(document.querySelector('#navigation-mode [data-mode="groups"]'),[groupListNote],{key:'groups',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body]});
+bindDescriptionNotes(document.querySelector('#inspector-title'),[document.querySelector('#role-refresh-feedback'),document.querySelector('#role-sidebar-note')],{key:'roles',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body,document.querySelector('#inspector-roles')]});
+const projectOrder=createListOrder({container:dom.projectList,scope:'projects',onEnd:()=>renderProjects(),onError:message=>{groupListNote.textContent=message;groupListNote.hidden=false;setError(message);}});
 const roleOrder=createListOrder({container:dom.roleList,scope:()=>`roles:${app.selectedProjectId||''}`,onEnd:()=>renderRoles(),onError:setError});
 
 const statusLabels = {
@@ -151,7 +156,7 @@ const runOriginal=createHistoryViewer({api,inline:true});
 const runStepText=(key,params={})=>getLanguage()==='zh'&&stepZh[key]?stepZh[key].replace(/\{(\w+)\}/g,(_,k)=>String(params[k]??'')):t(key,params);
 const runPreview=createPreviewSheet(dom.runDialog,runStepText);
 let originalRunSnapshot=null;
-const room = createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice(projectId, nodeId) {
+const room = createRoomUI({ api, openSideAsk:message=>inspector.openSideAsk(message), refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice(projectId, nodeId) {
   if (app.data.projects.some(p => p.id === projectId)) { app.selectedProjectId=projectId;openSettings('project'); }
 } });
 // Icons are for utility actions only (close, add, edit, refresh, settings). Commit actions such as send, save, prepare and delete
@@ -275,7 +280,7 @@ function createMobileDrawers() {
   return { set, isMobile: () => media.matches };
 }
 const drawers = createMobileDrawers();
-const inspector=createWorkspaceInspector({api,getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
+const inspector=createWorkspaceInspector({api,onError:setError,getConversationId:()=>app.selectedConversationId||app.selectedProjectId,onSideAskOpen:()=>{setInspectorMode('shown');mobilePanel('roles');},getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
 const conversationTaskUI=createConversationTaskUI({api,getScope:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),getRoles:()=>[...app.data.roles,...app.data.supervisorRoles],openMessage:async(scope,id)=>{mobilePanel('chat');await room.jumpMessage(scope,id);}});
 const nativeSessionUI=createNativeSessionUI({api,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
 initWorkspaceColumns();
@@ -1302,12 +1307,37 @@ function renderSupervisorDefaultChoices(values = {}) {
   );
 }
 
+function renderRetiredPromptSettings(settings) {
+  for(const [field,id] of [['platformPrompt','platform-prompt-summary'],['supervisorPrompt','supervisor-prompt-summary']]) {
+    const summary=document.getElementById(id);
+    let box=summary.parentElement.querySelector('[data-retired-warning]');
+    if(!box){box=create('div','workspace-note');box.dataset.retiredWarning=field;summary.after(box);}
+    box.replaceChildren();
+    const warning=create('p','');
+    if(renderRetiredCommandWarning(warning,settings[field],t)) {
+      box.append(warning);
+      const button=create('button','secondary compact','Update to current default');button.type='button';
+      const revision=settings.promptsRevision||0;
+      button.addEventListener('click',async()=>{
+        button.disabled=true;
+        try {app.data.settings=await api('/api/settings/prompts',{method:'POST',json:{[field]:app.data.promptDefaults[field],promptsRevision:revision}});renderPlatformPrompts();}
+        catch(error){warning.textContent=error.message;button.disabled=false;}
+      });box.append(button);
+    }
+    const textarea=dom.promptsForm.elements[field];
+    let editorWarning=textarea.parentElement.querySelector('[data-retired-warning]');
+    if(!editorWarning){editorWarning=create('p','workspace-note');editorWarning.dataset.retiredWarning=field;textarea.after(editorWarning);textarea.addEventListener('input',()=>renderRetiredCommandWarning(editorWarning,textarea.value,t));}
+    renderRetiredCommandWarning(editorWarning,textarea.value,t);
+  }
+}
+
 function renderPlatformPrompts() {
   if (!dom.promptsForm) return;
   const settings = app.data.settings || {};
   dom.promptsForm.elements.platformPrompt.value = settings.platformPrompt ?? app.data.promptDefaults?.platformPrompt ?? '';
   dom.promptsForm.elements.supervisorPrompt.value = settings.supervisorPrompt ?? app.data.promptDefaults?.supervisorPrompt ?? '';
   renderSupervisorDefaultChoices(settings);
+  renderRetiredPromptSettings(settings);
   dom.promptsUpdated.textContent = settings.promptsUpdatedAt ? t('Last saved: {time}', { time: formatTime(settings.promptsUpdatedAt) }) : 'Not saved separately; using the default';
   document.querySelector('#platform-prompt-summary').textContent = dom.promptsForm.elements.platformPrompt.value.trim() || 'Not set; using the platform default rules.';
   document.querySelector('#supervisor-prompt-summary').textContent = dom.promptsForm.elements.supervisorPrompt.value.trim() || 'Not set; using the default supervisor instructions.';
@@ -1353,6 +1383,7 @@ function openPromptEditor(mode) {
   if(mode==='supervisor-prompt')openSettings('prompts');
   renderPlatformPrompts();
   dom.promptsDialog.dataset.editMode = mode;
+  dom.promptsDialog.dataset.promptsRevision=String(app.data.settings?.promptsRevision||0);
   for (const section of dom.promptsForm.querySelectorAll('[data-prompt-field]')) section.hidden = mode === 'supervisor-prompt' ? section.dataset.promptField !== 'supervisor' : mode === 'platform' ? section.dataset.promptField !== 'platform' : section.dataset.promptField === 'platform';
   document.querySelector('#restore-platform-prompts').textContent = mode !== 'platform' ? 'Restore default prompts' : 'Restore defaults';
   document.querySelector('#platform-prompts-dialog-title').textContent = {
@@ -1366,9 +1397,16 @@ function appendRuntimeModels(parent, worker, runtime) {
   const details = create('details', `runtime-settings${runtime.available ? ' is-available' : ''}`);
   const summary = create('summary', 'runtime-settings-summary');
   const label = runtime.label || runtime.type || 'Runtime';
+  const name = create('strong', '', label);
+  // Show the reported CLI version beside its name; keep the complete vendor/build string in the tooltip.
+  const rawVersion = typeof runtime.version === 'string' ? runtime.version.trim() : '';
+  const number = rawVersion.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/)?.[0];
+  const version = create('span', 'runtime-version', number ? `v${number}` : rawVersion || t('Version unknown'));
+  version.title = rawVersion || t('Version unknown');
+  name.append(version);
   summary.append(
     agentIconEl(runtime.type, label),
-    create('strong', '', label),
+    name,
     create('span', `runtime-state ${runtime.available ? 'is-ready' : 'is-unavailable'}`, runtime.available ? 'Available' : 'Unavailable')
   );
   if (!runtime.available) summary.append(platformUI.deleteRuntimeButton(worker,runtime));
@@ -1575,8 +1613,9 @@ function renderTaskDetail() {
   const oldFilesOpen = dom.taskDetail.querySelector('.run-workspace-files')?.open;
   const openTools = new Map([...dom.taskDetail.querySelectorAll('.nt-activity[open]')].map(card => [card.dataset.toolId,[...card.querySelectorAll('.nt-step')].flatMap((row,i)=>row.classList.contains('is-open')?[i]:[])]));
   const inputRulesOpen=dom.taskDetail.querySelector('.run-input-rules')?.open;
-  const oldScroll = dom.taskDetail.scrollTop;
-  const followTail = oldPanel && dom.taskDetail.scrollHeight - oldScroll - dom.taskDetail.clientHeight < 72;
+  const inputGroupsOpen=[...dom.taskDetail.querySelectorAll('.run-input-group[open]')].map(box=>box.dataset.group);
+  const oldScroll = oldPanel?.scrollTop || 0;
+  const followTail = oldPanel && oldPanel.scrollHeight - oldScroll - oldPanel.clientHeight < 72;
   const oldRunId = app.detailRunId;
   dom.taskDetail.replaceChildren();
   const task = getCurrentTask();
@@ -1602,23 +1641,28 @@ function renderTaskDetail() {
   renderRunToolbar(task, latestRun);
   const body = create('div', 'detail-body');
   if (latestRun) body.append(renderRunSummary(latestRun));
-  if (app.detailError) body.append(create('div', 'inline-error', app.detailError));
-  if (latestRun) body.append(renderApprovals(latestRun));
-  body.append(renderRunTabs(task, latestRun));
+  const tabs = renderRunTabs(task, latestRun), messages = [];
+  // Keep status details and approval controls in the scrolling content, below the fixed metadata and tabs.
+  if (latestRun?.error) messages.push(create('div', 'inline-error full-width', latestRun.error));
+  if (app.detailError) messages.push(create('div', 'inline-error', app.detailError));
+  if (latestRun) { const approvals = renderApprovals(latestRun); if (approvals.childElementCount) messages.push(approvals); }
+  tabs.querySelector('.run-tab-panel').prepend(...messages);
+  body.append(tabs);
   dom.taskDetail.append(body);
   app.detailRunId = latestRun?.id || null;
   const panel = dom.taskDetail.querySelector('.run-tab-panel');
   if (oldFilesOpen && oldRunId === app.detailRunId && oldTab === 'run-tab-artifacts') panel?.querySelector('.run-workspace-files')?.setAttribute('open', '');
   if(oldRunId===app.detailRunId&&oldTab===`run-tab-${app.detailTab}`){
     if(inputRulesOpen)panel?.querySelector('.run-input-rules')?.setAttribute('open','');
+    for(const key of inputGroupsOpen)panel?.querySelector(`.run-input-group[data-group="${key}"]`)?.setAttribute('open','');
     for(const card of panel?.querySelectorAll('.nt-activity')||[]){const steps=openTools.get(card.dataset.toolId);if(!steps)continue;card.open=true;card.dispatchEvent(new Event('toggle'));for(const i of steps)card.querySelectorAll('.nt-step-head')[i]?.click();}
   }
   if(oldRunId!==app.detailRunId)runPreview.close();
   const activeRun = latestRun && !['succeeded', 'failed', 'interrupted'].includes(latestRun.status);
-  if (panel && app.detailTab === 'output' && activeRun && (!oldPanel || oldTab !== 'run-tab-output')) dom.taskDetail.scrollTop = dom.taskDetail.scrollHeight;
-  else if (panel && oldPanel && oldRunId === app.detailRunId && oldTab !== `run-tab-${app.detailTab}`) dom.taskDetail.scrollTop = 0;
-  else if (panel && oldPanel && oldRunId === app.detailRunId) dom.taskDetail.scrollTop = app.detailTab === 'output' && activeRun && followTail ? dom.taskDetail.scrollHeight : oldScroll;
-  else dom.taskDetail.scrollTop = 0;
+  if (panel && app.detailTab === 'output' && activeRun && (!oldPanel || oldTab !== 'run-tab-output')) panel.scrollTop = panel.scrollHeight;
+  else if (panel && oldPanel && oldRunId === app.detailRunId && oldTab !== `run-tab-${app.detailTab}`) panel.scrollTop = 0;
+  else if (panel && oldPanel && oldRunId === app.detailRunId) panel.scrollTop = app.detailTab === 'output' && activeRun && followTail ? panel.scrollHeight : oldScroll;
+  else if (panel) panel.scrollTop = 0;
 }
 
 function renderRunToolbar(task, run) {
@@ -1698,7 +1742,7 @@ function renderRunSummary(run) {
     const value=usage[key]??usage[legacy],item=create('span',`run-usage-item${key==='totalTokens'?' is-total':''}`);
     const amount=formatTokenMillions(value);item.append(create('span','',name),create('strong','',amount??t('Not available')));if(amount)item.title=String(value);summary.append(item);
   }
-  if(run.error)summary.append(create('div','inline-error full-width',run.error));return summary;
+  return summary;
 }
 
 /** The conversation log groups input, output, tools, artifacts and stored original text of the same Run. */
@@ -1732,6 +1776,7 @@ function renderRunTabs(task, run) {
   const panel = create('div', 'run-tab-panel');
   panel.id = 'run-tab-panel';
   panel.setAttribute('role', 'tabpanel');
+  panel.tabIndex = 0;
   panel.setAttribute('aria-labelledby', `run-tab-${app.detailTab}`);
   if (app.detailTab === 'input') panel.append(renderRunInput(task, logs.input,run));
   if (app.detailTab === 'output') panel.append(renderRunOutput(run, app.events));
@@ -1751,19 +1796,68 @@ function renderRunTabs(task, run) {
   return wrapper;
 }
 
+const RUN_INPUT_LABELS={steering:'Direction change',task:'Current task',followup:'Reminder facts',discussion:'Discussion conclusion',roster:'Roles that must take part',
+  references:'Related messages',deliveries:'Related deliveries',completion:'Completion requirement',dependencies:'Dependency status',sourceWorkspace:'Referenced execution directory',
+  sourceInputs:'Cross-device synced input',environment:'Environment',stage:'Stage boundary',wb:'wb command'};
+const RUN_INPUT_FIXED=[['identity','Identity'],['platform','Platform prompt'],['role','Role instructions'],['supervisor','Supervisor prompt']];
+const RUN_INPUT_METHOD={claude:'Claude system prompt (--append-system-prompt)',codex:'Codex developer instructions',grok:'Grok rules (--rules)',agy:'Agy: first message of the session'};
+
 function renderRunInput(task, snapshot,run) {
   const section = create('section', 'run-log-content');
   const input = displayRunInput(task, snapshot);
-  const contextNote=contextUsageLabel(run?.contextPacket?.context);
+  if(input.groups)return renderGroupedRunInput(section,input);
+  // Minimal turns do not send the conversation context, so the dispatch-time context line would describe input that was never sent.
+  const contextNote=run?.minimalInstructions===1?'':contextUsageLabel(run?.contextPacket?.context);
   if(contextNote)section.append(create('p','run-log-note',contextNote));
   if (!input.complete) section.append(create('p', 'run-log-note', 'The full CLI input was not saved for this past run; below is only the recorded task request.'));
-  else section.append(create('p', 'run-log-note', 'This is the input the platform sent to the CLI this round; it excludes history kept by the CLI itself and vendor built-in prompts.'));
+  // Only a regular minimal turn recorded before sections existed is "older"; maintenance turns and turns without a context packet never have them.
+  else section.append(create('p', 'run-log-note', run?.minimalInstructions===1&&run.contextPacket&&!run.switchOperationId?'Older record without sections; shown as one block.':'This is the input the platform sent to the CLI this round; it excludes history kept by the CLI itself and vendor built-in prompts.'));
   if(input.instructionsInheritedFrom)section.append(create('p','run-log-note',t('Fixed rules are inherited from the original session run {instructionsInheritedFrom} and are not appended again this round; execution boundaries and tool entries are still shown in full below.', { instructionsInheritedFrom: input.instructionsInheritedFrom })));
   const card=create('div','run-input-card'),head=create('div','run-input-head');
   head.append(create('h3','',input.complete?'Actual input this round':'Task request'),runCopyButton(input.prompt||''));
   card.append(head,create('pre','run-log-pre',input.prompt||'No execution request provided'));section.append(card);
   if(input.instructions){const rules=create('details','run-input-rules'),heading=create('summary','','Platform and Role Work Instructions');rules.append(heading,create('pre','run-log-pre',input.instructions),runCopyButton(input.instructions));section.append(rules);}
   if(input.configurationUpdate)section.append(create('h3','','Native configuration update event'),create('pre','run-log-pre',input.configurationUpdate));
+  return section;
+}
+
+/** Message first and open; then Home's and the Worker's additions and the platform prompts, each collapsed and named. */
+function renderGroupedRunInput(section,input) {
+  const head=create('div','run-input-head');
+  // Copy what the CLI actually received: Agy gets the instruction message in front, Claude and Grok a configuration update.
+  const runtime=input.fixed?.runtime,sent=[runtime==='agy'?input.instructions:['claude','grok'].includes(runtime)?input.configurationUpdate:'',input.prompt].filter(Boolean).join('\n\n');
+  head.append(create('p','run-log-note','This is the input the platform sent to the CLI this round; it excludes history kept by the CLI itself and vendor built-in prompts.'),runCopyButton(sent));
+  section.append(head);
+  const message=create('div','run-input-card');
+  message.append(create('h3','','This round\'s message'),create('pre','run-log-pre',input.groups.message.map(part=>part.text).join('\n\n')||t('No execution request provided')));
+  section.append(message);
+  const group=(key,title,parts)=>{
+    if(!parts.length)return;
+    const box=create('details','run-input-group');box.dataset.group=key;
+    box.append(create('summary','',t(title,{names:parts.map(part=>t(RUN_INPUT_LABELS[part.key]||part.key)).join(t(', '))})));
+    for(const part of parts)box.append(create('pre','run-log-pre',part.text));
+    section.append(box);
+  };
+  group('home','Home additions: {names}',input.groups.home);
+  group('worker','Worker additions: {names}',input.groups.worker);
+  const components=input.fixed?.components||null;
+  const present=components?RUN_INPUT_FIXED.filter(([name])=>components[name]?.text):[];
+  if(present.length||input.instructions||input.configurationUpdate) {
+    const box=create('details','run-input-group');box.dataset.group='fixed';
+    const names=present.length?present.map(([,label])=>t(label)):[t('Platform and Role Work Instructions')];
+    if(input.configurationUpdate)names.push(t('Configuration update'));
+    box.append(create('summary','',t('Platform prompts: {names}',{names:names.join(t(', '))})));
+    if(present.length) {
+      const method=RUN_INPUT_METHOD[input.fixed.runtime];
+      box.append(create('p','run-log-note',[input.fixed.sent?t('Sent this round.'):t('Kept from the session; not re-sent this round.'),method?t('Delivered as: {method}',{method:t(method)}):''].filter(Boolean).join(' ')));
+      for(const [name,label] of present){
+        const version=components[name].version;
+        box.append(create('h4','',version?t('{label} · version {version}',{label:t(label),version:version.slice(0,8)}):t(label)),create('pre','run-log-pre',components[name].text));
+      }
+    }else if(input.instructions)box.append(create('pre','run-log-pre',input.instructions));
+    if(input.configurationUpdate)box.append(create('h4','',t('Configuration update sent this round')),create('pre','run-log-pre',input.configurationUpdate));
+    section.append(box);
+  }
   return section;
 }
 
@@ -1775,10 +1869,10 @@ function renderRunOutput(run, events) {
   if(!rows.length&&!run?.result)section.append(create('div','event-empty',run?'Waiting for CLI output…':'Task has not started yet'));
   for(const row of rows){
     if(row.kind==='tools'){
-      const block=activityBlock({steps:row.tools.map(tool=>{const step=classifyStep(tool.item,run?.status);if(tool.item.query!=null){step.args={...step.args,query:step.args.query??tool.item.query};if(step.kind==='web'&&!step.url)step.url=typeof tool.item.query==='string'?tool.item.query:JSON.stringify(tool.item.query);if(step.kind==='search'&&!step.query)step.query=tool.item.query;}return step;}),t:runStepText,onPreview:(step,path)=>runPreview.open(step,path)});
-      block.dataset.toolId=String(row.tools[0].item.id||row.seq);section.append(block);
+      const block=activityBlock({steps:row.tools.map(tool=>{const step=classifyStep(tool.item,run?.status);if(tool.item.query!=null){step.args={...step.args,query:step.args.query??tool.item.query};if(step.kind==='web'&&!step.url)step.url=typeof tool.item.query==='string'?tool.item.query:JSON.stringify(tool.item.query);if(step.kind==='search'&&!step.query)step.query=tool.item.query;}return step;}),notes:row.notes.map(note=>({...note,text:simplifiedCliOutput(note.text)})),t:runStepText,onPreview:(step,path)=>runPreview.open(step,path)});
+      block.dataset.toolId=String(row.seq);section.append(block);
     }else if(row.kind==='text')appendText(row.text);
-    else{const entry=create('div',`run-transcript-note${row.kind==='error'?' is-error':''}`);entry.append(create('span','',row.kind==='error'?'Error':'CLI log'),create('pre','',simplifiedCliOutput(row.text)));section.append(entry);}
+    else section.append(create('div','nt-error',simplifiedCliOutput(row.text)));
   }
   if(shouldShowFinalResult(run?.result,partitionRunLog(events).output))appendText(run.result);
   return section;
@@ -1811,6 +1905,8 @@ function renderDeliveries(run) {
     const card = create('div', 'approval-card');
     card.append(create('strong', '', labels[d.status] || d.status), create('p', '', d.summary),
       create('p', '', `${d.repoUrl}\n${d.commit}\n${d.ref}`));
+    const scope=deliveryRepositorySummary(d,run.repositories||[]);
+    if(scope.names.length)card.append(create('p','',`${t(scope.partial?'Only some repositories':'Repositories')}: ${scope.names.join(', ')}`));
     if (d.error) card.append(create('p', 'inline-error', d.error));
     if (!d.approvedAt && ['waiting_source', 'awaiting_approval'].includes(d.status)) {
       const approve = create('button', 'secondary', 'Confirm push of this commit'); approve.type = 'button';
@@ -2272,6 +2368,7 @@ document.querySelector('#restore-platform-prompts')?.addEventListener('click', (
   const mode = dom.promptsDialog.dataset.editMode;
   if (mode === 'platform') dom.promptsForm.elements.platformPrompt.value = app.data.promptDefaults?.platformPrompt || '';
   if (mode === 'supervisor' || mode === 'supervisor-prompt') dom.promptsForm.elements.supervisorPrompt.value = app.data.promptDefaults?.supervisorPrompt || '';
+  for(const field of ['platformPrompt','supervisorPrompt'])dom.promptsForm.elements[field].dispatchEvent(new Event('input'));
   dom.promptsFeedback.textContent = 'Prompts have been restored to their defaults; click "Save settings" to apply.';
   dom.promptsFeedback.hidden = false;
 });
@@ -2282,7 +2379,7 @@ dom.promptsForm?.addEventListener('submit', async event => {
   button.disabled = true;
   dom.promptsFeedback.hidden = true;
   try {
-    app.data.settings = await api('/api/settings/prompts', { method: 'POST', json: dom.promptsDialog.dataset.editMode==='supervisor-prompt'?{supervisorPrompt:values.supervisorPrompt}:values });
+    app.data.settings = await api('/api/settings/prompts', { method: 'POST', json: {...(dom.promptsDialog.dataset.editMode==='supervisor-prompt'?{supervisorPrompt:values.supervisorPrompt}:values),promptsRevision:Number(dom.promptsDialog.dataset.promptsRevision)} });
     renderSupervisorDefaultChoices(app.data.settings);
     dom.promptsUpdated.textContent = t('Last saved: {time}', { time: formatTime(app.data.settings.promptsUpdatedAt) });
     dom.promptsDialog.close();

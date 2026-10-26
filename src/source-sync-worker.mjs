@@ -1,3 +1,5 @@
+import {metadataDigest} from './source-sync-metadata.mjs';
+import {metadataBlobRoot,readMetadataFiles,applyMetadataChanges,cleanupMetadataFiles,confirmMetadataRead} from './source-sync-metadata-files.mjs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {open,writeFile,lstat,realpath,rename,link,unlink,chmod,mkdir} from 'node:fs/promises';
@@ -120,6 +122,15 @@ export class SourceSyncWorker {
     }
     if(this.running.has(command.id))return {status:'reconciling'};
     this.db.put('sourceSyncCommands',{id:command.id,projectId:command.projectId,command,fingerprint,status:'pending'});
+    if(command.detection==='metadata'&&command.action==='cleanup'){
+      // No business-directory binding is needed to retire a private batch cache. Applied siblings retain identity checks.
+      let result;try{if([...this.running].some(id=>this.db.get('sourceSyncCommands',id)?.command?.batchId===command.batchId))return {status:'waiting_idle',reason:'recovery_required'};result=await cleanupMetadataFiles(command,this.db,metadataBlobRoot(this.blobRoot,command));}
+      catch(error){result={status:'waiting_idle',reason:error.code||'cleanup_failed'};}
+      this.db.transaction(()=>{
+        this.db.put('sourceSyncCommands',{...this.db.get('sourceSyncCommands',command.id),status:result.status,...(result.status==='completed'?{result}:{})});
+        if(result.status==='completed')this.db.put('sourceSyncReceipts',{id:command.id,projectId:command.projectId,generation:command.generation,fingerprint,result,createdAt:now()});
+      });return result;
+    }
     if(this.paused()&&!this.db.get('sourceSyncReservations',command.projectId))return {status:'blocked',reason:'paused'};
     if(!observing&&(this.takeoverState(command.projectId)||this.activeRuns().some(r=>(r.projectId==='*'||r.projectId===command.projectId)&&!['succeeded','failed','interrupted'].includes(r.status))))return {status:'waiting_idle'};
     const held=this.db.get('sourceSyncReservations',command.projectId);if(held&&held.commandId!==command.id)return {status:'waiting_idle'};
@@ -127,14 +138,19 @@ export class SourceSyncWorker {
     try{
       const binding=await this.resolveBinding(command);
       if(!binding||binding.generation!==command.generation)throw syncError('binding_changed');
+      if(command.detection==='metadata'&&command.rootIdentity){const s=await lstat(binding.root,{bigint:true});if(!s.isDirectory()||`${s.dev}:${s.ino}`!==command.rootIdentity)throw syncError('binding_changed');}
       let result;
+      const blobRoot=command.detection==='metadata'?metadataBlobRoot(this.blobRoot,command):this.blobRoot;
       if(command.action==='capture'&&this.db.get('sourceSyncCancellations',command.id))result={status:'cancelled',files:[]};
       else if(command.action==='capture'){
-        const options={root:binding.root,repositoryId:command.repositoryId,generation:command.generation,blobRoot:this.blobRoot,preview:command.preview,expectedHead:command.baseCommit,scopePolicy:command.scopePolicy||{},baselineEntries:command.baselineEntries};
+        const options={root:binding.root,repositoryId:command.repositoryId,generation:command.generation,blobRoot,detection:command.detection,preview:command.preview,expectedHead:command.baseCommit,scopePolicy:command.scopePolicy||{},baselineEntries:command.baselineEntries};
         if(command.scopeKind==='directory'){
-          const manifest=await captureDirectorySnapshot({...options,background:true,busy:()=>this.observationBusy(command.projectId)}),base={...manifest,entries:{},digest:manifestDigest({},options.scopePolicy),excluded:[]};result={status:'completed',base,manifest};
+          const manifest=await captureDirectorySnapshot({...options,background:true,busy:()=>this.observationBusy(command.projectId)}),base={...manifest,entries:{},digest:command.detection==='metadata'?metadataDigest({},options.scopePolicy):manifestDigest({},options.scopePolicy),excluded:[]};result={status:'completed',base,manifest};
         }else{const base=await captureGitBase(options),manifest=await captureSourceSnapshot({...options,base});result={status:'completed',base,manifest};}
-      }else if(command.action==='apply')result=await applySourceChanges({command,root:binding.root,changes:command.changes,db:this.db,blobRoot:this.blobRoot,
+      }else if(command.detection==='metadata'&&command.action==='read')result=await readMetadataFiles(command,binding.root,blobRoot);
+      else if(command.detection==='metadata'&&command.action==='stage'){const original=this.db.get('sourceSyncCommands',command.readCommandId);if(original?.command?.batchId!==command.batchId||original.result?.status!=='completed')throw syncError('command_changed');const files=command.paths.map(p=>original.result.files.find(f=>f.path===p.path));if(files.some(f=>!f))throw syncError('invalid_command');result={status:'completed',files};await confirmMetadataRead(command,binding.root,result);}
+      else if(command.detection==='metadata'&&command.action==='apply')result=await applyMetadataChanges({command,root:binding.root,db:this.db,blobRoot,cancelled:()=>this.paused()||this.db.get('sourceSyncCancellations',command.id)});
+      else if(command.action==='apply')result=await applySourceChanges({command,root:binding.root,changes:command.changes,db:this.db,blobRoot:this.blobRoot,
         cancelled:()=>this.paused()||this.db.get('sourceSyncCancellations',command.id)});
       else throw syncError('invalid_sync_action');
       this.db.transaction(()=>{
@@ -143,7 +159,7 @@ export class SourceSyncWorker {
         if(this.db.get('sourceSyncReservations',command.projectId)?.commandId===command.id)this.db.remove('sourceSyncReservations',command.projectId);
       });return result;
     }catch(error){
-      const uncertain=this.db.list('sourceSyncJournals').some(j=>j.commandId===command.id&&j.status==='prepared');
+      const uncertain=this.db.list('sourceSyncJournals').some(j=>j.commandId===command.id&&['preparing','prepared'].includes(j.status));
       const result={status:uncertain?'reconciling':'blocked',reason:error.code||'apply_failed',...(error.limit?{limit:error.limit}:{})};
       this.db.transaction(()=>{
         this.db.put('sourceSyncCommands',{...this.db.get('sourceSyncCommands',command.id),status:result.status,...(!uncertain?{result}:{})});

@@ -112,10 +112,18 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
     createSession:options=>Object.assign(createNativeSession(options),{quotaIdentity:sessionQuotaIdentity(runtimes().find(r=>r.type===options.runtime))})
   });
   /** Preparing leases belong to this Runner until preparation settles; generic terminal expiry must not revoke them. */
-  runner.check=binding=>{
+  runner.check=(binding,{reportClosed=true}={})=>{
     const s=db.get('terminalSessions',binding.id);
     if(s?.kind==='native-turn'&&runner.holds(s.runtime,s.sessionId)&&!s.childPid)return {id:s.id,status:s.status,processState:'prepared',checkedAt:new Date().toISOString()};
-    const result=checkTerminalSession(db,binding,dbPath,{automatic:true});if(s?.kind==='native-turn'&&result.processState==='released')closed(s);return result;
+    const result=checkTerminalSession(db,binding,dbPath,{automatic:true});if(reportClosed&&s?.kind==='native-turn'&&result.processState==='released')closed(s);return result;
+  };
+  /** Explicit send/steer checks the exact lease and PID identity without stopping a running CLI. */
+  runner.refresh=({runtime,sessionId,leaseId}={})=>{
+    const s=db.get('terminalSessions',leaseId);
+    if(!s||s.kind!=='native-turn'||s.nodeId!==nodeId||s.runtime!==runtime||s.sessionId!==sessionId)throw Error('Takeover lease does not match this session');
+    // The HTTP caller must settle its refresh before sending/steering; an early closed event could dispatch another queue item.
+    const result=runner.check({id:leaseId,nodeId,projectId:s.projectId},{reportClosed:false});
+    return {leaseId,runtime,sessionId,processState:result.processState,...runner.snapshot(runtime,sessionId,leaseId),paused:isPaused()};
   };
   /** Restart recovery uses the durable process proof before admitting new input; lost receipts retain the shared lease. */
   runner.recover=async()=>{for(const s of db.list('terminalSessions'))if(s.kind==='native-turn'&&held(s)){try{await leases.retire({leaseId:s.id,runtime:s.runtime,sessionId:s.sessionId});}catch(error){db.put('terminalSessions',{...s,status:'stopping',processError:error.message});}}};

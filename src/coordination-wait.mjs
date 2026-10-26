@@ -1,5 +1,42 @@
 import {assertConversationRecord,conversationIdOf} from './group-conversations.mjs';
 
+/** Pin the wake's feedback identity; ambiguous same-time results without an explicit trigger must not select a random peer. */
+export function continuationFeedback(children,triggerRequestId=null) {
+  let child=triggerRequestId?children.find(c=>c.id===triggerRequestId||c.resultRequestId===triggerRequestId):null;
+  if(!child){
+    if(children.length===1)child=children[0];
+    else{
+      const times=children.map(c=>Date.parse(c.updatedAt));
+      if(!times.length||times.some(t=>!Number.isFinite(t)))return null;
+      const last=Math.max(...times),latest=children.filter((c,i)=>times[i]===last);
+      if(latest.length!==1)return null;
+      child=latest[0];
+    }
+  }
+  return child?.currentRunId?{requestId:child.resultRequestId||child.id,runId:child.currentRunId}:null;
+}
+
+/** Legacy wakes use only their saved dependency set, never the chat tail or results that changed after the wake. */
+export function legacyContinuationFeedback(db,request,previous) {
+  if(previous.continuationRequestId!==request.id||previous.waitEvent?.reason!=='results'||!Array.isArray(previous.waitEvent.requestIds))return null;
+  const cutoff=Date.parse(request.createdAt),owners=new Set();let owner=previous;
+  if(!Number.isFinite(cutoff))return null;
+  while(owner){
+    if(owners.has(owner.id)||owner.projectId!==request.projectId||conversationIdOf(owner)!==conversationIdOf(request)||owner.targetRoleId!==request.targetRoleId)return null;
+    owners.add(owner.id);if(!owner.continuationOf)break;owner=db.get('coordinationRequests',owner.continuationOf);if(!owner)return null;
+  }
+  const children=[];
+  for(const id of previous.waitEvent.requestIds){
+    const original=db.get('coordinationRequests',id);
+    if(!original||!owners.has(original.parentRequestId)||original.projectId!==request.projectId||conversationIdOf(original)!==conversationIdOf(request))return null;
+    let current;try{current=currentContinuation(db,id);}catch{return null;}
+    const time=Date.parse(current?.updatedAt);
+    if(!current||!['succeeded','failed','cancelled'].includes(current.status)||!Number.isFinite(time)||time>cutoff)return null;
+    children.push({...current,id:original.id,resultRequestId:current.id});
+  }
+  return continuationFeedback(children);
+}
+
 /** Follow only the same owner's continuation chain; a peer reply must not jump to a different task or project. */
 export function currentContinuation(db,requestId) {
   let current=db.get('coordinationRequests',requestId);const seen=new Set();

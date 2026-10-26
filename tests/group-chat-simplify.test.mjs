@@ -99,7 +99,7 @@ test('removed wb commands are refused before any request is sent', async () => {
   for (const argv of [['report', '{}'], ['ask', 'Builder', 'hi'], ['read', 'file', '{}'], ['docs'], ['handoff', 'last']]) {
     const error = await run(process.execPath, ['src/wb-cli.mjs', ...argv], { env: { PATH: process.env.PATH, WB_LANGUAGE: 'en' } }).then(() => null, e => e);
     assert.ok(error, argv.join(' '));
-    assert.match(error.stderr, /Unknown command/, argv.join(' '));
+    assert.match(error.stderr, argv[0]==='report'?/report is retired.*final reply/:/Unknown command/, argv.join(' '));
   }
 });
 

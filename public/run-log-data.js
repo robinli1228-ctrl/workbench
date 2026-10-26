@@ -49,7 +49,7 @@ export function formatTokenMillions(value) {
   return count>0&&count<10000?'<0.01 M':`${(count/1000000).toFixed(2)} M`;
 }
 
-/** 保留首个工具事件的位置并合并后续状态；输入只出现在独立输入页。 */
+/** 工具和运行提示组成会话页的活动块；正文保持顺序，输入只出现在独立输入页。 */
 export function runTimeline(events = []) {
   const logs=partitionRunLog(events),rows=[];
   const entries=[...logs.output.map(event=>({seq:event.seq,event})),...logs.tools.map(tool=>({seq:tool.seq,tool}))].sort((a,b)=>(a.seq||0)-(b.seq||0));
@@ -57,12 +57,19 @@ export function runTimeline(events = []) {
     const last=rows.at(-1);
     if(entry.tool){
       if(last?.kind==='tools')last.tools.push(entry.tool);
-      else rows.push({kind:'tools',seq:entry.seq,tools:[entry.tool]});
+      else rows.push({kind:'tools',seq:entry.seq,tools:[entry.tool],notes:[]});
       continue;
     }
-    const event=entry.event,payload=event.payload||{},text=stripAnsi(typeof payload==='string'?payload:payload.text||payload.message||JSON.stringify(payload));
+    const event=entry.event,payload=event.payload||{};
+    const text=stripAnsi(typeof payload==='string'?payload:typeof payload.text==='string'?payload.text:typeof payload.message==='string'?payload.message:['log','error'].includes(event.type)?JSON.stringify(payload):'');
     if(!text)continue;
-    const kind=event.type==='error'?'error':event.type==='log'?'log':'text';
+    if(event.type==='log'){
+      const note={kind:'log',text,createdAt:event.createdAt};
+      if(last?.kind==='tools')last.notes.push(note);
+      else rows.push({kind:'tools',seq:entry.seq,tools:[],notes:[note]});
+      continue;
+    }
+    const kind=event.type==='error'?'error':'text';
     if(last?.kind==='text'&&kind==='text'&&event.type==='text'&&last.streaming)last.text+=text;
     else if(!(kind==='text'&&last?.kind==='text'&&last.text===text))rows.push({kind,seq:entry.seq,text,streaming:event.type==='text',createdAt:event.createdAt});
   }
@@ -71,8 +78,20 @@ export function runTimeline(events = []) {
 
 /** When an old Run has no input snapshot, show only the original task request; do not pass it off as the full CLI input. */
 export function displayRunInput(task, input) {
-  if (input && typeof input.prompt === 'string') return { instructions: input.instructions || '', prompt: input.prompt, complete: true, instructionsInheritedFrom:input.instructionsInheritedFrom||null,configurationUpdate:input.configurationUpdate||'' };
-  return { instructions: '', prompt: task?.prompt || '', complete: false };
+  if (input && typeof input.prompt === 'string') return { instructions: input.instructions || '', prompt: input.prompt, complete: true, instructionsInheritedFrom:input.instructionsInheritedFrom||null,configurationUpdate:input.configurationUpdate||'',
+    groups:runInputGroups(input),fixed:input.fixed&&typeof input.fixed==='object'?input.fixed:null };
+  return { instructions: '', prompt: task?.prompt || '', complete: false, groups:null, fixed:null };
+}
+
+/** Split a recorded input by the ranges the Worker wrote when it built it; records without valid ranges are not guessed at. */
+export function runInputGroups(input) {
+  const prompt=typeof input?.prompt==='string'?input.prompt:'',sections=Array.isArray(input?.sections)?input.sections:null;
+  if(!sections?.length)return null;
+  let last=0;
+  for(const s of sections)if(!Number.isInteger(s?.start)||!Number.isInteger(s.end)||s.start<last||s.end<s.start||s.end>prompt.length)return null;else last=s.end;
+  const groups={message:[],home:[],worker:[]};
+  for(const s of sections)if(groups[s.group])groups[s.group].push({key:String(s.key||''),text:prompt.slice(s.start,s.end)});
+  return groups;
 }
 
 /** Use the context frozen at dispatch time; do not rewrite history logs with later-updated summaries. */

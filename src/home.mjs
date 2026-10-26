@@ -22,7 +22,7 @@ import {newTerminalBinding,publishNewTerminal} from './role-terminal.mjs';
 import {RoleSwitches,roleSwitchView} from './role-switches.mjs';
 import {RoleSwitchRuntime} from './role-switch-runtime.mjs';
 import { ConversationContext } from './conversation-context.mjs';
-import { renderRunPrompt } from './run-context.mjs';
+import { renderRunPrompt,renderRunInputParts } from './run-context.mjs';
 import { buildTeamContext, renderTeamContext } from './team-context.mjs';
 import { Rooms } from './rooms.mjs';
 import { CollaborationSessions, reviewView, reviewDocumentAllowed } from './collaboration-sessions.mjs';
@@ -59,7 +59,7 @@ import { TokenUsage, createTokenUsageBackgroundCollector } from './token-usage.m
 import { Attachments, AttachmentTransfers } from './attachments.mjs';
 import { ExecutionPlans, schedulingRules } from './execution-plans.mjs';
 import { History } from './history.mjs';
-import { archiveHistoricalReceipts } from './result-receipts.mjs';
+import { archiveHistoricalReceipts, wakeCallOutcomes } from './result-receipts.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
@@ -278,7 +278,11 @@ async function dispatch(nodeId) {
     }
     const storedTask = run.inputTask||db.get('tasks', run.taskId);
     // Minimal turns get the execution rules once, from the Worker's executionInstructions; adding them here too repeated them.
-    const basePrompt=runWithLanguage('en',()=>[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal||run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n'));
+    // Minimal turns follow the language pack the launch is sent in; legacy Workers keep the English wrapping.
+    const promptLanguage=minimal?c.launchInput?.language??getLanguage():'en';
+    const basePrompt=runWithLanguage(promptLanguage,()=>[run.contextPacket?renderRunPrompt(run.contextPacket,{minimal}):storedTask.prompt,minimal||run.switchOperationId?'':renderTeamContext(run.teamContext)].filter(Boolean).join('\n\n'));
+    // Named parts let a current Worker put the message first and title each platform addition; older Workers use the prompt.
+    const inputParts=minimal&&run.contextPacket&&!run.switchOperationId?runWithLanguage(promptLanguage,()=>renderRunInputParts(run.contextPacket)):null;
     const rulesText = runWithLanguage('en',()=>schedulingRules());
     // The timer line is matched in both languages; it is dropped for Workers without timer tools.
     const schedulingRulesText = db.get('workers',nodeId)?.capabilities?.timerTools===1 ? rulesText : rulesText.replace(/^(?:Use wb timer only when given an explicit wall-clock time or recurrence requirement; |\u53ea\u6709\u6536\u5230\u660e\u786e\u7684\u5899\u949f\u65f6\u95f4\/\u5468\u671f\u9700\u6c42\u624d\u7528 wb timer\uff1b).*\n/m,'');
@@ -286,7 +290,7 @@ async function dispatch(nodeId) {
     // New Workers put the fixed Supervisor conventions in the stable rules area; old Workers still receive the full original format, so rolling upgrades do not lose rules.
     const stableInstructions=db.get('workers',nodeId)?.capabilities?.stableInstructions===1;
     const task = c.launchInput?.task||{...storedTask,prompt:supervisorInstructions&&!stableInstructions?`${basePrompt}\n\n${supervisorInstructions}`:basePrompt,
-      runtimeInstructions:stableInstructions?supervisorInstructions:''};
+      runtimeInstructions:stableInstructions?supervisorInstructions:'',...(inputParts?{inputParts}:{})};
     const storedProject = db.get('projects', run.projectId);
     const project = { ...storedProject, repoUrl: run.repositoryUrl ?? storedProject.repoUrl };
     const request = run.requestId ? db.get('coordinationRequests', run.requestId) : db.list('coordinationRequests').find(r => r.currentRunId === run.id);
@@ -301,7 +305,8 @@ async function dispatch(nodeId) {
     const dispatchSocket=sockets.get(nodeId);
     const gitCredentials = {};
     if (!run.switchOperationId && (c.type === 'launch' || c.type === 'delivery_publish' || run.deliveryId)) {
-      try { for (const repo of run.repositories || []) gitCredentials[repo.id] = await hosting.auth(repo.accountId, repo.repoUrl); }
+      const publishing = c.type === 'delivery_publish' ? db.get('deliveries', c.deliveryId) : null;
+      try { for (const repo of (run.repositories || []).filter(r=>publishing?.purpose!=='review'||!publishing.items||publishing.items.some(item=>item.id===r.id))) gitCredentials[repo.id] = await hosting.auth(repo.accountId, repo.repoUrl); }
       catch (e) {
         if(c.type === 'delivery_publish') {
           const delivery=db.get('deliveries',c.deliveryId);
@@ -362,7 +367,7 @@ function snapshot(scope=null) {
   }
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,queuePause:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
+  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {nativeCatalogCache:1,roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,queuePause:1,collaborationWait:1}, homePlatform: process.platform, collaborationWaits: collaborationQueueView(db).states, projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -419,6 +424,8 @@ function scheduleChatTurn() {
       }
     }catch(error){chatScheduleError(error,request.id);}
   }
+  try {if(wakeCallOutcomes(db,(receipt,text)=>rooms.postSystemTask(receipt.projectId,{id:`outcome-${receipt.id.replace(/^rr:/,'')}`,conversationId:receipt.conversationId,
+    roleId:receipt.ownerRoleId,text,source:{kind:'call_outcome',receiptId:receipt.id}})))change();}catch(error){console.error('Call outcome wake:',error.message);}
   try {if(proactiveFollowup.tick())change();}catch(error){console.error('Proactive follow-up:',error.message);}
   try {if(dueRoleCompactions(db,{online:id=>online(id)&&sockets.get(id).workerReady,send:(nodeId,payload)=>send(sockets.get(nodeId),payload)}))change();}catch(error){console.error('Role compaction:',error.message);}
   for(const task of db.chatTasks(['ready']))prepareChatContext(task);
@@ -512,7 +519,7 @@ function reconcileTerminals(nodeId) {
   return Promise.all([...projects].filter(terminalScopeExists).map(id=>refreshProjectTerminals(id,{automatic:true}))).then(()=>folderPreparations.cleanup(nodeId)).catch(error=>console.error('Terminal reconciliation failed:',error.message));
 }
 const nativeCatalogRecords=(nodeId,runtime)=>db.list('nativeCatalogEntries').filter(entry=>entry.nodeId===nodeId&&entry.runtime===runtime);
-const nativeCatalogItem=entry=>({id:entry.id,entryId:entry.id,nodeId:entry.nodeId,runtime:entry.runtime,sessionId:entry.sessionId||null,title:entry.title,createdAt:entry.createdAt,modifiedAt:entry.modifiedAt||entry.createdAt,workspace:entry.workspace||null,origin:'dialog',status:entry.status||'awaiting_native_id',hasHistory:entry.hasHistory===true,previewAvailable:entry.previewAvailable===true,canReopen:entry.status==='draft',canResume:entry.hasHistory===true&&!['active','prepared'].includes(entry.status),exactLastScan:entry.exactLastScan||null});
+const nativeCatalogItem=entry=>({id:entry.id,entryId:entry.id,nodeId:entry.nodeId,runtime:entry.runtime,sessionId:entry.sessionId||null,title:entry.title,createdAt:entry.createdAt,modifiedAt:entry.modifiedAt||entry.createdAt,historyRevision:entry.historyRevision||null,workspace:entry.workspace||null,origin:'dialog',status:entry.status||'awaiting_native_id',hasHistory:entry.hasHistory===true,previewAvailable:entry.previewAvailable===true,canReopen:entry.status==='draft',canResume:entry.hasHistory===true&&!['active','prepared'].includes(entry.status),exactLastScan:entry.exactLastScan||null});
 function managedNativeSessions(nodeId,runtime){
   const items=new Map();for(const session of db.list('roleSessions')){
     if(session.nodeId!==nodeId||session.runtime!==runtime||session.historyClearedAt||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/.test(session.nativeSessionId||''))continue;
@@ -539,7 +546,7 @@ function ownedNativeSession(nodeId,runtime,sessionId){
   return nativeCatalogRecords(nodeId,runtime).find(r=>r.sessionId===sessionId)||managedNativeSessions(nodeId,runtime).find(r=>r.sessionId===sessionId)||adoptedNativeSessions(nodeId,runtime).find(r=>r.sessionId===sessionId)||null;
 }
 function cacheNativeCatalog(items,nodeId,runtime){
-  db.transaction(()=>{for(const item of items||[]){if(item.origin!=='dialog'||item.nodeId!==nodeId||item.runtime!==runtime||!item.entryId)continue;const current=db.get('nativeCatalogEntries',item.entryId);if(current?.nodeId!==nodeId||current.runtime!==runtime)continue;db.put('nativeCatalogEntries',{...current,sessionId:item.sessionId||null,title:item.title,workspace:item.workspace||current.workspace,status:item.status,hasHistory:item.hasHistory===true,previewAvailable:item.previewAvailable===true,exactLastScan:item.exactLastScan||current.exactLastScan||null,modifiedAt:item.modifiedAt||current.modifiedAt});}});
+  db.transaction(()=>{for(const item of items||[]){if(item.origin!=='dialog'||item.nodeId!==nodeId||item.runtime!==runtime||!item.entryId)continue;const current=db.get('nativeCatalogEntries',item.entryId);if(current?.nodeId!==nodeId||current.runtime!==runtime)continue;db.put('nativeCatalogEntries',{...current,sessionId:item.sessionId||null,title:item.title,workspace:item.workspace||current.workspace,status:item.status,hasHistory:item.hasHistory===true,previewAvailable:item.previewAvailable===true,exactLastScan:item.exactLastScan||current.exactLastScan||null,modifiedAt:item.modifiedAt||current.modifiedAt,historyRevision:item.historyRevision||null});}});
 }
 /** Stopping is an explicit human action, scoped to the saved lease rather than arbitrary browser-supplied PIDs. */
 async function returnTerminal(claim,action) {
@@ -660,7 +667,7 @@ const server = http.createServer(async (req, res) => {
       if (wechatProject && req.method === 'POST') {
         const link = wechat.openProject(wechatProject[1]); void wechat.tick().catch(() => {}); return json(res, { id: link.id }, 201);
       }
-      if(pathname.includes('native-')&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
+      if((pathname.includes('native-')||/^\/api\/agent\/side-asks\/[^/]+\/[^/]+$/.test(pathname)||/^\/api\/projects\/[^/]+\/messages\/[^/]+\/side$/.test(pathname))&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
       const nativeGit=pathname.match(/^\/api\/native-sessions\/([^/]+)\/git$/);
       if(nativeGit&&req.method==='GET'){
         // Read-only Git facts for the session's own registered working folder; the browser never supplies a path.
@@ -786,6 +793,21 @@ const server = http.createServer(async (req, res) => {
           if(worker.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
           const record=sessionId?ownedNativeSession(nodeId,runtime,sessionId):null;
           if(sessionId&&!record)throw Error('Session is not registered with Workbench');
+          // First paint reads registered Home entries; normal Worker verification still enforces file access.
+          if(!sessionId&&url.searchParams.get('cached')==='1'){
+            if(!['codex','claude','grok','agy'].includes(runtime))throw Error('Unsupported CLI');
+            let items;
+            if(scope==='group')items=managedNativeSessions(nodeId,runtime).map(entry=>({...entry,id:entry.sessionId,nodeId,runtime,origin:'managed'}));
+            else {
+              items=nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem);
+              if(scope==='all'){
+                const seen=new Set([...items.map(item=>item.sessionId),...managedNativeSessions(nodeId,runtime).map(item=>item.sessionId)]);
+                items.push(...adoptedNativeSessions(nodeId,runtime).filter(entry=>!seen.has(entry.sessionId)).map(entry=>({...entry,id:entry.sessionId,nodeId,origin:'takeover'})));
+              }
+            }
+            items.sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||'')));
+            return json(res,{items:nativeTurns.switches.decorateCatalog(nodeId,items.slice(0,100)),cached:true,partial:items.length>100,offline:!online(nodeId)});
+          }
           if(!online(nodeId)){
             // Offline All can show cached independent entries, but must not imply complete native history.
             if(!sessionId&&['created','all'].includes(scope))return json(res,{items:nativeTurns.switches.decorateCatalog(nodeId,nativeCatalogRecords(nodeId,runtime).map(nativeCatalogItem)),partial:scope==='all',offline:true});
@@ -1489,7 +1511,10 @@ const server = http.createServer(async (req, res) => {
     files['/workspace-inspector.js']='workspace-inspector.js';
     files['/conversation-tasks.js']='conversation-tasks.js';
     files['/conversation-task-state.js']='conversation-task-state.js';
+    files['/delivery-summary.js']='delivery-summary.js';
+    files['/retired-commands.js']='retired-commands.js';
     files['/source-sync.js']='source-sync.js';
+    files['/source-sync-audit.js']='source-sync-audit.js';
     files['/quota-state.js']='quota-state.js';
     files['/chat-card-state.js']='chat-card-state.js';
     files['/state-data.js']='state-data.js';
@@ -1506,6 +1531,8 @@ const server = http.createServer(async (req, res) => {
     files['/role-templates.js']='role-templates.js';
     files['/i18n.js']='i18n.js';
     files['/output-language.js']='output-language.js';
+    files['/native-side-ask.js']='native-side-ask.js';
+    files['/group-side-ask.js']='group-side-ask.js';
     files['/native-sessions.js']='native-sessions.js';
     files['/native-agent-switch.js']='native-agent-switch.js';
     files['/native-transcript.js']='native-transcript.js';

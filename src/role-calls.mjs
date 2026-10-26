@@ -7,7 +7,7 @@ import {outcomeFor,runFailureKind} from './run-reports.mjs';
 import { tr } from './i18n.mjs';
 import {freezeSourceInputs,sourceInputBatch,sourceConflictContext} from './source-sync-input.mjs';
 import {createHash} from 'node:crypto';
-import {currentContinuation,waitDependencies} from './coordination-wait.mjs';
+import {currentContinuation,waitDependencies,continuationFeedback} from './coordination-wait.mjs';
 import {SessionQueue} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
@@ -132,11 +132,16 @@ export class RoleCalls {
       const sourceEnded = ancestor && (normalized.kind === 'continuation' ? ancestor.status === 'cancelled' : callTerminal.has(ancestor.status));
       if (ancestor && (sourceEnded || ancestor.steeringTaskId)) throw new Error(tr('roleCalls.sourceCallHasEndedBeen'));
       // Schedule completion and different reviewers also cause continuations; bound actual calls with the root budget and cycle checks, not wake-up count.
+      let childOnPath=null;
       let depth = 0, rootRequestId = ancestor?.rootRequestId || ancestor?.id || normalized.id;
       while (ancestor) {
         if(ancestor.steeringTaskId)throw new Error(tr('roleCalls.userHasChangedDirectionOld'));
         if (++depth > 4) throw new Error(tr('roleCalls.collaborationCallsExceed4Levels'));
-        if (ancestor.targetRoleId === input.targetRoleId && !callTerminal.has(ancestor.status)) throw new Error(tr('roleCalls.rejectedRoleLoopInActive'));
+        if (ancestor.targetRoleId === input.targetRoleId && !callTerminal.has(ancestor.status)) {
+          const awaitingResult=childOnPath && ancestor.status==='waiting_call' && this.dependencies(ancestor).some(child=>child.id===childOnPath.id||child.resultRequestId===childOnPath.id);
+          throw new Error(tr(awaitingResult?'roleCalls.returnToWaitingCaller':'roleCalls.rejectedRoleLoopInActive'));
+        }
+        childOnPath=ancestor;
         ancestor = ancestor.parentRequestId ? this.db.get('coordinationRequests', ancestor.parentRequestId) : null;
       }
       const continued = normalized.continuationOf ? this.db.get('coordinationRequests', normalized.continuationOf) : null;
@@ -316,14 +321,14 @@ export class RoleCalls {
     // Register the settled call before resuming its owner, so the safe continuation includes this result. Replaying a call
     // that had already settled (Home restart, upgrade) only refreshes an existing receipt and never backfills history.
     if(callTerminal.has(r.status))registerResultReceipt(this.db,{run,request:r,refreshOnly:settledBefore});
-    this.settleResult(r);
+    this.settleResult(r,{triggerRequestId:!settledBefore&&callTerminal.has(r.status)?r.id:null});
   }
 
   /** Run results and pre-execution failures must settle the same queue and continuation chain; neither rewrites historical Runs or reports. */
-  settleResult(r,{resumeParents=true}={}) {
+  settleResult(r,{resumeParents=true,triggerRequestId=null}={}) {
     this.resume(r.id);
     new SessionQueue(this.db).settleRequest(r);
-    if (resumeParents&&r.parentRequestId) this.resume(r.parentRequestId);
+    if (resumeParents&&r.parentRequestId) this.resume(r.parentRequestId,Date.now(),triggerRequestId);
     if (r.continuationOf && callTerminal.has(r.status)) {
       let previousId = r.continuationOf;
       const seen=new Set();
@@ -334,7 +339,7 @@ export class RoleCalls {
         const next=this.db.put('coordinationRequests', { ...prior, status: r.status, result: r.result, outcome:r.outcome,runStatus:r.runStatus,failureKind:r.failureKind||null,reportSummary:r.reportSummary,error:r.error||null,
           ...(r.notExecutedReason?{notExecutedReason:r.notExecutedReason,admissionError:r.admissionError}:{}),updatedAt: r.updatedAt });
         new SessionQueue(this.db).settleRequest(next);
-        if (resumeParents&&prior.parentRequestId) this.resume(prior.parentRequestId);
+        if (resumeParents&&prior.parentRequestId) this.resume(prior.parentRequestId,Date.now(),triggerRequestId);
         previousId = prior.continuationOf;
       }
     }
@@ -347,7 +352,7 @@ export class RoleCalls {
     });
   }
 
-  resume(requestId,time=Date.now()) {
+  resume(requestId,time=Date.now(),triggerRequestId=null) {
     return this.db.transaction(()=>{
     const parent = currentContinuation(this.db,requestId);
     if (parent?.status !== 'waiting_call' || parent.continuationRequestId || parent.steeringTaskId || this.db.get('tasks',parent.taskId)?.status==='cancelled') return;
@@ -384,6 +389,8 @@ export class RoleCalls {
         planId:parent.planId,planVersion:parent.planVersion,stepId:parent.stepId,execution:parent.execution,
         wakeReason:reason,waitRequestIds:reason!=='results'?children.filter(c=>!callTerminal.has(c.status)).map(c=>c.id):[],
         summary: `${header}${packCoordinationResults(children, Math.max(0, 12000 - header.length))}`.slice(0, 12000) });
+      // Quote metadata only: inputs, task origin and scheduling stay intact. The result message may be published after this transaction.
+      if(!Object.hasOwn(next,'continuationFeedback'))this.db.put('coordinationRequests',{...next,continuationFeedback:reason==='results'?continuationFeedback(children,triggerRequestId):null});
       this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), continuationRequestId: next.id, updatedAt: new Date().toISOString() });
       // Mark the episode as reported only once the wake exists, so a failed wake can be retried.
       for(const {request,block} of blocked){const id=request.resultRequestId||request.id;this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',id),blockedWake:{kind:block.kind,since:block.since,notifiedAt:new Date(time).toISOString()}});}

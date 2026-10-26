@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { loadTurnContext } from './turn-context.mjs';
 import { agentRequest } from './agent-bridge.mjs';
 import { setupCatalog, setupPropose } from './setup-tools.mjs';
-import { conversationTask, helpText, historySearchInput, chatPost, notifySupervisor, callRole, waitForRole, requestDelivery } from './wb-tools.mjs';
+import { conversationTask, helpText, historySearchInput, chatPost, notifySupervisor, callRole, waitForRole, requestDelivery, parseDeliveryArgs } from './wb-tools.mjs';
 import { tr } from './i18n.mjs';
 
 function out(data) {
@@ -35,6 +35,7 @@ export async function main(argv = process.argv.slice(2)) {
     if(['help','-h','--help'].includes(cmd)&&['review','sync','errors'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
     if(!cmd||['help','-h','--help'].includes(cmd)||(tail.some(value=>['--help','-h'].includes(value))&&!tail.includes('--'))||(cmd==='deliver'&&sub==='help'))
       return out(helpText());
+    if(['report','schedule','collaboration','pass'].includes(cmd))throw new Error(tr(`wbCli.retired.${cmd}`));
     if(!COMMANDS.includes(cmd))throw new Error(tr('wbCli.unknownCommand',{cmd,HELP:helpText()}));
     loadTurnContext(process.env,{turnId});
     const supervisor = process.env.WB_SYSTEM_SUPERVISOR === '1';
@@ -88,8 +89,8 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (cmd === 'deliver') {
       if (['help', '-h', '--help'].includes(sub)) return out(tr('wbTools.deliveryUsage'));
-      const review=sub==='--review',args=review?rest:tail;
-      return out(await requestDelivery(args[0], args[1], args.slice(2).join(' '),{review}));
+      const {requestId,commit,summary,...options}=parseDeliveryArgs(tail);
+      return out(await requestDelivery(requestId,commit,summary,options));
     }
     if (cmd === 'call') {
       const values = {}, flags = { '--role': 'role', '--kind': 'kind', '--request-id': 'requestId', '--text': 'text', '--file':'file', '--delivery-id': 'deliveryId','--source-sync-batch-id':'sourceSyncBatchId',

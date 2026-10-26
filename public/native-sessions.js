@@ -1,10 +1,11 @@
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
-import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON,quotaForRole,roleNameQuota} from './role-icons.js';
+import {agentIconEl,machineIconEl,workerKind,setActionIcon,closeIcon,UI_ICON,quotaForRole,roleNameQuota,bindDescriptionNotes} from './role-icons.js';
 import {usableBucket,parseQuotaResetDate} from './quota-state.js';
 import {createListOrder} from './list-order.js';
 import {groupNativeSessions,readNativeSessionPages} from './native-session-groups.js';
+import {createSideAsk} from './native-side-ask.js';
 import {createNativeAgentSwitchUI} from './native-agent-switch.js';
 import {createNativeHistoryTimeline} from './native-history-timeline.js';
 import {createFolderControl} from './create-folder.js';
@@ -292,12 +293,15 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  gear.addEventListener('click',()=>{if(selected)openSessionSettings(selected);});gear.hidden=true;(document.querySelector('#toggle-inspector')||document.querySelector('#connection-note'))?.before(gear);
  const filters=el('div','native-session-filters'),device=el('select'),tool=el('select');device.setAttribute('aria-label',t('Session device'));tool.setAttribute('aria-label',t('Agent tool'));filters.append(device,tool);list.before(filters);
  const note=el('p','workspace-note');list.before(note);note.classList.add('native-session-note');
+ bindDescriptionNotes(mode.querySelector('[data-mode="sessions"]'),[note],{key:'sessions',visible:()=>document.body.dataset.navigationMode==='sessions',watch:[document.body]});
  // A narrowed left column (dragged below ~230px, or collapsed) drops the device/tool filters; the list keeps the width.
  const sidebar=document.querySelector('#project-sidebar');if(sidebar&&'ResizeObserver' in window)new ResizeObserver(()=>{filters.classList.toggle('is-narrow',sidebar.getBoundingClientRect().width<205);}).observe(sidebar);
  let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue=(()=>{try{const saved=sessionStorage.getItem('agent-workbench.navigation-mode');return saved==='groups'||saved==='sessions'?saved:'sessions';}catch{return 'sessions';}})(),lastRefresh=0,listSignature='',detailSignature='',detailMeta='';
  const active=()=>modeValue==='sessions';
  const endpoint=nodeId=>`/api/native-sessions/${encodeURIComponent(nodeId)}`;
  const key=item=>item?`${item.nodeId}/${item.runtime}/${item.entryId||item.id}`:'';
+ const historyReadStamps=new Map();let historyLoading=null;
+ const historyStamp=item=>JSON.stringify([nativeId(item),item.historyRevision||item.modifiedAt||null,item.hasHistory,item.previewAvailable,item.workspace]);
  const SELECTION_KEY='agent-workbench.native-session'; // per tab, like agent-workbench.project for the group chat
  // Which side the left column shows; a reload keeps it (per tab), a new tab starts on Sessions.
  const MODE_KEY='agent-workbench.navigation-mode';
@@ -526,13 +530,15 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   list.scrollTop=scroll;
  }
  /** Fetch at most two device catalogues at a time; one unavailable device must not hide the others. */
- async function load({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet){items=[];resetDetail();renderList();note.textContent=t('Loading native sessions…');}
+ async function load({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet)note.textContent=t('Loading native sessions…');
   // Both device filters and All include registered independent entries plus managed role history.
   const scopes=['created','group'].includes(device.value)?[device.value]:['all','group'];
   const jobs=workers().flatMap(w=>(tool.value==='all'?Object.keys(names):[tool.value]).filter(runtime=>device.value==='created'||w.runtimes?.some(r=>r.type===runtime&&r.available&&r.supported!==false)).flatMap(runtime=>scopes.map(scope=>({nodeId:w.id,runtime,scope})))),results=[],errors=[],failedJobs=new Set();let partial=false,index=0;
   // Publish complete catalogue snapshots as they arrive; a slow peer cannot block selecting already-read history.
   const owned=item=>['dialog','managed','takeover'].includes(item.origin);
-  const previous=quiet?items.filter(owned):[],ordered=values=>[...new Map(values.filter(owned).map(item=>[key(item),item])).values()].sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||''))||key(a).localeCompare(key(b)));
+  const matchesJob=(item,job)=>item.nodeId===job.nodeId&&item.runtime===job.runtime&&(job.scope==='group'?item.origin==='managed':job.scope==='created'?item.origin==='dialog':item.origin!=='managed');
+  const previous=items.filter(item=>owned(item)&&jobs.some(job=>matchesJob(item,job))),ordered=values=>[...new Map(values.filter(owned).map(item=>[key(item),item])).values()].sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||''))||key(a).localeCompare(key(b)));
+  items=ordered(previous);if(selected&&!jobs.some(job=>matchesJob(selected,job)))resetDetail();renderList();
   const updateLineage=()=>{if(!selected)return;const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(selected)));if(group){const chain=[group.latest,...group.history];timeline.setOlder(selected,chain.slice(chain.findIndex(row=>key(row)===key(selected))+1));}};
   // Like the group chat: reopen the session viewed last in this tab; only a settled list with nothing remembered falls
   // back to its top row. A selection already made is never replaced, and a partial catalogue never pre-empts the remembered one.
@@ -540,12 +546,21 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    let wanted=null;try{wanted=sessionStorage.getItem(SELECTION_KEY);}catch{}
    const next=(wanted&&items.find(item=>key(item)===wanted))||(settled?listOrder.ordered(groupNativeSessions(items),group=>group.id.startsWith('conversation:')?group.id:key(group.latest))[0]?.latest:null);
    if(next)void read(next);};
+  // 首次/切换筛选先显示 Home 保存的目录；不等待远端，也不把预览当成新鲜的历史核验。
+  if((!quiet||!previous.length)&&getData().capabilities?.nativeCatalogCache===1){
+   await Promise.all(jobs.map(async job=>{try{
+    const result=await api(`${endpoint(job.nodeId)}?${new URLSearchParams({runtime:job.runtime,scope:job.scope,cached:'1'})}`);
+    if(ticket!==version||!active()||result.cached!==true)return;
+    previous.push(...(result.items||[]).map(item=>({...item,nodeId:job.nodeId})));items=ordered(previous);updateLineage();renderList();
+   }catch{/* Worker refresh below reports authoritative errors; existing rows stay visible. */}}));
+   if(ticket!==version||!active())return;
+  }
   await Promise.all(Array.from({length:Math.min(2,jobs.length)},async()=>{while(index<jobs.length&&ticket===version&&active()){const job=jobs[index++];try{const result=await readNativeSessionPages((offset,revision)=>api(`${endpoint(job.nodeId)}?${new URLSearchParams({runtime:job.runtime,scope:job.scope,offset:String(offset),revision})}`),()=>ticket===version&&active());if(ticket!==version||!active())return;results.push(...result.items.map(item=>({...item,nodeId:job.nodeId})));partial||=result.partial;items=ordered([...previous,...results]);updateLineage();renderList();autoSelect();}catch(e){failedJobs.add(`${job.nodeId}/${job.runtime}/${job.scope}`);errors.push(`${workerName(job.nodeId)}: ${t(e.message)}`);}}}));
   if(ticket!==version||!active())return;loading=false;
-  if(quiet)results.push(...items.filter(item=>owned(item)&&failedJobs.has(`${item.nodeId}/${item.runtime}/${scopes.length>1?(item.origin==='managed'?'group':'all'):scopes[0]}`)&&!results.some(r=>key(r)===key(item))));
+  results.push(...items.filter(item=>owned(item)&&failedJobs.has(`${item.nodeId}/${item.runtime}/${scopes.length>1?(item.origin==='managed'?'group':'all'):scopes[0]}`)&&!results.some(r=>key(r)===key(item))));
   items=ordered(results);
   note.textContent=errors.length?[t('Some devices could not be read.'),...new Set(errors)].join(' '):t(partial?'Showing recent sessions. Updates automatically.':items.length?'':'No sessions in this filter. Create one using the top-right button.');
-  if(selected){const next=items.find(item=>key(item)===key(selected));if(next){selected={...selected,...next};if(quiet&&!dialog.open)void read(selected,{quiet:true});}else resetDetail();}renderList();autoSelect(true);
+  if(selected){const next=items.find(item=>key(item)===key(selected));if(next){const sameNative=nativeId(next)===nativeId(selected);selected={...selected,...next};renderTitle();if(!dialog.open&&!(historyLoading?.key===key(selected)&&historyLoading.sessionId===nativeId(next)&&historyLoading.ticket===detailVersion)&&(!quiet||historyReadStamps.get(key(selected))!==historyStamp(next)))void read(selected,{quiet:sameNative});}else resetDetail();}renderList();autoSelect(true);
   // A mutation/focus refresh arriving during a read must run after that older snapshot settles.
   if(pendingRefresh)void load({quiet:true});
  }
@@ -647,16 +662,16 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  /** Errors that mean the saved snapshot no longer fits the history file. */
  const staleCopy=error=>/changed|Invalid native history cursor/i.test(error?.message||'');
  async function read(item,{quiet=false}={}){if(item.conversationBinding){const group=groupNativeSessions(items).find(g=>g.id===`conversation:${item.conversationBinding.id}`);if(group)item=group.latest;}
-  const ticket=++detailVersion;selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
+  const ticket=++detailVersion;historyLoading={key:key(item),sessionId:nativeId(item),ticket};selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
   const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];
   const restart=()=>{timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));detailSignature=detailMeta='';};
   if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);}
-  const id=nativeId(item),readable=id&&item.hasHistory!==false,current=()=>ticket===detailVersion&&active()&&key(selected)===key(item);
+  const id=nativeId(item),readable=id&&item.hasHistory!==false,current=()=>ticket===detailVersion&&active()&&key(selected)===key(item)&&nativeId(selected)===id;
   /** Draw a page: a full one (opening, or a fallback) or rows appended since the last read (`delta`). */
   const present=(base,page,{quietly})=>{
    const delta=Boolean(page?.delta);
    const value=readable?{...base,...page,...(delta?{notice:undefined,sessionConfiguration:mergeConfiguration(base.sessionConfiguration,page.sessionConfiguration)}:{}),id:item.id,entryId:item.entryId,nodeId:item.nodeId,sessionId:id,title:item.title}:base;
-   selected=value;timeline.readSucceeded();
+   selected=value;historyReadStamps.delete(key(item));historyReadStamps.set(key(item),historyStamp(item));while(historyReadStamps.size>16)historyReadStamps.delete(historyReadStamps.keys().next().value);timeline.readSucceeded();
    // What the session looks like apart from its rows: a refresh with no new rows still redraws when this changed
    // (a rename, a new binding), and otherwise leaves everything as it is (only the snapshot moved on).
    const meta=JSON.stringify({...value,messages:undefined,historySnapshot:undefined,nextCursor:undefined,hasMore:undefined,partial:undefined,delta:undefined});
@@ -682,13 +697,13 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
      catch(error){
       // The history was rewritten since the copy: forget it and read the latest page as usual. Other errors (device offline)
       // leave the copy on screen with the error under it.
-      if(!staleCopy(error)){if(current())timeline.showError(error);return;}
+      if(!staleCopy(error)){if(current()){historyReadStamps.delete(key(item));timeline.showError(error);}return;}
       if(!current())return;
       forgetPage(key(item));page=null;timeline.showUpdating();
      }
      if(!current())return;
      if(page?.delta){present(selected,page,{quietly:true});rememberPage(item,page,{appended:true,baseSnapshot:saved.historySnapshot});return;}
-     if(!page){try{page=await readPage(item,null,null);}catch(error){if(current())timeline.showError(error);return;}if(!current())return;}
+     if(!page){try{page=await readPage(item,null,null);}catch(error){if(current()){historyReadStamps.delete(key(item));timeline.showError(error);}return;}if(!current())return;}
      restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));
      present(item,page,{quietly:false});rememberPage(item,page);return;
     }
@@ -699,7 +714,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    if(quiet&&page.deltaFallback){timeline.showNewer();return;}
    present(item,page,{quietly:quiet});
    if(page.delta)rememberPage(item,page,{appended:true,baseSnapshot});else rememberPage(item,page);
-  }catch(e){if(staleCopy(e))forgetPage(key(item));if(ticket===detailVersion){if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}
+  }catch(e){if(staleCopy(e))forgetPage(key(item));if(ticket===detailVersion){historyReadStamps.delete(key(item));if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}finally{if(historyLoading?.ticket===ticket)historyLoading=null;}
  }
  /** Full text of one prompt in the group chat's reading layer; nothing stays on the page when it is closed. */
  let promptDialog=null;
@@ -982,111 +997,6 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   card.append(ctx);
   const feedback=takeover.feedback(value);if(feedback)card.append(el('p','global-error',feedback));
  }
- /**
-  * Side question tab. A blank chat on open; each question runs read-only on a temporary copy of the session (Claude: its
-  * last 10 turns) and never reaches it. Nothing is kept: the brush in the panel header clears it, and so do switching sessions, a new
-  * prompt in the main session, an hour without use and two hours of age. Switching to another right-side tab keeps it.
-  */
- function createSideAsk(){
-  const root=el('div','native-side-ask');
-  // The clear button sits in the right panel's header, shown while this tab is selected.
-  const clear=iconButton('brush','Clear this side question',()=>void reset({tell:true}),'native-ask-clear');
-  const body=el('div','side-preview-body native-ask-body'),note=el('p','workspace-note native-ask-note');note.hidden=true;
-  const form=el('form','chat-composer native-takeover-form native-ask-form'),bar=el('div','chat-input-bar'),field=el('div','chat-input-field'),tray=el('div','chat-attachments native-takeover-tray');tray.hidden=true;
-  const attach=el('button','native-attach');attach.type='button';attach.title=t('Upload an image or file');attach.setAttribute('aria-label',t('Upload file'));attach.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8M7 13l7-7"/></svg>';
-  const model=el('select','native-ask-model');model.setAttribute('aria-label',t('Model for side questions'));
-  const input=el('textarea');input.rows=3;input.placeholder=t('Ask a quick question that does not interrupt the main session…');input.setAttribute('aria-label',t('Side question'));
-  const send=el('button','primary chat-send');send.type='submit';setActionIcon(send,'send',t('Send'));
-  const fileInput=el('input');fileInput.type='file';fileInput.multiple=true;fileInput.hidden=true;document.body.append(fileInput);
-  // Text on top, a tool row under it: attach and model on the left, send on the right.
-  const tools=el('div','native-ask-tools'),gap=el('span','native-ask-tools-gap');tools.append(attach,model,gap,send);
-  field.append(tray,input,tools);bar.append(field);form.append(bar);root.append(body,note,form);
-  let session=null,sideId=null,view=null,pending=false,poll=null,signature='',files=[],uploads=0,notice='',generation=0;
-  const sessionKey=value=>value?key(value):'';
-  const live=q=>['queued','starting','running','waiting_user','stopping'].includes(q?.status);
-  const NOTES={main_prompt:'The main session has a new prompt; side questions start over.',main_session_moved:'The main session has a new prompt; side questions start over.',idle:'Closed after an hour without use.',expired:'Closed two hours after it began.',replaced:'Closed because another side question started.',device_disconnected:'The device disconnected; the side question was closed.',restart:'The device restarted; the side question was closed.'};
-  function available(value){const worker=getData().workers?.find(w=>w.id===value?.nodeId);return Boolean(value&&['claude','codex'].includes(value.runtime)&&worker?.capabilities?.nativeSideAsk===1&&nativeId(value)&&value.workspace);}
-  function fillModels(){
-   const worker=getData().workers?.find(w=>w.id===session?.nodeId),runtime=worker?.runtimes?.find(r=>r.type===session?.runtime),main=takeover.settings().model||session?.sessionConfiguration?.model||'';
-   const keep=model.value;model.replaceChildren();const follow=el('option','',main||t('Follow the session'));follow.value='';model.append(follow);
-   for(const m of runtime?.models||[]){if(m.id===main)continue;const o=el('option','',m.name||m.id);o.value=m.id;model.append(o);}
-   model.value=[...model.options].some(o=>o.value===keep)?keep:'';
-  }
-  function setNote(text){note.hidden=!text;note.textContent=text?t(text):'';}
-  function render(){
-   if(!session)return;
-   const questions=view?.questions||[];const sig=JSON.stringify([sessionKey(session),questions.map(q=>[q.id,q.status,q.text.length,q.events.length,q.error,q.endedAt]),notice,pending,uploads,files.map(f=>f.id)]);
-   const busy=pending||questions.some(live);send.disabled=busy||uploads>0||(!input.value.trim()&&!files.length);attach.disabled=busy;clear.disabled=!sideId&&!questions.length&&!pending&&!uploads;
-   tray.replaceChildren();for(const f of files){const chip=el('div','attachment-card attachment-file-card');chip.title=f.name;const open=el('span','attachment-open');open.append(el('span','attachment-name',f.name),el('small','',formatBytes(f.size)));chip.append(open,closeIcon(button('',()=>{files=files.filter(x=>x.id!==f.id);render();},'attachment-remove'),t('Remove attachment')));tray.append(chip);}
-   if(uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
-   if(sig===signature)return;signature=sig;
-   body.replaceChildren();
-   if(notice)body.append(el('p','workspace-note native-ask-restarted',t(notice)));
-   if(!questions.length){const empty=el('div','side-preview-empty');const icon=el('span','side-preview-empty-icon');icon.innerHTML=UI_ICON.sideAsk;empty.append(icon,el('p','',t('Ask a quick question that does not interrupt the main session. The answer stays here only, and is gone once you clear it or the main session moves on.')));body.append(empty);return;}
-   for(const q of questions){
-    const files=q.attachments?.length?el('div','chat-attachments native-turn-files'):null;if(files)for(const a of q.attachments)files.append(el('span','attachment-name native-ask-file',a.name));
-    const user=chatRow('user',q.prompt,session.runtime,q.createdAt,files);
-    const content=el('div','nt-turn');content.append(turnContent(q,session,{live:live(q),open:live(q)}));
-    if(live(q))content.append(workingLine(q));
-    const reply=chatRow('assistant',replyText(q),session.runtime,q.endedAt||q.createdAt,null,live(q)?'running':q.status==='succeeded'?'completed':'error',session,{content});
-    if(q.endedAt)reply.querySelector('.nt-reply-foot')?.append(el('span','nt-duration',t('Took {duration}',{duration:elapsedText(q.createdAt,new Date(q.endedAt).getTime())})));
-    if(!live(q))footNote(reply,endNote(q));
-    body.append(user,reply);
-   }
-   const usage=[...questions].reverse().find(q=>q.contextUsage?.usedTokens)?.contextUsage?.usedTokens;
-   if(usage)body.append(el('p','workspace-note native-ask-usage',t('Context about {tokens} tokens',{tokens:usage>=1000?`${Math.round(usage/1000)}k`:usage})));
-   body.scrollTop=body.scrollHeight;
-  }
-  function stopPoll(){clearInterval(poll);poll=null;}
-  function startPoll(){if(poll)return;poll=setInterval(()=>void refresh(),1000);}
-  async function refresh(){
-   if(!session||!sideId)return stopPoll();const asked=sideId,owner=sessionKey(session),ticket=generation;
-   try{const next=await api(`${endpoint(session.nodeId)}/side/${encodeURIComponent(asked)}`);if(ticket!==generation||sideId!==asked||sessionKey(session)!==owner)return;
-    if(next.closed){sideId=null;view=null;notice=NOTES[next.reason]||'';stopPoll();render();return;}
-    view=next;notice=next.restarted?'The main session has a new prompt; side questions start over.':notice;if(!next.questions.some(live))stopPoll();render();}
-   catch(error){if(ticket===generation&&sideId===asked&&sessionKey(session)===owner)setNote(error.message);}
-  }
-  async function reset({tell=false,reason=''}={}){
-   stopPoll();generation++;const old=sideId,owner=session;sideId=null;view=null;files=[];pending=false;uploads=0;notice=reason?NOTES[reason]||'':'';signature='';setNote('');
-   if(tell&&old&&owner)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(old)}`,{method:'DELETE'}).catch(()=>{});
-   render();
-  }
-  async function ask(){
-   if(!session||pending)return;const prompt=input.value;if(!prompt.trim()&&!files.length)return;
-   // Every async result belongs to the original session and this opening of its side panel, even after A -> B -> A.
-   const owner=session,ticket=generation,current=()=>ticket===generation&&sessionKey(session)===sessionKey(owner);
-   pending=true;setNote('');render();
-   try{const next=await api(`${endpoint(owner.nodeId)}/side`,{method:'POST',json:{sideId,runtime:owner.runtime,sessionId:nativeId(owner),prompt,model:model.value||null,attachmentIds:files.map(f=>f.id)}});
-    if(!current()){if(next.id)void api(`${endpoint(owner.nodeId)}/side/${encodeURIComponent(next.id)}`,{method:'DELETE'}).catch(()=>{});return;}
-    if(next.id!==sideId&&sideId&&view?.questions?.length)notice='The main session has a new prompt; side questions start over.';
-    sideId=next.id;view=next;input.value='';files=[];startPoll();}
-   catch(error){if(current())setNote(error.message);}
-   finally{if(current()){pending=false;render();}}
-  }
-  async function upload(list){
-   if(!session)return;const list2=[...list],owner=session,ticket=generation,current=()=>ticket===generation&&sessionKey(session)===sessionKey(owner);
-   if(files.length+uploads+list2.length>6){setNote('At most 6 attachments per message');return;}
-   if(list2.some(f=>!f.size||f.size>20*1024*1024)){setNote('Attachments cannot be empty; each file is limited to 20 MB');return;}
-   uploads+=list2.length;render();
-   for(const file of list2){if(!current())break;
-    try{const item=await api(`${endpoint(owner.nodeId)}/attachments`,{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'pasted-image.png')}});
-     if(!current()){void api(`${endpoint(owner.nodeId)}/attachments/${encodeURIComponent(item.id)}`,{method:'DELETE'}).catch(()=>{});return;}
-     files.push({id:item.id,name:item.name,mime:item.mime,size:item.size});}
-    catch(error){if(current())setNote(error.message);}finally{if(current()){uploads--;render();}}}
-  }
-  form.addEventListener('submit',e=>{e.preventDefault();void ask();});
-  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=`${Math.min(150,Math.max(70,input.scrollHeight))}px`;render();});
-  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!send.disabled){e.preventDefault();void ask();}});
-  input.addEventListener('paste',e=>{const list=[...(e.clipboardData?.files||[])];if(list.length){e.preventDefault();void upload(list);}});
-  attach.addEventListener('click',()=>fileInput.click());fileInput.addEventListener('change',()=>{void upload(fileInput.files);fileInput.value='';});
-  return {root,clear,available,
-   /** A different session starts a blank side question (the old one is closed); the same session keeps it. */
-   attach(value){if(sessionKey(value)!==sessionKey(session)){const previous=session;void reset({tell:Boolean(previous)});session=value;}else session=value;fillModels();render();},
-   detach(){void reset({tell:true});session=null;},
-   /** The main session got a new prompt from this page: the side question starts over. */
-   mainPrompted(value){if(session&&sessionKey(value)===sessionKey(session)&&(sideId||view?.questions?.length||pending))void reset({reason:'main_prompt'});}
-  };
- }
  const takeover=createTakeover();
  const agentSwitchUI=createNativeAgentSwitchUI({api,t,getState:()=>({busy:!selected||takeover.switchBusy(selected)}),
   onChange:()=>{if(selected){const panel=sidePanels.overview.querySelector('[data-native-controls]');if(panel)delete panel.dataset.signature;takeover.render();renderSessionControls(selected);}},
@@ -1098,7 +1008,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
    for(const s of segments)if(!items.some(i=>i.nodeId===conversation.nodeId&&i.runtime===s.runtime&&i.sessionId===s.sessionId))items.push({id:s.entryId||s.sessionId,...s,nodeId:conversation.nodeId,title:conversation.title,workspace:conversation.workspace,origin:'dialog',hasHistory:true,canResume:s.id===current.id,conversationBinding:conversation});
    const group=groupNativeSessions(items).find(g=>g.id===`conversation:${conversation.id}`);takeover.bindConversation(group.latest);listSignature='';renderList();if(viewing)await read(group.latest);
   }});
- const sideAsk=createSideAsk();sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);sideAsk.clear.hidden=sideTab!=='ask';sideHeader.append(sideAsk.clear);
+ const sideAsk=createSideAsk({api,getData,getModel:()=>takeover.settings().model});sidePanels.ask.classList.add('is-preview','is-ask');sidePanels.ask.append(sideAsk.root);sideAsk.clear.hidden=sideTab!=='ask';sideHeader.append(sideAsk.clear);
  const folderOpen=iconButton('folder','Working folder',()=>openFolder(),'native-folder-open');folderOpen.hidden=sideTab!=='outputs';sideHeader.append(folderOpen);
  // Sessions opened on this page with "Allow all": once the headless first turn has produced history, chat here without a separate takeover confirmation.
  const pageOpened=new Set();
@@ -1432,7 +1342,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(orderable&&!turn.steer){row.dataset.orderId=turn.id;const grip=el('span','message-queue-grip');grip.innerHTML=GRIP;grip.title=t('Drag to reorder');row.append(grip);}
     const text=turn.prompt||(turn.attachments||[]).map(a=>a.name).join(', '),title=el('strong','',`${i+1}. ${text}`);title.title=text;title.translate=false;info.append(title);
     if(turn.createdAt){const when=el('time','message-queue-time',clock(turn.createdAt));when.dateTime=turn.createdAt;when.title=time(turn.createdAt);when.translate=false;info.append(when);}row.append(info);
-    const busy=queuePending.has(turn.id)||turn.steer,steer=el('button',`icon-button message-queue-steer${busy?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(turn.steer?'Interrupting and starting this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
+    const busy=queuePending.has(turn.id),steer=el('button',`icon-button message-queue-steer${busy||turn.steer?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(busy?'Interrupting and starting this message':turn.steer?'Refresh session state and retry this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
     steer.onclick=async()=>{queuePending.add(turn.id);queueSignature='';renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
     row.append(steer);
     if(queueState){const edit=iconButton('edit','Edit: back to the input box',()=>void editQueued(turn),'message-queue-edit');edit.disabled=busy||Boolean(operation().editing);row.append(edit);}

@@ -9,7 +9,7 @@ import { projectRepositories,assertProjectReady } from './project-space.mjs';
 import { projectTerminalLock, terminalOwnsProject } from './terminal-resume.mjs';
 import { RoleSessions,taskConversationId } from './role-sessions.mjs';
 import {ConversationTasks} from './conversation-tasks.mjs';
-import { buildRunContext } from './run-context.mjs';
+import { buildRunContext,turnOrigin } from './run-context.mjs';
 import { steeringWaitReason } from './role-steering.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import { tr } from './i18n.mjs';
@@ -29,6 +29,7 @@ const pendingSourceCommand = "COALESCE(json_extract(data,'$.result'),0) IN (0,''
 const activeRun = "COALESCE(json_extract(data,'$.status'),'') NOT IN ('succeeded','failed','interrupted')";
 // A batch that still needs work; terminal statuses match SourceSync's done set and the transport's watch gate.
 const openSourceBatch = "COALESCE(json_extract(data,'$.status'),'') NOT IN ('completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready')";
+const pendingMetadataCleanup = "json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status') IN ('cleaning','blocked','cancelled','completed','partial_conflict','evidence_ready') AND json_extract(data,'$.metadataCleanedAt') IS NULL";
 const chatTask = "json_extract(data,'$.origin')='chat' AND json_extract(data,'$.status') IN ('ready','in_progress')";
 const schedulableRequest = "json_extract(data,'$.status') IN ('queued','waiting_call','waiting_delivery')";
 const pendingCallResult = "json_extract(data,'$.status') IN ('running','queued')";
@@ -44,6 +45,24 @@ export class Store {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,seq INTEGER NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS records_metadata_blobs ON records(json_extract(data,'$.projectId'),json_extract(data,'$.namespace')) WHERE kind='sourceSyncBlobs';
+      CREATE INDEX IF NOT EXISTS records_metadata_cleanup ON records(id) WHERE kind='sourceSyncBatches' AND ${pendingMetadataCleanup};
+      CREATE INDEX IF NOT EXISTS records_metadata_journal_batch ON records(json_extract(data,'$.batchId')) WHERE kind='sourceSyncJournals';
+      CREATE INDEX IF NOT EXISTS records_metadata_worker_batch ON records(json_extract(data,'$.command.batchId')) WHERE kind='sourceSyncCommands';
+      CREATE INDEX IF NOT EXISTS records_sync_journal_command ON records(json_extract(data,'$.commandId')) WHERE kind='sourceSyncJournals';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_state_finish ON records(json_extract(data,'$.finishedAt'),id) WHERE kind='sourceSyncAuditStates' AND json_extract(data,'$.status') IN ('succeeded','failed');
+      CREATE INDEX IF NOT EXISTS records_sync_audit_head_state ON records(json_extract(data,'$.stateId')) WHERE kind='sourceSyncAuditHeads';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_expiry ON records(json_extract(data,'$.expiresAt'),id) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_project ON records(json_extract(data,'$.projectId'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_path ON records(json_extract(data,'$.projectId'),json_extract(data,'$.relativePath'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_source ON records(json_extract(data,'$.projectId'),json_extract(data,'$.sourceDevice'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_target ON records(json_extract(data,'$.projectId'),json_extract(data,'$.targetDevice'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_status ON records(json_extract(data,'$.projectId'),json_extract(data,'$.status'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_sync_audit_operation ON records(json_extract(data,'$.projectId'),json_extract(data,'$.operationId'),json_extract(data,'$.recordedAt') DESC,id DESC) WHERE kind='sourceSyncAudit';
+      CREATE INDEX IF NOT EXISTS records_metadata_init_project ON records(json_extract(data,'$.projectId'),json_extract(data,'$.createdAt') DESC,id DESC) WHERE kind='sourceSyncInitializations';
+      CREATE INDEX IF NOT EXISTS records_metadata_init ON records(id) WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.status')='running';
+      CREATE INDEX IF NOT EXISTS records_metadata_conflict_gc ON records(id) WHERE kind='sourceSyncConflicts' AND json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status')='resolved' AND json_extract(data,'$.copiesReleasedAt') IS NULL;
+      CREATE INDEX IF NOT EXISTS records_metadata_scope ON records(json_extract(data,'$.projectId'),json_extract(data,'$.repositoryId'),json_extract(data,'$.generation'),json_extract(data,'$.path')) WHERE kind='sourceSyncMetadataBaselines';
       CREATE INDEX IF NOT EXISTS events_run ON events(run_id,seq);
       CREATE TABLE IF NOT EXISTS room_message_receipts(seq INTEGER PRIMARY KEY AUTOINCREMENT,message_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,received_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS room_receipts_project ON room_message_receipts(project_id,seq);
@@ -148,6 +167,9 @@ export class Store {
   latestConversationMessageId(projectId,conversationId) {
     return this.db.prepare("SELECT id FROM records WHERE kind='roomMessages' AND json_extract(data,'$.projectId')=? AND CASE WHEN COALESCE(json_extract(data,'$.conversationId'),0) IN (0,'') THEN json_extract(data,'$.projectId') ELSE json_extract(data,'$.conversationId') END=? AND COALESCE(json_extract(data,'$.kind'),'')!='summary' ORDER BY rowid DESC LIMIT 1").get(projectId,conversationId)?.id||null;
   }
+  metadataBaselines(projectId,repositoryId,generation) {
+    return this.db.prepare("SELECT data FROM records WHERE kind='sourceSyncMetadataBaselines' AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.repositoryId')=?"+(generation===undefined?"":" AND json_extract(data,'$.generation')=?")).all(projectId,repositoryId,...(generation===undefined?[]:[generation])).map(r=>JSON.parse(r.data));
+  }
   /** Project-local sync metadata must not scan or serialize other projects' full manifests. */
   listProject(kind,projectId) {return this.db.prepare("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.projectId')=? ORDER BY rowid").all(kind,projectId).map(r=>JSON.parse(r.data));}
   /** Scope checks need only identity and paths, not full historical outputs on every sync resend. */
@@ -172,6 +194,10 @@ export class Store {
     if(projectId!==undefined){conditions.push("json_extract(data,'$.projectId')=?");params.push(projectId);}
     if(status!==undefined){conditions.push("json_extract(data,'$.status')=?");params.push(status);}
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_source_batch_open WHERE ${conditions.join(' AND ')} ORDER BY rowid`).all(...params).map(r=>JSON.parse(r.data));
+  }
+  /** Bounded, rotating retirement scan; completed history drops out of this partial index. */
+  metadataCleanupBatches(after='',limit=32) {
+    return this.db.prepare(`SELECT data FROM records INDEXED BY records_metadata_cleanup WHERE kind='sourceSyncBatches' AND ${pendingMetadataCleanup} AND id>? ORDER BY id LIMIT ?`).all(after,limit).map(r=>JSON.parse(r.data));
   }
   /** Page small transport records first; never parse historical receipt bodies just to select work. */
   sourceReceiptTransports({ready=true,at=Date.now(),limit=16,exclude=[]}={}) {
@@ -239,7 +265,7 @@ export class Store {
       if(this.list('roleSwitches').some(op=>op.projectId===id&&(!switchSettled(op)||!op.steps.released)))throw new Error('Project still has an unsettled CLI switch.');
       if(this.listProject('sourceSyncCommands',id).some(c=>!c.result))throw syncError('sync_busy');
       for(const c of this.listProject('sourceSyncCommands',id))this.put('sourceSyncTombstones',{id:c.id,nodeId:c.nodeId,projectId:id,generation:c.generation,deletedAt:now()});
-      for(const kind of ['sourceSyncConfigs','sourceSyncManifests','sourceSyncVersions','sourceSyncDevices','sourceSyncBatches','sourceSyncConflicts','sourceSyncConflictHistory','sourceSyncCandidates','sourceSyncProvenance','sourceSyncCommands','sourceSyncReceipts','sourceSyncUploads','sourceSyncUploadReceipts','sourceSyncWatchStates','sourceSyncWatchNotices'])for(const r of this.listProject(kind,id))this.remove(kind,r.id);
+      for(const kind of ['sourceSyncAudit','sourceSyncAuditStates','sourceSyncAuditHeads','sourceSyncInitializations','sourceSyncInitializationResumes','sourceSyncMetadataScopes','sourceSyncMetadataBaselines','sourceSyncConfigs','sourceSyncManifests','sourceSyncVersions','sourceSyncDevices','sourceSyncBatches','sourceSyncConflicts','sourceSyncConflictHistory','sourceSyncCandidates','sourceSyncProvenance','sourceSyncCommands','sourceSyncReceipts','sourceSyncUploads','sourceSyncUploadReceipts','sourceSyncWatchStates','sourceSyncWatchNotices'])for(const r of this.listProject(kind,id))this.remove(kind,r.id);
       if(this.list('discussionThreads').some(t=>t.projectId===id&&t.status==='open')
         ||this.list('discussionDeliveries').some(d=>d.projectId===id&&['queued','dispatched','runtime_accepted','reconciling'].includes(d.status))
         ||this.list('discussionIntents').some(i=>i.projectId===id&&i.status==='queued'))throw new Error(tr('store.projectStillHasUnfinishedDiscussions'));
@@ -335,7 +361,11 @@ export class Store {
       // Freeze the role's saved scope for this execution; switch maintenance keeps its own read-only boundary.
       const permissionScope = task.origin==='chat'&&!isSwitchMaintenance(task) ? (this.get('roles', task.roleSnapshot?.id||task.roleId)?.permissionScope ?? task.roleSnapshot?.permissionScope) : undefined;
       if (permissionScope !== undefined) { const issue = permissionScopeIssue(this.get('workers', nodeId), task.roleSnapshot?.runtime || 'codex', permissionScope); if (issue) throw new Error(tr(`rolePermissions.${issue}`, { scope: permissionScope })); }
-      const repositories = projectRepositories(this, task.projectId, nodeId).filter(r=>!task.execution?.repositoryKeys||task.execution.repositoryKeys.includes(r.key));
+      const delivery = task.deliveryId ? this.get('deliveries', task.deliveryId) : null;
+      const reviewItems = delivery?.purpose === 'review' ? delivery.items : null;
+      if (reviewItems && (delivery.projectId !== task.projectId || delivery.status !== 'ready' || !reviewItems.length)) throw new Error(tr('projectDelivery.projectRepositorySetHasChanged'));
+      const repositories = projectRepositories(this, task.projectId, nodeId).filter(r=>(!task.execution?.repositoryKeys||task.execution.repositoryKeys.includes(r.key)) && (!reviewItems || reviewItems.some(item=>item.id===r.id && item.repoUrl===r.repoUrl)));
+      if (reviewItems && repositories.length !== reviewItems.length) throw new Error(tr('projectDelivery.projectRepositorySetHasChanged'));
       if (!task.roleSnapshot?.systemSupervisor && repositories.some(repo => !repo.localRoot)) throw new Error(tr('store.projectRepositoriesOnDeviceNot'));
       const sourceWait=sourceInputWaitReason(this,task,nodeId);if(sourceWait)throw syncError(sourceWait);
       if (!reservePropagation(this, task)) return null;
@@ -351,7 +381,7 @@ export class Store {
         ...(storedTask.executionBinding?{originalRoleSnapshot:storedTask.roleSnapshot,executionBinding:storedTask.executionBinding,inputTask:task}:{}),
         sourceInputs:structuredClone(task.sourceInputs||[]),sourceSyncBatchId:task.sourceSyncBatchId||null,
         ...sourceConflictContext(task),
-        sourceSyncTracking:Boolean(this.get('sourceSyncConfigs',task.projectId)?.enabled&&this.get('sourceSyncConfigs',task.projectId)?.nodeIds?.includes(nodeId)),
+        sourceSyncTracking:Boolean(this.get('sourceSyncConfigs',task.projectId)?.detection!=='metadata'&&this.get('sourceSyncConfigs',task.projectId)?.enabled&&this.get('sourceSyncConfigs',task.projectId)?.nodeIds?.includes(nodeId)),
         // The discussion protocol preview was retired; even an older preview Worker gets ordinary turns.
         discussionProtocol:0,peerStatus:this.get('workers',nodeId)?.capabilities?.peerStatus===1?1:0,permissionProfile:'business',
         roleSessionId:roleSession?.id||null,resumeNativeSessionId:roleSession?.nativeSessionId||null,resumeNativeSession:roleSession?.nativeSession||null,resumeWorkspace:roleSession?.workspace||null,
@@ -384,6 +414,7 @@ export class Store {
           conversation:context,organizer:this.get('summaryQueues',`${task.projectId}:${task.conversationId||task.projectId}`),
           messages,deliveries:task.deliveryId?[this.get('deliveries',task.deliveryId)].filter(Boolean):[],
           references:[...(quote?[quote]:[]),...(source&&source.text!==task.prompt&&source.id!==quote?.id?[source]:[])]});
+        run.contextPacket.origin=turnOrigin(this,task,request);
         run.contextVersion=run.contextPacket.context.version;
         run.promptRevision=task.roleSnapshot?.revision||null;
       }

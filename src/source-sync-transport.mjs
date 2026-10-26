@@ -1,3 +1,8 @@
+import {initializationPage} from './source-sync-audit.mjs';
+import {SourceSyncInitialization} from './source-sync-initialization.mjs';
+import {Readable} from 'node:stream';
+import {validateMetadataCapture,contentEqual} from './source-sync-metadata.mjs';
+import {metadataBlobRoot,confirmMetadataRead} from './source-sync-metadata-files.mjs';
 import {timingSafeEqual} from 'node:crypto';
 import {join} from 'node:path';
 import {SourceSync} from './source-sync.mjs';
@@ -31,17 +36,26 @@ function receiptEnvelope(commandId,result){
 
 /** The existing Home listener transports content; scoped transfer credentials never enter model input. */
 export class SourceSyncHome {
-  constructor({db,data,online,socket,change,rooms,query}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change});this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;
+  constructor({db,data,online,socket,change,rooms,query,now=Date.now}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change,now});this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;this.baselines=new SourceSyncInitialization(this);
     this.conflicts=new SourceSyncConflicts({db,rooms,sync:this.sync,reachability:role=>online(role.nodeId)&&db.get('workers',role.nodeId)?.capabilities?.sourceSyncTools===1&&!runtimeIssue(db.get('workers',role.nodeId),role.runtime,role.model)});
     this.agent=new SourceSyncAgent({db,sync:this.sync,conflicts:this.conflicts,storage:this.storage,query});
   }
   busy(projectId,nodeId){return this.db.listSourceSyncCommands({projectId,nodeId,action:'apply',pending:true}).length>0;}
   async tick(){if(this.ticking)return;this.ticking=true;try{
+    this.sync.audit.cleanup();
+    await this.cleanupMetadataBatches();
+    this.baselines.tick();
+    await this.cleanupMetadataConflicts();
     this.watchTick();
     this.conflicts.tick();
     for(const c of this.sync.schedule()){
       const socket=this.socket(c.nodeId);if(!socket?.workerReady||socket.readyState!==1)continue;
       if(c.lastSentAt&&Date.now()-Date.parse(c.lastSentAt)<5000)continue;
+      // Cleanup uses frozen batch credentials and private paths, even after reconfiguration/cancellation.
+      if(c.detection==='metadata'&&c.action==='cleanup'){
+        this.db.put('sourceSyncCommands',{...c,lastSentAt:new Date().toISOString()});
+        socket.send(JSON.stringify({type:'source_sync_command',commandId:c.id,batchId:c.batchId,projectId:c.projectId,secret:c.secret}));continue;
+      }
       const binding=sourceScopeBinding(this.db,c.projectId,c.repositoryId,c.nodeId);
       if(c.scopeKind==='directory'){
         const batch=this.db.get('sourceSyncBatches',c.batchId);
@@ -58,12 +72,41 @@ export class SourceSyncHome {
       socket.send(JSON.stringify({type:'source_sync_command',commandId:c.id,batchId:c.batchId,projectId:c.projectId,folderAccess:folderAccessFor(this.db,c.nodeId,`project:${c.projectId}`),secret:c.secret}));
     }
   }finally{this.ticking=false;}}
+  async cleanupMetadataConflicts(){
+    const rows=this.db.db.prepare("SELECT data FROM records INDEXED BY records_metadata_conflict_gc WHERE kind='sourceSyncConflicts' AND json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status')='resolved' AND json_extract(data,'$.copiesReleasedAt') IS NULL AND id>? ORDER BY id LIMIT 16").all(this.conflictCleanupCursor||'').map(r=>JSON.parse(r.data));
+    this.conflictCleanupCursor=rows.at(-1)?.id||'';
+    for(const c of rows){
+      // Inspect at most one page per tick; retained references are expensive to scan, so retry hourly.
+      if(Date.parse(c.copiesNextCheckAt)>Date.now()||!c.resolutionBatchId||!this.db.get('sourceSyncBatches',c.resolutionBatchId)?.metadataCleanedAt)continue;
+      const checked=Date.now();this.db.put('sourceSyncConflicts',{...c,copiesCheckedAt:new Date(checked).toISOString(),copiesNextCheckAt:new Date(checked+3600000).toISOString()});
+      this.storage.releaseConflictCopies(c);
+    }
+  }
+  async cleanupMetadataBatches(){
+    const batches=this.db.metadataCleanupBatches(this.metadataCleanupCursor||'');
+    this.metadataCleanupCursor=batches.at(-1)?.id||'';
+    for(const b of batches){
+      const commands=this.db.listSourceSyncCommands({projectId:b.projectId,batchId:b.id});
+      // Home cannot inspect Worker journals. Wait for definite command results AND every Worker's guarded cleanup ACK.
+      if(commands.some(c=>c.action!=='cleanup'&&(!c.result||c.status==='reconciling')))continue;
+      const cleanups=b.bindings.map(binding=>{
+        const extra={journalCommands:commands.filter(c=>c.action==='apply'&&c.nodeId===binding.nodeId&&c.repositoryId===binding.repositoryId).map(c=>c.id)};
+        const previous=this.sync.command(b,binding,'cleanup',extra);
+        // Pre-upgrade cleanup may already have a terminal failure. Preserve its receipt and use one stable retirement ID.
+        return previous.result&&previous.result.status!=='completed'?this.sync.command(b,binding,'cleanup',{...extra,retirementOf:previous.id}):previous;
+      });
+      if(cleanups.some(c=>c.result?.status!=='completed'))continue;
+      try{await this.storage.scoped(b.id).cleanup(b.projectId);}catch(e){if(e.code==='sync_busy')continue;throw e;}
+      const current=this.db.get('sourceSyncBatches',b.id),cleanedAt=new Date().toISOString();
+      this.db.put('sourceSyncBatches',{...current,metadataCleanedAt:cleanedAt,...(current.status==='cleaning'?{status:current.conflictIds.length||current.pendingMetadata?.length?'partial_conflict':'completed',updatedAt:cleanedAt}:{})});this.sync.audit.observe(this.db.get('sourceSyncBatches',b.id));
+    }
+  }
   /** Persist each observation once and coalesce later saves; file notifications never invoke a model. */
   watchTick(){
     const configs=this.db.list('sourceSyncConfigs').filter(c=>c.enabled&&c.scopeKind==='directory'&&c.mode==='continuous');
     for(const worker of this.db.list('workers').filter(w=>w.capabilities?.sourceSyncDirectory===1)){
       const socket=this.socket(worker.id);if(!socket?.workerReady||socket.readyState!==1)continue;
-      const supported=configs.filter(c=>c.contentMode!=='source-and-outputs'||worker.capabilities.sourceSyncOutputs===1);
+      const supported=configs.filter(c=>(c.contentMode!=='source-and-outputs'||worker.capabilities.sourceSyncOutputs===1)&&(c.detection!=='metadata'||worker.capabilities.sourceSyncMetadataMode===1));
       for(const c of configs.filter(c=>!supported.includes(c)))for(const b of c.bindings.filter(b=>b.nodeId===worker.id)){
         const id=`${worker.id}:${c.projectId}:${b.repositoryId}`,old=this.db.get('sourceSyncWatchStates',id);
         if(old?.error!=='worker_unsupported'||old.generation!==c.generation)this.db.put('sourceSyncWatchStates',{id,projectId:c.projectId,repositoryId:b.repositoryId,nodeId:worker.id,generation:c.generation,status:'blocked',error:'worker_unsupported'});
@@ -113,15 +156,15 @@ export class SourceSyncHome {
     const previousAck=ackKey&&(this.db.get('sourceSyncReceiptAcks',ackKey)||this.db.get('sourceSyncRetiredReceipts',ackKey));
     if(message.type==='source_sync_receipt'&&previousAck?.nodeId===nodeId){this.socket(nodeId)?.send(JSON.stringify(previousAck.ack));return;}
     const c=this.db.get('sourceSyncCommands',message.commandId);if(!c||c.nodeId!==nodeId)throw syncError('receipt_owner_mismatch');
-    const uploaded=c.action==='apply'?this.db.get('sourceSyncUploadReceipts',c.id):null;
+    const uploaded=c.action!=='capture'?this.db.get('sourceSyncUploadReceipts',c.id):null;
     if(message.type==='source_sync_command_ack'){
       this.db.put('sourceSyncCommands',{...c,ackedAt:new Date().toISOString()});
-      if(!uploaded)return;
+      if(!uploaded||['read','stage'].includes(c.action))return;
     }else if(message.type!=='source_sync_receipt')return;
     if(message.result?.receiptId&&message.result.receiptId!==c.id)throw syncError('receipt_owner_mismatch');
     // A timed-out upload response cannot invalidate saved evidence. The ordinary receipt validator still decides completion.
-    let result=uploaded?.result||message.result;
-    if(uploaded&&uploaded.fingerprint!==contentHash(JSON.stringify(result)))throw syncError('receipt_changed');
+    let result=['read','stage'].includes(c.action)&&!message.result?.receiptId?message.result:uploaded?.result||message.result;
+    if(uploaded&&result===uploaded.result&&uploaded.fingerprint!==contentHash(JSON.stringify(result)))throw syncError('receipt_changed');
     // Legacy Workers encoded cancelled captures as apply references despite having no upload.
     if(result?.receiptId&&c.action==='capture'&&result.status==='cancelled')result={status:'cancelled',files:[]};
     if(result?.receiptId)throw syncError('receipt_missing');
@@ -138,7 +181,7 @@ export class SourceSyncHome {
     const receiptHash=contentHash(JSON.stringify(result));
     if(message.receiptHash&&message.receiptHash!==receiptHash)throw syncError('receipt_changed');
     const batch=this.db.get('sourceSyncBatches',c.batchId);
-    if(c.result&&contentHash(JSON.stringify(c.result))!==receiptHash||batch?.status==='cancelled'){
+    if(c.result&&contentHash(JSON.stringify(c.result))!==receiptHash||batch?.status==='cancelled'&&!(c.detection==='metadata'&&c.action==='cleanup')){
       // Receipt delivery is complete, not the operation. Keep both outcomes and the original terminal status.
       const id=`${c.id}:${receiptHash}`,ack={type:'source_sync_receipt_ack',commandId:c.id,receiptHash,disposition:'recorded_terminal'};
       this.db.transaction(()=>{
@@ -146,6 +189,18 @@ export class SourceSyncHome {
         this.db.put('sourceSyncReceiptAcks',{id,projectId:c.projectId,nodeId,ack});
       });
       this.socket(nodeId)?.send(JSON.stringify(ack));return;
+    }
+    if(c.detection==='metadata'&&['read','stage'].includes(c.action)&&result.status==='completed'&&!c.result&&!retiring(batch)){
+      const storage=this.storage.scoped(c.batchId);
+      for(const f of result.files)if(f.entry&&!(c.action==='read'&&c.paths.find(p=>p.path===f.path)?.compare)&&!await storage.has(c.projectId,f.entry))throw syncError('blob_missing');
+      const stages=this.db.listSourceSyncCommands({batchId:c.batchId,action:'stage'}).map(x=>x.id===c.id?{...x,result}:x);
+      const reads=this.db.listSourceSyncCommands({batchId:c.batchId,action:'read'});
+      if(c.action==='stage'&&stages.every(x=>x.result?.status==='completed'))for(const op of batch.metadataOperations||[]){
+        if(op.source)continue;
+        const sides=batch.nodeIds.map(n=>reads.find(r=>r.repositoryId===op.repositoryId&&r.nodeId===n)?.result.files.find(f=>f.path===op.path)?.entry||null);
+        if(!['resolution','initialize_overwrite'].includes(op.decision)&&contentEqual(sides[0],sides[1]))continue;
+        for(const entry of sides.filter(Boolean))await this.storage.receive(c.projectId,entry,Readable.from(await storage.read(c.projectId,entry.hash)));
+      }
     }
     this.sync.acceptReceipt(nodeId,{commandId:c.id,result});
     const saved=this.db.get('sourceSyncCommands',c.id)?.result;
@@ -160,29 +215,32 @@ export class SourceSyncHome {
     if(!c||!matches(req.headers.authorization||'',`Bearer ${c.secret}`)){json(res,{error:'Unauthorized'},401);return true;}
     const batch=this.db.get('sourceSyncBatches',c.batchId);
     const evidenceRequest=req.method==='PUT'&&['capture','receipt'].includes(m[2])||req.method==='GET'&&m[2]==='receipt';
-    if(!this.db.get('projects',c.projectId)||!batch||batch.status==='cancelled'&&!evidenceRequest)throw syncError('batch_inactive');
+    if(!this.db.get('projects',c.projectId)||!batch||batch.status==='cancelled'&&!evidenceRequest&&!(c.detection==='metadata'&&c.action==='cleanup'))throw syncError('batch_inactive');
     if(m[2]==='receipt'&&req.method==='GET'){
       // A small proof avoids retransmitting historical manifests over a slow or recovering connection.
-      const uploaded=c.action==='apply'?this.db.get('sourceSyncUploadReceipts',c.id)?.result:null;
+      const uploaded=c.action!=='capture'?this.db.get('sourceSyncUploadReceipts',c.id)?.result:null;
       const bundle=c.action==='capture'&&(c.result||batch.status==='cancelled')?this.db.get('sourceSyncUploads',c.id)?.bundle:null;
-      const result=uploaded||(bundle?{status:'completed',...bundle}:null);
+      const result=(['read','stage'].includes(c.action)&&!c.result?null:uploaded)||(bundle?{status:'completed',...bundle}:null);
       json(res,{receiptHash:result?contentHash(JSON.stringify(result)):null});return true;
     }
+    if(m[2]==='plan'&&req.method==='GET'&&c.detection==='metadata'&&c.action!=='cleanup'&&batch.metadataCleanedAt)throw syncError('batch_inactive');
     if(m[2]==='plan'&&req.method==='GET'){const {result,lastResult,secret,status,lastSentAt,ackedAt,receivedAt,...plan}=c;json(res,plan);return true;}
-    if(m[2]==='receipt'&&req.method==='PUT'&&c.action==='apply'){
+    if(m[2]==='receipt'&&req.method==='PUT'&&c.action!=='capture'){
       const result=await body(req);if(!Array.isArray(result.files)||result.files.length>10000)throw syncError('invalid_receipt');
       const fingerprint=contentHash(JSON.stringify(result)),old=this.db.get('sourceSyncUploadReceipts',c.id);
       if(old&&old.fingerprint!==fingerprint)throw syncError('receipt_changed');
-      this.db.put('sourceSyncUploadReceipts',{id:c.id,projectId:c.projectId,result,fingerprint});json(res,{stored:true});return true;
+      this.sync.validateReceipt(c,result);
+      this.db.put('sourceSyncUploadReceipts',{id:c.id,projectId:c.projectId,result,fingerprint});
+      const missing=[];if(['read','stage'].includes(c.action)&&!c.result&&!retiring(batch))for(const f of result.files)if(f.entry&&!(c.action==='read'&&c.paths.find(p=>p.path===f.path)?.compare)&&!await this.storage.scoped(c.batchId).has(c.projectId,f.entry))missing.push(f.entry);json(res,{stored:true,missing});return true;
     }
     if(m[2]==='capture'&&req.method==='PUT'&&c.action==='capture'){
       const bundle=await body(req);
       // Reject old captures before accepting any content uploads, not after their bytes have been staged.
-      for(const s of [bundle.base,bundle.manifest])validateSourceCapture(s,c);
+      for(const s of [bundle.base,bundle.manifest])(c.detection==='metadata'?validateMetadataCapture:validateSourceCapture)(s,c);
       if(c.scopeKind!=='directory'&&(bundle.base.baseCommit!==bundle.manifest.baseCommit||c.baseCommit&&c.baseCommit!==bundle.base.baseCommit))throw syncError('git_baseline_mismatch');
       const fingerprint=contentHash(JSON.stringify(bundle)),old=this.db.get('sourceSyncUploads',c.id);
       if(old&&old.fingerprint!==fingerprint)throw syncError('capture_changed');
-      if(batch.contentMode==='source-and-outputs'&&!c.result&&batch.status!=='cancelled'){
+      if(batch.detection!=='metadata'&&batch.contentMode==='source-and-outputs'&&!c.result&&batch.status!=='cancelled'){
         const offered=new Set();let bytes=0;
         for(const capture of this.db.listSourceSyncCommands({projectId:c.projectId,batchId:c.batchId,action:'capture'})){
           const snapshot=capture.id===c.id?bundle.manifest:this.db.get('sourceSyncUploads',capture.id)?.bundle.manifest;
@@ -201,10 +259,13 @@ export class SourceSyncHome {
     }
     if(m[2]==='blobs'&&m[3]){
       const bundle=this.db.get('sourceSyncUploads',c.id)?.bundle;
-      const allowed=c.action==='capture'&&bundle?entries(bundle):(c.changes||[]).map(x=>x.after).filter(Boolean);
+      const allowed=['read','stage'].includes(c.action)?(this.db.get('sourceSyncUploadReceipts',c.id)?.result.files||[]).map(f=>f.entry).filter(Boolean):c.action==='capture'&&bundle?entries(bundle):(c.changes||[]).map(x=>x.after).filter(Boolean);
+      const storage=c.detection==='metadata'?this.storage.scoped(c.batchId):this.storage;
       const entry=allowed.find(e=>e.hash===m[3]);if(!entry)throw syncError('blob_not_in_command');
-      if(req.method==='PUT'&&c.action==='capture'){if(bundle.manifest.metadataOnly)throw syncError('preview_metadata_only');json(res,await this.storage.receive(c.projectId,entry,req));return true;}
-      if(req.method==='GET'&&c.action==='apply'){const bytes=await this.storage.read(c.projectId,entry.hash);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':bytes.length,'Cache-Control':'no-store'});res.end(bytes);return true;}
+      const payloadPath=c.action==='apply'?c.changes?.find(x=>x.after?.hash===entry.hash)?.path:this.db.get('sourceSyncUploadReceipts',c.id)?.result.files?.find(x=>x.entry?.hash===entry.hash)?.path;
+      if(req.method==='PUT'&&c.detection==='metadata'&&payloadPath){let bytes=0,counted=false;req.on('data',chunk=>bytes+=chunk.length);req.pause();const count=()=>{if(!counted){counted=true;this.sync.audit.transferred(c,payloadPath,bytes);}};req.once('end',count);req.once('close',count);}
+      if(req.method==='PUT'&&['capture','read','stage'].includes(c.action)){if(c.detection==='metadata'&&(c.result||retiring(batch)||['cleaning','completed','partial_conflict'].includes(batch.status))){req.resume();json(res,{stored:false,terminal:true});return true;}if(bundle?.manifest.metadataOnly)throw syncError('preview_metadata_only');json(res,await storage.receive(c.projectId,entry,req));return true;}
+      if(req.method==='GET'&&c.action==='apply'){const bytes=await storage.read(c.projectId,entry.hash);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':bytes.length,'Cache-Control':'no-store'});res.end(bytes);this.sync.audit.transferred(c,payloadPath,bytes.length);return true;}
     }
     throw syncError('invalid_sync_action');
   }
@@ -212,6 +273,12 @@ export class SourceSyncHome {
     const projectId=m[1],route=m[2]||'';if(!this.db.get('projects',projectId))throw syncError('project_missing');
     let value;
     if(req.method==='GET'&&!route)value=this.sync.status(projectId);
+    else if(req.method==='GET'&&route==='pending'){const q=new URL(req.url,'http://localhost').searchParams;value=this.baselines.pending(projectId,q.get('repositoryId'),{after:q.get('after')||'',limit:q.get('limit')});}
+    else if(req.method==='GET'&&route==='initializations')value=initializationPage(this.db,projectId,Object.fromEntries(new URL(req.url,'http://localhost').searchParams));
+    else if(req.method==='GET'&&route==='audit')value=this.sync.audit.list(projectId,Object.fromEntries(new URL(req.url,'http://localhost').searchParams));
+    else if(req.method==='GET'&&/^audit\/[-a-f0-9]+$/.test(route))value=this.sync.audit.detail(projectId,route.split('/')[1],Object.fromEntries(new URL(req.url,'http://localhost').searchParams));
+    else if(req.method==='POST'&&route==='initializations')value=this.baselines.start(projectId,await body(req,100000));
+    else if(req.method==='POST'&&/^initializations\/[a-f0-9]{64}\/resume$/.test(route))value=this.baselines.resume(projectId,route.split('/')[1],await body(req,100000));
     else if(req.method==='GET'&&route==='config')value=this.sync.config(projectId);
     else if(req.method==='PUT'&&route==='config')value=this.sync.configure(projectId,await body(req,100000));
     else if(req.method==='POST'&&route==='preview')value=this.sync.preview(projectId,await body(req,100000));
@@ -223,6 +290,12 @@ export class SourceSyncHome {
     }
     else if(req.method==='GET'&&/^conflicts\/[^/]+$/.test(route))value=await this.agent.execute({projectId},'read',{conflictId:route.split('/')[1]});
     else if(req.method==='POST'&&/^conflicts\/[^/]+\/read$/.test(route))value=await this.agent.execute({projectId},'read',{...await body(req,100000),conflictId:route.split('/')[1]});
+    else if(req.method==='POST'&&/^conflicts\/[^/]+\/resolve$/.test(route)){
+      const c=this.db.get('sourceSyncConflicts',route.split('/')[1]),input=await body(req,100000);
+      if(c?.projectId!==projectId||c.detection!=='metadata'||c.generation!==input.generation||input.confirmed!==true||['resolved','cancelled'].includes(c.status))throw syncError('conflict_changed');
+      const side=c.sides.find(s=>s.nodeId===input.sourceNodeId);if(!side||side.unknown)throw syncError('invalid_scope');
+      value=this.sync.resolve(c,{id:contentHash(JSON.stringify([c.id,c.generation,side.nodeId])),entry:side.entry,sourceNodeId:side.nodeId,sourceRoot:side.root});
+    }
     else if(req.method==='POST'&&/^conflicts\/[^/]+\/(assign|review)$/.test(route)){
       const id=route.split('/')[1],input=await body(req,100000);if(this.db.get('sourceSyncConflicts',id)?.projectId!==projectId)throw syncError('conflict_missing');
       value=route.endsWith('/assign')?this.conflicts.assign(id,input.generation,input.roleId,{kind:'human'}):this.conflicts.acceptReview(id,input.generation,input.proposalId);
@@ -273,14 +346,22 @@ export class SourceSyncClient {
       }
       const prior=this.db.get('sourceSyncCommands',message.commandId);
       const command=prior?.result&&prior.command?prior.command:await (await this.request(message,'plan')).json();
+      if(command.detection==='metadata'&&command.action==='cleanup'&&[...this.inFlight].some(id=>{if(id===command.id)return false;const batchId=this.db.get('sourceSyncTransport',id)?.batchId||this.db.get('sourceSyncCommands',id)?.command?.batchId;return !batchId||batchId===command.batchId;})){
+        this.send({type:'source_sync_receipt',commandId:command.id,result:{status:'waiting_idle',reason:'transfer_in_flight'}});return;
+      }
+      // A delayed command must not repopulate staging after this Worker's durable cleanup receipt.
+      if(command.detection==='metadata'&&command.action!=='cleanup'&&!prior?.result&&this.db.db.prepare("SELECT 1 FROM records WHERE kind='sourceSyncCommands' AND json_extract(data,'$.command.batchId')=? AND json_extract(data,'$.command.action')='cleanup' AND json_extract(data,'$.result.status')='completed' LIMIT 1").get(command.batchId)){
+        this.send(receiptEnvelope(command.id,{status:'cancelled',files:[]}));return;
+      }
+      const blobRoot=command.detection==='metadata'?metadataBlobRoot(this.blobRoot,command):this.blobRoot;
       const transport=this.db.get('sourceSyncTransport',command.id);
-      this.db.put('sourceSyncTransport',{...transport,id:command.id,projectId:command.projectId,message,ready:false});
+      this.db.put('sourceSyncTransport',{...transport,id:command.id,projectId:command.projectId,batchId:command.batchId,message,ready:false});
       this.send({type:'source_sync_command_ack',commandId:command.id});
       const saved=this.db.get('sourceSyncCommands',command.id)?.result;
       // Receipt replay needs only the saved result; execute still checks the exact command fingerprint below.
       if(command.action==='apply'&&!['completed','partial_conflict','cancelled','blocked'].includes(saved?.status))for(const entry of new Map(command.changes.map(c=>c.after).filter(Boolean).map(e=>[e.hash,e])).values()){
-        let present=false;try{present=(await readSourceBlob(this.blobRoot,entry.hash)).length===entry.size;}catch{}
-        if(!present){const r=await this.request(message,`blobs/${entry.hash}`),bytes=Buffer.from(await r.arrayBuffer());if(bytes.length!==entry.size||contentHash(bytes)!==entry.hash)throw syncError('blob_corrupt');await saveSourceBlob(this.blobRoot,bytes);}
+        let present=false;try{present=(await readSourceBlob(blobRoot,entry.hash)).length===entry.size;}catch{}
+        if(!present){const r=await this.request(message,`blobs/${entry.hash}`),bytes=Buffer.from(await r.arrayBuffer());if(bytes.length!==entry.size||contentHash(bytes)!==entry.hash)throw syncError('blob_corrupt');await saveSourceBlob(blobRoot,bytes);}
       }
       const result=await this.withFolderAccess(message,command,()=>this.worker.execute(command));
       this.watch.received(command,result);
@@ -288,15 +369,18 @@ export class SourceSyncClient {
       if(saved)try{const proof=await (await this.request(message,'receipt')).json();alreadyUploaded=proof.receiptHash===contentHash(JSON.stringify(result));}catch{ /* Old Homes can still accept the original upload path. */ }
       if(!alreadyUploaded&&result.status==='completed'&&command.action==='capture'){
         const needed=await (await this.request(message,'capture','PUT',{base:result.base,manifest:result.manifest})).json();
-        for(const entry of needed.missing)await this.request(message,`blobs/${entry.hash}`,'PUT',await readSourceBlob(this.blobRoot,entry.hash));
+        for(const entry of needed.missing)await this.request(message,`blobs/${entry.hash}`,'PUT',await readSourceBlob(blobRoot,entry.hash));
       }
-      if(!alreadyUploaded&&command.action==='apply'&&Array.isArray(result.files))await this.request(message,'receipt','PUT',result);
+      if(!alreadyUploaded&&command.action!=='capture'&&Array.isArray(result.files)){const needed=await (await this.request(message,'receipt','PUT',result)).json();for(const entry of needed.missing||[])await this.request(message,`blobs/${entry.hash}`,'PUT',await readSourceBlob(blobRoot,entry.hash));
+        if(['read','stage'].includes(command.action)&&result.status==='completed')await confirmMetadataRead(command,(await this.worker.resolveBinding(command)).root,result);
+      }
       this.db.put('sourceSyncTransport',{...this.db.get('sourceSyncTransport',command.id),ready:true,recoveryAttempts:0,nextRecoveryAt:0});
       this.flush();
       if(!['completed','partial_conflict','cancelled'].includes(result.status))this.send({type:'source_sync_receipt',commandId:command.id,result});
     }catch(error){
       const transport=this.db.get('sourceSyncTransport',message.commandId),attempts=(transport?.recoveryAttempts||0)+1;
       if(this.retainQuotaResult(transport,message.commandId,error))return;
+      if(!transportFailure(error)&&this.db.get('sourceSyncCommands',message.commandId)?.command?.detection==='metadata'){const result={status:'blocked',reason:error.code};this.db.put('sourceSyncTransport',{...transport,ready:true,terminalResult:result});this.db.put('sourceSyncReceipts',{id:message.commandId,projectId:transport.projectId,result});this.send(receiptEnvelope(message.commandId,result));return;}
       if(transport)this.db.put('sourceSyncTransport',{...transport,recoveryAttempts:attempts,nextRecoveryAt:Date.now()+retryDelay(attempts),recoveryError:transportFailure(error)?'transfer_failed':error.code});
       this.send({type:'source_sync_receipt',commandId:message.commandId,result:{status:transportFailure(error)?'reconciling':'blocked',reason:transportFailure(error)?'transfer_failed':error.code,...(error.limit?{limit:error.limit}:{})}});
     }finally{this.inFlight.delete(message.commandId);}
@@ -319,6 +403,7 @@ export class SourceSyncClient {
       this.send({type:'source_sync_receipt',commandId:id,result:{status:'reconciling',reason:'recovery_required'}});return;
     }
     // Home may never have stored this capture's manifest; offer the saved one again before the receipt, never a recapture.
+    if(record?.command?.detection==='metadata'&&Array.isArray(record.result?.files)&&!transport?.terminalResult&&transport?.message){void this.execute(transport.message);return;}
     if(record?.result?.base&&!transport?.terminalResult&&transport?.message){void this.replayCapture(id,record.result,transport.message);return;}
     this.send(receiptEnvelope(id,transport?.terminalResult||record?.result||{status:'cancelled',files:[]}));
   }

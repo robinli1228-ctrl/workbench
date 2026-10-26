@@ -10,10 +10,10 @@ for(const lang of ['en','zh'])test(`${lang} defaults migrate exactly, custom and
  for(const value of ['',old[lang].platform+' xxxxx'])assert.equal(normalizePlatformSettings({platformPrompt:value}).platformPrompt,value);
  for(const value of ['',old[lang].supervisor+' xxxxx'])assert.equal(normalizePlatformSettings({supervisorPrompt:value}).supervisorPrompt,value);
 }));
-for(const cmd of ['schedule','collaboration','pass'])test(`${cmd} is unknown before loading retained turn identity`,()=>{
+for(const cmd of ['schedule','collaboration','pass'])test(`${cmd} explains retirement before loading retained turn identity`,()=>{
  const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('WB_')));
  const r=spawnSync(process.execPath,['src/wb-cli.mjs',cmd],{env:{...env,LANG:'en',WB_SYSTEM_SUPERVISOR:'1',WB_QUEUE_BATCH:'1'},encoding:'utf8'});
- assert.equal(r.status,1);assert.match(r.stdout+r.stderr,/Unknown command|未知命令/);
+ assert.equal(r.status,1);assert.match(r.stdout+r.stderr,/is retired|已停用/);
 });
 test('help, execution rules and paused bridge expose none of the removed tools',async()=>{
  const prior={...process.env};process.env.WB_SYSTEM_SUPERVISOR='1';process.env.WB_QUEUE_BATCH='1';

@@ -162,21 +162,61 @@ export async function waitForRole(summary,options={}) {
   return homeFetch('/api/agent/wait', { runId: context().runId, summary,requestIds:options.requestIds,timeoutSeconds:options.timeoutSeconds });
 }
 
+/** Flags may precede or follow the positional delivery arguments. */
+export function parseDeliveryArgs(args) {
+  const words=[],repos=[];let review=false;
+  for(let i=0;i<args.length;i++) {
+    if(args[i]==='--review')review=true;
+    else if(args[i]==='--repo') {if(!args[i+1]||args[i+1].startsWith('--'))throw new Error(tr('wbTools.deliveryUsage'));repos.push(args[++i]);}
+    else if(args[i]==='--'){words.push(...args.slice(i+1));break;}
+    else words.push(args[i]);
+  }
+  return {requestId:words[0],commit:words[1],summary:words.slice(2).join(' '),review,repos};
+}
+
+/** Resolve only selected repositories; no filesystem probing of omitted repositories for auto. */
+export async function deliveryItems(repositories, commit, {review=false,repos=[]}={}) {
+  if(repos.length&&!review)throw new Error(tr('wbTools.deliveryRepoReviewOnly'));
+  let selected=repositories;
+  if(repos.length) {
+    selected=repos.map(key=>{
+      const matches=repositories.filter(r=>r.id===key||r.key===key);
+      if(matches.length!==1)throw new Error(tr('wbTools.deliveryRepoUnknown',{key,keys:repositories.map(r=>r.key||r.id).join(', ')}));
+      return matches[0];
+    });
+    if(new Set(selected.map(r=>r.id)).size!==selected.length)throw new Error(tr('wbTools.deliveryRepoDuplicate'));
+  }
+  if(!selected.length)throw new Error(tr('wbTools.currentRunHasNoDeliverable'));
+  if(commit!=='auto') {
+    if(!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit))throw new Error(tr('wbTools.deliveryUsage'));
+    if(repos.length>1)throw new Error(tr('wbTools.deliveryShaManyRepos'));
+    if(!review&&repositories.length>1)throw new Error(tr('gitDelivery.projectDeliveryRequiresAuto'));
+    const matches=[];
+    for(const repo of selected) {try {await exec('git',['cat-file','-e',`${commit}^{commit}`],{cwd:repo.localRoot,timeout:5000});matches.push(repo);}catch{}}
+    if(matches.length!==1)throw new Error(tr(matches.length?'wbTools.deliveryShaAmbiguous':'wbTools.deliveryShaMissing'));
+    selected=matches;
+  }
+  const items=[];
+  for(const repo of selected) {
+    const head=commit==='auto'?(await exec('git',['rev-parse','HEAD'],{cwd:repo.localRoot,timeout:5000})).stdout.trim():commit;
+    items.push({id:repo.id,repoUrl:repo.repoUrl,commit:head});
+  }
+  return items;
+}
+
 /** A distinct review endpoint fails closed on older Homes instead of silently advancing baselines. */
-export async function requestDelivery(requestId, commit, summary, { review = false } = {}) {
+export async function requestDelivery(requestId, commit, summary, { review = false, repos=[] } = {}) {
   if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(requestId)
     || typeof commit !== 'string' || (commit !== 'auto' && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(commit))
     || typeof summary !== 'string' || !summary.trim() || summary.length > 8000) throw new Error(tr('wbTools.deliveryUsage'));
+  if(repos.length&&!review)throw new Error(tr('wbTools.deliveryRepoReviewOnly'));
   const path = review ? '/api/agent/deliveries/review' : '/api/agent/deliveries';
-  if (commit === 'auto') {
-    const repositories = JSON.parse(process.env.WB_REPOSITORIES || '[]');
-    if (!repositories.length) throw new Error(tr('wbTools.currentRunHasNoDeliverable'));
-    const items = [];
-    for (const repo of repositories) {
-      const head = (await exec('git',['rev-parse','HEAD'],{cwd:repo.localRoot,timeout:5000})).stdout.trim();
-      items.push({id:repo.id,repoUrl:repo.repoUrl,commit:head});
-    }
-    return homeFetch(path,{runId:context().runId,requestId,commit:items[0].commit,items,summary});
+  const repositories=JSON.parse(process.env.WB_REPOSITORIES||'[]');
+  // Keep the legacy single-SHA payload/fingerprint unless selection is necessary.
+  if(commit==='auto'||repos.length||review&&repositories.length>1) {
+    const items=await deliveryItems(repositories,commit,{review,repos});
+    const result=await homeFetch(path,{runId:context().runId,requestId,commit:items[0].commit,items,summary});
+    return review&&commit!=='auto'&&!repos.length?{...result,repositorySelection:tr('wbTools.deliveryRepoSelected',{key:repositories.find(r=>r.id===items[0].id)?.key||items[0].id})}:result;
   }
   return homeFetch(path, { runId: context().runId, requestId, commit, summary });
 }
