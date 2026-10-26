@@ -49,6 +49,39 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     closed(nodeId,m){const s=db.get('terminalSessions',m.leaseId);if(s&&s.nodeId===nodeId){db.put('terminalSessions',{...s,status:'released',processState:'released',releasedAt:new Date().toISOString()});finishTurns(nodeId,m.runtime,m.sessionId);}}
   };
   const turns=new NativeTurnsHome({db,attachments,send,online,change,leases,gitCredential});
+  /** User sends and steers refresh live ownership, never infer that a process exited from an old failed turn. */
+  async function refresh(nodeId,runtime,sessionId){
+    const key=`${nodeId}/${runtime}/${sessionId}`,previous=db.get('nativeTakeovers',key);
+    if(!previous?.leaseId)return;
+    if(!held(previous.leaseId)){finishTurns(nodeId,runtime,sessionId);change();return;}
+    if(!online(nodeId))throw Error('\u8bbe\u5907\u672a\u8fde\u63a5\uff0c\u6682\u65f6\u65e0\u6cd5\u6838\u5bf9\u4f1a\u8bdd\u72b6\u6001\uff1b\u6d88\u606f\u5c1a\u672a\u53d1\u9001\uff0c\u8bf7\u8fde\u63a5\u540e\u91cd\u8bd5');
+    if(db.get('workers',nodeId)?.capabilities?.nativeTakeoverRefresh!==1){
+      if(previous.status==='retiring'||previous.status==='closing')throw Error('\u8bf7\u66f4\u65b0 Worker \u540e\u91cd\u8bd5\uff0c\u4f1a\u8bdd\u63a5\u7ba1\u72b6\u6001\u9700\u8981\u91cd\u65b0\u6838\u5bf9');
+      return;
+    }
+    const active=()=>nativeTurnRows(db,{nodeId,runtime,sessionId,active:true,limit:-1});
+    const stamp=()=>JSON.stringify([db.get('nativeTakeovers',key),db.get('terminalSessions',previous.leaseId),active().map(t=>[t.id,t.status,t.updatedAt])]);
+    const before=stamp(),reply=await workerQuery({nodeId},'native_takeover_state',{runtime,sessionId,leaseId:previous.leaseId},20000);
+    // A reply or another send may have advanced the session while this query was in flight.
+    if(stamp()!==before)return;
+    if(reply?.leaseId!==previous.leaseId||reply.runtime!==runtime||reply.sessionId!==sessionId||!Array.isArray(reply.activeIds))throw Error('\u4f1a\u8bdd\u72b6\u6001\u6838\u5bf9\u4e0d\u5339\u914d\uff0c\u8bf7\u91cd\u8bd5');
+    if(reply.paused)throw Error('\u8bbe\u5907\u6267\u884c\u5df2\u6682\u505c\uff0c\u6062\u590d\u540e\u8bf7\u91cd\u8bd5');
+    const current=active(),known=new Set(current.map(t=>t.id));
+    if(reply.activeIds.some(id=>!known.has(id)))throw Error('\u8bbe\u5907\u4ecd\u6709\u6267\u884c\u4e2d\u7684\u6d88\u606f\uff0c\u7b49\u5f85\u72b6\u6001\u540c\u6b65\u540e\u8bf7\u91cd\u8bd5');
+    if(reply.processState==='released'&&!reply.activeIds.length){
+      leases.closed(nodeId,{leaseId:previous.leaseId,runtime,sessionId});
+      db.put('nativeTakeovers',{...previous,status:'closed',reason:'refreshed',updatedAt:new Date().toISOString()});change();return;
+    }
+    if(reply.closing||previous.status==='closing')throw Error('\u539f\u4f1a\u8bdd\u8fdb\u7a0b\u4ecd\u5728\u9000\u51fa\uff0c\u9000\u51fa\u540e\u8bf7\u91cd\u8bd5');
+    if(reply.processState!=='active'||!reply.reusable){
+      if(reply.activeIds.length)return; // The Worker is still preparing this very turn.
+      throw Error('\u539f\u4f1a\u8bdd\u8fdb\u7a0b\u5c1a\u672a\u786e\u8ba4\u53ef\u590d\u7528\u6216\u5df2\u9000\u51fa\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5');
+    }
+    const timestamp=new Date().toISOString();
+    for(const turn of current)if(!reply.activeIds.includes(turn.id))db.put('nativeTurns',{...turn,status:'interrupted',phase:null,error:'\u72b6\u6001\u6838\u5bf9\u786e\u8ba4\u4e0a\u4e00\u8f6e\u5df2\u7ed3\u675f',endedAt:timestamp,updatedAt:timestamp});
+    db.put('nativeTakeovers',{...previous,status:'open',updatedAt:timestamp});
+    const lease=db.get('terminalSessions',previous.leaseId);db.put('terminalSessions',{...lease,status:'active',processState:'active',lastCheckedAt:timestamp});change();
+  }
   // Side questions: memory only; their files come from the same per-device attachment store as takeover turns.
   const sideAsks=createHomeSideAsks({send,online,attachments,owner:NativeTurnsHome.owner,change});
   const switches=new NativeAgentSwitches({db,online,workerQuery,turns,sideAsks,change,sessionRecord});
@@ -105,6 +138,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       const open=turns.process(nodeId,runtime,sessionId);if(!open)finishTurns(nodeId,runtime,sessionId);
       json(res,{items:turns.list(nodeId,runtime,sessionId),queue:turns.queueState(nodeId,runtime,sessionId),process:open?'open':'closed',supported:worker.capabilities?.nativeTurns===3,controls:worker.capabilities?.nativeControls===1,settings:turns.settings(nodeId,runtime,sessionId)});return true;}
     if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');if(input.control&&worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to compact a native session');
+      await refresh(nodeId,input.runtime,input.sessionId);
       const credential=input.control?null:await gitCredential(turns.settings(nodeId,input.runtime,input.sessionId));const created=turns.create(nodeId,worker,input,{gitCredential:credential});
       // A new prompt in the main session: its side question ends, the next one starts from the new state.
       if(!input.control)sideAsks.closeFor(nodeId,input.runtime,input.sessionId);json(res,created,201);return true;}
@@ -113,7 +147,10 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     if(area==='side'&&a&&!b&&req.method==='GET'){json(res,sideAsks.get(decodeURIComponent(a)));return true;}
     if(area==='side'&&a&&!b&&req.method==='DELETE'){json(res,sideAsks.stop(decodeURIComponent(a)));return true;}
     if(area==='turns'&&a&&b==='stop'&&req.method==='POST'){json(res,turns.stop(nodeId,decodeURIComponent(a)));return true;}
-    if(area==='turns'&&a&&b==='steer'&&req.method==='POST'){json(res,turns.steer(nodeId,decodeURIComponent(a)));return true;}
+    if(area==='turns'&&a&&b==='steer'&&req.method==='POST'){
+      const id=decodeURIComponent(a),turn=db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
+      if(turn.status==='waiting')await refresh(nodeId,turn.runtime,turn.sessionId);
+      json(res,turns.steer(nodeId,id));return true;}
     if(area==='turns'&&a&&b==='withdraw'&&req.method==='POST'){json(res,turns.withdraw(nodeId,decodeURIComponent(a)));return true;}
     if(area==='turns'&&a&&b==='answer'&&req.method==='POST'){json(res,turns.answer(nodeId,decodeURIComponent(a),await body(req)));return true;}
     // Pause/resume the session's queue or store its dragged order; both live on Home, which dispatches the next message.

@@ -385,6 +385,50 @@ export function bindQuotaDetails(mark, getDetails, title = 'Quota details') {
   mark.addEventListener('click', event => { event.stopPropagation(); hide(); openQuotaDetails(getDetails,title); });
 }
 
+let activeDescriptionHide = null;
+let descriptionId = 0;
+
+/** Move existing sidebar guidance behind one accessible marker while keeping its producers unchanged. */
+export function bindDescriptionNotes(anchor, sources, { key, visible = () => true, watch = [] } = {}) {
+  const notes = sources.filter(Boolean), heading = el('span', 'description-heading'), mark = el('button', 'description-note-button');
+  mark.type = 'button'; mark.hidden = true; mark.dataset.descriptionFor = key; mark.setAttribute('aria-label', t('Description details'));
+  anchor.before(heading); heading.append(anchor, mark); notes.forEach(note => note.classList.add('description-note-source'));
+  let hint = null, hideTimer = null;
+  const text = () => visible() ? notes.filter(note => !note.closest('[hidden]')).map(note => t(note.textContent.trim())).filter(Boolean).join('\n\n') : '';
+  const position = () => {
+    if (!hint) return;
+    const box = mark.getBoundingClientRect();
+    hint.style.left = `${Math.max(8, Math.min(box.left, innerWidth - hint.offsetWidth - 8))}px`;
+    hint.style.top = `${Math.max(8, Math.min(box.bottom + 8, innerHeight - hint.offsetHeight - 8))}px`;
+  };
+  const hide = () => {
+    clearTimeout(hideTimer); hint?.remove(); hint = null; mark.removeAttribute('aria-describedby');
+    if (activeDescriptionHide === hide) activeDescriptionHide = null;
+  };
+  const later = () => { clearTimeout(hideTimer); hideTimer = setTimeout(() => { if (document.activeElement !== mark && !hint?.matches(':hover')) hide(); }, 150); };
+  const sync = () => {
+    const value = text(); mark.hidden = !value; mark.setAttribute('aria-label', t('Description details'));
+    if (!value || !mark.getClientRects().length) hide(); else if (hint) { hint.textContent = value; position(); }
+  };
+  const show = () => {
+    clearTimeout(hideTimer); sync(); if (mark.hidden || hint) return;
+    activeDescriptionHide?.(); activeDescriptionHide = hide;
+    hint = el('div', 'quota-tooltip description-note-tooltip', text()); hint.id = `description-note-${++descriptionId}`; hint.setAttribute('role', 'tooltip');
+    document.body.append(hint); mark.setAttribute('aria-describedby', hint.id); position();
+    hint.addEventListener('mouseenter', () => clearTimeout(hideTimer)); hint.addEventListener('mouseleave', later);
+  };
+  mark.addEventListener('mouseenter', show); mark.addEventListener('mouseleave', later);
+  mark.addEventListener('focus', show); mark.addEventListener('blur', hide);
+  mark.addEventListener('click', event => { event.stopPropagation(); show(); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && hint) { hide(); event.stopPropagation(); } }, true);
+  document.addEventListener('pointerdown', event => { if (hint && !mark.contains(event.target) && !hint.contains(event.target)) hide(); });
+  window.addEventListener('scroll', event => { if (hint && !hint.contains(event.target)) hide(); }, true); window.addEventListener('resize', hide);
+  const observer = new MutationObserver(sync);
+  for (const note of notes) observer.observe(note, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['hidden'] });
+  for (const node of watch.filter(Boolean)) observer.observe(node, { attributes:true, attributeFilter:['hidden','data-navigation-mode','data-workspace-view','data-project-sidebar','data-mobile-panel'] });
+  sync(); return { sync };
+}
+
 /** Draw only quota windows actually returned by the vendor; unknown quota is not shown as green. */
 /** A stale snapshot (kept, unconfirmed or old) keeps its number but loses its tone, so it never reads as current. */
 export function roleNameQuota(quota, { stale = false } = {}) {

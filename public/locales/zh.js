@@ -58,6 +58,8 @@ export default {
   "This card has no text to discuss": "这张卡片没有可讨论的正文",
   "This card is too long for a side question": "这张卡片内容过长，暂时无法用于侧聊",
 
+
+  'Description details': '查看说明信息',
   'Run record': '运行记录',
   'Total': '合计',
   'Token · Session cumulative': 'Token · 会话累计',
@@ -1206,6 +1208,7 @@ export default {
   'Steering needs attention': '引导需要处理',
   'Steering needs attention: {reason}': '引导需要处理：{reason}',
   'Interrupting and starting this message': '正在打断当前执行并启动这条引导',
+  'Refresh session state and retry this message': '重新核对会话状态并启动这条消息',
   'Interrupt this role now and run this message first; actions already performed are not rolled back': '立即打断该角色并优先执行这条引导；已执行操作不会回滚',
   'Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept': '立即打断该角色，在原会话中处理这条引导；旧任务不自动续跑，已有修改保留',
   'Steer now': '立即引导',

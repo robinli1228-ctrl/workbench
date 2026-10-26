@@ -11,7 +11,7 @@ import { createHistoryViewer } from './history-view.js';
 import {createRoleSwitchUI} from './role-switch.js';
 import {createRoleHistoryTabs} from './role-history.js';
 import {createCliRecoveryUI} from './cli-recovery.js';
-import {createListOrder} from './list-order.js';
+import {createListOrder,orderedItems,readListOrder} from './list-order.js';
 import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
 import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
@@ -1179,7 +1179,11 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     // One timeline, one key: trigger time. Messages carry the server's order; a running role's card sits where its run was
     // triggered (the same place its reply will take), so nothing moves once placed. Queued work is not in the timeline.
     const entries=[],orderOf=m=>String(m.orderAt||m.createdAt||'');
-    messages.forEach((m,i)=>entries.push({at:orderOf(m),rank:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)}));
+    messages.forEach((m,i)=>{
+      // Hide only wholly queued user inputs; keep the original record available for quotes and multi-role replies.
+      if(m.sender==='human'&&m.taskIds?.length&&m.taskIds.every(id=>messageQueue.hasTask(id)))return;
+      entries.push({at:orderOf(m),rank:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)});
+    });
     for(const item of notices)entries.push({at:String(item.request.createdAt||item.at||''),rank:1,seq:0,node:()=>renderResumeNotice(item.request,item.at)});
     const liveTasks=new Map();
     for(const m of messages)for(const id of m.taskIds||[]){const task=data.tasks?.find(t=>t.id===id);if(task)liveTasks.set(task.id,task);}
@@ -1294,10 +1298,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     const supervisorRole = project?.supervisorRoleId ? (data.supervisorRoles || []).find(r => r.id === project.supervisorRoleId) : null;
     const supervisor = supervisorRole ? { ...supervisorRole, name: t('Supervisor@@roleCard') } : null;
     const supervisorMatches = supervisor && (!q || supervisor.name.toLowerCase().includes(q) || 'supervisor'.startsWith(q) || '\u603b\u7ba1'.includes(q));
-    const roles = projectRoles().filter(r => !q || r.name.toLowerCase().includes(q));
+    const roles = orderedItems(projectRoles(),readListOrder(`roles:${projectId}`)).filter(r => !q || r.name.toLowerCase().includes(q));
     const everyone = !q || 'everyone'.includes(q) || 'all'.startsWith(q);
-    // The supervisor comes first, then @everyone, then the other roles.
-    mentionChoices = [...(supervisorMatches ? [supervisor] : []), ...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...roles];
+    // Keep @everyone above the roles; role candidates follow the sidebar's pinned supervisor and saved card order.
+    mentionChoices = [...(everyone ? [{ name: 'everyone', everyone: true }] : []), ...(supervisorMatches ? [supervisor] : []), ...roles];
     if (!mentionChoices.length) { hideMentionMenu(); return; }
     mentionIndex = Math.min(mentionIndex, mentionChoices.length - 1);
     mentionMenu.replaceChildren();

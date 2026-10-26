@@ -23,7 +23,7 @@ import { createRoomUI, createRoleRefresh } from './room.js';
 import { projectSettings } from './project-settings.js';
 import {createGroupConversationUI} from './group-conversations.js';
 import {createProjectTeamCopyUI} from './project-team-copy.js';
-import { agentIconEl, agentWatermarkEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl, closeIcon } from './role-icons.js';
+import { agentIconEl, agentWatermarkEl, machineIconEl, quotaForRole, roleActivity, roleNameQuota, UI_ICON, deviceIconEl, workerDisplayName, workerKind, setActionIcon, projectIconAssignments, projectIconEl, closeIcon, bindDescriptionNotes } from './role-icons.js';
 import { activateSettingsTab, normalizeSettingsTab, settingsView, initProjectSettingsTabs } from './settings-page.js';
 import { supervisorSettings } from './supervisor-settings.js';
 import { roleTemplatesUI } from './role-templates.js';
@@ -122,7 +122,10 @@ const app = {
 };
 app.view = 'workspace';
 app.settingsTab = 'devices';
-const projectOrder=createListOrder({container:dom.projectList,scope:'projects',onEnd:()=>renderProjects(),onError:setError});
+const groupListNote=create('p','workspace-note');groupListNote.id='group-list-note';groupListNote.hidden=true;dom.projectList.before(groupListNote);
+bindDescriptionNotes(document.querySelector('#navigation-mode [data-mode="groups"]'),[groupListNote],{key:'groups',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body]});
+bindDescriptionNotes(document.querySelector('#inspector-title'),[document.querySelector('#role-refresh-feedback'),document.querySelector('#role-sidebar-note')],{key:'roles',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body,document.querySelector('#inspector-roles')]});
+const projectOrder=createListOrder({container:dom.projectList,scope:'projects',onEnd:()=>renderProjects(),onError:message=>{groupListNote.textContent=message;groupListNote.hidden=false;setError(message);}});
 const roleOrder=createListOrder({container:dom.roleList,scope:()=>`roles:${app.selectedProjectId||''}`,onEnd:()=>renderRoles(),onError:setError});
 
 const statusLabels = {
@@ -1611,8 +1614,8 @@ function renderTaskDetail() {
   const openTools = new Map([...dom.taskDetail.querySelectorAll('.nt-activity[open]')].map(card => [card.dataset.toolId,[...card.querySelectorAll('.nt-step')].flatMap((row,i)=>row.classList.contains('is-open')?[i]:[])]));
   const inputRulesOpen=dom.taskDetail.querySelector('.run-input-rules')?.open;
   const inputGroupsOpen=[...dom.taskDetail.querySelectorAll('.run-input-group[open]')].map(box=>box.dataset.group);
-  const oldScroll = dom.taskDetail.scrollTop;
-  const followTail = oldPanel && dom.taskDetail.scrollHeight - oldScroll - dom.taskDetail.clientHeight < 72;
+  const oldScroll = oldPanel?.scrollTop || 0;
+  const followTail = oldPanel && oldPanel.scrollHeight - oldScroll - oldPanel.clientHeight < 72;
   const oldRunId = app.detailRunId;
   dom.taskDetail.replaceChildren();
   const task = getCurrentTask();
@@ -1638,9 +1641,13 @@ function renderTaskDetail() {
   renderRunToolbar(task, latestRun);
   const body = create('div', 'detail-body');
   if (latestRun) body.append(renderRunSummary(latestRun));
-  if (app.detailError) body.append(create('div', 'inline-error', app.detailError));
-  if (latestRun) body.append(renderApprovals(latestRun));
-  body.append(renderRunTabs(task, latestRun));
+  const tabs = renderRunTabs(task, latestRun), messages = [];
+  // Keep status details and approval controls in the scrolling content, below the fixed metadata and tabs.
+  if (latestRun?.error) messages.push(create('div', 'inline-error full-width', latestRun.error));
+  if (app.detailError) messages.push(create('div', 'inline-error', app.detailError));
+  if (latestRun) { const approvals = renderApprovals(latestRun); if (approvals.childElementCount) messages.push(approvals); }
+  tabs.querySelector('.run-tab-panel').prepend(...messages);
+  body.append(tabs);
   dom.taskDetail.append(body);
   app.detailRunId = latestRun?.id || null;
   const panel = dom.taskDetail.querySelector('.run-tab-panel');
@@ -1652,10 +1659,10 @@ function renderTaskDetail() {
   }
   if(oldRunId!==app.detailRunId)runPreview.close();
   const activeRun = latestRun && !['succeeded', 'failed', 'interrupted'].includes(latestRun.status);
-  if (panel && app.detailTab === 'output' && activeRun && (!oldPanel || oldTab !== 'run-tab-output')) dom.taskDetail.scrollTop = dom.taskDetail.scrollHeight;
-  else if (panel && oldPanel && oldRunId === app.detailRunId && oldTab !== `run-tab-${app.detailTab}`) dom.taskDetail.scrollTop = 0;
-  else if (panel && oldPanel && oldRunId === app.detailRunId) dom.taskDetail.scrollTop = app.detailTab === 'output' && activeRun && followTail ? dom.taskDetail.scrollHeight : oldScroll;
-  else dom.taskDetail.scrollTop = 0;
+  if (panel && app.detailTab === 'output' && activeRun && (!oldPanel || oldTab !== 'run-tab-output')) panel.scrollTop = panel.scrollHeight;
+  else if (panel && oldPanel && oldRunId === app.detailRunId && oldTab !== `run-tab-${app.detailTab}`) panel.scrollTop = 0;
+  else if (panel && oldPanel && oldRunId === app.detailRunId) panel.scrollTop = app.detailTab === 'output' && activeRun && followTail ? panel.scrollHeight : oldScroll;
+  else if (panel) panel.scrollTop = 0;
 }
 
 function renderRunToolbar(task, run) {
@@ -1735,7 +1742,7 @@ function renderRunSummary(run) {
     const value=usage[key]??usage[legacy],item=create('span',`run-usage-item${key==='totalTokens'?' is-total':''}`);
     const amount=formatTokenMillions(value);item.append(create('span','',name),create('strong','',amount??t('Not available')));if(amount)item.title=String(value);summary.append(item);
   }
-  if(run.error)summary.append(create('div','inline-error full-width',run.error));return summary;
+  return summary;
 }
 
 /** The conversation log groups input, output, tools, artifacts and stored original text of the same Run. */
@@ -1769,6 +1776,7 @@ function renderRunTabs(task, run) {
   const panel = create('div', 'run-tab-panel');
   panel.id = 'run-tab-panel';
   panel.setAttribute('role', 'tabpanel');
+  panel.tabIndex = 0;
   panel.setAttribute('aria-labelledby', `run-tab-${app.detailTab}`);
   if (app.detailTab === 'input') panel.append(renderRunInput(task, logs.input,run));
   if (app.detailTab === 'output') panel.append(renderRunOutput(run, app.events));
@@ -1861,10 +1869,10 @@ function renderRunOutput(run, events) {
   if(!rows.length&&!run?.result)section.append(create('div','event-empty',run?'Waiting for CLI output…':'Task has not started yet'));
   for(const row of rows){
     if(row.kind==='tools'){
-      const block=activityBlock({steps:row.tools.map(tool=>{const step=classifyStep(tool.item,run?.status);if(tool.item.query!=null){step.args={...step.args,query:step.args.query??tool.item.query};if(step.kind==='web'&&!step.url)step.url=typeof tool.item.query==='string'?tool.item.query:JSON.stringify(tool.item.query);if(step.kind==='search'&&!step.query)step.query=tool.item.query;}return step;}),t:runStepText,onPreview:(step,path)=>runPreview.open(step,path)});
-      block.dataset.toolId=String(row.tools[0].item.id||row.seq);section.append(block);
+      const block=activityBlock({steps:row.tools.map(tool=>{const step=classifyStep(tool.item,run?.status);if(tool.item.query!=null){step.args={...step.args,query:step.args.query??tool.item.query};if(step.kind==='web'&&!step.url)step.url=typeof tool.item.query==='string'?tool.item.query:JSON.stringify(tool.item.query);if(step.kind==='search'&&!step.query)step.query=tool.item.query;}return step;}),notes:row.notes.map(note=>({...note,text:simplifiedCliOutput(note.text)})),t:runStepText,onPreview:(step,path)=>runPreview.open(step,path)});
+      block.dataset.toolId=String(row.seq);section.append(block);
     }else if(row.kind==='text')appendText(row.text);
-    else{const entry=create('div',`run-transcript-note${row.kind==='error'?' is-error':''}`);entry.append(create('span','',row.kind==='error'?'Error':'CLI log'),create('pre','',simplifiedCliOutput(row.text)));section.append(entry);}
+    else section.append(create('div','nt-error',simplifiedCliOutput(row.text)));
   }
   if(shouldShowFinalResult(run?.result,partitionRunLog(events).output))appendText(run.result);
   return section;
