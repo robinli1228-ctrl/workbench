@@ -142,7 +142,7 @@ export default Object.freeze({
   'wbCli.retired.schedule': 'wb schedule 已停用。步骤依赖记在 wb task 的任务计划里，核对前一步结果后再派下一步；只有明确的时间需求才用 wb timer。',
   'wbCli.retired.collaboration': 'wb collaboration 已停用。请用 wb task 和 wb call。',
   'wbCli.retired.pass': 'wb pass 已停用。没有可补充的内容，就在最终回复里说明。',
-  'platformPrompts.retiredCommandGuidance': 'wb report、wb schedule 等命令已取消，结果以最终回复为准。',
+  'platformPrompts.retiredCommandGuidance': '已取消的命令（wb report、wb schedule 等）不要再用，结果以最终回复为准。',
   'platformPrompts.promptRevisionConflict': '提示词版本已变化，请刷新后再保存。',
   'roleCalls.returnToWaitingCaller': '派活的人正在等你的结果，直接写在最终回复里即可，不要再 call 它。',
   'gitDelivery.projectDeliveryRequiresAuto': '本轮包含多个仓库，请使用 wb deliver <请求编号> auto <说明> 申请交付各仓库的确定提交；不能用一个 SHA 代表全部仓库。',
@@ -1799,7 +1799,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 替换：额度用尽或鉴权失败不重复重试；临时错误重试一次仍失败，再交给其他可用角色。先确认原任务已经停止，保留版本和已完成的证据。审核不能由作者本人替补，测试不能由开发者本人替补。`,
   'wbTools.helpReview': `独立审核只读：每个问题写清位置、触发条件、影响和证据。修复后核对新版本和编号修改清单，按需补读受影响上下文。临时审阅同步的未提交修改时，记录设备、实际目录、观察时间、路径和 SHA256，前后核对输入；结论仅针对这些字节，不冒充已提交版本的正式审核。结论写在回复里：通过、需要修改（附编号问题清单）、无法核实或需要用户决定，各附依据；只有非阻塞建议时才算通过。尚未释放的独立审核意见先按发布流程交总管，不能提前泄露。决定与证据读取同一指定版本。`,
   'wbTools.helpSync': `跨设备：
-- 仅已启用同步、纳入范围的绑定目录按当前策略同步，可含未提交修改和获准的 Git-ignored 产物；隔离 worktree 不自动纳入。以实际范围、排除规则和回执为准，不保证所有文件或固定时限。依赖他端文件前用 wb sync status 核对范围、冲突、待处理批次和回执；项目状态不证明单文件一致，用 wb sync status '{"path":"相对路径"}' 核对各端 SHA256 和观察时间：你依赖的那一端为 consistent 才算已到，in_transit、conflict 或 unknown（含设备离线）如实说明，不说成没到。同步不是冻结快照，输入变化须重查。
+- 仅已启用同步、纳入范围的绑定目录按当前策略同步，可含未提交修改和获准的 Git-ignored 产物；隔离 worktree 不自动纳入。以实际范围、排除规则和回执为准，不保证所有文件或固定时限。依赖他端文件前用 wb sync status 核对范围、冲突、待处理批次和回执；项目状态不证明单文件一致，用 wb sync status '{"path":"相对路径"}' 核对各端状态和观察时间（内容哈希模式给出各端 SHA256；元数据同步只比较修改时间和大小，不给 SHA256，哈希为空不代表没到）：你依赖的那一端为 consistent 才算已到，in_transit、conflict 或 unknown（含设备离线）如实说明，不说成没到。同步不是冻结快照，输入变化须重查。
 - 改绑定目录前用 wb discuss peers 协调负责文件和重叠任务；peers 不是文件锁，不同时派两端改同一文件。
 - 共享文档和小文件放获准且纳入同步的绑定项目 .workbench/docs，交接写设备、路径、哈希并确认接收；未共享、排除或离线时如实说明，不泄露未公开审核材料。
 - 正式审核、测试验收等固定版本工作用已提交 commit 交付（wb deliver 或排程自动交付，勿重复），写完整 SHA；交付自动推送，接收核对后执行；同步文件只用于临时查看和快检，不代替提交或正式验收。本设备做不了的交目标设备角色，目标不可用就说明阻塞，不改派冒充完成。
