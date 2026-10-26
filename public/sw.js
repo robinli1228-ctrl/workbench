@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v198-running-side-question';
+const CACHE = 'agent-workbench-static-v199-restore-session-composer';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
