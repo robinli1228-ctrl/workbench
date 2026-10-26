@@ -132,11 +132,16 @@ export class RoleCalls {
       const sourceEnded = ancestor && (normalized.kind === 'continuation' ? ancestor.status === 'cancelled' : callTerminal.has(ancestor.status));
       if (ancestor && (sourceEnded || ancestor.steeringTaskId)) throw new Error(tr('roleCalls.sourceCallHasEndedBeen'));
       // Schedule completion and different reviewers also cause continuations; bound actual calls with the root budget and cycle checks, not wake-up count.
+      let childOnPath=null;
       let depth = 0, rootRequestId = ancestor?.rootRequestId || ancestor?.id || normalized.id;
       while (ancestor) {
         if(ancestor.steeringTaskId)throw new Error(tr('roleCalls.userHasChangedDirectionOld'));
         if (++depth > 4) throw new Error(tr('roleCalls.collaborationCallsExceed4Levels'));
-        if (ancestor.targetRoleId === input.targetRoleId && !callTerminal.has(ancestor.status)) throw new Error(tr('roleCalls.rejectedRoleLoopInActive'));
+        if (ancestor.targetRoleId === input.targetRoleId && !callTerminal.has(ancestor.status)) {
+          const awaitingResult=childOnPath && ancestor.status==='waiting_call' && this.dependencies(ancestor).some(child=>child.id===childOnPath.id||child.resultRequestId===childOnPath.id);
+          throw new Error(tr(awaitingResult?'roleCalls.returnToWaitingCaller':'roleCalls.rejectedRoleLoopInActive'));
+        }
+        childOnPath=ancestor;
         ancestor = ancestor.parentRequestId ? this.db.get('coordinationRequests', ancestor.parentRequestId) : null;
       }
       const continued = normalized.continuationOf ? this.db.get('coordinationRequests', normalized.continuationOf) : null;

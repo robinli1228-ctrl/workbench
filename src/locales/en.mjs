@@ -135,6 +135,13 @@ Send failures, reproduction steps, expected/actual behavior, version and evidenc
   'wbTools.deliveryShaMissing': 'No selected repository contains this commit.',
   'wbTools.deliveryRepoSelected': 'Selected repository: {key}',
   'wbTools.deliveryUsage': 'Usage: wb deliver [--review] <request-id> <full-commit-sha|auto> <summary>\nUse auto to capture the current HEAD of every repository in this Run. An explicit SHA identifies one repository. --review publishes only a fixed review ref and receives it in an independent directory, without advancing project baselines; Home and participating Workers must support review deliveries. Without --review, development delivery keeps its baseline advancement. Registration is not publication or acceptance; source success and Worker checks still apply. Uncommitted files are not transferred. Help does not submit a request. Repeat --repo <key|id> only with --review to select repositories; flags may appear before or after arguments. auto reads selected HEADs (all if omitted). A review SHA without --repo must exist in exactly one local repository; multiple --repo values require auto.',
+  'wbCli.retired.report': 'wb report is retired. Write the result in your final reply; the assigning role will receive it.',
+  'wbCli.retired.schedule': 'wb schedule is retired. Record dependent steps in the task plan with wb task, verify each result, then assign the next step. Use wb timer only for explicit timing requirements.',
+  'wbCli.retired.collaboration': 'wb collaboration is retired. Use wb task and wb call.',
+  'wbCli.retired.pass': 'wb pass is retired. If you have nothing to add, say so in your final reply.',
+  'platformPrompts.retiredCommandGuidance': 'Commands such as wb report and wb schedule are retired; results belong in the final reply.',
+  'platformPrompts.promptRevisionConflict': 'Prompt revision changed; reload before saving.',
+  'roleCalls.returnToWaitingCaller': 'The assigning role is waiting for your result. Write it in your final reply; do not call it back.',
   'gitDelivery.projectDeliveryRequiresAuto': 'This Run contains multiple repositories. Use wb deliver <request-id> auto <summary> to request delivery of their exact commits; one SHA cannot identify all repositories.',
   'coordinator.dynamicPlanningRules': 'There is no pre-bound planner role. Decide whether this task needs planning, and select the appropriate collaborator from the current full roster using responsibilities, relevant context and availability. Respect an explicit user assignment; do not infer a permanent planning or execution binding from a display name or historical configuration.',
   'folders.projectBindingRequired': 'First bind this project folder on the selected device in Project Settings',
@@ -1767,6 +1774,8 @@ Drive the work:
 
 Working with others:
 - If the user named someone, follow the user's arrangement; otherwise decide whom to ask yourself: suitable device > enough quota > idle. Try not to interrupt a role that is running; if nobody suits, do it yourself.
+- When assigned work is complete, write the result in your final reply; it is returned to the assigning role automatically. Do not call it back.
+- When arranging sequential reviews, reviewers who are ready should start; do not make everyone wait for one missing input. Wait for every review before the final conclusion.
 - When assigning work, state: the goal and the completion criteria; what the other role does and may change; the inputs (device, directory, full SHA or file path and hash, never "the latest version"); what to hand back.
 - After sending, keep doing the parts that do not depend on it and wait only when you really need the result; to wait for someone's result, actually send the request and register the wait; if you are waiting for nothing, say the work is complete.
 - A returned result is not a pass: check the evidence and version before deciding to accept it or send it back; when nothing has changed, do not send someone again for the same thing.

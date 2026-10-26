@@ -1,3 +1,4 @@
+import {renderRetiredCommandWarning} from './retired-commands.js';
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
@@ -317,6 +318,12 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
   const quoteBar = document.querySelector('#chat-quote');
   const roleDialog = document.querySelector('#role-dialog');
   const roleForm = document.querySelector('#role-form');
+  const roleCommandWarnings={};
+  for(const key of ['responsibility','instructions']) {
+    const warning=create('p','workspace-note full-width');warning.dataset.retiredWarning=key;
+    roleForm.elements[key].after(warning);roleCommandWarnings[key]=warning;
+    roleForm.elements[key].addEventListener('input',()=>renderRetiredCommandWarning(warning,roleForm.elements[key].value,t));
+  }
   roleForm.prepend(create('p','workspace-note full-width','Role and project settings apply to every chat in this project.'));
   const roleHistory=createRoleHistoryTabs({getConversationId:()=>conversationId,host:roleDialog,settings:roleForm,getData:()=>data,getRole:()=>editingRoleSnapshot,api,refreshState,create,formatTime,openTask});
   const cliSwitch=createRoleSwitchUI({api,refreshState});
@@ -1431,6 +1438,7 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     presets.disabled = Boolean(role);
     document.querySelector('#role-archive').hidden = !role;
     for (const key of ['name', 'mode', 'responsibility', 'instructions']) roleForm.elements[key].value = value[key] ?? (key === 'mode' ? 'workspace-write' : '');
+    for(const key of ['responsibility','instructions'])renderRetiredCommandWarning(roleCommandWarnings[key],roleForm.elements[key].value,t);
     roleForm.elements.preset.value = rolePreset(role?.templateKey)?.key || 'custom';
     preferredModel = value.model || '';
     preferredRuntime = role?.runtime || 'codex';

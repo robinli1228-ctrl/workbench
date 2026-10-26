@@ -1491,6 +1491,7 @@ const server = http.createServer(async (req, res) => {
     files['/conversation-tasks.js']='conversation-tasks.js';
     files['/conversation-task-state.js']='conversation-task-state.js';
     files['/delivery-summary.js']='delivery-summary.js';
+    files['/retired-commands.js']='retired-commands.js';
     files['/source-sync.js']='source-sync.js';
     files['/quota-state.js']='quota-state.js';
     files['/chat-card-state.js']='chat-card-state.js';

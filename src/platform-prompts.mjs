@@ -1,3 +1,4 @@
+import {retiredCommandLines} from '../public/retired-commands.js';
 import { defaultOrganizerPrompt } from './conversation-organizer.mjs';
 import {discussionInstructions} from './discussion-policy.mjs';
 import { tr, isMessage, runWithLanguage } from './i18n.mjs';
@@ -64,6 +65,8 @@ const LEGACY_SUPERVISOR_DEFAULTS = new Set([
   '891c4412e1ff62d8ca3264e1627dc12b10678a2025b0cafaa907384b48751bb0'
 ]);
 const LEGACY_PLATFORM_DEFAULTS = new Set([
+  'ee2e0467fca2b86c8434affc53faa7ab5542dc2ff2a757180ec4d0438ccdd781',
+  '68b63bf13a5e802f548cb41cf502402df12bfe0838c7e2cf69acf4f732ff38e3',
   // Exact defaults before task-driven collaboration.
   '13d2e34a3a5a8fd0cbe946442693a46e8601a49be87751623acad8dfe7ec3d4b',
   '5470aa8edaecde124ea8c024d4929a92ff091fe5939353b57559ac645e719cc9',
@@ -100,18 +103,26 @@ function promptOrDefault(value, key, fallback) {
   return isMessage(text, templateKey) || isMessage(text, key) || isMessage(text, currentKey) || isMessage(text,key==='platformPrompts.youFixedProjectSupervisorYou'?'minimal.supervisorDefault':'minimal.platformDefault') || (key!=='platformPrompts.youFixedProjectSupervisorYou'&&isMessage(text,'minimal.platformDefaultLegacy1')) || legacyDefault ? fallback() : value;
 }
 
+/** Add execution-only guidance; never mutate the saved custom configuration. */
+export function retiredCommandGuidance(value,kind='role') {
+  const text=typeof value==='string'?value:'';
+  if(kind!=='role' && promptOrDefault(text,kind==='supervisor'?'platformPrompts.youFixedProjectSupervisorYou':'platformPrompts.youRunningInControlledCollaboration',()=>null)===null)return text;
+  const warning=tr('platformPrompts.retiredCommandGuidance');
+  return retiredCommandLines(text).length&&!text.includes(warning)?`${text}\n\n${warning}`:text;
+}
+
 /** Suppress only legacy minimal boilerplate; current editable templates and custom text must reach execution. */
 export function customExecutionPrompt(value,kind='platform') {
   const text=typeof value==='string'?value:'';
   return isMessage(text.trim(),kind==='supervisor'?'minimal.supervisorDefault':'minimal.platformDefault')
     ||kind!=='supervisor'&&isMessage(text.trim(),'minimal.platformDefaultLegacy1')
-    ||isMessage(text.trim(),kind==='supervisor'?'collaboration.supervisor':'collaboration.platform')?'':text;
+    ||isMessage(text.trim(),kind==='supervisor'?'collaboration.supervisor':'collaboration.platform')?'':retiredCommandGuidance(text,kind);
 }
 
 /** Rolling upgrades keep the old wrapping contract for Workers that have not negotiated minimal instructions. */
 export function legacyExecutionPrompt(value,kind='platform') {
   if(typeof value==='string'&&!value.trim())return value;
-  return customExecutionPrompt(value,kind)===''?runWithLanguage('en',()=>kind==='supervisor'?defaultSupervisorPrompt():tr('collaboration.platform')):value;
+  return customExecutionPrompt(value,kind)===''?runWithLanguage('en',()=>kind==='supervisor'?defaultSupervisorPrompt():tr('collaboration.platform')):retiredCommandGuidance(value,kind);
 }
 
 export function normalizePlatformSettings(record = {}) {
@@ -158,8 +169,10 @@ function defaultValue(value, label) {
 
 export function updatePlatformPrompts(record, input, now = new Date().toISOString()) {
   const current = normalizePlatformSettings(record);
+  if(input.promptsRevision!==undefined && input.promptsRevision!==(current.promptsRevision||0))throw new Error(tr('platformPrompts.promptRevisionConflict'));
   return {
     ...current,
+    promptsRevision:(current.promptsRevision||0)+1,
     platformPrompt: input.platformPrompt === undefined ? current.platformPrompt : promptValue(input.platformPrompt, tr('platformPrompts.platformPrompt')),
     supervisorPrompt: input.supervisorPrompt === undefined ? current.supervisorPrompt : promptValue(input.supervisorPrompt, tr('platformPrompts.supervisorPrompt')),
     defaultSupervisorRuntime: defaultValue(input.defaultSupervisorRuntime ?? current.defaultSupervisorRuntime, tr('platformPrompts.defaultSupervisorCli')),
@@ -176,8 +189,8 @@ export function updatePausedSetting(record, paused) {
 
 /** Platform rules come before role configuration; neither can override the permission and collaboration boundaries hard-coded in the runtime. */
 export function composeAgentInstructions(platformPrompt, roleInstructions) {
-  const platform = typeof platformPrompt === 'string' ? platformPrompt.trim() : '';
-  const role = typeof roleInstructions === 'string' ? roleInstructions.trim() : '';
+  const platform = retiredCommandGuidance(platformPrompt,'platform').trim();
+  const role = retiredCommandGuidance(roleInstructions).trim();
   if (!platform) return role;
   if (!role) return platform;
   return tr('platformPrompts.platformPromptDoesNotOverride', { platform, role });
