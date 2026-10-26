@@ -1,3 +1,4 @@
+import {SourceSyncInitialization} from './source-sync-initialization.mjs';
 import {Readable} from 'node:stream';
 import {validateMetadataCapture,contentEqual} from './source-sync-metadata.mjs';
 import {metadataBlobRoot,confirmMetadataRead} from './source-sync-metadata-files.mjs';
@@ -34,13 +35,15 @@ function receiptEnvelope(commandId,result){
 
 /** The existing Home listener transports content; scoped transfer credentials never enter model input. */
 export class SourceSyncHome {
-  constructor({db,data,online,socket,change,rooms,query}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change});this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;
+  constructor({db,data,online,socket,change,rooms,query}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change});this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;this.baselines=new SourceSyncInitialization(this);
     this.conflicts=new SourceSyncConflicts({db,rooms,sync:this.sync,reachability:role=>online(role.nodeId)&&db.get('workers',role.nodeId)?.capabilities?.sourceSyncTools===1&&!runtimeIssue(db.get('workers',role.nodeId),role.runtime,role.model)});
     this.agent=new SourceSyncAgent({db,sync:this.sync,conflicts:this.conflicts,storage:this.storage,query});
   }
   busy(projectId,nodeId){return this.db.listSourceSyncCommands({projectId,nodeId,action:'apply',pending:true}).length>0;}
   async tick(){if(this.ticking)return;this.ticking=true;try{
     await this.cleanupMetadataBatches();
+    this.baselines.tick();
+    await this.cleanupMetadataConflicts();
     this.watchTick();
     this.conflicts.tick();
     for(const c of this.sync.schedule()){
@@ -67,6 +70,11 @@ export class SourceSyncHome {
       socket.send(JSON.stringify({type:'source_sync_command',commandId:c.id,batchId:c.batchId,projectId:c.projectId,folderAccess:folderAccessFor(this.db,c.nodeId,`project:${c.projectId}`),secret:c.secret}));
     }
   }finally{this.ticking=false;}}
+  async cleanupMetadataConflicts(){
+    const rows=this.db.db.prepare("SELECT data FROM records WHERE kind='sourceSyncConflicts' AND json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status')='resolved' AND json_extract(data,'$.copiesReleasedAt') IS NULL AND id>? ORDER BY id LIMIT 16").all(this.conflictCleanupCursor||'').map(r=>JSON.parse(r.data));
+    this.conflictCleanupCursor=rows.at(-1)?.id||'';
+    for(const c of rows)this.storage.releaseConflictCopies(c);
+  }
   async cleanupMetadataBatches(){
     const batches=this.db.metadataCleanupBatches(this.metadataCleanupCursor||'');
     this.metadataCleanupCursor=batches.at(-1)?.id||'';
@@ -183,7 +191,7 @@ export class SourceSyncHome {
       if(c.action==='stage'&&stages.every(x=>x.result?.status==='completed'))for(const op of batch.metadataOperations||[]){
         if(op.source)continue;
         const sides=batch.nodeIds.map(n=>reads.find(r=>r.repositoryId===op.repositoryId&&r.nodeId===n)?.result.files.find(f=>f.path===op.path)?.entry||null);
-        if(op.decision!=='resolution'&&contentEqual(sides[0],sides[1]))continue;
+        if(!['resolution','initialize_overwrite'].includes(op.decision)&&contentEqual(sides[0],sides[1]))continue;
         for(const entry of sides.filter(Boolean))await this.storage.receive(c.projectId,entry,Readable.from(await storage.read(c.projectId,entry.hash)));
       }
     }
@@ -255,7 +263,11 @@ export class SourceSyncHome {
   async browserHttp(req,res,pathname){const m=pathname.match(/^\/api\/projects\/([^/]+)\/source-sync(?:\/(.*))?$/);if(!m)return false;
     const projectId=m[1],route=m[2]||'';if(!this.db.get('projects',projectId))throw syncError('project_missing');
     let value;
-    if(req.method==='GET'&&!route)value=this.sync.status(projectId);
+    if(req.method==='GET'&&!route)value={...this.sync.status(projectId),initializations:this.db.db.prepare("SELECT data FROM records WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.projectId')=? ORDER BY rowid DESC LIMIT 20").all(projectId).map(r=>JSON.parse(r.data))};
+    else if(req.method==='GET'&&route==='pending'){const q=new URL(req.url,'http://localhost').searchParams;value=this.baselines.pending(projectId,q.get('repositoryId'),{after:q.get('after')||'',limit:q.get('limit')});}
+    else if(req.method==='GET'&&route==='initializations')value=this.db.db.prepare("SELECT data FROM records WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.projectId')=? ORDER BY rowid DESC LIMIT 20").all(projectId).map(r=>JSON.parse(r.data));
+    else if(req.method==='POST'&&route==='initializations')value=this.baselines.start(projectId,await body(req,100000));
+    else if(req.method==='POST'&&/^initializations\/[a-f0-9]{64}\/resume$/.test(route))value=this.baselines.resume(projectId,route.split('/')[1]);
     else if(req.method==='GET'&&route==='config')value=this.sync.config(projectId);
     else if(req.method==='PUT'&&route==='config')value=this.sync.configure(projectId,await body(req,100000));
     else if(req.method==='POST'&&route==='preview')value=this.sync.preview(projectId,await body(req,100000));
@@ -267,6 +279,12 @@ export class SourceSyncHome {
     }
     else if(req.method==='GET'&&/^conflicts\/[^/]+$/.test(route))value=await this.agent.execute({projectId},'read',{conflictId:route.split('/')[1]});
     else if(req.method==='POST'&&/^conflicts\/[^/]+\/read$/.test(route))value=await this.agent.execute({projectId},'read',{...await body(req,100000),conflictId:route.split('/')[1]});
+    else if(req.method==='POST'&&/^conflicts\/[^/]+\/resolve$/.test(route)){
+      const c=this.db.get('sourceSyncConflicts',route.split('/')[1]),input=await body(req,100000);
+      if(c?.projectId!==projectId||c.detection!=='metadata'||c.generation!==input.generation||input.confirmed!==true||['resolved','cancelled'].includes(c.status))throw syncError('conflict_changed');
+      const side=c.sides.find(s=>s.nodeId===input.sourceNodeId);if(!side||side.unknown)throw syncError('invalid_scope');
+      value=this.sync.resolve(c,{id:contentHash(JSON.stringify([c.id,c.generation,side.nodeId])),entry:side.entry,sourceNodeId:side.nodeId,sourceRoot:side.root});
+    }
     else if(req.method==='POST'&&/^conflicts\/[^/]+\/(assign|review)$/.test(route)){
       const id=route.split('/')[1],input=await body(req,100000);if(this.db.get('sourceSyncConflicts',id)?.projectId!==projectId)throw syncError('conflict_missing');
       value=route.endsWith('/assign')?this.conflicts.assign(id,input.generation,input.roleId,{kind:'human'}):this.conflicts.acceptReview(id,input.generation,input.proposalId);

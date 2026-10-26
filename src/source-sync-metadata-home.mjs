@@ -12,7 +12,7 @@ export class SourceSyncMetadata {
     this.db.put('sourceSyncManifests',{id,projectId:b.projectId,repositoryId,generation:b.generation,revision:0,baseCommit:null,scopeKind:'directory',scopePolicy:b.bindings.find(x=>x.repositoryId===repositoryId).scopePolicy,entries:{},digest:manifestDigest({}),origins:{}});
     const captures=this.sync.captures(b,repositoryId);
     for(const c of captures)this.db.put('sourceSyncMetadataScopes',{id:`${b.projectId}:${repositoryId}:${b.generation}:${c.nodeId}`,projectId:b.projectId,repositoryId,generation:b.generation,nodeId:c.nodeId,rootIdentity:c.result.manifest.rootIdentity});
-    for(const path of new Set([...this.db.metadataBaselines(b.projectId,repositoryId).map(x=>x.path),...Object.keys(old?.entries||{}),...Object.keys(captures[0].result.manifest.entries).filter(p=>captures[1].result.manifest.entries[p])]))this.db.put('sourceSyncMetadataBaselines',{id:key(b,repositoryId,path),projectId:b.projectId,repositoryId,generation:b.generation,path,pending:true,revision:0});
+    for(const path of new Set([...this.db.metadataBaselines(b.projectId,repositoryId).map(x=>x.path),...Object.keys(old?.entries||{}),...Object.keys(captures[0].result.manifest.entries).filter(p=>captures[1].result.manifest.entries[p])]))this.db.put('sourceSyncMetadataBaselines',{id:key(b,repositoryId,path),projectId:b.projectId,repositoryId,generation:b.generation,path,pending:true,revision:0,endpoints:Object.fromEntries(captures.map(c=>[c.nodeId,c.result.manifest.entries[path]||absent()]))});
   }}
   validate(c,result){
     if(c.action==='capture'){if(result.status!=='completed')throw syncError('invalid_receipt');for(const s of [result.base,result.manifest])validateMetadataCapture(s,c);return;}
@@ -36,15 +36,18 @@ export class SourceSyncMetadata {
       const baselines=this.db.metadataBaselines(b.projectId,repositoryId,b.generation),baselineMap=new Map(baselines.map(x=>[x.path,x]));
       const conflicts=this.db.listProject('sourceSyncConflicts',b.projectId).filter(c=>c.repositoryId===repositoryId&&c.syncGeneration===b.generation&&!['resolved','cancelled'].includes(c.status));
       for(const path of new Set([...baselines.map(v=>v.path),...Object.keys(snapshots[a].entries),...Object.keys(snapshots[bnode].entries)])){
+        if(b.kind==='initialize'&&!b.initialization.paths.includes(path))continue;
         const op={repositoryId,path,observed:{[a]:snapshots[a].entries[path]||absent(),[bnode]:snapshots[bnode].entries[path]||absent()}};
         // Exclusion (including oversize and unavailable traversal) is never evidence of deletion.
         if(captures.some(c=>c.result.manifest.excluded.some(e=>path===e.path||path.startsWith(e.path.replace(/\/$/,'')+'/')))){pending.push({repositoryId,path,reason:'source_scope_changed'});continue;}
-        const conflict=conflicts.find(c=>c.path===path);if(conflict){conflictIds.add(conflict.id);continue;}
-        const base=baselineMap.get(path),decision=base?.pending?'baseline_required':decideMetadata(base?{a:base.endpoints[a],b:base.endpoints[bnode]}:null,{a:op.observed[a],b:op.observed[bnode]});
-        if(decision==='baseline_required'){pending.push({repositoryId,path,reason:'metadata_baseline_required'});if(!base)this.db.put('sourceSyncMetadataBaselines',{id:key(b,repositoryId,path),projectId:b.projectId,repositoryId,generation:b.generation,path,pending:true,revision:0});continue;}
+        const conflict=conflicts.find(c=>c.path===path),prior=conflict&&this.db.get('sourceSyncBatches',conflict.resolutionBatchId);
+        const retryOwnInitialization=b.kind==='initialize'&&conflict?.initialization&&conflict.status==='initializing'&&prior?.metadataCleanedAt&&prior.initialization?.jobId===b.initialization.jobId;
+        if(conflict&&!retryOwnInitialization){conflictIds.add(conflict.id);if(b.kind==='initialize')pending.push({repositoryId,path,reason:'unresolved_conflicts'});continue;}
+        const base=baselineMap.get(path);if(b.kind==='initialize'&&!base?.pending)continue;const decision=base?.pending?'baseline_required':decideMetadata(base?{a:base.endpoints[a],b:base.endpoints[bnode]}:null,{a:op.observed[a],b:op.observed[bnode]});
+        if(decision==='baseline_required'&&b.kind!=='initialize'){pending.push({repositoryId,path,reason:'metadata_baseline_required'});this.db.put('sourceSyncMetadataBaselines',{...base,id:key(b,repositoryId,path),projectId:b.projectId,repositoryId,generation:b.generation,path,pending:true,revision:base?.revision||0,endpoints:op.observed});continue;}
         if(decision==='unchanged')continue;
         if(decision==='absent'){this.baseline(b,op,op.observed);continue;}
-        op.decision=decision;op.source=decision==='a'?a:decision==='b'?bnode:null;op.target=op.source===a?bnode:a;operations.push(op);
+        op.decision=decision==='baseline_required'?(b.initialization.mode==='overwrite'?'initialize_overwrite':'compare'):decision;op.source=decision==='a'?a:decision==='b'?bnode:null;op.target=op.source===a?bnode:a;operations.push(op);
       }
     }
     const readBytes=operations.reduce((n,o)=>n+(o.source?o.observed[o.source].size||0:Object.values(o.observed).reduce((sum,m)=>sum+(m.size||0),0)),0);if(readBytes>SOURCE_SYNC_LIMITS.batchBytes){this.sync.blockPreparation(b,'batch_too_large');return;}
@@ -69,7 +72,7 @@ export class SourceSyncMetadata {
       const read=(o,nodeId)=>reads.find(c=>c.repositoryId===o.repositoryId&&c.nodeId===nodeId)?.result.files.find(f=>f.path===o.path)?.entry||null;
       if(b.status==='reading'){
         let staged=false;
-        for(const binding of b.bindings){const paths=b.metadataOperations.filter(o=>o.repositoryId===binding.repositoryId&&!o.source&&o.observed[binding.nodeId].exists&&(o.decision==='resolution'||!contentEqual(read(o,b.nodeIds[0]),read(o,b.nodeIds[1])))).map(o=>({path:o.path,expected:o.observed[binding.nodeId],entry:read(o,binding.nodeId)}));
+        for(const binding of b.bindings){const paths=b.metadataOperations.filter(o=>o.repositoryId===binding.repositoryId&&!o.source&&o.observed[binding.nodeId].exists&&(['resolution','initialize_overwrite'].includes(o.decision)||!contentEqual(read(o,b.nodeIds[0]),read(o,b.nodeIds[1])))).map(o=>({path:o.path,expected:o.observed[binding.nodeId],entry:read(o,binding.nodeId)}));
           if(paths.length){const original=reads.find(c=>c.repositoryId===binding.repositoryId&&c.nodeId===binding.nodeId);this.sync.command(b,binding,'stage',{paths,readCommandId:original.id});staged=true;}
         }
         if(staged){this.db.put('sourceSyncBatches',{...b,status:'staging'});return;}
@@ -88,11 +91,18 @@ export class SourceSyncMetadata {
           for(const side of sides)if(!entryEqual(side.entry,b.proposal.entry))changes.set(`${op.repositoryId}:${side.nodeId}`,[{path:op.path,before:op.observed[side.nodeId],after:b.proposal.entry}]);
           continue;
         }
+        if(op.decision==='initialize_overwrite'){
+          const sides=b.nodeIds.map(n=>this.sync.side(b.projectId,op.repositoryId,n,read(op,n),b.bindings.find(x=>x.nodeId===n&&x.repositoryId===op.repositoryId)));
+          const proof=this.sync.recordConflict({projectId:b.projectId,repositoryId:op.repositoryId,path:op.path,syncGeneration:b.generation,base:null,sides,receiving:sides,batchId:b.id,detection:'metadata',initialization:true});
+          this.db.put('sourceSyncConflicts',{...proof,status:'initializing',resolutionBatchId:b.id});conflicts.add(proof.id);
+          const source=b.initialization.sourceNodeId,target=b.nodeIds.find(n=>n!==source),group=`${op.repositoryId}:${target}`;
+          if(!contentEqual(read(op,source),read(op,target))){if(!changes.has(group))changes.set(group,[]);changes.get(group).push({path:op.path,before:op.observed[target],after:read(op,source)});}continue;
+        }
         if(!op.source){const [a,other]=b.nodeIds,left=read(op,a),right=read(op,other);
           if(contentEqual(left,right)){this.baseline(b,op,op.observed);continue;}
           const sides=b.nodeIds.map(n=>this.sync.side(b.projectId,op.repositoryId,n,read(op,n),b.bindings.find(x=>x.nodeId===n&&x.repositoryId===op.repositoryId)));
           const c=this.sync.recordConflict({projectId:b.projectId,repositoryId:op.repositoryId,path:op.path,syncGeneration:b.generation,base:null,sides,receiving:sides,batchId:b.id,detection:'metadata'});
-          this.db.put('sourceSyncConflicts',{...c,status:'needs_input',reason:'metadata_conflict'});conflicts.add(c.id);continue;
+          this.db.put('sourceSyncConflicts',{...c,status:'needs_input',reason:'metadata_conflict'});conflicts.add(c.id);const pendingBase=this.db.get('sourceSyncMetadataBaselines',key(b,op.repositoryId,op.path));if(pendingBase?.pending)this.db.remove('sourceSyncMetadataBaselines',pendingBase.id);continue;
         }
         const group=`${op.repositoryId}:${op.target}`;if(!changes.has(group))changes.set(group,[]);changes.get(group).push({path:op.path,before:op.observed[op.target],after:read(op,op.source)});
       }
@@ -105,10 +115,12 @@ export class SourceSyncMetadata {
       for(const op of b.metadataOperations){
         const results=applies.filter(c=>c.repositoryId===op.repositoryId).flatMap(c=>(c.result.files||[]).filter(f=>f.path===op.path).map(f=>({...f,nodeId:c.nodeId})));
         if(results.some(f=>f.status==='conflict')){incomplete.push({repositoryId:op.repositoryId,path:op.path,reason:'target_changed'});continue;}
-        if(results.length||op.decision==='resolution')this.baseline(b,op,{...op.observed,...Object.fromEntries(results.map(f=>[f.nodeId,f.observed]))});
+        if(results.length||['resolution','initialize_overwrite'].includes(op.decision))this.baseline(b,op,{...op.observed,...Object.fromEntries(results.map(f=>[f.nodeId,f.observed]))});
       }
+      if(b.kind==='initialize'&&b.initialization.mode==='overwrite')for(const id of b.conflictIds){const c=this.db.get('sourceSyncConflicts',id);if(c?.initialization&&c.resolutionBatchId===b.id){const failed=incomplete.some(x=>x.repositoryId===c.repositoryId&&x.path===c.path);this.db.put('sourceSyncConflicts',{...c,status:failed?'needs_input':'resolved',...(!failed?{resolvedAt:stamp()}:{})});}}
+      if(b.kind==='initialize')b={...b,conflictIds:b.conflictIds.filter(id=>this.db.get('sourceSyncConflicts',id)?.status!=='resolved')};
       if(b.kind==='resolution'){
-        const c=this.db.get('sourceSyncConflicts',b.conflictIds[0]);if(c?.generation===b.conflictGeneration)this.db.put('sourceSyncConflicts',{...c,status:incomplete.length?'needs_input':'resolved',...(incomplete.length?{reason:'distribution_incomplete'}:{resolvedAt:stamp()})});
+        const c=this.db.get('sourceSyncConflicts',b.conflictIds[0]);if(c?.generation===b.conflictGeneration)this.db.put('sourceSyncConflicts',{...c,status:incomplete.length?'needs_input':'resolved',...(incomplete.length?{reason:'distribution_incomplete'}:{resolvedAt:stamp(),resolutionBatchId:b.id})});
         if(!incomplete.length)b={...b,conflictIds:[]};
       }
       b=this.db.put('sourceSyncBatches',{...b,status:'cleaning',pendingMetadata:[...b.pendingMetadata,...incomplete]});

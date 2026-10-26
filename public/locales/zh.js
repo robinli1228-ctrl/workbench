@@ -4,6 +4,26 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Initializing':'正在初始化',
+  'Saving initial versions':'正在保护初始版本',
+  "Establish sync baseline": "建立同步基线",
+  "Baseline initialization": "基线初始化",
+  "paths processed": "条路径已处理",
+  "Resume initialization": "继续初始化",
+  "Files may differ. Metadata alone does not prove equality. Nothing is written until you confirm an operation.": "文件可能不同。元数据不能证明内容一致；确认操作前不会写入。",
+  "All currently pending paths in this scope": "此范围当前所有待建立基线的路径",
+  "Next page": "下一页",
+  "First page": "第一页",
+  "Exists": "存在",
+  "Select pending paths first": "请先选择待建立基线的路径",
+  "Read both devices once to verify the selected files? Different contents will be preserved as conflicts.": "确认对选定文件在两端各读取一次核验？内容不同会保存为冲突，原件保持不变。",
+  "Save both existing versions, then overwrite from the selected source? This changes the other device.": "确认先保存双方现有版本，再用选定来源覆盖初始化？这会修改另一设备的文件。",
+  "Verify contents once": "一次性核验内容",
+  "Initialize from selected source": "用选定来源覆盖初始化",
+  "Choose a saved side only after reviewing it. The current files will be checked again before applying.": "请审阅后选择保存的版本。应用前会重新核对当前文件。",
+  "Use version from {name}": "使用 {name} 的版本",
+  "Apply this reviewed version to both devices? Unreferenced conflict copies will be removed after confirmation.": "确认将已审阅版本应用到两端？完成确认后会清理无引用的冲突副本。",
+
   'Change detection':'变化判定',
   'Content hashes (existing mode)':'内容哈希（原有模式）',
   'Simple metadata mode (two devices)':'简单元数据模式（两台设备）',

@@ -50,6 +50,8 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_metadata_journal_batch ON records(json_extract(data,'$.batchId')) WHERE kind='sourceSyncJournals';
       CREATE INDEX IF NOT EXISTS records_metadata_worker_batch ON records(json_extract(data,'$.command.batchId')) WHERE kind='sourceSyncCommands';
       CREATE INDEX IF NOT EXISTS records_sync_journal_command ON records(json_extract(data,'$.commandId')) WHERE kind='sourceSyncJournals';
+      CREATE INDEX IF NOT EXISTS records_metadata_init ON records(id) WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.status')='running';
+      CREATE INDEX IF NOT EXISTS records_metadata_conflict_gc ON records(id) WHERE kind='sourceSyncConflicts' AND json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status')='resolved' AND json_extract(data,'$.copiesReleasedAt') IS NULL;
       CREATE INDEX IF NOT EXISTS records_metadata_scope ON records(json_extract(data,'$.projectId'),json_extract(data,'$.repositoryId'),json_extract(data,'$.generation'),json_extract(data,'$.path')) WHERE kind='sourceSyncMetadataBaselines';
       CREATE INDEX IF NOT EXISTS events_run ON events(run_id,seq);
       CREATE TABLE IF NOT EXISTS room_message_receipts(seq INTEGER PRIMARY KEY AUTOINCREMENT,message_id TEXT NOT NULL UNIQUE,project_id TEXT NOT NULL,received_at TEXT NOT NULL);

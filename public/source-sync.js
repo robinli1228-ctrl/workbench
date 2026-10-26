@@ -2,7 +2,7 @@ import {t,onLanguageChange} from './i18n.js';
 import {setActionIcon} from './role-icons.js';
 
 const el=(tag,cls,text)=>Object.assign(document.createElement(tag),{className:cls||'',...(text===undefined?{}:{textContent:text})});
-const labels={queued:'Queued',capturing:'Scanning files',reading:'Reading changed files',staging:'Reading changed files',cleaning:'Clearing transfer staging',applying:'Applying files',completed:'Synchronized',partial_conflict:'Conflicts detected',blocked:'Blocked',cancelling:'Cancelling',cancelled:'Cancelled',preview_ready:'Scope ready',evidence_ready:'Evidence ready',open:'Conflict open',resolving:'Repair in progress',verifying:'Verifying',resolved_pending_sync:'Waiting for device receipts',resolved:'Resolved',needs_input:'Needs attention'};
+const labels={running:'Initializing',paused:'Paused',initializing:'Saving initial versions',queued:'Queued',capturing:'Scanning files',reading:'Reading changed files',staging:'Reading changed files',cleaning:'Clearing transfer staging',applying:'Applying files',completed:'Synchronized',partial_conflict:'Conflicts detected',blocked:'Blocked',cancelling:'Cancelling',cancelled:'Cancelled',preview_ready:'Scope ready',evidence_ready:'Evidence ready',open:'Conflict open',resolving:'Repair in progress',verifying:'Verifying',resolved_pending_sync:'Waiting for device receipts',resolved:'Resolved',needs_input:'Needs attention'};
 const terminal=new Set(['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready']);
 const limitCodes=new Set(['file_too_large','batch_too_large','manifest_too_large','storage_full']);
 const reasons={metadata_two_devices:'Simple mode requires exactly two devices and a directory scope.',metadata_baseline_required:'Pending sync baseline',metadata_conflict:'Both devices changed this file.',worker_unsupported:'Worker update required'};
@@ -39,6 +39,10 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
       const sync=button('Sync now',b=>act(()=>api(endpoint()+'/batches',{requestId:crypto.randomUUID(),sourceNodeId:selectedSource,targetNodeIds:state.config.nodeIds.filter(id=>id!==selectedSource)}),b));sync.disabled=action||getData().settings?.paused||state.batches.some(b=>!terminal.has(b.status));panel.append(sync);
       if(getData().settings?.paused)panel.append(el('p','workspace-note',t('Execution is paused')));
     }
+    if(state.config.enabled&&state.config.detection==='metadata'){
+      panel.append(button('Establish sync baseline',initialize));
+      for(const j of state.initializations||[]){const row=el('div','source-sync-row');row.append(el('small','workspace-note',`${t('Baseline initialization')} · ${status(j.status)} · ${j.processed} ${t('paths processed')}${j.reason?' · '+issue(j.reason):''}`));if(j.status==='paused')row.append(button('Resume initialization',b=>act(()=>api(endpoint()+'/initializations/'+j.id+'/resume',{}),b)));panel.append(row);}
+    }
     for(const b of state.batches.slice(-4).reverse()){
       const row=el('div','source-sync-row');row.append(el('span','',status(b.status)));const meta=el('small','workspace-note',`${b.id.slice(0,8)}${b.reason?' · '+issue(b.reason,b.limit):''}`);meta.setAttribute('translate','no');row.append(meta);
       if(!terminal.has(b.status)){const offline=b.nodeIds.filter(id=>!device(id)?.online);if(offline.length)row.append(el('small','workspace-note',t('Waiting for devices: {names}',{names:offline.map(name).join(', ')})));row.append(button('Cancel sync',btn=>act(()=>api(endpoint()+'/batches/'+b.id+'/cancel',{revision:b.revision}),btn)));}
@@ -46,6 +50,21 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
       panel.append(row);
     }
     for(const c of state.conflicts.filter(c=>!['resolved','cancelled'].includes(c.status))){const row=el('div','source-sync-row');const open=button(c.path,()=>detail(c.id));open.setAttribute('translate','no');row.append(open,el('small','workspace-note',status(c.status)));panel.append(row);}
+  }
+  async function initialize(){
+    const {body,note,id,v}=modal('Establish sync baseline');const config=state.config;let after='',next=null,items=[],selected=new Set();
+    body.append(el('p','workspace-note',t('Files may differ. Metadata alone does not prove equality. Nothing is written until you confirm an operation.')));
+    const scope=el('select');scope.setAttribute('aria-label',t('Repositories'));for(const r of config.repositoryIds){const o=el('option','',getData().repositories?.find(x=>x.id===r)?.name||t('Project files and shared documents'));o.value=r;scope.append(o);}body.append(scope);
+    const allLabel=el('label','source-sync-choice'),all=el('input');all.type='checkbox';allLabel.append(all,el('span','',t('All currently pending paths in this scope')));body.append(allLabel);
+    const list=el('div','source-sync-preview'),more=button('Next page',async()=>{after=next;await page();}),first=button('First page',async()=>{after='';await page();});body.append(list,first,more);
+    const source=el('select');source.setAttribute('aria-label',t('Source device'));for(const n of config.nodeIds){const o=el('option','',name(n));o.value=n;source.append(o);}body.append(source);
+    async function page(){try{const r=await api(endpoint(id)+'/pending?'+new URLSearchParams({repositoryId:scope.value,after,limit:'50'}));if(!valid(id,v))return;items=r.items;next=r.next;more.disabled=!next;list.replaceChildren();for(const item of items){const label=el('label','source-sync-choice'),check=el('input');check.type='checkbox';check.checked=selected.has(item.path);check.addEventListener('change',()=>check.checked?selected.add(item.path):selected.delete(item.path));const text=el('span','',item.path);text.setAttribute('translate','no');label.append(check,text);list.append(label);for(const [node,m] of Object.entries(item.endpoints||{}))list.append(el('small','workspace-note',`${name(node)} · ${m.exists?t('Exists'):t('File deleted')} · ${m.size??0} ${t('bytes')} · ${m.mtimeNs||'—'} ns`));}note.textContent=t('Pending sync baseline');}catch(e){if(valid(id,v))note.textContent=e.message;}}
+    scope.addEventListener('change',()=>{after='';selected.clear();void page();});
+    async function submit(mode,b){if(!all.checked&&!selected.size){note.textContent=t('Select pending paths first');return;}
+      if(!window.confirm(t(mode==='verify'?'Read both devices once to verify the selected files? Different contents will be preserved as conflicts.':'Save both existing versions, then overwrite from the selected source? This changes the other device.')))return;
+      b.disabled=true;try{await api(endpoint(id)+'/initializations',{requestId:crypto.randomUUID(),repositoryId:scope.value,revision:config.revision,confirmed:true,all:all.checked,paths:[...selected],mode,...(mode==='overwrite'?{sourceNodeId:source.value}:{})});if(valid(id,v)){dialog.close();await load(true);}}catch(e){if(valid(id,v)){note.textContent=e.message;b.disabled=false;}}
+    }
+    body.append(button('Verify contents once',b=>submit('verify',b)),button('Initialize from selected source',b=>submit('overwrite',b)));await page();
   }
   async function configure(){
     await load(true);if(!state)return;const ctx=modal('Configure project file sync'),{body,note,id,v}=ctx,config=state.config;let preview=null,pending=false;
@@ -91,7 +110,13 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
       }field.append(select);const pre=el('pre','artifact-code');pre.setAttribute('translate','no');let offset=0;
       const more=button('Load more',()=>read(true));async function read(append=false){const serial=++pageVersion;if(!append)offset=0;more.disabled=true;try{const r=await api(endpoint(id)+'/conflicts/'+conflictId+'/read',{side:select.value,offset,limit:12000});if(!valid(id,v)||serial!==pageVersion)return;pre.textContent=(append?pre.textContent:'')+(r.deleted?t('File deleted'):r.binary?t('Binary file; compare the recorded hashes.'):r.content||'');offset=r.nextOffset;more.hidden=offset===null||r.deleted||r.binary;more.disabled=false;}catch(e){if(valid(id,v)&&serial===pageVersion)note.textContent=e.message;}}
       select.addEventListener('change',()=>void read());body.append(field,pre,more);await read();
-      if(!valid(id,v))return;const ownerLabel=el('label','',t('Assign repair owner')),roles=el('select');roles.setAttribute('aria-label',t('Assign repair owner'));for(const r of [...getData().roles||[],...getData().supervisorRoles||[]].filter(r=>r.projectId===id&&r.enabled&&!r.archivedAt)){const o=el('option','',r.name);o.value=r.id;roles.append(o);}ownerLabel.append(roles);body.append(ownerLabel,button('Assign',async b=>{b.disabled=true;try{await api(endpoint(id)+'/conflicts/'+conflictId+'/assign',{generation:c.generation,roleId:roles.value});if(valid(id,v)){await detail(conflictId);await load(true);}}catch(e){if(valid(id,v)){note.textContent=e.message;b.disabled=false;}}}));
+      if(!valid(id,v))return;
+      if(c.detection==='metadata'){
+        if(['initializing','resolved','cancelled'].includes(c.status))return;
+        body.append(el('p','workspace-note',t('Choose a saved side only after reviewing it. The current files will be checked again before applying.')));
+        for(const side of c.sides)body.append(button(t('Use version from {name}',{name:name(side.nodeId)}),async b=>{if(!window.confirm(t('Apply this reviewed version to both devices? Unreferenced conflict copies will be removed after confirmation.')))return;b.disabled=true;try{await api(endpoint(id)+'/conflicts/'+c.id+'/resolve',{confirmed:true,generation:c.generation,sourceNodeId:side.nodeId});if(valid(id,v)){dialog.close();await load(true);}}catch(e){if(valid(id,v)){note.textContent=e.message;b.disabled=false;}}}));return;
+      }
+      const ownerLabel=el('label','',t('Assign repair owner')),roles=el('select');roles.setAttribute('aria-label',t('Assign repair owner'));for(const r of [...getData().roles||[],...getData().supervisorRoles||[]].filter(r=>r.projectId===id&&r.enabled&&!r.archivedAt)){const o=el('option','',r.name);o.value=r.id;roles.append(o);}ownerLabel.append(roles);body.append(ownerLabel,button('Assign',async b=>{b.disabled=true;try{await api(endpoint(id)+'/conflicts/'+conflictId+'/assign',{generation:c.generation,roleId:roles.value});if(valid(id,v)){await detail(conflictId);await load(true);}}catch(e){if(valid(id,v)){note.textContent=e.message;b.disabled=false;}}}));
       if(c.proposal){const evidence=el('pre','artifact-code',JSON.stringify({candidate:c.proposal.entry,rationale:c.proposal.rationale,evidence:c.proposal.evidence},null,2));evidence.setAttribute('translate','no');body.append(evidence);}
       if(c.reason==='independent_review_required'&&c.proposal)body.append(button('Accept independently reviewed candidate',async b=>{b.disabled=true;try{await api(endpoint(id)+'/conflicts/'+conflictId+'/review',{generation:c.generation,proposalId:c.proposal.id});if(valid(id,v)){await detail(conflictId);await load(true);}}catch(e){if(valid(id,v)){note.textContent=e.message;b.disabled=false;}}}));
     }catch(e){if(valid(id,v))note.textContent=e.message;}

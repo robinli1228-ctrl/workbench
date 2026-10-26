@@ -37,7 +37,7 @@ export class SourceSync {
     if(prior&&identity(versions(prior.sides))===identity(versions(input.sides))&&identity(versions(prior.receiving||[]))===identity(versions(input.receiving||[]))&&!['resolved','cancelled'].includes(prior.status))return prior;
     if(input.projectId){const manifest=this.db.get('sourceSyncManifests',`${input.projectId}:${input.repositoryId}`);if(manifest?.scopeKind==='directory')input={...input,scopeKind:'directory',scopePolicy:manifest.scopePolicy};}
     if(prior)this.db.put('sourceSyncConflictHistory',{...prior,id:`${id}:${prior.generation}`});
-    return this.db.put('sourceSyncConflicts',{...prior,...input,id,generation:(prior?.generation||0)+1,status:'open',proposal:null,createdAt:stamp()});
+    return this.db.put('sourceSyncConflicts',{...prior,...input,...(input.detection==='metadata'?{copiesReleasedAt:null}:{}),id,generation:(prior?.generation||0)+1,status:'open',proposal:null,createdAt:stamp()});
   }
   resolve(conflict,proposal){return this.specialBatch(conflict,'resolution',proposal);}
   refreshEvidence(conflict){return this.specialBatch(conflict,'evidence');}
