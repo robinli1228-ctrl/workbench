@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v194-local-omissions';
+const CACHE = 'agent-workbench-static-v195-fixed-run-header';
 const STATIC = [
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',

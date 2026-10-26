@@ -1578,8 +1578,8 @@ function renderTaskDetail() {
   const oldFilesOpen = dom.taskDetail.querySelector('.run-workspace-files')?.open;
   const openTools = new Map([...dom.taskDetail.querySelectorAll('.nt-activity[open]')].map(card => [card.dataset.toolId,[...card.querySelectorAll('.nt-step')].flatMap((row,i)=>row.classList.contains('is-open')?[i]:[])]));
   const inputRulesOpen=dom.taskDetail.querySelector('.run-input-rules')?.open;
-  const oldScroll = dom.taskDetail.scrollTop;
-  const followTail = oldPanel && dom.taskDetail.scrollHeight - oldScroll - dom.taskDetail.clientHeight < 72;
+  const oldScroll = oldPanel?.scrollTop || 0;
+  const followTail = oldPanel && oldPanel.scrollHeight - oldScroll - oldPanel.clientHeight < 72;
   const oldRunId = app.detailRunId;
   dom.taskDetail.replaceChildren();
   const task = getCurrentTask();
@@ -1605,9 +1605,13 @@ function renderTaskDetail() {
   renderRunToolbar(task, latestRun);
   const body = create('div', 'detail-body');
   if (latestRun) body.append(renderRunSummary(latestRun));
-  if (app.detailError) body.append(create('div', 'inline-error', app.detailError));
-  if (latestRun) body.append(renderApprovals(latestRun));
-  body.append(renderRunTabs(task, latestRun));
+  const tabs = renderRunTabs(task, latestRun), messages = [];
+  // Keep status details and approval controls in the scrolling content, below the fixed metadata and tabs.
+  if (latestRun?.error) messages.push(create('div', 'inline-error full-width', latestRun.error));
+  if (app.detailError) messages.push(create('div', 'inline-error', app.detailError));
+  if (latestRun) { const approvals = renderApprovals(latestRun); if (approvals.childElementCount) messages.push(approvals); }
+  tabs.querySelector('.run-tab-panel').prepend(...messages);
+  body.append(tabs);
   dom.taskDetail.append(body);
   app.detailRunId = latestRun?.id || null;
   const panel = dom.taskDetail.querySelector('.run-tab-panel');
@@ -1618,10 +1622,10 @@ function renderTaskDetail() {
   }
   if(oldRunId!==app.detailRunId)runPreview.close();
   const activeRun = latestRun && !['succeeded', 'failed', 'interrupted'].includes(latestRun.status);
-  if (panel && app.detailTab === 'output' && activeRun && (!oldPanel || oldTab !== 'run-tab-output')) dom.taskDetail.scrollTop = dom.taskDetail.scrollHeight;
-  else if (panel && oldPanel && oldRunId === app.detailRunId && oldTab !== `run-tab-${app.detailTab}`) dom.taskDetail.scrollTop = 0;
-  else if (panel && oldPanel && oldRunId === app.detailRunId) dom.taskDetail.scrollTop = app.detailTab === 'output' && activeRun && followTail ? dom.taskDetail.scrollHeight : oldScroll;
-  else dom.taskDetail.scrollTop = 0;
+  if (panel && app.detailTab === 'output' && activeRun && (!oldPanel || oldTab !== 'run-tab-output')) panel.scrollTop = panel.scrollHeight;
+  else if (panel && oldPanel && oldRunId === app.detailRunId && oldTab !== `run-tab-${app.detailTab}`) panel.scrollTop = 0;
+  else if (panel && oldPanel && oldRunId === app.detailRunId) panel.scrollTop = app.detailTab === 'output' && activeRun && followTail ? panel.scrollHeight : oldScroll;
+  else if (panel) panel.scrollTop = 0;
 }
 
 function renderRunToolbar(task, run) {
@@ -1701,7 +1705,7 @@ function renderRunSummary(run) {
     const value=usage[key]??usage[legacy],item=create('span',`run-usage-item${key==='totalTokens'?' is-total':''}`);
     const amount=formatTokenMillions(value);item.append(create('span','',name),create('strong','',amount??t('Not available')));if(amount)item.title=String(value);summary.append(item);
   }
-  if(run.error)summary.append(create('div','inline-error full-width',run.error));return summary;
+  return summary;
 }
 
 /** The conversation log groups input, output, tools, artifacts and stored original text of the same Run. */
@@ -1735,6 +1739,7 @@ function renderRunTabs(task, run) {
   const panel = create('div', 'run-tab-panel');
   panel.id = 'run-tab-panel';
   panel.setAttribute('role', 'tabpanel');
+  panel.tabIndex = 0;
   panel.setAttribute('aria-labelledby', `run-tab-${app.detailTab}`);
   if (app.detailTab === 'input') panel.append(renderRunInput(task, logs.input,run));
   if (app.detailTab === 'output') panel.append(renderRunOutput(run, app.events));

@@ -2332,6 +2332,8 @@ body .project-sidebar .sidebar-heading { gap: 8px; margin-bottom: 12px; padding-
   padding: 10px 14px; border: 1px solid var(--card-hairline); border-radius: 9px;
   color: var(--text-strong); background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 4%); font-size: var(--fs-md); line-height: 1.65;
 }
+/* Move the scroll track toward the card edge while preserving the text's width and alignment. */
+.chat-bubble > .chat-reply-preview { margin-right: -10px; padding-right: 10px; }
 .chat-row.human .chat-bubble, .native-session-content .chat-row.human .chat-bubble {
   border-color: rgb(79 91 206 / 16%); border-radius: 9px; color: #262c5c;
   background: linear-gradient(180deg, #f1f2ff 0%, #e9ebfd 100%); box-shadow: 0 1px 2px rgb(79 91 206 / 8%);
@@ -3936,7 +3938,7 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .native-identity .native-agent-switch-action:disabled{opacity:.55;cursor:default}
 
 /* Run detail: compact metadata and the same expandable transcript as Sessions. */
-#run-dialog .run-dialog-heading { padding: 22px 26px 18px; align-items: flex-start; }
+#run-dialog .run-dialog-heading { padding: 22px 26px 10px; align-items: flex-start; border-bottom: 0; }
 #run-dialog-title { color: var(--text-body); font-size: 20px; line-height: 1.5; }
 #run-dialog .run-dialog-meta { margin-top: 18px; gap: 10px 18px; font-size: 12px; }
 #run-dialog-session { display: inline-flex; align-items: center; gap: 7px; color: var(--text-muted); }
@@ -3945,20 +3947,20 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 #run-dialog-created { padding-left: 18px; border-left: 1px solid var(--line); }
 #run-dialog .run-copy { width: 26px; height: 26px; min-height: 0; padding: 5px; border: 0; background: transparent; color: #8590a5; }
 #run-dialog .run-copy svg { width: 16px; height: 16px; }
-#run-dialog .detail-body { padding: 0; }
-#run-dialog .run-usage { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 25px; margin: 0; padding: 17px 26px; background: #fafbfe; border-bottom: 1px solid var(--line); }
-.run-usage-label { color: #8792a6; font-size: 12px; }
-.run-usage-item { display: inline-flex; align-items: baseline; gap: 8px; font-size: 12px; color: #8792a6; }
-.run-usage-item strong { font: 600 14px var(--font-mono); color: #586680; }
-.run-usage-item.is-total strong { color: var(--accent); }
-#run-dialog .run-usage .inline-error { flex-basis: 100%; }
-#run-dialog .run-log-tabs { border: 0; border-radius: 0; }
-#run-dialog .run-tab-list { display: flex; gap: 12px; padding: 11px 26px; background: #fff; border-bottom: 1px solid var(--line); overflow-x: auto; }
-#run-dialog .run-tab { flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; min-height: 34px; border: 0; border-radius: 7px; color: #8792a6; font-size: 13px; background: transparent; }
-#run-dialog .run-tab.active { color: var(--accent); background: #efeffc; }
+#run-dialog .detail-column { display: flex; flex-direction: column; overflow: hidden; }
+#run-dialog .detail-body { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; overflow: hidden; }
+#run-dialog .run-usage { display: flex; align-items: center; flex: none; flex-wrap: nowrap; gap: 20px; margin: 0; padding: 8px 26px 14px; background: #fff; border: 0; white-space: nowrap; overflow-x: auto; scrollbar-width: thin; }
+.run-usage-label { flex: none; color: #7d8799; font-size: 12px; }
+.run-usage-item { display: inline-flex; flex: none; align-items: baseline; gap: 6px; font-size: 12px; color: #7d8799; }
+.run-usage-item strong { font: 400 12px var(--font-mono); color: inherit; }
+.run-usage-item.is-total strong { color: inherit; }
+#run-dialog .run-log-tabs { display: flex; flex-direction: column; flex: 1; min-height: 0; border: 0; border-radius: 0; }
+#run-dialog .run-tab-list { display: flex; flex: none; gap: 12px; padding: 11px 26px; background: #f0f3f8; border-bottom: 1px solid var(--line); overflow-x: auto; }
+#run-dialog .run-tab { flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; min-height: 34px; border: 0; border-radius: 7px; color: #526078; font-size: 13px; background: transparent; }
+#run-dialog .run-tab.active { color: #fff; background: #34445b; }
 .run-tab-icon,.run-tab-icon svg { display: block; width: 16px; height: 16px; }
-#run-dialog .run-tab-panel { padding: 24px 26px; background: #f8f9fc; min-height: 340px; }
-#run-dialog .run-transcript { display: grid; gap: 16px; overflow: visible; }
+#run-dialog .run-tab-panel { flex: 1; min-height: 0; padding: 24px 26px; background: #fff; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+#run-dialog .run-transcript { display: grid; gap: 16px; overflow: visible; background: #fff; }
 #run-dialog .run-reply { font-size: 14px; line-height: 1.85; color: var(--text-body); overflow-wrap: anywhere; }
 #run-dialog .run-reply > :first-child { margin-top: 0; }
 #run-dialog .run-reply > :last-child { margin-bottom: 0; }
@@ -3974,17 +3976,16 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 #run-dialog .file-list { display: grid; gap: 0; }
 #run-dialog .file-button { border: 0; border-top: 1px solid #edf0f5; border-radius: 0; background: #fff; padding: 13px 8px; }
 #run-dialog .file-button:hover { background: #f5f7fc; }
-#run-dialog .run-original .dialog-heading { padding: 12px 17px; background: #fafbfe; border-bottom: 1px solid #edf0f5; }
+#run-dialog .run-original .dialog-heading { padding: 12px 17px; background: #fff; border-bottom: 1px solid #edf0f5; }
 #run-dialog .run-original .history-viewer-content { margin: 0; padding: 18px 20px; background: #fff; border: 0; color: #59637a; font: 13px/1.9 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 #run-dialog .run-original .history-viewer-status,#run-dialog .run-original .history-viewer-actions { margin: 0; padding: 10px 17px; }
 @media(max-width:600px){
- #run-dialog .run-dialog-heading { padding: 16px 12px; }
+ #run-dialog .run-dialog-heading { padding: 16px 12px 8px; }
  #run-dialog-title { font-size: 16px; }
  #run-dialog .run-dialog-meta { gap: 8px; }
  #run-dialog-created { border: 0; padding: 0; font-size: 10px; }
  #run-dialog-status { flex-basis: 100%; justify-content: flex-end; }
- #run-dialog .run-usage { padding: 14px 12px; gap: 10px 15px; }
- #run-dialog .run-usage-label { flex-basis: 100%; }
+ #run-dialog .run-usage { padding: 8px 12px 12px; gap: 15px; }
  #run-dialog .run-tab-list { padding: 10px 12px; gap: 3px; }
  #run-dialog .run-tab { font-size: 12px; gap: 5px; padding: 7px; }
  #run-dialog .run-tab-panel { padding: 16px 12px; }
