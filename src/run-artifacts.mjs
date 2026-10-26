@@ -64,14 +64,32 @@ export function recordedArtifactPath(db,run,path,knownCandidates=null){
   return resolve(run.workspace,found.path);
 }
 
+/** One time per card: the newest of its write record, its newest mention in a reply and the file's modification time. */
+function latestEvidence(c,modifiedAt) {
+  const role=run=>run?.roleSnapshot?.name||null;
+  return [{kind:'write',at:c.writtenAt,roleName:role(c.run),runtime:c.run.roleSnapshot?.runtime||null},
+    {kind:'reference',at:c.mention?.at||null,roleName:role(c.mention?.run),runtime:null},
+    {kind:'modified',at:modifiedAt||null,roleName:null,runtime:null}]
+    .filter(e=>Number.isFinite(Date.parse(e.at))).sort((a,b)=>Date.parse(b.at)-Date.parse(a.at))[0]
+    ||{kind:'reference',at:c.run.updatedAt||c.run.createdAt||null,roleName:role(c.run),runtime:null};
+}
+
 /** Query a bounded set of recent runs without walking the whole workspace; for the same device and path only the latest record is shown. */
 export async function recentProjectArtifacts(db,projectId,query,online,projectFiles=null) {
   if(!db.get('projects',projectId))throw new Error(tr('runArtifacts.projectNotFound'));
   const runs=db.list('runs').filter(r=>r.projectId===projectId&&r.workspace).sort((a,b)=>String(b.updatedAt||b.createdAt).localeCompare(String(a.updatedAt||a.createdAt)));
   const messages=db.list('roomMessages').filter(m=>m.projectId===projectId),candidates=new Map();
-  for(const run of runs.slice(0,40))for(const file of artifactCandidates(run,db.events(run.id),messages.filter(m=>m.runId===run.id),projectFiles?path=>projectFiles.reference(run,path):null)) {
+  for(const run of runs.slice(0,40)) {
+    const replies=messages.filter(m=>m.runId===run.id),registered=projectFiles?path=>projectFiles.reference(run,path):null;
+    // References are independent evidence even when this same run also wrote the file; reading still uses the write record.
+    const mentioned=new Set(artifactCandidates(run,[],replies,registered).map(file=>file.path));
+    for(const file of artifactCandidates(run,db.events(run.id),replies,registered)) {
     const ref=projectFiles?.reference(run,file.path),key=ref?`${ref.scopeId}:${ref.path}`:`${run.nodeId}:${resolve(run.workspace,file.path)}`,prior=candidates.get(key);
-    if(!prior||file.writtenAt&&(!prior.writtenAt||file.writtenAt>prior.writtenAt))candidates.set(key,{...file,run,ref});
+    // The write record (or the newest run) still decides how the file is read; the newest mention is kept beside it.
+    const mention=mentioned.has(file.path)?{at:run.finishedAt||run.updatedAt||run.createdAt,run}:null;
+    const base=!prior||file.writtenAt&&(!prior.writtenAt||file.writtenAt>prior.writtenAt)?{...file,run,ref}:prior;
+    candidates.set(key,{...base,mention:[prior?.mention,mention].filter(Boolean).sort((a,b)=>String(b.at).localeCompare(String(a.at)))[0]||null});
+  }
   }
   if(projectFiles){
     const selected=[...candidates.values()].slice(0,100),items=[],deviceErrors=new Map();
@@ -98,10 +116,9 @@ export async function recentProjectArtifacts(db,projectId,query,online,projectFi
         name:basename(c.path),type:extname(c.path).slice(1).toUpperCase()||'FILE',recordedAt:c.writtenAt||c.run.updatedAt||c.run.createdAt,
         runtime:c.writtenAt?c.run.roleSnapshot?.runtime||null:null,roleName:c.writtenAt?c.run.roleSnapshot?.name||null:null,
         sourceKind:c.writtenAt?'write':'reference',source:c.writtenAt?tr('runArtifacts.writeRecord'):tr('runArtifacts.replyReference'),
-        error,syncState:error?'read_error':local.syncState});
+        error,syncState:error?'read_error':local.syncState,latest:latestEvidence(c,local?.modifiedAt)});
     }));
-    // Ordering follows recorded write/reference evidence, not a later synchronization changing local mtime.
-    items.sort((a,b)=>String(b.recordedAt).localeCompare(String(a.recordedAt)));
+    items.sort((a,b)=>String(b.latest.at).localeCompare(String(a.latest.at)));
     return {items,partial:runs.length>40||candidates.size>100,scannedRuns:Math.min(40,runs.length)};
   }
   const selected=[...candidates.values()].slice(0,100),groups=new Map(),items=[];
@@ -116,9 +133,10 @@ export async function recentProjectArtifacts(db,projectId,query,online,projectFi
       items.push({runId:run.id,nodeId:run.nodeId,path:c.path,name:basename(c.path),type:extname(c.path).slice(1).toUpperCase()||'FILE',
         size:info?.size??null,modifiedAt:info?.modifiedAt||null,recordedAt:c.writtenAt||run.updatedAt||run.createdAt,
         runtime:attributed?run.roleSnapshot?.runtime||null:null,roleName:attributed?run.roleSnapshot?.name||null:null,
-        source:c.writtenAt?tr('runArtifacts.writeRecord'):tr('runArtifacts.replyReference'),error:error||info?.error||(!info?tr('runArtifacts.deviceReturnedNoFileInformation'):null)});
+        source:c.writtenAt?tr('runArtifacts.writeRecord'):tr('runArtifacts.replyReference'),error:error||info?.error||(!info?tr('runArtifacts.deviceReturnedNoFileInformation'):null),
+        latest:latestEvidence(c,info?.modifiedAt)});
     }
   }));
-  items.sort((a,b)=>String(b.modifiedAt||b.recordedAt).localeCompare(String(a.modifiedAt||a.recordedAt)));
+  items.sort((a,b)=>String(b.latest.at).localeCompare(String(a.latest.at)));
   return {items,partial:runs.length>40||candidates.size>100||groups.size>12,scannedRuns:Math.min(40,runs.length)};
 }

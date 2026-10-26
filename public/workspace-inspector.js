@@ -54,8 +54,14 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
   function artifactRow(file){
     const button=el('button','artifact-row');button.type='button';
     const type=el('span','artifact-filetype',file.type.slice(0,6));type.dataset.kind=/MD|TXT|DOCX|PDF/.test(file.type)?'document':'code';
-    const body=el('span','artifact-row-body');body.append(el('strong','',file.name),el('small','',`${t(file.sourceKind==='write'?'File write record':'Mentioned in reply')}${file.runtime?` · ${file.runtime}`:''}${file.recordedAt?` · ${date(file.recordedAt)}`:''}`));
-    if(file.modifiedAt)body.append(el('small','',t('Local modified: {time}',{time:date(file.modifiedAt)})));
+    // One time: the newest of the write record, the newest mention and the file's modification (Home picks it).
+    const latest=file.latest||{kind:file.sourceKind==='write'?'write':'reference',at:file.recordedAt,runtime:file.runtime,roleName:null};
+    const who=latest.kind==='write'?latest.runtime:latest.kind==='reference'?latest.roleName:null;
+    // Role and CLI names are the user's own labels: kept out of the page translator, which would rename e.g. a role called 总管.
+    const meta=el('small','',t(latest.kind==='write'?'File write record':latest.kind==='modified'?'Locally modified':'Mentioned in reply'));
+    if(who){const name=el('span','',who);name.setAttribute('translate','no');meta.append(' · ',name);}
+    if(latest.at)meta.append(` · ${date(latest.at)}`);
+    const body=el('span','artifact-row-body');body.append(el('strong','',file.name),meta);
     if(file.path){const path=el('small','artifact-local-path',file.path);path.setAttribute('translate','no');body.append(path);}
     body.append(el('small',file.error||file.syncState==='conflict'?'artifact-warning':'',fileState(file)));
     if(sourceVersion(file))body.append(el('small','artifact-local-path',`${getData().workers.find(w=>w.id===file.nodeId)?.name||file.nodeId} · ${sourceVersion(file)}`));
@@ -72,7 +78,10 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
       if(version!==generation)return;
       list.replaceChildren();loadedAt=Date.now();
       note.textContent=t(result.partial?'Showing partial outputs from recent runs · see the conversation log for earlier records':'Write records and reply references are shown separately; contents come from the bound Mac.');
-      for(const file of result.items)list.append(artifactRow(file));
+      // Files the page cannot read are folded into one line at the end instead of sitting between real outputs.
+      const readable=result.items.filter(file=>!file.error),unreadable=result.items.filter(file=>file.error);
+      for(const file of readable)list.append(artifactRow(file));
+      if(unreadable.length){const box=el('details','artifact-unreadable');box.append(el('summary','',t('{count} more files cannot be read',{count:unreadable.length})));for(const file of unreadable)box.append(artifactRow(file));list.append(box);}
       if(!result.items.length)list.append(el('div','inspector-empty','No recognizable outputs yet. File write records and file links in replies will appear here.'));
     }catch(error){if(version===generation){note.textContent=t('Read failed: {message}', { message: error.message });loadedAt=Date.now();}}
     finally{if(version===generation){busy=false;refresh.disabled=false;}}

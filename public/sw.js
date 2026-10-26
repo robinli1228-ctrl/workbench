@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v200-independent-side-chat';
+const CACHE = 'agent-workbench-static-v201-integrated-recent-outputs';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',

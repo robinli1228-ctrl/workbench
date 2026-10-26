@@ -1644,6 +1644,8 @@ button.action-icon-button { display: inline-flex; align-items: center; justify-c
 .recent-artifact-list { display:grid; gap:8px; }
 .artifact-row { width:100%; display:flex; align-items:center; gap:10px; text-align:left; padding:12px 10px; border:1px solid #dfe8f6; border-radius:10px; background:#fff; transition:background .15s,border-color .15s; }
 .artifact-row:hover { background:#f6faff; border-color:#9fbff4; }
+.artifact-unreadable { display:grid; gap:8px; }
+.artifact-unreadable > summary { cursor:pointer; padding:6px 2px; color:#7a8599; font-size:12px; }
 .artifact-filetype { width:36px; height:42px; display:flex; align-items:center; justify-content:center; flex-shrink:0; border-radius:7px 12px 7px 7px; background:#e9edff; color:#5f5ccb; font-size:9px; font-weight:800; letter-spacing:.02em; }
 .artifact-filetype[data-kind="document"] { background:#e5f1ff; color:#0875df; }
 .artifact-row-body { display:grid; gap:5px; min-width:0; }
