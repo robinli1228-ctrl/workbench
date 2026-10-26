@@ -6,7 +6,7 @@ import { Store } from '../src/store.mjs';
 import { Rooms } from '../src/rooms.mjs';
 import { RoleCalls } from '../src/role-calls.mjs';
 import { createAgentCalls } from '../src/agent-calls.mjs';
-import { runWithLanguage } from '../src/i18n.mjs';
+import { runWithLanguage, tr } from '../src/i18n.mjs';
 import { composeTurnInput, executionEnvironmentHint, createRunInput, executionInstructionComponents } from '../src/run-input.mjs';
 import { traditionalInput } from '../src/input-language.mjs';
 import { turnOrigin, renderRunInputParts, renderRunPrompt } from '../src/run-context.mjs';
@@ -191,3 +191,9 @@ test('a caller whose wait already woke once still hears about a later failure; f
   assert.equal(posted.length, 1);
   assert.equal(e.db.list('outcomeWakes').length, 0, 'a disabled caller gets no reminder and the queue is cleared');
 });
+
+test('the retired-command notice is sent in the same script as the rest, and sync help covers metadata mode', () => runWithLanguage('zh', () => {
+  const { role } = executionInstructionComponents({ run: { roleSnapshot: { name: '开发' }, roleId: 'r1' }, configuration: { platformPrompt: '', roleInstructions: '完成后用 wb report 汇报。', supervisorPrompt: '' } });
+  assert.match(role, /已取消的命令（wb report、wb schedule 等）不要再用，結果以最終回覆爲準。$/, 'the notice starts with prose, so conversion does not skip it as a command line');
+  assert.match(tr('wbTools.helpSync'), /元数据同步只比较修改时间和大小，不给 SHA256，哈希为空不代表没到/);
+}));
