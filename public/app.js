@@ -1,3 +1,4 @@
+import {deliveryRepositorySummary} from './delivery-summary.js';
 import {createConversationTaskUI} from './conversation-tasks.js';
 import {createDataSettingsUI} from './data-settings.js';
 import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
@@ -1811,6 +1812,8 @@ function renderDeliveries(run) {
     const card = create('div', 'approval-card');
     card.append(create('strong', '', labels[d.status] || d.status), create('p', '', d.summary),
       create('p', '', `${d.repoUrl}\n${d.commit}\n${d.ref}`));
+    const scope=deliveryRepositorySummary(d,run.repositories||[]);
+    if(scope.names.length)card.append(create('p','',`${t(scope.partial?'Only some repositories':'Repositories')}: ${scope.names.join(', ')}`));
     if (d.error) card.append(create('p', 'inline-error', d.error));
     if (!d.approvedAt && ['waiting_source', 'awaiting_approval'].includes(d.status)) {
       const approve = create('button', 'secondary', 'Confirm push of this commit'); approve.type = 'button';

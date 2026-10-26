@@ -127,7 +127,14 @@ export default Object.freeze({
   'collaboration.testerInstructions': `根据原始要求测试交付物。先确认对应版本已经部署到获准的测试环境且可访问；有授权时准备该环境，否则明确请求实现者或总管安排部署。
 页面流程通常使用 Playwright 模拟人的导航、点击、输入和确认，覆盖主路径及相关异常、边界场景，检查实际操作结果，而非只看脚本退出码。
 把失败步骤、预期与实际、版本和证据反馈原实现者。对争议结果共同核对，预期行为不明确时找计划角色确认，修复后复测。报告真实通过项和未测试项，区分测试数据与真实业务写入。`,
-  'wbTools.deliveryUsage': '用法：wb deliver [--review] <请求编号> <完整提交SHA|auto> <说明>\n使用 auto 读取本轮所有仓库的当前 HEAD；仅有一个明确仓库时也可指定完整 SHA。--review 只发布固定审核分支，并在独立目录接收，不推进项目基线；Home 和参与设备的 Worker 均须支持审核交付。不加 --review 时，开发交付保留原有基线推进行为。登记不等于发布或验收，仍须源执行成功及 Worker 校验；不传送未提交文件。查看帮助不会提交申请。',
+  'wbTools.deliveryRepoReviewOnly': '只有 --review 可使用 --repo；普通交付必须包含全部仓库。',
+  'wbTools.deliveryRepoUnknown': '仓库 {key} 不存在或有歧义。可用 key：{keys}',
+  'wbTools.deliveryRepoDuplicate': '不能重复选择同一仓库。',
+  'wbTools.deliveryShaManyRepos': '一个 SHA 不能选择多个仓库；请用 auto。',
+  'wbTools.deliveryShaAmbiguous': '多个仓库都有此提交；请指定 --repo。',
+  'wbTools.deliveryShaMissing': '选定的仓库中没有此提交。',
+  'wbTools.deliveryRepoSelected': '已自动认定仓库：{key}',
+  'wbTools.deliveryUsage': '用法：wb deliver [--review] <请求编号> <完整提交SHA|auto> <说明>\n使用 auto 读取本轮所有仓库的当前 HEAD；完整 SHA 指定一个仓库。--review 只发布固定审核分支，并在独立目录接收，不推进项目基线；Home 和参与设备的 Worker 均须支持审核交付。不加 --review 时，开发交付保留原有基线推进行为。登记不等于发布或验收，仍须源执行成功及 Worker 校验；不传送未提交文件。查看帮助不会提交申请。 仅 --review 支持重复 --repo <key或id> 选择仓库；选项可放参数前后。auto 读取所选仓的 HEAD，未选择则读取全部。审核 SHA 未指定 --repo 时须仅存在于一个本地仓库；多个 --repo 须用 auto。',
   'gitDelivery.projectDeliveryRequiresAuto': '本轮包含多个仓库，请使用 wb deliver <请求编号> auto <说明> 申请交付各仓库的确定提交；不能用一个 SHA 代表全部仓库。',
   'coordinator.dynamicPlanningRules': '项目不预绑定计划角色。每轮先判断是否需要规划，再根据当前完整角色名单、同伴职能、相关上下文和可用状态选择合适对象。用户明确点名时按指定执行；不能从角色显示名称或历史配置推断永久的计划或执行绑定。',
   'folders.projectBindingRequired': '请先在项目设置中绑定该设备上的项目文件夹',
@@ -1562,7 +1569,8 @@ wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      定时提醒：到点在群里叫醒指定角色。任何角色都可以给自己设；总管还可以给别人设。写操作带稳定 requestId；update/pause/resume/delete 还要 id 和 revision，update 要带完整的 name、description 和时间设置。不写 roleId 就是提醒自己。
                      例：wb timer create '{"requestId":"remind-1","name":"复查","description":"复查部署结果","type":"once","onceAt":"2026-10-25T09:00:00+08:00"}'
-wb deliver [--review] 编号 完整SHA|auto 说明
+wb deliver [--review] [--repo key或id]... 编号 完整SHA|auto 说明
+                     --repo 可重复，仅用于审核；auto 读取所选 HEAD。审核 SHA 须明确对应一个仓，有歧义时指定 --repo。
                      跨设备交付一个提交，交付会自动推送；auto 取本轮所有仓库的当前 HEAD。--review 只给审核用：发布固定审核分支、在独立目录接收，不推进项目基线
 wb session current   查看本轮的角色会话身份
 wb help sync | wb help review | wb help errors

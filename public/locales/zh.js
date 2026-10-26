@@ -4,6 +4,7 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Only some repositories': '只包含部分仓库',
   'Run record': '运行记录',
   'Total': '合计',
   'Token · Session cumulative': 'Token · 会话累计',

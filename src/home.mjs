@@ -301,7 +301,8 @@ async function dispatch(nodeId) {
     const dispatchSocket=sockets.get(nodeId);
     const gitCredentials = {};
     if (!run.switchOperationId && (c.type === 'launch' || c.type === 'delivery_publish' || run.deliveryId)) {
-      try { for (const repo of run.repositories || []) gitCredentials[repo.id] = await hosting.auth(repo.accountId, repo.repoUrl); }
+      const publishing = c.type === 'delivery_publish' ? db.get('deliveries', c.deliveryId) : null;
+      try { for (const repo of (run.repositories || []).filter(r=>publishing?.purpose!=='review'||!publishing.items||publishing.items.some(item=>item.id===r.id))) gitCredentials[repo.id] = await hosting.auth(repo.accountId, repo.repoUrl); }
       catch (e) {
         if(c.type === 'delivery_publish') {
           const delivery=db.get('deliveries',c.deliveryId);
@@ -1489,6 +1490,7 @@ const server = http.createServer(async (req, res) => {
     files['/workspace-inspector.js']='workspace-inspector.js';
     files['/conversation-tasks.js']='conversation-tasks.js';
     files['/conversation-task-state.js']='conversation-task-state.js';
+    files['/delivery-summary.js']='delivery-summary.js';
     files['/source-sync.js']='source-sync.js';
     files['/quota-state.js']='quota-state.js';
     files['/chat-card-state.js']='chat-card-state.js';

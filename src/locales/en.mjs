@@ -127,7 +127,14 @@ During independent review, submit your own conclusions first; the requester orga
   'collaboration.testerInstructions': `Test the delivered work against the original requirements. First verify that the intended version is deployed and reachable in the authorized test environment; prepare that environment when authorized or request deployment from the implementer or supervisor.
 For web flows, normally use Playwright to simulate real human navigation, clicks, input and confirmation. Cover the main path and relevant error and boundary cases; check the observable result rather than only a script exit code.
 Send failures, reproduction steps, expected/actual behavior, version and evidence to the original implementer. Discuss disputed results, involve the planner when expected behavior is unclear, and re-test fixes. Report what actually passed and what was not tested, distinguishing test data from real business writes.`,
-  'wbTools.deliveryUsage': 'Usage: wb deliver [--review] <request-id> <full-commit-sha|auto> <summary>\nUse auto to capture the current HEAD of every repository in this Run. An explicit SHA is supported for an unambiguous single repository. --review publishes only a fixed review ref and receives it in an independent directory, without advancing project baselines; Home and participating Workers must support review deliveries. Without --review, development delivery keeps its baseline advancement. Registration is not publication or acceptance; source success and Worker checks still apply. Uncommitted files are not transferred. Help does not submit a request.',
+  'wbTools.deliveryRepoReviewOnly': 'Only --review supports --repo; ordinary delivery must include all repositories.',
+  'wbTools.deliveryRepoUnknown': 'Unknown or ambiguous repository {key}. Available keys: {keys}',
+  'wbTools.deliveryRepoDuplicate': 'Duplicate repository selection.',
+  'wbTools.deliveryShaManyRepos': 'One SHA cannot select multiple repositories; use auto.',
+  'wbTools.deliveryShaAmbiguous': 'This commit exists in multiple repositories; specify --repo.',
+  'wbTools.deliveryShaMissing': 'No selected repository contains this commit.',
+  'wbTools.deliveryRepoSelected': 'Selected repository: {key}',
+  'wbTools.deliveryUsage': 'Usage: wb deliver [--review] <request-id> <full-commit-sha|auto> <summary>\nUse auto to capture the current HEAD of every repository in this Run. An explicit SHA identifies one repository. --review publishes only a fixed review ref and receives it in an independent directory, without advancing project baselines; Home and participating Workers must support review deliveries. Without --review, development delivery keeps its baseline advancement. Registration is not publication or acceptance; source success and Worker checks still apply. Uncommitted files are not transferred. Help does not submit a request. Repeat --repo <key|id> only with --review to select repositories; flags may appear before or after arguments. auto reads selected HEADs (all if omitted). A review SHA without --repo must exist in exactly one local repository; multiple --repo values require auto.',
   'gitDelivery.projectDeliveryRequiresAuto': 'This Run contains multiple repositories. Use wb deliver <request-id> auto <summary> to request delivery of their exact commits; one SHA cannot identify all repositories.',
   'coordinator.dynamicPlanningRules': 'There is no pre-bound planner role. Decide whether this task needs planning, and select the appropriate collaborator from the current full roster using responsibilities, relevant context and availability. Respect an explicit user assignment; do not infer a permanent planning or execution binding from a display name or historical configuration.',
   'folders.projectBindingRequired': 'First bind this project folder on the selected device in Project Settings',
@@ -1562,7 +1569,8 @@ wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      Timed reminders: wake a role in the group chat at a set time. Any role may set them for itself; the supervisor may also set them for others. Writes need a stable requestId; update/pause/resume/delete also need id and revision, and update must resend the full name, description and schedule. Without roleId the reminder is for yourself.
                      Example: wb timer create '{"requestId":"remind-1","name":"Recheck","description":"Recheck the deployment","type":"once","onceAt":"2026-10-25T09:00:00+08:00"}'
-wb deliver [--review] ID FULL_SHA|auto DESCRIPTION
+wb deliver [--review] [--repo KEY|ID]... ID FULL_SHA|auto DESCRIPTION
+                     --repo is repeatable, review-only; auto reads selected HEADs. A review SHA must identify one repository; use --repo if ambiguous.
                      Deliver a commit across devices; the delivery is pushed automatically, and auto takes the current HEAD of every repository in this run. --review is for reviews only: it publishes a fixed review ref received in a separate directory, without advancing project baselines
 wb session current   Show this turn's role session identity
 wb help sync | wb help review | wb help errors

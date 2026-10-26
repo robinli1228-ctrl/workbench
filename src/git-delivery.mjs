@@ -91,7 +91,7 @@ export class Deliveries {
       }
     }
     if (items) {
-      if (!Array.isArray(items) || !items.length || items.length !== run.repositories?.length || new Set(items.map(i=>i.id)).size !== items.length) throw new Error(tr('gitDelivery.projectDeliveryMustIncludeAll'));
+      if (!Array.isArray(items) || !items.length || (input.purpose !== 'review' && items.length !== run.repositories?.length) || new Set(items.map(i=>i.id)).size !== items.length) throw new Error(tr('gitDelivery.projectDeliveryMustIncludeAll'));
       for (const item of items) {
         const repo = run.repositories.find(r=>r.id===item.id);
         if (!repo || repo.repoUrl !== item.repoUrl) throw new Error(tr('gitDelivery.deliveryRepositoryDoesNotBelong'));

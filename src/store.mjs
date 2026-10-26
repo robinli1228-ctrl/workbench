@@ -335,7 +335,11 @@ export class Store {
       // Freeze the role's saved scope for this execution; switch maintenance keeps its own read-only boundary.
       const permissionScope = task.origin==='chat'&&!isSwitchMaintenance(task) ? (this.get('roles', task.roleSnapshot?.id||task.roleId)?.permissionScope ?? task.roleSnapshot?.permissionScope) : undefined;
       if (permissionScope !== undefined) { const issue = permissionScopeIssue(this.get('workers', nodeId), task.roleSnapshot?.runtime || 'codex', permissionScope); if (issue) throw new Error(tr(`rolePermissions.${issue}`, { scope: permissionScope })); }
-      const repositories = projectRepositories(this, task.projectId, nodeId).filter(r=>!task.execution?.repositoryKeys||task.execution.repositoryKeys.includes(r.key));
+      const delivery = task.deliveryId ? this.get('deliveries', task.deliveryId) : null;
+      const reviewItems = delivery?.purpose === 'review' ? delivery.items : null;
+      if (reviewItems && (delivery.projectId !== task.projectId || delivery.status !== 'ready' || !reviewItems.length)) throw new Error(tr('projectDelivery.projectRepositorySetHasChanged'));
+      const repositories = projectRepositories(this, task.projectId, nodeId).filter(r=>(!task.execution?.repositoryKeys||task.execution.repositoryKeys.includes(r.key)) && (!reviewItems || reviewItems.some(item=>item.id===r.id && item.repoUrl===r.repoUrl)));
+      if (reviewItems && repositories.length !== reviewItems.length) throw new Error(tr('projectDelivery.projectRepositorySetHasChanged'));
       if (!task.roleSnapshot?.systemSupervisor && repositories.some(repo => !repo.localRoot)) throw new Error(tr('store.projectRepositoriesOnDeviceNot'));
       const sourceWait=sourceInputWaitReason(this,task,nodeId);if(sourceWait)throw syncError(sourceWait);
       if (!reservePropagation(this, task)) return null;
