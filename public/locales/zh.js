@@ -4,6 +4,17 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  'Change detection':'变化判定',
+  'Content hashes (existing mode)':'内容哈希（原有模式）',
+  'Simple metadata mode (two devices)':'简单元数据模式（两台设备）',
+  'Simple mode: metadata and completion receipts; equal time and size can miss content changes.':'简单模式以元数据与完成回执确认；修改时间和大小都相同时可能漏检内容变化。',
+  'Simple mode requires exactly two devices and a directory scope.':'简单模式需要恰好两台设备，并且必须是目录范围。',
+  'Simple mode requires exactly two upgraded devices. Unavailable devices need a Worker update.':'简单模式需要恰好两台已升级设备；不可选的设备需要升级 Worker。',
+  'Pending sync baseline':'待建立同步基线',
+  'Both devices changed this file.':'两台设备都修改了这个文件。',
+  'Reading changed files':'读取变化的文件',
+  'Clearing transfer staging':'清理传输暂存',
+
   'Run record': '运行记录',
   'Total': '合计',
   'Token · Session cumulative': 'Token · 会话累计',

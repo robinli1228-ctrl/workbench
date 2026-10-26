@@ -11,7 +11,8 @@ export const contentHash=bytes=>createHash('sha256').update(bytes).digest('hex')
 
 /** Codes are stable protocol values; localized detail does not participate in identity. */
 export function syncError(code,detail='') {
-  return Object.assign(new Error(tr('sourceSync.failure',{code,detail})),{code});
+  const metadataMessages={metadata_two_devices:'sourceSync.metadataTwoDevices',metadata_baseline_required:'sourceSync.metadataBaseline',invalid_metadata:'sourceSync.invalidMetadata'};
+  return Object.assign(new Error(tr('sourceSync.failure',{code,detail:detail||(metadataMessages[code]?tr(metadataMessages[code]):'')})),{code});
 }
 
 /** Keep bounded limit evidence separate from localized messages and file contents. */

@@ -19,6 +19,7 @@ export class SourceSyncAgent {
     const path=input.path;
     if(typeof path!=='string'||!path||path.length>500||path.startsWith('/')||path.split('/').some(part=>part==='..'||part===''))throw syncError('invalid_path');
     const config=this.db.get('sourceSyncConfigs',run.projectId),guarded=reviewView(this.db,run).reviewGuarded;
+    if(config?.enabled&&config.detection==='metadata')return this.metadataFileStatus(run,input,config,guarded);
     // Historical scopes and acknowledgements remain stored, but cannot prove delivery in the current configuration.
     const nodeIds=[...new Set(config?.nodeIds||[])];
     const manifests=this.db.listProject('sourceSyncManifests',run.projectId).filter(m=>config?.enabled&&config.repositoryIds?.includes(m.repositoryId)&&m.generation===config.generation&&(input.repositoryId===undefined||m.repositoryId===input.repositoryId));
@@ -46,6 +47,18 @@ export class SourceSyncAgent {
     }).filter(Boolean);
     return {path,observedAt:new Date().toISOString(),enabled:Boolean(config?.enabled),state:scopes.length?scopes.some(s=>s.state==='conflict')?'conflict':scopes.every(s=>s.state==='consistent')?'consistent':scopes.some(s=>s.state==='in_transit')?'in_transit':'unknown':'unknown',
       ...(scopes.length?{}:{reason:'not_in_sync_scope'}),scopes};
+  }
+  metadataFileStatus(run,{path,repositoryId},config,guarded){
+    const batches=this.db.listSourceSyncBatches({projectId:run.projectId}),conflicts=this.db.listProject('sourceSyncConflicts',run.projectId).filter(c=>c.path===path&&c.syncGeneration===config.generation&&!['resolved','cancelled'].includes(c.status));
+    const scopes=config.repositoryIds.filter(id=>repositoryId===undefined||id===repositoryId).map(id=>{
+      const key=contentHash(JSON.stringify([run.projectId,id,config.generation,path])),baseline=this.db.get('sourceSyncMetadataBaselines',key);
+      const hidden=guarded&&path.startsWith('.workbench/'),conflictIds=conflicts.filter(c=>c.repositoryId===id).map(c=>c.id);
+      const devices=config.nodeIds.map(nodeId=>{const online=Boolean(this.sync.online(nodeId)),active=batches.some(b=>b.generation===config.generation&&b.repositoryIds.includes(id));
+        return {nodeId,online,state:hidden?'unknown':conflictIds.length?'conflict':!online?'unknown':active?'in_transit':baseline?.endpoints?'consistent':'unknown',hash:null,
+          metadata:hidden?null:baseline?.endpoints?.[nodeId]||null,observedAt:hidden?null:baseline?.acknowledgedAt||null,reason:hidden?'review_document_not_released':!online?'device_offline':baseline?.pending?'metadata_baseline_required':!baseline?'no_acknowledgement':null};});
+      return {repositoryId:id,confirmation:'metadata_and_receipts',hashComputed:false,conflictIds:hidden?[]:conflictIds,devices,state:devices.some(d=>d.state==='conflict')?'conflict':devices.every(d=>d.state==='consistent')?'consistent':devices.some(d=>d.state==='in_transit')?'in_transit':'unknown'};
+    });
+    return {path,enabled:true,confirmation:'metadata_and_receipts',hashComputed:false,scopes,state:scopes.some(s=>s.state==='conflict')?'conflict':scopes.length&&scopes.every(s=>s.state==='consistent')?'consistent':scopes.some(s=>s.state==='in_transit')?'in_transit':'unknown'};
   }
   async execute(run,action,input={}){
     if(!input||typeof input!=='object'||Array.isArray(input))throw syncError('invalid_request');
