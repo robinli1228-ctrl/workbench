@@ -75,6 +75,13 @@ export function createAgentCalls({db,calls,rooms},run,input) {
       requestId:requests[0].id,requestIds:requests.map(r=>r.id),callFingerprint:fingerprint,taskIds:[],text:input.text,replyToId:rooms.replySourceFor(run)?.id||null,
       handoff:{kind,fromRoleId:run.roleId,fromRole:run.roleSnapshot.name,toRoleId:toRoles[0].id,toRole:toRoles[0].name,toRoles,summary:input.text},createdAt:new Date().toISOString()});
     rooms.touch(run.projectId,conversationIdOf(run));
-    return response(message);
+    // Nudges at the moment of dispatch; the call itself is sent unchanged either way.
+    const hints=[];
+    // Work handed to others should be tracked as a task; consultations and reviews are not.
+    if(['direct','transfer'].includes(kind)&&!linked&&!parent.conversationTaskId)hints.push(tr('agentCalls.taskHint'));
+    // The supervisor giving a task to its owner with direct gets the result back and answers the user a second time.
+    if(kind==='direct'&&run.roleSnapshot?.systemSupervisor&&linked&&targets.length===1&&linked.ownerRoleId===targets[0].id)hints.push(tr('agentCalls.transferHint'));
+    const result=response(message);
+    return hints.length?{...result,hint:hints.join(' ')}:result;
   });
 }
