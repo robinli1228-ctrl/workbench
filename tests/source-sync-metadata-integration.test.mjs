@@ -30,3 +30,128 @@ test('S01 unchanged tombstones do not advance the confirmed baseline again',asyn
 test('S13 prepared journal reconciles a crash between link and unlink',async t=>{const f=await fixture(t);await f.write('a','base');await f.sync();await f.write('a','next');const {renameSync,linkSync}=await import('node:fs');const wd=f.clients.b.db,put=wd.put.bind(wd);let crashed=false;wd.put=(kind,value)=>{const saved=put(kind,value);if(!crashed&&kind==='sourceSyncJournals'&&value.detection==='metadata'&&value.status==='prepared'){crashed=true;renameSync(join(f.dir,'b','file.txt'),value.backupPath);linkSync(value.tempPath,join(f.dir,'b','file.txt'));throw Error('synthetic crash with own hardlink alias');}return saved;};const b=await f.sync();assert.equal(crashed,true);assert.equal(b.status,'completed');assert.equal(await f.read('b'),'next');assert.equal((await stat(join(f.dir,'b','file.txt'))).nlink,1);});
 test('S05 equal content with different executable modes still needs no upload',async t=>{const f=await fixture(t);await f.write('a','base');await f.sync();await f.write('a','equal');await f.write('b','equal');const {chmod}=await import('node:fs/promises');await chmod(join(f.dir,'a','file.txt'),0o755);const b=await f.sync();assert.equal(b.status,'completed');assert.equal(f.db.listSourceSyncCommands({batchId:b.id,action:'stage'}).length,0);assert.equal(f.db.listSourceSyncCommands({batchId:b.id,action:'apply'}).length,0);});
 test('S13 cancellation can replay a saved read receipt without requiring discarded bytes',async t=>{const f=await fixture(t);await f.write('a','base');await f.sync();await f.write('a','next');const client=f.clients.a,request=client.request.bind(client);client.request=async(m,p,method,v)=>{const result=await request(m,p,method,v);if(p==='receipt'&&method==='PUT'&&client.db.get('sourceSyncCommands',m.commandId)?.command?.action==='read')throw Object.assign(Error('synthetic lost upload response'),{code:'ECONNRESET'});return result;};const b=await f.sync();assert.equal(b.status,'reading');const read=f.db.listSourceSyncCommands({batchId:b.id,action:'read'})[0];client.request=request;f.home.sync.cancel('p',b.id,b.revision);client.cancel(read.id);for(let i=0;i<100&&client.inFlight.size;i++)await new Promise(r=>setTimeout(r,5));await f.pump();assert.equal(f.db.get('sourceSyncBatches',b.id).status,'cancelled');assert.equal(await f.read('b'),'base');});
+
+// Drive the same persisted commands/receipts after a terminal batch, including restart replay.
+async function retire(f, home=f.home) {
+  const queue=[];
+  for(const [id,c] of Object.entries(f.clients))c.send=m=>queue.push([id,m]);
+  for(let i=0;i<8;i++) {
+    await home.tick();
+    for(const c of home.sync.schedule())await f.clients[c.nodeId].execute({commandId:c.id,secret:c.secret});
+    while(queue.length){const [id,m]=queue.shift();await home.message(id,m);}
+  }
+}
+async function assertRetired(f,b,before=0,home=f.home) {
+  assert.equal(home.db.db.prepare("SELECT count(*) AS n FROM records WHERE kind='sourceSyncBlobs' AND json_extract(data,'$.namespace')=?").get(b.id).n,0);
+  assert.equal(home.db.get('sourceSyncBlobUsage','p')?.bytes||0,before);
+  for(const c of Object.values(f.clients))await assert.rejects(stat(join(c.blobRoot,'metadata',b.id)),{code:'ENOENT'});
+}
+async function failAfterUpload(f) {
+  await f.write('a','candidate');
+  const c=f.clients.a,request=c.request.bind(c);let changed=false;
+  c.request=async(m,p,method,v)=>{const r=await request(m,p,method,v);if(!changed&&p.startsWith('blobs/')&&method==='PUT'){changed=true;await f.write('a','newer');}return r;};
+  const tick=f.home.tick.bind(f.home);f.home.tick=async()=>{};
+  let batch;try{batch=await f.sync();}finally{f.home.tick=tick;c.request=request;}
+  assert.equal(batch.reason,'source_busy');return batch;
+}
+test('terminal metadata: S07 clears both staging stores and quota without deleting shared content',async t=>{
+  const f=await fixture(t),{Readable}=await import('node:stream'),{contentHash}=await import('../src/source-sync-manifest.mjs');
+  const entry={hash:contentHash('shared'),size:6,executable:false};await f.home.storage.receive('p',entry,Readable.from('shared'));
+  const b=await failAfterUpload(f);await retire(f);await assertRetired(f,b,6);
+  assert.equal((await f.home.storage.read('p',entry.hash)).toString(),'shared');
+  assert.equal(f.db.get('sourceSyncBatches',b.id).status,'blocked');
+});
+test('terminal metadata: cancel after read upload clears staging and preserves cancellation',async t=>{
+  const f=await fixture(t);await f.write('a','candidate');
+  const c=f.clients.a,request=c.request.bind(c);let cancelled=false;
+  c.request=async(m,p,method,v)=>{const r=await request(m,p,method,v);if(!cancelled&&p.startsWith('blobs/')&&method==='PUT'){cancelled=true;const command=f.db.get('sourceSyncCommands',m.commandId),b=f.db.get('sourceSyncBatches',command.batchId);f.home.sync.cancel('p',b.id,b.revision);}return r;};
+  const b=await f.sync();assert.equal(b.status,'cancelled');await retire(f);await assertRetired(f,b);
+  assert.equal(f.db.get('sourceSyncBatches',b.id).status,'cancelled');
+  await assert.rejects(f.read('b'),{code:'ENOENT'});
+});
+test('terminal metadata: preparing and prepared journals retain staging until a definite outcome',async t=>{
+  const {cleanupMetadataFiles}=await import('../src/source-sync-metadata-files.mjs');
+  const f=await fixture(t),batchId='a'.repeat(64),root=join(f.clients.a.blobRoot,'metadata',batchId);
+  await mkdir(root,{recursive:true});await writeFile(join(root,'saved'),'recover');
+  const db=f.clients.a.db,id='journal',commandId='apply';
+  for(const status of ['preparing','prepared']){
+    db.put('sourceSyncJournals',{id,commandId,projectId:'p',batchId,detection:'metadata',status});
+    const result=await cleanupMetadataFiles({id:'cleanup',projectId:'p',batchId,journalCommands:[]},db,root);
+    assert.notEqual(result.status,'completed');assert.equal(await readFile(join(root,'saved'),'utf8'),'recover');
+  }
+  db.put('sourceSyncJournals',{...db.get('sourceSyncJournals',id),status:'conflict'});
+  assert.equal((await cleanupMetadataFiles({id:'cleanup',projectId:'p',batchId,journalCommands:[]},db,root)).status,'completed');
+  await assert.rejects(stat(root),{code:'ENOENT'});
+});
+test('terminal metadata: Home defers reconciling commands then cleans after their definite result',async t=>{
+  const f=await fixture(t),b=await failAfterUpload(f),read=f.db.listSourceSyncCommands({batchId:b.id,action:'read'})[0];
+  f.db.put('sourceSyncCommands',{...read,status:'reconciling',result:null});
+  await f.home.tick();assert.ok(f.db.get('sourceSyncBlobUsage','p').bytes>0);
+  assert.equal(f.db.listSourceSyncCommands({batchId:b.id,action:'cleanup'}).length,0);
+  f.db.put('sourceSyncCommands',read);await retire(f);await assertRetired(f,b);
+});
+test('terminal metadata: Worker reconciling command protects local staging',async t=>{
+  const {cleanupMetadataFiles}=await import('../src/source-sync-metadata-files.mjs');
+  const f=await fixture(t),batchId='b'.repeat(64),root=join(f.clients.a.blobRoot,'metadata',batchId),db=f.clients.a.db;
+  await mkdir(root,{recursive:true});await writeFile(join(root,'saved'),'recover');
+  db.put('sourceSyncCommands',{id:'apply',projectId:'p',command:{batchId},status:'reconciling'});
+  assert.notEqual((await cleanupMetadataFiles({id:'cleanup',projectId:'p',batchId},db,root)).status,'completed');
+  assert.equal(await readFile(join(root,'saved'),'utf8'),'recover');
+  db.put('sourceSyncCommands',{id:'apply',projectId:'p',command:{batchId},status:'completed',result:{status:'completed'}});
+  assert.equal((await cleanupMetadataFiles({id:'cleanup',projectId:'p',batchId},db,root)).status,'completed');
+});
+test('terminal metadata: fresh Home and Worker database connections resume unfinished cleanup',async t=>{
+  const f=await fixture(t),b=await failAfterUpload(f);
+  for(const [id,c] of Object.entries(f.clients)){
+    c.watch.close();c.db.close();
+    f.clients[id]=new SourceSyncClient({db:new Store(join(f.dir,`worker-${id}.sqlite`)),data:join(f.dir,`data-${id}`),home:c.home,send(){},resolveBinding:async command=>({...command,root:join(f.dir,id)})});
+  }
+  const db=new Store(join(f.dir,'home.sqlite'));t.after(()=>db.close());
+  const home=new SourceSyncHome({db,data:join(f.dir,'home'),online:()=>true,socket:f.home.socket,change(){},rooms:{postSystemTask(){throw Error('model dispatch forbidden');}}});
+  await retire(f,home);await assertRetired(f,b,0,home);
+});
+test('terminal metadata: Worker recovery wait keeps Home quota until resolved; recovery siblings stay',async t=>{
+  const f=await fixture(t),b=await failAfterUpload(f),db=f.clients.a.db;
+  const backupPath=join(f.dir,'a','.xxxxx.old'),tempPath=join(f.dir,'a','.xxxxx.new');
+  await writeFile(backupPath,'old');await writeFile(tempPath,'new');
+  db.put('sourceSyncJournals',{id:'uncertain',commandId:'interrupted',projectId:'p',batchId:b.id,detection:'metadata',status:'prepared',backupPath,tempPath});
+  await retire(f);assert.ok(f.db.get('sourceSyncBlobUsage','p').bytes>0);
+  assert.ok((await stat(join(f.clients.a.blobRoot,'metadata',b.id))).isDirectory());
+  assert.equal(f.db.get('sourceSyncBatches',b.id).metadataCleanedAt,undefined);
+  db.put('sourceSyncJournals',{...db.get('sourceSyncJournals','uncertain'),status:'conflict'});
+  await retire(f);await assertRetired(f,b);
+  assert.equal(await readFile(backupPath,'utf8'),'old');assert.equal(await readFile(tempPath,'utf8'),'new');
+});
+test('terminal metadata: in-flight transfer delays cleanup and changed binding does not orphan private cache',async t=>{
+  const f=await fixture(t),b=await failAfterUpload(f),c=f.clients.a;
+  c.inFlight.add('pending-plan');await retire(f);
+  assert.ok(f.db.get('sourceSyncBlobUsage','p').bytes>0);
+  c.inFlight.delete('pending-plan');
+  c.worker.resolveBinding=async()=>{throw Error('obsolete business binding must not be reopened for cleanup');};
+  f.db.put('workspaces',{...f.db.get('workspaces','p:a'),localRoot:'/xxxxx/rebound'});
+  await retire(f);await assertRetired(f,b);
+});
+test('terminal metadata: legacy failed cleanup stays immutable and a retirement command completes it',async t=>{
+  const f=await fixture(t),b=await failAfterUpload(f);
+  const old=f.home.sync.command(b,b.bindings[0],'cleanup',{journalCommands:[]}),result={status:'blocked',reason:'binding_changed'};
+  f.db.put('sourceSyncCommands',{...old,status:'blocked',result});
+  const {contentHash}=await import('../src/source-sync-manifest.mjs');
+  f.clients[old.nodeId].db.put('sourceSyncCommands',{id:old.id,projectId:'p',command:old,fingerprint:contentHash(JSON.stringify(old)),status:'blocked',result});
+  await retire(f);await assertRetired(f,b);
+  assert.deepEqual(f.db.get('sourceSyncCommands',old.id).result,result);
+  assert.equal(f.db.listSourceSyncCommands({batchId:b.id,action:'cleanup'}).filter(c=>c.result?.status==='completed').length,2);
+});
+test('terminal metadata: delayed read cannot recreate a retired Worker cache',async t=>{
+  const f=await fixture(t),b=await failAfterUpload(f);await retire(f);await assertRetired(f,b);
+  // A command cancelled before the Worker saw it can still arrive late on the connection.
+  const {readSourceMetadata}=await import('../src/source-sync-files.mjs');
+  const original=f.db.listSourceSyncCommands({batchId:b.id,action:'read'})[0];
+  const late={...original,id:'f'.repeat(64),status:'cancelled',result:{status:'cancelled',files:[]},paths:[{...original.paths[0],expected:await readSourceMetadata(join(f.dir,'a'),'file.txt',original.scopePolicy)}]};
+  f.db.put('sourceSyncCommands',late);
+  const cleaned=f.db.get('sourceSyncBatches',b.id);f.db.put('sourceSyncBatches',{...cleaned,metadataCleanedAt:undefined});
+  await f.clients.a.execute({commandId:late.id,secret:late.secret});
+  await assert.rejects(stat(join(f.clients.a.blobRoot,'metadata',b.id)),{code:'ENOENT'});
+  assert.equal(await f.read('a'),'newer');
+  f.db.put('sourceSyncBatches',cleaned);
+  await assert.rejects(f.clients.a.request({commandId:late.id,secret:late.secret},'plan'),e=>e.code==='batch_inactive');
+});

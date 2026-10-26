@@ -29,6 +29,7 @@ const pendingSourceCommand = "COALESCE(json_extract(data,'$.result'),0) IN (0,''
 const activeRun = "COALESCE(json_extract(data,'$.status'),'') NOT IN ('succeeded','failed','interrupted')";
 // A batch that still needs work; terminal statuses match SourceSync's done set and the transport's watch gate.
 const openSourceBatch = "COALESCE(json_extract(data,'$.status'),'') NOT IN ('completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready')";
+const pendingMetadataCleanup = "json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status') IN ('cleaning','blocked','cancelled','completed','partial_conflict','evidence_ready') AND json_extract(data,'$.metadataCleanedAt') IS NULL";
 const chatTask = "json_extract(data,'$.origin')='chat' AND json_extract(data,'$.status') IN ('ready','in_progress')";
 const schedulableRequest = "json_extract(data,'$.status') IN ('queued','waiting_call','waiting_delivery')";
 const pendingCallResult = "json_extract(data,'$.status') IN ('running','queued')";
@@ -45,6 +46,9 @@ export class Store {
       CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,seq INTEGER NOT NULL,data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS records_metadata_blobs ON records(json_extract(data,'$.projectId'),json_extract(data,'$.namespace')) WHERE kind='sourceSyncBlobs';
+      CREATE INDEX IF NOT EXISTS records_metadata_cleanup ON records(id) WHERE kind='sourceSyncBatches' AND ${pendingMetadataCleanup};
+      CREATE INDEX IF NOT EXISTS records_metadata_journal_batch ON records(json_extract(data,'$.batchId')) WHERE kind='sourceSyncJournals';
+      CREATE INDEX IF NOT EXISTS records_metadata_worker_batch ON records(json_extract(data,'$.command.batchId')) WHERE kind='sourceSyncCommands';
       CREATE INDEX IF NOT EXISTS records_sync_journal_command ON records(json_extract(data,'$.commandId')) WHERE kind='sourceSyncJournals';
       CREATE INDEX IF NOT EXISTS records_metadata_scope ON records(json_extract(data,'$.projectId'),json_extract(data,'$.repositoryId'),json_extract(data,'$.generation'),json_extract(data,'$.path')) WHERE kind='sourceSyncMetadataBaselines';
       CREATE INDEX IF NOT EXISTS events_run ON events(run_id,seq);
@@ -178,6 +182,10 @@ export class Store {
     if(projectId!==undefined){conditions.push("json_extract(data,'$.projectId')=?");params.push(projectId);}
     if(status!==undefined){conditions.push("json_extract(data,'$.status')=?");params.push(status);}
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_source_batch_open WHERE ${conditions.join(' AND ')} ORDER BY rowid`).all(...params).map(r=>JSON.parse(r.data));
+  }
+  /** Bounded, rotating retirement scan; completed history drops out of this partial index. */
+  metadataCleanupBatches(after='',limit=32) {
+    return this.db.prepare(`SELECT data FROM records INDEXED BY records_metadata_cleanup WHERE kind='sourceSyncBatches' AND ${pendingMetadataCleanup} AND id>? ORDER BY id LIMIT ?`).all(after,limit).map(r=>JSON.parse(r.data));
   }
   /** Page small transport records first; never parse historical receipt bodies just to select work. */
   sourceReceiptTransports({ready=true,at=Date.now(),limit=16,exclude=[]}={}) {

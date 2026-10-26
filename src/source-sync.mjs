@@ -121,7 +121,7 @@ export class SourceSync {
     this.db.put('sourceSyncBatches',batch);this.change();return batch;
   });}
   command(batch,binding,action,extra={}){
-    const id=identity(batch.id,binding.repositoryId,binding.nodeId,action,...(binding.endpointId?[binding.endpointId]:[])),prior=this.db.get('sourceSyncCommands',id);if(prior)return prior;
+    const id=identity(batch.id,binding.repositoryId,binding.nodeId,action,...(binding.endpointId?[binding.endpointId]:[]),...(action==='cleanup'&&extra.retirementOf?[extra.retirementOf]:[])),prior=this.db.get('sourceSyncCommands',id);if(prior)return prior;
     return this.db.put('sourceSyncCommands',{id,projectId:batch.projectId,batchId:batch.id,repositoryId:binding.repositoryId,nodeId:binding.nodeId,
       generation:batch.generation,...(batch.detection==='metadata'&&batch.kind!=='preview'?{rootIdentity:this.db.get('sourceSyncMetadataScopes',`${batch.projectId}:${binding.repositoryId}:${batch.generation}:${binding.nodeId}`)?.rootIdentity}:{}),action,preview:batch.kind==='preview',root:binding.root,repoUrl:binding.repoUrl,...(binding.scopeKind==='directory'?{scopeKind:'directory',scopePolicy:binding.scopePolicy,...(batch.detection?{detection:batch.detection}:{})}:{}),...(binding.sourceRunId?{sourceRunId:binding.sourceRunId}:{}),...(binding.endpointId?{endpointId:binding.endpointId,captureRole:binding.captureRole}:{}),secret:randomBytes(32).toString('hex'),status:'queued',...extra});
   }
@@ -140,7 +140,7 @@ export class SourceSync {
         this.command(batch,binding,'capture',{baseCommit:batch.kind==='preview'?null:canonical?.baseCommit,...(binding.scopeKind==='directory'?{baselineEntries:canonical?.entries||{}}:{})});}
       this.db.put('sourceSyncBatches',{...batch,status:'capturing'});batch.status='capturing';
     }
-    return this.db.listSourceSyncCommands({pending:true}).filter(c=>this.online(c.nodeId)&&(!done.has(this.db.get('sourceSyncBatches',c.batchId)?.status)||this.db.get('sourceSyncBatches',c.batchId)?.status==='blocked'));
+    return this.db.listSourceSyncCommands({pending:true}).filter(c=>this.online(c.nodeId)&&(!done.has(this.db.get('sourceSyncBatches',c.batchId)?.status)||this.db.get('sourceSyncBatches',c.batchId)?.status==='blocked'||c.detection==='metadata'&&c.action==='cleanup'));
   }
   /** Validate late evidence too; acknowledging delivery must never legitimize a malformed result. */
   validateReceipt(command,result){
@@ -160,8 +160,14 @@ export class SourceSync {
   acceptReceipt(nodeId,receipt){return this.db.transaction(()=>{
     const command=this.db.get('sourceSyncCommands',receipt.commandId);
     if(!command||command.nodeId!==nodeId)throw syncError('receipt_owner_mismatch');
-    const batch=this.db.get('sourceSyncBatches',command.batchId);if(!batch||batch.status==='cancelled')return {discarded:true};
+    const batch=this.db.get('sourceSyncBatches',command.batchId);if(!batch||batch.status==='cancelled'&&!(command.detection==='metadata'&&command.action==='cleanup'))return {discarded:true};
     if(command.result)return command.result;
+    if(command.detection==='metadata'&&command.action==='cleanup'){
+      this.validateReceipt(command,receipt.result);
+      if(receipt.result.status==='completed')this.db.put('sourceSyncCommands',{...command,status:'completed',result:receipt.result,receivedAt:stamp()});
+      else this.db.put('sourceSyncCommands',{...command,status:'waiting_idle',lastResult:receipt.result});
+      return receipt.result;
+    }
     const result=receipt.result;if(!result||typeof result.status!=='string')throw syncError('invalid_receipt');
     if(['waiting_idle','waiting_device','reconciling'].includes(result.status)){this.db.put('sourceSyncCommands',{...command,status:result.status,lastResult:result});return result;}
     if(result.status==='blocked'||result.status==='cancelled'){

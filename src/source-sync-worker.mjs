@@ -122,6 +122,15 @@ export class SourceSyncWorker {
     }
     if(this.running.has(command.id))return {status:'reconciling'};
     this.db.put('sourceSyncCommands',{id:command.id,projectId:command.projectId,command,fingerprint,status:'pending'});
+    if(command.detection==='metadata'&&command.action==='cleanup'){
+      // No business-directory binding is needed to retire a private batch cache. Applied siblings retain identity checks.
+      let result;try{if([...this.running].some(id=>this.db.get('sourceSyncCommands',id)?.command?.batchId===command.batchId))return {status:'waiting_idle',reason:'recovery_required'};result=await cleanupMetadataFiles(command,this.db,metadataBlobRoot(this.blobRoot,command));}
+      catch(error){result={status:'waiting_idle',reason:error.code||'cleanup_failed'};}
+      this.db.transaction(()=>{
+        this.db.put('sourceSyncCommands',{...this.db.get('sourceSyncCommands',command.id),status:result.status,...(result.status==='completed'?{result}:{})});
+        if(result.status==='completed')this.db.put('sourceSyncReceipts',{id:command.id,projectId:command.projectId,generation:command.generation,fingerprint,result,createdAt:now()});
+      });return result;
+    }
     if(this.paused()&&!this.db.get('sourceSyncReservations',command.projectId))return {status:'blocked',reason:'paused'};
     if(!observing&&(this.takeoverState(command.projectId)||this.activeRuns().some(r=>(r.projectId==='*'||r.projectId===command.projectId)&&!['succeeded','failed','interrupted'].includes(r.status))))return {status:'waiting_idle'};
     const held=this.db.get('sourceSyncReservations',command.projectId);if(held&&held.commandId!==command.id)return {status:'waiting_idle'};
@@ -140,7 +149,6 @@ export class SourceSyncWorker {
         }else{const base=await captureGitBase(options),manifest=await captureSourceSnapshot({...options,base});result={status:'completed',base,manifest};}
       }else if(command.detection==='metadata'&&command.action==='read')result=await readMetadataFiles(command,binding.root,blobRoot);
       else if(command.detection==='metadata'&&command.action==='stage'){const original=this.db.get('sourceSyncCommands',command.readCommandId);if(original?.command?.batchId!==command.batchId||original.result?.status!=='completed')throw syncError('command_changed');const files=command.paths.map(p=>original.result.files.find(f=>f.path===p.path));if(files.some(f=>!f))throw syncError('invalid_command');result={status:'completed',files};await confirmMetadataRead(command,binding.root,result);}
-      else if(command.detection==='metadata'&&command.action==='cleanup')result=await cleanupMetadataFiles(command,this.db,blobRoot);
       else if(command.detection==='metadata'&&command.action==='apply')result=await applyMetadataChanges({command,root:binding.root,db:this.db,blobRoot,cancelled:()=>this.paused()||this.db.get('sourceSyncCancellations',command.id)});
       else if(command.action==='apply')result=await applySourceChanges({command,root:binding.root,changes:command.changes,db:this.db,blobRoot:this.blobRoot,
         cancelled:()=>this.paused()||this.db.get('sourceSyncCancellations',command.id)});

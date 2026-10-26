@@ -40,12 +40,17 @@ export class SourceSyncHome {
   }
   busy(projectId,nodeId){return this.db.listSourceSyncCommands({projectId,nodeId,action:'apply',pending:true}).length>0;}
   async tick(){if(this.ticking)return;this.ticking=true;try{
-    for(const b of this.db.listSourceSyncBatches({status:'cleaning'}).filter(b=>b.detection==='metadata')){const commands=this.db.listSourceSyncCommands({batchId:b.id,action:'cleanup'});if(commands.length&&commands.every(c=>c.result?.status==='completed')){await this.storage.scoped(b.id).cleanup(b.projectId);this.db.put('sourceSyncBatches',{...b,status:b.conflictIds.length||b.pendingMetadata?.length?'partial_conflict':'completed',updatedAt:new Date().toISOString()});}}
+    await this.cleanupMetadataBatches();
     this.watchTick();
     this.conflicts.tick();
     for(const c of this.sync.schedule()){
       const socket=this.socket(c.nodeId);if(!socket?.workerReady||socket.readyState!==1)continue;
       if(c.lastSentAt&&Date.now()-Date.parse(c.lastSentAt)<5000)continue;
+      // Cleanup uses frozen batch credentials and private paths, even after reconfiguration/cancellation.
+      if(c.detection==='metadata'&&c.action==='cleanup'){
+        this.db.put('sourceSyncCommands',{...c,lastSentAt:new Date().toISOString()});
+        socket.send(JSON.stringify({type:'source_sync_command',commandId:c.id,batchId:c.batchId,projectId:c.projectId,secret:c.secret}));continue;
+      }
       const binding=sourceScopeBinding(this.db,c.projectId,c.repositoryId,c.nodeId);
       if(c.scopeKind==='directory'){
         const batch=this.db.get('sourceSyncBatches',c.batchId);
@@ -62,6 +67,25 @@ export class SourceSyncHome {
       socket.send(JSON.stringify({type:'source_sync_command',commandId:c.id,batchId:c.batchId,projectId:c.projectId,folderAccess:folderAccessFor(this.db,c.nodeId,`project:${c.projectId}`),secret:c.secret}));
     }
   }finally{this.ticking=false;}}
+  async cleanupMetadataBatches(){
+    const batches=this.db.metadataCleanupBatches(this.metadataCleanupCursor||'');
+    this.metadataCleanupCursor=batches.at(-1)?.id||'';
+    for(const b of batches){
+      const commands=this.db.listSourceSyncCommands({projectId:b.projectId,batchId:b.id});
+      // Home cannot inspect Worker journals. Wait for definite command results AND every Worker's guarded cleanup ACK.
+      if(commands.some(c=>c.action!=='cleanup'&&(!c.result||c.status==='reconciling')))continue;
+      const cleanups=b.bindings.map(binding=>{
+        const extra={journalCommands:commands.filter(c=>c.action==='apply'&&c.nodeId===binding.nodeId&&c.repositoryId===binding.repositoryId).map(c=>c.id)};
+        const previous=this.sync.command(b,binding,'cleanup',extra);
+        // Pre-upgrade cleanup may already have a terminal failure. Preserve its receipt and use one stable retirement ID.
+        return previous.result&&previous.result.status!=='completed'?this.sync.command(b,binding,'cleanup',{...extra,retirementOf:previous.id}):previous;
+      });
+      if(cleanups.some(c=>c.result?.status!=='completed'))continue;
+      try{await this.storage.scoped(b.id).cleanup(b.projectId);}catch(e){if(e.code==='sync_busy')continue;throw e;}
+      const current=this.db.get('sourceSyncBatches',b.id),cleanedAt=new Date().toISOString();
+      this.db.put('sourceSyncBatches',{...current,metadataCleanedAt:cleanedAt,...(current.status==='cleaning'?{status:current.conflictIds.length||current.pendingMetadata?.length?'partial_conflict':'completed',updatedAt:cleanedAt}:{})});
+    }
+  }
   /** Persist each observation once and coalesce later saves; file notifications never invoke a model. */
   watchTick(){
     const configs=this.db.list('sourceSyncConfigs').filter(c=>c.enabled&&c.scopeKind==='directory'&&c.mode==='continuous');
@@ -142,7 +166,7 @@ export class SourceSyncHome {
     const receiptHash=contentHash(JSON.stringify(result));
     if(message.receiptHash&&message.receiptHash!==receiptHash)throw syncError('receipt_changed');
     const batch=this.db.get('sourceSyncBatches',c.batchId);
-    if(c.result&&contentHash(JSON.stringify(c.result))!==receiptHash||batch?.status==='cancelled'){
+    if(c.result&&contentHash(JSON.stringify(c.result))!==receiptHash||batch?.status==='cancelled'&&!(c.detection==='metadata'&&c.action==='cleanup')){
       // Receipt delivery is complete, not the operation. Keep both outcomes and the original terminal status.
       const id=`${c.id}:${receiptHash}`,ack={type:'source_sync_receipt_ack',commandId:c.id,receiptHash,disposition:'recorded_terminal'};
       this.db.transaction(()=>{
@@ -176,7 +200,7 @@ export class SourceSyncHome {
     if(!c||!matches(req.headers.authorization||'',`Bearer ${c.secret}`)){json(res,{error:'Unauthorized'},401);return true;}
     const batch=this.db.get('sourceSyncBatches',c.batchId);
     const evidenceRequest=req.method==='PUT'&&['capture','receipt'].includes(m[2])||req.method==='GET'&&m[2]==='receipt';
-    if(!this.db.get('projects',c.projectId)||!batch||batch.status==='cancelled'&&!evidenceRequest)throw syncError('batch_inactive');
+    if(!this.db.get('projects',c.projectId)||!batch||batch.status==='cancelled'&&!evidenceRequest&&!(c.detection==='metadata'&&c.action==='cleanup'))throw syncError('batch_inactive');
     if(m[2]==='receipt'&&req.method==='GET'){
       // A small proof avoids retransmitting historical manifests over a slow or recovering connection.
       const uploaded=c.action!=='capture'?this.db.get('sourceSyncUploadReceipts',c.id)?.result:null;
@@ -184,6 +208,7 @@ export class SourceSyncHome {
       const result=(['read','stage'].includes(c.action)&&!c.result?null:uploaded)||(bundle?{status:'completed',...bundle}:null);
       json(res,{receiptHash:result?contentHash(JSON.stringify(result)):null});return true;
     }
+    if(m[2]==='plan'&&req.method==='GET'&&c.detection==='metadata'&&c.action!=='cleanup'&&batch.metadataCleanedAt)throw syncError('batch_inactive');
     if(m[2]==='plan'&&req.method==='GET'){const {result,lastResult,secret,status,lastSentAt,ackedAt,receivedAt,...plan}=c;json(res,plan);return true;}
     if(m[2]==='receipt'&&req.method==='PUT'&&c.action!=='capture'){
       const result=await body(req);if(!Array.isArray(result.files)||result.files.length>10000)throw syncError('invalid_receipt');
@@ -292,9 +317,16 @@ export class SourceSyncClient {
       }
       const prior=this.db.get('sourceSyncCommands',message.commandId);
       const command=prior?.result&&prior.command?prior.command:await (await this.request(message,'plan')).json();
+      if(command.detection==='metadata'&&command.action==='cleanup'&&[...this.inFlight].some(id=>{if(id===command.id)return false;const batchId=this.db.get('sourceSyncTransport',id)?.batchId||this.db.get('sourceSyncCommands',id)?.command?.batchId;return !batchId||batchId===command.batchId;})){
+        this.send({type:'source_sync_receipt',commandId:command.id,result:{status:'waiting_idle',reason:'transfer_in_flight'}});return;
+      }
+      // A delayed command must not repopulate staging after this Worker's durable cleanup receipt.
+      if(command.detection==='metadata'&&command.action!=='cleanup'&&!prior?.result&&this.db.db.prepare("SELECT 1 FROM records WHERE kind='sourceSyncCommands' AND json_extract(data,'$.command.batchId')=? AND json_extract(data,'$.command.action')='cleanup' AND json_extract(data,'$.result.status')='completed' LIMIT 1").get(command.batchId)){
+        this.send(receiptEnvelope(command.id,{status:'cancelled',files:[]}));return;
+      }
       const blobRoot=command.detection==='metadata'?metadataBlobRoot(this.blobRoot,command):this.blobRoot;
       const transport=this.db.get('sourceSyncTransport',command.id);
-      this.db.put('sourceSyncTransport',{...transport,id:command.id,projectId:command.projectId,message,ready:false});
+      this.db.put('sourceSyncTransport',{...transport,id:command.id,projectId:command.projectId,batchId:command.batchId,message,ready:false});
       this.send({type:'source_sync_command_ack',commandId:command.id});
       const saved=this.db.get('sourceSyncCommands',command.id)?.result;
       // Receipt replay needs only the saved result; execute still checks the exact command fingerprint below.

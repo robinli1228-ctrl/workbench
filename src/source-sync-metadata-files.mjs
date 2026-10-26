@@ -83,6 +83,10 @@ export async function applyMetadataChanges({command,root,db,blobRoot,cancelled=(
   return {status:files.some(f=>f.status==='conflict')?'partial_conflict':'completed',files};
 }
 export async function cleanupMetadataFiles(command,db,blobRoot){
+  const uncertain=db.db.prepare("SELECT 1 FROM records WHERE kind='sourceSyncJournals' AND json_extract(data,'$.batchId')=? AND json_extract(data,'$.status') IN ('preparing','prepared') LIMIT 1").get(command.batchId);
+  const reconciling=db.db.prepare("SELECT 1 FROM records WHERE kind='sourceSyncCommands' AND json_extract(data,'$.command.batchId')=? AND id!=? AND json_extract(data,'$.status')='reconciling' LIMIT 1").get(command.batchId,command.id);
+  if(uncertain||reconciling)return {status:'waiting_idle',reason:'recovery_required'};
+
   for(const id of command.journalCommands||[])for(const j of db.db.prepare("SELECT data FROM records WHERE kind='sourceSyncJournals' AND json_extract(data,'$.commandId')=?").all(id).map(r=>JSON.parse(r.data)).filter(j=>j.projectId===command.projectId&&j.batchId===command.batchId&&j.detection==='metadata')){
     // Conflicts and uncertain journals retain their preimages for manual recovery.
     if(j.status!=='applied')continue;
