@@ -24,8 +24,9 @@ export default Object.freeze({
   "conversationTasks.usage":"使用 wb task list、show、create 或 update。",
   "conversationTasks.transferReason":"随关联派单转交负责人。",
   "conversationTasks.updated":"任务说明已更新。",
+  "conversationTasks.ownerReminder":"你是这个任务的负责人：做完后用 wb task update 把它标为完成并写上结果摘要；有分步计划时，先把每一步标为完成。",
   "conversationTasks.context":"群聊任务（Home 当前快照）。{updated}\n{task}",
-  "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。每步只填一个必填 description（步骤说明，最多4000字），不再填写步骤 title；任务自身的 title/description 不变。说明/计划整段替换。只有 done 可写 resultSummary，全部计划步骤必须已完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交前先在本轮用 wb task update 重写说明。重试须保持相同 requestId 和输入。\n步骤更新示例：wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"核对两端固定输入版本，并记录差异。\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"完善步骤说明\"}'。plan 为完整替换，必须保留仍需执行的其他步骤和配置。",
+  "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。每步只填一个必填 description（步骤说明，最多4000字），不再填写步骤 title；任务自身的 title/description 不变。说明/计划整段替换。只有 done 可写 resultSummary，全部计划步骤必须已完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交时交接说明要在本轮写好：本轮新建的任务可直接转交，早先建的任务先用 wb task update 重写说明。重试须保持相同 requestId 和输入。\n步骤更新示例：wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"核对两端固定输入版本，并记录差异。\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"完善步骤说明\"}'。plan 为完整替换，必须保留仍需执行的其他步骤和配置。",
 
   'deviceAdmin.reconnectUnsupported':'手动重连需要 Home 管理的反向 SSH 隧道、已保存的 SSH 密钥及可核验的 Linux Worker。',
   'deviceAdmin.reconnectBusy':'该设备有待处理或运行中的任务、常驻 CLI，或正在执行其他连接操作。未停止任何任务，请空闲后重试。',
@@ -1587,7 +1588,7 @@ wb session current   查看本轮的角色会话身份
 wb help sync | wb help review | wb help errors
                      跨设备同步、独立审核、工具报错码的说明
 
-常驻进程在当前工具入口前加 --turn RUN_ID。`,
+常驻进程在当前工具入口前加 --turn RUN_ID。每轮的调用方式都不同，用本轮【wb 命令】里给的，不要沿用上一轮的。`,
   // src/wechat-channel.mjs
   'wechatChannel.invalidWechatClientName': '微信客户端名称无效',
   'wechatChannel.invalidWechatClientConfiguration': '微信客户端配置无效',
@@ -1795,7 +1796,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 你只亲自做最简单的事：直接回答问题、查一个事实、一两步就能完成且不改代码的小操作。要读多个文件、写或改代码、跑测试、比较方案的，都派给其他角色。
 
 - 接消息：先用 wb task list 判断是修改已有任务还是新任务。没点名的消息先判断是什么：能答的问题直接答；是某个进行中任务的补充，转给那个任务的负责人；是新任务，按平台规则选人派出。判断不了时说明你按哪种理解处理，不反问用户“想让谁来”。
-- 派任务：任务整件转交给一个角色，由它负责到底：自主推进、自己找人沟通和审核，做完直接回复用户结论；你不再跟进，除非收到停滞提醒。流程长的任务，先列好分步计划一起交给它。把一个目标拆给几个角色时，结果回到你汇总后再回复用户。
+- 派任务：任务整件转交给一个角色，由它负责到底：先用 wb task create 建任务（负责人不填，默认是你；流程长的写好分步计划），再用 wb call --kind transfer --task T编号 交给它。它自主推进、自己找人沟通和审核，做完直接回复用户结论；你不再跟进，除非收到停滞提醒。把一个目标拆给几个角色时，用 direct 派出，结果回到你汇总后再回复用户。
 - 解决卡点：收到停滞提醒，或发现有人卡住、反复失败、互相等待时，由你亲自全面查清：看任务状态、群聊记录、运行详情和各角色的实际进展，找出卡在哪里，不把暂时没有输出当成卡死。能直接解决的自己处理（重新派人、补充信息、拆小任务、解除互相等待）；要改代码的派给其他角色；需要用户决定的，说清卡在哪一步、要用户做什么。
 - 替换：额度用尽或鉴权失败不重复重试；临时错误重试一次仍失败，再交给其他可用角色。先确认原任务已经停止，保留版本和已完成的证据。审核不能由作者本人替补，测试不能由开发者本人替补。`,
   'wbTools.helpReview': `独立审核只读：每个问题写清位置、触发条件、影响和证据。修复后核对新版本和编号修改清单，按需补读受影响上下文。临时审阅同步的未提交修改时，记录设备、实际目录、观察时间、路径和 SHA256，前后核对输入；结论仅针对这些字节，不冒充已提交版本的正式审核。结论写在回复里：通过、需要修改（附编号问题清单）、无法核实或需要用户决定，各附依据；只有非阻塞建议时才算通过。尚未释放的独立审核意见先按发布流程交总管，不能提前泄露。决定与证据读取同一指定版本。`,
