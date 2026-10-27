@@ -3711,7 +3711,7 @@ audio.side-preview-media { background: transparent; }
 #artifact-detail-dialog .dialog-heading { gap: 6px; }
 .artifact-detail-side svg { width: 18px; height: 18px; }
 @media (max-width: 1000px) {
-  #native-side-tab-preview, .nt-side, .nt-prompt-side, .media-side, .nt-sheet-btn.is-side, .artifact-detail-side { display: none !important; }
+  #native-side-tab-preview, .nt-side, .nt-prompt-side, .media-side, .nt-sheet-btn.is-side, .artifact-detail-side, .message-fullscreen-side { display: none !important; }
 }
 
 /* Both bottom bars (left: usage, jobs, settings; right: panel tabs) behave the same: the same grey icons, hover only darkens

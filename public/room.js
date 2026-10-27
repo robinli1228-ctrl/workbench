@@ -1,4 +1,5 @@
 import {renderRetiredCommandWarning} from './retired-commands.js';
+import {sideButton} from './side-preview.js';
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
@@ -842,15 +843,20 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       const heading=create('strong', '', t('{v} · Full reply', { v: name || t('Message') }));
       const view={text,name,taskId,projectId,follow:true,runId};
       const copy=copyMessageButton(()=>view.text);
-      header.append(heading,copy,close);
+      const renderContent=(value,source)=>{
+        const content=create('div','message-fullscreen-content');
+        content.append(markdown?renderLinkedMarkdown(value,source):create('div','chat-message-text',simplifiedCliOutput(value)));
+        if(attachments.length){const files=create('div','chat-attachments');for(const item of attachments)files.append(attachmentCard(item));content.append(files);}
+        return content;
+      };
+      // Pin the text and source visible at click time, so later live replies do not replace the side preview.
+      const side=sideButton('chat-icon-btn message-fullscreen-side',t('Open on the right'),()=>{
+        const snapshot=view.text,source=view.runId;
+        return {title:name||t('Message'),copyText:snapshot,render:()=>renderContent(snapshot,source)};
+      },{before:()=>messageFullscreen.close()});
+      header.append(heading,side,copy,close);
       const body = create('div', 'message-fullscreen-body');
-      const content = create('div', 'message-fullscreen-content');
-      content.append(markdown ? renderLinkedMarkdown(text,runId) : create('div', 'chat-message-text', simplifiedCliOutput(text)));
-      if (attachments.length) {
-        const files = create('div', 'chat-attachments');
-        for (const item of attachments) files.append(attachmentCard(item));
-        content.append(files);
-      }
+      const content = renderContent(text,runId);
       body.append(content);
       Object.assign(view,{body,content,copy,heading});fullscreenView=view;
       if(taskId) {

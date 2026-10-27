@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v203-shared-document-preview';
+const CACHE = 'agent-workbench-static-v204-group-full-reply-side-preview';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
