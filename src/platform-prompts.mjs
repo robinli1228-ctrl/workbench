@@ -96,7 +96,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   '425555463ecd6044365b7ecfec4f40ec07ad996d5587dba08191b2f2be4a5db4',
   // Defaults before the short template: no wb report, owners of transferred tasks, device > quota > idle.
   '9d72984584070cec25b18a4d085c55b2e1fba00a362c4cf4366af7a38d811a38',
-  'f2a7f7f83e8454bcc2d7c1b20115c39f29448d8e7844513f397d307ffc276c27'
+  'f2a7f7f83e8454bcc2d7c1b20115c39f29448d8e7844513f397d307ffc276c27',
+  // Defaults before the working-folder rules: worktrees sync, Git state is per device.
+  '6148454d934c658c680e3dd039ecdf4adc18360b035b36c4458ce6f0eb0dcbd6',
+  '2ba6d1155fe768f3af3697bd85df654be7d379e3df9fdc30837135d3d4c8ad86'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */
