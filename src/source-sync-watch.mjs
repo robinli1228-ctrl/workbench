@@ -17,8 +17,8 @@ export const OBSERVATION_INTERVALS=Object.freeze({
 
 /** Background observation persists notices; the existing SourceSync queue transfers files without a browser. */
 export class SourceSyncWatch {
-  constructor({db,send,resolveBinding,blocked=()=>false,busy=()=>false,clock=Date.now,intervals=OBSERVATION_INTERVALS,maxWatches=4096,pause:wait=pause,scopePause={idle:250,busy:1000,max:5000}}){
-    Object.assign(this,{db,send,resolveBinding,blocked,busy,clock,intervals,maxWatches,pause:wait,scopePause});this.watches=new Map();this.hints=new Map();this.failures=new Map();this.checked=new Map();this.fullChecked=new Map();this.observations=new Map();this.epochs=new Map();this.retryAt=new Map();this.sent=new Map();this.degraded=new Map();this.running=false;this.closed=false;
+  constructor({db,send,resolveBinding,blocked=()=>false,busy=()=>false,clock=Date.now,intervals=OBSERVATION_INTERVALS,maxWatches=process.platform==='darwin'?128:4096,pause:wait=pause,scopePause={idle:250,busy:1000,max:5000}}){
+    Object.assign(this,{db,send,resolveBinding,blocked,busy,clock,intervals,maxWatches,pause:wait,scopePause});this.watches=new Map();this.hints=new Map();this.failures=new Map();this.checked=new Map();this.fullChecked=new Map();this.observations=new Map();this.epochs=new Map();this.retryAt=new Map();this.sent=new Map();this.degraded=new Map();this.watchRetryAt=0;this.running=false;this.closed=false;
   }
   /** Until the first complete installation proves every directory is watched, treat the scope as unwatched. */
   cadence(id){return this.intervals[this.degraded.get(id)===false?'watching':'degraded'];}
@@ -42,12 +42,15 @@ export class SourceSyncWatch {
     for(const path of Object.keys(entries)){let dir=dirname(join(scope.root,path));while(dir!==scope.root&&dir.startsWith(scope.root+'/')){dirs.add(dir);dir=dirname(dir);}}
     let group=this.watches.get(id);if(!group){group=new Map();this.watches.set(id,group);}
     for(const [dir,w] of group)if(!dirs.has(dir)||w.directoryIdentity!==directories.get(dir)){w.close();group.delete(dir);}
-    let degraded=false;
-    for(const dir of dirs){if(group.has(dir))continue;if(group.size>=this.maxWatches){degraded=true;break;}
+    // Every scope shares the process's native watcher resources. macOS can report EMFILE asynchronously and spend
+    // minutes closing thousands of handles; keep a small global budget and use the existing sweep for the remainder.
+    let degraded=false,watchCount=[...this.watches.values()].reduce((n,g)=>n+g.size,0);
+    const resourceFailure=error=>{if(['EMFILE','ENOSPC'].includes(error?.code))this.watchRetryAt=this.clock()+RETRY_MAX_MS;};
+    for(const dir of dirs){if(group.has(dir))continue;if(watchCount>=this.maxWatches||this.clock()<this.watchRetryAt){degraded=true;break;}
       try{const w=watch(dir,{persistent:false},(event,file)=>{const path=file?relative(scope.root,join(dir,String(file))):'';
         if(path.split('/').at(-1)==='.gitignore'){this.invalidate(id);this.hint(id);}
         else if(!path||path==='.workbench'||path==='.workbench/docs'||!excludedSourcePath(path,scope.scopePolicy))this.hint(id,event==='change'&&path?path:null);
-      });w.directoryIdentity=directories.get(dir);w.on('error',()=>{w.close();if(group.get(dir)!==w)return;group.delete(dir);this.degraded.set(id,true);this.invalidate(id);this.hint(id);});group.set(dir,w);}catch{degraded=true;}
+      });w.directoryIdentity=directories.get(dir);w.on('error',error=>{w.close();if(group.get(dir)!==w)return;group.delete(dir);resourceFailure(error);this.degraded.set(id,true);this.invalidate(id);this.hint(id);});group.set(dir,w);watchCount++;}catch(error){resourceFailure(error);degraded=true;}
     }
     return degraded;
   }
