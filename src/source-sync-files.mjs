@@ -2,14 +2,39 @@ import {statMetadata,metadataDigest} from './source-sync-metadata.mjs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {constants,lstat} from 'node:fs';
-import {mkdir,realpath,open,readFile,writeFile,readdir,lstat as pathStat} from 'node:fs/promises';
+import {mkdir,mkdtemp,realpath,open,readFile,writeFile,readdir,lstat as pathStat} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
+import {tmpdir} from 'node:os';
 import {SOURCE_SYNC_LIMITS,SOURCE_SYNC_CAPTURE_POLICY,DIRECTORY_SYNC_CAPTURE_POLICY,OUTPUT_SYNC_CAPTURE_POLICY,includesSyncOutputs,contentHash,syncError,syncLimitError,excludedSourcePath,validateSourcePath,manifestDigest,entryEqual} from './source-sync-manifest.mjs';
 
 const exec=promisify(execFile);
 const git=async(root,args,encoding='utf8')=>(await exec('git',args,{cwd:root,encoding,timeout:30000,maxBuffer:24*1024*1024})).stdout;
 // Missing .git markers are routine during each safety walk; avoid rejected promises while keeping a fresh lstat.
 const exists=path=>new Promise((resolve,reject)=>lstat(path,(error,info)=>{if(!error)resolve(info);else if(error.code==='ENOENT')resolve(null);else reject(error);}));
+// A role-created worktree directly under the scope's .worktrees (.worktrees/<name> or .worktrees/<name>/<repo>) syncs as an
+// ordinary folder: its .git marker is excluded, and the platform's run-* and project-baseline copies stay out by name.
+export const WORKTREE_LIMITS=Object.freeze({files:3000,bytes:50*1024*1024,projectFiles:8000});
+export const WORKTREE_MAX_FILES=WORKTREE_LIMITS.files;
+const worktreeRoot=(path,policy)=>/^\.worktrees\/[^/]+(?:\/[^/]+)?$/.test(path)&&!excludedSourcePath(path,policy);
+/** Worktree roots on this device, found before the walk so their ignore rules join the scan signature. */
+async function worktreeRoots(root,policy){
+  const base=join(root,'.worktrees');if(!(await exists(base))?.isDirectory())return [];
+  const found=[],list=async dir=>{try{return (await readdir(dir,{withFileTypes:true})).filter(e=>e.isDirectory()&&!e.isSymbolicLink());}catch{return [];}};
+  for(const name of await list(base)){const path=`.worktrees/${name.name}`;if(!worktreeRoot(path,policy))continue;
+    if(await exists(join(root,path,'.git'))){found.push(path);continue;}
+    for(const child of await list(join(root,path)))if(worktreeRoot(`${path}/${child.name}`,policy)&&await exists(join(root,path,child.name,'.git')))found.push(`${path}/${child.name}`);}
+  return found;
+}
+// Ignore rules come only from the .gitignore files inside the worktree, read against an empty scratch repository, so the device
+// with .git and the device holding a plain received copy select the same files. Global and info/exclude rules are left out.
+let scratchGitDir=null;
+const emptyGitDir=()=>scratchGitDir??=mkdtemp(join(tmpdir(),'wb-ignore-')).then(async dir=>{await exec('git',['init','-q','--bare',dir],{timeout:30000});return dir;}).catch(e=>{scratchGitDir=null;throw e;});
+async function worktreeIgnored(root,path){
+  try{return (await exec('git',['--git-dir',await emptyGitDir(),'--work-tree',join(root,path),'-c','core.excludesFile=','ls-files','-z','--others','--ignored','--exclude-standard','--directory'],
+    {cwd:join(root,path),timeout:30000,maxBuffer:24*1024*1024})).stdout.split('\0').filter(Boolean).map(p=>`${path}/${p}`);}
+  // A missing ignore list would offer ignored files and then exclude them again, so the scan fails and is retried instead.
+  catch{throw syncError('source_busy',path);}
+}
 const blobSaves=new Map();
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 // Custom DATA_DIRs can live under .local; their database identifies the whole private runtime, including staging.
@@ -49,7 +74,7 @@ export async function sourceFilePath(root,path,{createParents=false,policy={}}={
     if(!info&&i<parts.length-1&&createParents){await mkdir(current,{mode:0o755}).catch(e=>{if(e.code!=='EEXIST')throw e;});info=await exists(current);}
     if(!info){if(i<parts.length-1)return {path:current,missing:true};return {path:current,missing:true};}
     if(info.isSymbolicLink()||i<parts.length-1&&!info.isDirectory()||i===parts.length-1&&(!info.isFile()||info.nlink!==1))throw syncError('unsafe_file',path);
-    if(i<parts.length-1&&await exists(join(current,'.git')))throw syncError('nested_repository',path);
+    if(i<parts.length-1&&await exists(join(current,'.git'))&&!worktreeRoot(parts.slice(0,i+1).join('/'),policy))throw syncError('nested_repository',path);
   }
   return {path:current,missing:false,stat:info};
 }
@@ -208,6 +233,11 @@ export async function captureDirectorySnapshot(options) {
   let visited=0,changedBytes=0,ignored=[];
   // Git ignore is an optional file-selection source, never the directory scope's version history.
   if(!outputs||metadataOnly)try{if(await realpath((await git(root,['rev-parse','--show-toplevel'])).trim())===root)ignored=(await git(root,['ls-files','-z','--others','--ignored','--exclude-standard','--directory'])).split('\0').filter(Boolean);}catch(e){if(!e.stderr?.includes('not a git repository')&&!String(e.message).includes('not a git repository')&&e.code!=='ENOENT')throw e;}
+  // Each worktree keeps its own repository's ignore rules; a received copy without .git has none to read.
+  const worktrees=await worktreeRoots(root,policy),worktreeKey=JSON.stringify(worktrees);
+  // A watch observation keeps the lists until a .gitignore event invalidates it or the set of worktrees changes.
+  let worktreeIgnores=!observation?.fullHash&&observation?.worktreeIgnores?.key===worktreeKey?observation.worktreeIgnores.ignored:null;
+  if(!outputs||metadataOnly){worktreeIgnores??=(await Promise.all(worktrees.map(path=>worktreeIgnored(root,path)))).flat();ignored.push(...worktreeIgnores);}
   const isIgnored=path=>ignored.some(p=>path===p||path.startsWith(p.endsWith('/')?p:p+'/'));
   // Git's effective selection also includes info/exclude and global rules that directory watches cannot see.
   const signature=JSON.stringify([root,String(rootInfo.dev),String(rootInfo.ino),options.repositoryId,options.generation,policy,ignored]);
@@ -215,7 +245,8 @@ export async function captureDirectorySnapshot(options) {
   const partial=Boolean(observation&&!observation.fullHash&&observation.signature===signature&&observation.snapshot&&options.changedPaths?.length&&options.changedPaths.every(path=>cached.has(path)));
   const nextCache=partial?new Map(cached):new Map();
   const directories=partial?new Map(observation.directories):new Map();
-  async function walk(dir,prefix=''){
+  const tooLarge={},worktree=path=>worktrees.includes(path);
+  async function walk(dir,prefix='',budget=null){
     // Empty directories need watchers too; retain identity during this walk so replacements cannot reuse an old inode's watcher.
     if(observation){const info=dir===root?rootInfo:await pathStat(dir,{bigint:true});if(!info.isDirectory())throw syncError('unsafe_file',prefix);directories.set(dir,`${info.dev}:${info.ino}`);}
     for(const item of await readdir(dir,{withFileTypes:true})){
@@ -228,9 +259,20 @@ export async function captureDirectorySnapshot(options) {
       if(item.isSymbolicLink()||!item.isFile()&&!item.isDirectory()){excluded.push({path,reason:item.isSymbolicLink()?'symlink':'special_file'});continue;}
       if(item.isDirectory()){
         if(outputs&&await runtimeDirectory(join(dir,item.name))){excluded.push({path,reason:'runtime_directory'});continue;}
-        if(await exists(join(dir,item.name,'.git'))){excluded.push({path,reason:'nested_repository'});continue;}
-        await walk(join(dir,item.name),path+'/');continue;
+        if(await exists(join(dir,item.name,'.git'))){
+          if(!worktree(path)){excluded.push({path,reason:'nested_repository'});continue;}
+          // A worktree that never synced and has more files than the cap is skipped on its own; one already synced keeps
+          // syncing, because a path leaving the scope would otherwise fence the whole project.
+          const known=Object.keys(options.baselineEntries||{}).some(p=>p.startsWith(path+'/')),start=paths.length,skipped=excluded.length,count=known?null:{files:0,bytes:0};
+          try{await walk(join(dir,item.name),path+'/',count);}
+          catch(e){if(e!==tooLarge)throw e;paths.length=start;excluded.length=skipped;excluded.push({path,reason:'worktree_too_large',files:count.files});
+            for(const key of directories.keys())if(key===join(dir,item.name)||key.startsWith(join(dir,item.name)+'/'))directories.delete(key);}
+          continue;
+        }
+        await walk(join(dir,item.name),path+'/',budget);continue;
       }
+      // A new worktree also stops short of the project-wide path limit and of one batch's bytes, so it never fails the scope.
+      if(budget&&(++budget.files>WORKTREE_LIMITS.files||paths.length>=WORKTREE_LIMITS.projectFiles||(budget.bytes+=(await pathStat(join(dir,item.name))).size)>WORKTREE_LIMITS.bytes))throw tooLarge;
       paths.push(path);if(paths.length>SOURCE_SYNC_LIMITS.paths)throw syncLimitError('manifest_too_large','files',SOURCE_SYNC_LIMITS.paths,paths.length,path);
     }
   }
@@ -261,6 +303,6 @@ export async function captureDirectorySnapshot(options) {
   if(options.detection==='metadata'){const finalRoot=await pathStat(root,{bigint:true});if(finalRoot.ino!==rootInfo.ino||finalRoot.dev!==rootInfo.dev)throw syncError('binding_changed');}
   const digest=options.detection==='metadata'?metadataDigest(entries,policy):manifestDigest(entries,policy);
   // Publish the cache only with a complete successful observation, never a failed/partial traversal.
-  if(observation){observation.cache=nextCache;observation.signature=signature;observation.snapshot={entries,excluded};observation.directories=directories;}
+  if(observation){observation.worktreeIgnores={key:worktreeKey,ignored:worktreeIgnores};observation.cache=nextCache;observation.signature=signature;observation.snapshot={entries,excluded};observation.directories=directories;}
   return {repositoryId:options.repositoryId,generation:options.generation,scopeKind:'directory',scopePolicy:policy,...(options.detection==='metadata'?{detection:'metadata',metadataOnly:true,rootIdentity:`${rootInfo.dev}:${rootInfo.ino}`}:{}),capturePolicy:outputs?OUTPUT_SYNC_CAPTURE_POLICY:DIRECTORY_SYNC_CAPTURE_POLICY,...(metadataOnly?{metadataOnly:true,newlyIncluded:paths.filter(path=>excludedSourcePath(path,{...policy,contentMode:'source-only'})||!(policy.sharedDocs&&path.startsWith('.workbench/docs/'))&&isIgnored(path))}:{}),baseCommit:null,entries,digest,excluded};
 }

@@ -20,17 +20,21 @@ export function syncLimitError(code,kind,maximum,actual,path='') {
   return Object.assign(syncError(code,path),{limit:{kind,path:String(path).slice(0,4096),maximum,actual}});
 }
 
-/** Mandatory exclusions apply even to tracked files and cannot be relaxed by a sender. */
+/** The platform's own copies under .worktrees: per-run isolated folders and the retired project baselines. */
+export const platformWorktreePath=parts=>parts.some((part,i)=>part==='.worktrees'&&i+1<parts.length&&/^(?:run-|project-baseline$)/.test(parts[i+1]));
+
+/** Mandatory exclusions apply even to tracked files and cannot be relaxed by a sender. Role-created worktrees are ordinary folders. */
 export function excludedSourcePath(path,policy={}) {
   const parts=String(path).split('/');
+  if(platformWorktreePath(parts))return true;
   const shared=policy.sharedDocs===true&&parts[0]==='.workbench'&&parts[1]==='docs'&&parts.length>2;
   if(!shared&&policy.onlySharedDocs||(policy.excludeRoots||[]).some(root=>root?(path===root||path.startsWith(root+'/')):!shared))return true;
-  if(includesSyncOutputs(policy))return parts.some(part=>/^(?:\.git|\.worktrees|\.data|node_modules|vendor|\.venv|venv|__pycache__|\.codex|\.claude|\.ssh|\.netrc|_netrc|\.npmrc|\.pypirc|\.agent-workbench-project\.json|worker-config\.json|auth(?:-profiles)?\.json|build|dist)$/i.test(part)
+  if(includesSyncOutputs(policy))return parts.some(part=>/^(?:\.git|\.data|node_modules|vendor|\.venv|venv|__pycache__|\.codex|\.claude|\.ssh|\.netrc|_netrc|\.npmrc|\.pypirc|\.agent-workbench-project\.json|worker-config\.json|auth(?:-profiles)?\.json|build|dist)$/i.test(part)
     ||/^\.wb-(?:bridge|source-sync)-/i.test(part)||/^\.env(?:\..*)?$/i.test(part)
     ||/^(?:credentials?|secrets?|tokens?)(?:.*)$/i.test(part)||/^(?:api|worker|access|refresh)[-_]token(?:\.|$)/i.test(part)
     ||/^(?:home|worker)(?:[-_.].*)?\.(?:sqlite|db)(?:[-.].*)?$/i.test(part)||/^(?:id_rsa|id_ed25519|id_ecdsa)(?:\.|$)/i.test(part)
     ||/\.(?:pem|key|p12|pfx)$/i.test(part));
-  return parts.some((part,i)=>!(shared&&i===0)&&(/^(?:\.git|\.workbench|\.worktrees|\.data|\.local|\.migration|\.DS_Store|\.attachments|node_modules|vendor|dist|build|target|coverage|\.next|\.cache|__pycache__|\.venv|\.codex|\.claude|\.ssh|\.netrc|_netrc|\.npmrc)$/i.test(part)
+  return parts.some((part,i)=>!(shared&&i===0)&&(/^(?:\.git|\.workbench|\.data|\.local|\.migration|\.DS_Store|\.attachments|node_modules|vendor|dist|build|target|coverage|\.next|\.cache|__pycache__|\.venv|\.codex|\.claude|\.ssh|\.netrc|_netrc|\.npmrc)$/i.test(part)
     ||part.startsWith('.wb-bridge-')||part.startsWith('.wb-source-sync-')||/^\.env(?:\..*)?$/i.test(part)&&!/^\.env\.(?:example|sample|template)$/i.test(part)
     ||/^(?:credentials?|secrets?|tokens?)(?:\.|$)/i.test(part)||/^(?:id_rsa|id_ed25519|id_ecdsa)(?:\.|$)/i.test(part)
     ||/\.(?:pem|key|p12|pfx|log)$/i.test(part)));
