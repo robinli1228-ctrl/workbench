@@ -7,6 +7,7 @@ import {liveSceneRows} from './live-scene.js';
 import {activityBlock,classifyStep,taskBlock,createPreviewSheet,elapsedText} from './native-transcript.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {stripAnsi} from './run-log-data.js';
+import {sideButton} from './side-preview.js';
 const t=(text,params)=>{const own=getLanguage()==='zh'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
 const button=(text,fn,cls='secondary')=>{const n=el('button',cls,t(text));n.type='button';n.addEventListener('click',fn);return n;};
@@ -19,7 +20,7 @@ const names={claude:'Claude Code',codex:'Codex'};
 /** Long prompts retain the Sessions full-text action instead of trapping text behind the three-line clamp. */
 function showPrompt(text){
  const dialog=el('dialog','message-fullscreen'),header=el('header','message-fullscreen-header'),body=el('div','message-fullscreen-body'),content=el('div','message-fullscreen-content');
- header.append(el('h2','',t('My message')),iconButton('copy','Copy',()=>void navigator.clipboard?.writeText(text)),iconButton('close','Close',()=>dialog.close()));content.append(el('div','chat-message-text',text));body.append(content);dialog.append(header,body);dialog.addEventListener('close',()=>dialog.remove(),{once:true});document.body.append(dialog);dialog.showModal();
+ header.append(el('h2','',t('My message')),iconButton('copy','Copy',()=>void navigator.clipboard?.writeText(text)),sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),copyText:text,render:()=>el('div','nt-side-prompt',text)}),{before:()=>dialog.close()}),iconButton('close','Close',()=>dialog.close()));content.append(el('div','chat-message-text',text));body.append(content);dialog.append(header,body);dialog.addEventListener('close',()=>dialog.remove(),{once:true});document.body.append(dialog);dialog.showModal();
 }
 
 
@@ -27,7 +28,7 @@ function showPrompt(text){
 function questionRows(q,session,files,live,preview,api){
  const user=el('article','nt-row nt-user native-chat-row'),userBody=el('div','nt-body'),text=el('div','nt-prompt-text',q.prompt);
  userBody.append(text);userBody.hidden=!q.prompt?.trim();if(files)user.append(files);user.append(userBody);
- const tools=el('div','nt-prompt-tools');tools.append(el('time','nt-prompt-time',clock(q.createdAt)),iconButton('copy','Copy',()=>void navigator.clipboard?.writeText(q.prompt||'')));const expand=iconButton('fullscreen','Full screen',()=>showPrompt(q.prompt||''),'nt-prompt-expand');expand.hidden=true;tools.append(expand);requestAnimationFrame(()=>{expand.hidden=!(text.isConnected&&text.scrollHeight>text.clientHeight+1);});user.append(tools);
+ const tools=el('div','nt-prompt-tools');tools.append(el('time','nt-prompt-time',clock(q.createdAt)),iconButton('copy','Copy',()=>void navigator.clipboard?.writeText(q.prompt||'')));const expand=iconButton('fullscreen','Full screen',()=>showPrompt(q.prompt||''),'nt-prompt-expand');expand.hidden=true;tools.append(expand);if(q.prompt?.trim())tools.append(sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),copyText:q.prompt,render:()=>el('div','nt-side-prompt',q.prompt)})));requestAnimationFrame(()=>{expand.hidden=!(text.isConnected&&text.scrollHeight>text.clientHeight+1);});user.append(tools);
  const reply=el('article',`nt-row nt-agent native-chat-row${q.status==='failed'?' is-error':''}`),by=el('div','nt-byline'),avatar=el('span','nt-avatar');avatar.append(agentIconEl(session.runtime));
  by.append(avatar,el('span','nt-name',names[session.runtime]),el('time','',clock(q.endedAt||q.createdAt)));reply.append(by);
  const markdown=value=>linkMedia(renderMarkdown(value),{key:`native:${session.nodeId}:${session.runtime}:${nativeId(session)}`,describe:path=>api(`${endpoint(session.nodeId)}/media?${new URLSearchParams({runtime:session.runtime,sessionId:nativeId(session),path})}`)});
