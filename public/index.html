@@ -110,7 +110,6 @@
             <p id="project-supervisor-note" class="workspace-note full-width"></p>
             <p class="workspace-note full-width" data-model-usage-note role="note" hidden></p>
             <label>Code repository<select name="repositoryMode"><option value="none">Do not use Git for now</option><option value="existing">Link an existing repository</option><option value="create">Create a repository automatically</option></select></label>
-            <label>Baseline source branch (optional)<input name="baseBranch" placeholder="Leave blank to use the repository's current default branch"></label>
             <label>Hosting account<select name="hostingAccountId"></select></label>
             <label>Repository URL (for existing)<input name="repositoryUrl" placeholder="https://github.com/owner/repo"></label>
             <div hidden><select name="nodeId"></select><input id="new-project-root" name="root"><button id="pick-project-folder" type="button">Select folder</button><input name="repoUrl"></div>
@@ -199,9 +198,6 @@
                     <label>Hosting account<select name="accountId"></select></label>
                     <label class="full-width">Repository URL (for existing)<input name="repoUrl" placeholder="GitHub or Gitee repository URL"></label>
                     <label>New repository name<input name="remoteName" placeholder="Leave blank to use project-folder-repository-folder"></label>
-                    <label>Baseline source branch (optional)<input name="baseBranch" placeholder="e.g. feature-branch; leave blank to use the current branch"></label>
-                    <label>Pinned starting commit (optional)<input name="baseCommit" placeholder="Enter a full SHA only when an older starting point is needed"></label>
-                    <label class="checkbox-label"><input type="checkbox" name="publishBaseline" checked>Publish the project collaboration branch to the remote</label>
                     <div id="repository-node-options" class="full-width"></div>
                     <div class="form-actions full-width"><button type="submit" class="secondary" data-action-label>Prepare repository</button></div>
                   </form>

@@ -44,6 +44,12 @@ export async function setupRepository(roots, input) {
   // Read the logical repository URL, preserving the device's existing insteadOf transport configuration (SSH aliases or mirrors).
   const origin = giteeRepository(await git(root, ['config', '--get', 'remote.origin.url']));
   if (origin?.webUrl !== repo.webUrl) throw new Error(tr('setupWorkspace.originExistingDirectoryDoesNot'));
+  // A binding that leaves its baseline copy must not land on a checkout that lacks the work delivered into that copy.
+  if (input.containsCommit) {
+    if (!/^[a-f0-9]{40,64}$/.test(input.containsCommit)) throw new Error(tr('setupWorkspace.checkoutMissingBaselineWork', { commit: String(input.containsCommit).slice(0, 12) }));
+    try { await git(root, ['merge-base', '--is-ancestor', input.containsCommit, 'HEAD']); }
+    catch { throw new Error(tr('setupWorkspace.checkoutMissingBaselineWork', { commit: input.containsCommit.slice(0, 12) })); }
+  }
   const agentsMd = await ensureAgentsFiles(root);
   return { localRoot: root, git: { head: await git(root, ['rev-parse', 'HEAD']).catch(() => null),
     branch: await git(root, ['symbolic-ref', '--short', 'HEAD']).catch(() => 'detached'), dirty: Boolean(await git(root, ['status', '--porcelain'])) }, agentsMd };
