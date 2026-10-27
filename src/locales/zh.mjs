@@ -803,11 +803,16 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'projectAdmin.chooseLinkExistingRepositoryCreate': '请选择关联已有仓库或新建仓库',
   'projectAdmin.repositoryDirectoryNameMayContain': '仓库目录名只允许字母、数字、短横线和下划线',
   'projectAdmin.invalidProjectBaselineSourceBranch': '项目基线来源分支无效',
+  'projectAdmin.moveEveryBaselineDevice': '这个仓库还有设备绑在旧的基线副本上，请把这些设备一起勾上再准备：{devices}',
+  'projectAdmin.listSeparator': '、',
+  'projectAdmin.pauseSyncBeforeMove': '这个仓库正在同步。请先在“同步”里暂停，改完绑定后再打开',
+  'projectAdmin.baselineVersionUnavailable': '无法核实旧基线版本，仓库绑定已保留。',
+  'projectAdmin.repositoryBindingsChanged': '准备期间仓库绑定已变化，请重新打开配置后再试。',
+  'projectAdmin.repositoryBindingsUnchanged': '其他设备准备失败，全部仓库绑定已保留。',
   'projectAdmin.pinnedStartingPointNeedsFull': '固定起点需要完整 Git 提交编号',
   'projectAdmin.selectParticipatingDevices': '请选择参与设备',
   'projectAdmin.repositoryBeingPreparedWaitFor': '此仓库正在准备，请等待结果',
   'projectAdmin.resultLastRepositoryCreationUnconfirmed': '上次建仓结果未确认，请检查托管平台后使用“关联已有仓库”，不重复创建',
-  'projectAdmin.existingProjectBaselineUncommittedUnreadable': '已有项目基线未提交或不可读取，请先处理后再加入设备',
   // src/project-baseline.mjs
   'projectBaseline.invalidProjectRepositoryIdentifier': '项目或仓库标识无效',
   'projectBaseline.projectBaselineNeedsFullCommit': '项目基线需要完整提交编号',
@@ -1354,6 +1359,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'setupWorkspace.supervisorDirectoryEscapesAllowedRoot': '主管目录越界',
   'setupWorkspace.supervisorDirectoryEscapesAllowedRoot2': '主管目录越界',
   'setupWorkspace.invalidRepositoryUrlDirectory': '仓库地址或目录无效',
+  'setupWorkspace.checkoutMissingBaselineWork': '项目文件夹里的仓库还不包含旧基线副本的版本 {commit}。请先把它更新到包含这个提交的版本，再重新准备',
   'setupWorkspace.directoryOutsideRangeWorkerAllows': '目录不在 Worker 允许范围',
   'setupWorkspace.directoryDoesNotExistIt': '目录不存在，可通过克隆操作创建',
   'setupWorkspace.cloneFailedCheckDeviceNetwork': '克隆失败，请检查设备网络和 Git 凭据；已产生的目录保留供检查',
@@ -1776,6 +1782,10 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 按任务计划做事：完成自己负责的步骤后标记该步骤完成，更新任务说明里的交接内容，再转交给下一步角色；只有最后一步完成才把整个任务标为完成。
 - 转交给你的任务，你就是负责人：自己推进到底，组织审核，做完直接回复用户结论。
 
+工作目录：
+- 项目开启同步后，项目文件夹里的文件会在设备之间自动同步，包括角色建的 worktree；.git、构建产物等 Git 忽略的文件默认不同步，范围见 wb help sync。默认直接在绑定目录里改；除非确有必要，例如大体量修改，或和别人的工作明显重叠，尽量不新建 worktree，代码合并后尽快删除自己建的 worktree。平台安排你在隔离执行目录（.worktrees/run-*）里工作时，就在那里做，不要删它。
+- Git 状态（提交、分支、暂存区）不同步：本机 git status 里可能有别的设备同步过来的修改，不代表有人没提交，不要撤销或丢弃。提交时只暂存自己负责的文件，并先用 git log -1 确认 HEAD 就是这些修改所基于的版本；不是的话，先和改动的人协调。
+
 找人协作：
 - 用户点名了就按用户的安排；没点名时自己判断找谁：设备合适 > 余额充足 > 空闲。正在运行的尽量不打断，没有合适的人就自己做。
 - 被派的活做完后，结果写在最终回复里，会自动交回派活的人；不要再反过来 call 它。
@@ -1801,7 +1811,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 替换：额度用尽或鉴权失败不重复重试；临时错误重试一次仍失败，再交给其他可用角色。先确认原任务已经停止，保留版本和已完成的证据。审核不能由作者本人替补，测试不能由开发者本人替补。`,
   'wbTools.helpReview': `独立审核只读：每个问题写清位置、触发条件、影响和证据。修复后核对新版本和编号修改清单，按需补读受影响上下文。临时审阅同步的未提交修改时，记录设备、实际目录、观察时间、路径和 SHA256，前后核对输入；结论仅针对这些字节，不冒充已提交版本的正式审核。结论写在回复里：通过、需要修改（附编号问题清单）、无法核实或需要用户决定，各附依据；只有非阻塞建议时才算通过。尚未释放的独立审核意见先按发布流程交总管，不能提前泄露。决定与证据读取同一指定版本。`,
   'wbTools.helpSync': `跨设备：
-- 仅已启用同步、纳入范围的绑定目录按当前策略同步，可含未提交修改和获准的 Git-ignored 产物；隔离 worktree 不自动纳入。以实际范围、排除规则和回执为准，不保证所有文件或固定时限。依赖他端文件前用 wb sync status 核对范围、冲突、待处理批次和回执；项目状态不证明单文件一致，用 wb sync status '{"path":"相对路径"}' 核对各端状态和观察时间（内容哈希模式给出各端 SHA256；元数据同步只比较修改时间和大小，不给 SHA256，哈希为空不代表没到）：你依赖的那一端为 consistent 才算已到，in_transit、conflict 或 unknown（含设备离线）如实说明，不说成没到。同步不是冻结快照，输入变化须重查。
+- 仅已启用同步、纳入范围的绑定目录按当前策略同步，可含未提交修改和获准的 Git-ignored 产物；角色建的 worktree 也会同步，平台的隔离执行目录（.worktrees/run-*）不同步；没同步过且太大（超过 3000 个文件或 50 MB）的 worktree 会被跳过。以实际范围、排除规则和回执为准，不保证所有文件或固定时限。依赖他端文件前用 wb sync status 核对范围、冲突、待处理批次和回执；项目状态不证明单文件一致，用 wb sync status '{"path":"相对路径"}' 核对各端状态和观察时间（内容哈希模式给出各端 SHA256；元数据同步只比较修改时间和大小，不给 SHA256，哈希为空不代表没到）：你依赖的那一端为 consistent 才算已到，in_transit、conflict 或 unknown（含设备离线）如实说明，不说成没到。同步不是冻结快照，输入变化须重查。
 - 改绑定目录前用 wb discuss peers 协调负责文件和重叠任务；peers 不是文件锁，不同时派两端改同一文件。
 - 共享文档和小文件放获准且纳入同步的绑定项目 .workbench/docs，交接写设备、路径、哈希并确认接收；未共享、排除或离线时如实说明，不泄露未公开审核材料。
 - 正式审核、测试验收等固定版本工作用已提交 commit 交付（wb deliver 或排程自动交付，勿重复），写完整 SHA；交付自动推送，接收核对后执行；同步文件只用于临时查看和快检，不代替提交或正式验收。本设备做不了的交目标设备角色，目标不可用就说明阻塞，不改派冒充完成。
@@ -1852,6 +1862,10 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'turnInput.title.other': '【平台附加】',
   'turnInput.envMissing': '本机缺少仓库：{keys}',
   'turnInput.envSharedDocs': '共享报告目录：{path}（只放可以公开的报告；未公开的审核材料不要放这里）',
+  'turnInput.projectRules': '项目规则（{path}）：\n{text}',
+  'turnInput.projectRulesTooLarge': '项目规则在 {path}，文件超过 64 KB，没有附上，请自己读取。',
+  'turnInput.projectRulesNative': '项目规则在 {path}，由 Grok 自己加载。',
+  'turnInput.projectRulesUnreadable': '项目规则在 {path}，这次没能读取，请自己打开。',
   'turnInput.reviewStage': '本阶段是独立审核：只读，核对指定版本。',
   'turnInput.wb': '调用方式：{wbCommand}',
   'resultReceipts.outcomeWake': '你{action}给 {role} 的请求 {requestId} {outcome}：{reason}。请决定重新派人、补充信息，或告诉用户；详情用 wb history read {requestId} 查看。',

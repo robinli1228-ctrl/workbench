@@ -48,29 +48,43 @@ export class ProjectAdmin {
         repo = saveRepository(this.db, projectId, { key: input.key, repoUrl: input.repoUrl || repo?.repoUrl, accountId: input.accountId || repo?.accountId,
           baseBranch:input.baseBranch,baseCommit:input.baseCommit });
       }
-      const results = [];
-      const existingBaseline = this.db.list('repositoryWorkspaces').find(binding => binding.repositoryId === repo.id && binding.baselineBranch);
-      let expectedCommit = null;
-      if(existingBaseline) {
-        const snapshot=await this.query({nodeId:existingBaseline.nodeId,projectId},'execution_snapshot',
-          {repositories:[{id:repo.id,key:repo.key,localRoot:existingBaseline.localRoot}]},30000);
-        if(snapshot[0]?.dirty || !snapshot[0]?.commit)throw new Error(tr('projectAdmin.existingProjectBaselineUncommittedUnreadable'));
-        expectedCommit=snapshot[0].commit;
+      const results = [], prepared = [], nodeIds = [...new Set(input.nodeIds)];
+      const priorBindings = nodeIds.map(nodeId=>this.db.get('repositoryWorkspaces',`${repo.id}:${nodeId}`));
+      // Bindings left on an older baseline copy move back to their source checkouts, on every device at once: a baseline copy
+      // cannot receive deliveries from a direct checkout, and a synced folder must not move under running source sync.
+      const onBaseline = this.db.list('repositoryWorkspaces').filter(b => b.repositoryId === repo.id && b.baselineBranch);
+      if (onBaseline.length) {
+        const left = onBaseline.filter(b => !nodeIds.includes(b.nodeId));
+        if (left.length) throw new Error(tr('projectAdmin.moveEveryBaselineDevice', { devices: left.map(b => this.db.get('workers', b.nodeId)?.name || b.nodeId).join(tr('projectAdmin.listSeparator')) }));
+        const sync = this.db.get('sourceSyncConfigs', projectId);
+        if (sync?.enabled && (sync.repositoryIds || []).includes(repo.id)) throw new Error(tr('projectAdmin.pauseSyncBeforeMove'));
       }
-      for (const nodeId of [...new Set(input.nodeIds)]) {
+      for (const nodeId of nodeIds) {
         try {
           const binding = await this.prepare(projectId, nodeId);
           const previousBinding = this.db.get('repositoryWorkspaces', `${repo.id}:${nodeId}`);
-          const sourceRoot = previousBinding?.sourceRoot || previousBinding?.localRoot || `${binding.localRoot}/${repo.key}`;
+          // The repository is bound where it sits in the project folder.
+          const localRoot = previousBinding?.sourceRoot || previousBinding?.localRoot || `${binding.localRoot}/${repo.key}`;
+          let containsCommit = null;
+          if (previousBinding?.baselineBranch) {
+            // Unavailable evidence is not proof that the old copy was absent or contained no work.
+            containsCommit = (await this.query({ nodeId, projectId }, 'execution_snapshot', { repositories: [{ id: repo.id, key: repo.key, localRoot: previousBinding.localRoot }] }, 30000))[0]?.commit;
+            if(!/^[a-f0-9]{40,64}$/.test(containsCommit||''))throw new Error(tr('projectAdmin.baselineVersionUnavailable'));
+          }
           const credential = await this.hosting.auth(repo.accountId, repo.repoUrl);
-          const checked = await this.query({ nodeId }, 'repository_setup', { operationId: `${randomUUID()}-0`, repoUrl: repo.repoUrl, localRoot:sourceRoot,
-            clone: input.clone !== false, credential, projectId, projectRoot:binding.localRoot, key:repo.key,
-            baseBranch:repo.baseBranch, baseCommit:repo.baseCommit, expectedCommit,publishBaseline:input.publishBaseline!==false }, 90000);
-          if (!expectedCommit) expectedCommit=checked.git.head;
-          if (!repo.baseBranch) repo=this.db.put('repositories',{...repo,baseBranch:checked.baseBranch});
-          bindRepository(this.db, repo, nodeId, checked); results.push({ nodeId, status: 'ready', localRoot:checked.localRoot });
+          const checked = await this.query({ nodeId }, 'repository_setup', { operationId: `${randomUUID()}-0`, repoUrl: repo.repoUrl, localRoot,
+            clone: input.clone !== false, credential, ...(containsCommit ? { containsCommit } : {}) }, 90000);
+          prepared.push({nodeId,checked}); results.push({ nodeId, status: 'ready', localRoot:checked.localRoot });
         } catch (e) { results.push({ nodeId, status: 'blocked', error: e.message }); }
       }
+      // Commit device bindings together after all asynchronous preparation, fencing new tasks and configuration changes.
+      if(results.every(r=>r.status==='ready'))try{this.db.transaction(()=>{
+        this.check(projectId);
+        if(onBaseline.length&&this.db.get('sourceSyncConfigs',projectId)?.enabled&&this.db.get('sourceSyncConfigs',projectId).repositoryIds?.includes(repo.id))throw new Error(tr('projectAdmin.pauseSyncBeforeMove'));
+        for(let i=0;i<nodeIds.length;i++)if(JSON.stringify(this.db.get('repositoryWorkspaces',`${repo.id}:${nodeIds[i]}`))!==JSON.stringify(priorBindings[i]))throw new Error(tr('projectAdmin.repositoryBindingsChanged'));
+        for(const {nodeId,checked}of prepared)bindRepository(this.db,repo,nodeId,checked);
+      });}catch(e){for(const result of results)Object.assign(result,{status:'blocked',error:e.message});}
+      if(results.some(r=>r.status!=='ready'))for(const result of results)if(result.status==='ready')Object.assign(result,{status:'blocked',error:tr('projectAdmin.repositoryBindingsUnchanged')});
       const operation = this.db.put('repositoryOperations', { id: operationKey, projectId, status: results.every(r => r.status === 'ready') ? 'ready' : 'blocked', results });
       this.change(); return { repo, ...operation };
     } finally { this.busy.delete(operationKey); }

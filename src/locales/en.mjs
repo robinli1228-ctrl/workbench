@@ -803,11 +803,16 @@ Role prompt:
   'projectAdmin.chooseLinkExistingRepositoryCreate': 'Choose to link an existing repository or create a new one',
   'projectAdmin.repositoryDirectoryNameMayContain': 'The repository directory name may contain only letters, digits, hyphens, and underscores',
   'projectAdmin.invalidProjectBaselineSourceBranch': 'Invalid project baseline source branch',
+  'projectAdmin.moveEveryBaselineDevice': 'Some devices still use the old baseline copy of this repository; select them too: {devices}',
+  'projectAdmin.listSeparator': ', ',
+  'projectAdmin.pauseSyncBeforeMove': 'This repository is being synced. Pause it under Sync first, and turn it back on after the binding changes',
+  'projectAdmin.baselineVersionUnavailable': 'The old baseline version could not be verified; repository bindings were kept.',
+  'projectAdmin.repositoryBindingsChanged': 'Repository bindings changed during preparation; reopen the configuration and retry.',
+  'projectAdmin.repositoryBindingsUnchanged': 'Preparation failed on another device; all repository bindings were kept.',
   'projectAdmin.pinnedStartingPointNeedsFull': 'The pinned starting point needs a full Git commit ID',
   'projectAdmin.selectParticipatingDevices': 'Select the participating devices',
   'projectAdmin.repositoryBeingPreparedWaitFor': 'This repository is being prepared; wait for the result',
   'projectAdmin.resultLastRepositoryCreationUnconfirmed': 'The result of the last repository creation is unconfirmed; check the hosting platform and use "link an existing repository" instead of creating it again',
-  'projectAdmin.existingProjectBaselineUncommittedUnreadable': 'The existing project baseline is uncommitted or unreadable; handle it before adding the device',
   // src/project-baseline.mjs
   'projectBaseline.invalidProjectRepositoryIdentifier': 'Invalid project or repository identifier',
   'projectBaseline.projectBaselineNeedsFullCommit': 'The project baseline needs a full commit ID',
@@ -1354,6 +1359,7 @@ Inspection found new anomalies. Verify the actual state and do not retry blindly
   'setupWorkspace.supervisorDirectoryEscapesAllowedRoot': 'Supervisor directory escapes the allowed root',
   'setupWorkspace.supervisorDirectoryEscapesAllowedRoot2': 'Supervisor directory escapes the allowed root',
   'setupWorkspace.invalidRepositoryUrlDirectory': 'Invalid repository URL or directory',
+  'setupWorkspace.checkoutMissingBaselineWork': 'The repository in the project folder does not contain {commit} from the old baseline copy yet. Update it to a version that contains this commit, then prepare it again',
   'setupWorkspace.directoryOutsideRangeWorkerAllows': 'Directory is outside the range the Worker allows',
   'setupWorkspace.directoryDoesNotExistIt': 'Directory does not exist; it can be created with the clone operation',
   'setupWorkspace.cloneFailedCheckDeviceNetwork': 'Clone failed; check the device network and Git credentials; any directory already created is kept for inspection',
@@ -1776,6 +1782,10 @@ Drive the work:
 - Follow the task plan: mark your completed step done, update the task description with the handover, and transfer to the next role in the plan. Mark the whole task done only after its final step.
 - A task transferred to you makes you its owner: drive it to the end yourself, organise its reviews, and reply to the user with the conclusion when done.
 
+Working folder:
+- Once sync is on for the project, the files in the project folder sync between devices automatically, role-created worktrees included; .git, build outputs and other Git-ignored files do not sync by default (scope: wb help sync). Work in the bound folder by default; unless it is really needed, such as a large change or work that clearly overlaps someone else's, avoid creating a worktree, and delete any worktree you created soon after the code is merged. When the platform places you in an isolated run folder (.worktrees/run-*), work there and do not delete it.
+- Git state (commits, branches, the index) does not sync: this device's git status may include changes synced from another device; that does not mean someone left work uncommitted, so do not revert or discard them. When committing, stage only the files you own, and first check with git log -1 that HEAD is the commit those changes were based on; if it is not, coordinate with whoever made them first.
+
 Working with others:
 - If the user named someone, follow the user's arrangement; otherwise decide whom to ask yourself: suitable device > enough quota > idle. Try not to interrupt a role that is running; if nobody suits, do it yourself.
 - When assigned work is complete, write the result in your final reply; it is returned to the assigning role automatically. Do not call it back.
@@ -1801,7 +1811,7 @@ You personally do only the simplest things: answer a question directly, check on
 - Replacement: do not retry exhausted quota or authentication failures; retry a temporary error once, and if it still fails hand the work to another available role. First confirm the original task has stopped, and keep the versions and the evidence already produced. A review cannot be taken over by its author, nor a test by its developer.`,
   'wbTools.helpReview': `Independent review is read-only: identify each issue's location, trigger, impact and evidence. Recheck the repair version, numbered change list and affected context. Informal review of synced uncommitted edits records device, actual directory, observation time, paths and SHA256, checks inputs before and after, and covers those bytes only, never a committed version. State the conclusion in your reply: passed, changes needed (with a numbered list), unverifiable, or needs the user's decision, each with its grounds; only nonblocking suggestions may accompany a pass. Unreleased independent-review opinions go to the supervisor first and must not leak early. Read decisions and evidence from the same assigned version.`,
   'wbTools.helpSync': `Cross-device work:
-- Only enabled, in-scope bound directories sync under the current policy, possibly including uncommitted edits and approved Git-ignored outputs; isolated worktrees are not included automatically. Rely on actual scopes, exclusions and receipts, not every file or a fixed delay. Before depending on another device's files, check scope, conflicts, pending batches and receipts with wb sync status. Project status does not prove one file matches: wb sync status '{"path":"RELATIVE/PATH"}' gives each side's state and observation time (content-hash sync also gives SHA256; metadata sync compares only modification time and size, so an empty hash does not mean the file is missing). Only consistent on the side you depend on means it arrived; report in_transit, conflict or unknown (offline included) as such, never as missing. Synchronization is not a frozen snapshot; recheck changed inputs.
+- Only enabled, in-scope bound directories sync under the current policy, possibly including uncommitted edits and approved Git-ignored outputs; role-created worktrees sync too, while the platform's isolated run folders (.worktrees/run-*) do not; a worktree that has never synced and is too large (over 3000 files or 50 MB) is skipped. Rely on actual scopes, exclusions and receipts, not every file or a fixed delay. Before depending on another device's files, check scope, conflicts, pending batches and receipts with wb sync status. Project status does not prove one file matches: wb sync status '{"path":"RELATIVE/PATH"}' gives each side's state and observation time (content-hash sync also gives SHA256; metadata sync compares only modification time and size, so an empty hash does not mean the file is missing). Only consistent on the side you depend on means it arrived; report in_transit, conflict or unknown (offline included) as such, never as missing. Synchronization is not a frozen snapshot; recheck changed inputs.
 - Before editing a bound directory, coordinate file ownership and overlaps via wb discuss peers; it is not a file lock, so never assign the same file to both devices at once.
 - Put shared documents and small files in the authorized, sync-scoped .workbench/docs; name device, path and hash and confirm receipt. Disclose unshared, excluded or offline cases; never leak unreleased review material.
 - Formal review, acceptance testing and other fixed-version work use committed delivery (wb deliver or automatic schedule delivery, no duplicates) with the full SHA; the delivery is pushed automatically, then checked on receipt. Synchronized files are for quick looks only, never a substitute for commits or formal acceptance. Give work your device cannot do to a role on the target device; if it is unavailable, report the block rather than reassign and claim completion.
@@ -1852,6 +1862,10 @@ You personally do only the simplest things: answer a question directly, check on
   'turnInput.title.other': '[Platform addition]',
   'turnInput.envMissing': 'Repositories missing on this device: {keys}',
   'turnInput.envSharedDocs': 'Shared report directory: {path} (only reports that may be published; keep unpublished review material out of it)',
+  'turnInput.projectRules': 'Project rules ({path}):\n{text}',
+  'turnInput.projectRulesTooLarge': 'The project rules are in {path}; the file is over 64 KB and is not attached, so read it yourself.',
+  'turnInput.projectRulesNative': 'The project rules are in {path}; Grok loads them itself.',
+  'turnInput.projectRulesUnreadable': 'The project rules are in {path}; they could not be read this time, so open the file yourself.',
   'turnInput.reviewStage': 'This stage is an independent review: read-only, check the assigned version.',
   'turnInput.wb': 'Invoke as: {wbCommand}',
   'resultReceipts.outcomeWake': 'The request {requestId} you {action} to {role} {outcome}: {reason}. Decide whether to reassign it, add information, or tell the user; read the details with wb history read {requestId}.',

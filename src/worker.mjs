@@ -31,6 +31,7 @@ import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-
 import {listNativeSessions,readNativeSession,readNativeToolDetail,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import {createWorkerNativeAgentSwitch,assertNativeSwitchAccess,nativeAgentSourceBusy} from './native-agent-switch-worker.mjs';
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
+import {grokProjectRules} from './grok-project-rules.mjs';
 import {BRANCH_RUNTIMES,branchTarget,copyFolder,deletableFolder,forkClaude,forkCodex} from './native-branch.mjs';
 import { giteeRepository } from './repository.mjs';
 import { inspectRuntimes, runtimeIssue, mergeRuntimeReports, useQuotaIdentitySalt } from './runtime-probe.mjs';
@@ -471,8 +472,14 @@ async function command(m) {
       const executionConfiguration=m.run.minimalInstructions===1?await currentExecutionConfiguration(c.runId):null;
       if(reservation.stopRequested||paused||quitting||ws?.readyState!==1)throw new Error(tr('worker.interruptedByStopDisconnectBefore'));
       const components=executionConfiguration?executionInstructionComponents({run:m.run,configuration:executionConfiguration}):undefined;
-      const roleInstructions = components?Object.values(components).filter(Boolean).join('\n\n'):traditionalInput(executionText('worker.projectDescriptionRepositoriesForRun', { p1: runWithLanguage('en',()=>composeAgentInstructions(m.platformPrompt,m.run.roleSnapshot?.instructions??'')), p2: String(m.project.description||'').slice(0,4000), p3: executionRepositories.filter(r=>r.localRoot).map(r=>`${r.key}: ${r.localRoot}`).join('\n'), p4: runtimeGuidance(runtimeType), p5: m.task.runtimeInstructions||'' }));
       const priorInput=nativeHistory.findLast(r=>r.id!==c.runId && r.projectId===m.run.projectId && r.roleSessionId===m.run.roleSessionId && r.nativeSession?.id===m.run.resumeNativeSessionId);
+      // Grok skips an untrusted folder's AGENTS.md, so its rules carry the project rules the other CLIs load themselves.
+      // Without a file the component is left out, unless an earlier turn of this session sent one that must now be revoked.
+      if(components&&runtimeType==='grok') {
+        const projectRules=await grokProjectRules(folder,{grokHome:wbEnv.GROK_HOME||process.env.GROK_HOME||join(homedir(),'.grok'),env:wbEnv});
+        if(projectRules||priorInput?.instructionComponents?.projectRules?.empty===false)components.projectRules=projectRules;
+      }
+      const roleInstructions = components?Object.values(components).filter(Boolean).join('\n\n'):traditionalInput(executionText('worker.projectDescriptionRepositoriesForRun', { p1: runWithLanguage('en',()=>composeAgentInstructions(m.platformPrompt,m.run.roleSnapshot?.instructions??'')), p2: String(m.project.description||'').slice(0,4000), p3: executionRepositories.filter(r=>r.localRoot).map(r=>`${r.key}: ${r.localRoot}`).join('\n'), p4: runtimeGuidance(runtimeType), p5: m.task.runtimeInstructions||'' }));
       let instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,components});
       const fingerprint=warmSessionFingerprint({folder,runtimeType,model:m.task.model,effort,roleName:m.run.roleSnapshot?.name,roleInstructions,env:{...resumeEnvironment(wbEnv),WB_REQUIRE_TURN:wbEnv.WB_REQUIRE_TURN},permissionScope});
       let session;
