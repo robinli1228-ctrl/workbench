@@ -29,6 +29,9 @@ export function executionRules(run,{minimal=false}={}) {
 const DEFAULT_FIELD_LIMIT = 128;
 // Match only exact previous EN/ZH defaults; custom edits must survive prompt upgrades.
 const LEGACY_SUPERVISOR_DEFAULTS = new Set([
+  // Defaults before the supervisor was told how to transfer: create the task, then wb call --kind transfer --task.
+  'd10ca3af465f888e22f597a777c3e438071346d02630f0aca7ead8a231d0eac5',
+  '36a69ad10ccc1274b1d3d82a0437e44d0bedb91e80ba543ebe66a1b47bc3f6ba',
   // Exact defaults before task-driven collaboration.
   '9fd60d14949af20883ae03e75daf592f86e323b4be329bfb4f0d166d56f438ba',
   '542d638a7020bbad92a8a4ed48f0f78e3b3f0de565a656b7df6a024300e13be5',
