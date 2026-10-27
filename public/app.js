@@ -1802,7 +1802,7 @@ function renderRunTabs(task, run) {
 const RUN_INPUT_LABELS={steering:'Direction change',task:'Current task',followup:'Reminder facts',discussion:'Discussion conclusion',roster:'Roles that must take part',
   references:'Related messages',deliveries:'Related deliveries',completion:'Completion requirement',dependencies:'Dependency status',sourceWorkspace:'Referenced execution directory',
   sourceInputs:'Cross-device synced input',environment:'Environment',stage:'Stage boundary',wb:'wb command'};
-const RUN_INPUT_FIXED=[['identity','Identity'],['platform','Platform prompt'],['role','Role instructions'],['supervisor','Supervisor prompt']];
+const RUN_INPUT_FIXED=[['identity','Identity'],['platform','Platform prompt'],['role','Role instructions'],['supervisor','Supervisor prompt'],['projectRules','Project rules (AGENTS.md)']];
 const RUN_INPUT_METHOD={claude:'Claude system prompt (--append-system-prompt)',codex:'Codex developer instructions',grok:'Grok rules (--rules)',agy:'Agy: first message of the session'};
 
 function renderRunInput(task, snapshot,run) {
