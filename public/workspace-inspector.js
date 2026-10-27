@@ -3,7 +3,7 @@ import { t, dateLocale } from './i18n.js';
 import {renderMarkdown} from './markdown.js';
 import {UI_ICON,deviceIconEl,workerDisplayName,workerKind} from './role-icons.js';
 import {sourceSyncPanel} from './source-sync.js';
-import {sideButton,canOpenSide} from './side-preview.js';
+import {sideButton,canOpenSide,createSidePreview,setSidePreviewOpener} from './side-preview.js';
 
 const el=(tag,className,text)=>Object.assign(document.createElement(tag),{className:className||'',...(text!==undefined?{textContent:text}:{})});
 const date=value=>value?new Date(value).toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'Modified time unknown';
@@ -13,12 +13,14 @@ const fileState=file=>file.error?t('Read failed'):file.readMode==='recorded'?t('
   :t(file.syncState==='disabled'?'Sync disabled':file.syncState==='pending'?'Waiting for local synchronization':'Local file not found.');
 
 /** Reuses existing file reading; late responses must not overwrite new content after switching projects or closing the dialog. */
-export function createWorkspaceInspector({api,getProject,getData,openDevices,openProjectFolder,onError=()=>{},onSideAskOpen=()=>{},getConversationId=()=>getProject()?.id}) {
+export function createWorkspaceInspector({api,documentPreview,getProject,getData,openDevices,openProjectFolder,onError=()=>{},onSideAskOpen=()=>{},getConversationId=()=>getProject()?.id}) {
   const sourceSync=sourceSyncPanel({api,getProject,getData});
-  const names=['roles','artifacts','resources','ask'],titles={roles:'Role Settings',artifacts:'Recent Outputs',resources:'Resources',ask:'Side question'};
+  const names=['roles','artifacts','preview','ask'],titles={roles:'Role Settings',artifacts:'Recent Outputs',preview:'Side preview',ask:'Side question'};
   const panels=Object.fromEntries(names.map(name=>[name,document.querySelector(`#inspector-${name}`)]));
+  const preview=createSidePreview({t,emptyText:t('Open a document, then choose Open on the right.')});panels.preview.append(preview.root);
+  setSidePreviewOpener({key:'groups',available:()=>document.body.dataset.navigationMode==='groups'&&Boolean(getProject()),open:item=>{if(document.body.dataset.inspector==='hidden')document.querySelector('#toggle-inspector')?.click();select('preview');void preview.open(item);}});
   const tabs=[...document.querySelectorAll('.inspector-tabs [role="tab"]')],list=document.querySelector('#recent-artifact-list'),note=document.querySelector('#artifacts-note');
-  const tabIcons={roles:UI_ICON.roles,artifacts:UI_ICON.original,resources:UI_ICON.project,ask:UI_ICON.sideAsk};
+  const tabIcons={roles:UI_ICON.roles,artifacts:UI_ICON.original,preview:UI_ICON.sideOpen,ask:UI_ICON.sideAsk};
   tabs.forEach((tab,i)=>{tab.innerHTML=tabIcons[names[i]];tab.querySelector('svg').setAttribute('aria-hidden','true');});
   const dialog=document.querySelector('#artifact-detail-dialog'),content=document.querySelector('#artifact-detail-content');
   const refresh=document.querySelector('#refresh-artifacts');refresh.innerHTML=UI_ICON.refresh;
@@ -31,6 +33,8 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
   document.querySelector('#close-artifact-detail').before(side);
   dialog.addEventListener('close',()=>{detailVersion++;});
   async function detail(file){
+    const path=file.relativePath||file.path||file.originPath;
+    if(/\.(?:md|markdown|txt)$/i.test(path||'')){void documentPreview.open(path,file.shared?{kind:'project',projectId:file.projectId,scopeId:file.scopeId}:{kind:'run',runId:file.runId,readMode:file.readMode,sha256:file.sha256,sourceCommit:file.sourceCommit,versionEvidence:file.versionEvidence});return;}
     const version=++detailVersion;
     document.querySelector('#artifact-detail-title').textContent=file.name;
     const worker=getData().workers.find(w=>w.id===file.nodeId);
@@ -38,7 +42,7 @@ export function createWorkspaceInspector({api,getProject,getData,openDevices,ope
     content.textContent='Reading file…';side.hidden=true;sideItem=null;dialog.showModal();
     if(!file.shared&&!file.path){content.textContent=file.error||t('Local file not found.');return;}
     // An older Worker may only lack the metadata query; the existing content API still works, so details are not blocked.
-    const path=file.relativePath||file.path,markdown=/\.(md|markdown)$/i.test(path),text=/\.(md|markdown|txt)$/i.test(path);
+    const previewPath=file.relativePath||file.path,markdown=/\.(md|markdown)$/i.test(previewPath),text=/\.(md|markdown|txt)$/i.test(previewPath);
     try{
       const result=await api(file.shared?`/api/projects/${encodeURIComponent(file.projectId)}/local-file?${new URLSearchParams({scopeId:file.scopeId,path})}`:`/api/runs/${encodeURIComponent(file.runId)}/${text?'document':'file'}?${new URLSearchParams({path,...(file.readMode==='recorded'?{source:'recorded',sha256:file.sha256,...(file.sourceCommit?{commit:file.sourceCommit}:{})}:{})})}`);
       if(version!==detailVersion||!dialog.open)return;

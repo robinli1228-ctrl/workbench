@@ -49,7 +49,7 @@ const busyState=icon=>stateBlock(icon,'',{tone:'busy'});
 const emptyState=(icon,label,busy=false)=>busy?busyState(icon):stateBlock(icon,label);
 
 /** The session view reads native history and prepares terminal links. Only after an explicit takeover does it submit turns, resuming the same native ID. */
-export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange,onPreview,onStateRefresh=async()=>{}}){
+export function createNativeSessionUI({api,documentPreview,getData,artifactRow=null,onModeChange,onPreview,onStateRefresh=async()=>{}}){
  const mode=document.querySelector('#navigation-mode'),list=el('nav','project-list native-session-list'),content=el('section','native-session-content panel'),side=el('section','native-session-sidebar');
  list.id='native-session-list';content.id='native-session-content';side.id='native-session-sidebar';
  document.querySelector('#project-list').after(list);document.querySelector('main.workspace').append(content);document.querySelector('#node-sidebar').append(side);
@@ -75,7 +75,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const sidePreview=createSidePreview({t,formatSize:formatBytes,stamp:value=>time(value),copyAction,emptyText:t('Use \u201cOpen on the right\u201d beside Copy on a message, or beside Download in a picture or file preview. It stays here while you read the chat or switch sessions.')});
  sidePanels.preview.classList.add('is-preview');sidePanels.preview.append(sidePreview.root);
  // The panel is offered only while the Sessions page is shown; opening shows the right column if it was hidden.
- setSidePreviewOpener({available:()=>active(),open:item=>{if(document.body.dataset.inspector==='hidden')document.querySelector('#toggle-inspector')?.click();selectSideTab('preview');void sidePreview.open(item);}});
+ setSidePreviewOpener({key:'sessions',available:()=>active(),open:item=>{if(document.body.dataset.inspector==='hidden')document.querySelector('#toggle-inspector')?.click();selectSideTab('preview');void sidePreview.open(item);}});
  /** The chosen tab stays selected across sessions, like the group-chat inspector. */
  function selectSideTab(name){
   sideTab=name;document.body.dataset.sessionSideTab=name;for(const [tab,panel] of Object.entries(sidePanels))panel.hidden=tab!==name;
@@ -178,7 +178,9 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
  const folderState=new Map();
  const fileName=path=>String(path||'').replace(/[\\/]+$/,'').split(/[\\/]/).pop()||String(path||'');
  const fileDir=path=>{const name=fileName(path);return String(path||'').slice(0,Math.max(0,String(path||'').length-name.length));};
+ const documentContext=session=>({kind:'native',nodeId:session?.nodeId,runtime:session?.runtime,sessionId:session?nativeId(session):null,entryId:session?.entryId});
  async function openFile(session,path){
+  if(/\.(?:md|markdown|txt)$/i.test(path)){void documentPreview.open(path,documentContext(session));return;}
   const context=mediaContext(session);
   if(mediaKindFromName(path)!=='file'&&context){void openMediaViewer(path,context).catch(()=>{});return;}
   preview.loading(path);
@@ -627,7 +629,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   for(const [index,part] of turn.parts.entries()){if(part.kind==='tool'){group.push(part);continue;}flush();
    // A background task finished while this turn ran: one quiet line in place, the reply goes on below it.
    if(part.kind==='notice'){const line=el('div','nt-system nt-turn-notice');line.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${part.task.slice(0,8)}`));if(part.timestamp)line.title=time(part.timestamp);frag.append(line);continue;}const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;
-   frag.append(piece(`${turnId}|text|${index}|${part.timestamp}|${text}`,()=>{const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));return md;}));}
+   frag.append(piece(`${turnId}|text|${index}|${part.timestamp}|${text}`,()=>{const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));documentPreview.decorate(md,documentContext(item));return md;}));}
   flush();
   const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
   row.dataset.role='assistant';if(process)row.dataset.process='1';
@@ -736,7 +738,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   const body=simplifiedCliOutput(text||''),main=el('div','nt-body');let files=null;
   if(agent){const by=el('div','nt-byline');const avatar=el('span','nt-avatar');avatar.append(agentIconEl(runtime));const name=el('span','nt-name',names[runtime]||t('Assistant'));name.translate=false;by.append(avatar,name);if(at){const stamp=el('time','',clock(at));stamp.dateTime=at;stamp.title=time(at);by.append(stamp);}
    row.append(by);
-   if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));main.append(md);}
+   if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));documentPreview.decorate(md,documentContext(session));main.append(md);}
    if(body&&session)noteOutputs(session,body,at);}
   else{
    // Attachments sit above the bubble, outside it; the bubble holds only the text (none when the prompt is attachments alone).
@@ -754,7 +756,7 @@ export function createNativeSessionUI({api,getData,artifactRow=null,onModeChange
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
   if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);
    // Open on the right: the same text Copy takes, rendered as in the chat, pinned beside it (and kept while another session is open).
-   if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,mediaContext(session));return md;}})));
+   if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,mediaContext(session));documentPreview.decorate(md,documentContext(session));return md;}})));
    row.append(foot);}
   return row;}
  let agentDetailsSignature='';
@@ -1066,7 +1068,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    // The same text twice in one reply is two blocks: keyed by text and occurrence.
    const seen=(occurrences.get(text)||0)+1;occurrences.set(text,seen);const blockKey=`${seen}\u0000${text}`;
    let md=blocksBefore.get(blockKey);blocksBefore.delete(blockKey);
-   if(!md){md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));adopt(md);}
+   if(!md){md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));documentPreview.decorate(md,documentContext(session));adopt(md);}
    blocksAfter.set(blockKey,md);frag.append(md);
   }
   flush();

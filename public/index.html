@@ -183,6 +183,7 @@
                   <p id="project-folder-feedback" class="form-feedback" role="status" hidden></p>
                 </details>
                 <section id="project-repositories" class="settings-block"></section>
+                <section id="project-git-summary" class="project-git-summary" aria-label="Current project Git version" hidden></section>
                 <section class="settings-block" id="project-space-management">
                   <h3>Project Folders and Repositories</h3>
                   <p class="workspace-note">Each device uses "default workspace / project folder name". When a repository is linked, a project baseline Worktree of the same name is created; the original repository folder is kept, and all roles use the project baseline.</p>
@@ -208,11 +209,7 @@
                 </section>
                 </div>
                 <div id="project-panel-sync" data-project-settings-panel="sync" role="tabpanel" aria-labelledby="project-tab-sync" tabindex="0" hidden>
-                <section class="settings-block project-sync-settings">
-                  <h3>Project file sync</h3>
-                  <p class="workspace-note">Sync saved code, documents and resources between participating devices.</p>
-                  <div class="form-actions"><button type="button" class="secondary" id="configure-project-source-sync">Configure project file sync</button></div>
-                </section>
+                <section id="source-sync-panel" class="settings-block" aria-label="Source sync" hidden></section>
                 </div>
                 <div id="project-panel-coordination" data-project-settings-panel="coordination" role="tabpanel" aria-labelledby="project-tab-coordination" tabindex="0" hidden>
                 <section class="settings-block" aria-labelledby="followup-heading">
@@ -498,6 +495,7 @@
         <section class="inspector-panel" id="inspector-roles" role="tabpanel" aria-labelledby="inspector-tab-roles">
           <p class="workspace-note role-refresh-feedback" id="role-refresh-feedback" role="status" hidden></p>
           <p class="workspace-note" id="role-sidebar-note">Select a project to manage roles here.</p>
+          <section class="inspector-devices role-device-management" aria-label="Device Management"><div class="artifact-section-heading"><h3>Device Management</h3><div><button class="icon-button" id="manage-inspector-devices" type="button" aria-label="Manage devices" title="Manage devices"></button></div></div><div id="inspector-device-list"></div></section>
           <div class="worker-list role-list" id="role-list"></div>
         </section>
         <section class="inspector-panel" id="inspector-artifacts" role="tabpanel" aria-labelledby="inspector-tab-artifacts" hidden>
@@ -505,16 +503,12 @@
           <p class="artifact-list-note" id="artifacts-note" role="status"></p>
           <div id="recent-artifact-list" class="recent-artifact-list"></div>
         </section>
-        <section class="inspector-panel" id="inspector-resources" role="tabpanel" aria-labelledby="inspector-tab-resources" hidden>
-          <section class="inspector-devices" aria-label="Device Management"><div class="artifact-section-heading"><h3>Device Management</h3><div><button class="icon-button" id="manage-inspector-devices" type="button" aria-label="Manage devices" title="Manage devices"></button><button class="icon-button pause-button" id="pause-remote" type="button" disabled aria-label="Pause remote" title="Pause remote"></button></div></div><div class="sidebar-online-devices" id="sidebar-online-devices" aria-label="Quick access to online devices"></div><div id="inspector-device-list"></div></section>
-          <section id="project-git-summary" class="project-git-summary" aria-label="Current project Git version" hidden></section>
-          <section id="source-sync-panel" class="inspector-devices source-sync-panel" aria-label="Source sync" hidden></section>
-        </section>
+        <section class="inspector-panel group-preview-panel" id="inspector-preview" role="tabpanel" aria-labelledby="inspector-tab-preview" hidden></section>
         <section class="inspector-panel group-side-ask-panel" id="inspector-ask" role="tabpanel" aria-labelledby="inspector-tab-ask" hidden></section>
         <div class="inspector-tabs" role="tablist" aria-label="Right panel sections">
           <button id="inspector-tab-roles" type="button" role="tab" aria-label="Roles" title="Roles" aria-selected="true" aria-controls="inspector-roles"></button>
           <button id="inspector-tab-artifacts" type="button" role="tab" aria-label="Recent Outputs" title="Recent Outputs" aria-selected="false" aria-controls="inspector-artifacts" tabindex="-1"></button>
-          <button id="inspector-tab-resources" type="button" role="tab" aria-label="Resources" title="Resources" aria-selected="false" aria-controls="inspector-resources" tabindex="-1"></button>
+          <button id="inspector-tab-preview" type="button" role="tab" aria-label="Side preview" title="Side preview" aria-selected="false" aria-controls="inspector-preview" tabindex="-1"></button>
           <button id="inspector-tab-ask" type="button" role="tab" aria-label="Side question" title="Side question" aria-selected="false" aria-controls="inspector-ask" tabindex="-1"></button>
         </div>
       </aside>

@@ -4,6 +4,10 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  "The linked file has no recorded version in this preview.": "此预览没有所链接文件的历史版本凭据，无法按原版本打开。",
+  "Side preview":"侧边预览",
+  "Document source is unavailable.":"缺少文档来源，暂时无法打开。",
+  "Open a document, then choose Open on the right.":"打开文档后，选择“在右侧打开”即可在这里阅读。",
   'Only some repositories': '只包含部分仓库',
   'Update to current default': '更新为新默认',
   'Retired commands on line {line}: {commands}. Results belong in the final reply.': '第 {line} 行含已取消命令：{commands}。结果请写在最终回复里。',

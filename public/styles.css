@@ -4120,3 +4120,20 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .native-side-ask[hidden] { display: none; }
 
 .group-ask-scope { padding: 16px; }
+
+/* Shared document links carry their address in the tooltip and read only when opened. */
+.markdown-body a.document-reference { color: var(--accent); text-decoration: none; cursor: pointer; overflow-wrap: anywhere; }
+.markdown-body a.document-reference:hover { text-decoration: underline; }
+.markdown-body a.document-reference.is-unavailable { color: var(--text-muted, #89909f); }
+.document-preview-dialog .message-fullscreen-heading > strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-preview-panel:not([hidden]) { display: flex; min-height: 0; padding: 0; overflow: hidden; }
+.group-preview-panel > .side-preview { flex: 1; min-width: 0; }
+#inspector-roles .role-device-management { margin: 0 0 18px; padding: 18px 18px 12px; background: #fff; border: 1px solid #e4e7ef; border-radius: 16px; box-shadow: 0 2px 5px rgb(25 35 60 / 4.5%); }
+.role-device-management .artifact-section-heading { margin-bottom: 6px; padding-bottom: 12px; border-bottom: 1px solid #e4e7ef; }
+.role-device-management .artifact-section-heading h3 { font-size: 16px; font-weight: 650; color: #303746; }
+.role-device-management #manage-inspector-devices { border: 0; background: transparent; box-shadow: none; color: #71798b; }
+.role-device-management .inspector-device-row { min-height: 48px; margin: 0; padding: 10px 0; gap: 10px; border: 0; background: transparent; box-shadow: none; }
+.role-device-management .inspector-device-row > :first-child { flex: 0 0 24px; width: 24px; margin-right: 2px; }
+.role-device-management .inspector-device-row > span:nth-child(2) { flex: 1; min-width: 0; max-width: none; text-align: left; }
+.role-device-management .inspector-device-row small.is-online { color: #178064; background: #eaf6f1; border-radius: 20px; padding: 3px 9px; font-size: 11px; }
+@media (max-width: 1000px) { .document-preview-side { display: none; } }

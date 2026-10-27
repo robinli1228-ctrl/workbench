@@ -2,7 +2,7 @@ import {renderRetiredCommandWarning} from './retired-commands.js';
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
-import { renderMarkdown, renderMessageMarkdown, linkRunDocuments, localizeDocumentLinks } from './markdown.js';
+import { renderMarkdown, renderMessageMarkdown } from './markdown.js';
 import { linkMedia, openImageLightbox, markImageOpener, fileGlyph } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
@@ -298,7 +298,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
 }
 
 /** The chat only handles display and user actions; role selection, idempotency and scheduling are validated by Home. */
-export function createRoomUI({ api, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice, openSideAsk }) {
+export function createRoomUI({ api, documentPreview, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice, openSideAsk }) {
   const historyViewer=createHistoryViewer({api});
   const cliRecoveryUI=createCliRecoveryUI({api,refreshState,getData:()=>data,create});
   const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued,getConversationId:()=>conversationId});
@@ -797,59 +797,10 @@ export function createRoomUI({ api, refreshState, openTask, stopRun, decideAppro
     return copy;
   }
 
-  let documentPreviewDialog,documentPreviewVersion=0;
-  /** Keep file reading in the existing fullscreen layer; ordinary external links retain their browser behavior. */
-  function previewDocumentLinks(root,context=null){
-    root.addEventListener('click',event=>{
-      const link=event.target.closest?.('a[href]');if(!link||!root.contains(link)||event.button!==0)return;
-      const href=link.getAttribute('href');let url;
-      try{
-        url=new URL(href,location.href);
-        if(url.origin!==location.origin||url.pathname!=='/document.html'){
-          if(!context||/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)||!/\.(?:md|markdown|txt)(?:#.*)?$/i.test(href))return;
-          const path=context.get('path'),absolute=href.startsWith('/')||path.startsWith('/');
-          const resolved=new URL(href,new URL(path,'https://document.invalid/'));
-          let documentPath=decodeURIComponent(resolved.pathname);if(!absolute)documentPath=documentPath.replace(/^\//,'');
-          const next=new URLSearchParams(context);next.set('path',documentPath);
-          url=new URL(`/document.html?${next}`,location.href);
-        }
-      }catch{return;}
-      event.preventDefault();void openDocumentPreview(url.searchParams);
-    });
-    return root;
-  }
-  /** Read through the existing authorized API; closing or replacing the reader fences late responses. */
-  async function openDocumentPreview(params){
-    const version=++documentPreviewVersion,path=params.get('path')||'',runId=params.get('runId'),id=params.get('projectId'),scopeId=params.get('scopeId');
-    const name=path.split(/[\\/]/).at(-1)||t('Project Document');let raw='';
-    if(!documentPreviewDialog){
-      documentPreviewDialog=create('dialog','message-fullscreen');documentPreviewDialog.id='document-preview-dialog';
-      documentPreviewDialog.addEventListener('close',()=>{documentPreviewVersion++;});document.body.append(documentPreviewDialog);
-    }
-    documentPreviewDialog.setAttribute('aria-label',name);
-    const header=create('div','message-fullscreen-heading'),heading=create('strong','',name),copy=copyMessageButton(()=>raw);
-    const close=iconAction('close','Close',()=>documentPreviewDialog.close());close.autofocus=true;copy.disabled=true;
-    header.append(heading,copy,close);
-    const body=create('div','message-fullscreen-body'),content=create('div','message-fullscreen-content'),status=create('p','workspace-note',t('Reading file…'));
-    content.append(status);body.append(content);documentPreviewDialog.replaceChildren(header,body);
-    if(!documentPreviewDialog.open)documentPreviewDialog.showModal();
-    try{
-      if(!path||!runId&&(!id||!scopeId))throw new Error('Incomplete document link');
-      const endpoint=id?`/api/projects/${encodeURIComponent(id)}/local-file?${new URLSearchParams({scopeId,path})}`:`/api/runs/${encodeURIComponent(runId)}/document?path=${encodeURIComponent(path)}`;
-      const result=await api(endpoint);if(version!==documentPreviewVersion||!documentPreviewDialog.open)return;
-      if(result.shared){const location=create('p','workspace-note',result.path||t('Waiting for local synchronization'));location.setAttribute('translate','no');content.append(location);}
-      if(result.shared&&result.content===null){status.textContent=t(result.preview==='binary'?'Binary file; preview unavailable.':result.preview==='too_large'?'File synchronized; text preview exceeds 600 KB.':result.syncState==='missing'?'Local file not found.':'Waiting for local synchronization');return;}
-      raw=String(result.content||'');copy.disabled=!raw;
-      const rendered=/\.(?:md|markdown)$/i.test(name)?previewDocumentLinks(renderMarkdown(simplifiedCliOutput(raw)),params):Object.assign(create('pre','artifact-code'),{textContent:raw});
-      content.append(rendered);status.textContent=t('Full text loaded · {v} characters',{v:raw.length.toLocaleString(dateLocale())});
-      if(result.syncState==='conflict'||result.syncState==='local_changes')status.textContent+=' · '+t(result.syncState==='conflict'?'Conflict detected; showing actual local file.':'Showing local changes; synchronization pending.');
-    }catch(error){if(version===documentPreviewVersion&&documentPreviewDialog.open)status.textContent=t('Unable to open document: {message}',{message:error.message});}
-  }
-
   /** Chat prose is simplified for display only; copying and the Original view retain the complete stored text. */
   /** Media files named in a reply open in the shared viewer; bytes stay on the device that ran the turn until requested. */
   const mediaContext=runId=>runId?{key:`run:${runId}`,describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`)}:null;
-  const renderLinkedMarkdown=(text,runId)=>previewDocumentLinks(localizeDocumentLinks(linkMedia(linkRunDocuments(renderMessageMarkdown(simplifiedCliOutput(text)),runId),mediaContext(runId)),runId,api));
+  const renderLinkedMarkdown=(text,runId)=>documentPreview.decorate(linkMedia(renderMessageMarkdown(simplifiedCliOutput(text)),mediaContext(runId)),{kind:'run',runId});
   function replyPreview(text, markdown = true, runId = null, key = '') {
     const preview = create('div', 'chat-reply-preview');
     preview.dataset.previewKey = `${projectId}:${key}`;

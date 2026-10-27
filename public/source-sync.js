@@ -160,6 +160,6 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
   }
   document.querySelector('#configure-project-source-sync')?.addEventListener('click',()=>void configure());
   onLanguageChange(()=>{draw();if(dialog.open)dialog.close();});
-  const render=()=>{const id=getProject()?.id||null;if(id!==projectId){projectId=id;epoch++;view++;state=null;loading=false;loadedAt=0;selectedSource=null;if(dialog.open)dialog.close();panel.replaceChildren();}panel.hidden=!id;if(id&&!document.querySelector('#inspector-resources').hidden)void load();};
+  const render=()=>{const id=getProject()?.id||null;if(id!==projectId){projectId=id;epoch++;view++;state=null;loading=false;loadedAt=0;selectedSource=null;if(dialog.open)dialog.close();panel.replaceChildren();}panel.hidden=!id;if(id&&panel.getClientRects().length)void load();};
   setInterval(()=>{if(!document.hidden)render();},2000);return {render,configure};
 }
