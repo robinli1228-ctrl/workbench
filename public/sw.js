@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v202-composer-bare-icons';
+const CACHE = 'agent-workbench-static-v203-shared-document-preview';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',

@@ -239,11 +239,12 @@ function appendInline(parent, input) {
     if (emphasis) {
       const node = element('em'); appendInline(node, emphasis[2]); parent.append(node); cursor += emphasis[0].length; continue;
     }
-    const link = text.slice(cursor).match(/^\[([^\]\n]+)]\(([^)\s]+)\)/);
+    const link = text.slice(cursor).match(/^\[([^\]\n]+)]\(\s*(?:<([^>\n]+)>|([^\s)]+))\s*\)/);
     if (link) {
-      if (safeLink(link[2])) {
-        const node = element('a'); node.setAttribute('href', link[2]);
-        if (/^https?:/i.test(link[2])) { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noopener noreferrer'); }
+      const target=normalizeDocumentAddress(link[2]||link[3])||(link[2]||link[3]);
+      if (safeLink(target)) {
+        const node = element('a'); node.setAttribute('href', target);
+        if (/^https?:/i.test(target)) { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noopener noreferrer'); }
         appendInline(node, link[1]); parent.append(node);
       } else {
         parent.append(document.createTextNode(link[0]));
@@ -258,5 +259,16 @@ function appendInline(parent, input) {
 
 function safeLink(href) {
   const value = String(href || '').trim();
-  return /^(?:https?:\/\/|mailto:|#|\/|\.\.?\/)/i.test(value);
+  return /^(?:https?:\/\/|mailto:|#|\/|\.\.?\/)/i.test(value)||Boolean(normalizeDocumentAddress(value));
+}
+
+/** Normalize only explicit local document destinations; protocol-bearing web links never become device paths. */
+export function normalizeDocumentAddress(value){
+  if(typeof value!=='string')return null;let path=value.trim().replace(/^<([^>]+)>$/,'$1');
+  if(/^file:/i.test(path)){try{const url=new URL(path);if(url.hostname&&url.hostname!=='localhost')return null;path=decodeURIComponent(url.pathname);}catch{return null;}}
+  else if(/^[a-z][a-z0-9+.-]*:|^\/\//i.test(path))return null;
+  else try{path=decodeURIComponent(path);}catch{return null;}
+  if(/[\x00-\x1f\x7f]/.test(path)||!path||path.length>4096)return null;
+  path=path.replace(/#.*$/,'').replace(/(\.(?:md|markdown|txt)):[1-9]\d*(?::[1-9]\d*)?$/i,'$1');
+  return /\.(?:md|markdown|txt)$/i.test(path)?path:null;
 }

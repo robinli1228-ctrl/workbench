@@ -1,3 +1,4 @@
+import {createDocumentPreview} from './side-preview.js';
 import {deliveryRepositorySummary} from './delivery-summary.js';
 import {renderRetiredCommandWarning} from './retired-commands.js';
 import {createConversationTaskUI} from './conversation-tasks.js';
@@ -156,7 +157,8 @@ const runOriginal=createHistoryViewer({api,inline:true});
 const runStepText=(key,params={})=>getLanguage()==='zh'&&stepZh[key]?stepZh[key].replace(/\{(\w+)\}/g,(_,k)=>String(params[k]??'')):t(key,params);
 const runPreview=createPreviewSheet(dom.runDialog,runStepText);
 let originalRunSnapshot=null;
-const room = createRoomUI({ api, openSideAsk:message=>inspector.openSideAsk(message), refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice(projectId, nodeId) {
+const documentPreview=createDocumentPreview({api});
+const room = createRoomUI({ api, documentPreview, openSideAsk:message=>inspector.openSideAsk(message), refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice(projectId, nodeId) {
   if (app.data.projects.some(p => p.id === projectId)) { app.selectedProjectId=projectId;openSettings('project'); }
 } });
 // Icons are for utility actions only (close, add, edit, refresh, settings). Commit actions such as send, save, prepare and delete
@@ -280,9 +282,9 @@ function createMobileDrawers() {
   return { set, isMobile: () => media.matches };
 }
 const drawers = createMobileDrawers();
-const inspector=createWorkspaceInspector({api,onError:setError,getConversationId:()=>app.selectedConversationId||app.selectedProjectId,onSideAskOpen:()=>{setInspectorMode('shown');mobilePanel('roles');},getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
+const inspector=createWorkspaceInspector({api,documentPreview,onError:setError,getConversationId:()=>app.selectedConversationId||app.selectedProjectId,onSideAskOpen:()=>{setInspectorMode('shown');mobilePanel('roles');},getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
 const conversationTaskUI=createConversationTaskUI({api,getScope:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),getRoles:()=>[...app.data.roles,...app.data.supervisorRoles],openMessage:async(scope,id)=>{mobilePanel('chat');await room.jumpMessage(scope,id);}});
-const nativeSessionUI=createNativeSessionUI({api,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
+const nativeSessionUI=createNativeSessionUI({api,documentPreview,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
 initWorkspaceColumns();
 const mobilePanel = drawers.set;
 document.querySelector('#mobile-projects').innerHTML = UI_ICON.folder;
@@ -755,11 +757,11 @@ async function openProjectFolder(worker, button) {
 
 function renderOnlineDevices() {
   const list = document.querySelector('#sidebar-online-devices');
-  if (!list) return;
-  list.replaceChildren();
   const online = (app.data.workers || []).filter(w => w.online)
     .sort((a, b) => Number(workerKind(a) !== 'local') - Number(workerKind(b) !== 'local'));
   document.querySelector('#mobile-device-count').textContent = t(online.length===1?'{count} device online':'{count} devices online', { count: online.length });
+  if (!list) return;
+  list.replaceChildren();
   if (!online.length) {
     const empty = create('span', 'sidebar-device is-empty');
     empty.title = 'No devices online';
@@ -1062,12 +1064,13 @@ function openGitVersionDetails(project,status) {
   gitVersionDialog.append(list);gitVersionDialog.showModal();
 }
 
-/** The right column holds project-level totals only; per-repository versions, devices and sync times are viewed on click. */
+/** Project settings hold Git totals; per-repository versions, devices and sync times are viewed on click. */
+document.querySelector('#project-tab-workspace')?.addEventListener('click',()=>requestAnimationFrame(renderProjectGitVersion));
 function renderProjectGitVersion() {
   const panel=dom.projectGitSummary;if(!panel)return;
   const project=getCurrentProject();
-  panel.hidden=!project || app.view==='settings';
-  if(panel.hidden)return;
+  panel.hidden=!project;
+  if(panel.hidden||!panel.getClientRects().length)return;
   const repositories=(app.data.repositories||[]).filter(repo=>repo.projectId===project.id);
   const status=currentGitVersion(project.id),busy=gitVersionRequests.has(project.id);
   panel.replaceChildren();
@@ -2443,7 +2446,7 @@ async function toggleRemotePause() {
     for (const button of [dom.pauseRemote, dom.settingsPauseRemote].filter(Boolean)) button.disabled = false;
   }
 }
-dom.pauseRemote.addEventListener('click', toggleRemotePause);
+dom.pauseRemote?.addEventListener('click', toggleRemotePause);
 dom.settingsPauseRemote?.addEventListener('click', toggleRemotePause);
 
 window.addEventListener('beforeunload', disconnectUpdates);

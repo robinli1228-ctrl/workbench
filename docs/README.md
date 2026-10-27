@@ -2,6 +2,7 @@
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [plan-shared-document-preview](plan-shared-document-preview.md) | Shared frontend document links, modal/side preview and group inspector layout | Implemented; isolated verification and release gate tracked in plan |
 | [design-artifact-source-reading](design-artifact-source-reading.md) | Shared report locations and evidence-bound source artifact reads | Implementation and isolated verification; not deployed |
 | [design-lazy-native-tools](design-lazy-native-tools.md) | Native history summaries, on-demand tool details and bounded recent cache | Locally implemented; verification evidence recorded separately; not deployed |
 | [design-review-delivery](design-review-delivery.md) | Fixed review refs, baseline-preserving reception and isolated review sessions | Locally implemented, independently reviewed and isolated-tested; not deployed |
