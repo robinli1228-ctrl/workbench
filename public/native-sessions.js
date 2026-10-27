@@ -725,7 +725,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   const header=el('div','message-fullscreen-heading'),heading=el('strong','',at?`${t('Full message')} · ${time(at)}`:t('Full message'));
   const copy=el('button','icon-button');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(text).catch(()=>{}));
   const close=el('button','icon-button');close.type='button';setActionIcon(close,'close',t('Close'));close.autofocus=true;close.addEventListener('click',()=>promptDialog.close());
-  header.append(heading,copy,close);
+  header.append(heading,copy,sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),at,copyText:text,render:()=>el('div','nt-side-prompt',text)}),{before:()=>promptDialog.close()}),close);
   const bodyEl=el('div','message-fullscreen-body'),content=el('div','message-fullscreen-content');content.append(el('div','chat-message-text',text));bodyEl.append(content);
   promptDialog.replaceChildren(header,bodyEl);promptDialog.showModal();
  }
@@ -748,7 +748,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
    const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
    const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
    const pin=sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),subtitle:session?.title||'',at,copyText:body,render:()=>el('div','nt-side-prompt',body)}));pin.hidden||=!body.trim();
-   tools.append(expand,copy,pin);row.dataset.tools='1';row._tools=tools;
+   tools.append(copy,expand,pin);row.dataset.tools='1';row._tools=tools;
    requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
   }
   if(extra){if(agent)main.append(extra);else files.append(extra);}

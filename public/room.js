@@ -1,4 +1,5 @@
 import {renderRetiredCommandWarning} from './retired-commands.js';
+import {sideButton} from './side-preview.js';
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
@@ -809,6 +810,16 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
 
   let messageFullscreen, fullscreenView;
+  /** Full-screen and side views keep the same text, attachments and originating Run links. */
+  function fullMessageContent(text,markdown,attachments,runId){
+    const content=create('div','message-fullscreen-content');
+    content.append(markdown?renderLinkedMarkdown(text,runId):create('div','chat-message-text',simplifiedCliOutput(text)));
+    if(attachments?.length){const files=create('div','chat-attachments');for(const item of attachments)files.append(attachmentCard(item));content.append(files);}
+    return content;
+  }
+  function sideMessageButton(text,name,markdown=true,attachments=[],runId=null){
+    return sideButton('chat-icon-btn message-fullscreen-side',t('Open on the right'),()=>({title:name||t('Message'),copyText:text,render:()=>fullMessageContent(text,markdown,attachments,runId)}));
+  }
   /** Update only the same run that is open; stop auto-scrolling after the user scrolls up manually. */
   function updateLiveFullscreen() {
     const view=fullscreenView;
@@ -842,20 +853,19 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       const heading=create('strong', '', t('{v} · Full reply', { v: name || t('Message') }));
       const view={text,name,taskId,projectId,follow:true,runId};
       const copy=copyMessageButton(()=>view.text);
-      header.append(heading,copy,close);
+      // Pin the text and source visible at click time, so later live replies do not replace the side preview.
+      const side=sideButton('chat-icon-btn message-fullscreen-side',t('Open on the right'),()=>{
+        const snapshot=view.text,source=view.runId;
+        return {title:name||t('Message'),copyText:snapshot,render:()=>fullMessageContent(snapshot,markdown,attachments,source)};
+      },{before:()=>messageFullscreen.close()});
+      header.append(heading,copy,side,close);
       const body = create('div', 'message-fullscreen-body');
-      const content = create('div', 'message-fullscreen-content');
-      content.append(markdown ? renderLinkedMarkdown(text,runId) : create('div', 'chat-message-text', simplifiedCliOutput(text)));
-      if (attachments.length) {
-        const files = create('div', 'chat-attachments');
-        for (const item of attachments) files.append(attachmentCard(item));
-        content.append(files);
-      }
+      const content = fullMessageContent(text,markdown,attachments,runId);
       body.append(content);
       Object.assign(view,{body,content,copy,heading});fullscreenView=view;
       if(taskId) {
         const follow=iconAction('follow','Follow latest reply',()=>{view.follow=true;body.scrollTop=body.scrollHeight;follow.setAttribute('aria-pressed','true');});
-        follow.setAttribute('aria-pressed','true');header.insertBefore(follow,copy);
+        follow.setAttribute('aria-pressed','true');header.insertBefore(follow,close);
         body.addEventListener('scroll',()=>{view.follow=body.scrollHeight-body.clientHeight-body.scrollTop<40;follow.setAttribute('aria-pressed',String(view.follow));});
       }
       messageFullscreen.replaceChildren(header, body);
@@ -972,14 +982,15 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if(alert)bubble.append(create('p','run-alert',alert.reason));
     const approvals = run ? renderApprovalsInline(run) : null;
     if (approvals) col.append(approvals);
-    const actions = [];
+    const actions = [],stateActions=[];
     if (preview) actions.push(copyMessageButton(preview));
     actions.push(fullscreenMessageButton(preview, role.name, true, [], task.id, run?.id));
+    actions.push(sideMessageButton(preview,role.name,true,[],run?.id));
     if (run && ['queued', 'starting', 'running', 'waiting_user'].includes(run.status)) {
-      actions.push(iconAction('stop', 'Stop', b => stopRun(run, b)));
+      stateActions.push(iconAction('stop', 'Stop', b => stopRun(run, b)));
     }
     if (task.status === 'ready' && !run) {
-      actions.push(iconAction('stop', 'Cancel queued item', async b => {
+      stateActions.push(iconAction('stop', 'Cancel queued item', async b => {
         b.disabled = true;
         try { await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`, { method: 'POST', json: {} }); await refreshState({ quiet: true }); }
         catch (e) { setError(e.message); b.disabled = false; }
@@ -987,6 +998,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     }
     if(run&&['starting','running','waiting_user'].includes(run.status)&&['claude','codex'].includes(run.nativeSession?.runtime||run.runtime||role.runtime)&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk({id:`running:${run.id}`,sideRunId:run.id,projectId:task.projectId,conversationId:task.conversationId||task.projectId})));
     if (run) actions.push(iconAction('live', 'Log', () => openTask(task.id,run.id)));
+    actions.push(...stateActions);
     // Status and actions sit inside the card, the same footer as finished messages.
     // The footer names the stage: queued, the CLI getting ready (workspace, start, resume), then thinking, the step it is
     // running, or replying, with the time it has taken so far.
@@ -1069,12 +1081,13 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);b.disabled=false;}
     }));
     actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text));
+    actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, m.senderName, agent || Boolean(handoff), m.attachments, null, m.runId));
+    actions.push(sideMessageButton(handoff ? m.handoff.summary || m.text : m.text,m.senderName,agent||Boolean(handoff),m.attachments,m.runId));
     if(agent&&m.runId&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk(m)));
     if (m.runId) {
       const run = data.runs?.find(r => r.id === m.runId);
       if (run) actions.push(iconAction('live', 'Log', () => openTask(run.taskId,run.id)));
     }
-    actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, m.senderName, agent || Boolean(handoff), m.attachments, null, m.runId));
     actions.push(...discussionActions);
     const cardMeta=messageCardMeta(m),footer=create('div','chat-card-footer');setChatCardState(bubble,cardMeta.state);
     footer.append(create('span','chat-card-kind',t('{kind} · {status}',{kind:t(cardMeta.kind),status:t(cardMeta.status)})+(cardMeta.duration?` · ${cardMeta.duration}`:'')));
