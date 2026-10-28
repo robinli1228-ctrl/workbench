@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v207-concurrent-quick-switch';
+const CACHE = 'agent-workbench-static-v208-concurrent-state';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',

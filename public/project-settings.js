@@ -32,7 +32,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   const concurrentBox=document.querySelector('#concurrent-writes'),concurrentStatus=document.querySelector('#concurrent-status'),concurrentFeedback=document.querySelector('#concurrent-feedback');
   /** Devices whose Worker is too old to honour the switch keep the one-at-a-time lock; say so instead of promising more. */
   function showConcurrent(){
-    const p=getProject();if(!p)return;concurrentBox.checked=p.allowConcurrentWrites===true;concurrentFeedback.hidden=true;
+    const p=getProject();if(!p)return;concurrentBox.checked=p.allowConcurrentWrites===true;
     const data=getData(),nodeIds=new Set([...(data.roles||[]),...(data.supervisorRoles||[])].filter(r=>r.projectId===p.id&&!r.archivedAt&&r.enabled!==false).map(r=>r.nodeId));
     const old=(getData().workers||[]).filter(w=>nodeIds.has(w.id)&&w.capabilities?.concurrentWrites!==1).map(w=>workerDisplayName(w));
     concurrentStatus.textContent=p.allowConcurrentWrites===true&&old.length?t('These devices still queue one at a time until their Worker is upgraded: {names}',{names:old.join(t(', '))}):'';
@@ -40,7 +40,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   concurrentBox.addEventListener('change',async()=>{
     const p=getProject();if(!p)return;const enabled=concurrentBox.checked,here=()=>getProject()?.id===p.id;
     concurrentBox.disabled=true;concurrentFeedback.hidden=true;
-    try{if(await saveConcurrentWrites({api,projectId:p.id,enabled})===null){concurrentBox.checked=false;concurrentBox.disabled=false;return;}}
+    try{if(await saveConcurrentWrites({api,getData,projectId:p.id,enabled})===null){concurrentBox.checked=false;concurrentBox.disabled=false;return;}}
     catch(error){if(here()){concurrentBox.checked=!enabled;concurrentFeedback.textContent=error.message;concurrentFeedback.hidden=false;}concurrentBox.disabled=false;return;}
     // The server has the new value; a failed refresh must not flip the box back.
     try{await refreshState({quiet:true});}catch{}
@@ -240,7 +240,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     busy = false;
     settingsId = p.id; savedUrl = p.repoUrl || '';
     void loadFollowup();
-    showConcurrent();
+    concurrentFeedback.hidden=true;showConcurrent();
     form.elements.name.value = p.name || '';
     form.elements.description.value = p.description || '';
     form.elements.repoUrl.value = savedUrl;
@@ -368,6 +368,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   return {
     openFolder,
     refreshNodes,
+    refreshConcurrent:()=>{if(!concurrentBox.disabled)showConcurrent();},
     prepareSettings,
     openBinding(nodeId) { openFolder(nodeId, bindingForm.elements.localRoot.value, path => { bindingForm.elements.localRoot.value = path; }); }
   };

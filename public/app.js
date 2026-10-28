@@ -620,6 +620,7 @@ function render() {
   renderTasks();
   renderTaskDetail();
   projectsUI.refreshNodes();
+  projectsUI.refreshConcurrent();
   setupUI.refresh();
   platformUI.refresh(); spacesUI.refresh();
   if(!nativeSessionUI.active())void room.refresh(app.data, app.selectedProjectId,app.selectedConversationId);
