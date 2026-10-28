@@ -115,9 +115,10 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
   else if(bare&&context.loadFilePaths&&!context.filePaths?.().length){card.dataset.state='pending';meta.textContent=t('Click to locate file');}
   else if(describe)void describePath().then(show).catch(()=>{});
   card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void (async()=>{
-    try{if(bare)await context.loadFilePaths?.();const ref=resolvePath();if(ref.reason){show({available:false,reason:ref.reason});return;}
-      const info=await describePath();show(info);if(info.available)show(await openMediaViewer(ref.path,context,{at:messageTime(card),from:card}));
-    }catch{show({available:false,reason:'file_lookup_failed'});}
+    try{if(bare)await context.loadFilePaths?.();}catch{show({available:false,reason:'file_lookup_failed'});return;}
+    const ref=resolvePath();if(ref.reason){show({available:false,reason:ref.reason});return;}
+    // Open immediately; the shared viewer owns loading and metadata errors, which are not path-lookup failures.
+    try{show(await openMediaViewer(ref.path,context,{at:messageTime(card),from:card}));}catch{ /* The viewer shows the original metadata error. */ }
   })();});
   markImageOpener(card,kind==='image');
   return card;
