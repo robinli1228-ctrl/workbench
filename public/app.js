@@ -384,6 +384,7 @@ function renderSyncDot(){
   dot.setAttribute('aria-disabled',String(state!=='red'||syncRetrying.has(projectId)));
 }
 async function syncDotClick(){
+  if(!app.lastStateAt||app.connection?.state==='error')return;
   const projectId=syncDotProjectId(),indicator=(app.data?.sourceSyncSummaries||[]).find(s=>s.projectId===projectId)?.indicator;
   if(!projectId||indicator?.state!=='red'||syncRetrying.has(projectId))return;
   if(!indicator.retry){openProjectSync(projectId);return;}
