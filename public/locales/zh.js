@@ -2081,6 +2081,7 @@ export default {
   "Devices differ: {list}": "设备不一致：{list}",
   "Preparing…": "准备中…",
   "Not joined": "未加入",
+  "Ready@@folder": "已就绪",
   "Choose another folder": "换一个文件夹",
   "Check project folder": "检查项目目录",
   "Use an existing folder": "选择已有文件夹",

@@ -51,7 +51,7 @@ export function projectSpaceUI({ api, getData, getProject, refreshState, create,
     const fallback = `${(worker.workspaceRoot || worker.allowedRoots?.[0] || '').replace(/\/$/, '')}/${project.folderName || ''}`;
     const path = create('small'), code = create('code', '', binding?.localRoot || (worker.workspaceRoot || worker.allowedRoots?.[0] ? t('Default: {path}', { path: fallback }) : t('Workspace not set')));
     path.append(code); main.append(create('strong', '', worker.name || worker.id), path);
-    const state = pending ? chip('warn', t('Checking…')) : !worker.online ? chip('off', t('Offline')) : binding ? chip('ok', t('Ready')) : chip('off', t('Not joined'));
+    const state = pending ? chip('warn', t('Checking…')) : !worker.online ? chip('off', t('Offline')) : binding ? chip('ok', t('Ready@@folder')) : chip('off', t('Not joined'));
     const actions = create('span', 'settings-row-actions'), offline = !worker.online || pending;
     if (binding) actions.append(icon('folder', 'Choose another folder', () => pick(worker, binding.localRoot), { disabled: offline }), icon('refresh', 'Check project folder', () => void prepare(worker.id), { disabled: offline }));
     else actions.append(icon('folder', 'Use an existing folder', () => pick(worker, ''), { disabled: offline }), icon('plus', 'Join with the default folder', () => void prepare(worker.id), { disabled: offline, tint: true }));
@@ -126,7 +126,7 @@ export function projectSpaceUI({ api, getData, getProject, refreshState, create,
     form.elements.key.readOnly = Boolean(repo);
     if (repo) { form.elements.mode.value = 'existing'; form.elements.repoUrl.value = repo.repoUrl || ''; form.elements.key.value = repo.key || repo.name || ''; }
     form.elements.repoUrl.readOnly = Boolean(repo);
-    refreshDialog(); dialog.showModal();
+    refreshDialog(); dialog.showModal(); (repo ? form.elements.key : form.elements.repoUrl).focus();
   }
   document.querySelector('#add-project-repository').addEventListener('click', () => openDialog());
   for (const id of ['#close-project-repository', '#cancel-project-repository']) document.querySelector(id).addEventListener('click', () => dialog.close());

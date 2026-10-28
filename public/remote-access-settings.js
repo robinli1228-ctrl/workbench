@@ -88,7 +88,7 @@ export function createRemoteAccessSettingsUI({root,api}) {
   toggle.addEventListener('change',()=>void action(async()=>{await call(state?.tunnel?.enabled?'/stop':'/start',{});message('Remote access status updated.');}));
   $('[data-relay-test]').addEventListener('click',()=>void action(async()=>{const result=await call('/test',{});message(result.ok?'Relay connection test passed.':'Relay connection test failed.');}));
   $('[data-relay-refresh]').addEventListener('click',()=>void refresh());
-  $('[data-relay-edit]').addEventListener('click',()=>{dirty.clear();dialogMessage('');paint();dialog.showModal();});
+  $('[data-relay-edit]').addEventListener('click',()=>{dirty.clear();dialogMessage('');paint();dialog.showModal();form.elements.host.focus();});
   for(const button of [$('[data-relay-cancel]'),$('#close-remote-access-dialog')])button.addEventListener('click',()=>dialog.close());
   dialog.addEventListener('close',()=>{form.elements.password.value='';dirty.clear();paint();});
   paint();

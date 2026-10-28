@@ -315,13 +315,12 @@ input:focus, textarea:focus, select:focus { border-color: #66b996; box-shadow: 0
 }
 .project-settings-folder-block { margin: 0; }
 [data-project-settings-panel] { display: grid; gap: 18px; min-width: 0; }
-#settings-project-panel .project-basic-settings > form { margin-top: 16px; }
 #settings-project-panel .project-settings-folder-block[open] > .form-grid { margin-top: 16px; }
 #settings-project-panel .action-text-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: auto; flex-shrink: 0; }
 #settings-project-panel .action-text-button svg { width: 20px; height: 20px; flex-shrink: 0; }
 #settings-project-panel .path-picker { align-items: center; }
 #project-prepare-form > .form-actions { align-self: end; justify-content: flex-start; }
-#settings-project-panel .project-danger-zone { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
+#settings-project-panel .project-danger-zone:not(.settings-list) { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
 #settings-project-panel .project-danger-zone > .form-feedback { flex-basis: 100%; }
 
 .content-grid { display: grid; grid-template-columns: minmax(230px, 34%) minmax(360px, 1fr); gap: 20px; padding-top: 25px; }
@@ -2005,9 +2004,6 @@ dialog.role-switch-dialog { width: min(640px, calc(100vw - 32px)); }
 #settings-page .settings-panel > h3 { color: var(--ink); font-size: 18px; font-weight: 600; }
 #settings-page .settings-block > :is(h3, h4) { margin: 0 0 8px; padding: 0; border: 0; color: var(--ink); background: transparent; font-size: 15px; font-weight: 600; }
 #settings-page .settings-block .form-actions { margin-top: 8px; }
-#settings-page .project-danger-zone { align-items: center; margin-top: 16px; }
-#settings-page .project-danger-zone h3 { margin: 0 0 6px; font-size: 15px; }
-#settings-page .project-danger-zone p { margin: 0; }
 #settings-page .project-danger-zone .danger { color: var(--danger); border-color: #edc7cc; background: #fff; }
 #settings-page .repository-card { margin: 8px 0 0; padding: 12px 14px; border-color: var(--page-line); border-radius: 6px; background: #f6f7f9; }
 #settings-page .repository-card .workspace-note { margin-block: 6px; }
@@ -3876,16 +3872,9 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .nt-reply-foot .nt-duration { margin-left: 5px; }
 .nt-reply-foot .nt-foot-status { margin-left: 10px; color: var(--danger, #c0263a); font-size: 12px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* Remote access keeps local connection details out of the normal settings form. */
-.remote-access-settings { margin-bottom:16px; }
-.remote-access-settings form { display:flex; align-items:end; gap:12px; flex-wrap:wrap; margin:14px 0; }
-.remote-access-settings label { display:grid; gap:6px; flex:1; min-width:180px; }
-.remote-access-settings input { width:100%; min-width:0; }
-.remote-access-settings details { flex-basis:100%; }
-.remote-access-settings summary { cursor:pointer; color:var(--muted); }
-.remote-access-advanced { display:flex; flex-wrap:wrap; gap:12px; margin:12px 0; }
-.remote-access-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
-.remote-access-settings [data-relay-link] { overflow-wrap:anywhere; }
-@media(max-width:600px) { .remote-access-settings label { min-width:100%; } }
+.remote-access-advanced { display:flex; flex-wrap:wrap; gap:12px; margin:12px 0 0; }
+.remote-access-advanced label { flex:1; min-width:160px; }
+.settings-dialog-form summary { cursor:pointer; color:var(--muted); font-size:13px; }
 /* File glyph: a page with a folded corner and the extension on a coloured label. */
 .file-glyph { display: grid; place-items: center; flex: none; }
 .file-glyph svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -4151,9 +4140,9 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 #settings-page { background: #f3f4f7; }
 #settings-page .settings-page-body { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 #settings-page .settings-panel[data-settings-panel="project"] { padding: 0; border: 0; background: transparent; box-shadow: none; }
-#settings-page #project-panel-sync { max-width: 880px; margin-inline: auto; }
+#settings-page #project-panel-sync { width: 100%; max-width: 880px; margin-inline: auto; }
 #settings-page :is(.settings-panel:not([data-layout="list"]):not([data-settings-panel="project"]), #project-panel-sync > .settings-block) { padding: 24px 28px; border: 1px solid rgb(22 30 58 / 8%); border-radius: 16px; background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 1px 3px rgb(16 24 40 / 3%); }
-#settings-page .settings-panel[data-layout="list"], #settings-page [data-project-settings-panel][data-layout="list"] { display: flex; flex-direction: column; gap: 18px; max-width: 880px; margin-inline: auto; }
+#settings-page .settings-panel[data-layout="list"], #settings-page [data-project-settings-panel][data-layout="list"] { display: flex; flex-direction: column; gap: 18px; width: 100%; max-width: 880px; margin-inline: auto; }
 #settings-page .settings-list { min-width: 0; overflow: hidden; border: 1px solid #e6e8ef; border-radius: 16px; background: #fff; box-shadow: 0 1px 3px rgb(25 35 60 / 5%); }
 #settings-page .settings-list-head { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 14px 20px 12px; }
 #settings-page .settings-list-head > div { min-width: 0; }
@@ -4232,3 +4221,11 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 #settings-page .device-capacity-inline input[type="number"] { width: 80px; height: 34px; }
 #settings-page .device-capacity-inline button.secondary { min-height: 34px; padding: 6px 12px; }
 .device-capacity-inline .form-feedback { flex-basis: 100%; margin: 0; }
+#settings-page .settings-switch { flex: 0 0 36px; width: 36px; min-width: 36px; height: 20px; }
+#settings-page .settings-switch input[type="checkbox"] { width: 100%; height: 100%; }
+#settings-page .settings-row-value .connection-note { margin: 0; padding: 0; color: inherit; font-size: 14px; line-height: 1.5; background: none; border: 0; }
+#settings-page .settings-row-label:has(+ .settings-row-value:empty) { flex: 1 1 auto; }
+#settings-page .settings-row-label + .settings-row-value:empty { display: none; }
+#settings-page .settings-list-note:empty { display: none; }
+#settings-page #project-panel-sync > .settings-block { width: 100%; max-width: none; box-sizing: border-box; }
+#settings-page .project-git-summary { margin: 0; }
