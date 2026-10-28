@@ -18,7 +18,7 @@ import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,same
 import {stripAnsi} from './run-log-data.js';
 import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSummary} from './history-prompt.js';
 import {cachedHistory,saveHistory,forgetHistory,compactHistoryPage} from './history-cache.js';
-import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
+import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices,resolveToolFile,toolFilePaths,historyContainsReply} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -49,7 +49,7 @@ const busyState=icon=>stateBlock(icon,'',{tone:'busy'});
 const emptyState=(icon,label,busy=false)=>busy?busyState(icon):stateBlock(icon,label);
 
 /** The session view reads native history and prepares terminal links. Only after an explicit takeover does it submit turns, resuming the same native ID. */
-export function createNativeSessionUI({api,documentPreview,getData,artifactRow=null,onModeChange,onPreview,onSelect=()=>{},onStateRefresh=async()=>{}}){
+export function createNativeSessionUI({api,documentPreview,getData,onModeChange,onPreview,onSelect=()=>{},onStateRefresh=async()=>{}}){
  const mode=document.querySelector('#navigation-mode'),list=el('nav','project-list native-session-list'),content=el('section','native-session-content panel'),side=el('section','native-session-sidebar');
  list.id='native-session-list';content.id='native-session-content';side.id='native-session-sidebar';
  document.querySelector('#project-list').after(list);document.querySelector('main.workspace').append(content);document.querySelector('#node-sidebar').append(side);
@@ -95,7 +95,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
  const gitCache=new Map();let gitKey=null,renaming=null;
  // A path keeps its latest mention; live replies (no timestamp yet) count as newest, unreadable times as oldest.
  const outputRank=value=>{if(!value)return Infinity;const time=Date.parse(value);return Number.isFinite(time)?time:0;};
- function noteOutputs(session,text,at){
+ function noteOutputs(session,text,at,filePaths=[]){
   const context=mediaContext(session);if(!context)return;
   const paths=mediaPathMatches(text);if(!paths.length)return;
   let items=outputs.get(context.key);
@@ -106,12 +106,12 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
    for(const old of outputs.keys()){if(outputs.size<=OUTPUT_SESSIONS)break;if(old!==keep&&old!==context.key)outputs.delete(old);}
   }
   let changed=false;
-  for(const {path} of paths){const prior=items.get(path);if(prior&&outputRank(prior.at)>=outputRank(at))continue;items.set(path,{path,at:at||null});changed=true;}
+  for(const ref of paths){const {path}=resolveToolFile(ref.path,filePaths),prior=items.get(path);if(prior&&outputRank(prior.at)>=outputRank(at))continue;items.set(path,{path,at:at||null,filePaths});changed=true;}
   if(changed&&sideTab==='outputs'&&selected&&mediaContext(selected)?.key===context.key){clearTimeout(outputsTimer);outputsTimer=setTimeout(renderOutputs,100);}
  }
  /**
-  * Project outputs come only from a trusted link: the group-chat role binding of a managed session, or exactly one
-  * project whose role session on this device recorded this native ID. Standalone sessions are never guessed or scanned.
+  * Resolve the registered project for project-level controls using role identity or an unambiguous workspace binding.
+  * The Files tab does not load that project's artifacts or scan the session working folder.
   */
  function sessionProject(item){
   const data=getData();if(!item)return null;
@@ -126,55 +126,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   if(!hits.length)return null;const ids=new Set(hits.filter(w=>w.localRoot.length===hits[0].localRoot.length).map(w=>w.projectId));
   return ids.size===1?data.projects?.find(p=>p.id===[...ids][0])||null:null;
  }
- const projectOutputs=new Map();
- async function loadProjectOutputs(projectId,force=false){
-  const cached=projectOutputs.get(projectId);if(cached?.loading||!force&&cached?.at&&Date.now()-cached.at<30000)return;
-  projectOutputs.set(projectId,{...cached,loading:true});if(sideTab==='outputs')renderOutputs();
-  try{const result=await api(`/api/projects/${encodeURIComponent(projectId)}/artifacts`);projectOutputs.set(projectId,{items:result.items||[],partial:Boolean(result.partial),at:Date.now()});}
-  catch(error){projectOutputs.set(projectId,{items:[],error:error.message,at:Date.now()});}
-  if(sideTab==='outputs')renderOutputs();
- }
- /**
-  * Media and files the session produced under its working folder's outputs/ and artifacts/ (one level of subfolders),
-  * read through the device's folder listing; videos and images open in the media viewer, other files in the preview.
-  */
- const OUTPUT_DIRS=['outputs','artifacts'],producedState=new Map();
- async function loadProduced(session,force=false){
-  const id=key(session),root=session.workspace;if(!root)return;const st=producedState.get(id);
-  if(st?.loading||!force&&st?.root===root&&st.at&&Date.now()-st.at<30000)return;
-  const next={root,loading:true,files:st?.root===root?st.files:null,error:null,at:st?.at||0};producedState.set(id,next);if(sideTab==='outputs')renderOutputs();
-  const list=async path=>{try{const result=await api(`${endpoint(session.nodeId)}/folders?${new URLSearchParams({path,offset:'0'})}`);return (result.entries||[]).filter(e=>e.type==='folder'||e.type==='file');}catch{return null;}};
-  const files=[];let found=false;
-  for(const dir of OUTPUT_DIRS){const entries=await list(`${root.replace(/\/+$/,'')}/${dir}`);if(!entries)continue;found=true;
-   for(const e of entries)if(e.type==='file')files.push(e.path);
-   for(const folder of entries.filter(e=>e.type==='folder').slice(0,12)){for(const e of (await list(folder.path))||[])if(e.type==='file')files.push(e.path);if(files.length>=80)break;}}
-  if(producedState.get(id)!==next)return;
-  producedState.set(id,{root,loading:false,files:found?files.slice(0,80):null,error:null,at:Date.now()});
-  if(sideTab==='outputs'&&selected&&key(selected)===id)renderOutputs();
- }
-  /**
-  * Files tab, card 1: the project's outputs — media and files under the working folder's outputs/ and artifacts/ (one level of
-  * subfolders), then the project's recorded outputs (the group chat's Recent Outputs) that are not already listed.
-  */
- function outputsCard(session){
-  const card=el('section','native-side-card native-files-half native-outputs-card'),head=el('div','native-card-head'),body=el('div','native-files-body');
-  head.append(el('h3','',t('Project outputs')));card.append(head,body);
-  const st=producedState.get(key(session)),context=mediaContext(session),project=artifactRow?sessionProject(session):null,cached=project?projectOutputs.get(project.id):null;
-  if(!st||st.root!==session.workspace||(!st.loading&&!st.at))void loadProduced(session);
-  if(project&&(!cached?.at||Date.now()-cached.at>=30000))void loadProjectOutputs(project.id);
-  const refresh=iconButton('refresh','Refresh',()=>{void loadProduced(session,true);if(project)void loadProjectOutputs(project.id,true);});refresh.disabled=Boolean(st?.loading||cached?.loading);head.append(refresh);
-  const produced=st?.root===session.workspace?st.files||[]:[],seen=new Set(produced);
-  const media=produced.filter(path=>mediaKindFromName(path)!=='file'),others=produced.filter(path=>mediaKindFromName(path)==='file');
-  if(media.length&&context){const list=el('div','native-output-list');media.slice(0,40).forEach((path,index)=>list.append(mediaCard(path,context,{describe:index<12})));body.append(list);}
-  if(others.length){const list=el('div','native-file-list');for(const path of others.slice(0,40))list.append(fileRow(session,path,null));body.append(list);}
-  const records=(cached?.items||[]).filter(file=>!seen.has(file.path)&&!seen.has(file.originPath));
-  if(records.length){const list=el('div','native-project-output-list');for(const file of records.slice(0,30))list.append(artifactRow(file));body.append(list);if(cached.partial||records.length>30)body.append(el('p','native-side-hint',t('Showing part of the project outputs; the group chat lists the rest.')));}
-  if(cached?.error&&!body.childElementCount)body.append(failedState(cached.error,()=>void loadProjectOutputs(project.id,true)));
-  const busy=Boolean(session.workspace&&(!st?.at||st.loading))||Boolean(project&&(!cached?.at||cached.loading));
-  if(!body.childElementCount)body.append(busy?emptyState('original','Loading…',true):emptyState('original','No outputs yet'));
-  return card;
- }
- /** Files tab: what the CLI touched in page turns, files named in replies, the working folder itself, and project outputs. */
+ /** The working folder is browsed only when its header button is opened. */
  const folderState=new Map();
  const fileName=path=>String(path||'').replace(/[\\/]+$/,'').split(/[\\/]/).pop()||String(path||'');
  const fileDir=path=>{const name=fileName(path);return String(path||'').slice(0,Math.max(0,String(path||'').length-name.length));};
@@ -279,15 +231,15 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
  function openFolder(){if(!selected)return;folderDialog.querySelector('.native-folder-slot').replaceChildren(folderCard(selected));if(!folderDialog.open)folderDialog.showModal();}
  function renderFolder(){const prior=folderDialog.open&&folderDialog.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
  function renderOutputs(){
-  const panel=sidePanels.outputs;panel.replaceChildren();
-  if(!selected){if(folderDialog.open)folderDialog.close();panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
+  const panel=sidePanels.outputs;
+  if(!selected){if(folderDialog.open)folderDialog.close();panel.replaceChildren(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
   const context=mediaContext(selected);
-  // The project's outputs take most of the height, files named in the loaded replies the rest; the working folder is a dialog.
+  // Replace the complete view once: only files named in this session's loaded replies belong here.
   const mentioned=el('section','native-side-card native-files-half'),head=el('div','native-card-head'),body=el('div','native-files-body');head.append(el('h3','',t('Named in replies')));mentioned.append(head,body);
   const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
   if(!items.length)body.append(emptyState('quote','No files mentioned yet'));
-  else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));body.append(list);}
-  panel.append(outputsCard(selected),mentioned);renderFolder();
+  else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,{...context,filePaths:()=>item.filePaths||[]},{describe:index<12})));body.append(list);}
+  panel.replaceChildren(mentioned);renderFolder();
  }
  resetSide();
  // Session settings live behind a gear at the right end of the top bar, where the connection note sits in other modes.
@@ -609,7 +561,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
    const kept=before.get(signature);
    if(kept){after.set(signature,kept);for(const [id,node] of kept.pieces)piecesAfter.set(id,node);nodes.push(...kept.nodes);
     // A reused turn is not drawn again, so the files it names are noted here (the Files tab list is rebuilt after a reset).
-    const last=[...turn.parts].reverse().find(part=>part.kind==='text');if(last?.text)noteOutputs(item,last.text,turn.endedAt);continue;}
+    const last=[...turn.parts].reverse().find(part=>part.kind==='text');if(last?.text)noteOutputs(item,last.text,turn.endedAt,toolFilePaths(turn.parts.filter(p=>p.kind==='tool').map(historyStep)));continue;}
    own=new Map();const turnNodes=renderHistoryTurn(turn,item,startedAt,piece);after.set(signature,{nodes:turnNodes,pieces:own});nodes.push(...turnNodes);
   }
   // Least recently drawn sessions go first: the one being read moves to the end on every refresh.
@@ -618,6 +570,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
  }
  function renderHistoryTurn(turn,item,startedAt,piece=(id,build)=>build()){
   const nodes=[],first=turn.parts[0],turnId=turn.prompt?.id||`${first?.id||first?.timestamp||''}`;
+  const paths=toolFilePaths(turn.parts.filter(part=>part.kind==='tool').map(historyStep)),pathsKey=JSON.stringify(paths);
   if(turn.prompt)nodes.push(piece(`${turnId}|prompt|${JSON.stringify(turn.prompt)}`,()=>renderHistoryRow(turn.prompt,item)));
   if(!turn.parts.length)return nodes;
   const frag=document.createDocumentFragment();let group=[],process=false;
@@ -625,9 +578,10 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   for(const [index,part] of turn.parts.entries()){if(part.kind==='tool'){group.push(part);continue;}flush();
    // A background task finished while this turn ran: one quiet line in place, the reply goes on below it.
    if(part.kind==='notice'){const line=el('div','nt-system nt-turn-notice');line.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${part.task.slice(0,8)}`));if(part.timestamp)line.title=time(part.timestamp);frag.append(line);continue;}const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;
-   frag.append(piece(`${turnId}|text|${index}|${part.timestamp}|${text}`,()=>{const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));documentPreview.decorate(md,documentContext(item));return md;}));}
+   frag.append(piece(`${turnId}|text|${index}|${part.timestamp}|${pathsKey}|${text}`,()=>{const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,{...mediaContext(item),filePaths:()=>paths});documentPreview.decorate(md,{...documentContext(item),filePaths:()=>paths});return md;}));}
   flush();
-  const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
+  const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag,filePaths:paths});
+  row._replyTexts=turn.parts.filter(part=>part.kind==='text').map(part=>simplifiedCliOutput(stripAnsi(part.text||'')));
   row.dataset.role='assistant';if(process)row.dataset.process='1';
   if(startedAt&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(startedAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(startedAt,Date.parse(turn.endedAt));}
   nodes.push(row);
@@ -730,12 +684,13 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
  const mediaContext=session=>{const sessionId=session&&(nativeId(session)||session.sessionId);if(!session?.nodeId||!sessionId)return null;
   return {key:`native:${session.nodeId}:${session.runtime}:${sessionId}`,describe:path=>api(`${endpoint(session.nodeId)}/media?${new URLSearchParams({runtime:session.runtime,sessionId,path})}`)};};
  /** Transcript rows: assistant replies are plain prose with a small byline; prompts are a quiet block with a prompt mark. No card states or footers. */
- function chatRow(role,text,runtime,at,extra,state='completed',session,{content=null}={}){const agent=role!=='user',row=el('article',`nt-row ${agent?'nt-agent':'nt-user'} native-chat-row${state==='error'?' is-error':''}`);if(at)row.dataset.at=at;
+ function chatRow(role,text,runtime,at,extra,state='completed',session,{content=null,filePaths=[]}={}){const agent=role!=='user',row=el('article',`nt-row ${agent?'nt-agent':'nt-user'} native-chat-row${state==='error'?' is-error':''}`);if(at)row.dataset.at=at;
   const body=simplifiedCliOutput(text||''),main=el('div','nt-body');let files=null;
+  if(agent)row._replyTexts=[body];
   if(agent){const by=el('div','nt-byline');const avatar=el('span','nt-avatar');avatar.append(agentIconEl(runtime));const name=el('span','nt-name',names[runtime]||t('Assistant'));name.translate=false;by.append(avatar,name);if(at){const stamp=el('time','',clock(at));stamp.dateTime=at;stamp.title=time(at);by.append(stamp);}
    row.append(by);
-   if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));documentPreview.decorate(md,documentContext(session));main.append(md);}
-   if(body&&session)noteOutputs(session,body,at);}
+   if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,{...mediaContext(session),filePaths:()=>filePaths});documentPreview.decorate(md,{...documentContext(session),filePaths:()=>filePaths});main.append(md);}
+   if(body&&session)noteOutputs(session,body,at,filePaths);}
   else{
    // Attachments sit above the bubble, outside it; the bubble holds only the text (none when the prompt is attachments alone).
    // Time, Copy and Full screen (when text is hidden) sit under the bubble, outside it.
@@ -752,7 +707,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
   if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);
    // Open on the right: the same text Copy takes, rendered as in the chat, pinned beside it (and kept while another session is open).
-   if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,mediaContext(session));documentPreview.decorate(md,documentContext(session));return md;}})));
+   if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,{...mediaContext(session),filePaths:()=>filePaths});documentPreview.decorate(md,{...documentContext(session),filePaths:()=>filePaths});return md;}})));
    row.append(foot);}
   return row;}
  let agentDetailsSignature='';
@@ -1035,6 +990,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  const turnBlocks=new Map();
  function turnContent(turn,session,{live=false,open=false}={}){
   const frag=document.createDocumentFragment(),all=processRows(turn,{includeFinal:true});
+  const final=replyText(turn);
+  if(final.trim()&&!historyContainsReply(final,all.filter(row=>row.kind==='text'||row.kind==='message').map(row=>row.text)))all.push({kind:'message',text:final});
+  const paths=toolFilePaths(all.filter(row=>row.kind==='tool').map(row=>classifyStep(row.item,turn.status))),pathsKey=JSON.stringify(paths);
   const blocksBefore=turnBlocks.get(turn.id)||new Map(),blocksAfter=new Map();
   // A block still being written is drawn again, but its file cards are moved over from its previous drawing (only from
   // blocks this redraw does not keep), so a picture in it does not reload while the text around it grows.
@@ -1048,9 +1006,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    if(row.kind==='tool'||row.kind==='log'||row.kind==='error'){group.push(row);continue;}
    flush();const text=simplifiedCliOutput(stripAnsi(row.text||''));if(!text.trim())continue;
    // The same text twice in one reply is two blocks: keyed by text and occurrence.
-   const seen=(occurrences.get(text)||0)+1;occurrences.set(text,seen);const blockKey=`${seen}\u0000${text}`;
+   const seen=(occurrences.get(text)||0)+1;occurrences.set(text,seen);const blockKey=`${seen}:${pathsKey}\u0000${text}`;
    let md=blocksBefore.get(blockKey);blocksBefore.delete(blockKey);
-   if(!md){md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));documentPreview.decorate(md,documentContext(session));adopt(md);}
+   if(!md){md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,{...mediaContext(session),filePaths:()=>paths});documentPreview.decorate(md,{...documentContext(session),filePaths:()=>paths});adopt(md);}
    blocksAfter.set(blockKey,md);frag.append(md);
   }
   flush();
@@ -1159,7 +1117,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const worker=getData().workers?.find(w=>w.id===value.nodeId);supported=worker?.capabilities?.nativeTurns===3;
    const eligible=readable&&value.canResume!==false&&!value.canReopen&&Boolean(value.workspace);
    if(!eligible){shell.remove();clearFeedMarks(historyEl);feedSignature='';markLatestDuration();return;}
-   if(shell.parentNode!==content)content.append(shell);render();void refresh();
+   // The timeline may have moved its cached nodes and removed our saved-reply overlay even when their IDs are unchanged.
+   feedSignature='';if(shell.parentNode!==content)content.append(shell);render();void refresh();
   }
   /** Turns already in native history keep their process next to the matching reply; others render as their own rows. */
   /** While a reply runs the turns are re-read every second. When only the live replies' own content changed, just those replies are
@@ -1170,10 +1129,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const signatureOf=()=>JSON.stringify([k(),[...(historyEl?.querySelectorAll('.native-chat-row:not(.native-turn-anchored)')||[])].map(serialOf),timeline.hasOlder(),[...openProcesses].sort(),
    turns.map(turn=>isLive(turn)&&!turn.control?[turn.id,turn.status,turn.prompt,turn.attachments,turn.createdAt]:turn)]);
   function renderFeed({historyChanged=false}={}){const signature=signatureOf();
-   if(signature===feedSignature&&[...liveReplies.values()].every(row=>row.isConnected)){
+   if(!historyChanged&&signature===feedSignature&&[...liveReplies.values()].every(row=>row.isConnected)){
     for(const [id,row] of liveReplies){const turn=turns.find(x=>x.id===id);if(!turn)continue;const content=el('div','nt-turn');content.append(turnContent(turn,current,{live:true,open:true}),workingLine(turn));row.querySelector('.nt-turn')?.replaceWith(content);}
-    // 更早的原生会话不改变当前会话签名，但新分段仍需归位；每秒文本刷新不重复遍历历史。
-    if(historyChanged)markLatestDuration();
     return;}
    feedSignature=signature;liveReplies.clear();
    feed.replaceChildren();clearFeedMarks(historyEl);
@@ -1219,14 +1176,18 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     }
     const state=turn.status==='failed'?'error':turn.status==='interrupted'?'stopped':turn.status==='queued'?'queued':turn.status==='waiting_user'||turn.phase==='waiting'?'waiting':['starting','running','stopping'].includes(turn.status)?'running':'completed';
     const live=['queued','starting','running','waiting_user','stopping'].includes(turn.status);
+    const paths=toolFilePaths(stepsOf(turn).steps);
     if(!live&&turn.endedAt&&turn.prompt.trim()){
      const index=promptIndex(turn,'user',promptKey(turn.prompt));
-     if(index>=0){used.add(index);let anchor=rows[index];for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++)anchor=rows[i];
+     if(index>=0){used.add(index);let anchor=rows[index];const replies=[];for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++){anchor=rows[i];if(anchor.dataset.role==='assistant')replies.push(anchor);}
       if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));attachFiles(rows[index],files);}
-      // No reply row follows the prompt in the loaded history (not written yet, or the next row is another prompt): the turn's own
-      // reply row goes right after the prompt. The prompt bubble never hosts a reply's activity.
-      if(anchor.dataset.role==='user'){const content=el('div','nt-turn');content.append(turnContent(turn,current,{open:openProcesses.has(turn.id)}));
-       const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content});reply.dataset.role='assistant';reply.classList.add('native-turn-anchored');footNote(reply,endNote(turn));if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());anchor.after(reply);continue;}
+      // A native history snapshot can contain only the initial commentary. Keep the saved reply until that same
+      // prompt's history includes its final prose; clearFeedMarks restores the original rows on the next refresh.
+      const final=simplifiedCliOutput(replyText(turn));
+      if(anchor.dataset.role==='user'||final.trim()&&!historyContainsReply(final,replies.flatMap(row=>row._replyTexts||[]))){
+       for(const row of replies){row.hidden=true;row.dataset.nativeLiveHidden='1';}
+       const content=el('div','nt-turn');content.append(turnContent(turn,current,{open:openProcesses.has(turn.id)}));
+       const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';reply.classList.add('native-turn-anchored');footNote(reply,endNote(turn));if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());rows[index].after(reply);continue;}
       const extra=el('div','native-turn-anchored nt-extra');
       if(hasProcess(turn)&&anchor.dataset.process!=='1')extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
       {const tasks=taskBlock(turn,t);if(tasks)extra.append(tasks);}
@@ -1242,7 +1203,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const userRow=liveIndex>=0?null:chatRow('user',turn.prompt,current.runtime,turn.createdAt,makeFiles());if(userRow){userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);}
     const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));
     if(live)content.append(workingLine(turn));
-    const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content});reply.dataset.role='assistant';if(!live)footNote(reply,endNote(turn));if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
+    const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';if(!live)footNote(reply,endNote(turn));if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
     if(live){feed.append(...(userRow?[userRow,reply]:[reply]));liveReplies.set(turn.id,reply);}else place([userRow,reply],turn.createdAt);
    }markLatestDuration();}
   /** A centred date line opens the transcript, and again on a new day or before a prompt after a pause of 30 minutes or more. */

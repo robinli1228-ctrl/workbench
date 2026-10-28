@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {tr} from './i18n.mjs';
 
+// paths and batchBytes bound one transfer command, not the total project inventory.
 export const SOURCE_SYNC_LIMITS=Object.freeze({fileBytes:20*1024*1024,batchBytes:100*1024*1024,paths:10000,projectBytes:1024*1024*1024});
 // Earlier unshipped captures cannot prove the ignored-path scope used by deletion decisions.
 export const SOURCE_SYNC_CAPTURE_POLICY=2;
@@ -81,7 +82,7 @@ export function compareEntry(base,local,incoming) {
 /** Sorting is bytewise, not locale dependent; path aliases and file/parent collisions are rejected. */
 export function manifestDigest(entries,policy={}) {
   if(!entries||typeof entries!=='object'||Array.isArray(entries))throw syncError('invalid_manifest');
-  const paths=Object.keys(entries).sort();if(paths.length>SOURCE_SYNC_LIMITS.paths)throw syncError('manifest_too_large');
+  const paths=Object.keys(entries).sort();
   const aliases=new Set(),live=[];
   for(const path of paths) {
     validateSourcePath(path,policy);validateEntry(entries[path]);
@@ -101,6 +102,7 @@ export function validateSourceCapture(snapshot,command={}) {
   if(snapshot?.capturePolicy!==(outputs?OUTPUT_SYNC_CAPTURE_POLICY:directory?DIRECTORY_SYNC_CAPTURE_POLICY:SOURCE_SYNC_CAPTURE_POLICY)
     ||Boolean(snapshot.metadataOnly)!==Boolean(outputs&&command.preview))throw syncError('snapshot_policy_unsupported');
   if(directory?(snapshot.scopeKind!=='directory'||snapshot.baseCommit!==null||JSON.stringify(snapshot.scopePolicy)!==JSON.stringify(policy)):!/^[a-f0-9]{40,64}$/.test(snapshot.baseCommit||''))throw syncError('invalid_manifest');
+  if(!command.boundedTransfers&&Object.keys(snapshot.entries||{}).length>SOURCE_SYNC_LIMITS.paths)throw syncLimitError('manifest_too_large','files',SOURCE_SYNC_LIMITS.paths,Object.keys(snapshot.entries).length);
   if(manifestDigest(snapshot.entries,policy)!==snapshot.digest)throw syncError('invalid_manifest');
   return snapshot;
 }

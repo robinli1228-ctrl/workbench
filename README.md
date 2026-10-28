@@ -72,13 +72,15 @@ Claude and Codex also support side questions for a separate discussion alongside
 
 Run planning or interactive work on your computer and assign another role to a server with the required environment. Each execution device has a Worker that drives its installed CLIs and accesses its configured project directories.
 
-Bind the corresponding project folders on participating devices. Use fixed-commit Git deliveries when a reviewer or collaborator needs an exact code version. Optional source synchronization exchanges saved files within explicitly configured scopes, with visible status and conflict records. Synchronization is enabled per project scope; it does not commit, merge, or deploy code.
+Bind the corresponding project folders on participating devices. Use fixed-commit Git deliveries when a reviewer or collaborator needs an exact code version. Optional source synchronization exchanges saved files within explicitly configured scopes, with visible status and conflict records. Synchronization is enabled per project scope; it does not commit, merge, or deploy code. When all participating Workers support bounded transfers, both manual and automatic synchronization split large changes into ordered parts instead of rejecting the project for having more than 10,000 files. File-size, storage, exclusion, and conflict protections still apply.
 
 Cross-device collaboration passes work and its inputs between roles. It does not migrate a vendor's native session to another device.
 
 ### Inspect the work and its outputs
 
 Open run details to inspect inputs, CLI output, tool calls, and results. View Markdown reports and file previews in a dialog or side panel. Long history and tool details load on demand.
+
+Bare filenames in replies use explicit file paths from the same turn's tool records when the match is unique. Group-chat history loads those records on a file click; ambiguous names remain unresolved. Completed session replies stay visible while native history catches up, then return to the history view without duplicating the final answer.
 
 Device availability, queues, failures, and supported Token or quota information help you decide where to assign the next task. Usage figures are observations from the CLI environment, not provider billing statements.
 
