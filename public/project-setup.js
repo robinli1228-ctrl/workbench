@@ -42,7 +42,8 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     for (const item of [{ id: '', name: blank }, ...values]) {
       const option = create('option', '', item.name || item.id); option.value = item.id; el.append(option);
     }
-    el.value = preferredSelectValue(values, old, preferred);
+    // A remembered choice that is no longer offered must not stop a sole option from being picked.
+    el.value = preferredSelectValue(values, old, values.some(value => value.id === preferred) ? preferred : '');
   };
   function choices() {
     const data = getData(), settings = data.settings || {}, last = lastSupervisorChoice(settings);

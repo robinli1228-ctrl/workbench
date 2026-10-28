@@ -159,16 +159,16 @@ const reconnectingNodes = new Set();
 /** Sessions-page takeover hook (src/native-turns-home.mjs). */
 const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>{if(!reconnectingNodes.has(nodeId))send(sockets.get(nodeId),{...payload,language:getLanguage()});},online:id=>sockets.get(id)?.readyState===1&&!reconnectingNodes.has(id),change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession,
   // A hosting account becomes the Basic-auth header for the session's own repository only: the account picked for the session,
-  // or else the one matched by its remote the same way project repositories match (owner, then the default, then a sole account).
+  // or else the one whose space owns the folder's HTTPS remote. SSH remotes keep the device's key, a repository in nobody's
+  // space gets no token, and a session set to the device's own credentials stays that way.
   workerQuery,gitCredential:async(settings,session)=>{
     if(settings?.hostingAccountId&&settings.repoUrl&&db.get('hostingAccounts',settings.hostingAccountId)){const auth=await hosting.auth(settings.hostingAccountId,settings.repoUrl);return auth?{...auth,repoUrl:settings.repoUrl}:null;}
-    if(!session||!db.list('hostingAccounts').length)return null;
-    const repoUrl=settings?.repoUrl||await nativeSessionRemote(session);
-    try{if(!giteeRepository(repoUrl||''))return null;}catch{return null;}
-    // No match, or several accounts with none preferred: the device's own Git credentials apply, as before.
-    try{const auth=await hosting.auth(null,repoUrl);return auth?{...auth,repoUrl}:null;}catch{return null;}
+    if(settings?.accountOptOut||!session||!db.list('hostingAccounts').length)return null;
+    const repoUrl=settings?.remoteChecked?settings.repoUrl:await nativeSessionRemote(session);
+    if(!/^https:\/\//i.test(repoUrl||''))return null;
+    try{const id=hosting.match(repoUrl,{ownerOnly:true});const auth=id?await hosting.auth(id,repoUrl):null;return auth?{...auth,repoUrl}:null;}catch{return null;}
   }});
-/** The session folder's remote, asked once from its device and remembered; the Git card refreshes it. */
+/** The session folder's remote (or that it has none), asked once from its device and remembered; the Git card refreshes it. */
 async function nativeSessionRemote({nodeId,runtime,sessionId}){
   const record=ownedNativeSession(nodeId,runtime,sessionId),worker=db.get('workers',nodeId);
   if(!record?.workspace||!worker||!online(nodeId)||worker.capabilities?.workspaceGit!==1)return null;

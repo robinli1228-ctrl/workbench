@@ -268,7 +268,7 @@
             </section>
 
             <section class="settings-panel" data-settings-panel="hosting" data-layout="list" hidden>
-              <p class="settings-list-intro">Repositories and sessions use the account matched by their URL; with several accounts on one platform, new repositories use the default one.</p>
+              <p class="settings-list-intro">Repositories use the account matched by their URL; with several accounts on one platform, the default one. Sessions use an account only for HTTPS remotes in its own space.</p>
               <div id="hosting-account-list" class="settings-list-stack"></div>
               <p id="hosting-list-feedback" class="form-feedback" role="status" hidden></p>
               <dialog id="hosting-account-dialog" class="settings-edit-dialog" aria-labelledby="hosting-dialog-title">
@@ -426,7 +426,7 @@
                     <label>Access password<input name="password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" data-relay-password-input></label>
                     <p class="workspace-note">Leave blank to keep the current password. Home connection and keys are managed automatically; changing the server does not install it.</p>
                     <p class="form-feedback" data-relay-dialog-feedback role="status" hidden></p>
-                    <div class="form-actions"><button class="secondary" type="button" data-relay-cancel>Cancel</button><button class="primary" type="submit" data-relay-save>Save</button></div>
+                    <div class="form-actions"><button class="secondary" type="button" data-relay-cancel>Cancel</button><button class="secondary" type="submit" data-relay-save>Save</button><button class="primary" type="submit" data-relay-enable hidden>Save and enable</button></div>
                   </form>
                 </dialog>
               </section>

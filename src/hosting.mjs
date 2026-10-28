@@ -57,13 +57,14 @@ export class Hosting {
   }
   /**
    * The account a repository uses when none was picked: the one whose space owns the repository, else the default account,
-   * else the platform's only account. Null when there is none or several fit equally.
+   * else the platform's only account. Null when there is none or several fit equally. `ownerOnly` stops after the first step.
    */
-  match(url) {
+  match(url, { ownerOnly = false } = {}) {
     const remote = giteeRepository(url);
     if (!remote) return null;
     const accounts = this.db.list('hostingAccounts').filter(account => account.provider === remote.provider);
     const owned = accounts.filter(account => String(account.owner || '').toLowerCase() === remote.owner.toLowerCase());
+    if (ownerOnly) return owned.length === 1 ? owned[0].id : null;
     const preferred = this.db.get('settings', 'main')?.hostingAccountId;
     return (owned.length === 1 ? owned[0].id : null) || accounts.find(account => account.id === preferred)?.id || (accounts.length === 1 ? accounts[0].id : null);
   }

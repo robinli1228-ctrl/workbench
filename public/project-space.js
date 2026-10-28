@@ -9,6 +9,11 @@ export function matchHostingAccount(url, accounts = [], preferred = '') {
   const same = accounts.filter(account => account.provider === provider), owned = same.filter(account => String(account.owner || '').toLowerCase() === owner);
   return (owned.length === 1 ? owned[0] : null) || same.find(account => account.id === preferred) || (same.length === 1 ? same[0] : null);
 }
+/** Several accounts on the URL's platform and none chosen by the rule above: Home refuses to guess. */
+export function hostingAccountAmbiguous(url, accounts = [], preferred = '') {
+  const remote = String(url || '').trim().match(/^(?:https:\/\/|git@)(gitee\.com|github\.com)[/:]/i);
+  return Boolean(remote) && !matchHostingAccount(url, accounts, preferred) && accounts.filter(account => account.provider === remote[1].toLowerCase().split('.')[0]).length > 1;
+}
 
 /**
  * Repositories and workspace: one row per device for the project folder (use the default folder, or pick an existing one) and
@@ -20,7 +25,7 @@ export function projectSpaceUI({ api, getData, getProject, refreshState, create,
   const dialog = document.querySelector('#project-repository-dialog'), form = document.querySelector('#project-repository-form');
   const dialogFeedback = document.querySelector('#project-repository-feedback'), nodes = document.querySelector('#repository-node-options');
   const submit = form.querySelector('[data-repository-submit]'), accountNote = form.querySelector('[data-repository-account]');
-  let signature = '', projectId = '', editing = null, keyTouched = false;
+  let signature = '', projectId = '', editing = null, keyTouched = false, submitting = false;
   const busy = new Set();
   setActionIcon(document.querySelector('#add-project-repository'), 'plus', t('Add repository'));
   const show = (node, text) => { node.textContent = t(text || ''); node.hidden = !text; };
@@ -75,7 +80,9 @@ export function projectSpaceUI({ api, getData, getProject, refreshState, create,
     const glyph = create('span', 'settings-row-icon'); glyph.innerHTML = UI_ICON.git;
     const actions = create('span', 'settings-row-actions');
     actions.append(icon('edit', 'Edit repository', () => openDialog(repo), { disabled: busy.has(`repo:${repo.key}`) }));
-    row.append(glyph, main, busy.has(`repo:${repo.key}`) ? chip('warn', t('Preparing…')) : repositoryState(repo, bindings, workerName), actions);
+    const state = busy.has(`repo:${repo.key}`) ? chip('warn', t('Preparing…')) : repositoryState(repo, bindings, workerName);
+    state.title = bindings.map(b => `${workerName(b.nodeId)} · ${b.baselineBranch || t('Original folder')} · ${b.localRoot} · ${b.git?.head?.slice(0, 10) || t('To check')}`).join('\n');
+    row.append(glyph, main, state, actions);
     return row;
   }
 
@@ -104,7 +111,9 @@ export function projectSpaceUI({ api, getData, getProject, refreshState, create,
     for (const node of form.querySelectorAll('[data-mode]')) node.hidden = node.dataset.mode !== mode();
     form.querySelector('[data-repository-mode]').hidden = Boolean(editing);
     const matched = matchHostingAccount(form.elements.repoUrl.value, accounts, preferred);
-    accountNote.textContent = !form.elements.repoUrl.value.trim() ? '' : matched ? t('Will use account: {label} (matched by URL)', { label: matched.label }) : t("Uses the device's own Git credentials");
+    const url = form.elements.repoUrl.value;
+    accountNote.textContent = !url.trim() ? '' : matched ? t('Will use account: {label} (matched by URL)', { label: matched.label })
+      : hostingAccountAmbiguous(url, accounts, preferred) ? t('Several accounts on this platform could be used; mark one as the default in Settings → Code Hosting Accounts') : t("Uses the device's own Git credentials");
     const select = form.elements.accountId, old = select.value;
     select.replaceChildren(...accounts.map(account => { const option = create('option', '', `${account.label} · ${account.private ? t('Private') : t('Public')}`); option.value = account.id; return option; }));
     if (!accounts.length) { const option = create('option', '', t('Connect a hosting account in Settings first')); option.value = ''; select.append(option); }
@@ -115,9 +124,12 @@ export function projectSpaceUI({ api, getData, getProject, refreshState, create,
     const fresh = !nodes.childElementCount;
     nodes.replaceChildren(...(data.workers || []).map(w => {
       const label = create('label', 'checkbox-label', w.name || w.id), input = create('input'); input.type = 'checkbox'; input.name = 'nodeIds'; input.value = w.id;
-      input.checked = fresh ? (bound || projectNodes).includes(w.id) : checked.has(w.id); label.prepend(input); return label;
+      input.checked = fresh ? (bound || projectNodes).includes(w.id) : checked.has(w.id) || Boolean(bound?.includes(w.id));
+      // A device already holding the repository stays; editing can only add devices.
+      if (bound?.includes(w.id)) { input.checked = true; input.disabled = true; }
+      label.prepend(input); return label;
     }));
-    submit.disabled = mode() === 'create' && !select.value;
+    submit.disabled = submitting || (mode() === 'create' && !select.value);
   }
   function openDialog(repo = null) {
     editing = repo; keyTouched = Boolean(repo); form.reset(); nodes.replaceChildren(); show(dialogFeedback, '');
@@ -146,9 +158,9 @@ export function projectSpaceUI({ api, getData, getProject, refreshState, create,
     const id = projectId, key = form.elements.key.value.trim(), nodeIds = [...nodes.querySelectorAll('input:checked')].map(el => el.value);
     const fields = { key, mode: mode(), nodeIds, ...(mode() === 'create' ? { accountId: form.elements.accountId.value, remoteName: form.elements.remoteName.value.trim() } : { repoUrl: form.elements.repoUrl.value.trim() }) };
     if (!nodeIds.length) { show(dialogFeedback, 'Choose at least one device.'); return; }
-    submit.disabled = true; show(dialogFeedback, 'Processing…');
+    submitting = true; submit.disabled = true; show(dialogFeedback, 'Processing…');
     const result = await act(`repo:${key}`, feedback, () => api(`/api/projects/${encodeURIComponent(id)}/repositories`, { method: 'POST', json: fields }), 'Repository prepared.');
-    submit.disabled = false;
+    submitting = false; submit.disabled = false;
     if (result) { if (dialog.open) dialog.close(); } else show(dialogFeedback, feedback.textContent);
   });
   return { refresh: render };

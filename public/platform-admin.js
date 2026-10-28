@@ -63,22 +63,25 @@ export function platformAdminUI({api,getData,refreshState,create}) {
    * The CLI limit sits on the device card itself. Running and retained CLI processes share it; tasks queue when it is full, and
    * lowering it does not stop accepted work. An unsaved value survives the card being redrawn.
    */
-  const capacityDrafts=new Map();
+  // The card is redrawn on every state change, so the draft, the request in flight and its result live outside it.
+  const capacityDrafts=new Map(),capacityState=new Map();
   function capacityRow(worker) {
     const form=create('form','device-capacity-inline'),label=create('label','','Maximum running CLIs'),input=create('input'),save=create('button','secondary compact','Save'),note=create('p','form-feedback');
     input.type='number';input.min='1';input.max='64';input.step='1';input.required=true;
     input.value=capacityDrafts.get(worker.id)??worker.desiredCapacity??worker.capacity??2;
     form.title=t('Running and retained CLI processes share this limit. Tasks queue when full; lowering does not stop accepted work.');
-    note.hidden=true;note.setAttribute('role','status');save.type='submit';label.append(input);form.append(label,save,note);
-    input.addEventListener('input',()=>{capacityDrafts.set(worker.id,input.value);note.hidden=true;});
-    form.addEventListener('submit',e=>{e.preventDefault();void (async()=>{
-      save.disabled=true;text(note,'Processing…');
+    const state=capacityState.get(worker.id);save.disabled=Boolean(state?.busy);
+    note.hidden=!state?.note;note.textContent=state?.note?t(state.note):'';note.setAttribute('role','status');save.type='submit';label.append(input);form.append(label,save,note);
+    input.addEventListener('input',()=>{capacityDrafts.set(worker.id,input.value);capacityState.delete(worker.id);note.hidden=true;});
+    form.addEventListener('submit',e=>{e.preventDefault();if(capacityState.get(worker.id)?.busy)return;void (async()=>{
+      const show=(next)=>{capacityState.set(worker.id,next);const live=form.isConnected?{save,note}:null;if(live){live.save.disabled=Boolean(next.busy);text(live.note,next.note);}};
+      show({busy:true,note:'Processing…'});
       try{
         const result=await api(`/api/workers/${encodeURIComponent(worker.id)}/capacity`,{method:'POST',json:{capacity:Number(input.value)}});
-        capacityDrafts.delete(worker.id);input.value=result.capacity;
-        text(note,result.applied?'Saved and applied to the connected Worker.':'Saved; waiting for the Worker to apply this limit. It will be applied on reconnection if the device is offline.');
+        capacityDrafts.delete(worker.id);
+        show({note:result.applied?'Saved and applied to the connected Worker.':'Saved; waiting for the Worker to apply this limit. It will be applied on reconnection if the device is offline.'});
         await refreshState({quiet:true});
-      }catch(error){text(note,error.message);}finally{save.disabled=false;}
+      }catch(error){show({note:error.message});await refreshState({quiet:true}).catch(()=>{});}
     })();});
     return form;
   }

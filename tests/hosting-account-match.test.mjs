@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../src/store.mjs';
 import { Hosting } from '../src/hosting.mjs';
-import { matchHostingAccount } from '../public/project-space.js';
+import { matchHostingAccount, hostingAccountAmbiguous } from '../public/project-space.js';
 
 const credentials = { get: async id => ({ token: `token-${id}` }) };
 function hosting(accounts, preferred) {
@@ -35,6 +35,8 @@ test('several possible accounts without a default stay an error; none means devi
   await assert.rejects(h.auth(null, 'https://gitee.com/someone-else/app'));
   assert.equal(await hosting([GH]).hosting.auth(null, 'https://gitee.com/xxxxx/app'), null);
   assert.equal(matchHostingAccount('https://gitee.com/someone-else/app', [ORG, ME], ''), null);
+  assert.equal(hostingAccountAmbiguous('https://gitee.com/someone-else/app', [ORG, ME], ''), true, 'the page warns instead of promising device credentials');
+  assert.equal(hostingAccountAmbiguous('https://github.com/someone-else/app', [ORG, ME], ''), false);
 });
 
 test('saving basic information without the old repository link keeps it', () => {
@@ -44,4 +46,30 @@ test('saving basic information without the old repository link keeps it', () => 
   assert.equal(saved.name, 'renamed');
   assert.equal(saved.repoUrl, 'https://gitee.com/xxxxx/app.git');
   assert.equal(db.updateProject('p1', { name: 'renamed', repoUrl: '' }).repoUrl, '', 'an explicit empty link still clears it');
+});
+
+test('sessions only use the account owning their remote', async () => {
+  const { hosting: h } = hosting([ORG, ME, GH], 'me');
+  assert.equal(h.match('https://gitee.com/xxxxx-org/app', { ownerOnly: true }), 'org');
+  assert.equal(h.match('https://gitee.com/someone-else/app', { ownerOnly: true }), null, 'no default or sole-account fallback for sessions');
+  assert.equal(h.match('https://github.com/someone-else/app', { ownerOnly: true }), null);
+});
+
+test('a session remembers its remote once, and a changed remote drops an account picked for the old one', async () => {
+  const { NativeTurnsHome, nativeSettingsKey } = await import('../src/native-turns.mjs');
+  const db = new Store(':memory:');
+  const turns = new NativeTurnsHome({ db, send() {}, online: () => true, change() {}, assertIdle() {}, attachments: { resolve: () => [] } });
+  const S = '11111111-2222-3333-4444-555555555555', key = nativeSettingsKey('n1', 'claude', S);
+  assert.equal(turns.settings('n1', 'claude', S).remoteChecked, false);
+  turns.rememberRemote('n1', 'claude', S, null);
+  assert.deepEqual([turns.settings('n1', 'claude', S).remoteChecked, turns.settings('n1', 'claude', S).repoUrl], [true, null], 'a folder without a remote is not asked again');
+  db.put('nativeSessionSettings', { ...db.get('nativeSessionSettings', key), hostingAccountId: 'me', repoUrl: 'https://gitee.com/xxxxx/a.git' });
+  turns.rememberRemote('n1', 'claude', S, 'https://gitee.com/xxxxx/a.git');
+  assert.equal(turns.settings('n1', 'claude', S).hostingAccountId, 'me');
+  turns.rememberRemote('n1', 'claude', S, 'https://gitee.com/xxxxx/b.git');
+  assert.deepEqual([turns.settings('n1', 'claude', S).hostingAccountId, turns.settings('n1', 'claude', S).repoUrl], [null, 'https://gitee.com/xxxxx/b.git']);
+  assert.equal(turns.settings('n1', 'claude', S).accountOptOut, false);
+  db.put('nativeSessionSettings', { ...db.get('nativeSessionSettings', key), hostingAccountId: null });
+  turns.rememberRemote('n1', 'claude', S, 'https://gitee.com/xxxxx/c.git');
+  assert.equal(turns.settings('n1', 'claude', S).accountOptOut, true, 'choosing the device credentials earlier stays');
 });

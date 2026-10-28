@@ -48,7 +48,8 @@ export function createRemoteAccessSettingsUI({root,api}) {
     for(const field of form.querySelectorAll('input'))field.disabled=busy||!ready||(field.name!=='password'&&state.configurationEditable===false);
     for(const name of ['host','publicOrigin','user','port'])if(ready&&!dirty.has(name))form.elements[name].value=state[name]??'';
     $('[data-relay-save]').disabled=busy||!ready;
-    $('[data-relay-save]').textContent=t(ready&&!state.tunnel?.enabled?'Save and enable':'Save');
+    const enableButton=$('[data-relay-enable]');enableButton.hidden=!ready||state.tunnel?.enabled===true;enableButton.disabled=busy||!ready;
+    $('[data-relay-save]').className=enableButton.hidden?'primary':'secondary';
   }
   async function refresh(){
     if(!local){paint();return;}
@@ -73,17 +74,22 @@ export function createRemoteAccessSettingsUI({root,api}) {
   form.addEventListener('input',event=>{if(event.target.name&&event.target.name!=='password')dirty.add(event.target.name);});
   form.addEventListener('submit',event=>{
     event.preventDefault();
-    const patch={},input=form.elements.password,password=input.value,enable=!state?.tunnel?.enabled;
+    const patch={},input=form.elements.password,password=input.value,wasOn=state?.tunnel?.enabled===true;
+    // "Save and enable" turns a stopped relay on; plain "Save" leaves it as it was.
+    const enable=event.submitter?.hasAttribute('data-relay-enable')===true;
     for(const name of dirty){const value=name==='port'?Number(form.elements[name].value):form.elements[name].value.trim();if(value!==state?.[name])patch[name]=value;}
-    const patched=Object.keys(patch).length>0;
     void action(async()=>{
+      let patched=false;
       try{
-        if(patched){await call('/config',patch);dirty.clear();}
+        if(Object.keys(patch).length){await call('/config',patch);dirty.clear();patched=true;}
         if(password)await call('/password',{password});
-      }finally{input.value='';}
-      // Saving server settings stops the relay; it comes back on when it was on, or when this save is meant to enable it.
-      if((enable||patched)&&!(await call('/status')).tunnel?.enabled)await call('/start',{});
-    },{report:dialogMessage}).then(done=>{if(done){dialog.close();message('Remote access status updated.');}});
+      }finally{
+        input.value='';
+        // Saving server settings stops the relay: bring it back when it was on, even if a later step failed.
+        if(patched&&wasOn&&!enable&&!(await call('/status')).tunnel?.enabled)await call('/start',{});
+      }
+      if(enable&&!(await call('/status')).tunnel?.enabled)await call('/start',{});
+    },{report:dialogMessage}).then(done=>{if(done){dialog.close();message(enable?'Remote access status updated.':'Settings saved.');}});
   });
   toggle.addEventListener('change',()=>void action(async()=>{await call(state?.tunnel?.enabled?'/stop':'/start',{});message('Remote access status updated.');}));
   $('[data-relay-test]').addEventListener('click',()=>void action(async()=>{const result=await call('/test',{});message(result.ok?'Relay connection test passed.':'Relay connection test failed.');}));
