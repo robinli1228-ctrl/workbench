@@ -1,3 +1,4 @@
+import {checkInventorySize,metadataReadLookup} from './source-sync-batching.mjs';
 import {contentHash,syncError,validateEntry,entryEqual,manifestDigest,SOURCE_SYNC_LIMITS} from './source-sync-manifest.mjs';
 import {absent,contentEqual,decideMetadata,identityEqual,metadataDigest,validateMetadata,validateMetadataCapture} from './source-sync-metadata.mjs';
 const stamp=()=>new Date().toISOString();
@@ -18,8 +19,8 @@ export class SourceSyncMetadata {
     if(c.action==='capture'){if(result.status!=='completed')throw syncError('invalid_receipt');for(const s of [result.base,result.manifest])validateMetadataCapture(s,c);return;}
     if(!Array.isArray(result.files)||!['completed','partial_conflict'].includes(result.status))throw syncError('invalid_receipt');
     const expected=['read','stage'].includes(c.action)?c.paths:c.action==='apply'?c.changes:[];
-    if(result.files.length!==expected.length||new Set(result.files.map(f=>f.path)).size!==result.files.length)throw syncError('invalid_receipt');
-    for(const item of expected){const f=result.files.find(f=>f.path===item.path);if(!f)throw syncError('invalid_receipt');
+    if(expected.length>SOURCE_SYNC_LIMITS.paths||result.files.length!==expected.length||new Set(result.files.map(f=>f.path)).size!==result.files.length)throw syncError('invalid_receipt');
+    const files=new Map(result.files.map(f=>[f.path,f]));for(const item of expected){const f=files.get(item.path);if(!f)throw syncError('invalid_receipt');
       if(['read','stage'].includes(c.action)){validateMetadata(f.observed);validateEntry(f.entry);if(!identityEqual(f.observed,item.expected)||c.action==='stage'&&!entryEqual(f.entry,item.entry)||Boolean(f.entry)!==f.observed.exists||f.entry&&f.entry.size!==f.observed.size)throw syncError('invalid_receipt');}
       else if(f.status!=='conflict'){validateMetadata(f.observed);if(f.status!=='applied'||!entryEqual(f.after,item.after)||Boolean(item.after)!==f.observed.exists||item.after&&item.after.size!==f.observed.size)throw syncError('invalid_receipt');}
     }
@@ -32,7 +33,7 @@ export class SourceSyncMetadata {
     const operations=[],pending=[];const conflictIds=new Set(b.conflictIds);
     for(const repositoryId of b.repositoryIds){const captures=this.sync.captures(b,repositoryId),[a,bnode]=b.nodeIds;
       const snapshots=Object.fromEntries(captures.map(c=>[c.nodeId,c.result.manifest]));
-      try{metadataDigest({...snapshots[a].entries,...snapshots[bnode].entries},captures[0].scopePolicy);}catch(e){this.sync.blockPreparation(b,e.code||'invalid_manifest');return;}
+      try{const combined={...snapshots[a].entries,...snapshots[bnode].entries};checkInventorySize(combined,b.boundedTransfers);metadataDigest(combined,captures[0].scopePolicy);}catch(e){this.sync.blockPreparation(b,e.code||'invalid_manifest',e.limit?{limit:e.limit}:{});return;}
       const baselines=this.db.metadataBaselines(b.projectId,repositoryId,b.generation),baselineMap=new Map(baselines.map(x=>[x.path,x]));
       const conflicts=this.db.listProject('sourceSyncConflicts',b.projectId).filter(c=>c.repositoryId===repositoryId&&c.syncGeneration===b.generation&&!['resolved','cancelled'].includes(c.status));
       for(const path of new Set([...baselines.map(v=>v.path),...Object.keys(snapshots[a].entries),...Object.keys(snapshots[bnode].entries)])){
@@ -50,9 +51,9 @@ export class SourceSyncMetadata {
         op.decision=decision==='baseline_required'?(b.initialization.mode==='overwrite'?'initialize_overwrite':'compare'):decision;op.source=decision==='a'?a:decision==='b'?bnode:null;op.target=op.source===a?bnode:a;operations.push(op);
       }
     }
-    const readBytes=operations.reduce((n,o)=>n+(o.source?o.observed[o.source].size||0:Object.values(o.observed).reduce((sum,m)=>sum+(m.size||0),0)),0);if(readBytes>SOURCE_SYNC_LIMITS.batchBytes){this.sync.blockPreparation(b,'batch_too_large');return;}
+    const readBytes=operations.reduce((n,o)=>n+(o.source?o.observed[o.source].size||0:Object.values(o.observed).reduce((sum,m)=>sum+(m.size||0),0)),0);if(!b.boundedTransfers&&readBytes>SOURCE_SYNC_LIMITS.batchBytes){this.sync.blockPreparation(b,'batch_too_large');return;}
     const next={...b,metadataOperations:operations,pendingMetadata:pending,conflictIds:[...conflictIds],status:'reading'};this.db.put('sourceSyncBatches',next);this.sync.audit.observe(next);
-    for(const binding of b.bindings){const paths=operations.filter(o=>o.repositoryId===binding.repositoryId&&(o.source?o.source===binding.nodeId:true)&&o.observed[binding.nodeId].exists).map(o=>({path:o.path,expected:o.observed[binding.nodeId],compare:!o.source}));if(paths.length)this.sync.command(b,binding,'read',{paths});}
+    for(const binding of b.bindings){const paths=operations.filter(o=>o.repositoryId===binding.repositoryId&&(o.source?o.source===binding.nodeId:true)&&o.observed[binding.nodeId].exists).map(o=>({path:o.path,expected:o.observed[binding.nodeId],compare:!o.source}));if(paths.length)this.sync.commandParts(b,binding,'read',{paths},'paths',p=>p.expected.size||0);}
     this.advance(next);
   }
   prepareResolution(b){
@@ -69,11 +70,16 @@ export class SourceSyncMetadata {
     if(['reading','staging'].includes(b.status)){
       const reads=this.commands(b,'read');if(reads.some(c=>!c.result))return;
       if(reads.some(c=>c.result.status!=='completed'))return;
-      const read=(o,nodeId)=>reads.find(c=>c.repositoryId===o.repositoryId&&c.nodeId===nodeId)?.result.files.find(f=>f.path===o.path)?.entry||null;
+      const lookup=metadataReadLookup(reads),read=(o,nodeId)=>lookup(o.repositoryId,nodeId,o.path);
       if(b.status==='reading'){
         let staged=false;
         for(const binding of b.bindings){const paths=b.metadataOperations.filter(o=>o.repositoryId===binding.repositoryId&&!o.source&&o.observed[binding.nodeId].exists&&(['resolution','initialize_overwrite'].includes(o.decision)||!contentEqual(read(o,b.nodeIds[0]),read(o,b.nodeIds[1])))).map(o=>({path:o.path,expected:o.observed[binding.nodeId],entry:read(o,binding.nodeId)}));
-          if(paths.length){const original=reads.find(c=>c.repositoryId===binding.repositoryId&&c.nodeId===binding.nodeId);this.sync.command(b,binding,'stage',{paths,readCommandId:original.id});staged=true;}
+          if(paths.length){const wanted=new Map(paths.map(p=>[p.path,p]));let prior;
+            for(const original of reads.filter(c=>c.repositoryId===binding.repositoryId&&c.nodeId===binding.nodeId)){
+              const selected=original.paths.filter(p=>wanted.has(p.path)).map(p=>wanted.get(p.path));if(!selected.length)continue;
+              prior=this.sync.command(b,binding,'stage',{paths:selected,readCommandId:original.id,...(original.part===undefined?{}:{part:original.part,parts:original.parts,...(prior?{afterCommandId:prior.id}:{})})});staged=true;
+            }
+          }
         }
         if(staged){this.db.put('sourceSyncBatches',{...b,status:'staging'});return;}
       }else if(this.commands(b,'stage').some(c=>c.result?.status!=='completed'))return;
@@ -106,14 +112,15 @@ export class SourceSyncMetadata {
         }
         const group=`${op.repositoryId}:${op.target}`;if(!changes.has(group))changes.set(group,[]);changes.get(group).push({path:op.path,before:op.observed[op.target],after:read(op,op.source)});
       }
-      for(const binding of b.bindings){const group=changes.get(`${binding.repositoryId}:${binding.nodeId}`);if(group?.length){if(group.reduce((n,c)=>n+(c.after?.size||0),0)>SOURCE_SYNC_LIMITS.batchBytes){this.sync.blockPreparation(b,'batch_too_large');return;}this.sync.command(b,binding,'apply',{changes:group});}}
+      for(const binding of b.bindings){const group=changes.get(`${binding.repositoryId}:${binding.nodeId}`);if(group?.length){if(!b.boundedTransfers&&group.reduce((n,c)=>n+(c.after?.size||0),0)>SOURCE_SYNC_LIMITS.batchBytes){this.sync.blockPreparation(b,'batch_too_large');return;}this.sync.commandParts(b,binding,'apply',{changes:group},'changes',c=>c.after?.size||0);}}
       b=this.db.put('sourceSyncBatches',{...b,status:'applying',conflictIds:[...conflicts]});
     }
     if(b.status==='applying'){
       const applies=this.commands(b,'apply');if(applies.some(c=>!c.result))return;
-      const incomplete=[];
+      const incomplete=[],byPath=new Map(),pathKey=(repositoryId,path)=>JSON.stringify([repositoryId,path]);
+      for(const c of applies)for(const f of c.result.files||[]){const key=pathKey(c.repositoryId,f.path);if(!byPath.has(key))byPath.set(key,[]);byPath.get(key).push({...f,nodeId:c.nodeId});}
       for(const op of b.metadataOperations){
-        const results=applies.filter(c=>c.repositoryId===op.repositoryId).flatMap(c=>(c.result.files||[]).filter(f=>f.path===op.path).map(f=>({...f,nodeId:c.nodeId})));
+        const results=byPath.get(pathKey(op.repositoryId,op.path))||[];
         if(results.some(f=>f.status==='conflict')){incomplete.push({repositoryId:op.repositoryId,path:op.path,reason:'target_changed'});continue;}
         if(results.length||['resolution','initialize_overwrite'].includes(op.decision))this.baseline(b,op,{...op.observed,...Object.fromEntries(results.map(f=>[f.nodeId,f.observed]))});
       }

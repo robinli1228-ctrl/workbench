@@ -12,6 +12,7 @@ const inodeEqual=(a,b)=>a?.exists&&b?.exists&&a.dev===b.dev&&a.ino===b.ino;
 // Rename/link change ctime, but may not change content attributes. Use saved inode plus size/mtime/mode only after our rename.
 const movedEqual=(a,b)=>inodeEqual(a,b)&&['mtimeNs','size','mode'].every(k=>a[k]===b[k]);
 export async function readMetadataFiles(command,root,blobRoot){
+  if(!Array.isArray(command.paths)||command.paths.length>SOURCE_SYNC_LIMITS.paths||new Set(command.paths.map(p=>p.path)).size!==command.paths.length)throw syncError('invalid_command');
   const files=[];let bytes=0;
   for(const item of command.paths){const before=await readSourceMetadata(root,item.path,command.scopePolicy);if(!identityEqual(before,item.expected))throw syncError('source_busy',item.path);
     if(!before.exists){files.push({path:item.path,observed:before,entry:null});continue;}
@@ -25,9 +26,11 @@ export async function readMetadataFiles(command,root,blobRoot){
 /** Read receipts prove the source is still the captured inode after upload, not just before reading. */
 export async function confirmMetadataRead(command,root,result){if(command.rootIdentity){const s=await lstat(root,{bigint:true});if(!s.isDirectory()||`${s.dev}:${s.ino}`!==command.rootIdentity)throw syncError('binding_changed');}for(const f of result.files||[])if(!identityEqual(f.observed,await readSourceMetadata(root,f.path,command.scopePolicy)))throw syncError('source_busy',f.path);}
 export async function applyMetadataChanges({command,root,db,blobRoot,cancelled=()=>false}){
-  root=await realpath(root);const files=[];
+  if(!Array.isArray(command.changes)||command.changes.length>SOURCE_SYNC_LIMITS.paths||new Set(command.changes.map(p=>p.path)).size!==command.changes.length)throw syncError('invalid_command');
+  if(command.changes.reduce((n,c)=>n+(c.after?.size||0),0)>SOURCE_SYNC_LIMITS.batchBytes)throw syncError('batch_too_large');
+  root=await realpath(root);const files=[],fingerprint=contentHash(JSON.stringify(command));
   for(const change of command.changes){
-    const id=`${command.id}:${contentHash(change.path)}`,fingerprint=contentHash(JSON.stringify(command));let j=db.get('sourceSyncJournals',id);
+    const id=`${command.id}:${contentHash(change.path)}`;let j=db.get('sourceSyncJournals',id);
     if(j&&j.fingerprint!==fingerprint)throw syncError('command_conflict');
     if(j&&['applied','conflict'].includes(j.status)){files.push(j);continue;}
     // Recover only our saved extra link before the general safe-path check rejects a hard-linked leaf.
