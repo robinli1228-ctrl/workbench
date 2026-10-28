@@ -1442,7 +1442,9 @@ export default {
   'All projects': '全部项目',
   'Select project': '选择项目',
   'Select role': '选择角色',
-  'Manager': '主管（主管）',
+  'Manager': '主管',
+  // Older messages and roles still carry the former English name.
+  'Supervisor': '主管',
   'Edit · {name}': '编辑 · {name}',
   'This project has no scheduled jobs yet.': '这个项目还没有定时任务。',
   'No scheduled jobs yet.': '尚无定时任务。',

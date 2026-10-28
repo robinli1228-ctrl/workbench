@@ -58,7 +58,7 @@ export function collectiveRoleScope(text) {
 function collectiveRoleScopeEn(sentence) {
   const match=sentence.match(/\b(?:all|every|each)(?:\s+of)?(?:\s+the)?\s+(?:(?:(review(?:er|ing)?|audit(?:or|ing)?)\s+)?roles?\b|(reviewers|auditors)\b)[^.!?;\n]{0,40}?\b(?:review|audit|assess|evaluate|comment|give|provide|propose|participate|check|execute|handle|analy[sz]e)\b/i);
   if(!match)return null;
-  const prefix=sentence.slice(0,match.index).split(',').at(-1).trim().replace(/^@Supervisor\s*/i, '');
+  const prefix=sentence.slice(0,match.index).split(',').at(-1).trim().replace(/^@(?:Supervisor|Manager)\s*/i, '');
   const head=match[0].match(/^\S+(?:\s+of)?(?:\s+the)?\s+(?:\S+\s+)?(?:roles?|reviewers|auditors)\b/i)?.[0]||match[0];
   const action=match[0].slice(head.length).replace(/^[,\s]+/,'').split(',')[0];
   const tail=sentence.slice(match.index+head.length).trim();
