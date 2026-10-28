@@ -120,7 +120,7 @@ export class ProjectSetup {
         if (a.localRoot) throw new Error(tr('projectSetup.repositoryPathsComputedFromProject'));
         if (!/^[a-zA-Z0-9_-]{1,40}$/.test(a.key || '') || !giteeRepository(a.repoUrl)) throw new Error(tr('projectSetup.invalidRepositoryIdentifierUrl'));
         return { type: a.type, key: a.key, repoUrl: a.repoUrl, nodeId: a.nodeId, clone: a.clone !== false,
-          baseBranch:a.baseBranch || null,baseCommit:a.baseCommit || null,publishBaseline:a.publishBaseline!==false };
+          baseBranch:a.baseBranch || null };
       }
       if (isSupervisorName(a.name) || isBroadcastName(a.name) || !/^[\p{L}\p{N}_-]{1,32}$/u.test(a.name || '') || typeof a.instructions !== 'string' || a.instructions.length > 12000) throw new Error(tr('projectSetup.workingRoleNeedsValidName'));
       const issue = runtimeIssue(this.db.get('workers', a.nodeId), a.runtime, a.model);

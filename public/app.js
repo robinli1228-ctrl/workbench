@@ -2415,7 +2415,7 @@ dom.projectForm.addEventListener('submit', async (event) => {
     if(values.repositoryMode!=='none'){
       try {
         const result=await api(`/api/projects/${project.id}/repositories`,{method:'POST',json:{key:'code',mode:values.repositoryMode,repoUrl:values.repositoryUrl,
-          baseBranch:values.baseBranch,accountId:values.hostingAccountId,remoteName:values.folderName,nodeIds:[values.supervisor.nodeId]}});
+          accountId:values.hostingAccountId,remoteName:values.folderName,nodeIds:[values.supervisor.nodeId]}});
         if(result.status==='blocked')repositoryError=result.results.filter(r=>r.error).map(r=>r.error).join(t('; '));
       }catch(e){repositoryError=e.message;}
     }
