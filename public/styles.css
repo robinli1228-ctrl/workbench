@@ -1299,20 +1299,15 @@ body[data-workspace-view="settings"] #settings-usage-panel .settings-panel-headi
 .timer-job-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ink); font-size: 16px; font-weight: 800; }
 .timer-status { padding: 4px 9px; color: #62758a; background: #edf2f8; font-size: 12px; white-space: nowrap; }
 .timer-status.is-on { color: #206346; background: #e9f6ef; }
-.timer-job-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; width: 100%; margin: 12px 0 8px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-.timer-job-description:hover { color: var(--accent); }
-.timer-job-description:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.timer-description-full { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
-.timer-description-dialog .dialog-heading h3 { min-width: 0; overflow-wrap: anywhere; }
+.timer-job-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.timer-job-tools { display: flex; flex: none; align-items: center; gap: 16px; }
+.timer-job-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 10px 0 8px; color: var(--muted); font-size: 12px; }
+.timer-job-schedule { padding: 3px 8px; border-radius: 6px; background: #f0f1fc; color: var(--accent); font-weight: 600; overflow-wrap: anywhere; }
 .timer-job-meta { margin: 4px 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .timer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .timer-actions button { min-height: 34px; padding: 5px 11px; }
+.timer-job-head .timer-actions { margin: 0; flex-wrap: nowrap; gap: 6px; }
 .timer-actions .danger-text { color: #a3443d; }
-.timer-history { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
-.timer-history summary { cursor: pointer; color: #315b83; font-size: 13px; font-weight: 700; }
-.timer-history-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--line); }
-.timer-history-row span { min-width: 0; overflow-wrap: anywhere; }
-.timer-history-row button { flex: 0 0 auto; padding: 4px 8px; }
 .timer-edit-dialog { width: min(700px, calc(100vw - 28px)); overflow: auto; }
 .timer-edit-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .timer-edit-form > * { min-width: 0; }
@@ -1989,18 +1984,27 @@ dialog.role-switch-dialog { width: min(640px, calc(100vw - 32px)); }
 #settings-page button.secondary:not(dialog *):hover { color: var(--page-blue); border-color: var(--page-blue); }
 #settings-page button:not(dialog *):focus-visible { outline: 2px solid var(--page-blue); outline-offset: 2px; }
 #settings-page .settings-panel :is(.icon-button, .action-icon-button):not(dialog *) { border-radius: 8px; }
-#settings-page .timer-overview-number { color: #30353d; font-weight: 600; }
+#settings-page .timer-overview-number { color: #30353d; font-size: 20px; font-weight: 600; }
 #settings-page #token-usage-form { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0 0 16px; border: 0; border-bottom: 1px solid var(--page-line); border-radius: 0; background: #fff; }
 #settings-page .usage-device-info { min-width: 0; overflow-wrap: anywhere; }
+#settings-page .usage-pies { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+@media (max-width: 700px) {
+  #settings-page .usage-pies { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
 #settings-page .usage-device-info > strong { color: #30353d; font-size: 16px; font-weight: 600; }
 #settings-page :is(.usage-legend, .usage-total-label, .usage-total-unit, .usage-total small) { color: #656c7d; }
 #settings-page .usage-daily { scrollbar-width: thin; scrollbar-color: #c7cbd1 transparent; }
 #settings-page .timer-job-head { font-size: 16px; font-weight: 600; }
 #settings-page .timer-job-head > div { min-width: 0; overflow-wrap: anywhere; }
 #settings-page .timer-empty { border: 1px dashed #d9dce1; border-radius: 4px; color: #656c7d; background: #fff; }
-#settings-page .timer-overview { flex-wrap: wrap; gap: 8px 16px; }
+#settings-page .timer-overview { flex-wrap: wrap; gap: 8px 16px; padding: 12px 0; }
 #settings-page .timer-job-list { gap: 0; }
 #settings-page .timer-job-head { font-size: 14px; }
+@media (max-width: 600px) {
+  #settings-page .timer-job-head { flex-wrap: wrap; }
+  #settings-page .timer-job-title { flex-basis: 100%; }
+  #settings-page .timer-job-tools { width: 100%; justify-content: space-between; gap: 8px; }
+}
 #settings-page .usage-total strong { color: var(--accent); font-size: 24px; font-weight: 600; }
 #settings-page .settings-panel > h3 { color: var(--ink); font-size: 18px; font-weight: 600; }
 #settings-page .settings-block > :is(h3, h4) { margin: 0 0 8px; padding: 0; border: 0; color: var(--ink); background: transparent; font-size: 15px; font-weight: 600; }

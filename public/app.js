@@ -306,7 +306,7 @@ function openSettings(value = 'devices') {
   if (dom.apiToken) dom.apiToken.value = app.token;
   renderSettingsDevices();
   platformUI.refresh(); spacesUI.refresh(); tokenUI.refresh();
-  if (tab === 'usage') tokenUI.show();
+  if (tab === 'usage') tokenUI.show({resetScroll:true});
   if (tab === 'data') dataUI.show();
   if (tab === 'general') void remoteAccessUI.refresh();
   if (tab === 'timers') schedulesUI.show();

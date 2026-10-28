@@ -28,7 +28,7 @@ export function recentTimerOccurrences(occurrences, data, jobId) {
 }
 
 /** A single shared edit form is provided for project scheduled jobs; the authoritative schedule and trigger facts remain in Home. */
-export function createScheduledJobsUI({ api, getData, getProject, getConversationId=()=>getProject()?.id, refreshState, create, openTask }) {
+export function createScheduledJobsUI({ api, getData, getProject, getConversationId=()=>getProject()?.id, refreshState, create }) {
   const container = document.querySelector('#global-scheduled-jobs');
   const dialog = document.querySelector('#scheduled-job-dialog');
   if (!container || !dialog) return { refresh() {}, show() {} };
@@ -38,7 +38,7 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
   const input = (name, type = 'text') => { const el = create('input'); el.name = name; el.type = type; return el; };
   const button = (label, action, className = 'secondary') => {
     const el = create('button', className, label); el.type = 'button';
-    const icon={'Add scheduled job':'plus','Edit':'edit','Pause':'pause','Resume':'play','Check now':'search','Run now':'run','Delete':'trash','View conversation':'log'}[label];
+    const icon={'Add scheduled job':'plus','Edit':'edit','Pause':'pause','Resume':'play','Delete':'trash'}[label];
     if(icon)setActionIcon(el,icon,label);
     el.addEventListener('click', () => void action(el)); return el;
   };
@@ -48,6 +48,24 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
   };
   const status = value => ({ queued: 'Queued', running: 'Running', succeeded: 'Passed', unverified: 'To verify', failed: 'Failed', cancelled: 'Cancelled', dispatching: 'Dispatching' }[value] || value || 'Unknown');
   const projectName = id => getData().projects?.find(project => project.id === id)?.name || id;
+  // 日程来自任务配置；暂停后的旧下次时间不能用来推算执行间隔。
+  const scheduleText = (schedule = {}) => {
+    if (schedule.type === 'interval') {
+      const minutes = Number(schedule.intervalMinutes);
+      if (!Number.isFinite(minutes) || minutes <= 0) return t('Unknown');
+      if (minutes % 1440 === 0) return minutes === 1440 ? t('Every day') : t('Every {count} days', { count: minutes / 1440 });
+      if (minutes % 60 === 0) return minutes === 60 ? t('Every hour') : t('Every {count} hours', { count: minutes / 60 });
+      return t('Every {count} minutes', { count: minutes });
+    }
+    if (schedule.type === 'once') return t('Once at {time}', { time: format(schedule.onceAt) });
+    const time = `${schedule.time || '—'}${schedule.timezone ? ` (${schedule.timezone})` : ''}`;
+    if (schedule.type === 'daily') return t('Every day at {time}', { time });
+    if (schedule.type === 'weekly') {
+      const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][schedule.weekday];
+      return t('Every {day} at {time}', { day: t(day || 'Unknown'), time });
+    }
+    return t('Unknown');
+  };
 
   const toolbar = create('div', 'timer-toolbar');
   const projectSelect = create('select'); projectSelect.id = 'timer-project-filter'; projectSelect.setAttribute('aria-label', 'Filter by project');
@@ -57,17 +75,6 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
   const feedback = create('p', 'form-feedback'); feedback.hidden = true;
   const list = create('div', 'timer-job-list'); list.id = 'timer-job-list';
   container.replaceChildren(toolbar, summary, feedback, list);
-
-  // 查看说明与编辑分离，打开详情不会修改任务或触发调度。
-  const descriptionDialog = create('dialog', 'settings-edit-dialog timer-description-dialog');
-  descriptionDialog.id = 'timer-description-dialog';
-  descriptionDialog.setAttribute('aria-labelledby', 'timer-description-title');
-  const descriptionHeading = create('div', 'dialog-heading');
-  const descriptionTitle = create('h3'); descriptionTitle.id = 'timer-description-title'; descriptionTitle.translate = false;
-  const descriptionBody = create('p', 'timer-description-full'); descriptionBody.translate = false;
-  descriptionHeading.append(descriptionTitle, closeIcon(button('', () => descriptionDialog.close(), 'icon-button'), t('Close')));
-  descriptionDialog.append(descriptionHeading, descriptionBody);
-  dialog.after(descriptionDialog);
 
   const heading = create('div', 'dialog-heading');
   const dialogTitle = create('h3', '', 'Add scheduled job');
@@ -176,47 +183,29 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
     for (const job of jobs) {
       const card = create('article', 'timer-job-card');
       const head = create('div', 'timer-job-head');
-      head.append(create('div', '', `${job.name} · ${job.jobType === 'monitor' ? t('Progress check') : t('Scheduled dispatch')}`),
-        create('span', job.enabled ? 'timer-status is-on' : 'timer-status', job.enabled ? 'Enabled' : 'Paused'));
-      const descriptionPreview = button('', () => {
-        descriptionTitle.textContent = job.name;
-        descriptionBody.textContent = job.description || '';
-        descriptionDialog.showModal();
-      }, 'timer-job-description');
-      descriptionPreview.textContent = job.description || '';
-      descriptionPreview.translate = false;
-      descriptionPreview.setAttribute('aria-haspopup', 'dialog');
-      descriptionPreview.setAttribute('aria-controls', descriptionDialog.id);
-      descriptionPreview.hidden = !job.description;
-      card.append(head, descriptionPreview,
-        create('p', 'timer-job-meta', t('{v} · Next {v2} · Last {v3}', { v: projectName(job.projectId), v2: format(job.nextRunAt), v3: format(job.lastCheckAt || job.lastRunAt) })));
+      const title = create('div', 'timer-job-title', job.name); title.translate = false;
+      const tools = create('div', 'timer-job-tools');
+      tools.append(create('span', job.enabled ? 'timer-status is-on' : 'timer-status', job.enabled ? 'Enabled' : 'Paused'));
+      head.append(title, tools);
+      const schedule = create('div', 'timer-job-summary');
+      const project = create('span', 'timer-job-project', projectName(job.projectId)); project.translate = false;
+      schedule.append(create('span', 'timer-job-schedule', scheduleText(job.schedule || {})), project,
+        create('span', '', job.jobType === 'monitor' ? 'Progress check' : 'Scheduled dispatch'));
+      card.append(head, schedule,
+        create('p', 'timer-job-meta', t('Next {next} · Last {last}', { next: format(job.nextRunAt), last: format(job.lastCheckAt || job.lastRunAt) })));
       if (job.jobType === 'monitor') card.append(create('p', 'timer-job-meta', t('Last check: {v}', { v: job.lastCheckResult === 'deferred' ? t('new anomaly; supervisor will be notified when idle') : job.lastCheckResult === 'alerted' ? t('new anomaly found') : job.lastCheckAt ? t('no new anomalies') : t('not checked yet') })));
+      else {
+        const latest = recentTimerOccurrences(occurrences, data, job.id)[0];
+        if (latest) card.append(create('p', 'timer-job-meta', t('Latest result: {result}', { result: t(status(latest.status)) })));
+      }
       const controls = create('div', 'timer-actions');
-      const immediate = button(job.jobType === 'monitor' ? 'Check now' : 'Run now', control => {
-        if (!window.confirm(t('Run "{name}" now? {v}', { name: job.name, v: job.jobType === 'monitor' ? t('This only checks current progress; new anomalies will notify the supervisor.') : t('This dispatches to the role and consumes model quota.') }))) return;
-        return act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/run`, { method: 'POST', json: {conversationId:job.conversationId||job.projectId} }));
-      });
-      if (job.jobType === 'monitor' && !job.enabled) immediate.disabled = true;
       controls.append(button('Edit', () => edit(job)),
         button(job.enabled ? 'Pause' : 'Resume', control => act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/toggle`, { method: 'POST', json: { conversationId:job.conversationId||job.projectId,enabled: !job.enabled, revision: job.revision } }))),
-        immediate,
         button('Delete', control => {
           if (!window.confirm(t('Delete scheduled job "{name}"? Existing run records are kept.', { name: job.name }))) return;
           return act(control, () => api(`/api/projects/${encodeURIComponent(job.projectId)}/scheduled-jobs/${encodeURIComponent(job.id)}/delete`, { method: 'POST', json: { conversationId:job.conversationId||job.projectId,revision: job.revision } }));
         }, 'secondary danger-text'));
-      card.append(controls);
-      const history = recentTimerOccurrences(occurrences, data, job.id);
-      if (history.length) {
-        const details = create('details', 'timer-history'); details.append(create('summary', '', t(history.length===1?'Last {count} trigger':'Last {count} triggers', { count: history.length })));
-        for (const item of history) {
-          const row = create('div', 'timer-history-row');
-          row.append(create('span', '', `${item.kind === 'manual' ? t('Manual') : item.kind === 'monitor' ? t('Check') : t('Scheduled')} · ${format(item.createdAt)} · ${status(item.status)}${item.error ? ` · ${item.error}` : ''}`));
-          const taskId = item.taskIds?.[0];
-          if (taskId) row.append(button('View conversation', () => openTask(job.projectId, taskId, item.conversationId||job.conversationId||job.projectId)));
-          details.append(row);
-        }
-        card.append(details);
-      }
+      tools.append(controls);
       list.append(card);
     }
   }
