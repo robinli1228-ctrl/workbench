@@ -42,7 +42,7 @@
           <button class="icon-button" id="show-remote-desktop" type="button" aria-label="Open remote desktop" title="Open remote desktop" hidden>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4m3-13 3 2-3 2"/></svg>
           </button>
-          <button class="icon-button" id="show-app-settings" type="button" aria-label="Basic Settings" title="Basic Settings">
+          <button class="icon-button" id="show-app-settings" type="button" aria-label="Settings" title="Settings">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.8 7.8 0 0 0 .05-2l2.07-1.62-2-3.46-2.46.99a7.9 7.9 0 0 0-1.73-1L14.8 3h-5.6l-.53 2.91a7.9 7.9 0 0 0-1.73 1l-2.46-.99-2 3.46L4.55 11a7.8 7.8 0 0 0 0 2l-2.07 1.62 2 3.46 2.46-.99c.53.42 1.11.76 1.73 1L9.2 21h5.6l.53-2.91c.62-.24 1.2-.58 1.73-1l2.46.99 2-3.46L19.4 13Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
           </button>
         </div>
@@ -110,8 +110,8 @@
             <p id="project-supervisor-note" class="workspace-note full-width"></p>
             <p class="workspace-note full-width" data-model-usage-note role="note" hidden></p>
             <label>Code repository<select name="repositoryMode"><option value="none">Do not use Git for now</option><option value="existing">Link an existing repository</option><option value="create">Create a repository automatically</option></select></label>
-            <label>Hosting account<select name="hostingAccountId"></select></label>
-            <label>Repository URL (for existing)<input name="repositoryUrl" placeholder="https://github.com/owner/repo"></label>
+            <label data-repository-mode="create">Create under<select name="hostingAccountId"></select></label>
+            <label data-repository-mode="existing">Repository URL<input name="repositoryUrl" placeholder="https://github.com/owner/repo"></label>
             <div hidden><select name="nodeId"></select><input id="new-project-root" name="root"><button id="pick-project-folder" type="button">Select folder</button><input name="repoUrl"></div>
             <label class="full-width">Description<textarea name="description" rows="3" placeholder="Optional; state the project goal"></textarea></label>
             <div class="form-actions full-width">
@@ -130,9 +130,9 @@
               <button type="button" role="tab" data-settings-tab="general">Basic Settings</button>
               <button type="button" role="tab" data-settings-tab="devices">Devices and CLIs</button>
               <button type="button" role="tab" data-settings-tab="hosting">Code Hosting Accounts</button>
-              <button type="button" role="tab" data-settings-tab="prompts">Platform Prompts</button>
-              <button type="button" role="tab" data-settings-tab="information">Configuration Information</button>
+              <button type="button" role="tab" data-settings-tab="prompts">Prompts and Templates</button>
               <button type="button" role="tab" data-settings-tab="data">Data</button>
+              <button type="button" role="tab" data-settings-tab="information">About</button>
             </nav>
             <nav id="project-settings-tabs" class="settings-tabs" role="tablist" aria-label="Project settings categories" hidden>
               <button id="project-tab-basic" type="button" role="tab" data-project-settings-tab="basic" aria-controls="project-panel-basic" aria-selected="true">Basic information</button>
@@ -144,93 +144,84 @@
           </div>
           <div class="settings-page-body">
             <section class="settings-panel" data-settings-panel="project" id="settings-project-panel" hidden>
-              <div class="settings-panel-heading"><p>Manage the current project's description, repositories, workspace and scheduling. To manage devices and CLIs, use Basic Settings at the bottom left.</p></div>
               <div class="project-settings-body">
-                <div id="project-panel-basic" data-project-settings-panel="basic" role="tabpanel" aria-labelledby="project-tab-basic" tabindex="0">
-                <section class="settings-block project-basic-settings" aria-labelledby="project-basic-heading">
-                <h3 id="project-basic-heading">Basic information</h3>
-                <form id="project-settings-form" class="form-grid">
-                  <label>Project name<input name="name" required maxlength="80"></label>
-                  <label>Project folder name<input id="project-folder-name" readonly></label>
-                  <label class="full-width">Project description<textarea name="description" rows="3" maxlength="12000"></textarea></label>
-                  <label class="full-width legacy-repository">Gitee repository URL<input name="repoUrl" placeholder="https://gitee.com/org/repo or git@gitee.com:org/repo.git"></label>
-                  <p class="workspace-note full-width legacy-repository">Uses the node's existing SSH key or Git credentials; do not put an account password or Token in the URL. Saving the URL does not set origin, clone, pull or push.</p>
-                  <label class="legacy-repository">Node to check<select name="nodeId"></select></label><div class="check-action legacy-repository"><button class="secondary" id="repository-check" type="button">Check saved repository</button></div>
-                  <div class="form-actions full-width"><button class="primary" id="save-project-settings" type="button" data-action-label>Save basic information</button></div>
-                </form>
-                <p id="project-settings-feedback" class="form-feedback" role="status" hidden></p>
-                <div id="project-group-actions" class="form-actions" hidden>
-                  <button id="branch-group-chat" class="secondary" type="button">Branch into new chat</button>
-                  <button id="copy-project-team" class="secondary" type="button">Copy team into new project</button>
-                </div>
+                <div id="project-panel-basic" data-project-settings-panel="basic" data-layout="list" role="tabpanel" aria-labelledby="project-tab-basic" tabindex="0">
+                <section class="settings-list project-basic-settings" aria-labelledby="project-basic-heading">
+                  <header class="settings-list-head"><div><h3 id="project-basic-heading">Basic information</h3><p>Role and project settings apply to every chat in this project</p></div></header>
+                  <form id="project-settings-form" class="form-grid settings-list-form">
+                    <label>Project name<input name="name" required maxlength="80"></label>
+                    <label>Project folder name<input id="project-folder-name" readonly></label>
+                    <label class="full-width">Project description<textarea name="description" rows="3" maxlength="12000"></textarea></label>
+                    <div class="form-actions full-width"><button class="primary" id="save-project-settings" type="submit">Save</button></div>
+                  </form>
+                  <p id="project-settings-feedback" class="settings-list-note" role="status" hidden></p>
                 </section>
-                <section class="settings-block project-danger-zone" aria-labelledby="project-danger-heading">
-                  <div><h3 id="project-danger-heading">Danger zone</h3><p class="workspace-note">Deleting a project requires confirmation.</p></div>
-                  <button class="danger" id="delete-project" type="button" data-action-label>Delete project</button>
-                  <p id="project-delete-feedback" class="form-feedback full-width" role="status" hidden></p>
+                <section class="settings-list" id="project-group-actions" aria-labelledby="project-actions-heading" hidden>
+                  <header class="settings-list-head"><div><h3 id="project-actions-heading">Project actions</h3></div></header>
+                  <div class="settings-row"><span class="settings-row-label">Branch into new chat<small>A new chat in this project that starts from the current one</small></span><span class="settings-row-value"></span><button id="branch-group-chat" class="secondary" type="button">Branch</button></div>
+                  <div class="settings-row"><span class="settings-row-label">Copy team into new project<small>A new project with the same roles and their settings</small></span><span class="settings-row-value"></span><button id="copy-project-team" class="secondary" type="button">Copy team</button></div>
+                </section>
+                <section class="settings-list project-danger-zone" aria-labelledby="project-danger-heading">
+                  <header class="settings-list-head"><div><h3 id="project-danger-heading">Danger zone</h3></div></header>
+                  <div class="settings-row"><span class="settings-row-label">Delete project<small>Asks for confirmation; this cannot be undone</small></span><span class="settings-row-value"></span><button class="danger" id="delete-project" type="button">Delete project</button></div>
+                  <p id="project-delete-feedback" class="settings-list-note" role="status" hidden></p>
                 </section>
                 </div>
-                <div id="project-panel-workspace" data-project-settings-panel="workspace" role="tabpanel" aria-labelledby="project-tab-workspace" tabindex="0" hidden>
-                <details class="settings-block project-settings-folder-block">
-                  <summary>Link an existing project folder (optional)</summary>
-                  <div class="form-grid">
-                  <label>Select the project folder on a registered device<select id="settings-workspace-node"></select></label>
-                  <div class="full-width"><label for="settings-local-root">Local project folder</label><div class="path-picker"><input id="settings-local-root" readonly placeholder="Browse folders after selecting a device"><button class="secondary" id="pick-settings-folder" type="button">Select folder</button></div></div>
-                  <p class="workspace-note full-width">The folder must already exist and be within the device's allowed access scope. The node checks the path and no browser files are uploaded; changes affect later dispatches only.</p>
-                  <div class="form-actions full-width"><button class="secondary" id="save-settings-folder" type="button" data-action-label>Check and save folder</button></div>
-                  </div>
-                  <p id="project-folder-feedback" class="form-feedback" role="status" hidden></p>
-                </details>
-                <section id="project-repositories" class="settings-block"></section>
+                <div id="project-panel-workspace" data-project-settings-panel="workspace" data-layout="list" role="tabpanel" aria-labelledby="project-tab-workspace" tabindex="0" hidden>
+                <section class="settings-list" id="project-folders" aria-labelledby="project-folders-heading">
+                  <header class="settings-list-head"><div><h3 id="project-folders-heading">Project folders</h3><p>Each device's project folder; repositories go inside it and roles work there directly</p></div></header>
+                  <div id="project-folder-rows"></div>
+                  <p id="project-folder-feedback" class="settings-list-note" role="status" hidden></p>
+                </section>
                 <section id="project-git-summary" class="project-git-summary" aria-label="Current project Git version" hidden></section>
-                <section class="settings-block" id="project-space-management">
-                  <h3>Project Folders and Repositories</h3>
-                  <p class="workspace-note">Each device uses "default workspace / project folder name". When a repository is linked, a project baseline Worktree of the same name is created; the original repository folder is kept, and all roles use the project baseline.</p>
-                  <div id="project-space-status"></div>
-                  <form id="project-prepare-form" class="form-grid">
-                    <label>Participating device<select name="nodeId" required></select></label>
-                    <div class="form-actions"><button type="submit" class="secondary" data-action-label>Prepare / check project folder</button></div>
-                  </form>
-                  <p id="project-prepare-feedback" class="form-feedback" role="status" hidden></p>
-                  <form id="project-repository-form" class="form-grid">
-                    <label>Repository folder name<input name="key" required pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}" placeholder="code / web / api"></label>
-                    <label>Repository mode<select name="mode"><option value="existing">Link an existing repository</option><option value="create">Create a new repository</option></select></label>
-                    <label>Hosting account<select name="accountId"></select></label>
-                    <label class="full-width">Repository URL (for existing)<input name="repoUrl" placeholder="GitHub or Gitee repository URL"></label>
-                    <label>New repository name<input name="remoteName" placeholder="Leave blank to use project-folder-repository-folder"></label>
-                    <div id="repository-node-options" class="full-width"></div>
-                    <div class="form-actions full-width"><button type="submit" class="secondary" data-action-label>Prepare repository</button></div>
-                  </form>
-                  <p id="project-space-feedback" class="form-feedback" hidden></p>
+                <section class="settings-list" id="project-repositories" aria-labelledby="project-repositories-heading">
+                  <header class="settings-list-head"><div><h3 id="project-repositories-heading">Repositories</h3><p>Accounts are matched by repository URL</p></div>
+                    <span class="settings-list-actions"><button class="icon-button" id="add-project-repository" type="button" aria-label="Add repository"></button></span></header>
+                  <div id="project-repository-rows"></div>
+                  <p id="project-space-feedback" class="settings-list-note" role="status" hidden></p>
                 </section>
+                <dialog id="project-repository-dialog" class="settings-edit-dialog" aria-labelledby="project-repository-title">
+                  <div class="dialog-heading"><h3 id="project-repository-title">Add repository</h3><button class="icon-button" id="close-project-repository" type="button" aria-label="Close">×</button></div>
+                  <form id="project-repository-form" class="settings-dialog-form">
+                    <div class="settings-dialog-field" data-repository-mode><span class="settings-dialog-label">Mode</span>
+                      <span class="settings-segmented" role="radiogroup" aria-label="Mode"><label><input type="radio" name="mode" value="existing" checked><span>Link an existing repository</span></label><label><input type="radio" name="mode" value="create"><span>Create a new repository</span></label></span></div>
+                    <label data-mode="existing">Repository URL<input name="repoUrl" autocomplete="off" placeholder="GitHub or Gitee repository URL"></label>
+                    <p class="workspace-note" data-mode="existing" data-repository-account></p>
+                    <label data-mode="create">Create under<select name="accountId"></select></label>
+                    <label data-mode="create">New repository name<input name="remoteName" autocomplete="off" placeholder="Leave blank to use project-folder-repository-folder"></label>
+                    <label>Repository folder name<input name="key" required pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}" placeholder="code / web / api"></label>
+                    <div class="settings-dialog-field"><span class="settings-dialog-label">Put on these devices</span><div id="repository-node-options" class="settings-dialog-checks"></div></div>
+                    <p id="project-repository-feedback" class="form-feedback" role="status" hidden></p>
+                    <div class="form-actions"><button class="secondary" id="cancel-project-repository" type="button">Cancel</button><button class="primary" type="submit" data-repository-submit>Add repository</button></div>
+                  </form>
+                </dialog>
                 </div>
                 <div id="project-panel-sync" data-project-settings-panel="sync" role="tabpanel" aria-labelledby="project-tab-sync" tabindex="0" hidden>
                 <section id="source-sync-panel" class="settings-block" aria-label="Source sync" hidden></section>
                 </div>
-                <div id="project-panel-coordination" data-project-settings-panel="coordination" role="tabpanel" aria-labelledby="project-tab-coordination" tabindex="0" hidden>
-                <section class="settings-block" aria-labelledby="concurrent-heading">
-                  <h3 id="concurrent-heading">Concurrent edits</h3>
-                  <p class="workspace-note">Let several roles on the same device work in this project at the same time, even on the same files. A role still runs one thing at a time, and a device still runs no more CLIs than its limit. Nothing stops two roles from editing the same file or using Git at once; each role is told, when its turn starts, who else is working. It applies to runs that start afterwards.</p>
-                  <label class="checkbox-label full-width"><input type="checkbox" id="concurrent-writes">Allow several roles to edit this project at the same time</label>
-                  <p class="workspace-note" id="concurrent-status" role="status"></p>
-                  <p id="concurrent-feedback" class="form-feedback" role="status" hidden></p>
+                <div id="project-panel-coordination" data-project-settings-panel="coordination" data-layout="list" role="tabpanel" aria-labelledby="project-tab-coordination" tabindex="0" hidden>
+                <section class="settings-list" aria-labelledby="concurrent-heading">
+                  <header class="settings-list-head"><div><h3 id="concurrent-heading">Concurrent edits</h3><p>A role still runs one thing at a time, and a device no more CLIs than its limit</p></div></header>
+                  <div class="settings-row"><span class="settings-row-label">Allow several roles to edit this project at the same time<small>Nothing stops two roles from editing the same file or using Git at once; each role is told who else is working. Applies to runs that start afterwards.</small></span><span class="settings-row-value"></span>
+                    <label class="settings-switch" title="Allow several roles to edit this project at the same time"><input type="checkbox" id="concurrent-writes" aria-label="Allow several roles to edit this project at the same time"><span aria-hidden="true"></span></label></div>
+                  <p class="settings-list-note" id="concurrent-status" role="status"></p>
+                  <p id="concurrent-feedback" class="settings-list-note" role="status" hidden></p>
                 </section>
-                <section class="settings-block" aria-labelledby="followup-heading">
-                  <h3 id="followup-heading">Stall reminders</h3>
-                  <p class="workspace-note">Enabled by default, after 10 quiet minutes. Completed final replies need no reminder; no new messages means no repeated wake-ups. Disabling does not stop work already started.</p>
-                  <form id="proactive-followup-form" class="form-grid">
-                    <label class="checkbox-label full-width"><input type="checkbox" name="enabled">Enable stall reminders</label>
-                    <label>Silence duration (minutes)<input type="number" name="silenceMinutes" min="1" max="10080" step="1" value="10" required></label>
-                    <div class="form-actions full-width"><button type="submit" class="primary">Save stall reminder settings</button></div>
+                <section class="settings-list" aria-labelledby="followup-heading">
+                  <header class="settings-list-head"><div><h3 id="followup-heading">Stall reminders</h3><p>Wakes the supervisor when the chat goes quiet; completed final replies need no reminder</p></div>
+                    <span class="settings-list-actions"><button type="button" class="icon-button" id="refresh-followup" aria-label="Refresh stall reminder status"></button><button type="button" class="icon-button" id="view-followup" aria-label="View latest stall reminder" disabled></button></span></header>
+                  <form id="proactive-followup-form">
+                    <div class="settings-row"><span class="settings-row-label">Enable stall reminders</span><span class="settings-row-value"></span>
+                      <label class="settings-switch" title="Enable stall reminders"><input type="checkbox" name="enabled" aria-label="Enable stall reminders"><span aria-hidden="true"></span></label></div>
+                    <div class="settings-row"><span class="settings-row-label">Silence duration (minutes)</span><span class="settings-row-value"></span><input class="settings-row-number" type="number" name="silenceMinutes" min="1" max="10080" step="1" value="10" required aria-label="Silence duration (minutes)"></div>
+                    <div class="settings-row"><span class="settings-row-label">Status</span><span class="settings-row-value" id="followup-status" role="status"></span><button type="submit" class="primary">Save</button></div>
                   </form>
-                  <div class="followup-status-row"><p class="workspace-note" id="followup-status" role="status"></p><span class="followup-tools"><button type="button" class="secondary" id="refresh-followup">Refresh stall reminder status</button><button type="button" class="secondary" id="view-followup" disabled>View latest stall reminder</button></span></div>
-                  <p id="followup-feedback" class="form-feedback" role="status" hidden></p>
+                  <p id="followup-feedback" class="settings-list-note" role="status" hidden></p>
                 </section>
-                <section class="settings-block" aria-labelledby="session-queue-heading">
-                  <h3 id="session-queue-heading">Collaboration session queue</h3>
-                  <p class="workspace-note">Collaboration sessions are retired. Existing records are read-only.</p>
+                <section class="settings-list" aria-labelledby="project-timers-heading">
+                  <header class="settings-list-head"><div><h3 id="project-timers-heading">Scheduled Jobs</h3><p>Scheduled dispatches and progress checks for the current project</p></div>
+                    <span class="settings-list-actions"><button class="icon-button" id="open-project-timers" type="button" aria-label="Manage scheduled jobs"></button></span></header>
                 </section>
-                <section class="settings-block project-timer-link"><div><h3>Scheduled Jobs</h3><p class="workspace-note">View and adjust scheduled dispatches and progress checks for the current project.</p></div><button class="secondary" id="open-project-timers" type="button">Manage scheduled jobs</button></section>
                 </div>
               </div>
             </section>
@@ -241,11 +232,11 @@
               <dialog id="scheduled-job-dialog" class="settings-edit-dialog timer-edit-dialog" aria-label="Edit scheduled job"></dialog>
             </section>
 
-            <section class="settings-panel" data-settings-panel="devices" id="settings-devices-panel" hidden>
-              <div class="settings-panel-heading device-panel-heading"><div><h3>Devices and CLIs</h3><p>Manage registered local machines and servers, and view device connection, CLI availability, models and sign-in status. Project configuration is not included here.</p></div><button class="secondary" id="show-device-enroll" type="button">Add device</button></div>
-              <section class="settings-block device-enroll-panel" id="device-enroll-panel" hidden aria-label="Add server device">
-                <h4>Add server device</h4>
-                <form id="device-enroll-form" class="form-grid">
+            <section class="settings-panel" data-settings-panel="devices" data-layout="list" id="settings-devices-panel" hidden>
+              <div class="settings-list-intro device-panel-heading"><p>Registered computers and servers, their CLIs, models and sign-in status</p><button class="icon-button" id="show-device-enroll" type="button" aria-label="Add server device">Add device</button></div>
+              <section class="settings-list device-enroll-panel" id="device-enroll-panel" hidden aria-labelledby="device-enroll-title">
+                <header class="settings-list-head"><div><h3 id="device-enroll-title">Add server device</h3><p>The remote host needs Node.js 22.16+, npm and Git; connecting installs and starts the Worker</p></div></header>
+                <form id="device-enroll-form" class="form-grid settings-list-form">
                   <label>Device name<input name="name" required></label><label>SSH address<input name="host" required></label><label>SSH port<input name="port" type="number" value="22" min="1" max="65535" required></label>
                   <label>SSH user<input name="user" value="root" required></label><label>Password (or use an SSH key)<input name="password" type="password" autocomplete="new-password"></label><label>SSH key path (on the device hosting Home)<input name="keyPath" placeholder="Optional; use an existing key"></label>
                   <label class="full-width">Default workspace<input name="workspaceRoot" value="/srv/agent-projects" required></label>
@@ -255,8 +246,7 @@
                     <label>Server RDP port<input name="desktopPort" type="number" value="3389" min="1" max="65535"></label>
                     <label>Local tunnel port<input name="desktopLocalPort" type="number" value="3390" min="1024" max="65535"></label>
                   </div><p class="workspace-note">When you click the remote desktop button on a device card, the local Home creates a dedicated SSH tunnel and opens the Windows App; then click the saved server connection in the App. The server's RDP can keep listening on localhost only.</p></fieldset>
-                  <p class="workspace-note full-width">The remote host needs Node.js 22.16+, npm and Git. Connecting installs the Worker and starts a background process; model accounts must still be signed in on that device. A local machine connects to the same Home through a local Worker.</p>
-                  <div class="form-actions full-width"><button class="primary" type="submit">Save device info</button><button class="secondary" id="cancel-device-enroll" type="button">Cancel</button></div>
+                                    <div class="form-actions full-width"><button class="secondary" id="cancel-device-enroll" type="button">Cancel</button><button class="primary" type="submit">Save device info</button></div>
                 </form>
               </section>
               <p id="device-admin-feedback" class="form-feedback" role="status" hidden></p>
@@ -276,9 +266,9 @@
               <section class="settings-block usage-daily-block"><h4>Daily usage by model</h4><div id="token-usage-device-key" class="usage-device-key"></div><div id="token-usage-daily" class="usage-daily" aria-label="Daily token bar chart"></div></section>
             </section>
 
-            <section class="settings-panel" data-settings-panel="hosting" hidden>
-              <div class="settings-panel-heading"><h3>Code Hosting Accounts</h3><p>Each platform is managed independently. Only the connection status is shown here; the form opens only when editing an account or updating a token.</p></div>
-              <div id="hosting-account-list" class="hosting-provider-grid"></div>
+            <section class="settings-panel" data-settings-panel="hosting" data-layout="list" hidden>
+              <p class="settings-list-intro">Repositories use the account matched by their URL; with several accounts on one platform, the default one. Sessions use an account only for HTTPS remotes in its own space.</p>
+              <div id="hosting-account-list" class="settings-list-stack"></div>
               <p id="hosting-list-feedback" class="form-feedback" role="status" hidden></p>
               <dialog id="hosting-account-dialog" class="settings-edit-dialog" aria-labelledby="hosting-dialog-title">
                 <div class="dialog-heading"><div><p class="eyebrow">CODE HOSTING</p><h3 id="hosting-dialog-title">Connect hosting account</h3></div><button class="icon-button" id="close-hosting-dialog" type="button" aria-label="Close">×</button></div>
@@ -288,46 +278,67 @@
                   <label>Personal / organization space<input name="owner" placeholder="Leave blank to use the current account"></label>
                   <label>Repository visibility<select name="visibility"><option value="private">Private</option><option value="public">Public</option></select></label>
                   <label class="full-width">Access token<input name="token" type="password" autocomplete="new-password" required></label>
-                  <label class="checkbox-label full-width"><input type="checkbox" name="isDefault" checked>Use as the default account for new projects</label>
+                  <label class="checkbox-label full-width"><input type="checkbox" name="isDefault" checked>Use as the default account</label>
                   <div class="form-actions full-width"><button class="secondary" id="cancel-hosting-dialog" type="button">Cancel</button><button class="primary" type="submit">Verify and save account</button></div>
                 </form><p id="hosting-feedback" class="form-feedback" role="status" hidden></p>
               </dialog>
             </section>
 
-            <section class="settings-panel" data-settings-panel="data" id="settings-data-panel" hidden>
-              <div class="settings-panel-heading"><h3>Data</h3><p>What Home and each device store, and what the retention policy lets go. Finished sync bookkeeping and old sync snapshots are reclaimed; chat history, session turns, attachments and run logs are never touched. A pass runs a minute after start and daily; the file itself shrinks at the next idle moment.</p></div>
-              <form id="data-retention-form" class="form-grid data-retention-form">
-                <label>Keep finished sync records (days)<input name="syncCommandDays" type="number" min="0" max="365" step="0.5" required></label>
-                <label>Keep unreferenced sync snapshots (days)<input name="blobDays" type="number" min="0" max="365" step="1" required></label>
-                <label>Manifest versions kept per repository<input name="manifestVersions" type="number" min="1" max="500" step="1" required></label>
-                <div class="form-actions full-width"><button class="secondary" type="submit">Save retention</button><button class="secondary" id="data-refresh" type="button">Refresh</button><button class="primary" id="data-clean-all" type="button">Clean up all</button></div>
-              </form>
-              <p id="data-feedback" class="form-feedback" hidden></p>
-              <section class="settings-block"><table class="data-table"><tbody id="data-table"></tbody></table></section>
+            <section class="settings-panel" data-settings-panel="data" data-layout="list" id="settings-data-panel" hidden>
+              <section class="settings-list" aria-labelledby="data-retention-title">
+                <header class="settings-list-head"><div><h3 id="data-retention-title">Retention</h3><p>Finished sync bookkeeping and old sync snapshots are reclaimed; chat history, session turns, attachments and run logs are never touched</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" id="data-refresh" type="button" aria-label="Refresh"></button></span></header>
+                <form id="data-retention-form" class="data-retention-form">
+                  <div class="settings-row"><span class="settings-row-label">Keep finished sync records (days)</span><span class="settings-row-value"></span><input class="settings-row-number" name="syncCommandDays" type="number" min="0" max="365" step="0.5" required aria-label="Keep finished sync records (days)"></div>
+                  <div class="settings-row"><span class="settings-row-label">Keep unreferenced sync snapshots (days)</span><span class="settings-row-value"></span><input class="settings-row-number" name="blobDays" type="number" min="0" max="365" step="1" required aria-label="Keep unreferenced sync snapshots (days)"></div>
+                  <div class="settings-row"><span class="settings-row-label">Manifest versions kept per repository</span><span class="settings-row-value"></span><input class="settings-row-number" name="manifestVersions" type="number" min="1" max="500" step="1" required aria-label="Manifest versions kept per repository"></div>
+                  <div class="settings-row"><span class="settings-row-label">Runs a minute after start and daily<small>The file itself shrinks at the next idle moment</small></span><span class="settings-row-value"></span><button class="secondary" id="data-clean-all" type="button">Clean up all</button><button class="primary" type="submit">Save</button></div>
+                </form>
+                <p id="data-feedback" class="settings-list-note" hidden></p>
+              </section>
+              <section class="settings-list" aria-labelledby="data-usage-title">
+                <header class="settings-list-head"><div><h3 id="data-usage-title">Stored data</h3><p>What Home and each device store</p></div></header>
+                <div class="settings-list-body"><table class="data-table"><tbody id="data-table"></tbody></table></div>
+              </section>
             </section>
-            <section class="settings-panel" data-settings-panel="information" hidden>
-              <div class="settings-panel-heading"><h3>Configuration Information</h3><p>Software versions and update notes only. This page does not call an AI, install updates or restart services.</p></div>
-              <div class="settings-block setup-guide" id="setup-guide">
-                <div class="setup-guide-head"><h4>Setup guide</h4><div class="setup-guide-actions"><button class="secondary" id="copy-setup-guide" type="button">Copy for an AI assistant</button><button class="secondary" id="toggle-setup-guide" type="button" aria-expanded="false" aria-controls="setup-guide-body">Show guide</button></div></div>
-                <p class="workspace-note">The complete installation and configuration guide: architecture, prerequisites, environment variables, multi-device setup, services, upgrade and troubleshooting. Copy it and hand it to an AI assistant to walk through the setup with you.</p>
-                <p id="setup-guide-feedback" class="workspace-note" role="status" hidden></p>
-                <div id="setup-guide-body" class="setup-guide-body markdown-body" hidden></div>
-              </div>
-              <div class="software-update-actions"><button class="primary" id="check-software-updates" type="button">Check for updates</button><p class="workspace-note">Compare with GitHub main. Results are cached for one minute.</p></div>
-              <p id="software-update-feedback" class="form-feedback" role="status" hidden></p>
-              <div id="software-latest" class="settings-block" hidden></div>
-              <div id="software-versions" class="software-versions" aria-live="polite"></div>
+            <section class="settings-panel" data-settings-panel="information" data-layout="list" hidden>
+              <section class="settings-list" aria-labelledby="software-title">
+                <header class="settings-list-head"><div><h3 id="software-title">Version</h3><p>Compared with GitHub main; results are cached for one minute. Nothing is installed or restarted here.</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" id="check-software-updates" type="button" aria-label="Check for updates"></button></span></header>
+                <p id="software-update-feedback" class="settings-list-note" role="status" hidden></p>
+                <div id="software-latest" class="settings-list-body" hidden></div>
+                <div id="software-versions" class="settings-list-body software-versions" aria-live="polite"></div>
+              </section>
+              <section class="settings-list setup-guide" id="setup-guide" aria-labelledby="setup-guide-title">
+                <header class="settings-list-head"><div><h3 id="setup-guide-title">Setup guide</h3><p>Installation and configuration: architecture, prerequisites, multi-device setup, services, upgrade and troubleshooting</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" id="copy-setup-guide" type="button" aria-label="Copy for an AI assistant"></button><button class="icon-button" id="toggle-setup-guide" type="button" aria-expanded="false" aria-controls="setup-guide-body" aria-label="Show guide"></button></span></header>
+                <p id="setup-guide-feedback" class="settings-list-note" role="status" hidden></p>
+                <div id="setup-guide-body" class="settings-list-body setup-guide-body markdown-body" hidden></div>
+              </section>
             </section>
 
-            <section class="settings-panel" data-settings-panel="prompts" id="settings-prompts-panel" hidden>
-              <div class="settings-panel-heading"><h3>Platform Prompts</h3><p>Applies to new runs in all projects. Permissions, workspace and collaboration protocols hard-coded by the platform always take precedence and cannot be overridden here.</p></div>
-              <p id="platform-prompts-updated" class="settings-value">Not saved separately; using the default</p>
-              <div class="settings-overview-grid">
-                <section class="settings-overview-card"><span class="settings-kicker">GLOBAL RULES</span><h4>Platform Prompts</h4><p id="platform-prompt-summary" class="settings-overview-preview"></p><button class="secondary compact" type="button" data-prompt-edit="platform" aria-label="Edit platform prompt">Edit</button></section>
-                <section class="settings-overview-card" data-supervisor-settings><span class="settings-kicker">SUPERVISOR</span><h4>Supervisor Settings</h4><p id="supervisor-prompt-summary" class="settings-overview-preview"></p><p class="settings-overview-subline">New project defaults:<span id="supervisor-defaults-summary"></span></p><button class="secondary compact" type="button" data-prompt-edit="supervisor" aria-label="Edit supervisor settings">Edit</button></section>
-                <section class="settings-overview-card"><span class="settings-kicker">CONVERSATION MEMORY</span><h4>Conversation Organizer Model</h4><p id="conversation-organizer-summary" class="settings-overview-preview">Not configured; dispatch uses original excerpts.</p><button class="secondary compact" id="edit-conversation-organizer" type="button">Edit</button></section>
-                <section class="settings-overview-card"><span class="settings-kicker">ROLE TEMPLATES</span><h4>Role Templates</h4><p id="role-templates-summary" class="settings-overview-preview"></p><button class="secondary compact" id="manage-role-templates" type="button">Manage</button></section>
-              </div>
+            <section class="settings-panel" data-settings-panel="prompts" data-layout="list" id="settings-prompts-panel" hidden>
+              <section class="settings-list" aria-labelledby="platform-prompt-title">
+                <header class="settings-list-head"><div><h3 id="platform-prompt-title">Platform prompt</h3><p>Applies to new runs in all projects; the platform's built-in rules still come first</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" type="button" data-prompt-edit="platform" aria-label="Edit platform prompt"></button></span></header>
+                <div class="settings-list-preview"><p id="platform-prompt-summary" class="settings-preview-text"></p></div>
+                <p id="platform-prompts-updated" class="settings-list-note">Not saved separately; using the default</p>
+              </section>
+              <section class="settings-list" aria-labelledby="supervisor-prompt-title">
+                <header class="settings-list-head"><div><h3 id="supervisor-prompt-title">Supervisor prompt</h3><p>Shared by the supervisors of all projects</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" type="button" data-prompt-edit="supervisor" aria-label="Edit supervisor prompt"></button></span></header>
+                <div class="settings-list-preview"><p id="supervisor-prompt-summary" class="settings-preview-text"></p></div>
+              </section>
+              <section class="settings-list" aria-labelledby="role-templates-card-title">
+                <header class="settings-list-head"><div><h3 id="role-templates-card-title">Role templates</h3><p>Prefill new roles; existing roles keep their own text</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" id="manage-role-templates" type="button" aria-label="Manage role templates"></button></span></header>
+                <div class="settings-list-preview"><p id="role-templates-summary" class="settings-preview-text"></p></div>
+              </section>
+              <section class="settings-list" aria-labelledby="organizer-card-title">
+                <header class="settings-list-head"><div><h3 id="organizer-card-title">Background organizing (model and prompt)</h3><p>Sums up recent messages before a dispatch; without it, original excerpts are used</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" id="edit-conversation-organizer" type="button" aria-label="Edit background organizing"></button></span></header>
+                <div class="settings-list-preview"><p id="conversation-organizer-summary" class="settings-preview-text">Not configured; dispatch uses original excerpts.</p></div>
+              </section>
               <dialog id="role-templates-dialog" class="settings-edit-dialog prompt-edit-dialog" aria-labelledby="role-templates-title">
                 <div class="dialog-heading"><div><p class="eyebrow">ROLE TEMPLATES</p><h3 id="role-templates-title">Role templates</h3></div><button class="icon-button" id="close-role-templates" type="button" aria-label="Close">×</button></div>
                 <div id="role-templates-browser" class="role-templates-browser">
@@ -345,7 +356,7 @@
                 </form>
               </dialog>
               <dialog id="conversation-organizer-dialog" class="settings-edit-dialog prompt-edit-dialog" aria-labelledby="conversation-organizer-title">
-                <div class="dialog-heading"><div><p class="eyebrow">CONVERSATION MEMORY</p><h3 id="conversation-organizer-title">Edit conversation organizer model</h3></div><button class="icon-button" id="close-conversation-organizer" type="button" aria-label="Close">×</button></div>
+                <div class="dialog-heading"><div><p class="eyebrow">CONVERSATION MEMORY</p><h3 id="conversation-organizer-title">Edit background organizing</h3></div><button class="icon-button" id="close-conversation-organizer" type="button" aria-label="Close">×</button></div>
                 <form id="conversation-organizer-form" class="prompt-settings-grid">
                   <p class="workspace-note">A separate short session organizes the last ten messages and ongoing constraints; if not configured or organizing fails, dispatch proceeds as usual and is clearly marked as an original excerpt.</p>
                   <div class="supervisor-defaults">
@@ -373,16 +384,6 @@
                     <p class="workspace-note">Default for all projects. Applies to later supervisor runs; already running turns are unchanged.</p>
                     <textarea id="supervisor-prompt" name="supervisorPrompt" rows="12" maxlength="6000"></textarea>
                   </section>
-                  <section class="settings-block" data-prompt-field="defaults">
-                    <h4>New project default supervisor model</h4>
-                    <div class="supervisor-defaults">
-                      <label>Default supervisor CLI<select name="defaultSupervisorRuntime"></select></label>
-                      <label>Default supervisor model<select name="defaultSupervisorModel"></select></label>
-                      <label>Default reasoning effort<select name="defaultSupervisorEffort"></select></label>
-                    </div>
-                    <p class="workspace-note" data-model-usage-note role="note" hidden></p>
-                    <p class="workspace-note">Used only to preselect values when creating a project; configured projects are unchanged.</p>
-                  </section>
                   <p id="platform-prompts-feedback" class="form-feedback" role="status" hidden></p>
                   <div class="form-actions prompt-settings-actions">
                     <button class="secondary" id="restore-platform-prompts" type="button">Restore defaults</button>
@@ -393,67 +394,56 @@
               </dialog>
             </section>
 
-            <section class="settings-panel" data-settings-panel="general" id="settings-general-panel" hidden>
-              <div class="settings-panel-heading"><h3>Basic Settings</h3><p>Manage language, browser access, notifications and remote execution in one place.</p></div>
-              <section class="settings-overview-card remote-access-settings" id="remote-access-settings" aria-labelledby="remote-access-title">
-                <span class="settings-kicker">REMOTE ACCESS</span><h4 id="remote-access-title">Remote Access</h4>
-                <p data-relay-status role="status">Loading remote access status…</p>
-                <p data-relay-upgrade class="workspace-note" hidden>Update the remote access service before editing server settings.</p>
-                <form data-relay-config>
-                  <label>Relay server IP or address<input name="host" autocomplete="off" required></label>
-                  <details><summary>Advanced settings</summary><div class="remote-access-advanced">
-                    <label>Public HTTPS address<input name="publicOrigin" type="url" autocomplete="off"></label>
-                    <label>SSH user<input name="user" autocomplete="off"></label>
-                    <label>SSH port<input name="port" type="number" min="1" max="65535"></label>
-                  </div></details>
-                  <button class="secondary compact" type="submit">Save server settings</button>
-                </form>
-                <form data-relay-password>
-                  <label>New access password<input name="password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required></label>
-                  <button class="secondary compact" type="submit">Set password</button>
-                </form>
-                <p class="workspace-note">Home connection and keys are managed automatically. Browser login lasts 15 days. Changing a server does not install it.</p>
-                <div class="remote-access-actions"><button class="primary compact" type="button" data-relay-toggle aria-pressed="false">Enable remote access</button><button class="secondary compact" type="button" data-relay-test>Test connection</button><button class="secondary compact" type="button" data-relay-refresh>Refresh status</button></div>
-                <a data-relay-link target="_blank" rel="noreferrer" hidden></a><p data-relay-notice class="workspace-note" role="status" aria-live="polite"></p>
+            <section class="settings-panel" data-settings-panel="general" data-layout="list" id="settings-general-panel" hidden>
+              <section class="settings-list" aria-labelledby="home-status-title">
+                <header class="settings-list-head"><div><h3 id="home-status-title">Home</h3></div></header>
+                <div class="settings-row"><span class="settings-row-label">Version</span><span class="settings-row-value" id="settings-home-version">—</span></div>
+                <div class="settings-row"><span class="settings-row-label">Connection</span><span class="settings-row-value"><span id="settings-connection-note" class="connection-note settings-connection-note" role="status">Connecting to Home…</span></span></div>
               </section>
-              <div class="connection-settings-grid">
-                <section class="settings-overview-card language-setting" aria-labelledby="language-section-title">
-                  <span class="settings-kicker">INTERFACE</span><h4 id="language-section-title">Language</h4>
-                  <p class="workspace-note">Choose the language of the workbench interface. The choice applies immediately, is remembered in this browser and is also saved on Home.</p>
+              <section class="settings-list" id="remote-access-settings" aria-labelledby="remote-access-title">
+                <header class="settings-list-head">
+                  <div><h3 id="remote-access-title">Remote Access</h3><p>Open this workbench in a browser from outside</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" type="button" data-relay-test aria-label="Test connection"></button><button class="icon-button" type="button" data-relay-refresh aria-label="Refresh status"></button><button class="icon-button" type="button" data-relay-edit aria-label="Edit remote access"></button></span>
+                </header>
+                <div class="settings-row"><span class="settings-row-label">Status</span><span class="settings-row-value"><span class="settings-chip" data-relay-status role="status">Loading…</span></span>
+                  <label class="settings-switch" title="Enable remote access"><input type="checkbox" data-relay-toggle aria-label="Enable remote access"><span aria-hidden="true"></span></label></div>
+                <div class="settings-row"><span class="settings-row-label">Relay server</span><span class="settings-row-value" data-relay-host>—</span></div>
+                <div class="settings-row" data-relay-link-row hidden><span class="settings-row-label">Public address</span><span class="settings-row-value"><a data-relay-link target="_blank" rel="noreferrer"></a></span></div>
+                <div class="settings-row"><span class="settings-row-label">Access password</span><span class="settings-row-value" data-relay-password-state>—</span></div>
+                <p data-relay-notice class="settings-list-note" role="status" aria-live="polite" hidden></p>
+                <dialog class="settings-edit-dialog" data-relay-dialog aria-labelledby="remote-access-dialog-title">
+                  <div class="dialog-heading"><h3 id="remote-access-dialog-title">Edit remote access</h3><button class="icon-button" id="close-remote-access-dialog" type="button" aria-label="Close">×</button></div>
+                  <form data-relay-config class="settings-dialog-form">
+                    <p class="settings-dialog-status"><span class="settings-chip" data-relay-dialog-status></span><span data-relay-dialog-hint></span></p>
+                    <p data-relay-upgrade class="workspace-note" hidden>Update the remote access service before editing server settings.</p>
+                    <label>Relay server address<input name="host" autocomplete="off" placeholder="IP or domain name" required></label>
+                    <details><summary>Advanced settings (public address, SSH user and port)</summary><div class="remote-access-advanced">
+                      <label>Public HTTPS address<input name="publicOrigin" type="url" autocomplete="off"></label>
+                      <label>SSH user<input name="user" autocomplete="off"></label>
+                      <label>SSH port<input name="port" type="number" min="1" max="65535"></label>
+                    </div></details>
+                    <label>Access password<input name="password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" data-relay-password-input></label>
+                    <p class="workspace-note">Leave blank to keep the current password. Home connection and keys are managed automatically; changing the server does not install it.</p>
+                    <p class="form-feedback" data-relay-dialog-feedback role="status" hidden></p>
+                    <div class="form-actions"><button class="secondary" type="button" data-relay-cancel>Cancel</button><button class="secondary" type="submit" data-relay-save>Save</button><button class="primary" type="submit" data-relay-enable hidden>Save and enable</button></div>
+                  </form>
+                </dialog>
+              </section>
+              <section class="settings-list" aria-labelledby="language-section-title">
+                <header class="settings-list-head"><div><h3>Interface</h3></div></header>
+                <div class="settings-row"><span class="settings-row-label"><span id="language-section-title">Language</span><small>Remembered in this browser and saved on Home</small></span><span class="settings-row-value"></span>
                   <select id="language-select" aria-labelledby="language-section-title">
                     <option value="en" translate="no">English</option>
                     <option value="zh" translate="no">简体中文</option>
-                  </select>
-                </section>
-                <section class="settings-overview-card">
-                  <span class="settings-kicker">WECHAT</span><h4>WeChat Notifications and Commands</h4>
-                  <p id="wechat-summary" class="settings-overview-preview">Loading WeChat status</p>
-                  <p class="workspace-note">Only project supervisors can call the notification tool. Select a configured platform and account; messages identify their project and numbered replies return to its supervisor.</p>
-                  <button class="secondary compact" id="manage-wechat" type="button">Manage WeChat</button>
-                </section>
-                <section class="settings-overview-card" aria-labelledby="api-token-section-title">
-                  <span class="settings-kicker">BROWSER ACCESS</span><h4 id="api-token-section-title">API Token</h4>
-                  <p id="api-token-summary" class="settings-overview-preview">No Token saved in this browser</p>
-                  <p id="settings-connection-note" class="connection-note settings-connection-note" role="status">Connecting to Home…</p>
-                  <button class="secondary compact" id="edit-api-token" type="button" aria-label="Edit API Token">Edit</button>
-                </section>
-                <section class="settings-overview-card">
-                  <span class="settings-kicker">CONTROL PLANE</span><h4>Home Status</h4>
-                  <p id="settings-home-version" class="settings-value">—</p>
-                  <button class="secondary" id="settings-pause-remote" type="button">Pause remote execution</button>
-                </section>
-              </div>
-              <dialog id="wechat-dialog" class="settings-edit-dialog" aria-labelledby="wechat-dialog-title">
-                <div class="dialog-heading"><h3 id="wechat-dialog-title">WeChat Notifications and Commands</h3><button class="icon-button" id="close-wechat-dialog" type="button" aria-label="Close WeChat settings">×</button></div>
-                <p id="wechat-health" class="workspace-note"></p>
-                <div class="wechat-actions"><button class="secondary" id="toggle-wechat" type="button">Enable WeChat</button><button class="secondary" id="check-wechat" type="button">Check connection</button></div>
-                <p class="workspace-note">Enabling exposes the notification tool to each project's supervisor only. Reports and approvals are not forwarded automatically. Credentials are configured on Home, not in this dialog.</p>
-                <label for="wechat-channel">Notification channel (platform · account)</label><select id="wechat-channel" translate="no"></select>
-                <button class="secondary" id="save-wechat-channel" type="button">Save notification channel</button>
-                <p class="workspace-note">Messages automatically identify their project. Reply with "number + instruction" to queue the reply to that project's original supervisor, even if the text contains @mentions. Always include the number. Existing records keep their original account; changing the channel affects new messages only. Native permissions and Git delivery keep their existing approval boundaries.</p>
-                <p id="wechat-feedback" class="inline-error" role="status"></p>
-                <div id="wechat-records" class="wechat-records"></div>
-              </dialog>
+                  </select></div>
+              </section>
+              <section class="settings-list" aria-labelledby="api-token-section-title">
+                <header class="settings-list-head">
+                  <div><h3 id="api-token-section-title">API Token</h3><p>The token this browser uses when Home has authentication enabled</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" id="edit-api-token" type="button" aria-label="Edit API Token">Edit</button></span>
+                </header>
+                <div class="settings-row"><span class="settings-row-label">Status</span><span class="settings-row-value"><span id="api-token-summary" class="settings-chip">Not set</span></span></div>
+              </section>
             </section>
           </div>
         </section>
@@ -552,14 +542,15 @@
           <label>Select model<select name="model" required></select></label>
           <label>Reasoning effort / effort<select name="effort"><option value="">Use CLI default</option></select></label>
         </div>
-        <p class="workspace-note full-width" data-model-usage-note role="note" hidden></p>
         <label class="full-width">Permission scope<select name="permissionScope"></select></label>
         <p class="workspace-note full-width" data-permission-note></p>
+        <p class="workspace-note full-width" data-model-usage-note role="note" hidden></p>
         <h3 class="role-section-title full-width">Role responsibility and prompt</h3>
         <label class="full-width">Role responsibility<textarea id="supervisor-responsibility" name="responsibility" rows="3" readonly></textarea></label>
+        <p class="workspace-note full-width">For other roles to choose collaborators. Not injected into this role's execution context.</p>
         <div class="full-width">
-          <div class="artifact-section-heading"><label for="project-supervisor-prompt-preview">Role prompt</label><button id="edit-project-supervisor-prompt" class="secondary compact" type="button" data-prompt-edit="supervisor-prompt" aria-label="Edit default supervisor prompt">Edit</button></div>
-          <p class="workspace-note">Shared by all projects. Edit the default prompt without changing this project's device or model.</p>
+          <div class="artifact-section-heading"><label for="project-supervisor-prompt-preview">Role prompt</label><button id="edit-project-supervisor-prompt" class="secondary compact" type="button" data-prompt-edit="supervisor-prompt" aria-label="Edit supervisor prompt">Edit</button></div>
+          <p class="workspace-note">Shared by the supervisors of all projects; edited in Settings → Prompts and Templates.</p>
           <textarea id="project-supervisor-prompt-preview" rows="7" readonly translate="no"></textarea>
         </div>
         <label class="checkbox-label full-width"><input name="enabled" type="checkbox" checked>Enable role (disabling pauses this role's waiting assignments; a running execution must be stopped separately)</label>
@@ -607,18 +598,6 @@
       <div id="device-edit-content"></div>
     </dialog>
 
-    <dialog id="workspace-dialog">
-      <div class="dialog-heading">
-        <div><p class="eyebrow">Node Workspace</p><h2 id="binding-title"></h2></div>
-        <button class="icon-button" id="close-workspace-dialog" type="button" aria-label="Close node workspace">×</button>
-      </div>
-      <form id="binding-form" class="form-grid">
-        <div class="full-width"><label for="binding-root">Node local folder</label><div class="path-picker"><input id="binding-root" name="localRoot" readonly required placeholder="Browse and select a node folder"><button class="secondary" id="pick-binding-folder" type="button">Select folder</button></div></div>
-        <p class="workspace-note full-width">The folder must already exist and be within the node's allowed folders. For a Git project, first clone the repository on the node, then enter the repository root; saving checks the folder and current commit and does not pull or sync files. Changes affect tasks started afterwards only.</p>
-        <p id="binding-error" class="inline-error full-width" role="alert" hidden></p>
-        <div class="form-actions full-width"><button class="primary" type="submit">Check and save</button></div>
-      </form>
-    </dialog>
 
     <dialog id="file-dialog">
       <div class="dialog-heading">

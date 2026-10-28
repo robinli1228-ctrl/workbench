@@ -70,7 +70,7 @@ During trials, record each task's number of human interventions and the number o
 | Runtime | Two common native interfaces and one concrete ACP instance | Only add adapters that are really needed and verified |
 | Session control | Managed sessions started by the platform; external sessions optionally read-only | Keep the boundary and improve resume per adapter capability |
 | Workspace and delivery | Independent worktrees, fixed-version review, artifacts | Improve problems actually met in delivery |
-| Channels | Web, WeChat, login-state checks and disconnect alerts | Feishu, identity binding confirmed by humans |
+| Channels | Web, login-state checks and disconnect alerts (WeChat removed 2026-10-28; see section 15) | Feishu, identity binding confirmed by humans |
 | Primary node | One designated Home per project, manual stop-and-handoff | Keep manual primary/standby and improve configuration and state display |
 | Scheduling | Role and model assignment, online and permission checks, concurrency limits | Add manually configured priorities and fallback runtimes |
 | Skill | Use existing project Skills, triggered by hand | Save verified in-project execution methods |
@@ -477,6 +477,8 @@ The project collects items waiting for an answer, approval, review, blocked item
 Token streams, heartbeats and fine-grained tool output only update state or run details. Completion, failure, pending approval and channel faults are the only things pushed, so the group chat is not flooded by high-frequency messages.
 
 ## 15. WeChat and phase 2 Feishu
+
+Status (2026-10-28): the WeChat channel that shipped was removed from the product; this section is kept as a deferred design. Web is the only channel today.
 
 ### 15.1 Channel binding
 

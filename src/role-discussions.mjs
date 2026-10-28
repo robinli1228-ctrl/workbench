@@ -108,7 +108,6 @@ export class RoleDiscussions {
     const switchReason=roleSwitchWaitReason(this.db,{...task,roleId:role.id});if(switchReason)throw new Error(switchReason);
     if(!role?.enabled||role.archivedAt||role.nodeId!==nodeId)throw new Error(tr('roleDiscussions.roleDisabledDeviceHasChanged'));
     const worker=this.db.get('workers',nodeId),active=this.db.list('runs').filter(r=>!terminal.has(r.status));
-    if(this.db.get('settings','main')?.paused)throw new Error(tr('roleDiscussions.remoteExecutionPaused'));
     this.assertReady(role);
     if(conversationIdOf(task)!==task.projectId&&worker?.capabilities?.groupConversations!==1)throw new Error(tr('conversations.workerUpgrade'));
     if(active.some(r=>r.nodeId===nodeId&&r.status==='reconciling')||active.filter(r=>r.nodeId===nodeId).length>=(worker.capacity||1)||active.some(r=>r.roleId===role.id))throw new Error(tr('roleDiscussions.waitingForRoleFinishNode'));
@@ -352,7 +351,7 @@ export class RoleDiscussions {
 
   context(run,action) {
     const current=this.db.get('runs',run?.id);
-    if(!current||closed.has(current.status)||this.db.get('settings','main')?.paused)throw new Error(tr('roleDiscussions.currentRunInvalidPaused'));
+    if(!current||closed.has(current.status))throw new Error(tr('roleDiscussions.currentRunInvalid'));
     const task=this.db.get('tasks',current.businessTaskId||current.taskId);
     if(!task||task.projectId!==current.projectId||task.status==='cancelled'||current.stopRequested)throw new Error(tr('roleDiscussions.originalTaskNoLongerValid'));
     assertConversationRecord(current,task);

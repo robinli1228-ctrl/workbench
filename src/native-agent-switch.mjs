@@ -21,7 +21,6 @@ export class NativeAgentSwitches{
   if(!same(c.segments.find(s=>s.id===c.currentSegmentId),identity))throw Error('This is a historical Agent segment; use the current Agent');
  }
  assertIdle(nodeId,source){
-  if(this.db.get('settings','main')?.paused)throw Error('Remote execution is paused');
   if(this.turns.active(nodeId,source.runtime,source.sessionId)||this.turns.waiting(nodeId,source.runtime,source.sessionId).length||this.sideAsks?.busy(nodeId,source.runtime,source.sessionId))throw Error('Finish replies, questions and queued messages before switching Agent');
   if(nativeSessionProjectIds(this.db,{nodeId,...source}).length)throw Error('Use the group role controls to switch this Agent');
  }

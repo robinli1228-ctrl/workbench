@@ -37,8 +37,7 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
       const field=el('label','',t('Source device')),select=el('select');select.setAttribute('aria-label',t('Source device'));
       for(const id of state.config.nodeIds||[]){const w=device(id),o=el('option','',`${name(id)} · ${t(!w?.online?'Offline':w.capabilities?.sourceSync!==1?'Worker update required':'Online')}`);o.value=id;select.append(o);}
       if(!state.config.nodeIds.includes(selectedSource))selectedSource=state.config.nodeIds[0];select.value=selectedSource;select.addEventListener('change',()=>selectedSource=select.value);field.append(select);panel.append(field);
-      const sync=button('Sync now',b=>act(()=>api(endpoint()+'/batches',{requestId:crypto.randomUUID(),sourceNodeId:selectedSource,targetNodeIds:state.config.nodeIds.filter(id=>id!==selectedSource)}),b));sync.disabled=action||getData().settings?.paused||state.batches.some(b=>!terminal.has(b.status));panel.append(sync);
-      if(getData().settings?.paused)panel.append(el('p','workspace-note',t('Execution is paused')));
+      const sync=button('Sync now',b=>act(()=>api(endpoint()+'/batches',{requestId:crypto.randomUUID(),sourceNodeId:selectedSource,targetNodeIds:state.config.nodeIds.filter(id=>id!==selectedSource)}),b));sync.disabled=action||state.batches.some(b=>!terminal.has(b.status));panel.append(sync);
     }
     if(state.config.enabled&&state.config.detection==='metadata'){
       panel.append(button('Establish sync baseline',initialize));

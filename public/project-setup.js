@@ -9,6 +9,18 @@ export function preferredSelectValue(values, current, preferred) {
   return values.length === 1 ? values[0].id : '';
 }
 
+const LAST_SUPERVISOR='wb.lastSupervisor';
+/** The new project form starts from the supervisor chosen for the last project created in this browser. */
+export function rememberSupervisorChoice(choice) {
+  try { localStorage.setItem(LAST_SUPERVISOR, JSON.stringify({ nodeId: choice?.nodeId || '', runtime: choice?.runtime || '', model: choice?.model || '', effort: choice?.effort || '' })); } catch {}
+}
+function lastSupervisorChoice(settings) {
+  let last = null;
+  try { last = JSON.parse(localStorage.getItem(LAST_SUPERVISOR) || 'null'); } catch {}
+  // Before any project was created here, earlier saved platform defaults still apply.
+  return last || { nodeId: '', runtime: settings.defaultSupervisorRuntime || '', model: settings.defaultSupervisorModel || '', effort: settings.defaultSupervisorEffort || '' };
+}
+
 /** The create form accepts only Workers explicitly registered as local; the config card always shows the actual execution target. */
 export function projectSetupUI({ api, getData, getProject, refreshState, create, setError,openFolder }) {
   const form = document.querySelector('#project-form');
@@ -22,7 +34,6 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
   localRoot.addEventListener('input',()=>folderVersion++);
   permissionSelect.addEventListener('change',()=>{permissionSelect.dataset.touched='1';choices();});
   const cards = document.querySelector('#setup-proposals');
-  const repositories = document.querySelector('#project-repositories');
   const busy = new Set();
   let signature = '';
   const select = (name, values, blank, preferred = '') => {
@@ -31,49 +42,37 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     for (const item of [{ id: '', name: blank }, ...values]) {
       const option = create('option', '', item.name || item.id); option.value = item.id; el.append(option);
     }
-    el.value = preferredSelectValue(values, old, preferred);
+    // A remembered choice that is no longer offered must not stop a sole option from being picked.
+    el.value = preferredSelectValue(values, old, values.some(value => value.id === preferred) ? preferred : '');
   };
   function choices() {
-    const data = getData(), settings = data.settings || {};
+    const data = getData(), settings = data.settings || {}, last = lastSupervisorChoice(settings);
     const workers = (data.workers || []).filter(w => w.online && w.capabilities?.projectSpace === 1);
-    select('supervisorNodeId', workers, 'Select supervisor device');
-    select('hostingAccountId',(data.hostingAccounts || []).map(a=>({id:a.id,name:`${a.label} · ${a.private?t('Private'):t('Public')}`})),'Use existing device Git credentials',settings.hostingAccountId);
+    select('supervisorNodeId', workers, 'Select supervisor device', last.nodeId);
+    select('hostingAccountId',(data.hostingAccounts || []).map(a=>({id:a.id,name:`${a.label} · ${a.private?t('Private'):t('Public')}`})),'Connect a hosting account in Settings first',settings.hostingAccountId);
+    if (!form.elements.hostingAccountId.value && data.hostingAccounts?.length) form.elements.hostingAccountId.value = data.hostingAccounts[0].id;
+    for (const node of form.querySelectorAll('[data-repository-mode]')) node.hidden = node.dataset.repositoryMode !== form.elements.repositoryMode.value;
     const worker = workers.find(w => w.id === form.elements.supervisorNodeId.value);
     const runtimes = (worker?.runtimes || []).filter(r => r.supported && r.available && r.authReady === true);
-    select('supervisorRuntime', runtimes.map(r => ({ id: r.type, name: r.label || r.type })), 'Select a signed-in CLI', settings.defaultSupervisorRuntime);
+    select('supervisorRuntime', runtimes.map(r => ({ id: r.type, name: r.label || r.type })), 'Select a signed-in CLI', last.runtime);
     const runtime = runtimes.find(r => r.type === form.elements.supervisorRuntime.value);
     const local=worker?.nodeKind==='local'&&worker.capabilities?.localFolderSelection===1;
     localRoot.disabled=pickFolder.disabled=!local;
     folderNote.textContent=local?'Only the selected folder is bound; existing files are kept. Browsing does not grant CLI permissions.':'Upgrade the local Worker to select this folder';
     renderPermissionScope(permissionSelect,permissionNote,{worker,runtime:runtime?.type,isNew:true});
-    select('supervisorModel', runtime?.models || [], 'Select supervisor model', settings.defaultSupervisorModel);
+    select('supervisorModel', runtime?.models || [], 'Select supervisor model', last.runtime === form.elements.supervisorRuntime.value ? last.model : '');
     const model = runtime?.models?.find(m => m.id === form.elements.supervisorModel.value);
     renderModelUsageNotice(form.querySelector('[data-model-usage-note]'),runtime?.type,model||{id:form.elements.supervisorModel.value});
-    select('supervisorEffort', (model?.efforts || runtime?.efforts || []).map(id => ({ id })), 'CLI default', settings.defaultSupervisorEffort);
+    select('supervisorEffort', (model?.efforts || runtime?.efforts || []).map(id => ({ id })), 'CLI default', last.effort);
     document.querySelector('#project-supervisor-note').textContent = workers.length
-      ? 'The supervisor can run locally or on a server; when a Git repository is linked, a project baseline Worktree is created, and other devices can join in project settings.'
-      : 'No online device supporting project workspaces was found; connect or upgrade a Worker in Basic Settings.';
+      ? 'The supervisor can run locally or on a server; other devices can join in project settings.'
+      : 'No online device supporting project workspaces was found; connect or upgrade a Worker in Settings → Devices and CLIs.';
   }
-  for (const name of ['supervisorNodeId', 'supervisorRuntime', 'supervisorModel']) form.elements[name].addEventListener('change', choices);
+  for (const name of ['supervisorNodeId', 'supervisorRuntime', 'supervisorModel', 'repositoryMode']) form.elements[name].addEventListener('change', choices);
   form.elements.name.addEventListener('change',()=>{if(!form.elements.folderName.value)form.elements.folderName.value=form.elements.name.value.toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64)||`project-${Date.now().toString(36)}`;});
   function render() {
     const data = getData(), p = getProject();
     choices();
-    document.querySelectorAll('.legacy-repository').forEach(el => { el.hidden = !!p?.projectScope || !!p?.supervisorRoleId; });
-    document.querySelector('.project-settings-folder-block').hidden = false;
-    repositories.hidden = !p?.supervisorRoleId && !(data.repositories || []).some(r => r.projectId === p?.id);
-    repositories.replaceChildren(create('h3', '', 'Project Repositories'));
-    const repos = (data.repositories || []).filter(r => r.projectId === p?.id);
-    const workerName = id => data.workers?.find(w => w.id === id)?.name || id;
-    if (!repos.length) repositories.append(create('p', 'workspace-note', 'No repository configured; add one below. Plain-file projects can use the project folder directly.'));
-    for (const repo of repos) {
-      const card = create('div', 'repository-card');
-      card.append(create('strong', '', repo.name), create('p', 'workspace-note', repo.repoUrl));
-      const bindings = (data.repositoryWorkspaces || []).filter(b => b.repositoryId === repo.id);
-      for (const b of bindings) card.append(create('p', 'workspace-note', `${workerName(b.nodeId)} · ${b.baselineBranch || t('Original folder')} · ${b.localRoot} · ${b.git?.head?.slice(0, 10) || t('To check')}`));
-      if (!bindings.length) card.append(create('p', 'workspace-note', 'No device folder bound successfully yet; see the configuration records for the failure reason.'));
-      repositories.append(card);
-    }
     const proposals = (data.setupProposals || []).filter(r => r.projectId === p?.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const pendingCount = proposals.filter(proposal => proposal.status === 'pending').length;
     const title = pendingCount

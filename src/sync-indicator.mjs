@@ -40,9 +40,7 @@ export function syncIndicator(db, projectId, { online = () => true, conflicts = 
   if (decide) return red(tr('syncIndicator.conflicts', { count: decide }));
   const initialization = db.listProject('sourceSyncInitializations', projectId).filter(j => j.generation === undefined || j.generation === config.generation);
   if (initialization.some(j => j.status === 'paused')) return red(tr('syncIndicator.initializationPaused'));
-  const paused = db.get('settings', 'main')?.paused;
   const batches = db.listSourceSyncBatches({ projectId }).filter(b => b.kind !== 'preview' && b.generation === config.generation);
-  if (paused && batches.length) return red(tr('syncIndicator.pausedQueued'));
   if (batches.length || open.length || initialization.some(j => j.status === 'running') || away.length)
     return orange(away.length ? tr('syncIndicator.reconnecting', { names: names(away) }) : tr('syncIndicator.syncing'));
   const failedWatch = watchers.find(w => w.status === 'blocked');
@@ -54,7 +52,7 @@ export function syncIndicator(db, projectId, { online = () => true, conflicts = 
   if (last?.status === 'blocked') {
     const reason = last.reason || 'blocked', title = tr('syncIndicator.blocked', { reason });
     // A batch an agent started syncs that run's own copy, and a retry here would sync the project folder instead.
-    if (paused || PERMANENT.has(reason) || last.actor?.kind === 'agent' || !nodes.includes(last.sourceNodeId)) return red(title + tr('syncIndicator.openPanel'));
+    if (PERMANENT.has(reason) || last.actor?.kind === 'agent' || !nodes.includes(last.sourceNodeId)) return red(title + tr('syncIndicator.openPanel'));
     return red(title + tr('syncIndicator.clickRetry'), { retry: { sourceNodeId: last.sourceNodeId, targetNodeIds: nodes.filter(id => id !== last.sourceNodeId) } });
   }
   return { state: 'green', title: tr('syncIndicator.synced', { names: names(nodes) }) };

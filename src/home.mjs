@@ -13,7 +13,7 @@ import { Store, terminal } from './store.mjs';
 import {ProjectTeamCopy,projectCopyView} from './project-team-copy.mjs';
 import {ConversationTasks} from './conversation-tasks.mjs';
 import {GroupConversations,conversationIdOf,conversationView,agentConversationInput,resolveConversationId,assertConversationRecord,groupConversationIdOfSession} from './group-conversations.mjs';
-import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
+import {assertAgentSender} from './agent-bridge.mjs';
 import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
 import {validateCliCapacity,reservedTerminalSlots,registrationCapacity} from './device-capacity.mjs';
 import { SessionTools } from './session-tools.mjs';
@@ -45,7 +45,7 @@ import { pageSummaries } from './workspace-summaries.mjs';
 import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries, reviewDeliveryIssue } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
-import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updatePausedSetting, updateConversationOrganizer,legacyExecutionPrompt } from './platform-prompts.mjs';
+import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updateConversationOrganizer,legacyExecutionPrompt } from './platform-prompts.mjs';
 import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -71,12 +71,12 @@ import {SourceSyncHome} from './source-sync-transport.mjs';
 import {syncIndicator} from './sync-indicator.mjs';
 import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {acceptSourceProvenance} from './source-sync-provenance.mjs';
-import { WechatChannel, wechatTransport } from './wechat-channel.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
 import { roleResponsibility } from './role-definition.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
 import {readSoftwareVersion} from './software-version.mjs';
 import {SoftwareUpdates} from './software-updates.mjs';
+import {giteeRepository} from './repository.mjs';
 
 const base = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const softwareVersion=await readSoftwareVersion(base);
@@ -97,6 +97,9 @@ if (!workerToken) {
   await chmod(tokenFile, 0o600);
 }
 const db = new Store(join(data, 'home.sqlite'));
+// The global "pause remote execution" switch was removed; drop a stored flag so no install keeps a stale paused state around.
+const storedSettings=db.get('settings','main');
+if(storedSettings&&Object.hasOwn(storedSettings,'paused')){const {paused,...rest}=storedSettings;db.put('settings',rest);}
 for (const project of db.list('projects')) {
   if (!project.folderName) db.put('projects', { ...project, folderName:`project-${project.id.slice(0,8)}` });
 }
@@ -155,8 +158,24 @@ const sockets = new Map();
 const reconnectingNodes = new Set();
 /** Sessions-page takeover hook (src/native-turns-home.mjs). */
 const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>{if(!reconnectingNodes.has(nodeId))send(sockets.get(nodeId),{...payload,language:getLanguage()});},online:id=>sockets.get(id)?.readyState===1&&!reconnectingNodes.has(id),change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession,
-  // A session-bound hosting account becomes the Basic-auth header for that repository only; nothing is resolved without an explicit binding.
-  workerQuery,gitCredential:async settings=>{if(!settings?.hostingAccountId||!settings.repoUrl)return null;const auth=await hosting.auth(settings.hostingAccountId,settings.repoUrl);return auth?{...auth,repoUrl:settings.repoUrl}:null;}});
+  // A hosting account becomes the Basic-auth header for the session's own repository only: the account picked for the session,
+  // or else the one whose space owns the folder's HTTPS remote. SSH remotes keep the device's key, a repository in nobody's
+  // space gets no token, and a session set to the device's own credentials stays that way.
+  workerQuery,gitCredential:async(settings,session)=>{
+    if(settings?.hostingAccountId&&settings.repoUrl&&db.get('hostingAccounts',settings.hostingAccountId)){const auth=await hosting.auth(settings.hostingAccountId,settings.repoUrl);return auth?{...auth,repoUrl:settings.repoUrl}:null;}
+    if(settings?.accountOptOut||!session||!db.list('hostingAccounts').length)return null;
+    const repoUrl=settings?.remoteChecked?settings.repoUrl:await nativeSessionRemote(session);
+    if(!/^https:\/\//i.test(repoUrl||''))return null;
+    try{const id=hosting.match(repoUrl,{ownerOnly:true});const auth=id?await hosting.auth(id,repoUrl):null;return auth?{...auth,repoUrl}:null;}catch{return null;}
+  }});
+/** The session folder's remote (or that it has none), asked once from its device and remembered; the Git card refreshes it. */
+async function nativeSessionRemote({nodeId,runtime,sessionId}){
+  const record=ownedNativeSession(nodeId,runtime,sessionId),worker=db.get('workers',nodeId);
+  if(!record?.workspace||!worker||!online(nodeId)||worker.capabilities?.workspaceGit!==1)return null;
+  try{const git=await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_workspace_git',{workspace:record.workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},5000);
+    return nativeTurns.turns.rememberRemote(nodeId,runtime,sessionId,git?.remoteUrl);}
+  catch{return null;}
+}
 const viewers = new Set();
 const queries = new Map();
 const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
@@ -209,9 +228,8 @@ const assistant = new PlatformAssistant({db,rooms,coordinator,query:workerQuery,
 const tokenUsage = new TokenUsage(db,workerQuery,online,change);
 const usageRetry=createTokenUsageBackgroundCollector({collect:nodeId=>tokenUsage.collect(nodeId),online,getState:nodeId=>db.get('tokenUsageStates',nodeId)});
 const collectUsage = nodeId => { if(db.get('workers',nodeId)?.capabilities?.tokenUsage===1) void usageRetry.run(nodeId); };
-const wechat = new WechatChannel({ db, rooms, ...wechatTransport(), respondApproval, change, schedule: scheduleChat });
 
-/** The web and WeChat share the same approval validation, so external messages get no extra execution privileges. */
+/** Validates a browser approval reply before it becomes an approval command for the Run's Worker. */
 function respondApproval(approvalId, decision, commandId) {
   const a = db.get('approvals', approvalId), repeated = db.get('commands', commandId || '');
   if (repeated) {
@@ -223,7 +241,6 @@ function respondApproval(approvalId, decision, commandId) {
   const r = db.get('runs', a.runId);
   if (!r || !online(r.nodeId)) throw new Error(tr('home.nodeOfflineApprovalCannotBe'));
   if (terminal.has(r.status) || r.status === 'stopping') throw new Error(tr('home.executionHasEndedStopping'));
-  if (decision === 'accept' && db.get('settings', 'main')?.paused) throw new Error(tr('home.remoteExecutionPaused'));
   db.transaction(() => {
     db.put('commands', { id: commandId, type: 'approval', nodeId: r.nodeId, runId: r.id, approvalId: a.id, decision, acked: false });
     db.put('approvals', { ...a, status: 'responding' });
@@ -251,7 +268,6 @@ async function dispatch(nodeId) {
     if (!run) continue;
     // Historical launch receipts cannot execute again; reject them before native ownership reads or other admission work.
     if (c.type === 'launch' && (terminal.has(run.status) || run.status === 'stopping')) continue;
-    if(c.type==='launch'&&db.get('settings','main')?.paused)continue;
     if(['launch','delivery_publish'].includes(c.type)&&sourceSync.busy(run.projectId,nodeId))continue;
     if (['launch','delivery_publish'].includes(c.type) && projectTerminalLock(db,run.projectId,nodeId)) continue;
     const reviewIssue=reviewDeliveryIssue(db.get('workers',nodeId),db.get('deliveries',c.deliveryId||run.deliveryId||''));
@@ -319,14 +335,14 @@ async function dispatch(nodeId) {
     }
     const currentCommand=db.get('commands',c.id),currentRun=db.get('runs',run.id);
     if(!online(nodeId)||sockets.get(nodeId)!==dispatchSocket||!dispatchSocket.workerReady||!currentCommand||currentCommand.acked)continue;
-    // Authentication yields to pause, cancellation and reconnection. Never send the stale command/run snapshot afterwards.
+    // Authentication yields to cancellation and reconnection. Never send the stale command/run snapshot afterwards.
     if(JSON.stringify(currentCommand)!==JSON.stringify(c)||JSON.stringify(currentRun)!==JSON.stringify(run))continue;
     const settings=normalizePlatformSettings(db.get('settings','main'));
     if(c.type==='launch'){
       const currentTask=db.get('tasks',run.taskId);
       const discussion=run.discussionDeliveryId?db.get('discussionDeliveries',run.discussionDeliveryId):null;
       const currentOwner=run.discussionDeliveryId?discussion?.processingRunId===run.id&&discussion.status==='dispatched':currentTask?.currentRunId===run.id;
-      if(settings.paused||terminal.has(currentRun.status)||currentRun.status==='stopping'||!currentTask||!currentOwner||currentTask.status==='cancelled')continue;
+      if(terminal.has(currentRun.status)||currentRun.status==='stopping'||!currentTask||!currentOwner||currentTask.status==='cancelled')continue;
     }
     if(['launch','delivery_publish'].includes(c.type)){
       const currentRequest=run.requestId?db.get('coordinationRequests',run.requestId):db.list('coordinationRequests').find(r=>r.currentRunId===run.id);
@@ -342,7 +358,7 @@ async function dispatch(nodeId) {
     send(sockets.get(nodeId), { type: 'command', command: wireCommand, run, task, request,
       gitCredentials,folderAccess:folderAccessFor(db,nodeId,`project:${run.projectId}`),
       delivery: (c.deliveryId || run.deliveryId) ? db.get('deliveries', c.deliveryId || run.deliveryId) : null,
-      project: { ...project, root: run.projectRoot ?? project.root }, paused: settings.paused, platformPrompt, language });
+      project: { ...project, root: run.projectRoot ?? project.root }, platformPrompt, language });
   }
   } finally {dispatching.delete(nodeId);}
 }
@@ -380,7 +396,7 @@ function snapshot(scope=null) {
     attachmentTransfers:db.list('attachmentTransfers').slice(-200).map(({fingerprint,...t})=>t),
     hostingAccounts: db.list('hostingAccounts'), devices: db.list('devices').map(d => ({ ...d, status: online(d.nodeId) ? 'online' : d.status })), repositoryOperations: db.list('repositoryOperations'),
     repositories: db.list('repositories'), repositoryWorkspaces: db.list('repositoryWorkspaces'), setupProposals: db.list('setupProposals'), projectGitVersions:db.list('projectGitVersions'),
-    approvals: db.list('approvals'), gitChecks: db.list('gitChecks'), settings: normalizePlatformSettings(db.get('settings', 'main')), wechat: wechat.status(),
+    approvals: db.list('approvals'), settings: normalizePlatformSettings(db.get('settings', 'main')),
     promptDefaults: { platformPrompt: defaultPlatformPrompt(), supervisorPrompt: defaultSupervisorPrompt() },
     roleTemplates: listRoleTemplates(db), supervisors: db.list('supervisorConfigs'),
     executionPlans: db.list('executionPlans').map(({fingerprint,...p})=>p),
@@ -438,7 +454,7 @@ function scheduleChatTurn() {
   // Queued work claims capacity first; background organization does not take up the queued waiting stage of business roles.
   void conversationContext.drainOne({
     config:normalizePlatformSettings(db.get('settings','main')).conversationOrganizer,
-    canRun:nodeId=>!db.get('settings','main')?.paused && online(nodeId) && sockets.get(nodeId).workerReady
+    canRun:nodeId=>online(nodeId) && sockets.get(nodeId).workerReady
       && db.get('workers',nodeId)?.capabilities?.summaryBatches===1
       && db.activeRuns(nodeId).length+reservedTerminalSlots(db,nodeId)+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1),
     query:(snapshot,config)=>workerQuery({nodeId:config.nodeId},'conversation_summary',{snapshot,config},125000),change
@@ -657,18 +673,6 @@ const server = http.createServer(async (req, res) => {
         const view=workspace?workspaceFeed.read(state,url.searchParams.get('projectId'),url.searchParams.get('cursor'),url.searchParams.get('conversationId')):state;
         return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(view)),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
       }
-      if (pathname === '/api/wechat' && req.method === 'GET') return json(res, wechat.status());
-      if (pathname === '/api/wechat' && req.method === 'POST') { const b=await body(req); return json(res, wechat.configure(b.enabled,b.channelId)); }
-      if (pathname === '/api/wechat/health' && req.method === 'POST') return json(res, await wechat.health());
-      const wechatAction = pathname.match(/^\/api\/wechat\/([^/]+)\/(retry|cancel)$/);
-      if (wechatAction && req.method === 'POST') {
-        if (wechatAction[2] === 'retry') wechat.retry(wechatAction[1]); else wechat.close(wechatAction[1]);
-        return json(res, wechat.status());
-      }
-      const wechatProject = pathname.match(/^\/api\/projects\/([^/]+)\/wechat$/);
-      if (wechatProject && req.method === 'POST') {
-        const link = wechat.openProject(wechatProject[1]); void wechat.tick().catch(() => {}); return json(res, { id: link.id }, 201);
-      }
       if((pathname.includes('native-')||/^\/api\/agent\/side-asks\/[^/]+\/[^/]+$/.test(pathname)||/^\/api\/projects\/[^/]+\/(?:messages|runs)\/[^/]+\/side$/.test(pathname))&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
       const nativeGit=pathname.match(/^\/api\/native-sessions\/([^/]+)\/git$/);
       if(nativeGit&&req.method==='GET'){
@@ -683,7 +687,9 @@ const server = http.createServer(async (req, res) => {
         if(!worker||!online(nodeId))return json(res,{available:false,reason:'source_offline',workspace});
         if(worker.capabilities?.workspaceGit!==1)return json(res,{available:false,reason:'worker_upgrade',workspace});
         // Use the registered native/project identity to carry its existing scoped folder grant; never infer one from cwd.
-        try{return json(res,{available:true,workspace,...await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_workspace_git',{workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},10000)});}
+        try{const git=await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_workspace_git',{workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},10000);
+          if(record.sessionId)nativeTurns.turns.rememberRemote(nodeId,runtime,record.sessionId,git?.remoteUrl);
+          return json(res,{available:true,workspace,...git});}
         catch(error){return json(res,{available:false,reason:'git_read_failed',detail:String(error.message||error).slice(0,300),workspace});}
       }
       const nativeFile=pathname.match(/^\/api\/native-sessions\/([^/]+)\/file$/);
@@ -746,7 +752,6 @@ const server = http.createServer(async (req, res) => {
         if(!['claude','codex'].includes(runtime))throw Error('Only Claude Code and Codex sessions can be branched for now');
         const record=sessionId?ownedNativeSession(nodeId,runtime,sessionId):null;
         if(!record)throw Error('Session is not registered with Workbench');
-        if(db.get('settings','main')?.paused)throw Error('Remote execution is paused');
         if(busy)throw Error('This session is still replying or has queued messages; wait for it to finish first');
         const branchEntryId=randomUUID(),title=`${String((entry||record).title||'').trim().slice(0,90)||runtime} · ${tr('nativeBranch.titleSuffix')}`;
         const result=await workerQuery({nodeId},'native_session_branch',{runtime,sessionId,record,branchEntryId,newSessionId:runtime==='claude'?randomUUID():null,title},15*60000);
@@ -885,7 +890,6 @@ const server = http.createServer(async (req, res) => {
         const freshSessionId=fresh&&['claude','grok'].includes(b.runtime)?entry?.sessionId||randomUUID():null;
         const fingerprint=JSON.stringify({nodeId,runtime:b.runtime,sessionId:b.sessionId||null,freshSessionId,entryId:catalogEntryId,workspace:b.workspace||null,title:fresh?b.title.trim():null,allowAll:b.allowAll});
         if(prior){if(prior.nativeFingerprint!==fingerprint||prior.status!=='prepared')throw Object.assign(Error('Terminal request is already used or changed'),{folderPreparationReleased:db.get('folderPreparations',`${nodeId}:${b.operationId}`)?.status==='cancelled'});return json(res,terminalLaunchView(prior));}
-        if(db.get('settings','main')?.paused)throw Error('Remote execution is paused');
         const device=db.list('devices').find(d=>d.nodeId===nodeId);
         if(worker.nodeKind==='cloud'&&!device)throw Error('Register SSH access for this server first');
         const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
@@ -897,7 +901,7 @@ const server = http.createServer(async (req, res) => {
         const owner=nativeTerminalProject(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId,folderProjectIds:preview.projectId?[preview.projectId]:[]}),projectId=owner||`native-tui:${b.operationId}`;
         if(owner&&!db.get('projects',owner))throw Error('The owning group chat is unavailable; its session was not reassigned');
         // Share the existing reservation/return lifecycle when a native folder belongs to a group chat.
-        if(db.get('settings','main')?.paused||projectTerminalLock(db,projectId,nodeId)||sourceSync.busy(projectId,nodeId)||db.list('runs').some(r=>r.nodeId===nodeId&&(r.status==='reconciling'||r.projectId===projectId&&!terminal.has(r.status))))throw Error('The related group chat is busy; finish its current work first');
+        if(projectTerminalLock(db,projectId,nodeId)||sourceSync.busy(projectId,nodeId)||db.list('runs').some(r=>r.nodeId===nodeId&&(r.status==='reconciling'||r.projectId===projectId&&!terminal.has(r.status))))throw Error('The related group chat is busy; finish its current work first');
         if(db.get('terminalSessions',b.operationId))throw Error('Terminal request is being prepared');
         const createdAt=entry?.createdAt||new Date().toISOString(),claim={id:b.operationId,kind:'native',catalogEntryId,projectId,nodeId,runtime:b.runtime,sessionId:b.sessionId||null,nativeFingerprint:fingerprint,status:'preparing',createdAt:new Date().toISOString()};
         db.transaction(()=>{if(fresh)db.put('nativeCatalogEntries',{...entry,id:catalogEntryId,nodeId,runtime:b.runtime,sessionId:freshSessionId,title:b.title.trim(),workspace:preview.workspace,origin:'dialog',status:'preparing',hasHistory:false,previewAvailable:false,createdAt,modifiedAt:new Date().toISOString()});activateFolderBinding(folderCandidate);db.put('terminalSessions',claim);});change();
@@ -948,7 +952,6 @@ const server = http.createServer(async (req, res) => {
       if(reconnectAction&&req.method==='GET')return json(res,devicesAdmin.reconnectStatus(reconnectAction[1]));
       if(reconnectAction&&req.method==='POST')return json(res,await devicesAdmin.reconnect(reconnectAction[1]));
       if (deviceAction && req.method === 'POST') {
-        if (db.get('settings','main')?.paused) throw new Error(tr('home.remoteExecutionPaused2'));
         const result = await (deviceAction[2] === 'check' ? devicesAdmin.check(deviceAction[1]) : devicesAdmin.provision(deviceAction[1]));
         return json(res, result);
       }
@@ -969,7 +972,6 @@ const server = http.createServer(async (req, res) => {
       }
       const workerConfig = pathname.match(/^\/api\/workers\/([^/]+)\/configuration$/);
       if (workerConfig && req.method === 'POST') {
-        if (db.get('settings','main')?.paused) throw new Error(tr('home.remoteExecutionPaused3'));
         const b = await body(req), worker = db.get('workers',workerConfig[1]);
         if (!worker) throw new Error(tr('home.deviceNotFound'));
         const checked = await workerQuery({nodeId:worker.id},'workspace_root',b.workspaceRoot);
@@ -986,12 +988,7 @@ const server = http.createServer(async (req, res) => {
         if (run?.status === 'reconciling') throw Object.assign(new Error(tr('home.runReconciling')),{code:'run_reconciling'});
         if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
         if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
-        if(db.get('settings','main')?.paused&&!allowsPausedAgentOperation(pathname,b))throw Object.assign(new Error(tr('home.remoteExecutionPaused')),{code:'paused'});
         if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
-        if (pathname === '/api/agent/notify') {
-          if (Object.keys(b).some(key=>!['runId','action','input'].includes(key))) throw new Error(tr('wechatChannel.toolGuide'));
-          const result=wechat.notify(run,b.action,b.input); void wechat.tick().catch(()=>{}); return json(res,result);
-        }
         if(pathname==='/api/agent/source-sync'){const result=await sourceSync.agent.execute(run,b.action,b.input||{});change();return json(res,result);}
         if(pathname==='/api/agent/source-candidates'){const result=b.finish?await sourceSync.agent.completeCandidate(run,b.candidateId):sourceSync.agent.stageCandidate(run,b);change();return json(res,result);}
         if(pathname==='/api/agent/discussions') {
@@ -1072,7 +1069,6 @@ const server = http.createServer(async (req, res) => {
         validateLocalSupervisor(db.get('workers', supervisor.nodeId), supervisor, online(supervisor.nodeId));
         if (typeof b.name !== 'string' || !b.name.trim() || b.name.length > 80) throw new Error(tr('home.projectNameMustBe1'));
         if (b.description !== undefined && (typeof b.description !== 'string' || b.description.length > 12000)) throw new Error(tr('home.projectDescriptionMustBeAt'));
-        if (db.get('settings', 'main')?.paused) throw new Error(tr('home.remoteExecutionPausedResumeIt'));
         const id = b.requestId || randomUUID();
         if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error(tr('home.invalidCreateRequestId'));
         const folder = folderName(b.folderName || `project-${id.slice(0,8)}`);
@@ -1203,15 +1199,6 @@ const server = http.createServer(async (req, res) => {
         const grants=db.list('folderGrants').filter(g=>g.scope===`project:${m[1]}`);
         const r = db.deleteProject(m[1]);for(const grant of grants)await cancelFolderBinding(grant);change(); return json(res, r);
       }
-      if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/git-check$/)) && req.method === 'POST') {
-        const p = db.get('projects', m[1]), b = await body(req);
-        if (!p?.repoUrl) throw new Error(tr('home.saveGiteeRepositoryUrlFirst'));
-        const binding = db.get('workspaces', `${p.id}:${b.nodeId}`);
-        if (!binding || !db.get('workers', b.nodeId)?.capabilities?.projectBrowser) throw new Error(tr('home.selectNodeHasBoundDirectory'));
-        const result = await workerQuery({ nodeId: b.nodeId,projectId:p.id }, 'git_check', { repoUrl: p.repoUrl, localRoot: binding.localRoot }, 15000);
-        if (db.get('projects', p.id).repoUrl !== p.repoUrl || db.get('workspaces', binding.id)?.localRoot !== binding.localRoot) throw new Error(tr('home.configurationChangedDuringCheckCheck'));
-        db.put('gitChecks', { ...result, id: `${p.id}:${b.nodeId}`, projectId: p.id, nodeId: b.nodeId }); change(); return json(res, result);
-      }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/git-versions$/)) && req.method === 'POST') {
         return json(res,await projectGitVersions.refresh(m[1]));
       }
@@ -1280,7 +1267,7 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'GET') return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(rooms.messages(m[1],url.searchParams.get('before'),url.searchParams.get('conversationId')??undefined,url.searchParams.get('afterReceipt')))),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
         if (req.method === 'POST') {
           const input = await body(req);
-          const r = db.transaction(() => { const message = rooms.post(m[1], input); wechat.webReply(message); return message; });
+          const r = db.transaction(() => rooms.post(m[1], input));
           scheduleChat(); change(); return json(res, r, 201);
         }
       }
@@ -1390,7 +1377,6 @@ const server = http.createServer(async (req, res) => {
           if(existing.runId===r.id && existing.status==='prepared')return json(res,terminalLaunchView(existing));
           throw new Error(tr('home.projectOnDeviceAlreadyUnder'));
         }
-        if(db.get('settings','main')?.paused)throw new Error(tr('home.remoteExecutionPaused4'));
         if(!terminal.has(r.status) || db.list('runs').some(other=>other.projectId===r.projectId&&other.nodeId===r.nodeId&&!terminal.has(other.status)))throw new Error(tr('home.projectStillExecutingOnDevice'));
         const worker=db.get('workers',r.nodeId);
         if(worker?.capabilities?.terminalResume!==1)throw new Error(tr('home.upgradeWorkerOnDeviceFirst'));
@@ -1458,12 +1444,6 @@ const server = http.createServer(async (req, res) => {
         // Workers learn the new language immediately; viewers refresh via the change event.
         for (const ws of sockets.values()) send(ws, { type: 'language', language });
         change(); return json(res, { language });
-      }
-      if (pathname === '/api/settings' && req.method === 'POST') {
-        const b = await body(req);
-        const settings = db.put('settings', updatePausedSetting(db.get('settings', 'main'), b.paused));
-        for (const ws of sockets.values()) send(ws, { type: 'settings', ...settings, retention:retentionPolicy() });
-        change(); return json(res, settings);
       }
       // Data page: what Home and each device hold, what the retention policy lets go, and a cleanup on demand.
       if (pathname === '/api/settings/retention' && req.method === 'POST') {
@@ -1596,7 +1576,7 @@ wss.on('connection', ws => {
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId,runtimes:mergeReportedRuntimes(db.get('workers',nodeId)?.runtimes,m.node.runtimes), lastSeen: new Date().toISOString() });
         // Turns the Worker kept running through the disconnect continue; the ones it no longer has ended while it was away.
         nativeTurns.reconnected(nodeId, Array.isArray(m.nativeTurns) ? m.nativeTurns.filter(id => typeof id === 'string').slice(0, 200) : []);
-        send(ws, { type: 'registered', retention:retentionPolicy(), folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
+        send(ws, { type: 'registered', retention:retentionPolicy(), folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id), language: getLanguage(),cliRecovery:1,readTools:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
       }
       if (!nodeId || sockets.get(nodeId) !== ws) throw new Error(tr('home.nodeNotRegisteredYet'));
       if(['source_sync_receipt','source_sync_command_ack','source_sync_watch_ack','source_sync_watch_status','source_sync_dirty'].includes(m.type)){
@@ -1712,8 +1692,6 @@ const maintenanceDaily = setInterval(() => void runHomeMaintenance(), 24 * 36000
 const sessionQueueTimer=setInterval(()=>{try{queuePump.tick();void queuePump.reconcileVerifications().then(changed=>{if(changed)change();}).catch(e=>console.error(e.message));}catch(e){console.error(e.message);}},2000);sessionQueueTimer.unref();
 const terminalMonitor=setInterval(()=>{void reconcileTerminals();},15000);terminalMonitor.unref();
 const sourceSyncTimer=setInterval(()=>{void sourceSync.tick().catch(e=>console.error(e.message));},1000);sourceSyncTimer.unref();
-const wechatPoll = setInterval(() => { void wechat.tick().catch(error => { console.error(tr('home.wechatChannelCheckFailed'), error.message); }); }, 4000);
-wechatPoll.unref();
 const progressMonitor=setInterval(()=>{if(inspectRunProgress(db,online))change();},60000);progressMonitor.unref();
 const usageCollector = setInterval(() => { for(const nodeId of sockets.keys())collectUsage(nodeId); }, 6*60*60*1000);
 server.listen(port, host, () => console.log(tr('home.agentWorkbenchHttpData', { host, port, data })));

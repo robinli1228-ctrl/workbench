@@ -357,8 +357,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   if(['terminal','prepared','returning','stopping'].includes(prevState)&&state==='idle')takeover.returned(item);
   const mode=['page','ending','starting'].includes(state)?'page':['terminal','prepared','returning','stopping'].includes(state)?'terminal':null,switchingTo=switching.get(key(item))||null;
   const copyCommand=side.querySelector('.native-copy-command');if(copyCommand)copyCommand.disabled=takeover.releaseDisabled(item)||copyCommand.dataset.pending==='true';
-  const paused=Boolean(data.settings?.paused);
-  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,paused,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item),item.conversationBinding,agentSwitchUI.busy(item),takeover.switchBusy(item)]);
+  const signature=JSON.stringify([key(item),state,detail,mode,switchingTo,worker?.name,worker?.nodeKind,worker?.platform,claim?.id,claim?.status,claim?.url,claim?.command,claim?.lastCheckedAt,claim?.processError,returningClaim,controlFeedback,takeover.isReleasing(item),takeover.releaseDisabled(item),canTakeover,worker?.capabilities?.terminalControl,takeover.feedback(item),item.conversationBinding,agentSwitchUI.busy(item),takeover.switchBusy(item)]);
   const LABEL={page:'Chatting on this page',ending:'Ending page takeover…',starting:'Starting on this page…',terminal:'Running in iTerm',prepared:'iTerm is opening…',returning:'Returning to Workbench…',stopping:'Stopping the terminal CLI…',busy:'Occupied',offline:'Device offline',unstarted:'Not started',nohistory:'No history yet',idle:'Not connected'};
   sideBadge.hidden=true;
   if(panel.dataset.signature===signature)return;panel.dataset.signature=signature;panel.replaceChildren();
@@ -366,10 +365,10 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   const roster=data.workers||[],cloudNumber=new Map(roster.filter(w=>workerKind(w)==='cloud').map((w,index)=>[w.id,index+1])).get(item.nodeId);
   const identity=el('div','native-identity'),deviceChip=el('span','native-identity-item');
   if(worker)deviceChip.append(machineIconEl(worker,cloudNumber));const deviceName=el('span','native-identity-name',workerName(item.nodeId));deviceName.translate=false;deviceChip.append(deviceName);deviceChip.title=`${t('Device')} · ${workerName(item.nodeId)}`;
-  identity.append(deviceChip,agentSwitchUI.render({item,worker,busy:paused||takeover.switchBusy(item)||!['page','idle'].includes(state)}));panel.append(identity);
+  identity.append(deviceChip,agentSwitchUI.render({item,worker,busy:takeover.switchBusy(item)||!['page','idle'].includes(state)}));panel.append(identity);
   // One row: the two-way switch and, as an icon, the one action the state allows. Moving the switch opens the hand-over dialog.
   const row=el('div','native-connect-row'),seg=el('div','native-mode-switch');seg.setAttribute('role','group');seg.setAttribute('aria-label',t('Where the session runs'));
-  const switchable=!paused&&online&&canTakeover&&!switchingTo&&!agentSwitchUI.busy(item)&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
+  const switchable=online&&canTakeover&&!switchingTo&&!agentSwitchUI.busy(item)&&!takeover.releaseDisabled(item)&&!['busy','offline','nohistory','ending','returning','stopping','starting','prepared'].includes(state);
   const move=value=>{if(value==='terminal'||mode==='terminal')openHandover(item,value,{claim,worker});else void switchMode(item,value);};
   const modeButton=(value,title)=>{const b=el('button',`native-mode${mode===value?' is-on':''}${switchingTo===value?' is-pending':''}`);b.type='button';b.append(el('span','native-mode-title',title));b.disabled=!switchable||mode===value;b.setAttribute('aria-pressed',String(mode===value));b.addEventListener('click',()=>move(value));return b;};
   seg.append(modeButton('page',t('This page')),modeButton('terminal','iTerm'));row.append(seg);
@@ -394,9 +393,6 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   panel.append(row);
   // Right under the switch: the session ID with its copy buttons (built in renderSide, kept across rebuilds).
   if(sessionIdRow?.dataset.key===key(item))panel.append(sessionIdRow);
-  // The platform-wide pause (top bar / basic settings) blocks every start and send; say so here and offer the resume, instead of a bare error after a failed send.
-  if(paused){const note=el('div','native-paused'),resume=button('Resume remote',async b=>{b.target.disabled=true;try{await api('/api/settings',{method:'POST',json:{paused:false}});await onStateRefresh();}catch(error){controlFeedback={key:key(item),text:error.message};}finally{if(selected)renderSessionControls(selected);}},'secondary native-card-action');
-   note.append(el('span','',t('Remote execution is paused for the whole platform; nothing can start or be sent until it is resumed.')),resume);panel.append(note);}
   const project=state==='busy'?data.projects?.find(p=>p.id===(claim?.projectId||other?.projectId))||((claim||other)&&owners.size===1?data.projects?.find(p=>owners.has(p.id)):null):null;
   if(detail)panel.append(el('p','native-side-hint',project?`${t(detail)} · ${project.name}`:t(detail)));
   if(claim?.processError)panel.append(el('p','native-side-hint',t(claim.processError)));
@@ -845,22 +841,8 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   nameForm.append(nameInput,nameSave);nameForm.addEventListener('submit',async e=>{e.preventDefault();nameSave.disabled=true;nameNote.className='native-side-hint';nameNote.textContent=t('Saving…');try{await renameSession(value,nameInput.value);nameNote.textContent=t('Saved');}catch(error){nameNote.className='global-error';nameNote.textContent=t(error.message);}finally{nameSave.disabled=false;}});
   nameCard.append(nameForm,nameNote);
   // Repository and AGENTS.md (moved here from the old Resources tab): the same live cards, with refresh and edit.
-  const git=gitCache.get(key(value))?.state;
   const repo=el('section','native-side-card native-git-card');repo.dataset.nativeGit='';
   const agents=el('section','native-side-card native-agents-card');agents.dataset.nativeAgents='';
-  const acct=el('section','native-settings-section');acct.append(el('h3','',t('Git account for pushes')));
-  // Match the host of supported HTTPS/SCP remotes, never a hostname suffix or a repository path.
-  const remote=String(git?.remoteUrl||'').trim().match(/^(?:https:\/\/([^/]+)\/|git@([^:]+):)/i),host=(remote?.[1]||remote?.[2]||'').toLowerCase();
-  const provider=host==='github.com'?'github':host==='gitee.com'?'gitee':null;
-  const accounts=(getData().hostingAccounts||[]).filter(a=>!provider||a.provider===provider),settings=takeover.settings();
-  const sel=el('select'),none=el('option','',t('Use the device’s own Git credentials'));none.value='';sel.append(none);
-  for(const a of accounts){const o=el('option','',`${a.provider==='github'?'GitHub':'Gitee'} · ${a.login}${a.label?` · ${a.label}`:''}`);o.value=a.id;sel.append(o);}
-  sel.value=settings.hostingAccountId&&accounts.some(a=>a.id===settings.hostingAccountId)?settings.hostingAccountId:'';
-  const canBind=Boolean(git?.remoteUrl&&provider&&takeover.controls()&&nativeId(value));sel.disabled=!canBind;sel.setAttribute('aria-label',t('Git account for pushes'));
-  const acctNote=el('p','native-side-hint',t(!git?.remoteUrl?'Bind an account once the repository remote is known.':!provider?'Only GitHub and Gitee remotes can use a Workbench account.':!takeover.controls()?'Upgrade this Worker to bind a Git account to a session.':'Applies to the next message on this page and to the next iTerm launch; only this repository’s remote receives the token.'));
-  sel.addEventListener('change',async()=>{sel.disabled=true;acctNote.className='native-side-hint';acctNote.textContent=t('Saving…');const r=await takeover.saveSetting('hostingAccountId',sel.value,{repoUrl:git?.remoteUrl||null});if(r)acctNote.textContent=t('Saved');else{acctNote.className='global-error';acctNote.textContent=takeover.feedback(value)||t('Could not save');}sel.disabled=false;});
-  const manage=button('Manage accounts…',()=>{dialog.close();document.querySelector('#show-app-settings')?.click();},'secondary');
-  acct.append(sel,acctNote,manage);
   // Branch and delete: branch copies the folder next to it and forks the session (Claude, Codex); delete removes a folder
   // Workbench made for this session. The device answers first whether delete is allowed, and why not.
   const fork=el('section','native-settings-section native-branch-section');fork.append(el('h3','',t('Branch and delete')));
@@ -875,7 +857,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
    .then(state=>{deleteState=state;deleteButton.disabled=!state?.ok;deleteNote.textContent=state?.ok?(state.missing?t('The folder is already gone; delete removes the session from this list.'):`${t('Deletes this folder and removes the session from this list:')} ${state.path}`):t(state?.reason||'This folder cannot be deleted here');})
    .catch(error=>{deleteNote.className='global-error';deleteNote.textContent=t(error.message);});
   else deleteNote.textContent=t('Upgrade this Worker to branch or delete sessions');
-  body.append(nameCard,repo,agents,acct,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
+  body.append(nameCard,repo,agents,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
  }
  /** A branch says where it came from at the top of its transcript, with a way back to the original (a Codex branch shows
   * only its own turns; the conversation before the fork lives in the original). */
@@ -1355,10 +1337,10 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     queueList.append(row);});}
   /** Stop only while a reply runs and nothing is typed; with text or files the button sends, and Home queues the message. */
   function syncSendButton(){if(!current)return;const d=draft(),op=operation(),state=sendState(d,op),live=activeTurn(),stopping=live?.status==='stopping',typing=Boolean(input.value.trim())||Boolean(d.attachments?.length)||Boolean(d.pending);
-   const stopMode=Boolean(live)&&!typing,paused=Boolean(getData().settings?.paused);
+   const stopMode=Boolean(live)&&!typing;
    if(stopMode){sendButton.disabled=stopping||op.releasing||op.editing;setSend('stop',stopping?'Stopping…':'Stop');}
-   else{sendButton.disabled=paused||op.sending||op.releasing||op.editing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);setSend('send',paused?'Remote execution is paused':SEND_LABELS[state]||'Send');}
-   input.placeholder=paused?t('Remote execution is paused; resume it in the connection card or the top bar'):live?t('Reply in progress; Enter queues your message, Stop interrupts'):t('Message {tool}; replies continue this native session',{tool:names[current.runtime]||current.runtime});}
+   else{sendButton.disabled=op.sending||op.releasing||op.editing||op.uploads>0||sendLocked(state)||Boolean(op.verifying);setSend('send',SEND_LABELS[state]||'Send');}
+   input.placeholder=live?t('Reply in progress; Enter queues your message, Stop interrupts'):t('Message {tool}; replies continue this native session',{tool:names[current.runtime]||current.runtime});}
   let refocus=false;
   function render(){
    if(!current)return;const value=current,taken=isOn(value);renderFeed();renderSessionControls(value);

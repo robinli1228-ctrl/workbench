@@ -213,7 +213,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     // to wait. It shows as the role's starting card instead of in the queue (for at most 30s, so a stuck one comes back here).
     const busyRoles=new Set((data.runs||[]).filter(r=>r.projectId===projectId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)).map(r=>r.roleId));
     const firstForRole=new Map();for(const task of [...tasks].sort((a,b)=>queueKey(a)-queueKey(b)))if(!firstForRole.has(task.roleId))firstForRole.set(task.roleId,task.id);
-    const starting=task=>!task.steering&&!task.waitingReason&&!data.settings?.paused&&!data.chatQueuePaused&&!busyRoles.has(task.roleId)
+    const starting=task=>!task.steering&&!task.waitingReason&&!data.chatQueuePaused&&!busyRoles.has(task.roleId)
       &&firstForRole.get(task.roleId)===task.id&&Date.now()-Date.parse(task.createdAt)<30000;
     tasks=tasks.filter(task=>!starting(task));
     const conversation=getConversationId()||projectId;
@@ -270,7 +270,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
         steer.setAttribute('aria-busy',String(busy));steer.setAttribute('aria-label',error?t('Steering needs attention'):t(busy?'Steering':'Steer now'));
         steer.innerHTML=busy?'<svg class="message-queue-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>':error?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></svg>':'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
         steer.title=error?t('Steering needs attention: {reason}',{reason:error}):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):busyRoles.has(task.roleId)?t('Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept'):t('Run this message first; nothing is interrupted, and a pending wait keeps its place in the queue');
-        steer.disabled=Boolean(task.steering)||pending.has(task.id)||data.settings?.paused||!(data.capabilities?.roleSteering>=2);
+        steer.disabled=Boolean(task.steering)||pending.has(task.id)||!(data.capabilities?.roleSteering>=2);
         if(!(data.capabilities?.roleSteering>=2))steer.title='Steer now becomes available after the service is upgraded';
         steer.onclick=async()=>{
           pending.add(task.id);steeringPending.add(task.id);steeringErrors.delete(task.id);setError('');view.update(lastData,currentProject);
@@ -1370,7 +1370,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       && (!fields.permissionScope.value || fields.permissionScope.value === role.permissionScope);
   }
   function renderRoleSaveState() {
-    if(!savingRole)document.querySelector('#role-save').textContent=editingRoleSnapshot?.runtime&&roleForm.elements.runtime.value!==editingRoleSnapshot.runtime?'Handoff and switch':'Save role';
+    if(!savingRole)document.querySelector('#role-save').textContent=t(!editingRoleSnapshot?'Create role':editingRoleSnapshot.runtime&&roleForm.elements.runtime.value!==editingRoleSnapshot.runtime?'Handoff and switch':'Save role');
     document.querySelector('#role-save').disabled = savingRole || checkingRuntime
       || (!definitionOnly() && !roleRuntimeReady && !(editingRoleId && !roleForm.elements.enabled.checked));
   }
@@ -1410,8 +1410,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     roleForm.elements.autoApprove.checked = role ? role.autoApprove !== false : true;
     renderDeviceOptions(role?.nodeId);
     roleError.hidden = true;
-    document.querySelector('#role-dialog-title').textContent = 'Role Details';
-    document.querySelector('#role-save').textContent = 'Save role';
+    // One title pattern for the supervisor and every other role: "New role", or "Role settings · name".
+    document.querySelector('#role-dialog-title').textContent = role ? t('Role settings · {name}', { name: role.name }) : t('New role');
+    document.querySelector('#role-save').textContent = t(role ? 'Save role' : 'Create role');
     roleHistory.reset();
   }
 
@@ -1492,13 +1493,13 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (!efforts.length) {
       field.hidden = true;
       select.replaceChildren();
-      const blank = create('option', '', 'Default (unspecified)'); blank.value = ''; select.append(blank);
+      const blank = create('option', '', 'Use CLI default'); blank.value = ''; select.append(blank);
       select.value = '';
       return;
     }
     field.hidden = false;
     select.replaceChildren();
-    const blank = create('option', '', 'Default (unspecified)'); blank.value = ''; select.append(blank);
+    const blank = create('option', '', 'Use CLI default'); blank.value = ''; select.append(blank);
     for (const e of efforts) {
       const o = create('option', '', String(e)); o.value = String(e); select.append(o);
     }
@@ -1587,7 +1588,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       if (roleDialog.open) { roleError.textContent = error.message; roleError.hidden = false; }
       else setError(t('Role saved, but refreshing the list failed: {message}', { message: error.message }));
     }
-    finally { savingRole = false; document.querySelector('#role-save').textContent = 'Save role'; renderModelOptions(); }
+    finally { savingRole = false; document.querySelector('#role-save').textContent = t(editingRoleSnapshot ? 'Save role' : 'Create role'); renderModelOptions(); }
   });
   async function jumpMessage(target,id){
     if(target.projectId!==projectId||target.conversationId!==conversationId)return;

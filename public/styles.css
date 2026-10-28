@@ -31,10 +31,6 @@
 .execution-plan-item p { margin: 5px 0 8px; color: #656c7d; }
 .execution-stage { display: flex; flex-direction: column; gap: 3px; padding: 5px 0; }
 .execution-stage small { color: #656c7d; }
-.wechat-records { display: grid; gap: 12px; margin-top: 16px; }
-#wechat-dialog { width: min(720px, 94vw); }
-#wechat-dialog .wechat-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
-#wechat-feedback:empty { display: none; }
 .history-viewer { width: min(880px, 92vw); max-height: 85vh; padding: 22px; border: 1px solid #d5e0ee; border-radius: 12px; }
 .history-viewer-content { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 55vh; overflow: auto; font: 13px/1.65 ui-monospace, monospace; }
 .history-viewer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -319,13 +315,12 @@ input:focus, textarea:focus, select:focus { border-color: #66b996; box-shadow: 0
 }
 .project-settings-folder-block { margin: 0; }
 [data-project-settings-panel] { display: grid; gap: 18px; min-width: 0; }
-#settings-project-panel .project-basic-settings > form { margin-top: 16px; }
 #settings-project-panel .project-settings-folder-block[open] > .form-grid { margin-top: 16px; }
 #settings-project-panel .action-text-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: auto; flex-shrink: 0; }
 #settings-project-panel .action-text-button svg { width: 20px; height: 20px; flex-shrink: 0; }
 #settings-project-panel .path-picker { align-items: center; }
 #project-prepare-form > .form-actions { align-self: end; justify-content: flex-start; }
-#settings-project-panel .project-danger-zone { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
+#settings-project-panel .project-danger-zone:not(.settings-list) { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
 #settings-project-panel .project-danger-zone > .form-feedback { flex-basis: 100%; }
 
 .content-grid { display: grid; grid-template-columns: minmax(230px, 34%) minmax(360px, 1fr); gap: 20px; padding-top: 25px; }
@@ -2009,9 +2004,6 @@ dialog.role-switch-dialog { width: min(640px, calc(100vw - 32px)); }
 #settings-page .settings-panel > h3 { color: var(--ink); font-size: 18px; font-weight: 600; }
 #settings-page .settings-block > :is(h3, h4) { margin: 0 0 8px; padding: 0; border: 0; color: var(--ink); background: transparent; font-size: 15px; font-weight: 600; }
 #settings-page .settings-block .form-actions { margin-top: 8px; }
-#settings-page .project-danger-zone { align-items: center; margin-top: 16px; }
-#settings-page .project-danger-zone h3 { margin: 0 0 6px; font-size: 15px; }
-#settings-page .project-danger-zone p { margin: 0; }
 #settings-page .project-danger-zone .danger { color: var(--danger); border-color: #edc7cc; background: #fff; }
 #settings-page .repository-card { margin: 8px 0 0; padding: 12px 14px; border-color: var(--page-line); border-radius: 6px; background: #f6f7f9; }
 #settings-page .repository-card .workspace-note { margin-block: 6px; }
@@ -3259,8 +3251,6 @@ body[data-navigation-mode="sessions"] .native-session-gear { display: grid; plac
 .setup-guide-body h2 { margin-top: 22px; font-size: 16px; }
 .setup-guide-body h3 { margin-top: 16px; font-size: 14px; }
 /* Platform pause notice in the connection card. */
-.native-paused { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 0; padding: 8px 10px; border: 1px solid #f1d9d9; border-radius: 8px; background: #fdf3f3; color: var(--danger); font-size: 12px; }
-.native-paused .native-card-action { flex: none; }
 
 /* Prompt row: bubble (files above text) with the tool line right under it, outside the bubble. */
 .nt-user { flex-direction: column; align-items: flex-end; }
@@ -3882,16 +3872,9 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .nt-reply-foot .nt-duration { margin-left: 5px; }
 .nt-reply-foot .nt-foot-status { margin-left: 10px; color: var(--danger, #c0263a); font-size: 12px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* Remote access keeps local connection details out of the normal settings form. */
-.remote-access-settings { margin-bottom:16px; }
-.remote-access-settings form { display:flex; align-items:end; gap:12px; flex-wrap:wrap; margin:14px 0; }
-.remote-access-settings label { display:grid; gap:6px; flex:1; min-width:180px; }
-.remote-access-settings input { width:100%; min-width:0; }
-.remote-access-settings details { flex-basis:100%; }
-.remote-access-settings summary { cursor:pointer; color:var(--muted); }
-.remote-access-advanced { display:flex; flex-wrap:wrap; gap:12px; margin:12px 0; }
-.remote-access-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
-.remote-access-settings [data-relay-link] { overflow-wrap:anywhere; }
-@media(max-width:600px) { .remote-access-settings label { min-width:100%; } }
+.remote-access-advanced { display:flex; flex-wrap:wrap; gap:12px; margin:12px 0 0; }
+.remote-access-advanced label { flex:1; min-width:160px; }
+.settings-dialog-form summary { cursor:pointer; color:var(--muted); font-size:13px; }
 /* File glyph: a page with a folded corner and the extension on a coloured label. */
 .file-glyph { display: grid; place-items: center; flex: none; }
 .file-glyph svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -4151,3 +4134,112 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .role-device-management .inspector-device-row > span:nth-child(2) { flex: 1; min-width: 0; max-width: none; text-align: left; }
 .role-device-management .inspector-device-row small.is-online { color: #178064; background: #eaf6f1; border-radius: 20px; padding: 3px 9px; font-size: 11px; }
 @media (max-width: 1000px) { .document-preview-side { display: none; } }
+
+/* Settings as a list of cards on a grey page: a card has a head (title, one-line note, icon actions) and rows (label, value,
+   row actions). Panels still laid out the old way keep one white card around them. */
+#settings-page { background: #f3f4f7; }
+#settings-page .settings-page-body { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+#settings-page .settings-panel[data-settings-panel="project"] { padding: 0; border: 0; background: transparent; box-shadow: none; }
+#settings-page #project-panel-sync { width: 100%; max-width: 880px; margin-inline: auto; }
+#settings-page :is(.settings-panel:not([data-layout="list"]):not([data-settings-panel="project"]), #project-panel-sync > .settings-block) { padding: 24px 28px; border: 1px solid rgb(22 30 58 / 8%); border-radius: 16px; background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 1px 3px rgb(16 24 40 / 3%); }
+#settings-page .settings-panel[data-layout="list"], #settings-page [data-project-settings-panel][data-layout="list"] { display: flex; flex-direction: column; gap: 18px; width: 100%; max-width: 880px; margin-inline: auto; }
+#settings-page .settings-list { min-width: 0; overflow: hidden; border: 1px solid #e6e8ef; border-radius: 16px; background: #fff; box-shadow: 0 1px 3px rgb(25 35 60 / 5%); }
+#settings-page .settings-list-head { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 14px 20px 12px; }
+#settings-page .settings-list-head > div { min-width: 0; }
+#settings-page .settings-list-head h3 { margin: 0; color: var(--ink); font-size: 15px; font-weight: 650; }
+#settings-page .settings-list-head p { margin: 2px 0 0; color: #727a8c; font-size: 12.5px; line-height: 1.5; }
+#settings-page .settings-list-actions, #settings-page .settings-row-actions { display: flex; flex: none; align-items: center; gap: 4px; margin-left: auto; }
+#settings-page .settings-list :is(.settings-list-actions, .settings-row-actions) :is(.icon-button, .action-icon-button) { display: inline-grid; place-items: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 6px; border: 0; border-radius: 7px; color: #71798b; background: transparent; box-shadow: none; }
+#settings-page .settings-list :is(.settings-list-actions, .settings-row-actions) :is(.icon-button, .action-icon-button):hover:not(:disabled) { color: var(--page-blue); background: #eef0fa; }
+#settings-page .settings-list :is(.settings-list-actions, .settings-row-actions) :is(.icon-button, .action-icon-button):disabled { opacity: .45; cursor: default; }
+#settings-page .settings-list :is(.settings-list-actions, .settings-row-actions) :is(.icon-button, .action-icon-button) svg { width: 18px; height: 18px; }
+#settings-page .settings-row { display: flex; align-items: center; gap: 14px; min-height: 54px; padding: 8px 20px; border-top: 1px solid #eef0f4; }
+#settings-page .settings-row-label { flex: 0 0 220px; min-width: 0; color: var(--ink); font-size: 14px; font-weight: 550; }
+#settings-page .settings-row-label small { display: block; margin-top: 2px; color: #7a8191; font-size: 12px; font-weight: 400; }
+#settings-page .settings-row-value { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; overflow: hidden; color: #3a4152; font-size: 14px; overflow-wrap: anywhere; }
+#settings-page .settings-row-value.muted, #settings-page .settings-row-value .muted { color: #7a8191; }
+#settings-page .settings-row-value code { padding: 2px 7px; border-radius: 6px; color: #4a5162; background: #f3f5f9; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+#settings-page .settings-row-main { flex: 1 1 auto; min-width: 0; }
+#settings-page .settings-row-main > strong { display: block; color: var(--ink); font-size: 14px; font-weight: 550; overflow-wrap: anywhere; }
+#settings-page .settings-row-main > small { display: block; margin-top: 2px; overflow: hidden; color: #7a8191; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+#settings-page .settings-row-icon { display: inline-grid; flex: none; place-items: center; width: 20px; height: 20px; color: #7a8191; }
+#settings-page .settings-row-icon svg { width: 20px; height: 20px; }
+#settings-page .settings-row > select { flex: none; width: 220px; }
+#settings-page .settings-list-note { margin: 0; padding: 10px 20px 14px; border-top: 1px solid #eef0f4; color: #656c7d; font-size: 12px; line-height: 1.6; }
+#settings-page .settings-list-empty { display: flex; align-items: center; gap: 10px; padding: 18px 20px; border-top: 1px solid #eef0f4; color: #7a8191; font-size: 13px; }
+#settings-page .settings-list-empty svg { width: 20px; height: 20px; }
+.settings-chip { display: inline-flex; flex: none; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; color: #5b6273; background: #f1f3f7; font-size: 12px; line-height: 1.4; white-space: nowrap; }
+.settings-chip:empty { display: none; }
+.settings-chip.ok { color: #178064; background: #eaf6f1; }
+.settings-chip.warn { color: #a26410; background: #fdf3e3; }
+.settings-chip.bad { color: #b42318; background: #fdecea; }
+.settings-chip.off { color: #7a8191; background: #f1f3f7; }
+.settings-switch { position: relative; display: inline-flex; flex: none; width: 36px; height: 20px; cursor: pointer; }
+.settings-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
+.settings-switch span { width: 100%; height: 100%; border-radius: 999px; background: #d5d9e2; transition: background .15s; }
+.settings-switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 20%); transition: transform .15s; }
+.settings-switch input:checked + span { background: var(--accent); }
+.settings-switch input:checked + span::after { transform: translateX(16px); }
+.settings-switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-switch input:disabled + span { opacity: .45; }
+.settings-switch:has(input:disabled) { cursor: default; }
+.settings-dialog-form { display: flex; flex-direction: column; gap: 14px; }
+.settings-dialog-form > label, .settings-dialog-form .remote-access-advanced label { display: flex; flex-direction: column; gap: 6px; }
+.settings-dialog-form .workspace-note { margin: -6px 0 0; }
+.settings-dialog-form .form-actions { justify-content: flex-end; margin-top: 4px; }
+.settings-dialog-status { display: flex; align-items: center; gap: 10px; margin: 0; color: #3a4152; font-size: 13px; }
+.settings-dialog-status:not(:has(.settings-chip:not(:empty))) { display: none; }
+.settings-segmented { display: inline-flex; align-self: flex-start; overflow: hidden; border: 1px solid #dfe3ea; border-radius: 9px; }
+.settings-segmented label { display: block; cursor: pointer; }
+.settings-segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.settings-segmented span { display: block; padding: 8px 16px; color: #5b6273; font-size: 13px; }
+.settings-segmented input:checked + span { color: var(--accent); background: #eef0fa; font-weight: 600; }
+.settings-segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (max-width: 700px) {
+  #settings-page .settings-row { flex-wrap: wrap; gap: 6px 12px; }
+  #settings-page .settings-row-label { flex-basis: 100%; }
+  #settings-page .settings-row > select { width: 100%; }
+}
+#settings-page .settings-list-preview { padding: 12px 20px 14px; border-top: 1px solid #eef0f4; }
+#settings-page .settings-preview-text { display: -webkit-box; margin: 0; overflow: hidden; color: #4a5162; font-size: 13px; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+#settings-page .settings-list-preview [data-retired-warning] { margin-top: 8px; }
+#settings-page .settings-list-form { padding: 14px 20px 16px; border-top: 1px solid #eef0f4; }
+#settings-page .settings-list-form .form-actions { justify-content: flex-end; margin: 0; }
+#settings-page .settings-row-aside { color: #7a8191; font-size: 12.5px; font-weight: 400; }
+#settings-page .settings-row-number { flex: none; width: 110px; }
+#settings-page .settings-row > button:is(.primary, .secondary, .danger) { flex: none; }
+#settings-page .settings-list .icon-button.is-tint { color: var(--page-blue); background: #eef0fa; }
+.settings-dialog-field { display: flex; flex-direction: column; gap: 8px; }
+.settings-dialog-label { color: #3a4152; font-size: 13px; font-weight: 550; }
+.settings-dialog-checks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+#settings-page .settings-list-intro { margin: 0; color: #656c7d; font-size: 12.5px; line-height: 1.6; }
+#settings-page .settings-list-stack { display: flex; flex-direction: column; gap: 18px; }
+#settings-page .settings-list-body { padding: 12px 20px 16px; border-top: 1px solid #eef0f4; overflow-x: auto; }
+#settings-page .settings-list .data-table { width: 100%; }
+.device-capacity-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 10px 0 2px; }
+.device-capacity-inline label { display: inline-flex; align-items: center; gap: 10px; color: #3a4152; font-size: 13px; font-weight: 550; }
+#settings-page .device-capacity-inline input[type="number"] { width: 80px; height: 34px; }
+#settings-page .device-capacity-inline button.secondary { min-height: 34px; padding: 6px 12px; }
+.device-capacity-inline .form-feedback { flex-basis: 100%; margin: 0; }
+#settings-page .settings-switch { flex: 0 0 36px; width: 36px; min-width: 36px; height: 20px; }
+#settings-page .settings-switch input[type="checkbox"] { width: 100%; height: 100%; }
+#settings-page .settings-row-value .connection-note { margin: 0; padding: 0; color: inherit; font-size: 14px; line-height: 1.5; background: none; border: 0; }
+#settings-page .settings-row-label:has(+ .settings-row-value:empty) { flex: 1 1 auto; }
+#settings-page .settings-row-label + .settings-row-value:empty { display: none; }
+#settings-page .settings-list-note:empty { display: none; }
+#settings-page #project-panel-sync > .settings-block { width: 100%; max-width: none; box-sizing: border-box; }
+#settings-page .project-git-summary { margin: 0; }
+/* Devices and CLIs: each device is a card like the other settings cards. */
+#settings-page #settings-devices-panel .device-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#settings-page #settings-devices-panel .device-panel-heading p { margin: 0; }
+#settings-page #settings-devices-panel .device-list { display: flex; flex-direction: column; gap: 18px; }
+#settings-page #settings-devices-panel .device-card { padding: 16px 20px 18px; border: 1px solid #e6e8ef; border-radius: 16px; background: #fff; box-shadow: 0 1px 3px rgb(25 35 60 / 5%); }
+#settings-page #settings-devices-panel .worker-card-head strong { color: var(--ink); font-size: 15px; font-weight: 650; }
+#settings-page #settings-devices-panel .worker-meta { color: #727a8c; font-size: 12.5px; }
+#settings-page #settings-devices-panel .device-capacity-inline { margin: 12px 0 0; padding-top: 12px; border-top: 1px solid #eef0f4; }
+#settings-page #settings-devices-panel .device-runtime-list { margin-top: 12px; }
+#settings-page #settings-devices-panel .device-enroll-panel { margin: 0; }
+#settings-page #settings-devices-panel .device-card { align-self: stretch; width: 100%; box-sizing: border-box; }
+#settings-page #settings-devices-panel :is(.worker-card-head, .device-panel-heading) :is(.icon-button, .action-icon-button) { display: inline-grid; place-items: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 6px; border: 0; border-radius: 7px; color: #71798b; background: transparent; box-shadow: none; }
+#settings-page #settings-devices-panel :is(.worker-card-head, .device-panel-heading) :is(.icon-button, .action-icon-button):hover:not(:disabled) { color: var(--page-blue); background: #eef0fa; }
+#settings-page #settings-devices-panel :is(.worker-card-head, .device-panel-heading) :is(.icon-button, .action-icon-button) svg { width: 18px; height: 18px; }

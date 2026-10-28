@@ -248,7 +248,6 @@ export class Rooms {
       if(scope&&participants.length>12)throw new Error(tr('rooms.roundMatchesRolesExceedingLimit', { length: participants.length }));
       const schedulingTargets=participants.map(r=>r.id);
       const schedulingRoster=participants.map(r=>({id:r.id,name:r.name}));
-      if (roles.length && this.db.get('settings', 'main')?.paused) throw new Error(tr('rooms.remoteExecutionPausedMentionsCannot'));
       // Informational discussions, supervisor intake and same-role replies do not transfer a Git workspace.
       const sourceRoles=source&&quote.kind!=='discussion'&&!source.roleSnapshot?.systemSupervisor
         ?roles.filter(r=>!r.systemSupervisor&&r.id!==(source.roleId||quote.roleId)):[];
@@ -491,8 +490,7 @@ export class Rooms {
       const kind=task.discussionDeliveryId?'discussionDeliveries':'discussionIntents',recordId=task.discussionDeliveryId||task.discussionIntentId;
       const role = effectiveExecutionRole(this.db,task), worker = this.db.get('workers', role.nodeId);
       const active = this.db.activeRuns();
-      const reason = this.db.get('settings', 'main')?.paused ? tr('rooms.remoteExecutionPaused')
-        : !discussion&&!task.steering&&paused.has(conversationIdOf(task)) ? tr('rooms.queuePaused')
+      const reason = !discussion&&!task.steering&&paused.has(conversationIdOf(task)) ? tr('rooms.queuePaused')
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)

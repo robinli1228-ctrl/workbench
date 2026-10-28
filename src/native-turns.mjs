@@ -127,7 +127,16 @@ export class NativeTurnsHome{
  /** A finished turn is not permission to reuse an exiting process; only its matching lease closure releases the queue. */
  waitsForExit(nodeId,runtime,sessionId){const p=this.db.get('nativeTakeovers',sessionKey(nodeId,runtime,sessionId));return p?.status==='retiring'&&this.process(nodeId,runtime,sessionId);}
  /** Model and effort chosen on the Sessions page for this native session; they ride on every turn message. */
- settings(nodeId,runtime,sessionId){const s=this.db.get('nativeSessionSettings',nativeSettingsKey(nodeId,runtime,sessionId));return {model:s?.model||null,effort:s?.effort||null,hostingAccountId:s?.hostingAccountId||null,repoUrl:s?.repoUrl||null,updatedAt:s?.updatedAt||null};}
+ settings(nodeId,runtime,sessionId){const s=this.db.get('nativeSessionSettings',nativeSettingsKey(nodeId,runtime,sessionId));return {model:s?.model||null,effort:s?.effort||null,hostingAccountId:s?.hostingAccountId||null,repoUrl:s?.repoUrl||null,accountOptOut:s?.hostingAccountId===null,remoteChecked:s?.remoteChecked===true,updatedAt:s?.updatedAt||null};}
+ /** The session's repository remote, remembered so a turn can match a hosting account without asking the device again. */
+ rememberRemote(nodeId,runtime,sessionId,repoUrl){
+  const key=nativeSettingsKey(nodeId,runtime,sessionId),current=this.db.get('nativeSessionSettings',key)||{},value=typeof repoUrl==='string'&&repoUrl.trim()?repoUrl.trim().slice(0,300):null;
+  if(current.remoteChecked&&(current.repoUrl||null)===value)return value;
+  const next={...current,id:key,nodeId,runtime,sessionId,repoUrl:value,remoteChecked:true,updatedAt:now()};
+  // An account picked for an earlier remote no longer fits once the folder points elsewhere; an opt-out (null) stays.
+  if(current.hostingAccountId&&current.repoUrl&&current.repoUrl!==value)delete next.hostingAccountId;
+  this.db.put('nativeSessionSettings',next);return value;
+ }
  /**
   * One field per call. Claude applies a change in place through a /model or /effort turn; Codex and Grok take it on the next
   * turn; a resident Agy must restart, so its takeover is released and the next message starts it with the new flags.
@@ -250,7 +259,7 @@ export class NativeTurnsHome{
    const next=this.waiting(nodeId,runtime,sessionId)[0];if(!next)return;
    if(!next.steer&&this.queueState(nodeId,runtime,sessionId).paused)return;
    try{
-    const credential=next.control||!this.gitCredential?null:await this.gitCredential(this.settings(nodeId,runtime,sessionId));
+    const credential=next.control||!this.gitCredential?null:await this.gitCredential(this.settings(nodeId,runtime,sessionId),{nodeId,runtime,sessionId});
     const fresh=this.db.get('nativeTurns',next.id);
     if(!this.online(nodeId)||this.active(nodeId,runtime,sessionId)||this.waitsForExit(nodeId,runtime,sessionId))return;
     if(!fresh||fresh.status!=='waiting'||this.waiting(nodeId,runtime,sessionId)[0]?.id!==next.id)continue;

@@ -136,7 +136,7 @@ Use focused modules for manifest comparison, Worker filesystem I/O, Home sync co
 7. An isolated downstream CLI actually reads a unique uncommitted source marker from its prepared worktree; a clean-HEAD-only fallback must fail the test. Warm/native resume receives the changed-version notice.
 8. Inject target edits between scan/stage/apply, symlink or hardlink substitution, case collisions, quota exhaustion and truncated scans: no unreported overwrite, boundary escape or false successful manifest.
 9. Crash before/after a file rename or receipt, lose an acknowledgement, duplicate commands and restart Home/Worker: reconcile journaled effects without losing either side or relaunching repair models.
-10. Busy/unknown Runs, manual takeover, global pause, binding changes and project deletion block or fence writes and late commands. Cancel during a batch retains accurate per-file outcomes.
+10. Busy/unknown Runs, manual takeover, binding changes and project deletion block or fence writes and late commands (the former global pause was removed on 2026-10-28; a disconnected Worker still refuses). Cancel during a batch retains accurate per-file outcomes.
 11. Stale resolution, repeated failures and second modifications during repair invalidate old proposals; two-attempt limit and escalation work without a tight loop.
 12. Real browser: configure, preview scope, sync, open conflict/evidence, view owner/notification/result, switch language and reload; state persists and no secret/file body leaks into routine status output.
 
@@ -188,7 +188,7 @@ Persist dirty paths and reconciliation progress. Bounded periodic, startup and r
 
 Reuse durable transfer, guarded apply and recovery journals. Offline Workers retain local changes. Reconnect compares current endpoint contents with baselines before writes. Suppress receiving echoes only after reading bytes that match the receipt, never by ignoring all changes during a time window.
 
-Known active/unknown writers and terminal takeover keep unsafe applies pending without interrupting the CLI. Discovery may continue. Global pause stops transfer/apply while retaining dirty changes. Scope disable/rebind/deletion fences watchers and pending work. Home unavailability does not start a second peer control plane.
+Known active/unknown writers and terminal takeover keep unsafe applies pending without interrupting the CLI. Discovery may continue. A Worker disconnected from Home stops transfer/apply while retaining dirty changes (the former global pause was removed on 2026-10-28). Scope disable/rebind/deletion fences watchers and pending work. Home unavailability does not start a second peer control plane.
 
 ### 13.4 Deletions, renames and conflicts
 

@@ -1,7 +1,7 @@
 /** Shared by settings and execution; return line numbers without interpreting user prose. */
 export function retiredCommandLines(text) {
   return String(text??'').split(/\r?\n/).flatMap((line,index)=>{
-    const commands=[...new Set([...line.matchAll(/\bwb[ \t]+(report|schedule|collaboration|pass)\b/g)].map(match=>match[1]))];
+    const commands=[...new Set([...line.matchAll(/\bwb[ \t]+(report|schedule|collaboration|pass|notify)\b/g)].map(match=>match[1]))];
     return commands.length?[{line:index+1,commands}]:[];
   });
 }

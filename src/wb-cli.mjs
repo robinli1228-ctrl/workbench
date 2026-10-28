@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { loadTurnContext } from './turn-context.mjs';
 import { agentRequest } from './agent-bridge.mjs';
 import { setupCatalog, setupPropose } from './setup-tools.mjs';
-import { conversationTask, helpText, historySearchInput, chatPost, notifySupervisor, callRole, waitForRole, requestDelivery, parseDeliveryArgs } from './wb-tools.mjs';
+import { conversationTask, helpText, historySearchInput, chatPost, callRole, waitForRole, requestDelivery, parseDeliveryArgs } from './wb-tools.mjs';
 import { tr } from './i18n.mjs';
 
 function out(data) {
@@ -22,7 +22,7 @@ function sessionOptions(args) {
   return values;
 }
 
-const COMMANDS=['task','notify','sync','discuss','capabilities','session','setup','history','timer','note','wait','deliver','call'];
+const COMMANDS=['task','sync','discuss','capabilities','session','setup','history','timer','note','wait','deliver','call'];
 
 export async function main(argv = process.argv.slice(2)) {
   const turnId=argv[0]==='--turn'?argv[1]:undefined;
@@ -35,7 +35,7 @@ export async function main(argv = process.argv.slice(2)) {
     if(['help','-h','--help'].includes(cmd)&&['review','sync','errors'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
     if(!cmd||['help','-h','--help'].includes(cmd)||(tail.some(value=>['--help','-h'].includes(value))&&!tail.includes('--'))||(cmd==='deliver'&&sub==='help'))
       return out(helpText());
-    if(['report','schedule','collaboration','pass'].includes(cmd))throw new Error(tr(`wbCli.retired.${cmd}`));
+    if(['report','schedule','collaboration','pass','notify'].includes(cmd))throw new Error(tr(`wbCli.retired.${cmd}`));
     if(!COMMANDS.includes(cmd))throw new Error(tr('wbCli.unknownCommand',{cmd,HELP:helpText()}));
     loadTurnContext(process.env,{turnId});
     const supervisor = process.env.WB_SYSTEM_SUPERVISOR === '1';
@@ -47,10 +47,6 @@ export async function main(argv = process.argv.slice(2)) {
       if(sub==='update'&&rest.length===2)return out(await conversationTask('update',{...JSON.parse(rest[1]),id:rest[0]}));
       throw new Error(tr('conversationTasks.help'));
     }
-    if (cmd === 'notify') {
-      if (!['send','status'].includes(sub) || rest.length !== 1) throw new Error(tr('wechatChannel.toolGuide'));
-      return out(await notifySupervisor(sub,sub==='status'?{id:rest[0]}:JSON.parse(rest[0])));
-    }
     if(cmd==='sync'){
       if(!sourceSync)throw new Error(tr('sourceSync.failure',{code:'worker_unsupported',detail:''}));
       if(!['status','read','request','assign','propose'].includes(sub)||rest.length>1)throw new Error(tr('sourceSync.toolGuide'));
@@ -60,9 +56,8 @@ export async function main(argv = process.argv.slice(2)) {
       if(sub!=='peers'||rest.length>1)throw new Error(tr('wbCli.discussPeersUsage'));
       return out(await agentRequest('/api/agent/discussions',{runId:process.env.WB_RUN_ID,action:'peers',input:rest.length?JSON.parse(rest[0]):{view:'summary'}}));
     }
-    if (cmd === 'capabilities') return out({protocol:2,notifications:supervisor?1:0,sourceSyncTools:sourceSync?1:0,sessionTools:1,timerTools:1,transfer:1,
+    if (cmd === 'capabilities') return out({protocol:2,sourceSyncTools:sourceSync?1:0,sessionTools:1,timerTools:1,transfer:1,
       tools:[...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),'task list','task show','task create','task update','discuss peers','call','wait','note','timer',
-        ...(supervisor?['notify send','notify status']:[]),
         'history','history search','history read','history summary','deliver','session current',...(process.env.WB_PLATFORM_ASSISTANT==='1'?['setup catalog','setup propose']:[])]});
     if (cmd === 'session' && sub === 'current') return out(await agentRequest('/api/agent/sessions/current',{runId:process.env.WB_RUN_ID}));
     // Configuration cards belong to the platform assistant; project roles read the team with wb discuss peers.

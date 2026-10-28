@@ -160,7 +160,7 @@ export class ScheduledJobs {
 
   runNow(projectId, id) {
     const job = this.#job(projectId, id);
-    if (this.db.get('settings', 'main')?.paused || (job.jobType === 'monitor' && !job.enabled)) throw new Error(tr('scheduledJobs.scheduledJobsRemoteExecutionPaused'));
+    if (job.jobType === 'monitor' && !job.enabled) throw new Error(tr('scheduledJobs.monitorPaused'));
     if (job.jobType !== 'monitor' && this.#hasActive(job.id)) throw new Error(tr('scheduledJobs.previousScheduledRunItsCollaboration'));
     return this.db.transaction(() => {
       const current = this.#job(projectId, id);
@@ -172,7 +172,6 @@ export class ScheduledJobs {
   }
 
   tick() {
-    if (this.db.get('settings', 'main')?.paused) return false;
     const now = this.#now(); let changed = false;
     for (const snapshot of this.db.list('scheduledJobs')) {
       if (!snapshot.enabled || !snapshot.nextRunAt || new Date(snapshot.nextRunAt) > now || (snapshot.jobType !== 'monitor' && this.#hasActive(snapshot.id))) continue;

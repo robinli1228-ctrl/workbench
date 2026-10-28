@@ -10,7 +10,6 @@ export class ProjectAdmin {
     assertProjectReady(this.db,projectId);
     const project = this.db.get('projects', projectId);
     if (!project) throw new Error(tr('projectAdmin.projectNotFound'));
-    if (this.db.get('settings', 'main')?.paused) throw new Error(tr('projectAdmin.remoteExecutionPaused'));
     if (this.db.list('runs').some(r => r.projectId === projectId && !['succeeded','failed','interrupted'].includes(r.status))) throw new Error(tr('projectAdmin.projectRunningChangeDirectoriesRepositories'));
     return project;
   }

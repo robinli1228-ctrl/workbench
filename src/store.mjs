@@ -253,11 +253,13 @@ export class Store {
   }
   /** Project metadata never changes any node's Git remote or account credentials. */
   // collaborationWaitReleaseMinutes from older clients is ignored: waits no longer hold the queue back.
-  updateProject(id, { name, description = '', repoUrl = '' }) {
+  updateProject(id, { name, description = '', repoUrl }) {
     assertProjectReady(this,id);
     const p = this.get('projects', id); if (!p) throw new Error(tr('store.projectNotFound'));
     if (typeof name !== 'string' || !name.trim()) throw new Error(tr('store.projectNameRequired2'));
     if (typeof description !== 'string' || description.length > 12000) throw new Error(tr('store.descriptionMustBeAtMost'));
+    // The old single repository link is no longer edited on the page; a save without it keeps what is stored.
+    if (repoUrl === undefined) return this.put('projects', { ...p, name: name.trim(), description });
     const repository = giteeRepository(repoUrl);
     return this.put('projects', { ...p, name: name.trim(), description, repoUrl: repository?.url || '', repository });
   }
@@ -343,7 +345,6 @@ export class Store {
       const fingerprint = JSON.stringify({ taskId, nodeId });
       const prior = this.get('commands', commandId);
       if (prior) { if (prior.fingerprint !== fingerprint) throw new Error(tr('store.commandidParameterConflict')); return this.get('runs', prior.runId); }
-      if (this.get('settings', 'main')?.paused) throw new Error(tr('store.remoteCommandsPaused'));
       if (this.get('workers',nodeId)?.capabilities?.projectSpace !== 1) throw new Error(tr('store.upgradeTargetWorkerSupportShared'));
       const storedTask = new ProactiveFollowup(this).prepareStart(taskId);
       if(!storedTask&&this.get('tasks',taskId))return null;

@@ -5,31 +5,23 @@ import { tr } from './i18n.mjs';
 
 // Paths a role's wb command may reach; Home re-checks each request against the run and its role.
 const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary',
-  '/api/agent/discussions', '/api/agent/source-sync', '/api/agent/notify']);
+  '/api/agent/discussions', '/api/agent/source-sync']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-/** Dispatch pause must not swallow accepted work's conclusions; new work and write operations remain blocked. */
-export function allowsPausedAgentOperation(pathname,input={}) {
-  return new Set(['/api/agent/wait','/api/agent/note','/api/agent/setup/catalog','/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary']).has(pathname)
-    ||pathname==='/api/agent/conversation-tasks'&&['list','show'].includes(input.action)
-    ||pathname==='/api/agent/discussions'&&input.action==='peers';
-}
-
 /**
- * Why an operation cannot be sent now, or null. Pause is not cancellation: retained identity, connection and live process
- * checks still apply to every tool call. The code tells the caller whether retrying the same request can help.
+ * Why an operation cannot be sent now, or null. `connected` means registered with Home, not just an open socket; identity,
+ * connection and live process checks apply to every tool call. The code tells the caller whether retrying the same request can help.
  */
-export function agentOperationBlock({paused,quitting,connected,status},pathname,input) {
+export function agentOperationBlock({quitting,connected,status}) {
   if(quitting)return 'run_ended';
   if(!connected)return 'home_disconnected';
   if(!['running','starting'].includes(status))return status==='stopping'?'run_stopping':status==='reconciling'?'run_reconciling':'run_ended';
-  if(paused&&!allowsPausedAgentOperation(pathname,input))return 'paused';
   return null;
 }
-export function canSendAgentOperation(state,pathname,input) {return !agentOperationBlock(state,pathname,input);}
+export function canSendAgentOperation(state) {return !agentOperationBlock(state);}
 /** Refused before anything ran, so the identical request may be sent again. */
 const RETRYABLE=new Set(['run_reconciling','home_disconnected']),RETRY_DELAYS=[1000,2000,4000,5000,5000];
-const blockMessage=code=>tr({home_disconnected:'agentBridge.homeDisconnected',paused:'agentBridge.remotePaused',run_stopping:'home.runStopping',run_reconciling:'home.runReconciling'}[code]||'agentBridge.executionHasStoppedRemoteOperations');
+const blockMessage=code=>tr({home_disconnected:'agentBridge.homeDisconnected',run_stopping:'home.runStopping',run_reconciling:'home.runReconciling'}[code]||'agentBridge.executionHasStoppedRemoteOperations');
 async function withRetry(send) {
   for(let attempt=0;;attempt++) {
     try{return await send();}
@@ -87,7 +79,7 @@ async function agentRequestOnce(pathname,payload) {
   throw Object.assign(new Error(tr('agentBridge.workerCommunicationTimedOutOutcome')),{outcomeUnknown:true});
 }
 
-/** Only allowlisted Agent endpoints pass through the bridge; supervisor notifications are checked by Home, never arbitrary URLs or shell. */
+/** Only allowlisted Agent endpoints pass through the bridge, never arbitrary URLs or shell. */
 export async function homeRequest(home, token, pathname, payload) {
   if (!home || !allowed.has(pathname)) throw new Error(tr('agentBridge.invalidHomeToolPath'));
   try {

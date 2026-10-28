@@ -40,7 +40,7 @@ export function assertNativeSwitchAccess(db,{runtime,sessionId,workspace,claimId
 }
 
 /** Exact persisted native preparation, reusing the ordinary terminal creation and identity checks. */
-export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtimes,isPaused,sourceBusy,query,check,releaseIdle=async()=>{},prepareGrant=async()=>null,cancelGrant=()=>{},makeContext=createNativeAgentContext,prepareMs=NATIVE_SWITCH_PREPARE_MS,sideAsking=()=>false,sweepMs=60000}){
+export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtimes,isDisconnected,sourceBusy,query,check,releaseIdle=async()=>{},prepareGrant=async()=>null,cancelGrant=()=>{},makeContext=createNativeAgentContext,prepareMs=NATIVE_SWITCH_PREPARE_MS,sideAsking=()=>false,sweepMs=60000}){
  const inflight=new Map();
  /** Stops only the target's own verified processes, through the ordinary terminal stop. */
  const stopTarget=op=>query('terminal_stop',{id:op.leaseId,nodeId,projectId:`native-tui:${op.leaseId}`});
@@ -55,7 +55,7 @@ export function createWorkerNativeAgentSwitch({db,nodeId,data,projectRoot,runtim
  const save=(op,patch)=>db.put('workerNativeAgentSwitches',{...op,...patch,updatedAt:new Date().toISOString()});
  const fail=(op,error)=>{if(op.grantAttempted)cancelGrant(op);return save(op,{stage:'failed',error});};
  async function preflight(input,{allowSource=true,claimId=null}={}){
-  if(isPaused())throw Error('Remote execution is paused');
+  if(isDisconnected())throw Error('This device is not connected to Home');
   if(!runtimes().some(r=>r.type===input.targetRuntime&&r.available&&r.supported!==false))throw Error('Target Agent is unavailable on this device');
   const source=registeredNativeSession(db,input.source?.runtime,input.source?.sessionId);
   if(!source||source.roleBinding||nativeSessionProjectIds(db,{nodeId,...input.source}).length)throw Error('Source is not an independent Workbench session');

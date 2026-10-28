@@ -16,7 +16,8 @@ test('retired review browser controls unblock saved requests without reopening c
  const root=fileURLToPath(new URL('../',import.meta.url)),data=await mkdtemp(join(tmpdir(),'xxxxx-review-'));
  const db=new Store(join(data,'home.sqlite')),token=randomUUID(),workerToken=randomUUID();let home,log='';
  t.after(async()=>{if(home&&home.exitCode===null&&home.signalCode===null){home.kill('SIGTERM');await until(()=>home.exitCode!==null||home.signalCode!==null);}db.close();await rm(data,{recursive:true,force:true});});
- db.put('settings',{id:'main',paused:false});db.put('projects',{id:'p',name:'xxxxx',folderName:'xxxxx',features:{collaborationSessions:true}});
+ // A flag left by the removed global pause switch must not survive a Home start.
+ db.put('settings',{id:'main',paused:true});db.put('projects',{id:'p',name:'xxxxx',folderName:'xxxxx',features:{collaborationSessions:true}});
  for(const id of ['a','b'])db.put('roles',{id,projectId:'p',name:'xxxxx',enabled:true,nodeId:'offline',runtime:'claude',model:'xxxxx',mode:'workspace-write'});
  for(const id of ['s','closed']){
   db.put('collaborationSessions',{id,projectId:'p',conversationId:'p',type:'independent-review',state:'open',goal:'xxxxx',participants:[{roleId:'a',reviewer:true},{roleId:'b',reviewer:true}]});
@@ -28,6 +29,7 @@ test('retired review browser controls unblock saved requests without reopening c
  home=spawn(process.execPath,['src/home.mjs'],{cwd:root,env:{PATH:process.env.PATH,HOST:address.address,PORT:String(address.port),DATA_DIR:data,API_TOKEN:token,WORKER_TOKEN:workerToken,LANG:'en'},stdio:['ignore','pipe','pipe']});home.stdout.on('data',b=>log+=b);home.stderr.on('data',b=>log+=b);
  const request=async(path,method='POST',body={})=>{const r=await fetch(url+path,{method,headers:{Authorization:'Bearer '+(path.startsWith('/api/agent/')?workerToken:token),'Content-Type':'application/json'},...(method==='GET'?{}:{body:JSON.stringify(body)})});return{status:r.status,body:await r.json()};};
  try{await until(async()=>{try{return(await request('/healthz','GET')).status===200;}catch{return false;}});}catch(e){throw Error(e.message+' '+log);}
+ assert.equal(Object.hasOwn(db.get('settings','main'),'paused'),false,'Home startup drops the retired paused flag');
  const base='/api/projects/p/collaboration-sessions';
  await t.test('human release removes review isolation and the scheduler admits the saved request',async()=>{
   assert.equal(db.get('coordinationRequests','request-s').taskId,undefined);

@@ -67,8 +67,6 @@ test('red that only a person can fix opens the sync panel', () => runWithLanguag
   expectOpen(left.light(), 'files the last batch left behind');
   const watch = env(); watch.watch('mac', 'blocked', { error: 'source_busy' });
   expectOpen(watch.light(), 'a failed watcher retries by itself; a batch would not clear it');
-  const queued = env(); queued.batch('q', 'queued'); queued.db.put('settings', { id: 'main', paused: true });
-  expectOpen(queued.light(), 'paused execution leaves batches queued');
 }));
 
 test('a blocked batch is retried from its source only when a new batch can help', () => runWithLanguage('en', () => {

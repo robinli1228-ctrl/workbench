@@ -158,8 +158,8 @@ test('stored default prompts follow the language; customised prompts are kept', 
 
 test('validation errors are localized', async () => {
   const prompts = await import(fileUrl('src', 'platform-prompts.mjs'));
-  const message = (lang) => withLanguage(lang, () => { try { prompts.updatePausedSetting({}, 'nope'); } catch (e) { return e.message; } });
-  assert.equal(await message('en'), 'paused must be a boolean');
+  const message = (lang) => withLanguage(lang, () => { try { prompts.updateConversationOrganizer({}, {}); } catch (e) { return e.message; } });
+  assert.equal(await message('en'), 'Invalid conversation organizer setting: nodeId');
   assert.ok(hasCjk(await message('zh')));
 });
 
@@ -171,14 +171,6 @@ test('matchers accept both languages', async () => {
   for (const lang of ['en', 'zh']) {
     assert.ok(await withLanguage(lang, () => roles.isSupervisorName(i18n.tr('rooms.supervisor'))), `${lang} supervisor display name`);
   }
-
-  const wechat = await import(fileUrl('src', 'wechat-channel.mjs'));
-  assert.equal(wechat.parseApprovalReply('Approve'), 'approved');
-  assert.equal(wechat.parseApprovalReply(' approve. '), 'approved');
-  assert.equal(wechat.parseApprovalReply('\u901a\u8fc7'), 'approved');
-  assert.equal(wechat.parseApprovalReply('Reject'), 'rejected');
-  assert.equal(wechat.parseApprovalReply('\u62d2\u7edd\u3002'), 'rejected');
-  assert.equal(wechat.parseApprovalReply('maybe'), null);
 
   const rooms = await import(fileUrl('src', 'rooms.mjs'));
   assert.deepEqual(rooms.mentionNames('please check @Developer, then @\u5ba1\u6838\u5458\uff0c and (@Tester)'), ['Developer', '\u5ba1\u6838\u5458', 'Tester']);

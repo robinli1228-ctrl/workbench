@@ -80,7 +80,7 @@ function worker(t, { check, prepareMs = 60000, makeContext, stop = async () => (
   const dir = mkdtempSync(join(tmpdir(), 'wb-switch-worker-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const db = new Store(join(dir, 'worker.sqlite')), calls = [];
-  const handler = createWorkerNativeAgentSwitch({ db, nodeId: 'n1', data: dir, projectRoot: async p => p, runtimes: () => [], isPaused: () => false, sourceBusy: () => false,
+  const handler = createWorkerNativeAgentSwitch({ db, nodeId: 'n1', data: dir, projectRoot: async p => p, runtimes: () => [], isDisconnected: () => false, sourceBusy: () => false,
     query: async (action, path) => { calls.push({ action, path }); return action === 'terminal_stop' ? stop(db, path) : {}; }, check, prepareMs, ...(makeContext ? { makeContext } : {}), ...(sweepMs ? { sweepMs } : {}) });
   const input = { operationId: crypto.randomUUID(), conversationId: 'c1', source: { runtime: 'claude', sessionId: SOURCE }, targetRuntime: 'codex', workspace: '/srv/work/demo' };
   db.put('terminalSessions', { id: input.operationId, nodeId: 'n1', projectId: `native-tui:${input.operationId}`, status: 'active' });

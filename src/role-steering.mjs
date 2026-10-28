@@ -31,7 +31,6 @@ export class RoleSteering {
       }
       const message=this.db.get('roomMessages',task.sourceMessageId);
       if(task.origin!=='chat'||task.status!=='ready'||task.currentRunId||message?.sender!=='human'||!message.taskIds?.includes(task.id)||task.scheduledJobId||task.planId||task.continuationRunId)throw new Error(tr('roleSteering.onlyHumanMessagesHaveNot'));
-      if(this.db.get('settings','main')?.paused)throw new Error(tr('roleSteering.remoteExecutionPaused'));
       const role=this.db.get('roles',task.roleId);
       if(!role?.enabled||role.archivedAt)throw new Error(tr('roleSteering.roleDisabledArchived'));
       if(this.db.list('tasks').some(t=>t.projectId===projectId&&t.roleId===task.roleId&&t.steering&&t.status==='ready'&&!t.currentRunId))throw new Error(tr('roleSteering.roleAlreadyHasSteeringMessage'));

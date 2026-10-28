@@ -55,13 +55,24 @@ export class Hosting {
     if (input.isDefault || !this.db.get('settings', 'main')?.hostingAccountId) this.db.put('settings', { ...this.db.get('settings', 'main'), id: 'main', hostingAccountId: id });
     return result;
   }
+  /**
+   * The account a repository uses when none was picked: the one whose space owns the repository, else the default account,
+   * else the platform's only account. Null when there is none or several fit equally. `ownerOnly` stops after the first step.
+   */
+  match(url, { ownerOnly = false } = {}) {
+    const remote = giteeRepository(url);
+    if (!remote) return null;
+    const accounts = this.db.list('hostingAccounts').filter(account => account.provider === remote.provider);
+    const owned = accounts.filter(account => String(account.owner || '').toLowerCase() === remote.owner.toLowerCase());
+    if (ownerOnly) return owned.length === 1 ? owned[0].id : null;
+    const preferred = this.db.get('settings', 'main')?.hostingAccountId;
+    return (owned.length === 1 ? owned[0].id : null) || accounts.find(account => account.id === preferred)?.id || (accounts.length === 1 ? accounts[0].id : null);
+  }
   async auth(accountId, url) {
     if (!accountId) {
-      const accounts=this.db.list('hostingAccounts').filter(account=>account.provider===giteeRepository(url)?.provider);
-      const preferred=this.db.get('settings','main')?.hostingAccountId;
-      accountId=accounts.find(account=>account.id===preferred)?.id || (accounts.length===1?accounts[0].id:null);
-      if(!accountId && accounts.length)throw new Error(tr('hosting.thereMultipleHostingAccountsOn'));
-      if(!accountId)return null;
+      accountId = this.match(url);
+      if (!accountId && this.db.list('hostingAccounts').some(account => account.provider === giteeRepository(url)?.provider)) throw new Error(tr('hosting.thereMultipleHostingAccountsOn'));
+      if (!accountId) return null;
     }
     const account = this.db.get('hostingAccounts', accountId), remote = giteeRepository(url);
     if (!account || remote.provider !== account.provider) throw new Error(tr('hosting.repositoryDoesNotMatchHosting'));

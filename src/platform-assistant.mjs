@@ -39,11 +39,9 @@ export class PlatformAssistant {
   }
   async approve(id) {
     let p=this.db.get('platformProposals',id);if(!p)throw new Error(tr('platformAssistant.configurationProposalNotFound'));if(p.status!=='pending')return p;
-    if(this.db.get('settings','main')?.paused)throw new Error(tr('platformAssistant.remoteExecutionPaused'));
     p=this.db.put('platformProposals',{...p,status:'running'});this.change();
     try {
       for(const a of p.actions){
-        if(this.db.get('settings','main')?.paused)throw new Error(tr('platformAssistant.remoteExecutionPaused2'));
         let result;
         if(a.type==='device')result=await (a.action==='check'?this.devices.check(a.deviceId):this.devices.provision(a.deviceId));
         if(a.type==='prepare')result=await this.projects.prepare(a.projectId,a.nodeId);
@@ -64,7 +62,6 @@ export class PlatformAssistant {
     config:this.db.get('settings','assistant')||{},prompt:configurationPrompt(),
     tasks:this.db.list('tasks').filter(t=>t.projectId===PROJECT_ID).slice(-10),runs:this.db.list('runs').filter(r=>r.projectId===PROJECT_ID).slice(-10)};}
   async send(input) {
-    if(this.db.get('settings','main')?.paused)throw new Error(tr('platformAssistant.remoteExecutionPaused3'));
     if(this.preparing)throw new Error(tr('platformAssistant.assistantInitializing'));
     const {nodeId,runtime,model,effort}=input;
     validateLocalSupervisor(this.db.get('workers',nodeId),input,this.online(nodeId));

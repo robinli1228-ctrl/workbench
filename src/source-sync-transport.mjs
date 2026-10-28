@@ -115,7 +115,6 @@ export class SourceSyncHome {
       const version=contentHash(JSON.stringify(scopes));
       if(socket.sourceWatchAck!==version&&(!socket.sourceWatchSent||Date.now()-socket.sourceWatchSent>5000)){socket.sourceWatchSent=Date.now();socket.send(JSON.stringify({type:'source_sync_watch_config',version,scopes}));}
     }
-    if(this.db.get('settings','main')?.paused)return;
     for(const config of configs){
       const notices=this.db.listProject('sourceSyncWatchNotices',config.projectId).filter(n=>n.generation===config.generation&&!n.handled);
       for(const n of notices.filter(n=>n.batchId)){

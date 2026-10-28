@@ -84,7 +84,7 @@ export class ExecutionPlans {
   }
   /** The query completes before the queue is released; stable call IDs and persisted stage state prevent duplicate dispatch after a restart. */
   async advance() {
-    if(this.busy || this.db.get('settings','main')?.paused) return false;
+    if(this.busy) return false;
     this.busy=true; let changed=false;
     try {
       for(let plan of this.db.list('executionPlans').filter(p=>p.status==='running')) {
@@ -220,7 +220,7 @@ export class ExecutionPlans {
             this.db.put('executionPlans',{...plan,updatedAt:now()});changed=true;
           }
           const latest=this.db.get('executionPlans',plan.id);
-          if(latest.status!=='running' || this.db.get('coordinationRequests',plan.parentRequestId)?.steeringTaskId || this.db.get('coordinationRequests',plan.parentRequestId)?.status==='cancelled' || this.db.get('settings','main')?.paused) continue;
+          if(latest.status!=='running' || this.db.get('coordinationRequests',plan.parentRequestId)?.steeringTaskId || this.db.get('coordinationRequests',plan.parentRequestId)?.status==='cancelled') continue;
           const parallel=stage.mode==='parallel' && plan.isolated;
           if(stage.exclusive && plan.isolated && stage.members.some(m=>this.db.get('coordinationRequests',m.requestId)?.status==='waiting_dependencies')) {
             const actual=await this.checked(plan,this.query({nodeId:stage.members[0].nodeId,projectId:plan.projectId},'execution_snapshot',{repositories:this.repositories(plan,stage.members[0].nodeId)},30000));

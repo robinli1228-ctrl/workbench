@@ -1,5 +1,6 @@
 import {t,dateLocale,getLanguage} from './i18n.js';
 import {renderMarkdown} from './markdown.js';
+import {setActionIcon} from './role-icons.js';
 
 const labels={latest:'Up to date',update_available:'Update available',modified:'Local modifications',ahead:'Ahead of main',diverged:'Diverged from main',unknown:'Version not confirmed',check_failed:'Update check failed'};
 const fingerprint=version=>JSON.stringify([version?.commit,version?.dirty,version?.repository,version?.observedAt]);
@@ -64,8 +65,8 @@ export function configurationInformationUI({api,getData,create}) {
     if(!guide.loading||guide.language!==language){guide.language=language;guide.loading=api(`/api/platform/setup-guide?lang=${language}`).then(result=>{guide.text=result.markdown||'';guide.loading=null;return guide.text;}).catch(error=>{guide.loading=null;throw error;});}
     return guide.loading;}
   guideCopy.addEventListener('click',async()=>{guideCopy.disabled=true;try{const text=await loadGuide();await navigator.clipboard.writeText(text);say(t('Copied the whole guide. Paste it to your AI assistant and ask it to help you configure Workbench.'));}catch(error){say(t(error.message),true);}finally{guideCopy.disabled=false;}});
-  guideToggle.addEventListener('click',async()=>{const open=guideBody.hidden;if(!open){guideBody.hidden=true;guideToggle.setAttribute('aria-expanded','false');guideToggle.textContent=t('Show guide');return;}
-    guideToggle.disabled=true;try{const text=await loadGuide();guideBody.replaceChildren(renderMarkdown(text));guideBody.hidden=false;guideToggle.setAttribute('aria-expanded','true');guideToggle.textContent=t('Hide guide');}catch(error){say(t(error.message),true);}finally{guideToggle.disabled=false;}});
+  guideToggle.addEventListener('click',async()=>{const open=guideBody.hidden;if(!open){guideBody.hidden=true;guideToggle.setAttribute('aria-expanded','false');setActionIcon(guideToggle,'overview',t('Show guide'));return;}
+    guideToggle.disabled=true;try{const text=await loadGuide();guideBody.replaceChildren(renderMarkdown(text));guideBody.hidden=false;guideToggle.setAttribute('aria-expanded','true');setActionIcon(guideToggle,'compact',t('Hide guide'));}catch(error){say(t(error.message),true);}finally{guideToggle.disabled=false;}});
   $('[data-settings-tab="information"]').addEventListener('click',()=>void load());
   return {refresh(){
     if(panel.hidden||busy)return;

@@ -57,7 +57,7 @@ export class RoleSwitchRuntime {
     const existing=this.db.get('tasks',action.id);
     if(existing?.currentRunId) {this.onRunSettled(this.db.get('runs',existing.currentRunId));return;}
     const worker=this.db.get('workers',op.nodeId),active=this.db.list('runs').filter(r=>r.nodeId===op.nodeId&&!terminal.has(r.status));
-    if(this.db.get('settings','main')?.paused||active.length>=(worker?.capacity||1)||active.some(r=>r.roleId===op.roleId||r.status==='reconciling'))return;
+    if(active.length>=(worker?.capacity||1)||active.some(r=>r.roleId===op.roleId||r.status==='reconciling'))return;
     const run=this.db.transaction(()=>{
       const current=this.switches.operation(id);
       if(current.status!==op.status)throw new Error('Switch stage changed before launch.');

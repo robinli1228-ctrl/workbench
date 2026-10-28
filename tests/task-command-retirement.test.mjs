@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import {readFileSync} from 'node:fs';
 import {normalizePlatformSettings,defaultPlatformPrompt,defaultSupervisorPrompt,executionRules} from '../src/platform-prompts.mjs';
-import {runWithLanguage} from '../src/i18n.mjs';import {helpText} from '../src/wb-tools.mjs';import {allowsPausedAgentOperation,agentRequest} from '../src/agent-bridge.mjs';
+import {runWithLanguage} from '../src/i18n.mjs';import {helpText} from '../src/wb-tools.mjs';import {agentRequest} from '../src/agent-bridge.mjs';
 import {Store} from '../src/store.mjs';import {SessionQueue} from '../src/session-queue.mjs';
 const old=JSON.parse(readFileSync(new URL('./fixtures/pre-task-prompts.json',import.meta.url)));
 for(const lang of ['en','zh'])test(`${lang} defaults migrate exactly, custom and empty remain intact`,()=>runWithLanguage(lang,()=>{
@@ -15,10 +15,10 @@ for(const cmd of ['schedule','collaboration','pass'])test(`${cmd} explains retir
  const r=spawnSync(process.execPath,['src/wb-cli.mjs',cmd],{env:{...env,LANG:'en',WB_SYSTEM_SUPERVISOR:'1',WB_QUEUE_BATCH:'1'},encoding:'utf8'});
  assert.equal(r.status,1);assert.match(r.stdout+r.stderr,/is retired|已停用/);
 });
-test('help, execution rules and paused bridge expose none of the removed tools',async()=>{
+test('help, execution rules and the bridge expose none of the removed tools',async()=>{
  const prior={...process.env};process.env.WB_SYSTEM_SUPERVISOR='1';process.env.WB_QUEUE_BATCH='1';
  try{assert.doesNotMatch(helpText(),/wb (schedule|collaboration|pass)\b/);assert.doesNotMatch(executionRules({collaborationBatchId:'old'},{minimal:true}),/wb pass/);
- for(const tool of ['schedule','collaboration-sessions','pass']){assert.equal(allowsPausedAgentOperation(`/api/agent/${tool}`,{action:'list'}),false);await assert.rejects(agentRequest(`/api/agent/${tool}`,{}));}}
+ for(const tool of ['schedule','collaboration-sessions','pass']){await assert.rejects(agentRequest(`/api/agent/${tool}`,{}));}}
  finally{for(const k of ['WB_SYSTEM_SUPERVISOR','WB_QUEUE_BATCH'])if(prior[k]===undefined)delete process.env[k];else process.env[k]=prior[k];}
 });
 test('retirement disables collection, cancels only definitely unstarted batches and keeps uncertain delivery',t=>{

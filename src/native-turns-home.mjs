@@ -29,7 +29,6 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       const record=sessionRecord?.(nodeId,runtime,sessionId);
       if(sessionRecord&&!record)throw Error('Session is not registered with Workbench');
       if(sessionRecord&&db.get('workers',nodeId)?.capabilities?.nativeSessionOwnership!==1)throw Error('Upgrade this Worker to read only Workbench sessions; external history scanning is disabled');
-      if(db.get('settings','main')?.paused)throw Error('Remote execution is paused');
       const existing=previous?.leaseId&&held(previous.leaseId)?db.get('terminalSessions',previous.leaseId):null;
       if(existing&&(previous.status!=='open'||existing.status==='stopping'))throw Error('The previous takeover is still closing');
       const leaseId=existing?.id||randomUUID(),owner=nativeTerminalProject(db,{nodeId,runtime,sessionId}),projectId=owner||existing?.projectId||`native-tui:${leaseId}`;
@@ -65,7 +64,8 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     // A reply or another send may have advanced the session while this query was in flight.
     if(stamp()!==before)return;
     if(reply?.leaseId!==previous.leaseId||reply.runtime!==runtime||reply.sessionId!==sessionId||!Array.isArray(reply.activeIds))throw Error('\u4f1a\u8bdd\u72b6\u6001\u6838\u5bf9\u4e0d\u5339\u914d\uff0c\u8bf7\u91cd\u8bd5');
-    if(reply.paused)throw Error('\u8bbe\u5907\u6267\u884c\u5df2\u6682\u505c\uff0c\u6062\u590d\u540e\u8bf7\u91cd\u8bd5');
+    // `paused` on this reply is the Worker's own state (not yet registered with Home, or quitting), not a platform pause.
+    if(reply.paused)throw Error('\u8bbe\u5907\u672a\u8fde\u63a5\u4e3b\u63a7\u6216\u6b63\u5728\u9000\u51fa\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5');
     const current=active(),known=new Set(current.map(t=>t.id));
     if(reply.activeIds.some(id=>!known.has(id)))throw Error('\u8bbe\u5907\u4ecd\u6709\u6267\u884c\u4e2d\u7684\u6d88\u606f\uff0c\u7b49\u5f85\u72b6\u6001\u540c\u6b65\u540e\u8bf7\u91cd\u8bd5');
     if(reply.processState==='released'&&!reply.activeIds.length){
@@ -139,7 +139,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       json(res,{items:turns.list(nodeId,runtime,sessionId),queue:turns.queueState(nodeId,runtime,sessionId),process:open?'open':'closed',supported:worker.capabilities?.nativeTurns===3,controls:worker.capabilities?.nativeControls===1,settings:turns.settings(nodeId,runtime,sessionId)});return true;}
     if(area==='turns'&&!a&&req.method==='POST'){const input=await body(req);if(input.allowAll!==true)throw Error('Confirm automatic tool execution before taking over this session');if(input.control&&worker.capabilities?.nativeControls!==1)throw Error('Upgrade this Worker to compact a native session');
       await refresh(nodeId,input.runtime,input.sessionId);
-      const credential=input.control?null:await gitCredential(turns.settings(nodeId,input.runtime,input.sessionId));const created=turns.create(nodeId,worker,input,{gitCredential:credential});
+      const credential=input.control?null:await gitCredential(turns.settings(nodeId,input.runtime,input.sessionId),{nodeId,runtime:input.runtime,sessionId:input.sessionId});const created=turns.create(nodeId,worker,input,{gitCredential:credential});
       json(res,created,201);return true;}
     // Side question: ask (creates one, or continues ?sideId), read it while it is answered, clear it.
     if(area==='side'&&!a&&req.method==='POST'){const input=await body(req);switches.assertExecutable({...input,nodeId});json(res,sideAsks.ask(nodeId,worker,input),201);return true;}
@@ -156,7 +156,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
     if(area==='turns'&&a==='queue'&&!b&&req.method==='POST'){json(res,turns.setQueue(nodeId,await body(req)));return true;}
     throw Error('Invalid session action');
   }
-  return {turns,http,switches,gitCredentialFor:(nodeId,runtime,sessionId)=>gitCredential(turns.settings(nodeId,runtime,sessionId)),
+  return {turns,http,switches,gitCredentialFor:(nodeId,runtime,sessionId)=>gitCredential(turns.settings(nodeId,runtime,sessionId),{nodeId,runtime,sessionId}),
     message:(nodeId,m)=>['side_ask_event','side_ask_closed'].includes(m.type)?sideAsks.receive(nodeId,m):['native_turn_event','native_takeover_closed','native_takeover_lease'].includes(m.type)?(turns.receive(nodeId,m),true):false,sideAsks,
     disconnected:nodeId=>{turns.disconnected(nodeId);sideAsks.disconnected(nodeId);},reconnected:(nodeId,turnIds)=>turns.reconnected(nodeId,turnIds)};
 }

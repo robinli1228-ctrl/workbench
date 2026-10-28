@@ -66,7 +66,7 @@ export class CliRecoveryHome {
     // Accepted launches waiting on a last-moment race must retry even while their own Run holds capacity.
     // Ordinary ready tasks are checked by Room only after the other admission gates pass.
     for(const task of this.db.chatTasks().filter(t=>this.db.get('runs',t.currentRunId||'')?.cliRecoveryWait)){
-      if(!this.db.get('settings','main')?.paused)void this.check(task);
+      void this.check(task);
     }
     for(const record of this.db.unresolvedRecoveries())if(!this.current(record))this.db.put('cliRecoveries',{...record,state:'resolved',canStop:false});
   }
@@ -78,7 +78,7 @@ export class CliRecoveryHome {
     if(saved){if(saved.taskId!==taskId||saved.requestId!==record.requestId)throw Error(tr('cliRecovery.bindingChanged'));if(saved.completed)return Promise.resolve(saved.result);}
     if(this.decisions.has(input.decisionId))return this.decisions.get(input.decisionId);
     if(this.stoppingTasks.has(taskId))throw Error(tr('cliRecovery.stopPending'));
-    if(!this.current(record)||!record.canStop||this.db.get('settings','main')?.paused)throw Error(record.reason||tr('cliRecovery.bindingChanged'));
+    if(!this.current(record)||!record.canStop)throw Error(record.reason||tr('cliRecovery.bindingChanged'));
     this.stoppingTasks.add(taskId);
     const operation=(async()=>{
       this.db.put('cliRecoveryDecisions',{id:input.decisionId,projectId,taskId,requestId:record.requestId,completed:false});

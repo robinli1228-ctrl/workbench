@@ -155,7 +155,6 @@ export class RoleCalls {
       if (normalized.deliveryId && this.db.get('deliveries', normalized.deliveryId)?.projectId !== input.projectId) throw new Error(tr('roleCalls.deliveryDoesNotBelongProject'));
       if(normalized.sourceSyncBatchId&&this.db.get('sourceSyncBatches',normalized.sourceSyncBatchId)?.projectId!==input.projectId)throw new Error(tr('roleCalls.deliveryDoesNotBelongProject'));
       if(normalized.sourceSyncBatchId)sourceInputBatch(this.db,normalized.sourceSyncBatchId,input.projectId);
-      if (this.db.get('settings', 'main')?.paused) throw new Error(tr('roleCalls.remoteExecutionPaused'));
       const now = new Date().toISOString();
       return this.db.put('coordinationRequests', { ...normalized, conversationId, fingerprint,
         collaborationSessionId: sourceRequest?.collaborationSessionId || null,
@@ -209,7 +208,7 @@ export class RoleCalls {
   reconcile(requestId) {
     try {return this.db.transaction(() => {
       const r = this.db.get('coordinationRequests', requestId);
-      if (!r || callTerminal.has(r.status) || this.db.get('settings', 'main')?.paused) return r;
+      if (!r || callTerminal.has(r.status)) return r;
       if (r.taskId || r.currentRunId || !['queued', 'waiting_delivery'].includes(r.status)) return r;
       if(reviewView(this.db,{projectId:r.projectId,roleId:r.targetRoleId}).get('coordinationRequests',r.id)?.reviewRedacted)
         return this.db.put('coordinationRequests',{...r,waitingReason:'review_isolation'});
@@ -368,12 +367,11 @@ export class RoleCalls {
     if (!children.length) return;
     const ready=children.every(r=>callTerminal.has(r.status)),expired=parent.waitDeadlineAt&&Date.parse(parent.waitDeadlineAt)<=time;
     // A dependency that cannot start (device offline, CLI unusable) wakes the waiter once per blocked episode, like an
-    // early timeout: the requests stay active and nothing is cancelled or redispatched. Paused Homes never wake anyone.
+    // early timeout: the requests stay active and nothing is cancelled or redispatched.
     const blocked=!ready&&!expired?children.filter(c=>!callTerminal.has(c.status)).map(c=>({request:c,block:blockedDependency(this.db,c,time)})).filter(x=>x.block):[];
-    if(!ready&&!expired&&(!blocked.length||this.db.get('settings','main')?.paused))return;
+    if(!ready&&!expired&&!blocked.length)return;
     const reason=ready?'results':expired?'timeout':'blocked';
     if(!parent.waitEvent)this.db.put('coordinationRequests',{...parent,waitEvent:{id:`wait:${parent.id}`,reason,observedAt:new Date(time).toISOString(),requestIds:children.map(r=>r.id)}});
-    if (this.db.get('settings', 'main')?.paused) return;
     // The user cancelled or redirected the work this wait served: keep the late replies, close the wait, start nothing.
     const source=parent.parentRequestId?this.db.get('coordinationRequests',parent.parentRequestId):null;
     if(source&&(source.status==='cancelled'||source.steeringTaskId)) {
@@ -429,7 +427,7 @@ export class RoleCalls {
    * Once at Home start, before replaying results: a wait the old resume bug left behind (all dependencies settled, no
    * continuation, and the failed attempt recorded in waitingReason) is ended as resume_failed when its replies settled
    * long ago, instead of being revived on stale context. Recent ones are left to the normal resume, which now succeeds.
-   * Waits held for other reasons (paused Home, running plan, discussion) carry no failure and are never touched.
+   * Waits held for other reasons (running plan, discussion) carry no failure and are never touched.
    */
   reconcileStuckWaits(time=Date.now()) {
     return this.db.transaction(()=>{
