@@ -49,7 +49,7 @@ const busyState=icon=>stateBlock(icon,'',{tone:'busy'});
 const emptyState=(icon,label,busy=false)=>busy?busyState(icon):stateBlock(icon,label);
 
 /** The session view reads native history and prepares terminal links. Only after an explicit takeover does it submit turns, resuming the same native ID. */
-export function createNativeSessionUI({api,documentPreview,getData,artifactRow=null,onModeChange,onPreview,onSelect=()=>{},onStateRefresh=async()=>{}}){
+export function createNativeSessionUI({api,documentPreview,getData,onModeChange,onPreview,onSelect=()=>{},onStateRefresh=async()=>{}}){
  const mode=document.querySelector('#navigation-mode'),list=el('nav','project-list native-session-list'),content=el('section','native-session-content panel'),side=el('section','native-session-sidebar');
  list.id='native-session-list';content.id='native-session-content';side.id='native-session-sidebar';
  document.querySelector('#project-list').after(list);document.querySelector('main.workspace').append(content);document.querySelector('#node-sidebar').append(side);
@@ -110,8 +110,8 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   if(changed&&sideTab==='outputs'&&selected&&mediaContext(selected)?.key===context.key){clearTimeout(outputsTimer);outputsTimer=setTimeout(renderOutputs,100);}
  }
  /**
-  * Project outputs come only from a trusted link: the group-chat role binding of a managed session, or exactly one
-  * project whose role session on this device recorded this native ID. Standalone sessions are never guessed or scanned.
+  * Resolve the registered project for project-level controls using role identity or an unambiguous workspace binding.
+  * The Files tab does not load that project's artifacts or scan the session working folder.
   */
  function sessionProject(item){
   const data=getData();if(!item)return null;
@@ -126,55 +126,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   if(!hits.length)return null;const ids=new Set(hits.filter(w=>w.localRoot.length===hits[0].localRoot.length).map(w=>w.projectId));
   return ids.size===1?data.projects?.find(p=>p.id===[...ids][0])||null:null;
  }
- const projectOutputs=new Map();
- async function loadProjectOutputs(projectId,force=false){
-  const cached=projectOutputs.get(projectId);if(cached?.loading||!force&&cached?.at&&Date.now()-cached.at<30000)return;
-  projectOutputs.set(projectId,{...cached,loading:true});if(sideTab==='outputs')renderOutputs();
-  try{const result=await api(`/api/projects/${encodeURIComponent(projectId)}/artifacts`);projectOutputs.set(projectId,{items:result.items||[],partial:Boolean(result.partial),at:Date.now()});}
-  catch(error){projectOutputs.set(projectId,{items:[],error:error.message,at:Date.now()});}
-  if(sideTab==='outputs')renderOutputs();
- }
- /**
-  * Media and files the session produced under its working folder's outputs/ and artifacts/ (one level of subfolders),
-  * read through the device's folder listing; videos and images open in the media viewer, other files in the preview.
-  */
- const OUTPUT_DIRS=['outputs','artifacts'],producedState=new Map();
- async function loadProduced(session,force=false){
-  const id=key(session),root=session.workspace;if(!root)return;const st=producedState.get(id);
-  if(st?.loading||!force&&st?.root===root&&st.at&&Date.now()-st.at<30000)return;
-  const next={root,loading:true,files:st?.root===root?st.files:null,error:null,at:st?.at||0};producedState.set(id,next);if(sideTab==='outputs')renderOutputs();
-  const list=async path=>{try{const result=await api(`${endpoint(session.nodeId)}/folders?${new URLSearchParams({path,offset:'0'})}`);return (result.entries||[]).filter(e=>e.type==='folder'||e.type==='file');}catch{return null;}};
-  const files=[];let found=false;
-  for(const dir of OUTPUT_DIRS){const entries=await list(`${root.replace(/\/+$/,'')}/${dir}`);if(!entries)continue;found=true;
-   for(const e of entries)if(e.type==='file')files.push(e.path);
-   for(const folder of entries.filter(e=>e.type==='folder').slice(0,12)){for(const e of (await list(folder.path))||[])if(e.type==='file')files.push(e.path);if(files.length>=80)break;}}
-  if(producedState.get(id)!==next)return;
-  producedState.set(id,{root,loading:false,files:found?files.slice(0,80):null,error:null,at:Date.now()});
-  if(sideTab==='outputs'&&selected&&key(selected)===id)renderOutputs();
- }
-  /**
-  * Files tab, card 1: the project's outputs — media and files under the working folder's outputs/ and artifacts/ (one level of
-  * subfolders), then the project's recorded outputs (the group chat's Recent Outputs) that are not already listed.
-  */
- function outputsCard(session){
-  const card=el('section','native-side-card native-files-half native-outputs-card'),head=el('div','native-card-head'),body=el('div','native-files-body');
-  head.append(el('h3','',t('Project outputs')));card.append(head,body);
-  const st=producedState.get(key(session)),context=mediaContext(session),project=artifactRow?sessionProject(session):null,cached=project?projectOutputs.get(project.id):null;
-  if(!st||st.root!==session.workspace||(!st.loading&&!st.at))void loadProduced(session);
-  if(project&&(!cached?.at||Date.now()-cached.at>=30000))void loadProjectOutputs(project.id);
-  const refresh=iconButton('refresh','Refresh',()=>{void loadProduced(session,true);if(project)void loadProjectOutputs(project.id,true);});refresh.disabled=Boolean(st?.loading||cached?.loading);head.append(refresh);
-  const produced=st?.root===session.workspace?st.files||[]:[],seen=new Set(produced);
-  const media=produced.filter(path=>mediaKindFromName(path)!=='file'),others=produced.filter(path=>mediaKindFromName(path)==='file');
-  if(media.length&&context){const list=el('div','native-output-list');media.slice(0,40).forEach((path,index)=>list.append(mediaCard(path,context,{describe:index<12})));body.append(list);}
-  if(others.length){const list=el('div','native-file-list');for(const path of others.slice(0,40))list.append(fileRow(session,path,null));body.append(list);}
-  const records=(cached?.items||[]).filter(file=>!seen.has(file.path)&&!seen.has(file.originPath));
-  if(records.length){const list=el('div','native-project-output-list');for(const file of records.slice(0,30))list.append(artifactRow(file));body.append(list);if(cached.partial||records.length>30)body.append(el('p','native-side-hint',t('Showing part of the project outputs; the group chat lists the rest.')));}
-  if(cached?.error&&!body.childElementCount)body.append(failedState(cached.error,()=>void loadProjectOutputs(project.id,true)));
-  const busy=Boolean(session.workspace&&(!st?.at||st.loading))||Boolean(project&&(!cached?.at||cached.loading));
-  if(!body.childElementCount)body.append(busy?emptyState('original','Loading…',true):emptyState('original','No outputs yet'));
-  return card;
- }
- /** Files tab: what the CLI touched in page turns, files named in replies, the working folder itself, and project outputs. */
+ /** The working folder is browsed only when its header button is opened. */
  const folderState=new Map();
  const fileName=path=>String(path||'').replace(/[\\/]+$/,'').split(/[\\/]/).pop()||String(path||'');
  const fileDir=path=>{const name=fileName(path);return String(path||'').slice(0,Math.max(0,String(path||'').length-name.length));};
@@ -279,15 +231,15 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
  function openFolder(){if(!selected)return;folderDialog.querySelector('.native-folder-slot').replaceChildren(folderCard(selected));if(!folderDialog.open)folderDialog.showModal();}
  function renderFolder(){const prior=folderDialog.open&&folderDialog.querySelector('.native-folder-card');if(prior&&selected&&side.dataset.sessionKey===key(selected))prior.replaceWith(folderCard(selected));}
  function renderOutputs(){
-  const panel=sidePanels.outputs;panel.replaceChildren();
-  if(!selected){if(folderDialog.open)folderDialog.close();panel.append(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
+  const panel=sidePanels.outputs;
+  if(!selected){if(folderDialog.open)folderDialog.close();panel.replaceChildren(el('p','native-side-hint',t('Select a native session to view its details.')));return;}
   const context=mediaContext(selected);
-  // The project's outputs take most of the height, files named in the loaded replies the rest; the working folder is a dialog.
+  // Replace the complete view once: only files named in this session's loaded replies belong here.
   const mentioned=el('section','native-side-card native-files-half'),head=el('div','native-card-head'),body=el('div','native-files-body');head.append(el('h3','',t('Named in replies')));mentioned.append(head,body);
   const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
   if(!items.length)body.append(emptyState('quote','No files mentioned yet'));
   else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));body.append(list);}
-  panel.append(outputsCard(selected),mentioned);renderFolder();
+  panel.replaceChildren(mentioned);renderFolder();
  }
  resetSide();
  // Session settings live behind a gear at the right end of the top bar, where the connection note sits in other modes.

@@ -279,7 +279,7 @@ function createMobileDrawers() {
 const drawers = createMobileDrawers();
 const inspector=createWorkspaceInspector({api,documentPreview,refreshState,onError:setError,getConversationId:()=>app.selectedConversationId||app.selectedProjectId,onSideAskOpen:()=>{setInspectorMode('shown');mobilePanel('roles');},getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
 const conversationTaskUI=createConversationTaskUI({api,getScope:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),getRoles:()=>[...app.data.roles,...app.data.supervisorRoles],openMessage:async(scope,id)=>{mobilePanel('chat');await room.jumpMessage(scope,id);}});
-const nativeSessionUI=createNativeSessionUI({api,documentPreview,onSelect:()=>renderSyncDot(),getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
+const nativeSessionUI=createNativeSessionUI({api,documentPreview,onSelect:()=>renderSyncDot(),getData:()=>app.data,onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
 sessionProjectId=()=>nativeSessionUI.currentProjectId();
 initWorkspaceColumns();
 const mobilePanel = drawers.set;
