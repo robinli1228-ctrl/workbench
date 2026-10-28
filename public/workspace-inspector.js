@@ -34,7 +34,7 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
   }
   concurrent.addEventListener('click',async()=>{
     const project=getProject();if(!project||concurrent.disabled)return;concurrent.disabled=true;
-    try{if(await saveConcurrentWrites({api,projectId:project.id,enabled:concurrent.getAttribute('aria-pressed')!=='true'})!==null)await refreshState({quiet:true});}
+    try{if(await saveConcurrentWrites({api,getData,projectId:project.id,enabled:concurrent.getAttribute('aria-pressed')!=='true'})!==null)await refreshState({quiet:true});}
     catch(error){onError(error);}
     finally{concurrent.disabled=false;syncConcurrent();}
   });
