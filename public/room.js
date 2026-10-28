@@ -17,7 +17,7 @@ import { renderPermissionScope, permissionScopeValue } from './permission-scope.
 import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl } from './elapsed.js';
-import {classifyStep,stepTitle} from './native-transcript.js';
+import {classifyStep,stepTitle,toolFilePaths} from './native-transcript.js';
 import stepZh from './locales/native-takeover-zh.js';
 import { getLanguage } from './i18n.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
@@ -800,8 +800,29 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
 
   /** Chat prose is simplified for display only; copying and the Original view retain the complete stored text. */
   /** Media files named in a reply open in the shared viewer; bytes stay on the device that ran the turn until requested. */
-  const mediaContext=runId=>runId?{key:`run:${runId}`,describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`)}:null;
-  const renderLinkedMarkdown=(text,runId)=>documentPreview.decorate(linkMedia(renderMessageMarkdown(simplifiedCliOutput(text)),mediaContext(runId)),{kind:'run',runId});
+  const filePathsByRun=new Map(),filePathsLoading=new Map();
+  const eventPaths=events=>{const tools=new Map();for(const event of events||[]){const item=event.type==='tool'&&event.payload?.item,id=item&&(item.id||item.tool_use_id);if(id)tools.set(id,{...tools.get(id),...item});}
+    return toolFilePaths([...tools.values()].map(item=>classifyStep(item,'succeeded')));};
+  const filePathsFor=runId=>[...new Set([...(filePathsByRun.get(runId)?.paths||[]),...eventPaths(liveByRun.get(runId)?.events)])];
+  /** Old group cards load only their own Run on an explicit file click; retain paths, not full tool outputs. */
+  async function loadFilePaths(runId){
+    if(!runId)return;const saved=filePathsByRun.get(runId),lastSeq=liveByRun.get(runId)?.seq||0;
+    if(saved&&Date.now()-saved.at<30000&&saved.seq>=lastSeq)return;
+    if(filePathsLoading.has(runId))return filePathsLoading.get(runId);
+    const request=(async()=>{let after=0;const events=[];
+      for(let page=0;page<5;page++){
+        const result=await api(`/api/runs/${encodeURIComponent(runId)}/events?after=${after}&limit=100`),batch=result.events||[];
+        for(const event of batch)if(event.type==='tool')events.push(event);
+        const seq=batch.at(-1)?.seq||after;
+        if(!result.hasMore){filePathsByRun.delete(runId);filePathsByRun.set(runId,{paths:eventPaths(events),seq,at:Date.now()});while(filePathsByRun.size>32)filePathsByRun.delete(filePathsByRun.keys().next().value);return;}
+        if(seq<=after)break;after=seq;
+      }
+      throw Error(t('Tool history is incomplete; use a full path.'));
+    })().finally(()=>filePathsLoading.delete(runId));filePathsLoading.set(runId,request);return request;
+  }
+  const fileContext=runId=>({filePaths:()=>filePathsFor(runId),loadFilePaths:()=>loadFilePaths(runId)});
+  const mediaContext=runId=>runId?{key:`run:${runId}`,...fileContext(runId),describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`)}:null;
+  const renderLinkedMarkdown=(text,runId)=>documentPreview.decorate(linkMedia(renderMessageMarkdown(simplifiedCliOutput(text)),mediaContext(runId)),{kind:'run',runId,...fileContext(runId)});
   function replyPreview(text, markdown = true, runId = null, key = '') {
     const preview = create('div', 'chat-reply-preview');
     preview.dataset.previewKey = `${projectId}:${key}`;

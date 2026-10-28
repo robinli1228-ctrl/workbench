@@ -5,6 +5,24 @@ import {stripAnsi} from './run-log-data.js';
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
 const MAX_DIFF_LINES=4000,MAX_PREVIEW=400000;
 
+/** Resolve only bare names against this turn's explicit tool paths; ambiguity must never select another file. */
+export function resolveToolFile(path,paths=[]) {
+ if(typeof path!=='string'||/[\\/]/.test(path))return {path};
+ const matches=[...new Set(paths.filter(p=>typeof p==='string'&&!/[\x00-\x1f]/.test(p)&&!/^\w+:/.test(p)&&p.split(/[\\/]/).at(-1)===path).map(p=>p.replace(/^(?:\.\/)+/,'')))];
+ return matches.length>1?{path,reason:'file_ambiguous'}:matches.length===1?{path:matches[0],matched:true}:{path};
+}
+
+/** File location evidence comes from tool fields, never arbitrary command output or another turn's inventory. */
+export function toolFilePaths(steps=[]) {
+ return [...new Set(steps.filter(step=>!step.failed).flatMap(step=>step.files||[]).filter(path=>typeof path==='string'&&path.length<=4096))];
+}
+
+/** A partial history reply is not a receipt for the saved final answer. Compare prose only, ignoring display whitespace. */
+export function historyContainsReply(reply,texts=[]) {
+ const normalized=value=>stripAnsi(String(value||'')).replace(/\s+/g,' ').trim(),wanted=normalized(reply);
+ return Boolean(wanted)&&[...texts,texts.join('\n\n')].some(text=>normalized(text).includes(wanted));
+}
+
 /** Step icons: 24-unit line artwork scaled into the 20-unit box; each kind gets its own colour in the stylesheet. */
 const ICONS={
  // A page with lines: a file read.

@@ -250,7 +250,6 @@ button.usage-model-stack { display:flex; flex-direction:column-reverse; flex-shr
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.topbar-actions .connection-note { flex: 0 1 auto; }
 .settings-connection-note {
   max-width: none;
   white-space: normal;
@@ -937,10 +936,6 @@ dialog::backdrop { background: rgb(18 33 24 / 32%); backdrop-filter: none; }
     box-sizing: border-box;
   }
   .project-settings-body { padding: 0; }
-  .topbar-actions .connection-note {
-    max-width: 120px;
-    font-size: 10px;
-  }
   .dialog-heading { margin-bottom: 14px; padding-top: env(safe-area-inset-top);
     background: #fff; align-items: center; gap: 10px; }
   .dialog-heading h2 { font-size: 18px; overflow-wrap: anywhere; }
@@ -1703,14 +1698,6 @@ button.action-icon-button { display: inline-flex; align-items: center; justify-c
   .topbar-actions { flex-shrink:0; gap:6px; }
   .topbar-actions .version { display:none; }
   .topbar-actions .icon-button { width:30px; height:30px; min-height:30px; padding:6px; }
-  /* The dot is the project's file-sync light: an 18px target around a 6px dot with a soft halo. */
-  .topbar .connection-note { --dot:#8a909c; --halo:rgb(138 144 156 / 20%); font-size:0; width:18px; height:18px; min-height:18px; padding:0; margin:0 1px; border:0; border-radius:50%; box-shadow:none; cursor:default; background:radial-gradient(circle, var(--dot) 0 3px, var(--halo) 3.5px 6px, transparent 6.5px); }
-  .topbar .connection-note[data-sync="green"] { --dot:#20a579; --halo:rgb(32 165 121 / 16%); }
-  .topbar .connection-note[data-sync="orange"] { --dot:#e6a124; --halo:rgb(230 161 36 / 18%); }
-  .topbar .connection-note[data-sync="red"] { --dot:#d95151; --halo:rgb(217 81 81 / 18%); cursor:pointer; }
-  .topbar .connection-note[data-sync="red"][aria-disabled="false"]:hover { --halo:rgb(217 81 81 / 30%); }
-  .topbar .connection-note[data-sync="red"][aria-disabled="true"] { cursor:progress; }
-  .topbar .connection-note:focus-visible { box-shadow:var(--focus-ring); }
   .node-sidebar { display:flex; flex-direction:column; height:100%; min-height:0; padding:0; overflow:hidden; }
   .inspector-tabs { height:67px; min-height:0; box-sizing:border-box; }
   .column-splitter { display:block; position:absolute; top:0; bottom:0; width:7px; transform:translateX(-4px); cursor:col-resize; z-index:12; touch-action:none; outline-offset:-2px; }
