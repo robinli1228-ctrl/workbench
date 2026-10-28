@@ -2996,8 +2996,7 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 
 /* ---- Sessions page right panel: connection, model/context, files; composer aligned with the inspector tab bar ---- */
 .native-session-content.panel { border: 0; border-radius: 0; box-shadow: none; }
-.native-session-footer { border-top: 0; }
-.native-takeover-form.chat-composer { border-top: 1px solid var(--line); }
+.native-takeover-form.chat-composer { border-top: 0; }
 @media (min-width: 1001px) {
   .native-takeover-form.chat-composer { min-height: 67px; padding-block: 13px; }
   .native-takeover-form textarea { min-height: 37.6px; height: 37.6px; padding-block: 8px; }
