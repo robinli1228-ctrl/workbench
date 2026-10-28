@@ -71,7 +71,6 @@ import {SourceSyncHome} from './source-sync-transport.mjs';
 import {syncIndicator} from './sync-indicator.mjs';
 import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {acceptSourceProvenance} from './source-sync-provenance.mjs';
-import { WechatChannel, wechatTransport } from './wechat-channel.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
 import { roleResponsibility } from './role-definition.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
@@ -229,9 +228,8 @@ const assistant = new PlatformAssistant({db,rooms,coordinator,query:workerQuery,
 const tokenUsage = new TokenUsage(db,workerQuery,online,change);
 const usageRetry=createTokenUsageBackgroundCollector({collect:nodeId=>tokenUsage.collect(nodeId),online,getState:nodeId=>db.get('tokenUsageStates',nodeId)});
 const collectUsage = nodeId => { if(db.get('workers',nodeId)?.capabilities?.tokenUsage===1) void usageRetry.run(nodeId); };
-const wechat = new WechatChannel({ db, rooms, ...wechatTransport(), respondApproval, change, schedule: scheduleChat });
 
-/** The web and WeChat share the same approval validation, so external messages get no extra execution privileges. */
+/** Validates a browser approval reply before it becomes an approval command for the Run's Worker. */
 function respondApproval(approvalId, decision, commandId) {
   const a = db.get('approvals', approvalId), repeated = db.get('commands', commandId || '');
   if (repeated) {
@@ -398,7 +396,7 @@ function snapshot(scope=null) {
     attachmentTransfers:db.list('attachmentTransfers').slice(-200).map(({fingerprint,...t})=>t),
     hostingAccounts: db.list('hostingAccounts'), devices: db.list('devices').map(d => ({ ...d, status: online(d.nodeId) ? 'online' : d.status })), repositoryOperations: db.list('repositoryOperations'),
     repositories: db.list('repositories'), repositoryWorkspaces: db.list('repositoryWorkspaces'), setupProposals: db.list('setupProposals'), projectGitVersions:db.list('projectGitVersions'),
-    approvals: db.list('approvals'), settings: normalizePlatformSettings(db.get('settings', 'main')), wechat: wechat.status(),
+    approvals: db.list('approvals'), settings: normalizePlatformSettings(db.get('settings', 'main')),
     promptDefaults: { platformPrompt: defaultPlatformPrompt(), supervisorPrompt: defaultSupervisorPrompt() },
     roleTemplates: listRoleTemplates(db), supervisors: db.list('supervisorConfigs'),
     executionPlans: db.list('executionPlans').map(({fingerprint,...p})=>p),
@@ -674,18 +672,6 @@ const server = http.createServer(async (req, res) => {
         const state=snapshot(workspace?workspaceScope(db,url.searchParams.get('projectId')):null);
         const view=workspace?workspaceFeed.read(state,url.searchParams.get('projectId'),url.searchParams.get('cursor'),url.searchParams.get('conversationId')):state;
         return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(view)),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
-      }
-      if (pathname === '/api/wechat' && req.method === 'GET') return json(res, wechat.status());
-      if (pathname === '/api/wechat' && req.method === 'POST') { const b=await body(req); return json(res, wechat.configure(b.enabled,b.channelId)); }
-      if (pathname === '/api/wechat/health' && req.method === 'POST') return json(res, await wechat.health());
-      const wechatAction = pathname.match(/^\/api\/wechat\/([^/]+)\/(retry|cancel)$/);
-      if (wechatAction && req.method === 'POST') {
-        if (wechatAction[2] === 'retry') wechat.retry(wechatAction[1]); else wechat.close(wechatAction[1]);
-        return json(res, wechat.status());
-      }
-      const wechatProject = pathname.match(/^\/api\/projects\/([^/]+)\/wechat$/);
-      if (wechatProject && req.method === 'POST') {
-        const link = wechat.openProject(wechatProject[1]); void wechat.tick().catch(() => {}); return json(res, { id: link.id }, 201);
       }
       if((pathname.includes('native-')||/^\/api\/agent\/side-asks\/[^/]+\/[^/]+$/.test(pathname)||/^\/api\/projects\/[^/]+\/(?:messages|runs)\/[^/]+\/side$/.test(pathname))&&await nativeTurns.http(req,res,{pathname,url,json,body}))return;
       const nativeGit=pathname.match(/^\/api\/native-sessions\/([^/]+)\/git$/);
@@ -1003,10 +989,6 @@ const server = http.createServer(async (req, res) => {
         if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
         if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
         if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
-        if (pathname === '/api/agent/notify') {
-          if (Object.keys(b).some(key=>!['runId','action','input'].includes(key))) throw new Error(tr('wechatChannel.toolGuide'));
-          const result=wechat.notify(run,b.action,b.input); void wechat.tick().catch(()=>{}); return json(res,result);
-        }
         if(pathname==='/api/agent/source-sync'){const result=await sourceSync.agent.execute(run,b.action,b.input||{});change();return json(res,result);}
         if(pathname==='/api/agent/source-candidates'){const result=b.finish?await sourceSync.agent.completeCandidate(run,b.candidateId):sourceSync.agent.stageCandidate(run,b);change();return json(res,result);}
         if(pathname==='/api/agent/discussions') {
@@ -1285,7 +1267,7 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'GET') return await sendBufferedResponse(req,res,Buffer.from(JSON.stringify(rooms.messages(m[1],url.searchParams.get('before'),url.searchParams.get('conversationId')??undefined,url.searchParams.get('afterReceipt')))),{ 'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store' });
         if (req.method === 'POST') {
           const input = await body(req);
-          const r = db.transaction(() => { const message = rooms.post(m[1], input); wechat.webReply(message); return message; });
+          const r = db.transaction(() => rooms.post(m[1], input));
           scheduleChat(); change(); return json(res, r, 201);
         }
       }
@@ -1710,8 +1692,6 @@ const maintenanceDaily = setInterval(() => void runHomeMaintenance(), 24 * 36000
 const sessionQueueTimer=setInterval(()=>{try{queuePump.tick();void queuePump.reconcileVerifications().then(changed=>{if(changed)change();}).catch(e=>console.error(e.message));}catch(e){console.error(e.message);}},2000);sessionQueueTimer.unref();
 const terminalMonitor=setInterval(()=>{void reconcileTerminals();},15000);terminalMonitor.unref();
 const sourceSyncTimer=setInterval(()=>{void sourceSync.tick().catch(e=>console.error(e.message));},1000);sourceSyncTimer.unref();
-const wechatPoll = setInterval(() => { void wechat.tick().catch(error => { console.error(tr('home.wechatChannelCheckFailed'), error.message); }); }, 4000);
-wechatPoll.unref();
 const progressMonitor=setInterval(()=>{if(inspectRunProgress(db,online))change();},60000);progressMonitor.unref();
 const usageCollector = setInterval(() => { for(const nodeId of sockets.keys())collectUsage(nodeId); }, 6*60*60*1000);
 server.listen(port, host, () => console.log(tr('home.agentWorkbenchHttpData', { host, port, data })));

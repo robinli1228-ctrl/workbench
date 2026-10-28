@@ -97,7 +97,7 @@ Check: top right → Basic settings → the device list shows this machine with 
 | `CLAUDE_CONFIG_DIR` | Claude's real config directory when a wrapper changes `HOME`; otherwise native session histories are not found |
 | `REMOTE_DESKTOP_URL`, `CCUSAGE_BIN` | Optional, see `src/worker.mjs` and `src/token-usage.mjs` |
 
-Optional features: `WB_DISCUSSION_PREVIEW=1` with `WB_DISCUSSION_VALIDATED_CONFIGS` (JSON array) enables the peer-discussion preview; `WECHAT_CLIENT` and `WECHAT_CLIENT_CONFIG` configure the WeChat channel.
+Optional features: `WB_DISCUSSION_PREVIEW=1` with `WB_DISCUSSION_VALIDATED_CONFIGS` (JSON array) enables the peer-discussion preview.
 
 ## 6. Several devices
 

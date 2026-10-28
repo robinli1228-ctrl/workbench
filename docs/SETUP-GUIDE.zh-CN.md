@@ -98,7 +98,7 @@ npm run worker     # Worker（另一个终端）
 | `CLAUDE_CONFIG_DIR` | 包装器改变了 `HOME` 时，指向 Claude 实际的配置目录，否则原生会话历史找不到 |
 | `REMOTE_DESKTOP_URL`、`CCUSAGE_BIN` | 可选，见 `src/worker.mjs`、`src/token-usage.mjs` |
 
-可选功能：`WB_DISCUSSION_PREVIEW=1` + `WB_DISCUSSION_VALIDATED_CONFIGS`（JSON 数组）开启同行讨论预览；`WECHAT_CLIENT`、`WECHAT_CLIENT_CONFIG` 配置微信通道。
+可选功能：`WB_DISCUSSION_PREVIEW=1` + `WB_DISCUSSION_VALIDATED_CONFIGS`（JSON 数组）开启同行讨论预览。
 
 ## 6. 多设备部署
 

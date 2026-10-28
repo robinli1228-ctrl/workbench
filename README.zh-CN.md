@@ -39,7 +39,7 @@
 
 ## 语言
 
-「基础设置」页签集中提供语言（English / 简体中文）、浏览器 API Token 和微信通知。Home 访问令牌验证后保存在此浏览器，关闭再打开会自动使用，需要时可在基础设置里修改。请使用可信浏览器；清除网站数据、使用无痕模式或更换浏览器、访问地址后可能需要重新设置。语言选项切换界面及展示的默认文本，与实际模型输入的语言分开。本 README 与[操作指南](docs/OPERATING-GUIDE.zh-CN.md)也提供简体中文版本。
+「基础设置」页签集中提供语言（English / 简体中文）和浏览器 API Token。Home 访问令牌验证后保存在此浏览器，关闭再打开会自动使用，需要时可在基础设置里修改。请使用可信浏览器；清除网站数据、使用无痕模式或更换浏览器、访问地址后可能需要重新设置。语言选项切换界面及展示的默认文本，与实际模型输入的语言分开。本 README 与[操作指南](docs/OPERATING-GUIDE.zh-CN.md)也提供简体中文版本。
 
 派工附件的已知 JSON 封装在群聊卡片和全文弹窗中展开为 Markdown，标题、列表和代码正常排版；普通代码转义、保存原文和复制内容保持不变。
 
@@ -112,7 +112,6 @@ Claude、Codex 的额度从正常群聊和会话的执行连接被动接收，�
 - 可安装的 PWA 外壳，桌面三栏布局和手机抽屉布局。
 - 状态读取超过 20 秒会超时并自动恢复，不重发任务。回到页面或网络恢复时刷新状态，保留未发送草稿；连接详情显示最近成功更新时间。
 - 静态文本与状态、聊天读取按浏览器支持协商 gzip，减少 SSH 传输量；流式事件与附件保持原样。页面小图标使用已有的 192px 图片，离线壳安装不再提前下载可选的大尺寸图片。
-- 可选的微信确认通道，默认关闭。它依赖一个需要你自行提供的外部确认中心。
 
 ## 架构概览
 
@@ -211,7 +210,7 @@ npm run worker   # Worker（在另一个终端中）
 | `CLAUDE_CONFIG_DIR` | 原生会话目录；当包装器改变了 `HOME` 时需要设置 |
 | `NODE_ID`, `WORKSPACE_ROOT`, `REMOTE_DESKTOP_URL`, `CCUSAGE_BIN` | 可选覆盖项，见 `src/worker.mjs` 和 `src/token-usage.mjs` |
 
-可选功能：`WB_DISCUSSION_PREVIEW=1` 配合 `WB_DISCUSSION_VALIDATED_CONFIGS`（由你已验证过的 `{runtime, model, version, bin}` 条目组成的 JSON 数组）可启用同行讨论预览。`WECHAT_CLIENT` 和 `WECHAT_CLIENT_CONFIG` 用于配置可选的微信通道。
+可选功能：`WB_DISCUSSION_PREVIEW=1` 配合 `WB_DISCUSSION_VALIDATED_CONFIGS`（由你已验证过的 `{runtime, model, version, bin}` 条目组成的 JSON 数组）可启用同行讨论预览。
 
 ### Home 与远程 Worker
 

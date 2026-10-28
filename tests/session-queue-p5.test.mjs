@@ -123,5 +123,4 @@ test('acceptance #1/#16: existing-session broadcast never calls the supervisor a
   assert.equal(e.db.list('tasks').length, 0);
   e.advance(60); e.pump.tick();                                            // workers offline -> nothing sent anywhere
   assert.deepEqual(e.sent, []);
-  assert.equal(e.db.list('wechatOutbox').length, 0);
 });

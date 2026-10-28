@@ -5,7 +5,7 @@ import { tr } from './i18n.mjs';
 
 // Paths a role's wb command may reach; Home re-checks each request against the run and its role.
 const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary',
-  '/api/agent/discussions', '/api/agent/source-sync', '/api/agent/notify']);
+  '/api/agent/discussions', '/api/agent/source-sync']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
@@ -79,7 +79,7 @@ async function agentRequestOnce(pathname,payload) {
   throw Object.assign(new Error(tr('agentBridge.workerCommunicationTimedOutOutcome')),{outcomeUnknown:true});
 }
 
-/** Only allowlisted Agent endpoints pass through the bridge; supervisor notifications are checked by Home, never arbitrary URLs or shell. */
+/** Only allowlisted Agent endpoints pass through the bridge, never arbitrary URLs or shell. */
 export async function homeRequest(home, token, pathname, payload) {
   if (!home || !allowed.has(pathname)) throw new Error(tr('agentBridge.invalidHomeToolPath'));
   try {

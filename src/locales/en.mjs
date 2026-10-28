@@ -143,6 +143,7 @@ Send failures, reproduction steps, expected/actual behavior, version and evidenc
   'wbCli.retired.schedule': 'wb schedule is retired. Record dependent steps in the task plan with wb task, verify each result, then assign the next step. Use wb timer only for explicit timing requirements.',
   'wbCli.retired.collaboration': 'wb collaboration is retired. Use wb task and wb call.',
   'wbCli.retired.pass': 'wb pass is retired. If you have nothing to add, say so in your final reply.',
+  'wbCli.retired.notify': 'wb notify is retired; WeChat notifications were removed. Put the question in your final reply and end the turn.',
   'platformPrompts.retiredCommandGuidance': 'Retired commands (wb report, wb schedule and the like) are no longer used; results belong in the final reply.',
   'platformPrompts.promptRevisionConflict': 'Prompt revision changed; reload before saving.',
   'roleCalls.returnToWaitingCaller': 'The assigning role is waiting for your result. Write it in your final reply; do not call it back.',
@@ -656,7 +657,6 @@ Execution purpose: {purpose}. {p4}{p5}`,
   'home.nodeNotRegisteredYet': 'Node is not registered yet',
   'home.runDoesNotBelongCurrent': 'The Run does not belong to the current node',
   'home.executionNodeDisconnectedTryAgain': 'The execution node disconnected; try again',
-  'home.wechatChannelCheckFailed': 'WeChat channel check failed:',
   'home.agentWorkbenchHttpData': 'Agent Workbench http://{host}:{port} · data {data}',
   // src/hosting.mjs
   'hosting.invalidCredentialId': 'Invalid credential ID',
@@ -731,7 +731,7 @@ Configuration checklist (inspect only the parts relevant to the request):
 3. Hosting: choose the existing verified GitHub/Gitee account, owner/organization, repository URL or new repository name and intended visibility. Keep account ownership and repository access distinct. Existing repositories are linked, not recreated. Ask for missing credentials through Basic Settings > Code Hosting; never ask for passwords, Tokens or private keys in chat, and never print or write them into project files.
 4. Project folders and repositories: identify the exact project and folderName, participating devices and each bound directory. Project folders derive from device workspace plus folderName. All project roles share the project's registered repositories; there is no primary-repository setting. Inspect existing ownership and dirty files before proposing preparation. Preserve existing files and commits; never reset or clean a directory to get past a check. Prepare each requested device and verify actual bindings rather than assuming the same absolute path on all devices.
 5. Roles and defaults: distinguish global platform/supervisor prompts and new-project defaults from a project's role responsibility, execution instructions, device, CLI, model and effort. Preserve user-customized and explicitly empty prompts. A change affecting an established native session requires its supported handoff entry. This assistant's proposal tool does not edit roles or global prompts: direct the user to their exact editor when needed, without claiming it has been applied.
-6. Collaboration and optional settings: explain formal fixed-commit Git delivery separately from opted-in saved-file synchronization; only enable a scope/participating device after the user requests it. Check directory bindings and pending/conflicting operations before configuration. Language, browser access Token, WeChat notifications and schedules are configured in their existing settings pages; no proposal action for these currently exists. Do not invent a tool, approval or background polling loop.
+6. Collaboration and optional settings: explain formal fixed-commit Git delivery separately from opted-in saved-file synchronization; only enable a scope/participating device after the user requests it. Check directory bindings and pending/conflicting operations before configuration. Language, browser access Token and schedules are configured in their existing settings pages; no proposal action for these currently exists. Do not invent a tool, approval or background polling loop.
 
 Execution tools: submit supported actions with wb setup propose '<JSON>', using {"summary":"short human-readable purpose","actions":[...]} and 1-8 actions per proposal.
 Available actions are {"type":"device","deviceId":"REGISTERED_DEVICE_ID","action":"check or connect"}; {"type":"workspace","nodeId":"NODE_ID","workspaceRoot":"directory within allowed roots","name":"device name"}; {"type":"repository","projectId":"PROJECT_ID","key":"repository directory name","mode":"existing or create","repoUrl":"existing GitHub/Gitee URL","accountId":"VERIFIED_ACCOUNT_ID","remoteName":"new repository name","nodeIds":["NODE_ID"]}; {"type":"prepare","projectId":"PROJECT_ID","nodeId":"NODE_ID"}; {"type":"cli","nodeId":"NODE_ID","runtime":"codex or claude"}. Include only fields appropriate to the action and mode. A deviceId exists only after the device form is saved. Inspect a check result before proposing dependent installation; do not put unverified dependencies into one batch.
@@ -778,7 +778,7 @@ Work in this turn's workspace by default. Explicit user authorization for other 
 Handle only this assignment. Do not start other agents on your own; {p2}.
 {p3}
 By default, work in the workspace designated by the Worker and the repositories listed for this run. Explicit user authorization extends the scope to specified targets without asking again. Actual runtime permissions still apply: if restricted, seek the required access or hand off to an execution environment that has it. {p4}
-When you need the user to supply information or make a decision, state the specific question and options in your reply, and then end the turn. Replies are not automatically forwarded to WeChat. Only the project supervisor may explicitly use wb notify send before ending the turn when a configured notification channel is enabled. Home binds the real project and supervisor; numbered replies queue to that supervisor without interrupting an active CLI. Do not poll WeChat, hold its credentials, or treat sent/pending as a user answer. Native permissions and Git delivery keep their existing approval boundaries.
+When you need the user to supply information or make a decision, state the specific question and options in your reply, and then end the turn. Native permissions and Git delivery keep their existing approval boundaries.
 {p5} Git pushes go only through wb deliver, which requests an existing approval.
 {p6}`,
   'platformPrompts.invalidConversationOrganizerSetting': 'Invalid conversation organizer setting: {key}',
@@ -1174,7 +1174,7 @@ Assistance results (context only):
   'rooms.currentRunInvalid': 'The current run is invalid',
   'rooms.yourConfirmationNeededReplyBy': `Your confirmation is needed: {summary}
 
-Reply by quoting this message, or reply with the matching WeChat number.`,
+Reply by quoting this message.`,
   'rooms.runHasEndedRuntimeReturned': 'The run has ended; the runtime returned no text result.',
   'rooms.runStopped': 'Run stopped',
   'rooms.runFailed': 'Run failed',
@@ -1587,47 +1587,6 @@ wb help sync | wb help review | wb help errors
                      Notes on cross-device sync, independent review and tool error codes
 
 A retained process puts --turn RUN_ID before the current-turn tool entry. Each turn has its own invocation: use the one in this turn's [wb command] block, never a previous turn's.`,
-  // src/wechat-channel.mjs
-  'wechatChannel.invalidWechatClientName': 'Invalid WeChat client name',
-  'wechatChannel.invalidWechatClientConfiguration': 'Invalid WeChat client configuration',
-  'wechatChannel.wechatCredentialFilePermissionsMust': 'WeChat credential file permissions must be 0600',
-  'wechatChannel.wechatCredentialEmpty': 'WeChat credential is empty',
-  'wechatChannel.invalidWechatToggle': 'Invalid WeChat toggle',
-  'wechatChannel.homeDoesNotHaveDedicated': 'Home does not have a dedicated WeChat client configuration installed yet',
-  'wechatChannel.wechatTargetNotAvailableYet': 'WeChat target is not available yet',
-  'wechatChannel.reachable': 'Reachable',
-  'wechatChannel.invalidWechatTargetProjectRole': 'Invalid WeChat target project or role',
-  'wechatChannel.questionLongSeeFullContent': `{p1}
-... The question is long; see the full content in the project group chat.`,
-  'wechatChannel.enableWechatNotificationsFirst': 'Enable WeChat notifications first',
-  'wechatChannel.projectWechatEntryReplyNumber': 'Project WeChat entry. Reply "this number + instruction" to hand it to the Supervisor, or "this number + @role + instruction". Only this project is handled. It keeps waiting until you reply; after the first reply it can be used for another 23 hours, after which please get a new entry to avoid reusing an old number.',
-  'wechatChannel.followUpClosedOnWeb': 'Follow-up closed on the web',
-  'wechatChannel.wechatRecordNotFound': 'WeChat record not found',
-  'wechatChannel.wechatRecordClosedDoesNot': 'WeChat record is closed or does not exist',
-  'wechatChannel.repliedOnWeb': 'Replied on the web',
-  'wechatChannel.pleaseReplyWithNumberIt': `{summary}
-{p2}
-Please reply with this number. It keeps waiting until you reply; if you have already answered this question by reference on the web, a late reply will not be executed. After the first answer, this number can be used to give further instructions for 23 hours, after which please get a new project entry.`,
-  'wechatChannel.runOperation': 'run operation',
-  'wechatChannel.replyOnlyApproveReject': `
-Reply only "Approve" or "Reject".`,
-  'wechatChannel.operationDetailsTooLongMay': 'The operation details are too long or may contain sensitive information; approve on the web execution details page. WeChat does not accept approval.',
-  'wechatChannel.cliPermissionApprovalOriginalApproval': `CLI permission approval: {p1}
-{p2}
-Original approval expires at: {expiresAt}; expired old replies will not grant authorization.`,
-  'wechatChannel.originalApprovalWasHandledExpired': 'The original approval was handled, expired, or the execution has ended',
-  'wechatChannel.originalRunRecordDoesNot': 'The original run record does not exist',
-  'wechatChannel.discussionRoundNotBusinessConfirmation': 'A discussion round is not a business confirmation entry; refer to the original task question',
-  'wechatChannel.originalQuestionWasUpdatedHandled': 'The original question was updated or handled',
-  'wechatChannel.wechatRequestCancelled': 'WeChat request cancelled',
-  'wechatChannel.viewFullOperationOnWeb': 'View the full operation on the web before approving',
-  'wechatChannel.approvalReplySubmittedWebShows': 'Approval reply submitted; the web shows the execution result',
-  'wechatChannel.wechatReplyEmpty': 'WeChat reply is empty',
-  'wechatChannel.followUpWindowForAnswered': 'The follow-up window for the answered number has ended; ask the supervisor for a new notification',
-  'wechatChannel.meWechat': 'Me · WeChat',
-  'wechatChannel.followUpWindowForAnswered2': 'The follow-up window for the answered number has ended; ask the supervisor for a new notification',
-  'wechatChannel.wechatClientAuthenticationFailedCheck': 'WeChat client authentication failed; check the configuration and test again',
-  'wechatChannel.wechatClientAuthenticationFailedCheck2': 'WeChat client authentication failed; check the configuration and test again',
   // src/worker-coordinator.mjs
   'workerCoordinator.callDoesNotMatchRole': 'Call does not match the role',
   'workerCoordinator.callHasAlreadyEnded': 'Call has already ended',
@@ -1914,12 +1873,6 @@ You personally do only the simplest things: answer a question directly, check on
   'sessionQueue.requestNotFound': "Request not found in this project.",
   'sessionQueue.reassignStarted': "This request has already started; it cannot be reassigned. Stop it explicitly first.",
   'sessionQueue.alert.backlog': "- Session {sessionId}: role {roleId} has {count} queued messages, oldest waiting {minutes} minutes. Consider adjusting participants or reassigning explicit work.",
-  'wechatChannel.channelUnavailable': 'The configured notification account is unavailable. Select an installed channel; existing numbers will not be rebound.',
-  'wechatChannel.supervisorOnly': 'Only the fixed supervisor of this project may call the notification tool.',
-  'wechatChannel.notificationNotFound': 'This notification does not belong to the current project supervisor.',
-  'wechatChannel.requestConflict': 'This notification requestId was already used with different text. Use a new ID for a new message.',
-  'wechatChannel.notificationTargetChanged': 'The original project supervisor is unavailable or changed; this number was closed without reassignment.',
-  'wechatChannel.toolGuide': 'Project supervisor only: wb notify send \'{"requestId":"stable-id","text":"Question or notification, at most 1600 characters"}\'; wb notify status MESSAGE_ID. The Home uses the configured platform/account and derives the real project and supervisor from this turn; never supply another project or recipient. The message automatically identifies its project. Enabling the tool does not auto-forward reports or approvals. Reuse the same requestId and text after a timeout; status shows queued/sent/error, not guaranteed receipt. Numbered replies queue to the original project supervisor without interrupting a running CLI. Native permissions, repository configuration and Git delivery keep their existing approval boundaries.',
   'rolePermissions.invalid': "Unknown permission scope: {scope}",
   'rolePermissions.worker_unsupported': "The device Worker does not support per-role permission scopes yet; upgrade it or keep the current permissions",
   'rolePermissions.scope_unsupported': "Permission scope {scope} is not available for this CLI on this device",

@@ -89,12 +89,6 @@ export async function chatPost(text) {
   return homeFetch('/api/agent/note', { runId: context().runId, text: String(text).trim() });
 }
 
-/** Sending is queued in Home with a stable ID; credentials and project identity never come from tool input. */
-export async function notifySupervisor(action,input) {
-  if (process.env.WB_SYSTEM_SUPERVISOR !== '1') throw new Error(tr('wechatChannel.supervisorOnly'));
-  return homeFetch('/api/agent/notify',{runId:context().runId,action,input});
-}
-
 /** The platform handles cross-node communication; local tools neither connect to other CLIs directly nor read their workspaces. */
 /** Optional dispatch fields become labelled lines ahead of the free text; nothing is trimmed, so versions, scope and acceptance survive verbatim. */
 export function composeCallText({goal,scope,input,returns,text}) {
@@ -275,4 +269,4 @@ export async function writeHandoff(fields = {}, override = {}) {
 }
 
 /** Role help lists only the tools this turn can use; the platform assistant also gets its configuration tools. */
-export const helpText = () => [tr('wbTools.builtInCollaborationToolsWorkbench'),tr('conversationTasks.help'),process.env.WB_SYSTEM_SUPERVISOR==='1'?tr('wechatChannel.toolGuide'):'',process.env.WB_SOURCE_SYNC==='1'?tr('sourceSync.toolGuide'):'',process.env.WB_PLATFORM_ASSISTANT==='1'?tr('wbTools.setupHelp'):''].filter(Boolean).join('\n\n');
+export const helpText = () => [tr('wbTools.builtInCollaborationToolsWorkbench'),tr('conversationTasks.help'),process.env.WB_SOURCE_SYNC==='1'?tr('sourceSync.toolGuide'):'',process.env.WB_PLATFORM_ASSISTANT==='1'?tr('wbTools.setupHelp'):''].filter(Boolean).join('\n\n');

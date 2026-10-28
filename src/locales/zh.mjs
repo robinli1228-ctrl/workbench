@@ -143,6 +143,7 @@ export default Object.freeze({
   'wbCli.retired.schedule': 'wb schedule 已停用。步骤依赖记在 wb task 的任务计划里，核对前一步结果后再派下一步；只有明确的时间需求才用 wb timer。',
   'wbCli.retired.collaboration': 'wb collaboration 已停用。请用 wb task 和 wb call。',
   'wbCli.retired.pass': 'wb pass 已停用。没有可补充的内容，就在最终回复里说明。',
+  'wbCli.retired.notify': 'wb notify 已停用，微信通知已移除。请把问题写在最终回复里，然后结束本轮。',
   'platformPrompts.retiredCommandGuidance': '已取消的命令（wb report、wb schedule 等）不要再用，结果以最终回复为准。',
   'platformPrompts.promptRevisionConflict': '提示词版本已变化，请刷新后再保存。',
   'roleCalls.returnToWaitingCaller': '派活的人正在等你的结果，直接写在最终回复里即可，不要再 call 它。',
@@ -656,7 +657,6 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'home.nodeNotRegisteredYet': '节点尚未注册',
   'home.runDoesNotBelongCurrent': 'Run 不属于当前节点',
   'home.executionNodeDisconnectedTryAgain': '执行节点已断开，请重试',
-  'home.wechatChannelCheckFailed': '微信通道检查失败:',
   'home.agentWorkbenchHttpData': 'Agent Workbench http://{host}:{port} · 数据 {data}',
   // src/hosting.mjs
   'hosting.invalidCredentialId': '凭据编号无效',
@@ -731,7 +731,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
 3. 代码托管：选择已验证的 GitHub/Gitee 账号、个人或组织、已有仓库地址或新仓库名及预期可见性。区分账号身份与仓库权限，已有仓库只关联、不重建。缺凭据引导到基础设置的代码托管表单，不索取聊天中的密码、Token、私钥，不输出或写入项目文件。
 4. 项目目录与仓库：明确项目、folderName、参与设备及各端绑定目录。项目路径由设备工作空间加项目文件夹名组成；角色共享本项目已登记的仓库，没有主仓库设置。准备前检查现有目录归属和未提交文件，保留文件和提交，不 reset 或清空目录来绕过检查。逐设备准备并核对实际绑定，不假设不同机器绝对路径相同。
 5. 角色与默认值：区分全局平台/总管提示词、新项目默认配置，以及项目角色的职能、执行提示词、设备、CLI、模型、深度。保留自定义和明确留空的提示词。影响原生会话的变更走已有交接入口。助手提案目前不能编辑角色或全局提示词，需要时指向准确编辑入口，不声称已经应用。
-6. 协同及可选设置：区分固定 commit 的正式 Git 交付与用户主动启用的文件同步；仅按用户要求配置范围和参与设备，先查目录、待处理操作及冲突。语言、浏览器访问 Token、微信通知、定时任务使用现有设置页，目前没有对应提案动作。不得编造工具、审批或后台轮询流程。
+6. 协同及可选设置：区分固定 commit 的正式 Git 交付与用户主动启用的文件同步；仅按用户要求配置范围和参与设备，先查目录、待处理操作及冲突。语言、浏览器访问 Token、定时任务使用现有设置页，目前没有对应提案动作。不得编造工具、审批或后台轮询流程。
 
 执行工具：通过 wb setup propose '<JSON>' 提交，格式 {"summary":"简短说明目的","actions":[...]}，每份提案 1–8 个动作。
 可用动作：{"type":"device","deviceId":"已登记设备ID","action":"check或connect"}；{"type":"workspace","nodeId":"节点ID","workspaceRoot":"已允许范围内目录","name":"设备名称"}；{"type":"repository","projectId":"项目ID","key":"仓库目录名","mode":"existing或create","repoUrl":"已有GitHub/Gitee地址","accountId":"已验证账号ID","remoteName":"新仓库名","nodeIds":["节点ID"]}；{"type":"prepare","projectId":"项目ID","nodeId":"节点ID"}；{"type":"cli","nodeId":"节点ID","runtime":"codex或claude"}。只填写对应动作和模式需要的字段。保存设备表单后才有 deviceId。检查结果确认后再提出依赖它的安装，不把未核实的依赖打包执行。
@@ -778,7 +778,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
 仅处理本次指派。不要自行启动其他 Agent，{p2}。
 {p3}
 默认在 Worker 指定工作区及本次列出的仓库内操作；用户明确授权时可扩展到指定目标，不重复询问。实际运行权限仍生效，受限时申请所需权限或交给具备权限的执行环境。{p4}
-需要用户补充信息或拍板时，在回复里写清具体问题与选项，然后结束本轮。回复不自动转发微信；配置并启用通知渠道后，仅项目总管可在结束本轮前显式调用 wb notify send。Home 绑定真实项目和总管，带编号的回复排入该总管队列，不打断活动 CLI。不轮询微信、不持有凭据，不把发送成功或 pending 当成用户答复。原生权限与 Git 交付保持原审批边界。
+需要用户补充信息或拍板时，在回复里写清具体问题与选项，然后结束本轮。原生权限与 Git 交付保持原审批边界。
 {p5}Git 推送仅通过 wb deliver 申请既有审批。
 {p6}`,
   'platformPrompts.invalidConversationOrganizerSetting': '会话整理 {key} 配置无效',
@@ -1174,7 +1174,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'rooms.currentRunInvalid': '当前执行无效',
   'rooms.yourConfirmationNeededReplyBy': `需要你确认：{summary}
 
-请引用本条消息回复，也可回复对应微信编号。`,
+请引用本条消息回复。`,
   'rooms.runHasEndedRuntimeReturned': '执行已结束，Runtime 未返回文字结果。',
   'rooms.runStopped': '执行已停止',
   'rooms.runFailed': '执行失败',
@@ -1587,47 +1587,6 @@ wb help sync | wb help review | wb help errors
                      跨设备同步、独立审核、工具报错码的说明
 
 常驻进程在当前工具入口前加 --turn RUN_ID。每轮的调用方式都不同，用本轮【wb 命令】里给的，不要沿用上一轮的。`,
-  // src/wechat-channel.mjs
-  'wechatChannel.invalidWechatClientName': '微信客户端名称无效',
-  'wechatChannel.invalidWechatClientConfiguration': '微信客户端配置无效',
-  'wechatChannel.wechatCredentialFilePermissionsMust': '微信凭据权限必须为 0600',
-  'wechatChannel.wechatCredentialEmpty': '微信凭据为空',
-  'wechatChannel.invalidWechatToggle': '微信开关无效',
-  'wechatChannel.homeDoesNotHaveDedicated': 'Home 尚未安装专用微信客户端配置',
-  'wechatChannel.wechatTargetNotAvailableYet': '微信目标尚不可用',
-  'wechatChannel.reachable': '可连接',
-  'wechatChannel.invalidWechatTargetProjectRole': '微信目标项目或角色无效',
-  'wechatChannel.questionLongSeeFullContent': `{p1}
-…问题较长，请在项目群聊查看完整内容。`,
-  'wechatChannel.enableWechatNotificationsFirst': '请先启用微信通知',
-  'wechatChannel.projectWechatEntryReplyNumber': '项目微信入口。回复「本条编号 + 指令」交给主管，或「本条编号 + @角色 + 指令」。只处理本项目。未回复前持续等待；首次回复后可继续使用23小时，之后请重新获取入口，避免旧编号复用。',
-  'wechatChannel.followUpClosedOnWeb': '已在网页关闭跟进',
-  'wechatChannel.wechatRecordNotFound': '微信记录不存在',
-  'wechatChannel.wechatRecordClosedDoesNot': '微信记录已关闭或不存在',
-  'wechatChannel.repliedOnWeb': '已在网页回复',
-  'wechatChannel.pleaseReplyWithNumberIt': `{summary}
-{p2}
-请带本条编号回复。未答复持续等待；若已在网页引用此问题回答，迟到回复不执行。首次回答后本编号可继续下指令23小时，之后重新获取项目入口。`,
-  'wechatChannel.runOperation': '执行操作',
-  'wechatChannel.replyOnlyApproveReject': `
-仅回复「通过」或「拒绝」。`,
-  'wechatChannel.operationDetailsTooLongMay': '操作详情过长或可能含敏感信息，请到网页执行详情审批；微信不接受通过。',
-  'wechatChannel.cliPermissionApprovalOriginalApproval': `CLI 权限审批：{p1}
-{p2}
-原审批到期时间：{expiresAt}；过期的旧回复不会授权。`,
-  'wechatChannel.originalApprovalWasHandledExpired': '原审批已处理、过期或执行已结束',
-  'wechatChannel.originalRunRecordDoesNot': '原执行记录不存在',
-  'wechatChannel.discussionRoundNotBusinessConfirmation': '讨论回合不是业务确认入口，请以原任务问题为准',
-  'wechatChannel.originalQuestionWasUpdatedHandled': '原问题已更新或处理',
-  'wechatChannel.wechatRequestCancelled': '微信请求已取消',
-  'wechatChannel.viewFullOperationOnWeb': '请到网页查看完整操作后审批',
-  'wechatChannel.approvalReplySubmittedWebShows': '已提交审批答复，执行结果以网页为准',
-  'wechatChannel.wechatReplyEmpty': '微信回复内容为空',
-  'wechatChannel.followUpWindowForAnswered': '已回答编号的续接窗口结束，请总管发送新通知',
-  'wechatChannel.meWechat': '我 · 微信',
-  'wechatChannel.followUpWindowForAnswered2': '已回答编号的续接窗口结束，请总管发送新通知',
-  'wechatChannel.wechatClientAuthenticationFailedCheck': '微信客户端认证失败，请检查配置后重新检测',
-  'wechatChannel.wechatClientAuthenticationFailedCheck2': '微信客户端认证失败，请检查配置后重新检测',
   // src/worker-coordinator.mjs
   'workerCoordinator.callDoesNotMatchRole': '调用与角色不匹配',
   'workerCoordinator.callHasAlreadyEnded': '调用已结束',
@@ -1914,12 +1873,6 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'sessionQueue.requestNotFound': "本项目中不存在该请求。",
   'sessionQueue.reassignStarted': "该请求已开始执行，不能改派。请先明确停止。",
   'sessionQueue.alert.backlog': "- 会话 {sessionId}：角色 {roleId} 积压 {count} 条消息，最早已等待 {minutes} 分钟。可考虑调整参与范围或改派明确任务。",
-  'wechatChannel.channelUnavailable': '通知账号未配置或已不可用，请选择已安装的渠道；已有编号不会改绑。',
-  'wechatChannel.supervisorOnly': '只有本项目的固定总管可以调用通知工具。',
-  'wechatChannel.notificationNotFound': '该通知不属于当前项目总管。',
-  'wechatChannel.requestConflict': '该通知 requestId 已用于不同内容，新消息请使用新编号。',
-  'wechatChannel.notificationTargetChanged': '原项目总管已不可用或发生变更，已关闭编号且未改派。',
-  'wechatChannel.toolGuide': '仅项目总管可用：wb notify send \'{"requestId":"stable-id","text":"问题或通知，最多1600字符"}\'；wb notify status MESSAGE_ID。Home 使用已配置的平台和账号，从本轮执行身份确定真实项目及总管，不得指定其他项目或收件角色；消息自动标明所属项目。启用仅开放工具，不自动转发报告或审批。超时后使用相同 requestId 和内容重试；状态区分排队、发送及错误，不把发送当作已读。带编号的回复排入原项目总管队列，不打断运行中的 CLI。原生权限、仓库配置及 Git 交付保持原审批边界。',
   'rolePermissions.invalid': "未知的权限范围：{scope}",
   'rolePermissions.worker_unsupported': "该设备的 Worker 尚不支持按角色设置权限；请升级 Worker，或保留当前权限",
   'rolePermissions.scope_unsupported': "该设备上的这个 CLI 不支持权限范围 {scope}",

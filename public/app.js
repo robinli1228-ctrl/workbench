@@ -596,7 +596,6 @@ async function refreshState({ quiet = false } = {}) {
       workers: Array.isArray(data.workers) ? data.workers : [],
       approvals: Array.isArray(data.approvals) ? data.approvals : [],
       settings: data.settings || {},
-      wechat: data.wechat || { enabled: false, configured: false, links: [] },
       promptDefaults: data.promptDefaults || {},
       supervisors: data.supervisors || [], requests: data.requests || [], deliveries: data.deliveries || [],
       executionPlans:data.executionPlans||[],scheduledJobs:data.scheduledJobs||[],scheduledOccurrences:data.scheduledOccurrences||[],runReports:data.runReports||[],runAlerts:data.runAlerts||[],
@@ -1452,59 +1451,6 @@ function modelQuotaLabel(runtime, model) {
   return 'Unknown';
 }
 
-/** Show only redacted status; WeChat credentials are managed in Home's private folder and never configured through the frontend. */
-function renderWechat() {
-  const state = app.data.wechat || { links: [] };
-  const summary = document.querySelector('#wechat-summary');
-  summary.textContent = state.configurationError || (!state.client ? 'WeChat service needs an update; currently not enabled' : !state.configured ? 'Home-specific client configuration not installed' : `${state.enabled ? t('Enabled') : t('Disabled')} · ${state.health || t('Connection not checked yet')}`);
-  const dialog = document.querySelector('#wechat-dialog'); if (!dialog.open) return;
-  document.querySelector('#wechat-health').textContent = t('{textContent}. Client: {v}; a connection check does not guarantee actual delivery.', { textContent: summary.textContent, v: state.client || t('not configured') });
-  const toggle = document.querySelector('#toggle-wechat'); toggle.textContent = state.enabled ? 'Pause WeChat messaging' : 'Enable WeChat'; toggle.disabled = !state.configured && !state.enabled;
-  document.querySelector('#check-wechat').disabled = !state.configured;
-  const select = document.querySelector('#wechat-channel'), channels = state.channels || [];
-  const selected = select.dataset.dirty === '1' ? select.value : state.channelId;
-  select.replaceChildren(...channels.map(channel => { const option = document.createElement('option'); option.textContent = `${channel.platform === 'wechat' ? t('WeChat') : channel.platform} · ${channel.account}`; option.value = channel.id; option.disabled = !channel.configured; option.translate = false; return option; }));
-  if (!channels.length) { const option = document.createElement('option'); option.textContent = t('No configured notification accounts'); option.value = ''; select.append(option); }
-  if (channels.some(channel => channel.id === selected)) select.value = selected;
-  select.disabled = !channels.length;
-  document.querySelector('#save-wechat-channel').disabled = !channels.length;
-  const list = document.querySelector('#wechat-records'); list.replaceChildren();
-  for (const link of state.links || []) {
-    const card = create('section', 'settings-overview-card');
-    const project = app.data.projects.find(p => p.id === link.projectId);
-    const kind = { question: 'Pending question', approval: 'CLI approval', project: 'Project entry', notification: 'Supervisor notification' }[link.kind] || 'Message';
-    card.append(create('strong', '', `${link.code ? t('[{code}]', { code: link.code }) : t('Pending send')} ${project?.name || t('Project removed')} · ${kind}`));
-    if (link.preview) card.append(create('p', 'settings-overview-preview', link.preview));
-    const status = link.state === 'closed' ? link.closedReason : link.error || (link.deliveryStatus === 'sent' ? t('Sent · {v}', { v: link.lastSeq ? t('reply received; you can keep giving numbered instructions') : t('awaiting reply') }) : 'Sending');
-    card.append(create('p', 'workspace-note', `${status} · ${formatTime(new Date(link.createdAt).toISOString())}`));
-    if (link.followupUntil && link.state !== 'closed') card.append(create('p', 'workspace-note', t('This answered number accepts follow-up instructions until {time}; after that, ask the supervisor for a new notification. Unanswered questions have no local wait timeout.', { time: formatTime(new Date(link.followupUntil).toISOString()) })));
-    if (link.error === 'weixin_context_expired') card.append(create('p', 'workspace-note', 'Send ClawBot a new message first, then retry the original request.'));
-    if (link.state !== 'closed') {
-      const actions = create('div', 'form-actions');
-      if (link.error) {
-        const retry = create('button', 'secondary compact', 'Retry original request'); retry.type = 'button';
-        retry.onclick = () => void wechatAction(retry, `/api/wechat/${link.id}/retry`); actions.append(retry);
-      }
-      const close = create('button', 'secondary compact', link.kind === 'question' ? 'Handled locally' : 'Close WeChat follow-up'); close.type = 'button';
-      close.title = 'Stop receiving further WeChat replies for this number; the business task is not cancelled'; close.onclick = () => void wechatAction(close, `/api/wechat/${link.id}/cancel`); actions.append(close);
-      card.append(actions);
-    }
-    list.append(card);
-  }
-  if (!(state.links || []).length) list.append(create('p', 'workspace-note', 'No notifications yet. Only explicit supervisor tool calls send new messages.'));
-}
-async function wechatAction(button, path, json = {}) {
-  button.disabled = true; const feedback = document.querySelector('#wechat-feedback'); feedback.textContent = '';
-  try { await api(path, { method: 'POST', json }); document.querySelector('#wechat-channel').dataset.dirty = ''; await refreshState(); }
-  catch (error) { feedback.textContent = error.message; }
-  finally { button.disabled = false; renderWechat(); }
-}
-document.querySelector('#manage-wechat').onclick = () => { document.querySelector('#wechat-channel').dataset.dirty = ''; document.querySelector('#wechat-dialog').showModal(); renderWechat(); };
-document.querySelector('#close-wechat-dialog').onclick = () => document.querySelector('#wechat-dialog').close();
-document.querySelector('#toggle-wechat').onclick = event => void wechatAction(event.currentTarget, '/api/wechat', { enabled: !app.data.wechat?.enabled, channelId: document.querySelector('#wechat-channel').value });
-document.querySelector('#check-wechat').onclick = event => void wechatAction(event.currentTarget, '/api/wechat/health');
-document.querySelector('#wechat-channel').onchange = event => { event.currentTarget.dataset.dirty = '1'; };
-document.querySelector('#save-wechat-channel').onclick = event => void wechatAction(event.currentTarget, '/api/wechat', { enabled: Boolean(app.data.wechat?.enabled), channelId: document.querySelector('#wechat-channel').value });
 
 /** The sidebar footer marks the page that is currently open, matching the right panel tab bar. */
 function renderSidebarNav() {
@@ -1519,7 +1465,6 @@ function renderSidebarNav() {
 }
 
 function renderWorkspace() {
-  renderWechat();
   renderSidebarNav();
   const project = getCurrentProject();
   const hasProjects = app.data.projects.length > 0;

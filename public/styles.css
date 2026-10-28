@@ -31,10 +31,6 @@
 .execution-plan-item p { margin: 5px 0 8px; color: #656c7d; }
 .execution-stage { display: flex; flex-direction: column; gap: 3px; padding: 5px 0; }
 .execution-stage small { color: #656c7d; }
-.wechat-records { display: grid; gap: 12px; margin-top: 16px; }
-#wechat-dialog { width: min(720px, 94vw); }
-#wechat-dialog .wechat-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
-#wechat-feedback:empty { display: none; }
 .history-viewer { width: min(880px, 92vw); max-height: 85vh; padding: 22px; border: 1px solid #d5e0ee; border-radius: 12px; }
 .history-viewer-content { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 55vh; overflow: auto; font: 13px/1.65 ui-monospace, monospace; }
 .history-viewer-actions { display: flex; gap: 8px; flex-wrap: wrap; }

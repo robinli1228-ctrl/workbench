@@ -172,14 +172,6 @@ test('matchers accept both languages', async () => {
     assert.ok(await withLanguage(lang, () => roles.isSupervisorName(i18n.tr('rooms.supervisor'))), `${lang} supervisor display name`);
   }
 
-  const wechat = await import(fileUrl('src', 'wechat-channel.mjs'));
-  assert.equal(wechat.parseApprovalReply('Approve'), 'approved');
-  assert.equal(wechat.parseApprovalReply(' approve. '), 'approved');
-  assert.equal(wechat.parseApprovalReply('\u901a\u8fc7'), 'approved');
-  assert.equal(wechat.parseApprovalReply('Reject'), 'rejected');
-  assert.equal(wechat.parseApprovalReply('\u62d2\u7edd\u3002'), 'rejected');
-  assert.equal(wechat.parseApprovalReply('maybe'), null);
-
   const rooms = await import(fileUrl('src', 'rooms.mjs'));
   assert.deepEqual(rooms.mentionNames('please check @Developer, then @\u5ba1\u6838\u5458\uff0c and (@Tester)'), ['Developer', '\u5ba1\u6838\u5458', 'Tester']);
   assert.deepEqual(rooms.mentionNames('\u4f60\u597d\uff0c@Developer\u3002\u8bf7\u67e5\u770b@Tester'), ['Developer']);
