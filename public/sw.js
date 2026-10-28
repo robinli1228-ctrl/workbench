@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v213-turn-file-links';
+const CACHE = 'agent-workbench-static-v214-session-files';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
