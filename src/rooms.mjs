@@ -72,7 +72,7 @@ function collectiveRoleScopeEn(sentence) {
 function collectiveRoleScopeZh(sentence) {
   const match=sentence.match(/(?:\u6240\u6709|\u5168\u90e8|\u5404\u4e2a|\u6bcf\u4e2a|\u5404\u4f4d|\u6bcf\u4f4d|\u5404)(?:\u7684)?(?:(\u5ba1\u6838|\u5ba1\u67e5|\u8bc4\u5ba1|\u590d\u6838)(?:\u7684)?)?\u89d2\u8272[^\u3002\uff01\uff1f!?;\uff1b\n]{0,40}?(?:\u5ba1\u6838|\u8bc4\u5ba1|\u5ba1\u67e5|\u590d\u6838|\u53d1\u8868|\u7ed9\u51fa|\u63d0\u51fa|\u63d0\u4f9b|\u53c2\u4e0e|\u68c0\u67e5|\u6267\u884c|\u5904\u7406|\u5206\u6790)/);
   if(!match)return null;
-  const prefix=sentence.slice(0,match.index).split(/[\uff0c,]/).at(-1).trim().replace(/^@\u603b\u7ba1\s*/, '');
+  const prefix=sentence.slice(0,match.index).split(/[\uff0c,]/).at(-1).trim().replace(/^@(?:\u603b\u7ba1|\u4e3b\u7ba1)\s*/, '');
   const roleEnd=match[0].indexOf('\u89d2\u8272')+2;
   const action=match[0].slice(roleEnd).replace(/^[\uff0c,\s]+/,'').split(/[\uff0c,]/)[0];
   const tail=sentence.slice(match.index+roleEnd).trim();

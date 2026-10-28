@@ -121,8 +121,8 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
     const project = getData().projects?.find(item => item.id === formProject.value);
     const roles = (getData().roles || []).filter(role => role.projectId === project?.id && !role.archivedAt && role.enabled && role.configured !== false);
     roleId.replaceChildren(option('', 'Select role'));
-    for (const role of roles) roleId.append(option(role.id, role.systemSupervisor ? 'Supervisor' : role.name));
-    if (project?.supervisorRoleId && !roles.some(role => role.id === project.supervisorRoleId)) roleId.append(option(project.supervisorRoleId, 'Supervisor'));
+    for (const role of roles) roleId.append(option(role.id, role.systemSupervisor ? 'Manager' : role.name));
+    if (project?.supervisorRoleId && !roles.some(role => role.id === project.supervisorRoleId)) roleId.append(option(project.supervisorRoleId, 'Manager'));
     roleId.value = selected || (jobType.value === 'monitor' ? project?.supervisorRoleId || '' : '');
   }
 
@@ -193,7 +193,7 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
         create('span', '', job.jobType === 'monitor' ? 'Progress check' : 'Scheduled dispatch'));
       card.append(head, schedule,
         create('p', 'timer-job-meta', t('Next {next} · Last {last}', { next: format(job.nextRunAt), last: format(job.lastCheckAt || job.lastRunAt) })));
-      if (job.jobType === 'monitor') card.append(create('p', 'timer-job-meta', t('Last check: {v}', { v: job.lastCheckResult === 'deferred' ? t('new anomaly; supervisor will be notified when idle') : job.lastCheckResult === 'alerted' ? t('new anomaly found') : job.lastCheckAt ? t('no new anomalies') : t('not checked yet') })));
+      if (job.jobType === 'monitor') card.append(create('p', 'timer-job-meta', t('Last check: {v}', { v: job.lastCheckResult === 'deferred' ? t('new anomaly; manager will be notified when idle') : job.lastCheckResult === 'alerted' ? t('new anomaly found') : job.lastCheckAt ? t('no new anomalies') : t('not checked yet') })));
       else {
         const latest = recentTimerOccurrences(occurrences, data, job.id)[0];
         if (latest) card.append(create('p', 'timer-job-meta', t('Latest result: {result}', { result: t(status(latest.status)) })));

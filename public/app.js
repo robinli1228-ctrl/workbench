@@ -695,7 +695,7 @@ function renderExecutionPlans() {
   const details=document.createElement('details');details.open=open;
   const summary=document.createElement('summary');
   const activity=plan=>planActivity(plan,app.data.requests||[],app.data.runs||[],app.data.tasks||[]);
-  const title=document.createElement('strong');title.textContent=t('Supervisor plan · {currentStage}', { currentStage: t(state.currentStage) });
+  const title=document.createElement('strong');title.textContent=t('Manager plan · {currentStage}', { currentStage: t(state.currentStage) });
   const progress=document.createElement('span');progress.className='execution-progress';progress.textContent=`${state.completed}/${state.total}`;
   const badge=document.createElement('span');badge.className='execution-status';badge.textContent=t(activity(state.current).label);
   summary.append(title,progress,badge);details.append(summary);panel.append(details);
@@ -952,12 +952,12 @@ function renderRoles() {
     const activity = roleActivity(role, app.data.tasks || [], app.data.runs || [],{requests:app.data.requests||[],warm,worker:worker||null,check:roleRefresh.getCheck(role)});
     const configured = activity.tone !== 'setup';
     const isSupervisor=role.id===project.supervisorRoleId;
-    const displayName=isSupervisor?t('Supervisor@@roleCard'):role.name;
+    const displayName=isSupervisor?t('Manager@@roleCard'):role.name;
     const card = create('article', `worker-card role-card is-${activity.tone}${role.enabled ? '' : ' disabled'}${isSupervisor?' is-supervisor':''}`);
     if(!isSupervisor)card.dataset.orderId=role.id;
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
-    card.setAttribute('aria-label', isSupervisor?t('Edit supervisor settings'):t('Edit role {name}', { name: role.name }));
+    card.setAttribute('aria-label', isSupervisor?t('Edit manager settings'):t('Edit role {name}', { name: role.name }));
     const head = create('div', 'role-card-head');
     const title = create('div', 'role-card-title');
     title.append(create('strong', 'role-card-name', displayName));
@@ -1337,7 +1337,7 @@ function renderPlatformPrompts() {
   renderRetiredPromptSettings(settings);
   dom.promptsUpdated.textContent = settings.promptsUpdatedAt ? t('Last saved: {time}', { time: formatTime(settings.promptsUpdatedAt) }) : 'Not saved separately; using the default';
   document.querySelector('#platform-prompt-summary').textContent = dom.promptsForm.elements.platformPrompt.value.trim() || 'Not set; using the platform default rules.';
-  document.querySelector('#supervisor-prompt-summary').textContent = dom.promptsForm.elements.supervisorPrompt.value.trim() || 'Not set; using the default supervisor instructions.';
+  document.querySelector('#supervisor-prompt-summary').textContent = dom.promptsForm.elements.supervisorPrompt.value.trim() || 'Not set; using the default manager instructions.';
   dom.promptsFeedback.hidden = true;
   roleTemplates.render();
   const organizer=settings.conversationOrganizer||{};
@@ -1377,7 +1377,7 @@ function openPromptEditor(mode) {
   dom.promptsDialog.dataset.editMode = mode;
   dom.promptsDialog.dataset.promptsRevision=String(app.data.settings?.promptsRevision||0);
   for (const section of dom.promptsForm.querySelectorAll('[data-prompt-field]')) section.hidden = section.dataset.promptField !== (mode === 'platform' ? 'platform' : 'supervisor');
-  document.querySelector('#platform-prompts-dialog-title').textContent = t(mode === 'platform' ? 'Edit platform prompt' : 'Edit supervisor prompt');
+  document.querySelector('#platform-prompts-dialog-title').textContent = t(mode === 'platform' ? 'Edit platform prompt' : 'Edit manager prompt');
   dom.promptsDialog.showModal();
   (mode === 'platform' ? dom.promptsForm.elements.platformPrompt : dom.promptsForm.elements.supervisorPrompt).focus();
 }
@@ -1712,7 +1712,7 @@ function renderRunTabs(task, run) {
 const RUN_INPUT_LABELS={steering:'Direction change',task:'Current task',followup:'Reminder facts',discussion:'Discussion conclusion',roster:'Roles that must take part',
   references:'Related messages',deliveries:'Related deliveries',completion:'Completion requirement',dependencies:'Dependency status',sourceWorkspace:'Referenced execution directory',
   sourceInputs:'Cross-device synced input',environment:'Environment',stage:'Stage boundary',wb:'wb command'};
-const RUN_INPUT_FIXED=[['identity','Identity'],['platform','Platform prompt'],['role','Role instructions'],['supervisor','Supervisor prompt'],['projectRules','Project rules (AGENTS.md)']];
+const RUN_INPUT_FIXED=[['identity','Identity'],['platform','Platform prompt'],['role','Role instructions'],['supervisor','Manager prompt'],['projectRules','Project rules (AGENTS.md)']];
 const RUN_INPUT_METHOD={claude:'Claude system prompt (--append-system-prompt)',codex:'Codex developer instructions',grok:'Grok rules (--rules)',agy:'Agy: first message of the session'};
 
 function renderRunInput(task, snapshot,run) {

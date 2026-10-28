@@ -606,7 +606,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
   const mentionInput=createMentionInput(input,()=>{
     const names=[...(data.roles||[]),...(data.supervisorRoles||[])].filter(r=>r.projectId===projectId&&!r.archivedAt).map(r=>r.name);
-    if(data.projects?.find(p=>p.id===projectId)?.supervisorRoleId)names.push('Supervisor','supervisor','\u603b\u7ba1');
+    if(data.projects?.find(p=>p.id===projectId)?.supervisorRoleId)names.push('Manager','manager','\u4e3b\u7ba1','Supervisor','supervisor','\u603b\u7ba1');
     return names;
   });
   const hasMention=text=>/(?:^|[\s,.!?;:(\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a\uff08])@([\p{L}\p{N}_-]+)/u.test(text);
@@ -630,7 +630,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
 
   function composer() {
     if (!projectId) return;
-    input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, new messages go to the supervisor; replies target the sender, and @ several roles dispatches to each' : 'Type a message; @role to start work';
+    input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, new messages go to the manager; replies target the sender, and @ several roles dispatches to each' : 'Type a message; @role to start work';
     const d = draft(), busy = sendingProject === scopeId, state = sendState(d);
     input.disabled = busy || !!d.pending || !!d.queueEdit;
     send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length) || sendLocked(state) || verifying.has(scopeId);
@@ -1125,7 +1125,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     older.hidden = !history?.hasMore;
     if (!messages.length) feed.append(create('div', 'chat-empty', history
       ? data.projects?.find(p=>p.id===projectId)?.supervisorRoleId
-        ? 'This is the project chat. New messages without @ go to the supervisor; replies target their sender; multiple @ mentions dispatch to each role; @everyone only sends a notification and does not start an Agent.'
+        ? 'This is the project chat. New messages without @ go to the manager; replies target their sender; multiple @ mentions dispatch to each role; @everyone only sends a notification and does not start an Agent.'
         : 'This is the project chat. Without @ it is only logged; @someone dispatches to them; @everyone only sends a notification and does not start an Agent.'
       : 'Loading chat…'));
     // Use the saved error time, never refresh time. Older notices follow the same history window as messages.
@@ -1256,8 +1256,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     // The project supervisor is routed by name on the server; offer it in the menu like any other role.
     const project = data.projects?.find(p => p.id === projectId);
     const supervisorRole = project?.supervisorRoleId ? (data.supervisorRoles || []).find(r => r.id === project.supervisorRoleId) : null;
-    const supervisor = supervisorRole ? { ...supervisorRole, name: t('Supervisor@@roleCard') } : null;
-    const supervisorMatches = supervisor && (!q || supervisor.name.toLowerCase().includes(q) || 'supervisor'.startsWith(q) || '\u603b\u7ba1'.includes(q));
+    const supervisor = supervisorRole ? { ...supervisorRole, name: t('Manager@@roleCard') } : null;
+    const supervisorMatches = supervisor && (!q || supervisor.name.toLowerCase().includes(q) || 'manager'.startsWith(q) || 'supervisor'.startsWith(q) || '\u4e3b\u7ba1'.includes(q) || '\u603b\u7ba1'.includes(q));
     const roles = orderedItems(projectRoles(),readListOrder(`roles:${projectId}`)).filter(r => !q || r.name.toLowerCase().includes(q));
     const everyone = !q || 'everyone'.includes(q) || 'all'.startsWith(q);
     // Keep @everyone above the roles; role candidates follow the sidebar's pinned supervisor and saved card order.

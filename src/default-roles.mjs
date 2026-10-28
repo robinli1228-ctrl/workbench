@@ -45,8 +45,11 @@ export function defaultRoleTemplates() {
   ]);
 }
 
-/** The fixed Supervisor role is recognised by either language's default display name (and by `systemSupervisor` / `supervisorRoleId`, never by name alone). */
-export const SUPERVISOR_NAMES = Object.freeze(['Supervisor', '\u603b\u7ba1']);
+/**
+ * The fixed manager role is recognised by either language's default display name, current (Manager / \u4e3b\u7ba1) or former
+ * (Supervisor / \u603b\u7ba1, still used by prompts and older messages), and by `systemSupervisor` / `supervisorRoleId`, never by name alone.
+ */
+export const SUPERVISOR_NAMES = Object.freeze(['Manager', '\u4e3b\u7ba1', 'Supervisor', '\u603b\u7ba1']);
 export function isSupervisorName(name) {
   return typeof name === 'string' && SUPERVISOR_NAMES.some(n => n.toLowerCase() === name.trim().toLowerCase());
 }
