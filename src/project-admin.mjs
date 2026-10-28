@@ -29,7 +29,6 @@ export class ProjectAdmin {
     if (!['existing','create'].includes(input.mode)) throw new Error(tr('projectAdmin.chooseLinkExistingRepositoryCreate'));
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}$/.test(input.key || '')) throw new Error(tr('projectAdmin.repositoryDirectoryNameMayContain'));
     if (input.baseBranch && (typeof input.baseBranch !== 'string' || input.baseBranch.length > 100 || input.baseBranch.startsWith('-'))) throw new Error(tr('projectAdmin.invalidProjectBaselineSourceBranch'));
-    if(input.baseCommit && !/^[a-f0-9]{40,64}$/.test(input.baseCommit))throw new Error(tr('projectAdmin.pinnedStartingPointNeedsFull'));
     if (!Array.isArray(input.nodeIds) || !input.nodeIds.length || input.nodeIds.some(id => !this.db.get('workers', id))) throw new Error(tr('projectAdmin.selectParticipatingDevices'));
     const operationKey = `${projectId}:${input.key}`;
     if (this.busy.has(operationKey)) throw new Error(tr('projectAdmin.repositoryBeingPreparedWaitFor'));
@@ -43,10 +42,10 @@ export class ProjectAdmin {
         let url;
         try { url = await this.hosting.create(input.accountId, input.remoteName || `${project.folderName}-${input.key}`, project.description); }
         catch (e) { this.db.put('repositoryOperations', { id: operationKey, projectId, status: e.remoteUncertain===false ? 'blocked' : 'remote_uncertain', error: e.message }); throw e; }
-        repo = saveRepository(this.db, projectId, { key: input.key, repoUrl: url, accountId: input.accountId, baseBranch:input.baseBranch,baseCommit:input.baseCommit });
+        repo = saveRepository(this.db, projectId, { key: input.key, repoUrl: url, accountId: input.accountId, baseBranch:input.baseBranch });
       } else {
         repo = saveRepository(this.db, projectId, { key: input.key, repoUrl: input.repoUrl || repo?.repoUrl, accountId: input.accountId || repo?.accountId,
-          baseBranch:input.baseBranch,baseCommit:input.baseCommit });
+          baseBranch:input.baseBranch });
       }
       const results = [], prepared = [], nodeIds = [...new Set(input.nodeIds)];
       const priorBindings = nodeIds.map(nodeId=>this.db.get('repositoryWorkspaces',`${repo.id}:${nodeId}`));
