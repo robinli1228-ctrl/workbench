@@ -1987,6 +1987,10 @@ dialog.role-switch-dialog { width: min(640px, calc(100vw - 32px)); }
 #settings-page .timer-overview-number { color: #30353d; font-size: 20px; font-weight: 600; }
 #settings-page #token-usage-form { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0 0 16px; border: 0; border-bottom: 1px solid var(--page-line); border-radius: 0; background: #fff; }
 #settings-page .usage-device-info { min-width: 0; overflow-wrap: anywhere; }
+#settings-page .usage-pies { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+@media (max-width: 700px) {
+  #settings-page .usage-pies { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
 #settings-page .usage-device-info > strong { color: #30353d; font-size: 16px; font-weight: 600; }
 #settings-page :is(.usage-legend, .usage-total-label, .usage-total-unit, .usage-total small) { color: #656c7d; }
 #settings-page .usage-daily { scrollbar-width: thin; scrollbar-color: #c7cbd1 transparent; }

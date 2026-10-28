@@ -46,6 +46,8 @@ export function refreshMessage(report){
 export function tokenUsageUI({api,getData,create}){
   const form=document.querySelector('#token-usage-form'),feedback=document.querySelector('#token-usage-feedback');
   let loaded=false;
+  // 等可见布局完成后定位最新日期；用户随后仍可自由向左查看历史。
+  const showLatest=()=>requestAnimationFrame(()=>{const chart=document.querySelector('#token-usage-daily');chart.scrollLeft=chart.scrollWidth;});
   const format=value=>Number(value||0).toLocaleString(dateLocale());
   const compact=value=>new Intl.NumberFormat(dateLocale(),{notation:'compact',maximumFractionDigits:1}).format(Number(value||0));
   const date=value=>{const d=new Date();d.setDate(d.getDate()+value);return new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit'}).format(d);};
@@ -80,6 +82,7 @@ export function tokenUsageUI({api,getData,create}){
       for(const segment of day.segments){const bar=create('span','usage-bar');bar.style.height=`${segment.value/day.totalTokens*100}%`;bar.style.background=segment.color;bar.title=`${t(segment.modelName)} · ${day.date} · ${format(segment.value)} tokens`;bar.setAttribute('role','img');bar.setAttribute('aria-label',bar.title);stack.append(bar);}
       bars.append(stack);group.append(bars,create('time','',day.date.slice(5)));chart.append(group);
     }
+    showLatest();
   }
   async function load(refresh){
     const values=Object.fromEntries(new FormData(form)),nodeIds=[values.nodeA,values.nodeB].filter(Boolean);
@@ -92,5 +95,5 @@ export function tokenUsageUI({api,getData,create}){
   }
   form.addEventListener('submit',event=>{event.preventDefault();void load(false);});
   document.querySelector('#token-usage-refresh').addEventListener('click',()=>void load(true));
-  return {refresh:options,show(){options();if(!loaded)void load(false);}};
+  return {refresh:options,show({resetScroll=false}={}){options();if(!loaded)void load(false);else if(resetScroll)showLatest();}};
 }
