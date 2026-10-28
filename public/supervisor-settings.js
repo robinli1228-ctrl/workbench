@@ -4,7 +4,7 @@ import {createRoleSwitchUI} from './role-switch.js';
 import {createRoleHistoryTabs} from './role-history.js';
 import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
 import {renderModelUsageNotice} from './model-usage.js';
-/** 总管详情使用原有配置接口，页面调整不改变项目接待角色和会话绑定。 */
+/** 主管详情使用原有配置接口，页面调整不改变项目接待角色和会话绑定。 */
 export function supervisorSettings({ api, getData, getProject, refreshState, create, openTask }) {
   const form = document.querySelector('#supervisor-form');
   const host=form.parentElement,settings=create('div','supervisor-configuration');settings.id='supervisor-settings-body';
@@ -59,7 +59,7 @@ export function supervisorSettings({ api, getData, getProject, refreshState, cre
     const p = getProject(), data = getData(); projectId = p?.id;
     if (!p) return;
     const role=data.supervisorRoles?.find(r=>r.id===p.supervisorRoleId);
-    form.elements.name.value=role?.name||t('Supervisor@@roleCard');
+    form.elements.name.value=role?.name||t('Manager@@roleCard');
     document.querySelector('#supervisor-dialog-title').textContent=t('Role settings · {name}',{name:form.elements.name.value});
     form.elements.responsibility.value=role?.responsibility||'';
     document.querySelector('#project-supervisor-prompt-preview').value = data.settings?.supervisorPrompt ?? data.promptDefaults?.supervisorPrompt ?? '';
@@ -110,7 +110,7 @@ export function supervisorSettings({ api, getData, getProject, refreshState, cre
       });
       await refreshState({ quiet: true }); busy = false;
       if (getProject()?.id !== id) return;
-      prepare(); feedback.textContent = 'Local supervisor settings saved; they apply to later sessions.'; feedback.hidden = false;
+      prepare(); feedback.textContent = 'Local manager settings saved; they apply to later sessions.'; feedback.hidden = false;
     } catch (error) { feedback.textContent = error.message; feedback.hidden = false; }
     finally { busy = false; form.querySelector('button[type=submit]').disabled = false; }
   });

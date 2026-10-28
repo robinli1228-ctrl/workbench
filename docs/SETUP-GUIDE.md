@@ -190,7 +190,7 @@ journalctl -u agent-workbench-worker -f          # logs
 
 1. **Basic settings**: every device online, CLIs and models detected; the language switch is here.
 2. **Hosting accounts** (optional): least-privilege GitHub / Gitee tokens (repository contents and pull requests), stored in a private file in Home's data directory. Role pushes and the Sessions page's Git credential come from here; a token is sent only to its repository's remote.
-3. **Create a project**: pick an online device, a logged-in CLI and a model as the supervisor, and a folder name. Workbench creates the folder on that device with `AGENTS.md` and `CLAUDE.md`.
+3. **Create a project**: pick an online device, a logged-in CLI and a model as the manager, and a folder name. Workbench creates the folder on that device with `AGENTS.md` and `CLAUDE.md`.
 4. **Device bindings**: in project settings bind a folder on every participating device (created if missing). Source sync keeps them consistent: the whole bound folder is in scope (`outputs/`, `artifacts/`, `.workbench/docs` included), code repositories sync against their Git baseline, `.git` itself is not transferred, and simultaneous edits of one file land in the conflict list for a person to resolve.
 5. **Roles**: define roles by device / CLI / model / effort / prompt; dispatch with `@role` in the group chat. Queued messages sit above the composer; each can be steered (interrupt and run now) or cancelled.
 6. **Sessions page**: a new native session takes a device, a CLI, an optional project and a working folder. With a project the folder is `<project>/native-sessions/<title>`, created when opened; without one `<WORKSPACE_ROOT>/native-sessions`. "Allow all operations" maps to the CLI's permission bypass. Open on the page (the Worker starts the CLI headlessly) or prepare an iTerm launch. Once taken over: the button is Stop while a reply runs, becomes Send as soon as you type (the message queues); switching to iTerm or back runs in a dialog with confirmation and progress. Right panel: Overview (connection, model, effort, context with compact, quota), Files (named in replies, touched, outputs folder, project outputs), Resources (repository, AGENTS.md, working folder, session ID).
@@ -238,6 +238,6 @@ journalctl -u agent-workbench-worker -f          # logs
 - [ ] Home reachable; `API_TOKEN` and HTTPS when not on loopback
 - [ ] Every Worker online, CLIs and models detected, `WORKER_ROOTS` / `WORKER_DATA_DIR` separate per Worker
 - [ ] Tunnel or reverse proxy runs as a service
-- [ ] At least one project: supervisor role works, every participating device has a bound folder, `AGENTS.md` exists
+- [ ] At least one project: manager role works, every participating device has a bound folder, `AGENTS.md` exists
 - [ ] `@role` in the group chat dispatches and replies; the Sessions page can create, take over and hand over to iTerm
 - [ ] Tokens exist only in service environment files or Home's data directory; `git status` in the checkout is clean

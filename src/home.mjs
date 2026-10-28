@@ -100,6 +100,12 @@ const db = new Store(join(data, 'home.sqlite'));
 // The global "pause remote execution" switch was removed; drop a stored flag so no install keeps a stale paused state around.
 const storedSettings=db.get('settings','main');
 if(storedSettings&&Object.hasOwn(storedSettings,'paused')){const {paused,...rest}=storedSettings;db.put('settings',rest);}
+// The fixed role is now called Manager; a manager still carrying a former default name takes the new one in the same language,
+// unless another role of the project already has that name (that role keeps it, and @name keeps reaching it).
+for (const role of db.list('roles').filter(r => r.systemSupervisor && ['Supervisor', '\u603b\u7ba1'].includes(r.name))) {
+  const name = role.name === 'Supervisor' ? 'Manager' : '\u4e3b\u7ba1';
+  if (!db.listProject('roles', role.projectId).some(other => other.id !== role.id && other.name === name)) db.put('roles', { ...role, name });
+}
 for (const project of db.list('projects')) {
   if (!project.folderName) db.put('projects', { ...project, folderName:`project-${project.id.slice(0,8)}` });
 }

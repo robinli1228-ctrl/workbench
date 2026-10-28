@@ -23,11 +23,11 @@ Workbench makes those handoffs part of the project workflow:
 - **Review across models.** Ask other roles to inspect an implementation independently, then send the findings back to its author.
 - **Keep the next step visible.** Track assignments, pending replies, task records, and execution details in one place.
 
-Address a role directly with `@role`, or ask the project supervisor to coordinate the work. A role combines a device, CLI, model, reasoning setting, and responsibility. You choose the team and its workflow.
+Address a role directly with `@role`, or ask the project manager to coordinate the work. A role combines a device, CLI, model, reasoning setting, and responsibility. You choose the team and its workflow.
 
 ## A typical collaboration
 
-Ask the supervisor:
+Ask the manager:
 
 > Add a quotation import feature. Agree on a plan, assign implementation, have two other roles review it independently, then test the fixes and report the result. Do not merge or deploy.
 
@@ -46,19 +46,19 @@ flowchart LR
 
 | Stage | Example role | What it passes on |
 | --- | --- | --- |
-| Plan | Claude Code as supervisor | Scope, acceptance criteria, and assignments |
+| Plan | Claude Code as manager | Scope, acceptance criteria, and assignments |
 | Implement | Codex as developer | Code version, changes, and self-check results |
 | Review | Grok and Antigravity as reviewers | Independent findings against the assigned version |
 | Revise | Original developer | Fixes and responses to review findings |
-| Verify and report | Tester and supervisor | Test evidence, artifacts, and remaining issues |
+| Verify and report | Tester and manager | Test evidence, artifacts, and remaining issues |
 
-These are example assignments, not fixed vendor roles. Any supported CLI can take a suitable responsibility. Handoffs carry task instructions, code versions, artifacts, and feedback; the CLIs keep their own native sessions. The supervisor can coordinate the next step through Workbench's collaboration tools. Merge, deployment, and other production actions require separate explicit authorization.
+These are example assignments, not fixed vendor roles. Any supported CLI can take a suitable responsibility. Handoffs carry task instructions, code versions, artifacts, and feedback; the CLIs keep their own native sessions. The manager can coordinate the next step through Workbench's collaboration tools. Merge, deployment, and other production actions require separate explicit authorization.
 
 ## What you can do
 
 ### Collaborate in a project group chat
 
-Keep requirements, assignments, discussion, and final results together. Use direct mentions, supervisor coordination, role consultations, or whole-task transfers to decide who works next.
+Keep requirements, assignments, discussion, and final results together. Use direct mentions, manager coordination, role consultations, or whole-task transfers to decide who works next.
 
 Each group has its own task list with descriptions, steps, owners, status, and change history. Task records describe the work; execution queues and run records show what is actually running or waiting. A successful process exit does not by itself mean the task passed review.
 
@@ -123,9 +123,9 @@ Open [http://127.0.0.1:4317](http://127.0.0.1:4317). The default listener is loc
 In the UI:
 
 1. Open Settings → Devices and CLIs and check that your device and installed CLIs are detected.
-2. Create a project, choose its folder, and select a device, CLI, and model for the supervisor.
-3. Configure the repositories and roles yourself, or ask the supervisor to propose them and confirm its configuration cards.
-4. Give the supervisor a goal, or `@` a role to start a specific assignment.
+2. Create a project, choose its folder, and select a device, CLI, and model for the manager.
+3. Configure the repositories and roles yourself, or ask the manager to propose them and confirm its configuration cards.
+4. Give the manager a goal, or `@` a role to start a specific assignment.
 
 To start the processes separately:
 
@@ -179,7 +179,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before contri
 - [Operating guide](docs/OPERATING-GUIDE.md): setup, accounts, devices, and release procedures.
 - [Architecture](docs/ARCHITECTURE.md): current components and interface boundaries.
 - [Product scope](docs/PRD.md): goals and planned capabilities.
-- [Coordination design](docs/design-coordination.md): supervisor and role collaboration.
+- [Coordination design](docs/design-coordination.md): manager and role collaboration.
 - [Review delivery](docs/design-review-delivery.md): fixed-version review inputs.
 - [Source synchronization](docs/design-source-sync.md): scope, conflict handling, and current limits.
 - [Documentation index](docs/README.md): detailed feature contracts and designs.

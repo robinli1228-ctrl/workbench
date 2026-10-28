@@ -167,6 +167,7 @@ test('matchers accept both languages', async () => {
   const roles = await import(fileUrl('src', 'default-roles.mjs'));
   assert.ok(roles.isSupervisorName('Supervisor') && roles.isSupervisorName('supervisor'));
   assert.ok(roles.isSupervisorName('\u603b\u7ba1'));
+  assert.ok(roles.isSupervisorName('Manager') && roles.isSupervisorName('\u4e3b\u7ba1'), 'the current names, next to the former ones prompts still use');
   assert.ok(!roles.isSupervisorName('Developer'));
   for (const lang of ['en', 'zh']) {
     assert.ok(await withLanguage(lang, () => roles.isSupervisorName(i18n.tr('rooms.supervisor'))), `${lang} supervisor display name`);

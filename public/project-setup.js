@@ -48,7 +48,7 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
   function choices() {
     const data = getData(), settings = data.settings || {}, last = lastSupervisorChoice(settings);
     const workers = (data.workers || []).filter(w => w.online && w.capabilities?.projectSpace === 1);
-    select('supervisorNodeId', workers, 'Select supervisor device', last.nodeId);
+    select('supervisorNodeId', workers, 'Select manager device', last.nodeId);
     select('hostingAccountId',(data.hostingAccounts || []).map(a=>({id:a.id,name:`${a.label} · ${a.private?t('Private'):t('Public')}`})),'Connect a hosting account in Settings first',settings.hostingAccountId);
     if (!form.elements.hostingAccountId.value && data.hostingAccounts?.length) form.elements.hostingAccountId.value = data.hostingAccounts[0].id;
     for (const node of form.querySelectorAll('[data-repository-mode]')) node.hidden = node.dataset.repositoryMode !== form.elements.repositoryMode.value;
@@ -60,12 +60,12 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     localRoot.disabled=pickFolder.disabled=!local;
     folderNote.textContent=local?'Only the selected folder is bound; existing files are kept. Browsing does not grant CLI permissions.':'Upgrade the local Worker to select this folder';
     renderPermissionScope(permissionSelect,permissionNote,{worker,runtime:runtime?.type,isNew:true});
-    select('supervisorModel', runtime?.models || [], 'Select supervisor model', last.runtime === form.elements.supervisorRuntime.value ? last.model : '');
+    select('supervisorModel', runtime?.models || [], 'Select manager model', last.runtime === form.elements.supervisorRuntime.value ? last.model : '');
     const model = runtime?.models?.find(m => m.id === form.elements.supervisorModel.value);
     renderModelUsageNotice(form.querySelector('[data-model-usage-note]'),runtime?.type,model||{id:form.elements.supervisorModel.value});
     select('supervisorEffort', (model?.efforts || runtime?.efforts || []).map(id => ({ id })), 'CLI default', last.effort);
     document.querySelector('#project-supervisor-note').textContent = workers.length
-      ? 'The supervisor can run locally or on a server; other devices can join in project settings.'
+      ? 'The manager can run locally or on a server; other devices can join in project settings.'
       : 'No online device supporting project workspaces was found; connect or upgrade a Worker in Settings → Devices and CLIs.';
   }
   for (const name of ['supervisorNodeId', 'supervisorRuntime', 'supervisorModel', 'repositoryMode']) form.elements[name].addEventListener('change', choices);
@@ -76,8 +76,8 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     const proposals = (data.setupProposals || []).filter(r => r.projectId === p?.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const pendingCount = proposals.filter(proposal => proposal.status === 'pending').length;
     const title = pendingCount
-      ? `${t('Pending confirmation')} (${pendingCount}) · ${t('Supervisor setup suggestions')}`
-      : t('Supervisor setup suggestions');
+      ? `${t('Pending confirmation')} (${pendingCount}) · ${t('Manager setup suggestions')}`
+      : t('Manager setup suggestions');
     const nextSignature = JSON.stringify([p?.id, proposals, [...busy], getLanguage()]);
     cards.hidden = !proposals.length;
     if (nextSignature === signature) return;
@@ -94,7 +94,7 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
           : t('Configure role {name} · all project repositories\nDevice: {v} · {runtime} · {model}\nPrompt: {v2}', { name: action.name, v: workerName(action.nodeId), runtime: action.runtime, model: action.model, v2: action.instructions || t('Not specified') });
         card.append(create('pre', 'setup-action', line));
       }
-      if (proposal.error) card.append(create('p', 'inline-error', t('{error}. Completed {v}/{v2}; nothing is rolled back or overwritten automatically. Ask the supervisor to review before proposing a new suggestion.', { error: proposal.error, v: proposal.completed?.length || 0, v2: proposal.actions.length })));
+      if (proposal.error) card.append(create('p', 'inline-error', t('{error}. Completed {v}/{v2}; nothing is rolled back or overwritten automatically. Ask the manager to review before proposing a new suggestion.', { error: proposal.error, v: proposal.completed?.length || 0, v2: proposal.actions.length })));
       if (proposal.status === 'pending') {
         const actions = create('div', 'form-actions');
         for (const [action, label] of [['approve', 'Confirm and run'], ['reject', 'Reject']]) {
