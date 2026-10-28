@@ -1,6 +1,7 @@
 import { t } from './i18n.js';
 import { workerDisplayName } from './role-icons.js';
 import { createFolderControl } from './create-folder.js';
+import { saveConcurrentWrites } from './concurrent-writes.js';
 
 /** Node folder selection and repository settings share the existing authenticated API and never upload local browser files. */
 export function projectSettings({ api, getData, getProject, getConversationId=()=>getProject()?.id, refreshState, create, setError, openSettings, closeSettings, openTask }) {
@@ -38,9 +39,8 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   }
   concurrentBox.addEventListener('change',async()=>{
     const p=getProject();if(!p)return;const enabled=concurrentBox.checked,here=()=>getProject()?.id===p.id;
-    if(enabled&&!confirm(t('Allow several roles to edit this project at the same time? Two roles can overwrite each other on the same file, and Git actions can collide. Migration, deployment and production operations will no longer wait for other roles.'))){concurrentBox.checked=false;return;}
     concurrentBox.disabled=true;concurrentFeedback.hidden=true;
-    try{await api(`/api/projects/${encodeURIComponent(p.id)}/concurrent-writes`,{method:'POST',json:{enabled}});}
+    try{if(await saveConcurrentWrites({api,projectId:p.id,enabled})===null){concurrentBox.checked=false;concurrentBox.disabled=false;return;}}
     catch(error){if(here()){concurrentBox.checked=!enabled;concurrentFeedback.textContent=error.message;concurrentFeedback.hidden=false;}concurrentBox.disabled=false;return;}
     // The server has the new value; a failed refresh must not flip the box back.
     try{await refreshState({quiet:true});}catch{}
