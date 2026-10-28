@@ -1,4 +1,4 @@
-export const SETTINGS_TABS = Object.freeze(['general', 'devices', 'hosting', 'prompts', 'information', 'data']);
+export const SETTINGS_TABS = Object.freeze(['general', 'devices', 'hosting', 'prompts', 'data', 'information']);
 
 /** 只切换可见性，不重新加载配置或重建表单，保留各分类尚未保存的输入。 */
 function selectProjectSettingsTab(root, value) {
@@ -39,13 +39,13 @@ export function normalizeSettingsTab(value) {
   if (value === 'project') return 'project';
   if (value === 'usage') return 'usage';
   if (value === 'timers') return 'timers';
-  return SETTINGS_TABS.includes(value) ? value : 'devices';
+  return SETTINGS_TABS.includes(value) ? value : 'general';
 }
 
 /** Settings, project, usage and scheduled jobs share a full-screen container; standalone pages do not take a basic settings tab. */
 export function settingsView(value) {
   const tab = normalizeSettingsTab(value), scope = ['project', 'usage', 'timers'].includes(tab) ? tab : 'global';
-  return { tab, scope, title: tab === 'project' ? 'Project Settings' : tab === 'usage' ? 'Token Usage' : tab === 'timers' ? 'Scheduled Jobs' : 'Basic Settings',
+  return { tab, scope, title: tab === 'project' ? 'Project Settings' : tab === 'usage' ? 'Token Usage' : tab === 'timers' ? 'Scheduled Jobs' : 'Settings',
     tabs: scope === 'global' ? [...SETTINGS_TABS] : [] };
 }
 

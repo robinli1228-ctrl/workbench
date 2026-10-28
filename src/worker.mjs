@@ -1124,21 +1124,6 @@ async function query(m,emit=send) {
     if (m.action === 'native_default_folder') {
       send({type:'reply',id:m.id,result:await prepareNativeSessionFolder(await folderAccess.allowedRoots(),defaultRoot,m.path?.bindings,{projectRoot:m.path?.projectRoot||null,name:m.path?.name||null})});return;
     }
-    if (m.action === 'git_check') {
-      const root = await projectRoot(m.path?.localRoot);
-      const repo = giteeRepository(m.path?.repoUrl); if (!repo) throw new Error(tr('worker.configureGiteeRepositoryUrlFirst'));
-      let origin = null;
-      try { origin = giteeRepository((await exec('git', ['remote', 'get-url', 'origin'], { cwd: root, timeout: 2000 })).stdout.trim()); } catch {}
-      let reachable = false;
-      try {
-        await exec('git', ['ls-remote', '--', repo.url, 'HEAD'], { cwd: root, timeout: 8000, maxBuffer: 65536,
-          env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=5' } });
-        reachable = true;
-      } catch {}
-      send({ type: 'reply', id: m.id, result: { repoUrl: repo.url, localRoot: root, reachable, origin: origin?.url || null,
-        remoteMatches: origin ? origin.webUrl === repo.webUrl : null, checkedAt: new Date().toISOString(),
-        message: reachable ? tr('worker.repositoryReadableCheckDoesNot') : tr('worker.unableReadRepositoryCheckUrl') } }); return;
-    }
     if (m.action === 'project_git_versions') {
       if (!Array.isArray(m.path?.repositories) || m.path.repositories.length > 30) throw new Error(tr('worker.invalidProjectRepositorySet'));
       const results=[];

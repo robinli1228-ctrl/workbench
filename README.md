@@ -122,7 +122,7 @@ Open [http://127.0.0.1:4317](http://127.0.0.1:4317). The default listener is loc
 
 In the UI:
 
-1. Open Basic Settings and check that your device and installed CLIs are detected.
+1. Open Settings → Devices and CLIs and check that your device and installed CLIs are detected.
 2. Create a project, choose its folder, and select a device, CLI, and model for the supervisor.
 3. Configure the repositories and roles yourself, or ask the supervisor to propose them and confirm its configuration cards.
 4. Give the supervisor a goal, or `@` a role to start a specific assignment.

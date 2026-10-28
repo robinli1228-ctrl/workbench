@@ -28,7 +28,7 @@ import { agentIconEl, agentWatermarkEl, machineIconEl, quotaForRole, roleActivit
 import { activateSettingsTab, normalizeSettingsTab, settingsView, initProjectSettingsTabs } from './settings-page.js';
 import { supervisorSettings } from './supervisor-settings.js';
 import { roleTemplatesUI } from './role-templates.js';
-import { projectSetupUI } from './project-setup.js';
+import { rememberSupervisorChoice, projectSetupUI } from './project-setup.js';
 import { deviceEntries, platformAdminUI } from './platform-admin.js';
 import { projectSpaceUI } from './project-space.js';
 import { tokenUsageUI } from './token-usage.js';
@@ -84,9 +84,6 @@ const dom = {
 };
 dom.settingsPauseRemote = document.querySelector('#settings-pause-remote');
 dom.settingsHomeVersion = document.querySelector('#settings-home-version');
-dom.workspaceDialog = document.querySelector('#workspace-dialog');
-dom.bindingForm = document.querySelector('#binding-form');
-dom.bindingError = document.querySelector('#binding-error');
 
 const app = {
   data: { projects: [], roles: [], roleTemplates: [], tasks: [], runs: [], workers: [], approvals: [], settings: { paused: false }, promptDefaults: {}, version: '' },
@@ -98,7 +95,6 @@ const app = {
   drafts: readSessionJson(DRAFT_KEY, { project: {}, tasks: {} }),
   commands: readSessionJson(COMMAND_KEY, {}),
   nodeSelections: {},
-  bindingTarget: null,
   events: [],
   files: [],
   detailTab: 'output',
@@ -124,7 +120,7 @@ const app = {
 // Set once the sessions UI exists; the dot can render before that, while the page is still connecting.
 let sessionProjectId=()=>null;
 app.view = 'workspace';
-app.settingsTab = 'devices';
+app.settingsTab = 'general';
 const groupListNote=create('p','workspace-note');groupListNote.id='group-list-note';groupListNote.hidden=true;dom.projectList.before(groupListNote);
 bindDescriptionNotes(document.querySelector('#navigation-mode [data-mode="groups"]'),[groupListNote],{key:'groups',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body]});
 bindDescriptionNotes(document.querySelector('#inspector-title'),[document.querySelector('#role-refresh-feedback'),document.querySelector('#role-sidebar-note')],{key:'roles',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body,document.querySelector('#inspector-roles')]});
@@ -167,17 +163,17 @@ const room = createRoomUI({ api, documentPreview, openSideAsk:message=>inspector
 // stay text-only, the same as the confirm buttons at the bottom of dialogs, so a row never mixes the two styles.
 for(const [selector,icon,label] of [
   ['#close-settings-page, dialog button.icon-button[id^="close-"], #folder-close, #close-project-form','close'],['#show-device-enroll','plus'],
-  ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit conversation organizer model'],['#edit-api-token','edit'],
-  ['#manage-wechat','settings'],
+  ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit background organizing'],['#manage-role-templates','edit','Manage role templates'],['#edit-api-token','edit'],
   ['#token-usage-form [type=submit]','search'],['#token-usage-refresh','refresh'],['#open-project-timers','history'],
-  ['#pick-settings-folder','folder'],['#refresh-followup','refresh'],['#view-followup','log']
+  ['#refresh-followup','refresh'],['#view-followup','log'],['#data-refresh','refresh'],['#check-software-updates','refresh'],
+  ['#copy-setup-guide','copy'],['#toggle-setup-guide','overview']
 ])document.querySelectorAll(selector).forEach(button=>setActionIcon(button,icon,label));
 const projectsUI = projectSettings({ api, getData: () => app.data, getProject: getCurrentProject, getConversationId:()=>app.selectedConversationId, refreshState, create, setError, openSettings, closeSettings,openTask });
 const supervisorsUI = supervisorSettings({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create,openTask });
 const roleTemplates = roleTemplatesUI({ api, getData: () => app.data, refreshState, create });
 const setupUI = projectSetupUI({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create, setError,openFolder:projectsUI.openFolder });
 const platformUI = platformAdminUI({api,getData:()=>app.data,refreshState,create});
-const spacesUI = projectSpaceUI({api,getData:()=>app.data,getProject:getCurrentProject,refreshState,create});
+const spacesUI = projectSpaceUI({api,getData:()=>app.data,getProject:getCurrentProject,refreshState,create,openFolder:(...args)=>projectsUI.openFolder(...args)});
 const tokenUI = tokenUsageUI({api,getData:()=>app.data,create});
 const dataUI = createDataSettingsUI({api});
 const schedulesUI = createScheduledJobsUI({api,getData:()=>app.data,getProject:getCurrentProject,getConversationId:()=>app.selectedConversationId,refreshState,create,
@@ -294,12 +290,11 @@ document.querySelector('#mobile-projects').innerHTML = UI_ICON.folder;
 document.querySelector('#mobile-roles').innerHTML = UI_ICON.roles;
 function viewportHeight() { document.documentElement.style.setProperty('--app-height', `${window.visualViewport?.height || window.innerHeight}px`); }
 window.visualViewport?.addEventListener('resize', viewportHeight); window.addEventListener('resize', viewportHeight); viewportHeight();
-document.querySelector('#pick-binding-folder').addEventListener('click', () => projectsUI.openBinding(app.bindingTarget?.nodeId));
 
 const remoteAccessUI=createRemoteAccessSettingsUI({root:document.querySelector('#remote-access-settings'),api});
-function openSettings(value = 'devices') {
+function openSettings(value = 'general') {
   let tab = normalizeSettingsTab(value);
-  if (tab === 'project' && !projectsUI.prepareSettings()) tab = 'devices';
+  if (tab === 'project' && !projectsUI.prepareSettings()) tab = 'general';
   dom.projectFormPanel.hidden = true;
   app.view = 'settings';
   app.settingsTab = activateSettingsTab(dom.settingsPage, tab);
@@ -595,7 +590,6 @@ async function refreshState({ quiet = false } = {}) {
       cliRecoveries:Array.isArray(data.cliRecoveries)?data.cliRecoveries:[],
       roleTemplates: Array.isArray(data.roleTemplates) ? data.roleTemplates : [],
       rooms: Array.isArray(data.rooms) ? data.rooms : [],
-      gitChecks: Array.isArray(data.gitChecks) ? data.gitChecks : [],
       workspaces: Array.isArray(data.workspaces) ? data.workspaces : [],
       sourceSyncSummaries: Array.isArray(data.sourceSyncSummaries) ? data.sourceSyncSummaries : [],
       tasks: Array.isArray(data.tasks) ? data.tasks : [],
@@ -1223,6 +1217,8 @@ function openRoleTerminal(role) {
 function renderSettingsDevices() {
   const list = dom.settingsDeviceList;
   if (!list) return;
+  // Redrawing would take the cursor out of a field being typed into (the CLI limit on a card).
+  if (list.contains(document.activeElement) && document.activeElement.matches('input, select, textarea')) return;
   list.replaceChildren();
   const workers = [...app.data.workers].sort((a, b) => {
     const kind = Number(workerKind(a) !== 'local') - Number(workerKind(b) !== 'local');
@@ -1259,6 +1255,7 @@ function renderSettingsDevices() {
       create('span', '', t('Last seen: {time}', { time: formatTime(worker.lastSeen) }))
     );
     card.append(head, meta);
+    if (entry.worker) card.append(platformUI.capacityRow(worker));
     const detail = platformUI.deviceDetails(entry);
     const actions = create('div', 'device-actions');
     const remoteDesktopUrl = typeof worker.remoteDesktopUrl === 'string' ? worker.remoteDesktopUrl.trim() : '';
@@ -1312,51 +1309,6 @@ function renderSettingsDevices() {
   }
 }
 
-function setSupervisorDefaultOptions(name, values, selected, blank) {
-  const select = dom.promptsForm?.elements[name];
-  if (!select) return '';
-  const unique = [...new Map(values.filter(value => value?.id).map(value => [value.id, value])).values()];
-  if (selected && !unique.some(value => value.id === selected)) unique.push({ id: selected, name: t('{selected} (currently unavailable)', { selected }) });
-  select.replaceChildren();
-  for (const value of [{ id: '', name: blank }, ...unique]) {
-    const option = create('option', '', value.name || value.id);
-    option.value = value.id;
-    select.append(option);
-  }
-  select.value = selected || '';
-  return select.value;
-}
-
-/** Defaults are generated only from signed-in Runtimes on online local machines; stale saved values stay displayed but are not replaced. */
-function renderSupervisorDefaultChoices(values = {}) {
-  if (!dom.promptsForm) return;
-  const runtimes = (app.data.workers || [])
-    .filter(worker => worker.online)
-    .flatMap(worker => worker.runtimes || [])
-    .filter(runtime => runtime.supported && runtime.available && runtime.authReady === true);
-  const runtime = setSupervisorDefaultOptions(
-    'defaultSupervisorRuntime',
-    runtimes.map(item => ({ id: item.type, name: item.label || item.type })),
-    values.defaultSupervisorRuntime || '',
-    'Choose manually when creating a project'
-  );
-  const selectedRuntimes = runtimes.filter(item => item.type === runtime);
-  const model = setSupervisorDefaultOptions(
-    'defaultSupervisorModel',
-    selectedRuntimes.flatMap(item => item.models || []),
-    values.defaultSupervisorModel || '',
-    'Choose manually when creating a project'
-  );
-  const selectedModels = selectedRuntimes.flatMap(item => item.models || []).filter(item => item.id === model);
-  renderModelUsageNotice(dom.promptsForm.querySelector('[data-model-usage-note]'),runtime,{id:model,usageCreditsMayApply:selectedModels.some(m=>m.usageCreditsMayApply)});
-  setSupervisorDefaultOptions(
-    'defaultSupervisorEffort',
-    [...new Set(selectedModels.flatMap(item => item.efforts || []).concat(selectedRuntimes.flatMap(item => item.efforts || [])))].map(id => ({ id })),
-    values.defaultSupervisorEffort || '',
-    'Use CLI default'
-  );
-}
-
 function renderRetiredPromptSettings(settings) {
   for(const [field,id] of [['platformPrompt','platform-prompt-summary'],['supervisorPrompt','supervisor-prompt-summary']]) {
     const summary=document.getElementById(id);
@@ -1386,16 +1338,10 @@ function renderPlatformPrompts() {
   const settings = app.data.settings || {};
   dom.promptsForm.elements.platformPrompt.value = settings.platformPrompt ?? app.data.promptDefaults?.platformPrompt ?? '';
   dom.promptsForm.elements.supervisorPrompt.value = settings.supervisorPrompt ?? app.data.promptDefaults?.supervisorPrompt ?? '';
-  renderSupervisorDefaultChoices(settings);
   renderRetiredPromptSettings(settings);
   dom.promptsUpdated.textContent = settings.promptsUpdatedAt ? t('Last saved: {time}', { time: formatTime(settings.promptsUpdatedAt) }) : 'Not saved separately; using the default';
   document.querySelector('#platform-prompt-summary').textContent = dom.promptsForm.elements.platformPrompt.value.trim() || 'Not set; using the platform default rules.';
   document.querySelector('#supervisor-prompt-summary').textContent = dom.promptsForm.elements.supervisorPrompt.value.trim() || 'Not set; using the default supervisor instructions.';
-  document.querySelector('#supervisor-defaults-summary').textContent = [
-    dom.promptsForm.elements.defaultSupervisorRuntime.selectedOptions[0]?.textContent || t('Choose CLI manually'),
-    dom.promptsForm.elements.defaultSupervisorModel.selectedOptions[0]?.textContent || t('Choose model manually'),
-    dom.promptsForm.elements.defaultSupervisorEffort.selectedOptions[0]?.textContent || t('CLI default reasoning effort')
-  ].join(' · ');
   dom.promptsFeedback.hidden = true;
   roleTemplates.render();
   const organizer=settings.conversationOrganizer||{};
@@ -1434,11 +1380,8 @@ function openPromptEditor(mode) {
   renderPlatformPrompts();
   dom.promptsDialog.dataset.editMode = mode;
   dom.promptsDialog.dataset.promptsRevision=String(app.data.settings?.promptsRevision||0);
-  for (const section of dom.promptsForm.querySelectorAll('[data-prompt-field]')) section.hidden = mode === 'supervisor-prompt' ? section.dataset.promptField !== 'supervisor' : mode === 'platform' ? section.dataset.promptField !== 'platform' : section.dataset.promptField === 'platform';
-  document.querySelector('#restore-platform-prompts').textContent = mode !== 'platform' ? 'Restore default prompts' : 'Restore defaults';
-  document.querySelector('#platform-prompts-dialog-title').textContent = {
-    platform: 'Edit platform prompt', supervisor: 'Edit supervisor settings', 'supervisor-prompt': 'Edit default supervisor prompt'
-  }[mode];
+  for (const section of dom.promptsForm.querySelectorAll('[data-prompt-field]')) section.hidden = section.dataset.promptField !== (mode === 'platform' ? 'platform' : 'supervisor');
+  document.querySelector('#platform-prompts-dialog-title').textContent = t(mode === 'platform' ? 'Edit platform prompt' : 'Edit supervisor prompt');
   dom.promptsDialog.showModal();
   (mode === 'platform' ? dom.promptsForm.elements.platformPrompt : dom.promptsForm.elements.supervisorPrompt).focus();
 }
@@ -1482,17 +1425,6 @@ function appendRuntimeModels(parent, worker, runtime) {
   }
   details.append(modelList);
   parent.append(details);
-}
-
-/** The dialog stores the target project and node, so SSE refreshes do not overwrite the path being edited. */
-function openWorkspaceBinding(project, worker, binding) {
-  if (project.supervisorRoleId) { openSettings('project'); return; }
-  app.bindingTarget = { projectId: project.id, nodeId: worker.id };
-  document.querySelector('#binding-title').textContent = `${project.name} · ${workerDisplayName(worker)}`;
-  dom.bindingForm.elements.localRoot.value = binding?.localRoot || project.root || '';
-  dom.bindingError.hidden = true;
-  dom.workspaceDialog.showModal();
-  dom.bindingForm.elements.localRoot.focus();
 }
 
 /** Account quota: when the probe returns no balance field, label it "Not available" rather than inventing a number. Optionally shows the last run's usage. */
@@ -1610,7 +1542,7 @@ function renderWorkspace() {
   dom.versionLabel.textContent = app.data.version ? `Home ${app.data.version}` : '';
   if (dom.settingsHomeVersion) dom.settingsHomeVersion.textContent = app.data.version ? `Home ${app.data.version}` : 'Home status unknown';
   const tokenSummary = document.querySelector('#api-token-summary');
-  if (tokenSummary) tokenSummary.textContent = app.token ? 'Set; saved in this browser for future visits. You can change it here.' : 'Not set; enter the Home access token if authentication is enabled.';
+  if (tokenSummary) { tokenSummary.textContent = t(app.token ? 'Set' : 'Not set'); tokenSummary.className = `settings-chip ${app.token ? 'ok' : 'off'}`; }
   const paused = Boolean(app.data.settings?.paused);
   for (const button of [dom.pauseRemote, dom.settingsPauseRemote].filter(Boolean)) {
     const label = paused ? 'Resume remote' : 'Pause remote';
@@ -2365,7 +2297,7 @@ window.addEventListener('storage', event => {
   connectUpdates();void refreshState();
 });
 
-document.querySelector('#show-app-settings')?.addEventListener('click', () => openSettings('devices'));
+document.querySelector('#show-app-settings')?.addEventListener('click', () => openSettings('general'));
 dom.connectionNote?.addEventListener('click',()=>void syncDotClick());
 document.querySelector('#show-remote-desktop')?.addEventListener('click', () => openDesktopDialog());
 document.querySelector('#start-remote-desktop')?.addEventListener('click', () => void startDesktopChain());
@@ -2406,15 +2338,6 @@ organizerForm?.addEventListener('submit',async event=>{
 });
 for (const id of ['#close-platform-prompts-dialog', '#cancel-platform-prompts-dialog']) document.querySelector(id)?.addEventListener('click', () => dom.promptsDialog.close());
 dom.promptsDialog?.addEventListener('close', renderPlatformPrompts);
-dom.promptsForm?.elements.defaultSupervisorRuntime?.addEventListener('change', event => {
-  renderSupervisorDefaultChoices({ defaultSupervisorRuntime: event.target.value });
-});
-dom.promptsForm?.elements.defaultSupervisorModel?.addEventListener('change', event => {
-  renderSupervisorDefaultChoices({
-    defaultSupervisorRuntime: dom.promptsForm.elements.defaultSupervisorRuntime.value,
-    defaultSupervisorModel: event.target.value
-  });
-});
 document.querySelector('#restore-platform-prompts')?.addEventListener('click', () => {
   const mode = dom.promptsDialog.dataset.editMode;
   if (mode === 'platform') dom.promptsForm.elements.platformPrompt.value = app.data.promptDefaults?.platformPrompt || '';
@@ -2430,8 +2353,7 @@ dom.promptsForm?.addEventListener('submit', async event => {
   button.disabled = true;
   dom.promptsFeedback.hidden = true;
   try {
-    app.data.settings = await api('/api/settings/prompts', { method: 'POST', json: {...(dom.promptsDialog.dataset.editMode==='supervisor-prompt'?{supervisorPrompt:values.supervisorPrompt}:values),promptsRevision:Number(dom.promptsDialog.dataset.promptsRevision)} });
-    renderSupervisorDefaultChoices(app.data.settings);
+    app.data.settings = await api('/api/settings/prompts', { method: 'POST', json: {...(dom.promptsDialog.dataset.editMode==='platform'?{platformPrompt:values.platformPrompt}:{supervisorPrompt:values.supervisorPrompt}),promptsRevision:Number(dom.promptsDialog.dataset.promptsRevision)} });
     dom.promptsUpdated.textContent = t('Last saved: {time}', { time: formatTime(app.data.settings.promptsUpdatedAt) });
     dom.promptsDialog.close();
   } catch (error) {
@@ -2459,11 +2381,13 @@ dom.projectForm.addEventListener('submit', async (event) => {
   try {
     const project = await api('/api/projects', { method: 'POST', json: values });
     pendingProjectRequest=null;
+    rememberSupervisorChoice(values.supervisor);
     let repositoryError='';
     if(values.repositoryMode!=='none'){
       try {
-        const result=await api(`/api/projects/${project.id}/repositories`,{method:'POST',json:{key:'code',mode:values.repositoryMode,repoUrl:values.repositoryUrl,
-          accountId:values.hostingAccountId,remoteName:values.folderName,nodeIds:[values.supervisor.nodeId]}});
+        // A linked repository uses the account its URL matches; only a new repository needs the account to create it under.
+        const result=await api(`/api/projects/${project.id}/repositories`,{method:'POST',json:{key:'code',mode:values.repositoryMode,
+          ...(values.repositoryMode==='create'?{accountId:values.hostingAccountId,remoteName:values.folderName}:{repoUrl:values.repositoryUrl}),nodeIds:[values.supervisor.nodeId]}});
         if(result.status==='blocked')repositoryError=result.results.filter(r=>r.error).map(r=>r.error).join(t('; '));
       }catch(e){repositoryError=e.message;}
     }
@@ -2498,28 +2422,6 @@ dom.pauseRemote?.addEventListener('click', toggleRemotePause);
 dom.settingsPauseRemote?.addEventListener('click', toggleRemotePause);
 
 window.addEventListener('beforeunload', disconnectUpdates);
-
-document.querySelector('#close-workspace-dialog').addEventListener('click', () => dom.workspaceDialog.close());
-dom.bindingForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  const target = { ...app.bindingTarget };
-  const button = dom.bindingForm.querySelector('[type="submit"]');
-  const localRoot = dom.bindingForm.elements.localRoot.value.trim();
-  button.disabled = true;
-  button.textContent = 'Checking node…';
-  dom.bindingError.hidden = true;
-  try {
-    await api(`/api/projects/${encodeURIComponent(target.projectId)}/workspaces/${encodeURIComponent(target.nodeId)}`, { method: 'POST', json: { localRoot } });
-    dom.workspaceDialog.close();
-    await refreshState({ quiet: true });
-  } catch (error) {
-    dom.bindingError.textContent = error.message;
-    dom.bindingError.hidden = false;
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Check and save';
-  }
-});
 
 /* Language setting: i18n.js owns the choice (localStorage 'wb.language'); Home keeps a copy via GET/PUT /api/language. */
 const languageSelect = document.querySelector('#language-select');

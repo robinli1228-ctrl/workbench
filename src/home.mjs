@@ -77,6 +77,7 @@ import { roleResponsibility } from './role-definition.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
 import {readSoftwareVersion} from './software-version.mjs';
 import {SoftwareUpdates} from './software-updates.mjs';
+import {giteeRepository} from './repository.mjs';
 
 const base = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const softwareVersion=await readSoftwareVersion(base);
@@ -155,8 +156,24 @@ const sockets = new Map();
 const reconnectingNodes = new Set();
 /** Sessions-page takeover hook (src/native-turns-home.mjs). */
 const nativeTurns=createHomeNativeTurns({db,dataDir:data,send:(nodeId,payload)=>{if(!reconnectingNodes.has(nodeId))send(sockets.get(nodeId),{...payload,language:getLanguage()});},online:id=>sockets.get(id)?.readyState===1&&!reconnectingNodes.has(id),change:()=>change(),busy:(projectId,nodeId)=>sourceSync.busy(projectId,nodeId),sessionRecord:ownedNativeSession,
-  // A session-bound hosting account becomes the Basic-auth header for that repository only; nothing is resolved without an explicit binding.
-  workerQuery,gitCredential:async settings=>{if(!settings?.hostingAccountId||!settings.repoUrl)return null;const auth=await hosting.auth(settings.hostingAccountId,settings.repoUrl);return auth?{...auth,repoUrl:settings.repoUrl}:null;}});
+  // A hosting account becomes the Basic-auth header for the session's own repository only: the account picked for the session,
+  // or else the one matched by its remote the same way project repositories match (owner, then the default, then a sole account).
+  workerQuery,gitCredential:async(settings,session)=>{
+    if(settings?.hostingAccountId&&settings.repoUrl&&db.get('hostingAccounts',settings.hostingAccountId)){const auth=await hosting.auth(settings.hostingAccountId,settings.repoUrl);return auth?{...auth,repoUrl:settings.repoUrl}:null;}
+    if(!session||!db.list('hostingAccounts').length)return null;
+    const repoUrl=settings?.repoUrl||await nativeSessionRemote(session);
+    try{if(!giteeRepository(repoUrl||''))return null;}catch{return null;}
+    // No match, or several accounts with none preferred: the device's own Git credentials apply, as before.
+    try{const auth=await hosting.auth(null,repoUrl);return auth?{...auth,repoUrl}:null;}catch{return null;}
+  }});
+/** The session folder's remote, asked once from its device and remembered; the Git card refreshes it. */
+async function nativeSessionRemote({nodeId,runtime,sessionId}){
+  const record=ownedNativeSession(nodeId,runtime,sessionId),worker=db.get('workers',nodeId);
+  if(!record?.workspace||!worker||!online(nodeId)||worker.capabilities?.workspaceGit!==1)return null;
+  try{const git=await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_workspace_git',{workspace:record.workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},5000);
+    return nativeTurns.turns.rememberRemote(nodeId,runtime,sessionId,git?.remoteUrl);}
+  catch{return null;}
+}
 const viewers = new Set();
 const queries = new Map();
 const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
@@ -380,7 +397,7 @@ function snapshot(scope=null) {
     attachmentTransfers:db.list('attachmentTransfers').slice(-200).map(({fingerprint,...t})=>t),
     hostingAccounts: db.list('hostingAccounts'), devices: db.list('devices').map(d => ({ ...d, status: online(d.nodeId) ? 'online' : d.status })), repositoryOperations: db.list('repositoryOperations'),
     repositories: db.list('repositories'), repositoryWorkspaces: db.list('repositoryWorkspaces'), setupProposals: db.list('setupProposals'), projectGitVersions:db.list('projectGitVersions'),
-    approvals: db.list('approvals'), gitChecks: db.list('gitChecks'), settings: normalizePlatformSettings(db.get('settings', 'main')), wechat: wechat.status(),
+    approvals: db.list('approvals'), settings: normalizePlatformSettings(db.get('settings', 'main')), wechat: wechat.status(),
     promptDefaults: { platformPrompt: defaultPlatformPrompt(), supervisorPrompt: defaultSupervisorPrompt() },
     roleTemplates: listRoleTemplates(db), supervisors: db.list('supervisorConfigs'),
     executionPlans: db.list('executionPlans').map(({fingerprint,...p})=>p),
@@ -683,7 +700,9 @@ const server = http.createServer(async (req, res) => {
         if(!worker||!online(nodeId))return json(res,{available:false,reason:'source_offline',workspace});
         if(worker.capabilities?.workspaceGit!==1)return json(res,{available:false,reason:'worker_upgrade',workspace});
         // Use the registered native/project identity to carry its existing scoped folder grant; never infer one from cwd.
-        try{return json(res,{available:true,workspace,...await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_workspace_git',{workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},10000)});}
+        try{const git=await workerQuery({nodeId,projectId:record.roleBinding?.projectId},'native_workspace_git',{workspace,runtime,sessionId:record.sessionId||null,entryId:record.id||null},10000);
+          if(record.sessionId)nativeTurns.turns.rememberRemote(nodeId,runtime,record.sessionId,git?.remoteUrl);
+          return json(res,{available:true,workspace,...git});}
         catch(error){return json(res,{available:false,reason:'git_read_failed',detail:String(error.message||error).slice(0,300),workspace});}
       }
       const nativeFile=pathname.match(/^\/api\/native-sessions\/([^/]+)\/file$/);
@@ -1202,15 +1221,6 @@ const server = http.createServer(async (req, res) => {
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)$/)) && req.method === 'DELETE') {
         const grants=db.list('folderGrants').filter(g=>g.scope===`project:${m[1]}`);
         const r = db.deleteProject(m[1]);for(const grant of grants)await cancelFolderBinding(grant);change(); return json(res, r);
-      }
-      if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/git-check$/)) && req.method === 'POST') {
-        const p = db.get('projects', m[1]), b = await body(req);
-        if (!p?.repoUrl) throw new Error(tr('home.saveGiteeRepositoryUrlFirst'));
-        const binding = db.get('workspaces', `${p.id}:${b.nodeId}`);
-        if (!binding || !db.get('workers', b.nodeId)?.capabilities?.projectBrowser) throw new Error(tr('home.selectNodeHasBoundDirectory'));
-        const result = await workerQuery({ nodeId: b.nodeId,projectId:p.id }, 'git_check', { repoUrl: p.repoUrl, localRoot: binding.localRoot }, 15000);
-        if (db.get('projects', p.id).repoUrl !== p.repoUrl || db.get('workspaces', binding.id)?.localRoot !== binding.localRoot) throw new Error(tr('home.configurationChangedDuringCheckCheck'));
-        db.put('gitChecks', { ...result, id: `${p.id}:${b.nodeId}`, projectId: p.id, nodeId: b.nodeId }); change(); return json(res, result);
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/git-versions$/)) && req.method === 'POST') {
         return json(res,await projectGitVersions.refresh(m[1]));

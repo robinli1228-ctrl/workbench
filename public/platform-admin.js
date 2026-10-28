@@ -1,5 +1,5 @@
 import { t, dateLocale, getLanguage } from './i18n.js';
-import { setActionIcon } from './role-icons.js';
+import { setActionIcon, UI_ICON } from './role-icons.js';
 import {configurationInformationUI} from './configuration-information.js';
 
 /** Connected Workers and server registrations share one card; registrations that are not connected keep their edit entry. */
@@ -59,6 +59,30 @@ export function platformAdminUI({api,getData,refreshState,create}) {
     return button;
   }
 
+  /**
+   * The CLI limit sits on the device card itself. Running and retained CLI processes share it; tasks queue when it is full, and
+   * lowering it does not stop accepted work. An unsaved value survives the card being redrawn.
+   */
+  const capacityDrafts=new Map();
+  function capacityRow(worker) {
+    const form=create('form','device-capacity-inline'),label=create('label','','Maximum running CLIs'),input=create('input'),save=create('button','secondary compact','Save'),note=create('p','form-feedback');
+    input.type='number';input.min='1';input.max='64';input.step='1';input.required=true;
+    input.value=capacityDrafts.get(worker.id)??worker.desiredCapacity??worker.capacity??2;
+    form.title=t('Running and retained CLI processes share this limit. Tasks queue when full; lowering does not stop accepted work.');
+    note.hidden=true;note.setAttribute('role','status');save.type='submit';label.append(input);form.append(label,save,note);
+    input.addEventListener('input',()=>{capacityDrafts.set(worker.id,input.value);note.hidden=true;});
+    form.addEventListener('submit',e=>{e.preventDefault();void (async()=>{
+      save.disabled=true;text(note,'Processing…');
+      try{
+        const result=await api(`/api/workers/${encodeURIComponent(worker.id)}/capacity`,{method:'POST',json:{capacity:Number(input.value)}});
+        capacityDrafts.delete(worker.id);input.value=result.capacity;
+        text(note,result.applied?'Saved and applied to the connected Worker.':'Saved; waiting for the Worker to apply this limit. It will be applied on reconnection if the device is offline.');
+        await refreshState({quiet:true});
+      }catch(error){text(note,error.message);}finally{save.disabled=false;}
+    })();});
+    return form;
+  }
+
   /** The edit form is hosted by the device dialog; list refreshes do not overwrite what is being typed. */
   function deviceDetails({worker,device:registered}) {
     const detail=create('div','device-detail');
@@ -76,23 +100,6 @@ export function platformAdminUI({api,getData,refreshState,create}) {
       const roots=Array.isArray(worker.allowedRoots)?worker.allowedRoots:[];
       if(roots.length)detail.append(create('p','workspace-note',t('Allowed folders: {v}', { v: roots.join(t(', ')) })));
 
-      detail.append(create('h4','','CLI Capacity'));
-      const capacityForm=create('form','form-grid device-capacity-form'),capacity=create('input'),capacityFeedback=create('p','form-feedback full-width');
-      capacity.type='number';capacity.min='1';capacity.max='64';capacity.step='1';capacity.required=true;
-      capacity.value=worker.desiredCapacity ?? worker.capacity ?? 2;
-      capacityFeedback.hidden=true;capacityFeedback.setAttribute('role','status');
-      const capacityLabel=create('label','','Maximum running CLIs'),capacityHint=create('p','workspace-note full-width','Running and retained CLI processes share this limit. Tasks queue when full; lowering does not stop accepted work.'),capacitySave=create('button','secondary','Save CLI limit');
-      capacityLabel.append(capacity);capacitySave.type='submit';capacityForm.append(capacityLabel,capacityHint,capacitySave,capacityFeedback);
-      capacityForm.addEventListener('submit',e=>{e.preventDefault();void (async()=>{
-        capacitySave.disabled=true;text(capacityFeedback,'Processing…');
-        try{
-          const result=await api(`/api/workers/${encodeURIComponent(worker.id)}/capacity`,{method:'POST',json:{capacity:Number(capacity.value)}});
-          capacity.value=result.capacity;
-          text(capacityFeedback,result.applied?'Saved and applied to the connected Worker.':'Saved; waiting for the Worker to apply this limit. It will be applied on reconnection if the device is offline.');
-          await refreshState({quiet:true});
-        }catch(error){text(capacityFeedback,error.message);}finally{capacitySave.disabled=false;}
-      })();});
-      detail.append(capacityForm);
     }
     if(registered){
       detail.append(create('h4','','Server Connection'));
@@ -135,22 +142,22 @@ export function platformAdminUI({api,getData,refreshState,create}) {
     if(next!==signature){signature=next;
       const accounts=$('#hosting-account-list');accounts.replaceChildren();
       for(const [provider,label] of [['gitee','Gitee'],['github','GitHub']]){
-        const card=create('section',`hosting-provider-card hosting-provider-${provider}`),head=create('div','hosting-provider-head'),mark=create('span','hosting-provider-mark',provider==='gitee'?'G':'GH'),title=create('div','hosting-provider-title');
-        title.append(create('span','settings-kicker','Code Hosting'),create('h4','',label));head.append(mark,title);card.append(head);
         const linked=(data.hostingAccounts||[]).filter(a=>a.provider===provider);
-        if(!linked.length)card.append(create('p','hosting-provider-empty','No account connected. Once connected, repositories can be created for new projects.'));
+        const card=create('section',`settings-list hosting-provider-${provider}`),head=create('header','settings-list-head'),title=create('div'),tools=create('span','settings-list-actions');
+        title.append(create('h3','',label));head.append(title,tools);card.append(head);
+        const add=create('button','icon-button');add.type='button';setActionIcon(add,'plus',t('{v} {label} account', { v: linked.length?t('Add another'):t('Connect'), label }));add.addEventListener('click',()=>openAccount(provider));tools.append(add);
+        if(!linked.length){const empty=create('div','settings-list-empty');empty.innerHTML=UI_ICON.link;empty.append(create('span','','No account connected. Once connected, repositories can be created for new projects.'));card.append(empty);}
         for(const a of linked){
-          const row=create('div','hosting-account-row'),info=create('div','hosting-account-info'),name=create('strong','',a.owner||a.login||a.label),meta=create('p','workspace-note',`${a.owner&&a.owner!==a.login?t('Login {login} · Organization', { login: a.login }):t('Personal')} · ${a.private?t('Private by default'):t('Public by default')}`);
-          info.append(name,meta);if(data.settings?.hostingAccountId===a.id)info.append(create('span','settings-badge','Default for new projects'));
-          if(a.verifiedAt)info.append(create('small','hosting-verified',t('Verified {v}', { v: new Date(a.verifiedAt).toLocaleString(dateLocale()) })));
-          const edit=create('button','secondary compact','Edit');edit.type='button';edit.setAttribute('aria-label',t('Edit {label} account {v}', { label, v: a.owner||a.login||'' }));edit.addEventListener('click',()=>openAccount(provider,a));
-          setActionIcon(edit,'edit');
-          row.append(info,edit);card.append(row);
+          const row=create('div','settings-row'),main=create('span','settings-row-main');
+          main.append(create('strong','',a.owner||a.login||a.label),create('small','',[a.owner&&a.owner!==a.login?t('Login {login} · Organization', { login: a.login }):t('Personal'),a.private?t('Private by default'):t('Public by default'),a.verifiedAt?t('Verified {v}', { v: new Date(a.verifiedAt).toLocaleString(dateLocale()) }):''].filter(Boolean).join(' · ')));
+          const chip=create('span','settings-chip ok',data.settings?.hostingAccountId===a.id?t('Default'):'');
+          const actions=create('span','settings-row-actions'),edit=create('button','icon-button');edit.type='button';setActionIcon(edit,'edit',t('Edit {label} account {v}', { label, v: a.owner||a.login||'' }));edit.addEventListener('click',()=>openAccount(provider,a));actions.append(edit);
+          row.append(main,chip,actions);card.append(row);
         }
-        const add=create('button','secondary compact hosting-add',linked.length?'Add another account':'Connect account');add.type='button';add.setAttribute('aria-label',t('{v} {label} account', { v: linked.length?t('Add another'):t('Connect'), label }));setActionIcon(add,linked.length?'plus':'link');add.addEventListener('click',()=>openAccount(provider));card.append(add);accounts.append(card);
+        accounts.append(card);
       }
     }
     information.refresh();
   }
-  return {refresh,deviceDetails,deleteDeviceButton,deleteRuntimeButton};
+  return {refresh,deviceDetails,capacityRow,deleteDeviceButton,deleteRuntimeButton};
 }

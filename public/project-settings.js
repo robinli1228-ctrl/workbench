@@ -5,7 +5,6 @@ import { saveConcurrentWrites } from './concurrent-writes.js';
 
 /** Node folder selection and repository settings share the existing authenticated API and never upload local browser files. */
 export function projectSettings({ api, getData, getProject, getConversationId=()=>getProject()?.id, refreshState, create, setError, openSettings, closeSettings, openTask }) {
-  document.querySelector('#project-panel-basic')?.prepend(create('p','workspace-note','Role and project settings apply to every chat in this project.'));
   const picker = document.querySelector('#folder-dialog');
   const crumbs = document.querySelector('#folder-crumbs');
   const list = document.querySelector('#folder-list');
@@ -13,15 +12,11 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   const pathLabel = document.querySelector('#folder-path');
   const choose = document.querySelector('#folder-use'), up = document.querySelector('#folder-up');
   const more = document.querySelector('#folder-more'), error = document.querySelector('#folder-error');
-  const projectForm = document.querySelector('#project-form'), bindingForm = document.querySelector('#binding-form');
+  const projectForm = document.querySelector('#project-form');
   const form = document.querySelector('#project-settings-form');
-  const checkButton = document.querySelector('#repository-check'), feedback = document.querySelector('#project-settings-feedback');
+  const feedback = document.querySelector('#project-settings-feedback');
   const folderFeedback = document.querySelector('#project-folder-feedback'), deleteFeedback = document.querySelector('#project-delete-feedback');
-  const workspaceNode = document.querySelector('#settings-workspace-node');
-  const localRoot = document.querySelector('#settings-local-root');
-  const pickSettingsFolder = document.querySelector('#pick-settings-folder');
-  const saveSettingsFolder = document.querySelector('#save-settings-folder');
-  let workerId, current = null, callback, serial = 0, settingsId, savedUrl = '', busy = false, allowedRoots = [], filterText = '';
+  let workerId, current = null, callback, serial = 0, settingsId, busy = false, allowedRoots = [], filterText = '';
   const newFolder = createFolderControl({api,onCreated: result => load(result.path)});
   const directPath=create('input'),openPath=create('button','secondary','Open');directPath.placeholder=t('Absolute folder path');directPath.setAttribute('aria-label',t('Absolute folder path'));openPath.type='button';
   let pathInputVersion=0;directPath.addEventListener('input',()=>pathInputVersion++);
@@ -211,83 +206,26 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     projectForm.elements.root.value = path; projectForm.dispatchEvent(new Event('input', { bubbles: true }));
   }));
 
-  function fillWorkspaceFields(projectId, preferredNodeId = '') {
-    const workers = getData().workers.filter(w => w.capabilities?.workspaceBindings);
-    const previous = preferredNodeId || workspaceNode.value;
-    workspaceNode.replaceChildren(
-      option(workers.length ? 'Select device…' : 'No devices support binding', ''),
-      ...workers.map(w => option(`${workerDisplayName(w)} · ${w.online ? t('Online') : t('Offline')}`, w.id))
-    );
-    const bound = getData().workspaces.filter(b => b.projectId === projectId);
-    const pick = workers.find(w => w.id === previous)
-      || workers.find(w => w.online && bound.some(b => b.nodeId === w.id))
-      || workers.find(w => w.online)
-      || workers[0];
-    workspaceNode.value = pick?.id || '';
-    const binding = getData().workspaces.find(b => b.projectId === projectId && b.nodeId === workspaceNode.value);
-    localRoot.value = binding?.localRoot || '';
-  }
-
-  function fillGitCheckNodes(projectId) {
-    const nodes = getData().workers.filter(w => getData().workspaces.some(b => b.nodeId === w.id && b.projectId === projectId));
-    const previous = form.elements.nodeId.value;
-    form.elements.nodeId.replaceChildren(option('Select node to check…', ''), ...nodes.map(w => option(`${workerDisplayName(w)} · ${w.online ? t('Online') : t('Offline')}`, w.id)));
-    form.elements.nodeId.value = nodes.some(w => w.id === previous) ? previous : (nodes[0]?.id || '');
-  }
-
   function prepareSettings() {
     const p = getProject(); if (!p) return;
     busy = false;
-    settingsId = p.id; savedUrl = p.repoUrl || '';
+    settingsId = p.id;
     void loadFollowup();
     concurrentFeedback.hidden=true;showConcurrent();
     form.elements.name.value = p.name || '';
     form.elements.description.value = p.description || '';
-    form.elements.repoUrl.value = savedUrl;
     feedback.hidden = true;
     folderFeedback.hidden = true; deleteFeedback.hidden = true;
     const saveBtn = document.querySelector('#save-project-settings');
     const delBtn = document.querySelector('#delete-project');
     if (saveBtn) saveBtn.disabled = false;
     if (delBtn) delBtn.disabled = false;
-    try { fillWorkspaceFields(p.id); } catch (e) { folderFeedback.textContent = e.message; folderFeedback.hidden = false; }
-    try { fillGitCheckNodes(p.id); } catch (e) { feedback.textContent = e.message; feedback.hidden = false; }
     return true;
   }
   document.querySelector('#show-project-settings').addEventListener('click', () => {
     if (prepareSettings()) openSettings('project');
   });
   form.addEventListener('input', () => { feedback.hidden = true; });
-
-  workspaceNode.addEventListener('change', () => {
-    const binding = getData().workspaces.find(b => b.projectId === settingsId && b.nodeId === workspaceNode.value);
-    localRoot.value = binding?.localRoot || '';
-    folderFeedback.hidden = true;
-  });
-  pickSettingsFolder.addEventListener('click', () => {
-    if (!workspaceNode.value) return setError('Please select the device to bind a folder to first');
-    openFolder(workspaceNode.value, localRoot.value, path => { localRoot.value = path; folderFeedback.hidden = true; });
-  });
-  saveSettingsFolder.addEventListener('click', async () => {
-    if (busy) return;
-    if (!workspaceNode.value) { folderFeedback.textContent = 'Please select a device first.'; folderFeedback.hidden = false; return; }
-    if (!localRoot.value) { folderFeedback.textContent = 'Please select a local project folder first.'; folderFeedback.hidden = false; return; }
-    busy = true; saveSettingsFolder.disabled = true; pickSettingsFolder.disabled = true; folderFeedback.hidden = true;
-    try {
-      const binding = await api(
-        `/api/projects/${encodeURIComponent(settingsId)}/workspaces/${encodeURIComponent(workspaceNode.value)}`,
-        { method: 'POST', json: { localRoot: localRoot.value } }
-      );
-      localRoot.value = binding.localRoot;
-      const git = binding.git ? ` · Git ${binding.git.branch} @ ${String(binding.git.head || '').slice(0, 8)}` : '';
-      folderFeedback.textContent = t('Local folder saved: {localRoot}{git}', { localRoot: binding.localRoot, git });
-      folderFeedback.hidden = false;
-      await refreshState({ quiet: true });
-      fillWorkspaceFields(settingsId, workspaceNode.value);
-      fillGitCheckNodes(settingsId);
-    } catch (e) { folderFeedback.textContent = e.message; folderFeedback.hidden = false; }
-    finally { busy = false; saveSettingsFolder.disabled = false; pickSettingsFolder.disabled = false; }
-  });
 
   document.querySelector('#delete-project').addEventListener('click', async () => {
     if (busy) return;
@@ -320,16 +258,11 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     if (del) del.disabled = true;
     feedback.hidden = true;
     try {
-      const p = await api(`/api/projects/${encodeURIComponent(settingsId)}`, {
+      await api(`/api/projects/${encodeURIComponent(settingsId)}`, {
         method: 'POST',
-        json: {
-          name,
-          description: form.elements.description.value,
-          repoUrl: form.elements.repoUrl.value
-        }
+        json: { name, description: form.elements.description.value }
       });
-      savedUrl = p.repoUrl; form.elements.repoUrl.value = savedUrl;
-      feedback.textContent = 'Basic information saved.';
+      feedback.textContent = t('Saved');
       feedback.hidden = false;
       await refreshState({ quiet: true });
     } catch (e) {
@@ -342,34 +275,11 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     }
   }
   form.addEventListener('submit', event => { event.preventDefault(); void saveProjectSettings(); });
-  document.querySelector('#save-project-settings').addEventListener('click', () => { void saveProjectSettings(); });
-  function showCheck(check) {
-    feedback.textContent = t('{message}\n{v}\nChecked at: {v2}', { message: check.message, v: check.origin ? t('Node origin: {origin}\n{v}', { origin: check.origin, v: check.remoteMatches ? t('Matches the project link') : t('Differs from the project link; not modified automatically') }) : t('No Gitee origin detected; only the link entered for the project was checked'), v2: new Date(check.checkedAt).toLocaleString() });
-    feedback.hidden = false;
-  }
-  form.elements.nodeId.addEventListener('change', () => {
-    const binding = getData().workspaces.find(b => b.projectId === settingsId && b.nodeId === form.elements.nodeId.value);
-    const check = (getData().gitChecks || []).find(c => c.projectId === settingsId && c.nodeId === form.elements.nodeId.value && c.repoUrl === savedUrl && c.localRoot === binding?.localRoot);
-    feedback.hidden = true; if (check) showCheck(check);
-  });
-  checkButton.addEventListener('click', async () => {
-    if (busy) return;
-    if (!savedUrl || form.elements.repoUrl.value.trim() !== savedUrl || !form.elements.nodeId.value) {
-      feedback.textContent = 'Please save the repository link first, then select a bound node.'; feedback.hidden = false; return;
-    }
-    busy = true; checkButton.disabled = true; checkButton.textContent = 'Checking node…';
-    try {
-      showCheck(await api(`/api/projects/${encodeURIComponent(settingsId)}/git-check`, { method: 'POST', json: { nodeId: form.elements.nodeId.value } }));
-      await refreshState({ quiet: true });
-    } catch (e) { feedback.textContent = e.message; feedback.hidden = false; }
-    finally { busy = false; checkButton.disabled = false; checkButton.textContent = 'Check saved repository'; }
-  });
 
   return {
     openFolder,
     refreshNodes,
     refreshConcurrent:()=>{if(!concurrentBox.disabled)showConcurrent();},
-    prepareSettings,
-    openBinding(nodeId) { openFolder(nodeId, bindingForm.elements.localRoot.value, path => { bindingForm.elements.localRoot.value = path; }); }
+    prepareSettings
   };
 }

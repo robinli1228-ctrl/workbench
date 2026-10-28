@@ -845,22 +845,8 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   nameForm.append(nameInput,nameSave);nameForm.addEventListener('submit',async e=>{e.preventDefault();nameSave.disabled=true;nameNote.className='native-side-hint';nameNote.textContent=t('Saving…');try{await renameSession(value,nameInput.value);nameNote.textContent=t('Saved');}catch(error){nameNote.className='global-error';nameNote.textContent=t(error.message);}finally{nameSave.disabled=false;}});
   nameCard.append(nameForm,nameNote);
   // Repository and AGENTS.md (moved here from the old Resources tab): the same live cards, with refresh and edit.
-  const git=gitCache.get(key(value))?.state;
   const repo=el('section','native-side-card native-git-card');repo.dataset.nativeGit='';
   const agents=el('section','native-side-card native-agents-card');agents.dataset.nativeAgents='';
-  const acct=el('section','native-settings-section');acct.append(el('h3','',t('Git account for pushes')));
-  // Match the host of supported HTTPS/SCP remotes, never a hostname suffix or a repository path.
-  const remote=String(git?.remoteUrl||'').trim().match(/^(?:https:\/\/([^/]+)\/|git@([^:]+):)/i),host=(remote?.[1]||remote?.[2]||'').toLowerCase();
-  const provider=host==='github.com'?'github':host==='gitee.com'?'gitee':null;
-  const accounts=(getData().hostingAccounts||[]).filter(a=>!provider||a.provider===provider),settings=takeover.settings();
-  const sel=el('select'),none=el('option','',t('Use the device’s own Git credentials'));none.value='';sel.append(none);
-  for(const a of accounts){const o=el('option','',`${a.provider==='github'?'GitHub':'Gitee'} · ${a.login}${a.label?` · ${a.label}`:''}`);o.value=a.id;sel.append(o);}
-  sel.value=settings.hostingAccountId&&accounts.some(a=>a.id===settings.hostingAccountId)?settings.hostingAccountId:'';
-  const canBind=Boolean(git?.remoteUrl&&provider&&takeover.controls()&&nativeId(value));sel.disabled=!canBind;sel.setAttribute('aria-label',t('Git account for pushes'));
-  const acctNote=el('p','native-side-hint',t(!git?.remoteUrl?'Bind an account once the repository remote is known.':!provider?'Only GitHub and Gitee remotes can use a Workbench account.':!takeover.controls()?'Upgrade this Worker to bind a Git account to a session.':'Applies to the next message on this page and to the next iTerm launch; only this repository’s remote receives the token.'));
-  sel.addEventListener('change',async()=>{sel.disabled=true;acctNote.className='native-side-hint';acctNote.textContent=t('Saving…');const r=await takeover.saveSetting('hostingAccountId',sel.value,{repoUrl:git?.remoteUrl||null});if(r)acctNote.textContent=t('Saved');else{acctNote.className='global-error';acctNote.textContent=takeover.feedback(value)||t('Could not save');}sel.disabled=false;});
-  const manage=button('Manage accounts…',()=>{dialog.close();document.querySelector('#show-app-settings')?.click();},'secondary');
-  acct.append(sel,acctNote,manage);
   // Branch and delete: branch copies the folder next to it and forks the session (Claude, Codex); delete removes a folder
   // Workbench made for this session. The device answers first whether delete is allowed, and why not.
   const fork=el('section','native-settings-section native-branch-section');fork.append(el('h3','',t('Branch and delete')));
@@ -875,7 +861,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
    .then(state=>{deleteState=state;deleteButton.disabled=!state?.ok;deleteNote.textContent=state?.ok?(state.missing?t('The folder is already gone; delete removes the session from this list.'):`${t('Deletes this folder and removes the session from this list:')} ${state.path}`):t(state?.reason||'This folder cannot be deleted here');})
    .catch(error=>{deleteNote.className='global-error';deleteNote.textContent=t(error.message);});
   else deleteNote.textContent=t('Upgrade this Worker to branch or delete sessions');
-  body.append(nameCard,repo,agents,acct,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
+  body.append(nameCard,repo,agents,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
  }
  /** A branch says where it came from at the top of its transcript, with a way back to the original (a Codex branch shows
   * only its own turns; the conversation before the fork lives in the original). */

@@ -59,6 +59,7 @@ export function supervisorSettings({ api, getData, getProject, refreshState, cre
     if (!p) return;
     const role=data.supervisorRoles?.find(r=>r.id===p.supervisorRoleId);
     form.elements.name.value=role?.name||t('Supervisor@@roleCard');
+    document.querySelector('#supervisor-dialog-title').textContent=t('Role settings · {name}',{name:form.elements.name.value});
     form.elements.responsibility.value=role?.responsibility||'';
     document.querySelector('#project-supervisor-prompt-preview').value = data.settings?.supervisorPrompt ?? data.promptDefaults?.supervisorPrompt ?? '';
     selectOptions(form.elements.nodeId, data.workers.map(w => ({ id: w.id, name: `${w.name} · ${w.online ? t('Online') : t('Offline')}` })), p.supervisorNodeId, 'Select supervisor device');

@@ -128,6 +128,13 @@ export class NativeTurnsHome{
  waitsForExit(nodeId,runtime,sessionId){const p=this.db.get('nativeTakeovers',sessionKey(nodeId,runtime,sessionId));return p?.status==='retiring'&&this.process(nodeId,runtime,sessionId);}
  /** Model and effort chosen on the Sessions page for this native session; they ride on every turn message. */
  settings(nodeId,runtime,sessionId){const s=this.db.get('nativeSessionSettings',nativeSettingsKey(nodeId,runtime,sessionId));return {model:s?.model||null,effort:s?.effort||null,hostingAccountId:s?.hostingAccountId||null,repoUrl:s?.repoUrl||null,updatedAt:s?.updatedAt||null};}
+ /** The session's repository remote, remembered so a turn can match a hosting account without asking the device again. */
+ rememberRemote(nodeId,runtime,sessionId,repoUrl){
+  const key=nativeSettingsKey(nodeId,runtime,sessionId),current=this.db.get('nativeSessionSettings',key)||{},value=typeof repoUrl==='string'&&repoUrl.trim()?repoUrl.trim().slice(0,300):null;
+  // An account picked earlier stays bound to the remote it was picked for.
+  if(!value||current.repoUrl===value||current.hostingAccountId)return value;
+  this.db.put('nativeSessionSettings',{...current,id:key,nodeId,runtime,sessionId,repoUrl:value,updatedAt:now()});return value;
+ }
  /**
   * One field per call. Claude applies a change in place through a /model or /effort turn; Codex and Grok take it on the next
   * turn; a resident Agy must restart, so its takeover is released and the next message starts it with the new flags.

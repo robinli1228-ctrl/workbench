@@ -1370,7 +1370,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       && (!fields.permissionScope.value || fields.permissionScope.value === role.permissionScope);
   }
   function renderRoleSaveState() {
-    if(!savingRole)document.querySelector('#role-save').textContent=editingRoleSnapshot?.runtime&&roleForm.elements.runtime.value!==editingRoleSnapshot.runtime?'Handoff and switch':'Save role';
+    if(!savingRole)document.querySelector('#role-save').textContent=t(!editingRoleSnapshot?'Create role':editingRoleSnapshot.runtime&&roleForm.elements.runtime.value!==editingRoleSnapshot.runtime?'Handoff and switch':'Save role');
     document.querySelector('#role-save').disabled = savingRole || checkingRuntime
       || (!definitionOnly() && !roleRuntimeReady && !(editingRoleId && !roleForm.elements.enabled.checked));
   }
@@ -1410,8 +1410,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     roleForm.elements.autoApprove.checked = role ? role.autoApprove !== false : true;
     renderDeviceOptions(role?.nodeId);
     roleError.hidden = true;
-    document.querySelector('#role-dialog-title').textContent = 'Role Details';
-    document.querySelector('#role-save').textContent = 'Save role';
+    // One title pattern for the supervisor and every other role: "New role", or "Role settings · name".
+    document.querySelector('#role-dialog-title').textContent = role ? t('Role settings · {name}', { name: role.name }) : t('New role');
+    document.querySelector('#role-save').textContent = t(role ? 'Save role' : 'Create role');
     roleHistory.reset();
   }
 
@@ -1492,13 +1493,13 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (!efforts.length) {
       field.hidden = true;
       select.replaceChildren();
-      const blank = create('option', '', 'Default (unspecified)'); blank.value = ''; select.append(blank);
+      const blank = create('option', '', 'Use CLI default'); blank.value = ''; select.append(blank);
       select.value = '';
       return;
     }
     field.hidden = false;
     select.replaceChildren();
-    const blank = create('option', '', 'Default (unspecified)'); blank.value = ''; select.append(blank);
+    const blank = create('option', '', 'Use CLI default'); blank.value = ''; select.append(blank);
     for (const e of efforts) {
       const o = create('option', '', String(e)); o.value = String(e); select.append(o);
     }
@@ -1587,7 +1588,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       if (roleDialog.open) { roleError.textContent = error.message; roleError.hidden = false; }
       else setError(t('Role saved, but refreshing the list failed: {message}', { message: error.message }));
     }
-    finally { savingRole = false; document.querySelector('#role-save').textContent = 'Save role'; renderModelOptions(); }
+    finally { savingRole = false; document.querySelector('#role-save').textContent = t(editingRoleSnapshot ? 'Save role' : 'Create role'); renderModelOptions(); }
   });
   async function jumpMessage(target,id){
     if(target.projectId!==projectId||target.conversationId!==conversationId)return;
