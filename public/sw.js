@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v215-group-sync-indicator';
+const CACHE = 'agent-workbench-static-v216-group-sync-indicator';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
