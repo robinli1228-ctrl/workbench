@@ -232,11 +232,11 @@
               <dialog id="scheduled-job-dialog" class="settings-edit-dialog timer-edit-dialog" aria-label="Edit scheduled job"></dialog>
             </section>
 
-            <section class="settings-panel" data-settings-panel="devices" id="settings-devices-panel" hidden>
-              <div class="settings-panel-heading device-panel-heading"><div><h3>Devices and CLIs</h3><p>Manage registered local machines and servers, and view device connection, CLI availability, models and sign-in status. Project configuration is not included here.</p></div><button class="secondary" id="show-device-enroll" type="button">Add device</button></div>
-              <section class="settings-block device-enroll-panel" id="device-enroll-panel" hidden aria-label="Add server device">
-                <h4>Add server device</h4>
-                <form id="device-enroll-form" class="form-grid">
+            <section class="settings-panel" data-settings-panel="devices" data-layout="list" id="settings-devices-panel" hidden>
+              <div class="settings-list-intro device-panel-heading"><p>Registered computers and servers, their CLIs, models and sign-in status</p><button class="icon-button" id="show-device-enroll" type="button" aria-label="Add server device">Add device</button></div>
+              <section class="settings-list device-enroll-panel" id="device-enroll-panel" hidden aria-labelledby="device-enroll-title">
+                <header class="settings-list-head"><div><h3 id="device-enroll-title">Add server device</h3><p>The remote host needs Node.js 22.16+, npm and Git; connecting installs and starts the Worker</p></div></header>
+                <form id="device-enroll-form" class="form-grid settings-list-form">
                   <label>Device name<input name="name" required></label><label>SSH address<input name="host" required></label><label>SSH port<input name="port" type="number" value="22" min="1" max="65535" required></label>
                   <label>SSH user<input name="user" value="root" required></label><label>Password (or use an SSH key)<input name="password" type="password" autocomplete="new-password"></label><label>SSH key path (on the device hosting Home)<input name="keyPath" placeholder="Optional; use an existing key"></label>
                   <label class="full-width">Default workspace<input name="workspaceRoot" value="/srv/agent-projects" required></label>
@@ -246,8 +246,7 @@
                     <label>Server RDP port<input name="desktopPort" type="number" value="3389" min="1" max="65535"></label>
                     <label>Local tunnel port<input name="desktopLocalPort" type="number" value="3390" min="1024" max="65535"></label>
                   </div><p class="workspace-note">When you click the remote desktop button on a device card, the local Home creates a dedicated SSH tunnel and opens the Windows App; then click the saved server connection in the App. The server's RDP can keep listening on localhost only.</p></fieldset>
-                  <p class="workspace-note full-width">The remote host needs Node.js 22.16+, npm and Git. Connecting installs the Worker and starts a background process; model accounts must still be signed in on that device. A local machine connects to the same Home through a local Worker.</p>
-                  <div class="form-actions full-width"><button class="primary" type="submit">Save device info</button><button class="secondary" id="cancel-device-enroll" type="button">Cancel</button></div>
+                                    <div class="form-actions full-width"><button class="secondary" id="cancel-device-enroll" type="button">Cancel</button><button class="primary" type="submit">Save device info</button></div>
                 </form>
               </section>
               <p id="device-admin-feedback" class="form-feedback" role="status" hidden></p>

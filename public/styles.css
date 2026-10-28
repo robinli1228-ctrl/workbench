@@ -4229,3 +4229,17 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 #settings-page .settings-list-note:empty { display: none; }
 #settings-page #project-panel-sync > .settings-block { width: 100%; max-width: none; box-sizing: border-box; }
 #settings-page .project-git-summary { margin: 0; }
+/* Devices and CLIs: each device is a card like the other settings cards. */
+#settings-page #settings-devices-panel .device-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#settings-page #settings-devices-panel .device-panel-heading p { margin: 0; }
+#settings-page #settings-devices-panel .device-list { display: flex; flex-direction: column; gap: 18px; }
+#settings-page #settings-devices-panel .device-card { padding: 16px 20px 18px; border: 1px solid #e6e8ef; border-radius: 16px; background: #fff; box-shadow: 0 1px 3px rgb(25 35 60 / 5%); }
+#settings-page #settings-devices-panel .worker-card-head strong { color: var(--ink); font-size: 15px; font-weight: 650; }
+#settings-page #settings-devices-panel .worker-meta { color: #727a8c; font-size: 12.5px; }
+#settings-page #settings-devices-panel .device-capacity-inline { margin: 12px 0 0; padding-top: 12px; border-top: 1px solid #eef0f4; }
+#settings-page #settings-devices-panel .device-runtime-list { margin-top: 12px; }
+#settings-page #settings-devices-panel .device-enroll-panel { margin: 0; }
+#settings-page #settings-devices-panel .device-card { align-self: stretch; width: 100%; box-sizing: border-box; }
+#settings-page #settings-devices-panel :is(.worker-card-head, .device-panel-heading) :is(.icon-button, .action-icon-button) { display: inline-grid; place-items: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 6px; border: 0; border-radius: 7px; color: #71798b; background: transparent; box-shadow: none; }
+#settings-page #settings-devices-panel :is(.worker-card-head, .device-panel-heading) :is(.icon-button, .action-icon-button):hover:not(:disabled) { color: var(--page-blue); background: #eef0fa; }
+#settings-page #settings-devices-panel :is(.worker-card-head, .device-panel-heading) :is(.icon-button, .action-icon-button) svg { width: 18px; height: 18px; }

@@ -2081,6 +2081,8 @@ export default {
   "Devices differ: {list}": "设备不一致：{list}",
   "Preparing…": "准备中…",
   "Not joined": "未加入",
+  "Registered computers and servers, their CLIs, models and sign-in status": "已登记的电脑和服务器，以及各自的 CLI、模型和登录状态",
+  "The remote host needs Node.js 22.16+, npm and Git; connecting installs and starts the Worker": "远程主机需要 Node.js 22.16+、npm 和 Git；连接后会安装并启动 Worker",
   "Several accounts on this platform could be used; mark one as the default in Settings → Code Hosting Accounts": "同一平台有多个账号可用，请在“设置 → 代码托管账号”里把其中一个设为默认",
   "Ready@@folder": "已就绪",
   "Choose another folder": "换一个文件夹",
