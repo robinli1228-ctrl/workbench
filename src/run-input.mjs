@@ -9,7 +9,7 @@ import {relative,isAbsolute,resolve} from 'node:path';
  * assigned to this turn (a plan baseline, a delivery, another run's workspace), or a retained copy behind the project.
  * Every line is built from converted templates with the values inserted as they are.
  */
-export function executionEnvironmentHint({cwd,projectRoot,boundary,repositories=[],inputRepositoryVersions=[],sharedDocs=null,readOnly=false,assigned=false}) {
+export function executionEnvironmentHint({cwd,projectRoot,boundary,repositories=[],inputRepositoryVersions=[],sharedDocs=null,readOnly=false,assigned=false,concurrentRoles=null}) {
   const short=value=>String(value||'').slice(0,12);
   const atRoot=resolve(cwd)===resolve(projectRoot||cwd);
   const outside=path=>{const rel=relative(cwd,path);return rel==='..'||rel.startsWith('../')||rel.startsWith('..\\')||isAbsolute(rel);};
@@ -33,6 +33,8 @@ export function executionEnvironmentHint({cwd,projectRoot,boundary,repositories=
   }
   if(missing.length)lines.push(sentText('turnInput.envMissing',{keys:missing.join(', ')}));
   if(sharedDocs)lines.push(sentText('turnInput.envSharedDocs',{path:sharedDocs}));
+  // The project allows several roles to edit at once: say who else is running now and how to stay out of each other's way.
+  if(concurrentRoles)lines.push(sentText('turnInput.envConcurrent'),...(concurrentRoles.length?[sentText('turnInput.envConcurrentOthers',{names:concurrentRoles.join(', ')})]:[]));
   return lines.join('\n');
 }
 

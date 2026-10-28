@@ -37,13 +37,17 @@ export function recoverDeliveryCommands(db) {
   }
 }
 
+/** Another run took over the delivery source's directory; runs of a concurrent-writes project share it by design, so that proves nothing. */
+export const workspaceTakenByLaterRun=(owner,source,runId)=>Boolean(owner&&owner.runId!==runId&&source?.concurrentWrites!==true);
+
 /** A continuation keeps the code state of a finished run; it cannot take over another role's directory or one already occupied by a later run. */
 export function continuationSource(db, run, retained=()=>false) {
   const source = db.get('runs', run.continuationRunId);
   if (!source || source.projectId !== run.projectId || source.roleId !== run.roleId || source.status !== 'succeeded' || !source.workspace) throw new Error(tr('workerCoordinator.continuationSourceNotFinishedDoes'));
   const owner = db.get('workspaceOwners', source.workspace);
   if (!source.projectScope && owner && owner.runId !== source.id) throw new Error(tr('workerCoordinator.continuationWorkspaceHasBeenTaken'));
-  if (db.list('runs').some(r => r.id !== run.id && r.workspace === source.workspace && !['succeeded', 'failed', 'interrupted'].includes(r.status))) throw new Error(tr('workerCoordinator.continuationWorkspaceStillHasUnfinished'));
+  // With the project's concurrent-writes switch on, other roles legitimately work in the shared project directory.
+  if (!run.concurrentWrites && db.list('runs').some(r => r.id !== run.id && r.workspace === source.workspace && !['succeeded', 'failed', 'interrupted'].includes(r.status))) throw new Error(tr('workerCoordinator.continuationWorkspaceStillHasUnfinished'));
   if (source.pid && !retained(source.pid)) {
     try { process.kill(source.pid, 0); throw new Error(tr('workerCoordinator.sourceProcessStillRunningCannot')); }
     catch (error) { if (error.code !== 'ESRCH') throw error; }

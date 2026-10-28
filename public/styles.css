@@ -4132,6 +4132,9 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .role-device-management .artifact-section-heading { margin-bottom: 6px; padding-bottom: 12px; border-bottom: 1px solid #e4e7ef; }
 .role-device-management .artifact-section-heading h3 { font-size: 16px; font-weight: 650; color: #303746; }
 .role-device-management #manage-inspector-devices { border: 0; background: transparent; box-shadow: none; color: #71798b; }
+.role-device-management .artifact-section-heading > div { display: flex; align-items: center; gap: 4px; }
+.role-device-management #toggle-concurrent-writes { border: 0; background: transparent; box-shadow: none; color: #71798b; }
+#node-sidebar .role-device-management #toggle-concurrent-writes[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 .role-device-management .inspector-device-row { min-height: 48px; margin: 0; padding: 10px 0; gap: 10px; border: 0; background: transparent; box-shadow: none; }
 .role-device-management .inspector-device-row > :first-child { flex: 0 0 24px; width: 24px; margin-right: 2px; }
 .role-device-management .inspector-device-row > span:nth-child(2) { flex: 1; min-width: 0; max-width: none; text-align: left; }

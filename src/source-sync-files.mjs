@@ -1,7 +1,7 @@
 import {statMetadata,metadataDigest} from './source-sync-metadata.mjs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {constants,lstat} from 'node:fs';
+import {constants,lstat,rmSync} from 'node:fs';
 import {mkdir,mkdtemp,realpath,open,readFile,writeFile,readdir,lstat as pathStat} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -32,7 +32,26 @@ async function worktreeRoots(root,policy,baselineEntries={}){
 // Ignore rules come only from the .gitignore files inside the worktree, read against an empty scratch repository, so the device
 // with .git and the device holding a plain received copy select the same files. Global and info/exclude rules are left out.
 let scratchGitDir=null;
-const emptyGitDir=()=>scratchGitDir??=mkdtemp(join(tmpdir(),'wb-ignore-')).then(async dir=>{await exec('git',['init','-q','--bare',dir],{timeout:30000});return dir;}).catch(e=>{scratchGitDir=null;throw e;});
+const ownedScratchDirs=new Set();
+process.once('exit',()=>{for(const dir of ownedScratchDirs)try{rmSync(dir,{recursive:true,force:true});}catch{}});
+const createScratchGitDir=async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'wb-ignore-'));ownedScratchDirs.add(dir);
+  try{await exec('git',['init','-q','--bare',dir],{timeout:30000});return dir;}
+  catch(error){try{rmSync(dir,{recursive:true,force:true});ownedScratchDirs.delete(dir);}catch{}throw error;}
+};
+/** Temporary-directory cleanup must not poison later scans. Concurrent callers share one replacement, and only
+ * directories created by this process are removed on exit. Missing ignore evidence still fails the current scan. */
+async function emptyGitDir(){
+  for(let attempt=0;attempt<2;attempt++){
+    const pending=scratchGitDir??=createScratchGitDir().catch(error=>{scratchGitDir=null;throw error;}),dir=await pending;
+    if((await exists(dir))?.isDirectory()){
+      const [head,objects,refs]=await Promise.all(['HEAD','objects','refs'].map(name=>exists(join(dir,name))));
+      if(head?.isFile()&&objects?.isDirectory()&&refs?.isDirectory())return dir;
+    }
+    if(scratchGitDir===pending)scratchGitDir=null;
+  }
+  throw new Error('Temporary Git ignore repository is unavailable.');
+}
 async function worktreeIgnored(root,path){
   try{return (await exec('git',['--git-dir',await emptyGitDir(),'--work-tree',join(root,path),'-c','core.excludesFile=','ls-files','-z','--others','--ignored','--exclude-standard','--directory'],
     {cwd:join(root,path),timeout:30000,maxBuffer:24*1024*1024})).stdout.split('\0').filter(Boolean).map(p=>`${path}/${p}`);}

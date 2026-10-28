@@ -4,6 +4,7 @@ import {roleWorkspace} from './project-repositories.mjs';
 import {projectRepositories} from './project-space.mjs';
 import {projectTerminalLock} from './terminal-resume.mjs';
 import {executionConflict} from './execution-workspace.mjs';
+import {concurrentWritesAllowed,concurrentPeers} from './concurrent-writes.mjs';
 import {discussionPolicy,supportsDiscussion,discussionTargetStatus} from './discussion-policy.mjs';
 import {buildTeamContext} from './team-context.mjs';
 import {conversationIdOf,groupConversationIdOfSession,assertConversationRecord} from './group-conversations.mjs';
@@ -85,6 +86,7 @@ export class RoleDiscussions {
         roleSessionId:session.id,resumeNativeSessionId:session.nativeSessionId||null,resumeNativeSession:session.nativeSession||null,resumeWorkspace:session.workspace||null,
         discussionDeliveryId:delivery.id,discussionThreadId:thread.id,discussionMessageId:message.id,directionRevision:thread.directionRevision,turnPurpose:purpose,
         discussionProtocol:2,permissionProfile:discussionPolicy({turnPurpose:purpose}).profileId,projectScope:true,projectRoot:binding.localRoot,
+        ...(concurrentWritesAllowed(this.db.get('projects',thread.projectId),this.db.get('workers',nodeId))?{concurrentWrites:true,concurrentPeers:concurrentPeers(this.db,thread.projectId,nodeId)}:{}),
         repositories:projectRepositories(this.db,thread.projectId,nodeId),model:role.model,mode:role.mode||'workspace-write',status:'queued',lastSeq:0,createdAt:now(),updatedAt:now(),
         discussionContext:{threadId:thread.id,questionId:thread.currentQuestionId,revision:thread.revision,message,attempt:delivery.attempts.length+1,
           actionRequestIds:purpose==='clarification'?{reply:`reply:${message.id}`}:{resolve:`resolve:${thread.currentQuestionId}`}}};
@@ -111,7 +113,7 @@ export class RoleDiscussions {
     if(conversationIdOf(task)!==task.projectId&&worker?.capabilities?.groupConversations!==1)throw new Error(tr('conversations.workerUpgrade'));
     if(active.some(r=>r.nodeId===nodeId&&r.status==='reconciling')||active.filter(r=>r.nodeId===nodeId).length>=(worker.capacity||1)||active.some(r=>r.roleId===role.id))throw new Error(tr('roleDiscussions.waitingForRoleFinishNode'));
     if(projectTerminalLock(this.db,task.projectId,nodeId))throw new Error(tr('roleDiscussions.projectUnderManualTakeover'));
-    if(executionConflict({projectId:task.projectId,nodeId},active))throw new Error(tr('roleDiscussions.waitingForExclusiveProjectOperation'));
+    if(executionConflict({projectId:task.projectId,nodeId},active,{concurrent:concurrentWritesAllowed(this.db.get('projects',task.projectId),worker)}))throw new Error(tr('roleDiscussions.waitingForExclusiveProjectOperation'));
   }
 
   /** An intent is redeemed only once, after the consuming run reaches a final state, and continues the original Task, role, and native session. */

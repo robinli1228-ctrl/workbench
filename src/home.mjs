@@ -49,7 +49,7 @@ import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettin
 import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
-import { folderName } from './project-space.mjs';
+import { folderName,assertProjectReady } from './project-space.mjs';
 import {folderAccessFor,nativeFolderAccess,FolderPreparations} from './folder-access.mjs';
 import { CredentialStore, Hosting } from './hosting.mjs';
 import { ProjectAdmin } from './project-admin.mjs';
@@ -1116,6 +1116,15 @@ const server = http.createServer(async (req, res) => {
         if(req.method==='GET')return json(res,proactiveFollowup.view(m[1],url.searchParams.get('conversationId')??undefined));
         if(req.method==='POST'){const result=proactiveFollowup.save(m[1],await body(req));change();return json(res,result);}
       }
+      if((m=pathname.match(/^\/api\/projects\/([^/]+)\/concurrent-writes$/)) && req.method==='POST') {
+        // A manual, per-project switch: roles on one device may then run at the same time, even on the same files.
+        const input=await body(req),project=db.get('projects',m[1]);
+        if(!project||project.systemConfig)return json(res,{error:tr('home.projectNotFound')},404);
+        assertProjectReady(db,project.id);
+        if(typeof input.enabled!=='boolean')return json(res,{error:tr('home.concurrentWritesNeedsBoolean')},400);
+        const saved=db.put('projects',{...project,allowConcurrentWrites:input.enabled,updatedAt:new Date().toISOString()});
+        change();scheduleChat();return json(res,{allowConcurrentWrites:saved.allowConcurrentWrites});
+      }
       if((m=pathname.match(/^\/api\/tasks\/([^/]+)\/detail$/)) && req.method==='GET') {
         const task=db.get('tasks',decodeURIComponent(m[1]));
         if(!task)return json(res,{error:tr('home.taskNotFound')},404);
@@ -1510,6 +1519,7 @@ const server = http.createServer(async (req, res) => {
     const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/send-state.js':'send-state.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
     Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
     files['/workspace-inspector.js']='workspace-inspector.js';
+    files['/concurrent-writes.js']='concurrent-writes.js';
     files['/conversation-tasks.js']='conversation-tasks.js';
     files['/conversation-task-state.js']='conversation-task-state.js';
     files['/delivery-summary.js']='delivery-summary.js';

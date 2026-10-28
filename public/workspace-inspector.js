@@ -4,6 +4,7 @@ import {renderMarkdown} from './markdown.js';
 import {UI_ICON,deviceIconEl,workerDisplayName,workerKind} from './role-icons.js';
 import {sourceSyncPanel} from './source-sync.js';
 import {sideButton,canOpenSide,createSidePreview,setSidePreviewOpener} from './side-preview.js';
+import {saveConcurrentWrites} from './concurrent-writes.js';
 
 const el=(tag,className,text)=>Object.assign(document.createElement(tag),{className:className||'',...(text!==undefined?{textContent:text}:{})});
 const date=value=>value?new Date(value).toLocaleString(dateLocale(),{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'Modified time unknown';
@@ -13,7 +14,7 @@ const fileState=file=>file.error?t('Read failed'):file.readMode==='recorded'?t('
   :t(file.syncState==='disabled'?'Sync disabled':file.syncState==='pending'?'Waiting for local synchronization':'Local file not found.');
 
 /** Reuses existing file reading; late responses must not overwrite new content after switching projects or closing the dialog. */
-export function createWorkspaceInspector({api,documentPreview,getProject,getData,openDevices,openProjectFolder,onError=()=>{},onSideAskOpen=()=>{},getConversationId=()=>getProject()?.id}) {
+export function createWorkspaceInspector({api,documentPreview,getProject,getData,openDevices,openProjectFolder,refreshState=async()=>{},onError=()=>{},onSideAskOpen=()=>{},getConversationId=()=>getProject()?.id}) {
   const sourceSync=sourceSyncPanel({api,getProject,getData});
   const names=['roles','artifacts','preview','ask'],titles={roles:'Role Settings',artifacts:'Recent Outputs',preview:'Side preview',ask:'Side question'};
   const panels=Object.fromEntries(names.map(name=>[name,document.querySelector(`#inspector-${name}`)]));
@@ -25,6 +26,18 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
   const dialog=document.querySelector('#artifact-detail-dialog'),content=document.querySelector('#artifact-detail-content');
   const refresh=document.querySelector('#refresh-artifacts');refresh.innerHTML=UI_ICON.refresh;
   const manage=document.querySelector('#manage-inspector-devices');manage.innerHTML=UI_ICON.settings||UI_ICON.project;manage.addEventListener('click',openDevices);
+  // Quick switch for the project's concurrent edits, shown while a project is open; the project settings page has the same switch.
+  const concurrent=document.querySelector('#toggle-concurrent-writes');concurrent.innerHTML=UI_ICON.concurrent;concurrent.querySelector('svg').setAttribute('aria-hidden','true');
+  function syncConcurrent(){
+    const project=getProject(),on=project?.allowConcurrentWrites===true,label=t(on?'Concurrent edits: on (click to turn off)':'Concurrent edits: off (click to turn on)');
+    concurrent.hidden=!project;concurrent.setAttribute('aria-pressed',String(on));concurrent.title=label;concurrent.setAttribute('aria-label',label);
+  }
+  concurrent.addEventListener('click',async()=>{
+    const project=getProject();if(!project||concurrent.disabled)return;concurrent.disabled=true;
+    try{if(await saveConcurrentWrites({api,getData,projectId:project.id,enabled:concurrent.getAttribute('aria-pressed')!=='true'})!==null)await refreshState({quiet:true});}
+    catch(error){onError(error);}
+    finally{concurrent.disabled=false;syncConcurrent();}
+  });
   const sideAsk=createGroupSideAsk({api,getData,onError,getScope:()=>[getProject()?.id,getConversationId()],show(){select('ask');onSideAskOpen();}});
   let selected='roles',projectId=null,generation=0,detailVersion=0,loadedAt=0,busy=false;
   document.querySelector('#close-artifact-detail').addEventListener('click',()=>dialog.close());
@@ -103,6 +116,7 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
   refresh.addEventListener('click',()=>void load(true));
   return {artifactRow,openSideAsk:message=>sideAsk.open(message),render(){
     sourceSync.render();sideAsk.syncScope();
+    syncConcurrent();
     const next=getProject()?.id||null;
     if(next!==projectId){if(selected==='ask')select('roles');projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
     const devices=document.querySelector('#inspector-device-list');devices.replaceChildren();

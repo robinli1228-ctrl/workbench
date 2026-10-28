@@ -282,7 +282,7 @@ function createMobileDrawers() {
   return { set, isMobile: () => media.matches };
 }
 const drawers = createMobileDrawers();
-const inspector=createWorkspaceInspector({api,documentPreview,onError:setError,getConversationId:()=>app.selectedConversationId||app.selectedProjectId,onSideAskOpen:()=>{setInspectorMode('shown');mobilePanel('roles');},getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
+const inspector=createWorkspaceInspector({api,documentPreview,refreshState,onError:setError,getConversationId:()=>app.selectedConversationId||app.selectedProjectId,onSideAskOpen:()=>{setInspectorMode('shown');mobilePanel('roles');},getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
 const conversationTaskUI=createConversationTaskUI({api,getScope:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),getRoles:()=>[...app.data.roles,...app.data.supervisorRoles],openMessage:async(scope,id)=>{mobilePanel('chat');await room.jumpMessage(scope,id);}});
 const nativeSessionUI=createNativeSessionUI({api,documentPreview,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
 initWorkspaceColumns();
@@ -620,6 +620,7 @@ function render() {
   renderTasks();
   renderTaskDetail();
   projectsUI.refreshNodes();
+  projectsUI.refreshConcurrent();
   setupUI.refresh();
   platformUI.refresh(); spacesUI.refresh();
   if(!nativeSessionUI.active())void room.refresh(app.data, app.selectedProjectId,app.selectedConversationId);
@@ -2415,7 +2416,7 @@ dom.projectForm.addEventListener('submit', async (event) => {
     if(values.repositoryMode!=='none'){
       try {
         const result=await api(`/api/projects/${project.id}/repositories`,{method:'POST',json:{key:'code',mode:values.repositoryMode,repoUrl:values.repositoryUrl,
-          baseBranch:values.baseBranch,accountId:values.hostingAccountId,remoteName:values.folderName,nodeIds:[values.supervisor.nodeId]}});
+          accountId:values.hostingAccountId,remoteName:values.folderName,nodeIds:[values.supervisor.nodeId]}});
         if(result.status==='blocked')repositoryError=result.results.filter(r=>r.error).map(r=>r.error).join(t('; '));
       }catch(e){repositoryError=e.message;}
     }
