@@ -28,6 +28,25 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
   openPath.addEventListener('click',()=>void load(directPath.value.trim()));directPath.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();void load(directPath.value.trim());}});
   document.querySelector('.folder-browser-actions').prepend(newFolder.button);
   list.before(newFolder.panel);
+  const concurrentBox=document.querySelector('#concurrent-writes'),concurrentStatus=document.querySelector('#concurrent-status'),concurrentFeedback=document.querySelector('#concurrent-feedback');
+  /** Devices whose Worker is too old to honour the switch keep the one-at-a-time lock; say so instead of promising more. */
+  function showConcurrent(){
+    const p=getProject();if(!p)return;concurrentBox.checked=p.allowConcurrentWrites===true;concurrentFeedback.hidden=true;
+    const data=getData(),nodeIds=new Set([...(data.roles||[]),...(data.supervisorRoles||[])].filter(r=>r.projectId===p.id&&!r.archivedAt&&r.enabled!==false).map(r=>r.nodeId));
+    const old=(getData().workers||[]).filter(w=>nodeIds.has(w.id)&&w.capabilities?.concurrentWrites!==1).map(w=>workerDisplayName(w));
+    concurrentStatus.textContent=p.allowConcurrentWrites===true&&old.length?t('These devices still queue one at a time until their Worker is upgraded: {names}',{names:old.join(t(', '))}):'';
+  }
+  concurrentBox.addEventListener('change',async()=>{
+    const p=getProject();if(!p)return;const enabled=concurrentBox.checked,here=()=>getProject()?.id===p.id;
+    if(enabled&&!confirm(t('Allow several roles to edit this project at the same time? Two roles can overwrite each other on the same file, and Git actions can collide. Migration, deployment and production operations will no longer wait for other roles.'))){concurrentBox.checked=false;return;}
+    concurrentBox.disabled=true;concurrentFeedback.hidden=true;
+    try{await api(`/api/projects/${encodeURIComponent(p.id)}/concurrent-writes`,{method:'POST',json:{enabled}});}
+    catch(error){if(here()){concurrentBox.checked=!enabled;concurrentFeedback.textContent=error.message;concurrentFeedback.hidden=false;}concurrentBox.disabled=false;return;}
+    // The server has the new value; a failed refresh must not flip the box back.
+    try{await refreshState({quiet:true});}catch{}
+    if(here()){showConcurrent();concurrentFeedback.textContent=t('Saved');concurrentFeedback.hidden=false;}
+    concurrentBox.disabled=false;
+  });
   const followupForm=document.querySelector('#proactive-followup-form'),followupFeedback=document.querySelector('#followup-feedback'),followupStatus=document.querySelector('#followup-status'),viewFollowup=document.querySelector('#view-followup');
   let followupVersion=0,followupConfig=null,followupProject=null;
   function followupDisabled(value){for(const element of followupForm.elements)element.disabled=value;document.querySelector('#refresh-followup').disabled=value;viewFollowup.disabled=value||!followupConfig?.execution?.taskId;}
@@ -221,6 +240,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     busy = false;
     settingsId = p.id; savedUrl = p.repoUrl || '';
     void loadFollowup();
+    showConcurrent();
     form.elements.name.value = p.name || '';
     form.elements.description.value = p.description || '';
     form.elements.repoUrl.value = savedUrl;

@@ -143,10 +143,15 @@ export async function prepareExecutionWorkspace(root,run,repositories) {
   return {folder,baseCommit:null,repositories:result};
 }
 
-/** Runs not approved by the supervisor keep using the project lock; isolated parallel runs share a device only with isolated runs of the same batch. */
-export function executionConflict(candidate,active) {
+/**
+ * Runs not approved by the supervisor keep using the project lock; isolated parallel runs share a device only with isolated runs of the same batch.
+ * With the project's concurrent-writes switch on, a pair that includes an ordinary chat run (one outside any plan stage) may overlap,
+ * exclusive stages included; two plan stages keep their rules.
+ */
+export function executionConflict(candidate,active,{concurrent=false}={}) {
   return active.some(other => {
     if (other.projectId!==candidate.projectId) return false;
+    if (concurrent && (!candidate.execution || !other.execution)) return false;
     if (candidate.execution?.exclusive || other.execution?.exclusive) return true;
     if (candidate.nodeId!==other.nodeId) return false;
     return !(candidate.execution?.isolated && other.execution?.isolated && candidate.execution.batchId===other.execution.batchId);

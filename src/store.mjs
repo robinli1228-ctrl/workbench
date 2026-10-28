@@ -21,6 +21,7 @@ import {reviewView} from './collaboration-sessions.mjs';
 import {tagMessage,SessionQueue,reservePropagation,settlePropagation} from './session-queue.mjs';
 import { permissionScopeIssue } from './role-permissions.mjs';
 import {claimResultReceipts,settleResultReceipts} from './result-receipts.mjs';
+import {concurrentWritesAllowed,concurrentPeers} from './concurrent-writes.mjs';
 
 export const terminal = new Set(['succeeded', 'failed', 'interrupted']);
 const now = () => new Date().toISOString();
@@ -387,6 +388,7 @@ export class Store {
         documentViews:this.get('workers',nodeId)?.capabilities?.sessionQueue===2?1:0,
         repositoryUrl: repositoryId ? this.get('repositories', repositoryId)?.repoUrl : null,
         projectRoot: binding.localRoot, model: task.model, mode: task.mode, status: 'queued', lastSeq: 0, createdAt: now(), updatedAt: now(),
+        ...(concurrentWritesAllowed(this.get('projects',task.projectId),this.get('workers',nodeId))?{concurrentWrites:true,concurrentPeers:concurrentPeers(this,task.projectId,nodeId)}:{}),
         ...(permissionScope !== undefined ? { permissionScope, permissionContract: 1 } : {}),
         ...(task.collaborationBatchId?{collaborationBatchId:task.collaborationBatchId,collaborationBatch:task.collaborationBatch,explicitPublish:true}:{}),
         requestId: task.requestId || null, deliveryId: task.deliveryId || null, continuationRunId: task.continuationRunId || null, planId: task.planId || null, planVersion: task.planVersion || null, stepId: task.stepId || null,

@@ -13,6 +13,7 @@ import { listRoleTemplates } from './role-templates.mjs';
 import { isRoleConfigured, isSupervisorName, isBroadcastName } from './default-roles.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
 import { executionConflict } from './execution-workspace.mjs';
+import { concurrentWritesAllowed } from './concurrent-writes.mjs';
 import { resolveRolePermissionScope, withPermissionScope } from './role-permissions.mjs';
 import { steeringWaitReason } from './role-steering.mjs';
 import { ConversationContext } from './conversation-context.mjs';
@@ -510,7 +511,7 @@ export class Rooms {
         : task.requiresCoordination && worker?.capabilities?.coordinationVersion !== 1 ? tr('rooms.upgradeWorkerSupportCrossDevice')
         : runtimeIssue(worker, role.runtime, role.model) ? runtimeIssue(worker, role.runtime, role.model)
         : active.some(r => r.roleId === role.id) ? tr('rooms.waitingForRoleFinishIts')
-        : executionConflict({...task,nodeId:role.nodeId},active) ? (task.execution?.exclusive ? tr('rooms.waitingForExclusiveOperationWindow') : tr('rooms.waitingForProjectWorkspaceExclusive'))
+        : executionConflict({...task,nodeId:role.nodeId},active,{concurrent:concurrentWritesAllowed(this.db.get('projects',task.projectId),worker)}) ? (task.execution?.exclusive ? tr('rooms.waitingForExclusiveOperationWindow') : tr('rooms.waitingForProjectWorkspaceExclusive'))
         : active.some(r => r.nodeId === role.nodeId && r.status === 'reconciling') ? tr('rooms.nodeHasRunsAwaitingReconciliation')
         : active.filter(r => r.nodeId === role.nodeId).length+reservedTerminalSlots(this.db,role.nodeId)+(worker.capabilities.cliCapacity!==1&&worker.capabilities.summaryBatches===1?0:worker.organizerBusy||0) >= (worker.capacity || 1) ? tr('rooms.waitingForNodeBecomeIdle')
         : discussion ? null : this.nativeRecoveryReason?.(task,recoveryChecks);

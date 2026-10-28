@@ -49,7 +49,7 @@ import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettin
 import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
-import { folderName } from './project-space.mjs';
+import { folderName,assertProjectReady } from './project-space.mjs';
 import {folderAccessFor,nativeFolderAccess,FolderPreparations} from './folder-access.mjs';
 import { CredentialStore, Hosting } from './hosting.mjs';
 import { ProjectAdmin } from './project-admin.mjs';
@@ -1115,6 +1115,15 @@ const server = http.createServer(async (req, res) => {
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/proactive-followup$/))){
         if(req.method==='GET')return json(res,proactiveFollowup.view(m[1],url.searchParams.get('conversationId')??undefined));
         if(req.method==='POST'){const result=proactiveFollowup.save(m[1],await body(req));change();return json(res,result);}
+      }
+      if((m=pathname.match(/^\/api\/projects\/([^/]+)\/concurrent-writes$/)) && req.method==='POST') {
+        // A manual, per-project switch: roles on one device may then run at the same time, even on the same files.
+        const input=await body(req),project=db.get('projects',m[1]);
+        if(!project||project.systemConfig)return json(res,{error:tr('home.projectNotFound')},404);
+        assertProjectReady(db,project.id);
+        if(typeof input.enabled!=='boolean')return json(res,{error:tr('home.concurrentWritesNeedsBoolean')},400);
+        const saved=db.put('projects',{...project,allowConcurrentWrites:input.enabled,updatedAt:new Date().toISOString()});
+        change();scheduleChat();return json(res,{allowConcurrentWrites:saved.allowConcurrentWrites});
       }
       if((m=pathname.match(/^\/api\/tasks\/([^/]+)\/detail$/)) && req.method==='GET') {
         const task=db.get('tasks',decodeURIComponent(m[1]));
