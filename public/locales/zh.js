@@ -1703,7 +1703,7 @@ export default {
   "Saved": "已保存",
   "Concurrent edits: on (click to turn off)": "同时修改：已开启（点击关闭）",
   "Concurrent edits: off (click to turn on)": "同时修改：未开启（点击开启）",
-  "Let several roles on the same device work in this project at the same time, even on the same files. A role still runs one thing at a time, and a device still runs no more CLIs than its limit. Nothing stops two roles from editing the same file or using Git at once; each role is told, when its turn starts, who else is already running. It applies to runs that start afterwards.": "允许同一台设备上的多个角色同时在本项目里工作，包括改同一批文件。每个角色仍然一次只做一件事，设备同时运行的 CLI 数量仍然不能超过上限。平台不会阻止两个角色同时改同一个文件或同时操作 Git，只会在每个角色这一轮开始时告诉它已有谁在运行。只对之后启动的运行生效。",
+  "Let several roles on the same device work in this project at the same time, even on the same files. A role still runs one thing at a time, and a device still runs no more CLIs than its limit. Nothing stops two roles from editing the same file or using Git at once; each role is told, when its turn starts, who else is working. It applies to runs that start afterwards.": "允许同一台设备上的多个角色同时在本项目里工作，包括改同一批文件。每个角色仍然一次只做一件事，设备同时运行的 CLI 数量仍然不能超过上限。平台不会阻止两个角色同时改同一个文件或同时操作 Git，只会在每个角色这一轮开始时告诉它还有谁在工作。只对之后启动的运行生效。",
   "Allow several roles to edit this project at the same time": "允许多个角色同时修改本项目",
   "These devices still queue one at a time until their Worker is upgraded: {names}": "这些设备的 Worker 还没升级，仍然一个一个排队：{names}",
   "Allow several roles to edit this project at the same time? Two roles can overwrite each other on the same file, and Git actions can collide. Migration, deployment and production operations will no longer wait for other roles.": "确定允许多个角色同时修改本项目吗？两个角色可能互相覆盖同一个文件，Git 操作也可能冲突。迁移、部署、生产操作也不再等待其他角色。",
