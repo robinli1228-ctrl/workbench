@@ -237,6 +237,11 @@ button.usage-model-stack { display:flex; flex-direction:column-reverse; flex-shr
 .version { color: var(--muted); font-size: 11px; }
 .connection-note {
   margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: default;
   max-width: 220px;
   color: var(--muted);
   font-size: 11px;
@@ -1703,9 +1708,14 @@ button.action-icon-button { display: inline-flex; align-items: center; justify-c
   .topbar-actions { flex-shrink:0; gap:6px; }
   .topbar-actions .version { display:none; }
   .topbar-actions .icon-button { width:30px; height:30px; min-height:30px; padding:6px; }
-  .topbar .connection-note { font-size:0; width:6px; height:6px; padding:0; background:#e6a124; border-radius:50%; margin:0 5px; }
-  .topbar .connection-note[data-state="connected"] { background:#20a579; }
-  .topbar .connection-note[data-state="error"] { background:#d95151; }
+  /* The dot is the project's file-sync light: an 18px target around a 6px dot with a soft halo. */
+  .topbar .connection-note { --dot:#8a909c; --halo:rgb(138 144 156 / 20%); font-size:0; width:18px; height:18px; min-height:18px; padding:0; margin:0 1px; border:0; border-radius:50%; box-shadow:none; cursor:default; background:radial-gradient(circle, var(--dot) 0 3px, var(--halo) 3.5px 6px, transparent 6.5px); }
+  .topbar .connection-note[data-sync="green"] { --dot:#20a579; --halo:rgb(32 165 121 / 16%); }
+  .topbar .connection-note[data-sync="orange"] { --dot:#e6a124; --halo:rgb(230 161 36 / 18%); }
+  .topbar .connection-note[data-sync="red"] { --dot:#d95151; --halo:rgb(217 81 81 / 18%); cursor:pointer; }
+  .topbar .connection-note[data-sync="red"][aria-disabled="false"]:hover { --halo:rgb(217 81 81 / 30%); }
+  .topbar .connection-note[data-sync="red"][aria-disabled="true"] { cursor:progress; }
+  .topbar .connection-note:focus-visible { box-shadow:var(--focus-ring); }
   .node-sidebar { display:flex; flex-direction:column; height:100%; min-height:0; padding:0; overflow:hidden; }
   .inspector-tabs { height:67px; min-height:0; box-sizing:border-box; }
   .column-splitter { display:block; position:absolute; top:0; bottom:0; width:7px; transform:translateX(-4px); cursor:col-resize; z-index:12; touch-action:none; outline-offset:-2px; }
@@ -2523,7 +2533,6 @@ pre, .prompt-preview { border: var(--hairline); border-radius: var(--r-sm); back
 .elapsed-time, .role-badge-elapsed { font-size: 10.5px; }
 
 /* State dots: a faint halo on online / live, nothing on idle. */
-.topbar .connection-note[data-state="connected"] { box-shadow: 0 0 0 3px rgb(32 165 121 / 14%); }
 .role-badge.is-working::before { box-shadow: 0 0 0 2px rgb(79 91 206 / 18%); }
 
 /* Kicker labels: small caps tracking, used sparingly for data fields. */
@@ -3075,7 +3084,6 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 /* session settings gear in the top bar (sessions mode only); the connection note yields its place */
 .native-session-gear { display: none; }
 body[data-navigation-mode="sessions"] .native-session-gear { display: grid; place-items: center; }
-body[data-navigation-mode="sessions"] #connection-note { display: none !important; }
 .native-settings-dialog { display: grid; gap: 18px; min-width: min(520px, 92vw); }
 .native-settings-section h3 { margin: 0 0 8px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .native-settings-section .native-rename-form { display: flex; gap: 8px; }

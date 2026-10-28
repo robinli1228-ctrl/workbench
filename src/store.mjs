@@ -189,6 +189,11 @@ export class Store {
     const index=pending?'records_source_command_pending':'records_source_command_batch';
     return this.db.prepare(`SELECT data FROM records INDEXED BY ${index} WHERE ${conditions.join(' AND ')} ORDER BY rowid`).all(...params).map(r=>JSON.parse(r.data));
   }
+  /** The project's newest finished non-preview sync batch of this generation; a cancelled batch is skipped, it proves nothing. */
+  lastSourceSyncBatch(projectId,generation) {
+    const row=this.db.prepare("SELECT data FROM records WHERE kind='sourceSyncBatches' AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.generation')=? AND COALESCE(json_extract(data,'$.kind'),'')<>'preview' AND json_extract(data,'$.status') IN ('completed','partial_conflict','blocked') ORDER BY rowid DESC LIMIT 1").get(projectId,generation);
+    return row?JSON.parse(row.data):null;
+  }
   /** Open (non-terminal) batches, optionally one project or one status, from the partial index: the per-second sync tick never parses the finished history. */
   listSourceSyncBatches({projectId,status}={}) {
     const conditions=["kind='sourceSyncBatches'",openSourceBatch],params=[];

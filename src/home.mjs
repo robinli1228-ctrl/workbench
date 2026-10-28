@@ -68,6 +68,7 @@ import { inspectRunProgress } from './run-monitor.mjs';
 import { projectTerminalLock, nativeSessionProjectIds, nativeTerminalProject, terminalCommand, terminalLaunchView, TERMINAL_PREPARATION_TTL_MS } from './terminal-resume.mjs';
 import { ProjectGitVersions } from './project-git-versions.mjs';
 import {SourceSyncHome} from './source-sync-transport.mjs';
+import {syncIndicator} from './sync-indicator.mjs';
 import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {acceptSourceProvenance} from './source-sync-provenance.mjs';
 import { WechatChannel, wechatTransport } from './wechat-channel.mjs';
@@ -374,7 +375,7 @@ function snapshot(scope=null) {
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
     sessionQueues:Object.fromEntries(db.list('projects').filter(p=>db.listProject('collaborationSessions',p.id).length).map(p=>[p.id,new SessionQueue(db).status(p.id)])),
     cliRecoveries:db.list('cliRecoveries').filter(r=>!['ready','resolved'].includes(r.state)).map(({binding,fingerprint,...record})=>record),
-    sourceSyncSummaries:db.list('projects').map(p=>({id:p.id,projectId:p.id,enabled:sourceSync.sync.config(p.id).enabled,conflicts:db.listProject('sourceSyncConflicts',p.id).filter(c=>!['resolved','cancelled'].includes(c.status)).length})),
+    sourceSyncSummaries:db.list('projects').map(p=>{const conflicts=db.listProject('sourceSyncConflicts',p.id);return {id:p.id,projectId:p.id,enabled:sourceSync.sync.config(p.id).enabled,conflicts:conflicts.filter(c=>!['resolved','cancelled'].includes(c.status)).length,indicator:syncIndicator(db,p.id,{online,conflicts})};}),
     terminalSessions: db.list('terminalSessions').filter(s=>!['released','cancelled'].includes(s.status)).map(s=>terminalLaunchView({...s,roleId:s.roleId||(s.runId?db.get('runs',s.runId)?.roleId:null)})),
     attachmentTransfers:db.list('attachmentTransfers').slice(-200).map(({fingerprint,...t})=>t),
     hostingAccounts: db.list('hostingAccounts'), devices: db.list('devices').map(d => ({ ...d, status: online(d.nodeId) ? 'online' : d.status })), repositoryOperations: db.list('repositoryOperations'),
