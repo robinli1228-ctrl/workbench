@@ -48,6 +48,7 @@ const STATE_REQUEST_TIMEOUT = 20_000;
 const SSE_RETRY_INTERVAL = 15_000;
 
 const dom = {
+  connectionNote: document.querySelector('#connection-note'),
   apiToken: document.querySelector('#api-token'),
   saveToken: document.querySelector('#save-token'),
   projectList: document.querySelector('#project-list'),
@@ -119,7 +120,6 @@ let sessionProjectId=()=>null;
 app.view = 'workspace';
 app.settingsTab = 'general';
 const groupListNote=create('p','workspace-note');groupListNote.id='group-list-note';groupListNote.hidden=true;dom.projectList.before(groupListNote);
-bindDescriptionNotes(document.querySelector('#navigation-mode [data-mode="groups"]'),[groupListNote],{key:'groups',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body]});
 bindDescriptionNotes(document.querySelector('#inspector-title'),[document.querySelector('#role-refresh-feedback'),document.querySelector('#role-sidebar-note')],{key:'roles',visible:()=>document.body.dataset.navigationMode==='groups',watch:[document.body,document.querySelector('#inspector-roles')]});
 const projectOrder=createListOrder({container:dom.projectList,scope:'projects',onEnd:()=>renderProjects(),onError:message=>{groupListNote.textContent=message;groupListNote.hidden=false;setError(message);}});
 const roleOrder=createListOrder({container:dom.roleList,scope:()=>`roles:${app.selectedProjectId||''}`,onEnd:()=>renderRoles(),onError:setError});
@@ -350,6 +350,30 @@ function setConnection(message, state = /failed|interrupted/i.test(message)?'err
   app.connection={message,state};
   const settingsNote = document.querySelector('#settings-connection-note');
   if (settingsNote) settingsNote.textContent = message;
+  renderSyncDot();
+}
+
+/** Only the selected group project has a header sync indicator; Sessions and navigation labels never show one. */
+const syncRetrying=new Set();
+function syncDotProjectId(){return document.body.dataset.navigationMode==='groups'?app.selectedProjectId||null:null;}
+function renderSyncDot(){
+  const dot=dom.connectionNote,projectId=syncDotProjectId();if(!dot)return;dot.hidden=!projectId;if(!projectId)return;
+  const connected=Boolean(app.lastStateAt)&&app.connection?.state!=='error';
+  const indicator=connected?(app.data?.sourceSyncSummaries||[]).find(s=>s.projectId===projectId)?.indicator:null;
+  const state=connected&&['green','orange','red'].includes(indicator?.state)?indicator.state:'gray';
+  const title=connected?indicator?.title||t('File sync is off for this project'):t('{connection} · sync status unknown',{connection:t(app.connection?.message||'Connecting to Home…')});
+  dot.dataset.sync=state;dot.textContent=title;dot.title=title;dot.setAttribute('aria-label',title);
+  dot.setAttribute('aria-disabled',String(state!=='red'||syncRetrying.has(projectId)));
+}
+/** Preserve the existing explicit retry/settings action, without dispatching anything on display or in Sessions. */
+async function syncDotClick(){
+  const projectId=syncDotProjectId();if(!projectId||!app.lastStateAt||app.connection?.state==='error'||syncRetrying.has(projectId))return;
+  const indicator=(app.data?.sourceSyncSummaries||[]).find(s=>s.projectId===projectId)?.indicator;if(indicator?.state!=='red')return;
+  if(!indicator.retry){openSettings('project');document.querySelector('#project-tab-sync')?.click();return;}
+  syncRetrying.add(projectId);renderSyncDot();
+  try{await api(`/api/projects/${encodeURIComponent(projectId)}/source-sync/batches`,{method:'POST',json:{requestId:crypto.randomUUID(),...indicator.retry}});await refreshState({quiet:true});}
+  catch(error){setError(error.message);}
+  finally{syncRetrying.delete(projectId);renderSyncDot();}
 }
 
 /**
@@ -593,6 +617,7 @@ async function refreshState({ quiet = false } = {}) {
 }
 
 function render() {
+  renderSyncDot();
   if (app.selectedProjectId) sessionStorage.setItem('agent-workbench.project', app.selectedProjectId);
   else sessionStorage.removeItem('agent-workbench.project');
   if(app.selectedConversationId)sessionStorage.setItem('agent-workbench.conversation',app.selectedConversationId);
@@ -2138,6 +2163,7 @@ function setInspectorMode(mode) {
   if (toggle) { const label = t(next === 'hidden' ? 'Show right panel' : 'Hide right panel'); toggle.setAttribute('aria-pressed', String(next === 'hidden')); toggle.title = label; toggle.setAttribute('aria-label', label); }
 }
 setInspectorMode(sessionStorage.getItem(INSPECTOR_KEY) || 'shown');
+dom.connectionNote?.addEventListener('click',()=>void syncDotClick());
 document.querySelector('#toggle-inspector')?.addEventListener('click', () => {
   if (drawers.isMobile()) { document.querySelector('#mobile-roles')?.click(); return; }
   setInspectorMode(document.body.dataset.inspector === 'hidden' ? 'shown' : 'hidden');
