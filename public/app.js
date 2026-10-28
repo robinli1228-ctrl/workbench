@@ -121,6 +121,8 @@ const app = {
   desktopChainVersion: 0,
   fileReadVersion: 0
 };
+// Set once the sessions UI exists; the dot can render before that, while the page is still connecting.
+let sessionProjectId=()=>null;
 app.view = 'workspace';
 app.settingsTab = 'devices';
 const groupListNote=create('p','workspace-note');groupListNote.id='group-list-note';groupListNote.hidden=true;dom.projectList.before(groupListNote);
@@ -284,7 +286,8 @@ function createMobileDrawers() {
 const drawers = createMobileDrawers();
 const inspector=createWorkspaceInspector({api,documentPreview,refreshState,onError:setError,getConversationId:()=>app.selectedConversationId||app.selectedProjectId,onSideAskOpen:()=>{setInspectorMode('shown');mobilePanel('roles');},getProject:getCurrentProject,getData:()=>app.data,openDevices:()=>openSettings('devices'),openProjectFolder});
 const conversationTaskUI=createConversationTaskUI({api,getScope:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),getRoles:()=>[...app.data.roles,...app.data.supervisorRoles],openMessage:async(scope,id)=>{mobilePanel('chat');await room.jumpMessage(scope,id);}});
-const nativeSessionUI=createNativeSessionUI({api,documentPreview,getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
+const nativeSessionUI=createNativeSessionUI({api,documentPreview,onSelect:()=>renderSyncDot(),getData:()=>app.data,artifactRow:file=>inspector.artifactRow(file),onModeChange:()=>{app.view='workspace';render();},onPreview:()=>mobilePanel('chat'),onStateRefresh:()=>refreshState({quiet:true})});
+sessionProjectId=()=>nativeSessionUI.currentProjectId();
 initWorkspaceColumns();
 const mobilePanel = drawers.set;
 document.querySelector('#mobile-projects').innerHTML = UI_ICON.folder;
@@ -353,9 +356,50 @@ function setError(message = '') {
 
 function setConnection(message, state = /failed|interrupted/i.test(message)?'error':/^Connected/.test(message)?'connected':'waiting') {
   if (app.lastStateAt) message = t('{status} · Last update {time}', { status: t(message), time: formatTime(app.lastStateAt) });
-  if (dom.connectionNote) {dom.connectionNote.textContent = message;dom.connectionNote.title=message;dom.connectionNote.dataset.state=state;}
+  app.connection={message,state};
   const settingsNote = document.querySelector('#settings-connection-note');
   if (settingsNote) settingsNote.textContent = message;
+  renderSyncDot();
+}
+
+/**
+ * The top-bar dot shows the file sync between devices for the project in view: the group chat's project, or the project the
+ * selected native session belongs to. Grey when sync is off, the session is in no project, or Home is not connected.
+ */
+function syncDotProjectId(){return document.body.dataset.navigationMode==='sessions'?sessionProjectId():app.selectedProjectId||null;}
+const syncRetrying=new Set();
+function renderSyncDot(){
+  const dot=dom.connectionNote;if(!dot)return;
+  const sessions=document.body.dataset.navigationMode==='sessions',projectId=syncDotProjectId();
+  // A refresh in progress or a fall back to polling keeps the last known light; only a failed connection or no state yet is grey.
+  const connected=Boolean(app.lastStateAt)&&app.connection?.state!=='error';
+  const indicator=connected&&projectId?(app.data?.sourceSyncSummaries||[]).find(s=>s.projectId===projectId)?.indicator:null;
+  const state=!connected?'gray':['green','orange','red'].includes(indicator?.state)?indicator.state:'gray';
+  const title=!connected?t('{connection} · sync status unknown',{connection:t(app.connection?.message||'Connecting to Home…')})
+    :projectId===undefined?t('Select a session to see the sync status of its project')
+    :!projectId?t(sessions?'This session is not in any project, so it has no sync status':'Select a project')
+    :indicator?.title||t('File sync is off for this project');
+  dot.dataset.sync=state;dot.textContent=title;dot.title=title;dot.setAttribute('aria-label',title);
+  // Focusable in every state so the light can be read; only red acts.
+  dot.setAttribute('aria-disabled',String(state!=='red'||syncRetrying.has(projectId)));
+}
+async function syncDotClick(){
+  if(!app.lastStateAt||app.connection?.state==='error')return;
+  const projectId=syncDotProjectId(),indicator=(app.data?.sourceSyncSummaries||[]).find(s=>s.projectId===projectId)?.indicator;
+  if(!projectId||indicator?.state!=='red'||syncRetrying.has(projectId))return;
+  if(!indicator.retry){openProjectSync(projectId);return;}
+  syncRetrying.add(projectId);renderSyncDot();
+  try{await api(`/api/projects/${encodeURIComponent(projectId)}/source-sync/batches`,{method:'POST',json:{requestId:crypto.randomUUID(),...indicator.retry}});await refreshState({quiet:true});}
+  catch(error){setError(error.message);}
+  finally{syncRetrying.delete(projectId);renderSyncDot();}
+}
+/** Problems a retry cannot fix are shown where they can be fixed: Project Settings, File sync. */
+async function openProjectSync(projectId){
+  if(!app.data.projects.some(p=>p.id===projectId))return;
+  // From the sessions page the session's project can differ from the group chat's: switch through the normal path, whose state
+  // request names a conversation of that project, before opening its settings.
+  if(projectId!==app.selectedProjectId){selectProject(projectId);render();await refreshState({quiet:true});}
+  openSettings('project');document.querySelector('#project-tab-sync')?.click();
 }
 
 /**
@@ -553,6 +597,7 @@ async function refreshState({ quiet = false } = {}) {
       rooms: Array.isArray(data.rooms) ? data.rooms : [],
       gitChecks: Array.isArray(data.gitChecks) ? data.gitChecks : [],
       workspaces: Array.isArray(data.workspaces) ? data.workspaces : [],
+      sourceSyncSummaries: Array.isArray(data.sourceSyncSummaries) ? data.sourceSyncSummaries : [],
       tasks: Array.isArray(data.tasks) ? data.tasks : [],
       chatQueuePaused:data.chatQueuePaused===true,
       runs: Array.isArray(data.runs) ? data.runs : [],
@@ -600,6 +645,7 @@ async function refreshState({ quiet = false } = {}) {
 }
 
 function render() {
+  renderSyncDot();
   if (app.selectedProjectId) sessionStorage.setItem('agent-workbench.project', app.selectedProjectId);
   else sessionStorage.removeItem('agent-workbench.project');
   if(app.selectedConversationId)sessionStorage.setItem('agent-workbench.conversation',app.selectedConversationId);
@@ -2320,6 +2366,7 @@ window.addEventListener('storage', event => {
 });
 
 document.querySelector('#show-app-settings')?.addEventListener('click', () => openSettings('devices'));
+dom.connectionNote?.addEventListener('click',()=>void syncDotClick());
 document.querySelector('#show-remote-desktop')?.addEventListener('click', () => openDesktopDialog());
 document.querySelector('#start-remote-desktop')?.addEventListener('click', () => void startDesktopChain());
 document.querySelector('#remote-desktop-device')?.addEventListener('change', () => { invalidateDesktopChain(); resetDesktopSteps(); dom.desktopFeedback.textContent = 'Click "Open desktop" to start checking the selected server.'; });
