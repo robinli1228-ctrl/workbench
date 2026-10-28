@@ -72,7 +72,7 @@ Claude and Codex also support side questions for a separate discussion alongside
 
 Run planning or interactive work on your computer and assign another role to a server with the required environment. Each execution device has a Worker that drives its installed CLIs and accesses its configured project directories.
 
-Bind the corresponding project folders on participating devices. Use fixed-commit Git deliveries when a reviewer or collaborator needs an exact code version. Optional source synchronization exchanges saved files within explicitly configured scopes, with visible status and conflict records. Synchronization is enabled per project scope; it does not commit, merge, or deploy code.
+Bind the corresponding project folders on participating devices. Use fixed-commit Git deliveries when a reviewer or collaborator needs an exact code version. Optional source synchronization exchanges saved files within explicitly configured scopes, with visible status and conflict records. Synchronization is enabled per project scope; it does not commit, merge, or deploy code. When all participating Workers support bounded transfers, both manual and automatic synchronization split large changes into ordered parts instead of rejecting the project for having more than 10,000 files. File-size, storage, exclusion, and conflict protections still apply.
 
 Cross-device collaboration passes work and its inputs between roles. It does not migrate a vendor's native session to another device.
 

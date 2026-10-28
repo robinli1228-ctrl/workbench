@@ -205,7 +205,7 @@ function snapshot(options,head,entries,excluded) {
 export async function captureGitBase(options) {
   const {root,head}=await inspectRoot(options);const entries=Object.create(null),excluded=[];
   const records=(await git(root,['ls-tree','-rz','--full-tree',head])).split('\0').filter(Boolean);
-  if(records.length>SOURCE_SYNC_LIMITS.paths)throw syncError('manifest_too_large');
+  if(!options.boundedTransfers&&records.length>SOURCE_SYNC_LIMITS.paths)throw syncError('manifest_too_large');
   for(const record of records){const tab=record.indexOf('\t'),[mode,type,hash]=record.slice(0,tab).split(' '),path=record.slice(tab+1);
     if(excludedSourcePath(path)||type!=='blob'){excluded.push({path,reason:type==='commit'?'nested_repository':'excluded'});continue;}
     validateSourcePath(path);if(!['100644','100755'].includes(mode))throw syncError('unsafe_file',path);
@@ -223,10 +223,10 @@ export async function captureSourceSnapshot(options) {
   const {root,head}=await inspectRoot(options);const base=options.base||await captureGitBase({...options,root,expectedHead:head});
   if(base.baseCommit!==head)throw syncError('git_baseline_mismatch');
   const paths=[...new Set([...Object.keys(base.entries),...(await git(root,['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(Boolean)])].sort();
-  if(paths.length>SOURCE_SYNC_LIMITS.paths)throw syncError('manifest_too_large');
+  if(!options.boundedTransfers&&paths.length>SOURCE_SYNC_LIMITS.paths)throw syncError('manifest_too_large');
   // Ignored files remain exclusions, not deletions of an earlier synchronized untracked file.
   const ignored=(await git(root,['ls-files','-z','--others','--ignored','--exclude-standard','--directory'])).split('\0').filter(Boolean);
-  if(ignored.length>SOURCE_SYNC_LIMITS.paths)throw syncError('manifest_too_large');
+  if(!options.boundedTransfers&&ignored.length>SOURCE_SYNC_LIMITS.paths)throw syncError('manifest_too_large');
   const entries=Object.create(null),excluded=[...base.excluded||[],...ignored.map(path=>({path,reason:'ignored'}))];let changedBytes=0;
   for(const path of paths){if(excludedSourcePath(path)||base.excluded?.some(e=>e.reason==='nested_repository'&&(path===e.path||path.startsWith(e.path+'/')))){excluded.push({path,reason:'excluded'});continue;}
     // Git reports an untracked embedded repository as one directory ending in slash.
@@ -237,7 +237,7 @@ export async function captureSourceSnapshot(options) {
       if(e.code!=='nested_repository')throw e;excluded.push({path,reason:e.code});continue;}
     entries[path]=captured.entry;
     if(captured.entry&&!entryEqual(Object.hasOwn(base.entries,path)?base.entries[path]:null,captured.entry))changedBytes+=captured.entry.size;
-    if(changedBytes>SOURCE_SYNC_LIMITS.batchBytes)throw syncError('batch_too_large');
+    if(!options.boundedTransfers&&changedBytes>SOURCE_SYNC_LIMITS.batchBytes)throw syncError('batch_too_large');
     if(captured.bytes&&options.blobRoot)await saveSourceBlob(options.blobRoot,captured.bytes);
   }
   if((await git(root,['rev-parse','HEAD'])).trim()!==head)throw syncError('git_baseline_mismatch');
@@ -271,7 +271,7 @@ export async function captureDirectorySnapshot(options) {
     // Empty directories need watchers too; retain identity during this walk so replacements cannot reuse an old inode's watcher.
     if(observation){const info=dir===root?rootInfo:await pathStat(dir,{bigint:true});if(!info.isDirectory())throw syncError('unsafe_file',prefix);directories.set(dir,`${info.dev}:${info.ino}`);}
     for(const item of await readdir(dir,{withFileTypes:true})){
-      const path=prefix+item.name;if(++visited>SOURCE_SYNC_LIMITS.paths*2)throw syncLimitError('manifest_too_large','scan_entries',SOURCE_SYNC_LIMITS.paths*2,visited,path);
+      const path=prefix+item.name;if(++visited>SOURCE_SYNC_LIMITS.paths*2&&!options.boundedTransfers)throw syncLimitError('manifest_too_large','scan_entries',SOURCE_SYNC_LIMITS.paths*2,visited,path);
       if(cooperate&&visited%32===0)await cooperate('walk',visited);
       const shared=policy.sharedDocs===true&&(path==='.workbench'||path==='.workbench/docs'||path.startsWith('.workbench/docs/'));
       const sharedParent=shared&&(path==='.workbench'||path==='.workbench/docs');
@@ -283,7 +283,7 @@ export async function captureDirectorySnapshot(options) {
         if(worktree(path)){
           // A worktree that never synced and has more files than the cap is skipped on its own; one already synced keeps
           // syncing, because a path leaving the scope would otherwise fence the whole project.
-          const known=Object.entries(options.baselineEntries||{}).some(([p,entry])=>entry&&p.startsWith(path+'/')),start=paths.length,skipped=excluded.length,count=known?null:{files:0,bytes:0};
+          const known=Object.entries(options.baselineEntries||{}).some(([p,entry])=>entry&&p.startsWith(path+'/')),start=paths.length,skipped=excluded.length,count=known||options.boundedTransfers?null:{files:0,bytes:0};
           try{await walk(join(dir,item.name),path+'/',count);}
           catch(e){if(e!==tooLarge)throw e;paths.length=start;excluded.length=skipped;excluded.push({path,reason:'worktree_too_large',files:count.files});
             for(const key of directories.keys())if(key===join(dir,item.name)||key.startsWith(join(dir,item.name)+'/'))directories.delete(key);}
@@ -295,7 +295,7 @@ export async function captureDirectorySnapshot(options) {
       }
       // A new worktree also stops short of the project-wide path limit and of one batch's bytes, so it never fails the scope.
       if(budget&&(++budget.files>WORKTREE_LIMITS.files||paths.length>=WORKTREE_LIMITS.projectFiles||(budget.bytes+=(await pathStat(join(dir,item.name))).size)>WORKTREE_LIMITS.bytes))throw tooLarge;
-      paths.push(path);if(paths.length>SOURCE_SYNC_LIMITS.paths)throw syncLimitError('manifest_too_large','files',SOURCE_SYNC_LIMITS.paths,paths.length,path);
+      paths.push(path);if(!options.boundedTransfers&&paths.length>SOURCE_SYNC_LIMITS.paths)throw syncLimitError('manifest_too_large','files',SOURCE_SYNC_LIMITS.paths,paths.length,path);
     }
   }
   // Changed paths are judged afresh, so their old excluded entries (a link that is now a file, or the reverse) are not carried over.
@@ -315,7 +315,7 @@ export async function captureDirectorySnapshot(options) {
     }
     if(!value.entry||value.entry.exists===false){if(partial){delete entries[path];nextCache.delete(path);return undefined;}throw syncError('source_busy',path);}
     if(options.detection!=='metadata'&&!entryEqual(value.entry,options.baselineEntries?.[path]||null))changedBytes+=value.entry.size;
-    if(changedBytes>SOURCE_SYNC_LIMITS.batchBytes)throw syncLimitError('batch_too_large','batch',SOURCE_SYNC_LIMITS.batchBytes,changedBytes,path);
+    if(!options.boundedTransfers&&changedBytes>SOURCE_SYNC_LIMITS.batchBytes)throw syncLimitError('batch_too_large','batch',SOURCE_SYNC_LIMITS.batchBytes,changedBytes,path);
     if(options.blobRoot&&!metadataOnly&&options.detection!=='metadata')await saveSourceBlob(options.blobRoot,value.bytes);
     if(observation)nextCache.set(path,{metadata:value.metadata,entry:value.entry});
     return value.entry;

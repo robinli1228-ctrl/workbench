@@ -1,3 +1,4 @@
+import {metadataReadLookup} from './source-sync-batching.mjs';
 import {initializationPage} from './source-sync-audit.mjs';
 import {SourceSyncInitialization} from './source-sync-initialization.mjs';
 import {Readable} from 'node:stream';
@@ -56,6 +57,7 @@ export class SourceSyncHome {
         this.db.put('sourceSyncCommands',{...c,lastSentAt:new Date().toISOString()});
         socket.send(JSON.stringify({type:'source_sync_command',commandId:c.id,batchId:c.batchId,projectId:c.projectId,secret:c.secret}));continue;
       }
+      if(c.boundedTransfers&&this.db.get('workers',c.nodeId)?.capabilities?.sourceSyncBatching!==1){this.sync.acceptReceipt(c.nodeId,{commandId:c.id,result:{status:'blocked',reason:'worker_unsupported'}});continue;}
       const binding=sourceScopeBinding(this.db,c.projectId,c.repositoryId,c.nodeId);
       if(c.scopeKind==='directory'){
         const batch=this.db.get('sourceSyncBatches',c.batchId);
@@ -111,7 +113,7 @@ export class SourceSyncHome {
         const id=`${worker.id}:${c.projectId}:${b.repositoryId}`,old=this.db.get('sourceSyncWatchStates',id);
         if(old?.error!=='worker_unsupported'||old.generation!==c.generation)this.db.put('sourceSyncWatchStates',{id,projectId:c.projectId,repositoryId:b.repositoryId,nodeId:worker.id,generation:c.generation,status:'blocked',error:'worker_unsupported'});
       }
-      const scopes=supported.flatMap(c=>c.bindings.filter(b=>b.nodeId===worker.id&&sourceScopeBinding(this.db,c.projectId,b.repositoryId,b.nodeId)?.localRoot===b.root).map(b=>({...b,projectId:c.projectId,generation:c.generation,folderAccess:folderAccessFor(this.db,worker.id,`project:${c.projectId}`)})));
+      const scopes=supported.flatMap(c=>c.bindings.filter(b=>b.nodeId===worker.id&&sourceScopeBinding(this.db,c.projectId,b.repositoryId,b.nodeId)?.localRoot===b.root).map(b=>({...b,projectId:c.projectId,generation:c.generation,...(this.sync.supportsBatching(c.nodeIds)?{boundedTransfers:true}:{}),folderAccess:folderAccessFor(this.db,worker.id,`project:${c.projectId}`)})));
       const version=contentHash(JSON.stringify(scopes));
       if(socket.sourceWatchAck!==version&&(!socket.sourceWatchSent||Date.now()-socket.sourceWatchSent>5000)){socket.sourceWatchSent=Date.now();socket.send(JSON.stringify({type:'source_sync_watch_config',version,scopes}));}
     }
@@ -122,6 +124,8 @@ export class SourceSyncHome {
         const batch=this.db.get('sourceSyncBatches',n.batchId);
         if(['completed','partial_conflict'].includes(batch?.status))this.db.put('sourceSyncWatchNotices',{...n,handled:true});
         else if(['blocked','cancelled'].includes(batch?.status)){
+          // A newly supported protocol can retry one old size refusal without editing its historical batch.
+          if(!batch.boundedTransfers&&this.sync.supportsBatching(config.nodeIds)&&['manifest_too_large','batch_too_large'].includes(batch.reason)){this.db.put('sourceSyncWatchNotices',{...n,batchId:null,error:null});continue;}
           const retryable=typeof batch.reason==='number'||['transfer_failed','waiting_device','paused'].includes(batch.reason);
           if(!retryable||(n.attempts||0)>=5){if(n.error!==(batch.reason||'retry_limit'))this.db.put('sourceSyncWatchNotices',{...n,error:batch.reason||'retry_limit'});continue;}
           if(Date.now()-Date.parse(n.queuedAt)>retryDelay(n.attempts||1))this.db.put('sourceSyncWatchNotices',{...n,batchId:null});
@@ -194,10 +198,10 @@ export class SourceSyncHome {
       const storage=this.storage.scoped(c.batchId);
       for(const f of result.files)if(f.entry&&!(c.action==='read'&&c.paths.find(p=>p.path===f.path)?.compare)&&!await storage.has(c.projectId,f.entry))throw syncError('blob_missing');
       const stages=this.db.listSourceSyncCommands({batchId:c.batchId,action:'stage'}).map(x=>x.id===c.id?{...x,result}:x);
-      const reads=this.db.listSourceSyncCommands({batchId:c.batchId,action:'read'});
+      const reads=this.db.listSourceSyncCommands({batchId:c.batchId,action:'read'}),read=metadataReadLookup(reads);
       if(c.action==='stage'&&stages.every(x=>x.result?.status==='completed'))for(const op of batch.metadataOperations||[]){
         if(op.source)continue;
-        const sides=batch.nodeIds.map(n=>reads.find(r=>r.repositoryId===op.repositoryId&&r.nodeId===n)?.result.files.find(f=>f.path===op.path)?.entry||null);
+        const sides=batch.nodeIds.map(n=>read(op.repositoryId,n,op.path));
         if(!['resolution','initialize_overwrite'].includes(op.decision)&&contentEqual(sides[0],sides[1]))continue;
         for(const entry of sides.filter(Boolean))await this.storage.receive(c.projectId,entry,Readable.from(await storage.read(c.projectId,entry.hash)));
       }
@@ -240,7 +244,7 @@ export class SourceSyncHome {
       if(c.scopeKind!=='directory'&&(bundle.base.baseCommit!==bundle.manifest.baseCommit||c.baseCommit&&c.baseCommit!==bundle.base.baseCommit))throw syncError('git_baseline_mismatch');
       const fingerprint=contentHash(JSON.stringify(bundle)),old=this.db.get('sourceSyncUploads',c.id);
       if(old&&old.fingerprint!==fingerprint)throw syncError('capture_changed');
-      if(batch.detection!=='metadata'&&batch.contentMode==='source-and-outputs'&&!c.result&&batch.status!=='cancelled'){
+      if(batch.detection!=='metadata'&&!batch.boundedTransfers&&batch.contentMode==='source-and-outputs'&&!c.result&&batch.status!=='cancelled'){
         const offered=new Set();let bytes=0;
         for(const capture of this.db.listSourceSyncCommands({projectId:c.projectId,batchId:c.batchId,action:'capture'})){
           const snapshot=capture.id===c.id?bundle.manifest:this.db.get('sourceSyncUploads',capture.id)?.bundle.manifest;
