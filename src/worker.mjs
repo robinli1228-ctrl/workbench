@@ -40,7 +40,7 @@ import { writeHandoff } from './wb-tools.mjs';
 import {handoffReadPaths} from './handoff-paths.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
 import { normalizeRemoteDesktopUrl } from './remote-desktop.mjs';
-import { validateLaunch, afterProcessExit, recordDeliveryResult, recoverDeliveryCommands, continuationSource } from './worker-coordinator.mjs';
+import { validateLaunch, afterProcessExit, recordDeliveryResult, recoverDeliveryCommands, continuationSource, workspaceTakenByLaterRun } from './worker-coordinator.mjs';
 import {CliSessionRecovery,driverIdentity} from './cli-session-recovery.mjs';
 import { publishDelivery, receiveDelivery } from './git-delivery.mjs';
 import { composeAgentInstructions, englishExecutionRules, executionRules } from './platform-prompts.mjs';
@@ -309,7 +309,7 @@ async function command(m) {
     const deferred=db.get('runs',c.runId);
     if (deferred&&!deferred.cliRecoveryWait) { send({ type: 'command_ack', id: c.id }); return; }
     // Reconnect and terminal resume retain this run's frozen policy, never the role's mutable current settings.
-    db.put('runs', { ...deferred,id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: deferred?.seq||0,cliRecoveryWait:false,error:null,
+    db.put('runs', { ...deferred,id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,concurrentWrites:m.run.concurrentWrites===true,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: deferred?.seq||0,cliRecoveryWait:false,error:null,
       ...(m.run.permissionScope!==undefined?{permissionScope:m.run.permissionScope,permissionContract:m.run.permissionContract}:{}),
       collaborationBatchId:m.run.collaborationBatchId||null,collaborationBatch:m.run.collaborationBatch||null,
       collaborationCycleId:m.run.collaborationCycleId||null,propagationBudget:m.run.propagationBudget||null,
@@ -339,7 +339,7 @@ async function command(m) {
       await checkNativeDriver(m);
       if(reservation.stopRequested){emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.taskHadNotStartedWas')});return;}
       if (db.list('runs').some(r => r.id !== c.runId && r.status === 'reconciling')) throw new Error(tr('worker.workerFullHasProcessesAwaiting'));
-      if (executionConflict(m.run,db.list('runs').filter(r=>r.id!==c.runId && !terminal.has(r.status)).map(r=>({...r,nodeId:identity.nodeId})))) throw new Error(tr('worker.projectWorkspaceExclusiveOperationStill'));
+      if (executionConflict(m.run,db.list('runs').filter(r=>r.id!==c.runId && !terminal.has(r.status)).map(r=>({...r,nodeId:identity.nodeId})),{concurrent:m.run.concurrentWrites===true})) throw new Error(tr('worker.projectWorkspaceExclusiveOperationStill'));
       emit(c.runId, 'status', { status: 'starting' });
       if(reservation.stopRequested || paused || ws?.readyState!==1){emit(c.runId,'status',{status:'interrupted',error:tr('worker.interruptedByStopDisconnectWhile')});return;}
       let executionRepositories = m.run.repositories || [];
@@ -545,7 +545,7 @@ async function command(m) {
       const attachmentHint = inputFiles.length ? executionText('worker.userAttachmentsForTurnUntrusted', { p1: inputFiles.map(a => JSON.stringify({name:a.name,path:a.path,mime:a.mime})).join('\n') }) : '';
       const toolGuide=executionConfiguration?executionText('minimal.toolEntry',{wbCommand}):[executionText('worker.wbCommandPrefixForTurn', { wbCommand }),(m.run.sourceSyncTracking||m.run.sourceConflictId||m.run.sourceConflictPeerId||m.run.sourceConflictAssignmentRequestId)?executionText('sourceSync.toolGuide'):''].filter(Boolean).join('\n\n');
       const taskPrompt=[m.task.prompt,executionConfiguration?.dependencyEvents?.length?executionText('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):''].filter(Boolean).join('\n\n');
-      const environmentHint=executionEnvironmentHint({cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,readOnly:m.task.mode==='read-only'||['audit','review'].includes(m.run.execution?.purpose),assigned:Boolean(m.run.deliveryId||source),sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
+      const environmentHint=executionEnvironmentHint({concurrentRoles:m.run.concurrentWrites===true&&!m.run.execution?.isolated&&m.task.mode!=='read-only'?(m.run.concurrentPeers||[]):null,cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,readOnly:m.task.mode==='read-only'||['audit','review'].includes(m.run.execution?.purpose),assigned:Boolean(m.run.deliveryId||source),sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
       // A Home that sends named parts gets the ordered layout: message and attachments first, then each titled addition.
       const parts=executionConfiguration&&m.task.inputParts?.message?m.task.inputParts:null;
       const turn=parts?{message:parts.message,home:Array.isArray(parts.home)?parts.home:[],attachments:inputFiles.map(a=>({name:a.name,path:a.path})),
@@ -620,7 +620,7 @@ async function command(m) {
       if (m.request?.status === 'cancelled' || (!m.delivery?.items && m.project.repoUrl !== m.delivery?.repoUrl)) throw new Error(tr('worker.sourceCallWasCancelledRepository'));
       if (source?.status !== 'succeeded' || source.projectId !== m.delivery?.projectId || m.delivery.sourceRunId !== c.runId || !m.delivery.approvedAt) throw new Error(tr('worker.deliverySourceDidNotSucceed'));
       const owner = db.get('workspaceOwners', source.workspace);
-      if (owner && owner.runId !== c.runId) throw new Error(tr('worker.workspaceHasAlreadyBeenContinued'));
+      if (workspaceTakenByLaterRun(owner,source,c.runId)) throw new Error(tr('worker.workspaceHasAlreadyBeenContinued'));
       const result = m.delivery.items
         ? await publishProjectDelivery((source.repositories || m.run.repositories).map(r=>({...r,credential:m.gitCredentials?.[r.id]})),m.delivery)
         : await publishDelivery({ root: await projectRoot(m.run.projectRoot), workspace: source.workspace,
@@ -1223,7 +1223,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
