@@ -1864,7 +1864,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'turnInput.envMissing': '本机缺少仓库：{keys}',
   'turnInput.envSharedDocs': '共享报告目录：{path}（只放可以公开的报告；未公开的审核材料不要放这里）',
   'turnInput.envConcurrent': '本项目允许多个角色同时修改同一批文件：只改自己负责的文件（分工不清时先用 wb discuss peers 看谁在做什么），提交只暂存自己的文件；不要切换分支，也不要执行 reset、clean；改动前先重新读取文件，免得覆盖别人刚做的修改。wb deliver 要求仓库正好停在你提交的版本、且没有未提交修改，别人正在改的时候它会失败，等他们提交后再交付。',
-  'turnInput.envConcurrentOthers': '这一轮开始时，同一设备上已有这些角色在运行：{names}；之后启动的用 wb discuss peers 查看。',
+  'turnInput.envConcurrentOthers': '这一轮开始时，同一设备上这些角色也在工作：{names}；之后加入的用 wb discuss peers 查看。',
   'turnInput.projectRules': '项目规则（{path}）：\n{text}',
   'turnInput.projectRulesTooLarge': '项目规则在 {path}，文件超过 64 KB，没有附上，请自己读取。',
   'turnInput.projectRulesNative': '项目规则在 {path}，由 Grok 自己加载。',
