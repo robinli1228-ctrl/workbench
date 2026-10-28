@@ -77,16 +77,14 @@ const dom = {
   runStatus: document.querySelector('#run-dialog-status'),
   taskList: document.querySelector('#task-list'),
   taskDetail: document.querySelector('#task-detail'),
-  pauseRemote: document.querySelector('#pause-remote'),
   fileDialog: document.querySelector('#file-dialog'),
   fileDialogTitle: document.querySelector('#file-dialog-title'),
   fileContent: document.querySelector('#file-content')
 };
-dom.settingsPauseRemote = document.querySelector('#settings-pause-remote');
 dom.settingsHomeVersion = document.querySelector('#settings-home-version');
 
 const app = {
-  data: { projects: [], roles: [], roleTemplates: [], tasks: [], runs: [], workers: [], approvals: [], settings: { paused: false }, promptDefaults: {}, version: '' },
+  data: { projects: [], roles: [], roleTemplates: [], tasks: [], runs: [], workers: [], approvals: [], settings: {}, promptDefaults: {}, version: '' },
   selectedProjectId: sessionStorage.getItem('agent-workbench.project') || null,
   selectedConversationId:sessionStorage.getItem('agent-workbench.conversation')||sessionStorage.getItem('agent-workbench.project')||null,
   selectedTaskId: sessionStorage.getItem('agent-workbench.task') || null,
@@ -142,8 +140,7 @@ for (const [id, name, label] of [
   ['toggle-inspector', 'panel', 'Hide right panel'],
   ['show-history', 'history', 'History'],
   ['add-role-sidebar', 'plus', 'Add role'],
-  ['refresh-role-status', 'refresh', 'Refresh role status and remaining quota'],
-  ['pause-remote', 'pause', 'Pause remote']
+  ['refresh-role-status', 'refresh', 'Refresh role status and remaining quota']
 ]) {
   const el = document.querySelector(`#${id}`);
   if (el) { el.innerHTML = UI_ICON[name]; el.title = label; el.setAttribute('aria-label', label); }
@@ -598,7 +595,7 @@ async function refreshState({ quiet = false } = {}) {
       sidebarExecutions:Array.isArray(data.sidebarExecutions)?data.sidebarExecutions:[],
       workers: Array.isArray(data.workers) ? data.workers : [],
       approvals: Array.isArray(data.approvals) ? data.approvals : [],
-      settings: data.settings || { paused: false },
+      settings: data.settings || {},
       wechat: data.wechat || { enabled: false, configured: false, links: [] },
       promptDefaults: data.promptDefaults || {},
       supervisors: data.supervisors || [], requests: data.requests || [], deliveries: data.deliveries || [],
@@ -1140,7 +1137,7 @@ function openRoleTerminal(role) {
   const activeStatuses=new Set(['queued','starting','running','waiting_user','stopping','reconciling']);
   let returning=false,lastSignature='';
   const claimFor=mode=>{const r=app.data.runs.find(r=>r.id===mode),nodeId=r?.nodeId||role.nodeId;return (app.data.terminalSessions||[]).find(s=>s.projectId===role.projectId&&s.nodeId===nodeId);};
-  const signature=mode=>{const c=claimFor(mode),r=app.data.runs.find(r=>r.id===mode),nodeId=c?.nodeId||r?.nodeId||role.nodeId,w=app.data.workers.find(w=>w.id===nodeId);return JSON.stringify([c?.id,c?.status,c?.processState,c?.lastCheckedAt,c?.processError,w?.online,w?.capabilities?.terminalControl,w?.capacity,w?.organizerBusy,app.data.settings?.paused,app.data.runs.filter(r=>r.nodeId===nodeId&&activeStatuses.has(r.status)).map(r=>[r.id,r.status]),(app.data.roleSwitches||[]).filter(s=>s.roleId===role.id).map(s=>[s.id,s.status])]);};
+  const signature=mode=>{const c=claimFor(mode),r=app.data.runs.find(r=>r.id===mode),nodeId=c?.nodeId||r?.nodeId||role.nodeId,w=app.data.workers.find(w=>w.id===nodeId);return JSON.stringify([c?.id,c?.status,c?.processState,c?.lastCheckedAt,c?.processError,w?.online,w?.capabilities?.terminalControl,w?.capacity,w?.organizerBusy,app.data.runs.filter(r=>r.nodeId===nodeId&&activeStatuses.has(r.status)).map(r=>[r.id,r.status]),(app.data.roleSwitches||[]).filter(s=>s.roleId===role.id).map(s=>[s.id,s.status])]);};
   const currentMode=()=>latestTerminalRun(role,app.data.runs)?.id||'';
   const viewSignature=()=>JSON.stringify([signature(currentMode()),latestTerminalRun(role,app.data.runs)]);
   const render=()=>{
@@ -1179,7 +1176,7 @@ function openRoleTerminal(role) {
     const currentSwitches=app.stateCache?.state?.roleSwitches||[],switching=currentSwitches.some(item=>item.projectId===role.projectId&&item.roleId===role.id&&!['committed','cancelled'].includes(item.status));
     const busy=app.data.runs.some(item=>item.projectId===role.projectId&&item.nodeId===nodeId&&activeStatuses.has(item.status));
     const occupied=app.data.runs.filter(item=>item.nodeId===nodeId&&activeStatuses.has(item.status)).length+(app.data.terminalSessions||[]).filter(item=>item.nodeId===nodeId&&['preparing','prepared','active','stopping'].includes(item.status)).length+(worker?.organizerBusy||0);
-    const gate=claim?'':!run?'No historical session is available to resume.':app.data.settings?.paused?'Remote dispatch is paused':switching?'This role is switching CLI; wait for the handoff to finish.':!worker?.online?'Device offline or not connected':busy?'This project is still running on that device; view live replies in the web page first and resume after it finishes.':occupied>=(worker?.capacity||1)?'Device CLI limit reached; return an unused terminal to the platform or wait for running work.':'';
+    const gate=claim?'':!run?'No historical session is available to resume.':switching?'This role is switching CLI; wait for the handoff to finish.':!worker?.online?'Device offline or not connected':busy?'This project is still running on that device; view live replies in the web page first and resume after it finishes.':occupied>=(worker?.capacity||1)?'Device CLI limit reached; return an unused terminal to the platform or wait for running work.':'';
     const feedback=create('p','inline-error',claim?.error||gate);feedback.hidden=!(claim?.error||gate);feedback.setAttribute('role','status');terminalDialog.append(feedback);
     const actions=create('div','form-actions');terminalDialog.append(actions);
     if(claim) {
@@ -1543,16 +1540,6 @@ function renderWorkspace() {
   if (dom.settingsHomeVersion) dom.settingsHomeVersion.textContent = app.data.version ? `Home ${app.data.version}` : 'Home status unknown';
   const tokenSummary = document.querySelector('#api-token-summary');
   if (tokenSummary) { tokenSummary.textContent = t(app.token ? 'Set' : 'Not set'); tokenSummary.className = `settings-chip ${app.token ? 'ok' : 'off'}`; }
-  const paused = Boolean(app.data.settings?.paused);
-  for (const button of [dom.pauseRemote, dom.settingsPauseRemote].filter(Boolean)) {
-    const label = paused ? 'Resume remote' : 'Pause remote';
-    button.disabled = !hasProjects;
-    button.classList.toggle('active', paused);
-    button.title = label;
-    button.setAttribute('aria-label', label);
-    if (button === dom.pauseRemote) button.innerHTML = UI_ICON[paused ? 'play' : 'pause'];
-    else setActionIcon(button,paused?'play':'pause',label);
-  }
 }
 
 function renderTasks() {
@@ -1687,8 +1674,7 @@ function renderRunToolbar(task, run) {
   } else if (!run || !activeStatuses.includes(run.status)) {
     const start = create('button', 'primary', run ? 'Run again' : 'Start run');
     start.type = 'button';
-    start.disabled = !onlineWorkers.length || Boolean(app.data.settings?.paused);
-    start.title = app.data.settings?.paused ? 'Remote dispatch is paused' : '';
+    start.disabled = !onlineWorkers.length;
     start.addEventListener('click', () => startTask(task, select.value, start));
     toolbar.append(start);
   } else if (['stopping', 'reconciling'].includes(run.status)) {
@@ -2405,21 +2391,6 @@ dom.projectForm.addEventListener('submit', async (event) => {
     button.disabled = false;
   }
 });
-
-async function toggleRemotePause() {
-  const nextPaused = !app.data.settings?.paused;
-  for (const button of [dom.pauseRemote, dom.settingsPauseRemote].filter(Boolean)) button.disabled = true;
-  try {
-    await api('/api/settings', { method: 'POST', json: { paused: nextPaused } });
-    await refreshState({ quiet: true });
-  } catch (error) {
-    setError(error.message);
-  } finally {
-    for (const button of [dom.pauseRemote, dom.settingsPauseRemote].filter(Boolean)) button.disabled = false;
-  }
-}
-dom.pauseRemote?.addEventListener('click', toggleRemotePause);
-dom.settingsPauseRemote?.addEventListener('click', toggleRemotePause);
 
 window.addEventListener('beforeunload', disconnectUpdates);
 

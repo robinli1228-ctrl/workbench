@@ -21,7 +21,7 @@ export function freezeExecutionConfiguration(db,runId) {
     const run=db.get('runs',runId),role=run?.roleId?db.get('roles',run.roleId):null;
     if(!run||!['queued','starting','running'].includes(run.status)||run.stopRequested||run.switchOperationId||run.minimalInstructions!==1)
       throw new Error('Execution configuration is not available for this active turn.');
-    if(db.get('settings','main')?.paused||!role||role.projectId!==run.projectId||role.nodeId!==run.nodeId||role.runtime!==run.roleSnapshot?.runtime||!role.enabled||role.archivedAt)
+    if(!role||role.projectId!==run.projectId||role.nodeId!==run.nodeId||role.runtime!==run.roleSnapshot?.runtime||!role.enabled||role.archivedAt)
       throw new Error('Execution role binding or authorization changed before start.');
     if(run.executionConfiguration)return run.executionConfiguration;
     const settings=normalizePlatformSettings(db.get('settings','main'));

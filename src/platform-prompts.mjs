@@ -140,7 +140,6 @@ export function normalizePlatformSettings(record = {}) {
   return {
     ...record,
     id: 'main',
-    paused: Boolean(record.paused),
     platformPrompt: promptOrDefault(record.platformPrompt, 'platformPrompts.youRunningInControlledCollaboration', defaultPlatformPrompt),
     supervisorPrompt: promptOrDefault(record.supervisorPrompt, 'platformPrompts.youFixedProjectSupervisorYou', defaultSupervisorPrompt),
     defaultSupervisorRuntime: typeof record.defaultSupervisorRuntime === 'string' ? record.defaultSupervisorRuntime : '',
@@ -190,11 +189,6 @@ export function updatePlatformPrompts(record, input, now = new Date().toISOStrin
     defaultSupervisorEffort: defaultValue(input.defaultSupervisorEffort ?? current.defaultSupervisorEffort, tr('platformPrompts.defaultSupervisorReasoningEffort')),
     promptsUpdatedAt: now
   };
-}
-
-export function updatePausedSetting(record, paused) {
-  if (typeof paused !== 'boolean') throw new Error(tr('platformPrompts.pausedMustBeBoolean'));
-  return { ...normalizePlatformSettings(record), paused };
 }
 
 /** Platform rules come before role configuration; neither can override the permission and collaboration boundaries hard-coded in the runtime. */

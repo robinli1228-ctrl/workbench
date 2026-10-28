@@ -11,7 +11,6 @@ export function newTerminalBinding(db,projectId,roleId,online) {
   const role=db.get('roles',roleId),worker=db.get('workers',role?.nodeId);
   if(!db.get('projects',projectId)||role?.projectId!==projectId)throw new Error(tr('home.roleDoesNotBelongProject'));
   if(role.enabled!==true||role.archivedAt||role.platformAssistant||!role.runtime||!role.model)throw new Error(tr('roleTerminal.unconfigured'));
-  if(db.get('settings','main')?.paused)throw new Error(tr('home.remoteExecutionPaused4'));
   if(activeRoleSwitch(db,role.id))throw new Error(tr('roleTerminal.switchBusy'));
   if(!online(role.nodeId))throw new Error(tr('home.selectOnlineWorker'));
   if(worker?.capabilities?.terminalFresh!==1)throw new Error(tr('roleTerminal.upgrade'));

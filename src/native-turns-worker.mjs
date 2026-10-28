@@ -34,7 +34,7 @@ export async function receiveTurnFiles({items=[],turnId,root,home,token,fetchImp
 }
 
 /** The Worker's only takeover entry: worker.mjs passes its state accessors and routes four message types here. */
-export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot,isPaused,runtimes,capacity,occupiedSlots,nodeId,changed=()=>{},trim=async()=>{},onQuota=()=>{}}) {
+export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot,isDisconnected,runtimes,capacity,occupiedSlots,nodeId,changed=()=>{},trim=async()=>{},onQuota=()=>{}}) {
   const dbPath=join(data,'worker.sqlite'),retiring=new Map(),observed=new WeakSet();let runner;
   const held=s=>s&&!['released','cancelled'].includes(s.status);
   const report=s=>{send({type:'native_takeover_lease',leaseId:s.id,runtime:s.runtime,sessionId:s.sessionId,projectId:s.projectId,workspace:s.workspace,status:s.status});changed();};
@@ -52,7 +52,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
     },
     validate(m){
       const s=db.get('terminalSessions',m.leaseId);
-      if(isPaused()||!held(s)||s.status==='stopping')throw Error('Takeover was stopped before input delivery');
+      if(isDisconnected()||!held(s)||s.status==='stopping')throw Error('Takeover was stopped before input delivery');
       assertNativeSessionIdle(db,{nodeId,runtime:m.runtime,sessionId:m.sessionId,workspace:s.workspace,projectId:s.projectId,claimId:s.id});
       if(db.list('workerRoleSwitches').some(op=>op.projectId===s.projectId&&!op.released)||db.get('sourceSyncReservations',s.projectId)||db.list('sourceSyncOperations').some(op=>op.projectId===s.projectId||op.projectId==='*'))throw Error('Project maintenance holds the working folder');
     },
@@ -80,7 +80,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
   runner=new NativeTurnRunner({
     send,leases,onQuota,
     canStart:(m,{reusing})=>{
-      if(isPaused())throw Error('Remote execution is paused');
+      if(isDisconnected())throw Error('This device is not connected to Home');
       if(!runtimes().some(r=>r.type===m.runtime&&r.available&&r.supported!==false))throw Error('CLI is not available on this device');
       if(!reusing&&occupiedSlots()>=capacity())throw Error('Device CLI capacity is full');
     },
@@ -123,7 +123,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
     if(!s||s.kind!=='native-turn'||s.nodeId!==nodeId||s.runtime!==runtime||s.sessionId!==sessionId)throw Error('Takeover lease does not match this session');
     // The HTTP caller must settle its refresh before sending/steering; an early closed event could dispatch another queue item.
     const result=runner.check({id:leaseId,nodeId,projectId:s.projectId},{reportClosed:false});
-    return {leaseId,runtime,sessionId,processState:result.processState,...runner.snapshot(runtime,sessionId,leaseId),paused:isPaused()};
+    return {leaseId,runtime,sessionId,processState:result.processState,...runner.snapshot(runtime,sessionId,leaseId),paused:isDisconnected()};
   };
   /** Restart recovery uses the durable process proof before admitting new input; lost receipts retain the shared lease. */
   runner.recover=async()=>{for(const s of db.list('terminalSessions'))if(s.kind==='native-turn'&&held(s)){try{await leases.retire({leaseId:s.id,runtime:s.runtime,sessionId:s.sessionId});}catch(error){db.put('terminalSessions',{...s,status:'stopping',processError:error.message});}}};

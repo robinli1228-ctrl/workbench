@@ -126,7 +126,6 @@ export class Deliveries {
 
   schedule() {
     const nodes = new Set();
-    if (this.db.get('settings', 'main')?.paused) return [];
     for (let r of this.db.list('deliveries').filter(d => ['waiting_source', 'awaiting_approval'].includes(d.status))) {
       const run = this.db.get('runs', r.sourceRunId);
       const request = run?.requestId ? this.db.get('coordinationRequests', run.requestId)

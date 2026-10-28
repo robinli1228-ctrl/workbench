@@ -68,7 +68,6 @@ export class AttachmentTransfers {
     if(!binding?.localRoot || !worker)throw new Error(tr('attachments.prepareProjectDirectoryOnTarget'));
     if(!this.online(nodeId))throw new Error(tr('attachments.targetDeviceOfflineBringIt'));
     if(worker.capabilities?.attachmentTransfer!==1)throw new Error(tr('attachments.upgradeTargetDeviceWorkerSupport'));
-    if(this.db.get('settings','main')?.paused)throw new Error(tr('attachments.remoteOperationsPaused'));
     const record={id:clientTransferId,projectId,nodeId,attachmentIds,fingerprint,workspace:prior?.workspace||binding.localRoot,status:'transferring',createdAt:prior?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
     if(prior && prior.workspace!==binding.localRoot)throw new Error(tr('attachments.projectDirectoryHasChangedCreate'));
     this.db.put('attachmentTransfers',record);this.change();

@@ -63,7 +63,6 @@ export class ProjectTeamCopy {
     const prepareNode=async receipt=>{
       const {nodeId}=receipt;
       try{
-        if(this.db.get('settings','main')?.paused)throw new Error('dispatch_paused');
         const worker=this.db.get('workers',nodeId);if(!this.online(nodeId))throw new Error('device_offline');
         if(worker?.capabilities?.projectTeamCopy!==1)throw new Error('worker_upgrade_required');
         const workspaceRoot=receipt.workspaceRoot||worker.workspaceRoot||worker.allowedRoots?.[0];
@@ -88,7 +87,6 @@ export class ProjectTeamCopy {
         if(!this.online(role.nodeId))throw new Error('device_offline');
         const issue=runtimeIssue(this.db.get('workers',role.nodeId),role.runtime,role.model);if(issue)throw new Error(issue);
       }
-      if(this.db.get('settings','main')?.paused)throw new Error('dispatch_paused');
       this.db.transaction(()=>{
         const current=this.db.get('projectCopyOperations',id);if(current.status==='ready')return;
         const project=this.db.get('projects',op.destinationProjectId);if(project?.copyOperationId!==id||project.setupStatus!=='copy_pending')throw new Error('destination_ownership_changed');

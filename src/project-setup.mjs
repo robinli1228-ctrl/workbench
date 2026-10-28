@@ -77,7 +77,6 @@ export class ProjectSetup {
   /** The supervisor changes only the persistent prompts of this project's working roles; the revision and request ID prevent concurrent overwrites and duplicate writes on retry. */
   updateRolePrompt(run, input) {
     const project = this.supervisor(run);
-    if (this.db.get('settings', 'main')?.paused) throw new Error(tr('projectSetup.remoteExecutionPaused'));
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(input?.requestId || '')) throw new Error(tr('projectSetup.stablePromptChangeIdRequired'));
     if (!Number.isInteger(input.revision) || input.revision < 1) throw new Error(tr('projectSetup.currentRoleRevisionRequired'));
     if (typeof input.instructions !== 'string' || !input.instructions.trim() || input.instructions.length > 12000) throw new Error(tr('projectSetup.rolePromptMustBe1'));
@@ -143,12 +142,10 @@ export class ProjectSetup {
     let p = this.db.get('setupProposals', id);
     if (p?.projectId !== projectId) throw new Error(tr('projectSetup.proposalDoesNotBelongProject'));
     if (p.status !== 'pending') return p;
-    if (this.db.get('settings', 'main')?.paused) throw new Error(tr('projectSetup.remoteExecutionPaused2'));
     p = this.db.put('setupProposals', { ...p, status: 'running' }); this.change();
     try {
       for (let i = 0; i < p.actions.length; i++) {
         const a = p.actions[i];
-        if (this.db.get('settings', 'main')?.paused) throw new Error(tr('projectSetup.remoteExecutionPaused3'));
         if (!this.online(a.nodeId)) throw new Error(tr('projectSetup.targetDeviceOfflineConnectIt'));
         let result;
         if (a.type === 'repository') {

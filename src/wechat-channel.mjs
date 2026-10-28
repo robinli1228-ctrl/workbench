@@ -234,7 +234,6 @@ export class WechatChannel {
         checkedAt: this.now(), nextAttemptAt: 0, attempts: 0, error: null });
       if (remote.deliveryStatus === 'failed') throw new Error(remote.deliveryError || 'delivery_failed');
       if (remote.status === 'cancelled') { this.close(link.id, tr('wechatChannel.wechatRequestCancelled')); return; }
-      if (this.db.get('settings', 'main')?.paused) return;
       if (link.kind === 'approval') {
         if (!['approved', 'rejected'].includes(remote.status)) return;
         if (remote.status === 'approved' && !link.remoteApproval) throw new Error(tr('wechatChannel.viewFullOperationOnWeb'));

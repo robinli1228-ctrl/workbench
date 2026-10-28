@@ -158,8 +158,8 @@ test('stored default prompts follow the language; customised prompts are kept', 
 
 test('validation errors are localized', async () => {
   const prompts = await import(fileUrl('src', 'platform-prompts.mjs'));
-  const message = (lang) => withLanguage(lang, () => { try { prompts.updatePausedSetting({}, 'nope'); } catch (e) { return e.message; } });
-  assert.equal(await message('en'), 'paused must be a boolean');
+  const message = (lang) => withLanguage(lang, () => { try { prompts.updateConversationOrganizer({}, {}); } catch (e) { return e.message; } });
+  assert.equal(await message('en'), 'Invalid conversation organizer setting: nodeId');
   assert.ok(hasCjk(await message('zh')));
 });
 

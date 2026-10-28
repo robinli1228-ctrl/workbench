@@ -96,7 +96,8 @@ const sessions = new Map();
 let organizerRunning = 0;
 const organizerControllers = new Set();
 let capacity = validateCliCapacity(db.get('settings','cli-capacity')?.capacity??Number(process.env.WORKER_CONCURRENCY||2));
-let ws, paused = true, quitting = false, registered = false, readySent = false, reconnectCleanup,cliRecoveryEnabled=false;
+// True until Home accepts this Worker's registration and again once the connection drops; the guards below refuse work in between.
+let ws, homeDisconnected = true, quitting = false, registered = false, readySent = false, reconnectCleanup,cliRecoveryEnabled=false;
 const eventSent = new Map();
 useQuotaIdentitySalt((db.get('settings','quota-identity')||db.put('settings',{id:'quota-identity',salt:randomUUID()})).salt);
 let runtimes = await inspectRuntimes(), probing, runtimeFailures = {}, runtimeRetry = null, runtimeRetryDue = false;
@@ -161,7 +162,7 @@ function occupiedSlots(){return sessions.size+organizerRunning+reservedTerminalS
 const compacting=new Map();
 function compactRoleSession(m) {
   const key=m.roleSessionId;
-  if(typeof key!=='string'||!key||compacting.has(key)||paused||quitting)return;
+  if(typeof key!=='string'||!key||compacting.has(key)||homeDisconnected||quitting)return;
   // Register maintenance before borrow() reports capacity, so Home never observes a false idle gap.
   const job=Promise.resolve().then(async()=>{
     const entry=warmSessions.borrow(key);
@@ -180,15 +181,15 @@ function compactRoleSession(m) {
     });
     session.control=null;
     // Kept warm again after a good compaction; otherwise closed and retired like any idle process.
-    await warmSessions.giveBack(key,{keep:outcome.status==='succeeded'&&!paused&&!quitting});
+    await warmSessions.giveBack(key,{keep:outcome.status==='succeeded'&&!homeDisconnected&&!quitting});
     return {ok:outcome.status==='succeeded',error:outcome.error||null,usedTokens:Number.isFinite(usage?.usedTokens)?usage.usedTokens:null};
   }).catch(error=>({ok:false,error:error.message})).then(result=>{compacting.delete(key);reportCapacity();send({type:'role_session_compacted',roleSessionId:key,afterRunId:m.afterRunId||null,...result});});
   compacting.set(key,job);reportCapacity();
 }
 /** Session-page takeover hook (src/native-turns-worker.mjs); idle unless a native session is taken over. */
 nativeTurns=createWorkerNativeTurns({db,send:m=>send(m),data,homeHttp:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),token,projectRoot:path=>projectRoot(path),
-  isPaused:()=>paused||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots()),onQuota:receiveRuntimeQuota});
-const nativeAgentSwitches=createWorkerNativeAgentSwitch({db,nodeId:identity.nodeId,data,projectRoot,runtimes:()=>runtimes,isPaused:()=>paused||quitting,
+  isDisconnected:()=>homeDisconnected||quitting,runtimes:()=>runtimes,capacity:()=>capacity,occupiedSlots:()=>occupiedSlots(),nodeId:identity.nodeId,changed:()=>reportCapacity(),trim:()=>warmSessions.trim(occupiedSlots()),onQuota:receiveRuntimeQuota});
+const nativeAgentSwitches=createWorkerNativeAgentSwitch({db,nodeId:identity.nodeId,data,projectRoot,runtimes:()=>runtimes,isDisconnected:()=>homeDisconnected||quitting,
  // Only a side question about this session holds its switch; one about another session on the device does not.
  sourceBusy:source=>nativeAgentSourceBusy({db,runner:nativeTurns,source,sideBusy:Boolean(sideAsks?.busyFor(source.runtime,source.sessionId))}),
  sideAsking:source=>Boolean(sideAsks?.busyFor(source.runtime,source.sessionId)),
@@ -211,7 +212,8 @@ const roleSwitchWorker=new RoleSwitchWorker({db,warmSessions,activeSessions:sess
 const inside = (root, path) => { const rel = relative(root, path); return !rel || (!rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && rel !== '..' && !isAbsolute(rel)); };
 const sourceSync=new SourceSyncClient({db,data,home:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),send,
   withFolderAccess:(message,command,fn)=>folderAccess.run(message.folderAccess?{...message.folderAccess,scope:`project:${command.projectId}`}:null,fn),
-  paused:()=>paused||quitting,
+  // Source sync keeps its wire reason code 'paused' for a Worker that is disconnected from Home or quitting.
+  paused:()=>homeDisconnected||quitting,
   activeRuns:()=>[...db.activeRuns(),...db.list('sourceSyncOperations')],
   takeoverState:projectId=>Boolean(projectTerminalLock(db,projectId,identity.nodeId)),
   resolveBinding:command=>folderAccess.run(command.folderAccess?{...command.folderAccess,scope:`project:${command.projectId}`}:folderAccess.context.getStore(),async()=>{
@@ -326,7 +328,7 @@ async function command(m) {
       roleSwitchWorker.assertLaunch(m.run);
       const discussionEnabled=supportsDiscussion({capabilities:discussionCapabilities(),runtimes},m.run.roleSnapshot?.runtime,m.run.roleSnapshot?.model);
       if((discussionTurn||m.run.discussionProtocol===2)&&(!discussionEnabled||m.run.discussionProtocol!==2))throw new Error(tr('worker.discussionProtocolV2NotEnabled'));
-      if (paused || m.paused) throw new Error(tr('worker.remoteCommandsPaused'));
+      if (homeDisconnected) throw new Error(tr('worker.homeNotConnected'));
       if(!sourceSync.worker.canStart(m.run.projectId))throw syncError('sync_busy');
       if (projectTerminalLock(db,m.run.projectId,identity.nodeId)) throw new Error(tr('worker.projectUnderManualTerminalTakeover'));
       turnStates.begin({...m.run,runtime:m.run.roleSnapshot?.runtime});
@@ -341,7 +343,7 @@ async function command(m) {
       if (db.list('runs').some(r => r.id !== c.runId && r.status === 'reconciling')) throw new Error(tr('worker.workerFullHasProcessesAwaiting'));
       if (executionConflict(m.run,db.list('runs').filter(r=>r.id!==c.runId && !terminal.has(r.status)).map(r=>({...r,nodeId:identity.nodeId})),{concurrent:m.run.concurrentWrites===true})) throw new Error(tr('worker.projectWorkspaceExclusiveOperationStill'));
       emit(c.runId, 'status', { status: 'starting' });
-      if(reservation.stopRequested || paused || ws?.readyState!==1){emit(c.runId,'status',{status:'interrupted',error:tr('worker.interruptedByStopDisconnectWhile')});return;}
+      if(reservation.stopRequested || homeDisconnected || ws?.readyState!==1){emit(c.runId,'status',{status:'interrupted',error:tr('worker.interruptedByStopDisconnectWhile')});return;}
       let executionRepositories = m.run.repositories || [];
       for (const repository of executionRepositories) if (repository.localRoot) await projectRoot(repository.localRoot);
       let source;
@@ -396,7 +398,7 @@ async function command(m) {
       const repositoryRoots = executionRepositories.filter(r=>r.localRoot).map(r=>r.localRoot);
       if (!source || m.task.mode !== 'read-only') db.put('workspaceOwners', { id: folder, runId: c.runId });
       if(m.run.sourceInputs?.length||m.run.sourceConflictId)emit(c.runId,'status',{sourceInputs:m.run.sourceInputs||[],sourceInputReceipts,sourceConflictId:m.run.sourceConflictId||null,sourceConflictGeneration:m.run.sourceConflictGeneration,sourceConflictAssignmentId:m.run.sourceConflictAssignmentId});
-      if (reservation.stopRequested || paused || ws?.readyState !== 1) { emit(c.runId, 'status', { status: 'interrupted', error: tr('worker.interruptedByStopDisconnectBefore') }); return; }
+      if (reservation.stopRequested || homeDisconnected || ws?.readyState !== 1) { emit(c.runId, 'status', { status: 'interrupted', error: tr('worker.interruptedByStopDisconnectBefore') }); return; }
       const runtimeType = m.run.roleSnapshot?.runtime || 'codex';
       if (!['codex', 'grok', 'agy', 'claude'].includes(runtimeType)) throw new Error(tr('worker.runtimeNotSupportedYet', { runtimeType }));
       const modelEffort = runtimes.find(r => r.type === runtimeType)?.models?.find(model => model.id === m.task.model)?.effort;
@@ -411,10 +413,10 @@ async function command(m) {
       const homeHttp = homeUrl.replace(/^ws/i, 'http').replace(/\/worker\/?$/, '');
       const inputFiles = await receiveAttachments({ items: m.run.attachments, workspace: folder, runId: c.runId, home: homeHttp, token });
       if(inputFiles.length)emit(c.runId,'status',{attachmentFiles:inputFiles});
-      if (reservation.stopRequested || paused || ws?.readyState !== 1) { emit(c.runId,'status',{status:'interrupted',error:tr('worker.executionInterruptedByStopDisconnect')});return; }
+      if (reservation.stopRequested || homeDisconnected || ws?.readyState !== 1) { emit(c.runId,'status',{status:'interrupted',error:tr('worker.executionInterruptedByStopDisconnect')});return; }
       bridge = await startAgentBridge({ workspace: folder, runId: c.runId, home: homeHttp, token,
-        canSend: (pathname,input) => canSendAgentOperation({paused,quitting,connected:ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input),
-        blockReason: (pathname,input) => agentOperationBlock({paused,quitting,connected:ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input) });
+        canSend: (pathname,input) => canSendAgentOperation({quitting,connected:!homeDisconnected&&ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input),
+        blockReason: (pathname,input) => agentOperationBlock({quitting,connected:!homeDisconnected&&ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input) });
       const wbEnv = agentProcessEnv(await runtimeGitEnvironment({directory:join(data,'git-auth'),key:m.run.roleSessionId||c.runId,repositories:executionRepositories,credentials:m.gitCredentials,env:process.env}), {
         PATH: `${join(base, 'bin')}${delimiter}${process.env.PATH || ''}`,
         WB_PROJECT_ROOT: m.run.execution?.isolated ? folder : root,
@@ -470,7 +472,7 @@ async function command(m) {
       emit(c.runId, 'status', { nativeSession: native });
       // The turn purpose goes into the dynamic input, so switching between Q&A and business stages does not needlessly recycle the warm process.
       const executionConfiguration=m.run.minimalInstructions===1?await currentExecutionConfiguration(c.runId):null;
-      if(reservation.stopRequested||paused||quitting||ws?.readyState!==1)throw new Error(tr('worker.interruptedByStopDisconnectBefore'));
+      if(reservation.stopRequested||homeDisconnected||quitting||ws?.readyState!==1)throw new Error(tr('worker.interruptedByStopDisconnectBefore'));
       const components=executionConfiguration?executionInstructionComponents({run:m.run,configuration:executionConfiguration}):undefined;
       const priorInput=nativeHistory.findLast(r=>r.id!==c.runId && r.projectId===m.run.projectId && r.roleSessionId===m.run.roleSessionId && r.nativeSession?.id===m.run.resumeNativeSessionId);
       // Grok skips an untrusted folder's AGENTS.md, so its rules carry the project rules the other CLIs load themselves.
@@ -487,7 +489,7 @@ async function command(m) {
         onProcess:proc=>{if(proc?.pid)emit(c.runId,'status',{pid:proc.pid,processIdentity:driverIdentity({...db.get('runs',c.runId),runtime:runtimeType},proc.pid)});},
         beforeInput:async()=>{
           if(m.run.collaborationBatch){const q={...m.run.collaborationBatch,roleId:m.run.roleId};try{await queueSlots.deliver(q.key,q.reservation,queueState(q,c.runId),()=>true);}catch(error){error.queueRetryable=true;throw error;}}
-          if(paused||quitting||ws?.readyState!==1||db.get('runs',c.runId)?.stopRequested)throw new Error(tr('worker.interruptedByStopDisconnectBefore'));
+          if(homeDisconnected||quitting||ws?.readyState!==1||db.get('runs',c.runId)?.stopRequested)throw new Error(tr('worker.interruptedByStopDisconnectBefore'));
           emit(c.runId,'status',{inputDeliveryState:'attempted'});
         },
         resumeSessionId:m.run.resumeNativeSessionId || null,
@@ -527,7 +529,7 @@ async function command(m) {
       reservation.session=session;
       await warmSessions.trim(occupiedSlots());
       await writeTurnContext(contextFile,wbEnv);
-      if(reservation.stopRequested || paused || quitting || ws?.readyState!==1) {
+      if(reservation.stopRequested || homeDisconnected || quitting || ws?.readyState!==1) {
         session?.shutdown();await afterProcessExit(session?.proc,()=>{});
         await bridge.stop();bridge=null;sessions.delete(c.runId);
         emit(c.runId,'status',{status:'interrupted',error:tr('worker.interruptedByStopDisconnectBefore2')});return;
@@ -558,7 +560,7 @@ async function command(m) {
         components:Object.fromEntries(Object.entries(components).map(([name,text])=>[name,{text,version:instructions.components?.[name]?.version||null}]))};
       if(instructions.inheritedFrom)input.instructionsInheritedFrom=instructions.inheritedFrom;
       await checkNativeDriver(m);
-      if(db.get('runs',c.runId)?.stopRequested||session.stopping||paused||quitting||ws?.readyState!==1){session.shutdown();await afterProcessExit(session.proc,()=>{});await provenance?.finish();sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.interruptedByStopDisconnectBefore2')});return;}
+      if(db.get('runs',c.runId)?.stopRequested||session.stopping||homeDisconnected||quitting||ws?.readyState!==1){session.shutdown();await afterProcessExit(session.proc,()=>{});await provenance?.finish();sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.interruptedByStopDisconnectBefore2')});return;}
       emit(c.runId, 'input', input);
       const result = session.start(input.prompt);
       await result;
@@ -585,7 +587,7 @@ async function command(m) {
       } catch (error) {
         emit(c.runId, 'log', { text: tr('worker.writtenHandoffWasNotRecorded', { message: error.message }) });
       }
-      if(finalStatus?.status==='succeeded' && keepAlive && !paused && !quitting && !session.stopping) {
+      if(finalStatus?.status==='succeeded' && keepAlive && !homeDisconnected && !quitting && !session.stopping) {
         sessions.delete(c.runId);
         warmSessions.keep(m.run.roleSessionId,fingerprint,session,{projectId:m.run.projectId,roleId:m.run.roleId,runtime:runtimeType,runId:c.runId});
         await warmSessions.trim(occupiedSlots());
@@ -616,7 +618,7 @@ async function command(m) {
       if(!sourceSync.worker.canStart(source?.projectId))throw syncError('sync_busy');
       db.put('sourceSyncOperations',{id:c.id,projectId:source?.projectId||'*',status:'running'});
       if (projectTerminalLock(db,source?.projectId,identity.nodeId)) throw new Error(tr('worker.projectUnderManualTerminalTakeover2'));
-      if (paused || m.paused) throw new Error(tr('worker.remoteExecutionPaused'));
+      if (homeDisconnected) throw new Error(tr('worker.homeNotConnected'));
       if (m.request?.status === 'cancelled' || (!m.delivery?.items && m.project.repoUrl !== m.delivery?.repoUrl)) throw new Error(tr('worker.sourceCallWasCancelledRepository'));
       if (source?.status !== 'succeeded' || source.projectId !== m.delivery?.projectId || m.delivery.sourceRunId !== c.runId || !m.delivery.approvedAt) throw new Error(tr('worker.deliverySourceDidNotSucceed'));
       const owner = db.get('workspaceOwners', source.workspace);
@@ -645,7 +647,7 @@ async function command(m) {
   }
   if (c.type === 'approval') {
     try {
-      if (paused && c.decision === 'accept') throw new Error(tr('worker.remoteCommandsPaused2'));
+      if (homeDisconnected && c.decision === 'accept') throw new Error(tr('worker.homeNotConnected'));
       const s = sessions.get(c.runId);
       if (s instanceof CliPrintSession) throw new Error(tr('worker.runtimeAutoApprovesInPrint'));
       if (!(s instanceof CodexSession) || s.stopping) throw new Error(tr('worker.sessionCannotAcceptApprovals'));
@@ -673,7 +675,7 @@ async function query(m,emit=send) {
     if(m.action==='native_takeover_state'){reply(nativeTurns.refresh(m.path));return;}
     if(m.action.startsWith('native_agent_switch_')){send({type:'reply',id:m.id,result:await nativeAgentSwitches.handle(m.action,m.path)});return;}
     if(m.action==='folder_grant_prepare'){
-      if(paused)throw Error('Remote execution is paused');
+      if(homeDisconnected)throw new Error(tr('worker.homeNotConnected'));
       const candidate=await realpath(m.path?.path);
       assertNativeSessionIdle(db,{nodeId:identity.nodeId,workspace:candidate,projectId:m.path.scope?.startsWith('project:')?m.path.scope.slice(8):null});
       reply(await folderAccess.prepare(m.path));return;
@@ -792,7 +794,7 @@ async function query(m,emit=send) {
       send({type:'reply',id:m.id,result:{opened:true,path:folder}});return;
     }
     if(m.action==='conversation_summary') {
-      if(paused || quitting)throw new Error(tr('worker.remoteOperationsPaused'));
+      if(homeDisconnected || quitting)throw new Error(tr('worker.homeNotConnected'));
       if(occupiedSlots()>=capacity)throw new Error(tr('worker.organizerDeviceCurrentlyHasNo'));
       const {snapshot,config}=m.path||{};
       if(!snapshot?.projectId || !Array.isArray(snapshot.delta) || !config?.model)throw new Error(tr('worker.conversationOrganizerParametersIncomplete'));
@@ -808,7 +810,7 @@ async function query(m,emit=send) {
       return;
     }
     if(m.action==='attachments_receive') {
-      if(paused)throw new Error(tr('worker.remoteOperationsPaused2'));
+      if(homeDisconnected)throw new Error(tr('worker.homeNotConnected'));
       const input=m.path;
       if(!input?.projectId || !Array.isArray(input.items) || input.items.some(a=>a.projectId!==input.projectId))throw new Error(tr('worker.attachmentsDoNotMatchProject'));
       const workspace=await projectRoot(input.workspace);
@@ -820,7 +822,7 @@ async function query(m,emit=send) {
     if(['media_stat','media_stream','media_hash','media_receive'].includes(m.action)) {
       const input=m.path||{},homeHttp=homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,'');
       if(m.action==='media_receive'){
-        if(paused)throw new Error(tr('worker.remoteOperationsPaused2'));
+        if(homeDisconnected)throw new Error(tr('worker.homeNotConnected'));
         if(typeof input.path!=='string'||!/^\/media\/[A-Za-z0-9_.-]+\?download=1$/.test(input.path))throw new Error('invalid_media_path');
         const workspace=await projectRoot(input.workspace);
         send({type:'reply',id:m.id,result:await receiveMedia({url:homeHttp+input.path,size:input.size,sha256:input.sha256,name:input.name,transferId:input.transferId,workspace})});return;
@@ -860,7 +862,7 @@ async function query(m,emit=send) {
       const input=m.path||{},runtime=input.runtime;
       if(!BRANCH_RUNTIMES.has(runtime))throw new Error('Only Claude Code and Codex sessions can be branched for now');
       if(!runtimes.some(r=>r.type===runtime&&r.available&&r.supported!==false))throw new Error('CLI is not available on this device');
-      if(paused)throw new Error('Remote execution is paused');
+      if(homeDisconnected)throw new Error(tr('worker.homeNotConnected'));
       if(occupiedSlots()>=capacity)throw new Error('Device CLI capacity is full');
       if(typeof input.branchEntryId!=='string'||!/^[a-zA-Z0-9-]{8,100}$/.test(input.branchEntryId)||db.get('nativeCatalogEntries',input.branchEntryId))throw new Error('Invalid branch entry');
       if(runtime==='claude'&&(typeof input.newSessionId!=='string'||!/^[0-9a-f-]{36}$/i.test(input.newSessionId)))throw new Error('Upgrade Home to branch Claude sessions');
@@ -932,7 +934,7 @@ async function query(m,emit=send) {
       const record=input.record||registeredNativeSession(db,runtime,input.sessionId);
       if(m.action==='native_tool_detail'){send({type:'reply',id:m.id,result:await readNativeToolDetail(runtime,input.sessionId,{record,ref:input.ref,offset:input.offset})});return;}
       if(m.action==='native_session'){send({type:'reply',id:m.id,result:await readNativeSession(runtime,input.sessionId,{record,historyPage:input.historyPage===true,cursor:input.cursor,snapshot:input.snapshot,delta:input.delta===true,toolPreview:input.toolPreview===true})});return;}
-      if(paused)throw Error('Remote execution is paused');
+      if(homeDisconnected)throw new Error(tr('worker.homeNotConnected'));
       const freshId=input.sessionId?null:input.freshSessionId||null;
       if(!input.sessionId&&['claude','grok'].includes(runtime)&&!freshId)throw Error('Upgrade Home to create an exact native session ID');
       nativeTuiArgs(runtime,{id:input.sessionId,freshId,allowAll:input.allowAll??false});
@@ -988,7 +990,7 @@ async function query(m,emit=send) {
         reportCapacity();
         send({type:'reply',id:m.id,result:{released:true,...(catalogEntry?{catalogEntry}: {})}});return;
       }
-      if(paused)throw new Error(tr('worker.remoteExecutionPaused2'));
+      if(homeDisconnected)throw new Error(tr('worker.homeNotConnected'));
       if(m.action==='terminal_new') {
         const input=m.path,role=input.roleSettings;
         if(input.nodeId!==identity.nodeId||typeof input.projectId!=='string'||!input.projectId||typeof input.roleId!=='string'||!input.roleId||!role)throw new Error(tr('worker.invalidTakeoverId'));
@@ -1037,7 +1039,7 @@ async function query(m,emit=send) {
       send({type:'reply',id:m.id,result:{id,workspace,user:nativeSession.user,runtime:nativeSession.runtime,sessionId:nativeSession.id,launcher:[process.execPath,join(base,'src','terminal-resume.mjs'),join(data,'worker.sqlite'),id]}});return;
     }
     if(m.action==='execution_receive') {
-      if(paused)throw new Error(tr('worker.remoteExecutionPaused3'));
+      if(homeDisconnected)throw new Error(tr('worker.homeNotConnected'));
       const repositories=m.path?.repositories,deliveries=m.path?.deliveries;
       if(!Array.isArray(repositories)||!Array.isArray(deliveries)||deliveries.length>12)throw new Error(tr('worker.invalidDeliveryParameters'));
       for(const r of repositories)await projectRoot(r.localRoot);
@@ -1051,7 +1053,7 @@ async function query(m,emit=send) {
       send({type:'reply',id:m.id,result});return;
     }
     if(m.action==='execution_baseline_advance') {
-      if(paused)throw new Error(tr('worker.remoteExecutionPaused4'));
+      if(homeDisconnected)throw new Error(tr('worker.homeNotConnected'));
       const repositories=m.path?.repositories,versions=m.path?.versions;
       if(!Array.isArray(repositories)||!Array.isArray(versions)||versions.length>30)throw new Error(tr('worker.invalidProjectBaselineAdvanceParameters'));
       const result=[];
@@ -1065,7 +1067,7 @@ async function query(m,emit=send) {
       send({type:'reply',id:m.id,result});return;
     }
     if(m.action==='cli_install'){
-      if(paused)throw new Error(tr('worker.remoteExecutionPaused5'));
+      if(homeDisconnected)throw new Error(tr('worker.homeNotConnected'));
       if(sessions.size)throw new Error(tr('worker.deviceExecutingInstallCliOnce'));
       const packages={codex:'@openai/codex',claude:'@anthropic-ai/claude-code'};
       const packageName=packages[m.path?.runtime];if(!packageName)throw new Error(tr('worker.installCliUsingVendorS'));
@@ -1079,7 +1081,7 @@ async function query(m,emit=send) {
       send({ type: 'reply', id: m.id, result: await prepareSupervisorDirectory(roots, m.path?.projectId) }); return;
     }
     if (m.action === 'project_directory') {
-      if (paused) throw new Error(tr('worker.remoteExecutionPaused6'));
+      if (homeDisconnected) throw new Error(tr('worker.homeNotConnected'));
       const result = await prepareProjectSpace(roots, { ...m.path, workspaceRoot:m.path.workspaceRoot || defaultRoot });
       send({type:'reply',id:m.id,result}); return;
     }
@@ -1091,7 +1093,7 @@ async function query(m,emit=send) {
       send({type:'reply',id:m.id,result:{localRoot:checked}}); return;
     }
     if (m.action === 'repository_setup') {
-      if (paused) throw new Error(tr('worker.remoteExecutionPaused7'));
+      if (homeDisconnected) throw new Error(tr('worker.homeNotConnected'));
       const key = m.path?.operationId;
       if (!/^[a-f0-9-]{36}-[0-7]$/.test(key || '')) throw new Error(tr('worker.invalidSetupOperationId'));
       const { credential, ...publicInput } = m.path;
@@ -1225,7 +1227,7 @@ function connect() {
       if (m.type === 'registered') {
         folderAccess.reconcile(Array.isArray(m.folderGrantIds)?m.folderGrantIds:[]);
         cliRecoveryEnabled=m.cliRecovery===1;
-        paused = m.paused;
+        homeDisconnected = false;
         // Home announces its language; run payloads carry their own, this covers Worker-originated text outside a run.
         if (m.language) try { setLanguage(m.language); } catch { /* keep current */ }
         const connection=ws;
@@ -1234,12 +1236,11 @@ function connect() {
         registered=true;readySent=false;eventSent.clear();clearTimeout(reconnectCleanup);
         nativeTurns?.resume?.();
         if(m.retention)retention=normalizeRetention(m.retention);startMaintenance();
-        if(paused)void warmSessions.closeAll();
         for (const r of db.list('runs').filter(r => !terminal.has(r.status))) emit(r.id, 'status', { status: r.status });
         flushOutbox();console.log(tr('worker.workerConnected', { homeUrl, nodeId: identity.nodeId }));
         if (runtimeRetryDue) { runtimeRetryDue = false; void refreshRuntimes(); }
       }
-      if (m.type === 'settings') {paused = m.paused;if(paused)void warmSessions.closeAll();if(m.retention)retention=normalizeRetention(m.retention);}
+      if (m.type === 'settings') {if(m.retention)retention=normalizeRetention(m.retention);}
       if (m.type === 'language') { try { setLanguage(m.language); } catch { /* ignore unsupported values */ } }
       if (m.type === 'ack') {db.remove('outbox', m.id);eventSent.delete(m.id);flushOutbox();}
       // Each command/query runs under the language Home put on the message, so prompts and errors built on this Worker match it.
@@ -1264,10 +1265,10 @@ function connect() {
   ws.on('error', e => console.error(tr('worker.connectionError'), e.message));
   ws.on('close', () => {
     for(const query of configurationQueries.values()){clearTimeout(query.timer);query.reject(new Error('Home disconnected during execution configuration query.'));}configurationQueries.clear();
-    paused=true;registered=false;readySent=false;eventSent.clear();
+    homeDisconnected=true;registered=false;readySent=false;eventSent.clear();
     // Running turns outlive a connection blip: they continue for a grace period and report what happened once Home is back.
     if(quitting)void nativeTurns.stopAll();else nativeTurns.suspend();
-    // A brief network blip keeps idle processes, still subject to the original identity fingerprint and idle deadline; an explicit pause/quit closes them immediately.
+    // A brief network blip keeps idle processes, still subject to the original identity fingerprint and idle deadline; an explicit quit closes them immediately.
     clearTimeout(reconnectCleanup);reconnectCleanup=setTimeout(()=>{void warmSessions.closeAll();},30000);reconnectCleanup.unref();
     for(const controller of organizerControllers)controller.abort();if(!quitting)setTimeout(connect,5000);
   });
@@ -1275,7 +1276,7 @@ function connect() {
 const outboxTimer=setInterval(flushOutbox,1000);outboxTimer.unref();
 sideAsks=new SideAsks({db,send,data,env:process.env,
   canStart:m=>{
-    if(paused||quitting)throw new Error('Remote execution is paused');
+    if(homeDisconnected||quitting)throw new Error(tr('worker.homeNotConnected'));
     const source=registeredNativeSession(db,m.runtime,m.sessionId);assertNativeSwitchAccess(db,{runtime:m.runtime,sessionId:m.sessionId,workspace:source?.workspace});
     if(!runtimes.some(r=>r.type===m.runtime&&r.available&&r.supported!==false))throw new Error('CLI is not available on this device');
     if(occupiedSlots()>=capacity)throw new Error('Device CLI capacity is full; try the side question again shortly');

@@ -158,18 +158,12 @@ test('O2: a dependency that already continued is marked on its effective continu
   assert.equal(e.db.get('coordinationRequests', next.id).continuationRequestId, undefined, 'the same episode is not reported again');
 });
 
-test('O2: normal queueing and a paused Home never trigger a blocked wake', () => {
+test('O2: normal queueing never triggers a blocked wake', () => {
   const busy = waiting();
   busy.db.put('runs', { id: 'rb', projectId: P, taskId: 'x', roleId: 'b', roleSnapshot: busy.db.get('roles', 'b'), nodeId: 'w2', status: 'running', lastSeq: 0 });
   busy.db.put('workers', { id: 'w2', capabilities: {} });
   busy.rooms.schedule(() => true);
   assert.equal(childTask(busy).blockedKind ?? null, null);
-  const paused = waiting();
-  paused.rooms.schedule(id => id !== 'w2');
-  const since = Date.parse(childTask(paused).blockedSince);
-  paused.db.put('settings', { id: 'main', paused: true });
-  paused.calls.resume(paused.parent.id, since + BLOCKED_WAKE_MS + 1000);
-  assert.equal(paused.db.get('coordinationRequests', paused.parent.id).continuationRequestId, undefined);
 });
 
 test('O4: a relative --file path falls back from the workspace to the project root, still inside the allow-list', async () => {

@@ -345,7 +345,6 @@ export class Store {
       const fingerprint = JSON.stringify({ taskId, nodeId });
       const prior = this.get('commands', commandId);
       if (prior) { if (prior.fingerprint !== fingerprint) throw new Error(tr('store.commandidParameterConflict')); return this.get('runs', prior.runId); }
-      if (this.get('settings', 'main')?.paused) throw new Error(tr('store.remoteCommandsPaused'));
       if (this.get('workers',nodeId)?.capabilities?.projectSpace !== 1) throw new Error(tr('store.upgradeTargetWorkerSupportShared'));
       const storedTask = new ProactiveFollowup(this).prepareStart(taskId);
       if(!storedTask&&this.get('tasks',taskId))return null;

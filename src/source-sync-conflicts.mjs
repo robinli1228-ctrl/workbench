@@ -24,7 +24,6 @@ export class SourceSyncConflicts {
   constructor({db,rooms,sync,reachability=()=>false}){Object.assign(this,{db,rooms,sync,reachability});}
   open(input){const old=this.db.get('sourceSyncConflicts',input.id);return old||this.db.put('sourceSyncConflicts',input);}
   tick(){
-    if(this.db.get('settings','main')?.paused)return;
     for(const conflict of this.db.list('sourceSyncConflicts').filter(c=>c.status==='open'&&c.detection!=='metadata')){
       const config=this.db.get('sourceSyncConfigs',conflict.projectId);if(!config?.enabled||config.generation!==conflict.syncGeneration)continue;
       if(this.db.activeRuns().some(r=>r.sourceConflictId===conflict.id))continue;

@@ -13,7 +13,7 @@ import { Store, terminal } from './store.mjs';
 import {ProjectTeamCopy,projectCopyView} from './project-team-copy.mjs';
 import {ConversationTasks} from './conversation-tasks.mjs';
 import {GroupConversations,conversationIdOf,conversationView,agentConversationInput,resolveConversationId,assertConversationRecord,groupConversationIdOfSession} from './group-conversations.mjs';
-import {assertAgentSender,allowsPausedAgentOperation} from './agent-bridge.mjs';
+import {assertAgentSender} from './agent-bridge.mjs';
 import {freezeExecutionConfiguration,supportsMinimalInstructions,instructionProtocolIssue} from './execution-configuration.mjs';
 import {validateCliCapacity,reservedTerminalSlots,registrationCapacity} from './device-capacity.mjs';
 import { SessionTools } from './session-tools.mjs';
@@ -45,7 +45,7 @@ import { pageSummaries } from './workspace-summaries.mjs';
 import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries, reviewDeliveryIssue } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
-import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updatePausedSetting, updateConversationOrganizer,legacyExecutionPrompt } from './platform-prompts.mjs';
+import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updateConversationOrganizer,legacyExecutionPrompt } from './platform-prompts.mjs';
 import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -98,6 +98,9 @@ if (!workerToken) {
   await chmod(tokenFile, 0o600);
 }
 const db = new Store(join(data, 'home.sqlite'));
+// The global "pause remote execution" switch was removed; drop a stored flag so no install keeps a stale paused state around.
+const storedSettings=db.get('settings','main');
+if(storedSettings&&Object.hasOwn(storedSettings,'paused')){const {paused,...rest}=storedSettings;db.put('settings',rest);}
 for (const project of db.list('projects')) {
   if (!project.folderName) db.put('projects', { ...project, folderName:`project-${project.id.slice(0,8)}` });
 }
@@ -240,7 +243,6 @@ function respondApproval(approvalId, decision, commandId) {
   const r = db.get('runs', a.runId);
   if (!r || !online(r.nodeId)) throw new Error(tr('home.nodeOfflineApprovalCannotBe'));
   if (terminal.has(r.status) || r.status === 'stopping') throw new Error(tr('home.executionHasEndedStopping'));
-  if (decision === 'accept' && db.get('settings', 'main')?.paused) throw new Error(tr('home.remoteExecutionPaused'));
   db.transaction(() => {
     db.put('commands', { id: commandId, type: 'approval', nodeId: r.nodeId, runId: r.id, approvalId: a.id, decision, acked: false });
     db.put('approvals', { ...a, status: 'responding' });
@@ -268,7 +270,6 @@ async function dispatch(nodeId) {
     if (!run) continue;
     // Historical launch receipts cannot execute again; reject them before native ownership reads or other admission work.
     if (c.type === 'launch' && (terminal.has(run.status) || run.status === 'stopping')) continue;
-    if(c.type==='launch'&&db.get('settings','main')?.paused)continue;
     if(['launch','delivery_publish'].includes(c.type)&&sourceSync.busy(run.projectId,nodeId))continue;
     if (['launch','delivery_publish'].includes(c.type) && projectTerminalLock(db,run.projectId,nodeId)) continue;
     const reviewIssue=reviewDeliveryIssue(db.get('workers',nodeId),db.get('deliveries',c.deliveryId||run.deliveryId||''));
@@ -336,14 +337,14 @@ async function dispatch(nodeId) {
     }
     const currentCommand=db.get('commands',c.id),currentRun=db.get('runs',run.id);
     if(!online(nodeId)||sockets.get(nodeId)!==dispatchSocket||!dispatchSocket.workerReady||!currentCommand||currentCommand.acked)continue;
-    // Authentication yields to pause, cancellation and reconnection. Never send the stale command/run snapshot afterwards.
+    // Authentication yields to cancellation and reconnection. Never send the stale command/run snapshot afterwards.
     if(JSON.stringify(currentCommand)!==JSON.stringify(c)||JSON.stringify(currentRun)!==JSON.stringify(run))continue;
     const settings=normalizePlatformSettings(db.get('settings','main'));
     if(c.type==='launch'){
       const currentTask=db.get('tasks',run.taskId);
       const discussion=run.discussionDeliveryId?db.get('discussionDeliveries',run.discussionDeliveryId):null;
       const currentOwner=run.discussionDeliveryId?discussion?.processingRunId===run.id&&discussion.status==='dispatched':currentTask?.currentRunId===run.id;
-      if(settings.paused||terminal.has(currentRun.status)||currentRun.status==='stopping'||!currentTask||!currentOwner||currentTask.status==='cancelled')continue;
+      if(terminal.has(currentRun.status)||currentRun.status==='stopping'||!currentTask||!currentOwner||currentTask.status==='cancelled')continue;
     }
     if(['launch','delivery_publish'].includes(c.type)){
       const currentRequest=run.requestId?db.get('coordinationRequests',run.requestId):db.list('coordinationRequests').find(r=>r.currentRunId===run.id);
@@ -359,7 +360,7 @@ async function dispatch(nodeId) {
     send(sockets.get(nodeId), { type: 'command', command: wireCommand, run, task, request,
       gitCredentials,folderAccess:folderAccessFor(db,nodeId,`project:${run.projectId}`),
       delivery: (c.deliveryId || run.deliveryId) ? db.get('deliveries', c.deliveryId || run.deliveryId) : null,
-      project: { ...project, root: run.projectRoot ?? project.root }, paused: settings.paused, platformPrompt, language });
+      project: { ...project, root: run.projectRoot ?? project.root }, platformPrompt, language });
   }
   } finally {dispatching.delete(nodeId);}
 }
@@ -455,7 +456,7 @@ function scheduleChatTurn() {
   // Queued work claims capacity first; background organization does not take up the queued waiting stage of business roles.
   void conversationContext.drainOne({
     config:normalizePlatformSettings(db.get('settings','main')).conversationOrganizer,
-    canRun:nodeId=>!db.get('settings','main')?.paused && online(nodeId) && sockets.get(nodeId).workerReady
+    canRun:nodeId=>online(nodeId) && sockets.get(nodeId).workerReady
       && db.get('workers',nodeId)?.capabilities?.summaryBatches===1
       && db.activeRuns(nodeId).length+reservedTerminalSlots(db,nodeId)+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1),
     query:(snapshot,config)=>workerQuery({nodeId:config.nodeId},'conversation_summary',{snapshot,config},125000),change
@@ -765,7 +766,6 @@ const server = http.createServer(async (req, res) => {
         if(!['claude','codex'].includes(runtime))throw Error('Only Claude Code and Codex sessions can be branched for now');
         const record=sessionId?ownedNativeSession(nodeId,runtime,sessionId):null;
         if(!record)throw Error('Session is not registered with Workbench');
-        if(db.get('settings','main')?.paused)throw Error('Remote execution is paused');
         if(busy)throw Error('This session is still replying or has queued messages; wait for it to finish first');
         const branchEntryId=randomUUID(),title=`${String((entry||record).title||'').trim().slice(0,90)||runtime} · ${tr('nativeBranch.titleSuffix')}`;
         const result=await workerQuery({nodeId},'native_session_branch',{runtime,sessionId,record,branchEntryId,newSessionId:runtime==='claude'?randomUUID():null,title},15*60000);
@@ -904,7 +904,6 @@ const server = http.createServer(async (req, res) => {
         const freshSessionId=fresh&&['claude','grok'].includes(b.runtime)?entry?.sessionId||randomUUID():null;
         const fingerprint=JSON.stringify({nodeId,runtime:b.runtime,sessionId:b.sessionId||null,freshSessionId,entryId:catalogEntryId,workspace:b.workspace||null,title:fresh?b.title.trim():null,allowAll:b.allowAll});
         if(prior){if(prior.nativeFingerprint!==fingerprint||prior.status!=='prepared')throw Object.assign(Error('Terminal request is already used or changed'),{folderPreparationReleased:db.get('folderPreparations',`${nodeId}:${b.operationId}`)?.status==='cancelled'});return json(res,terminalLaunchView(prior));}
-        if(db.get('settings','main')?.paused)throw Error('Remote execution is paused');
         const device=db.list('devices').find(d=>d.nodeId===nodeId);
         if(worker.nodeKind==='cloud'&&!device)throw Error('Register SSH access for this server first');
         const bindings=[...db.list('workspaces'),...db.list('repositoryWorkspaces')].filter(w=>w.nodeId===nodeId).map(w=>({projectId:w.projectId,localRoot:w.localRoot}));
@@ -916,7 +915,7 @@ const server = http.createServer(async (req, res) => {
         const owner=nativeTerminalProject(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId,folderProjectIds:preview.projectId?[preview.projectId]:[]}),projectId=owner||`native-tui:${b.operationId}`;
         if(owner&&!db.get('projects',owner))throw Error('The owning group chat is unavailable; its session was not reassigned');
         // Share the existing reservation/return lifecycle when a native folder belongs to a group chat.
-        if(db.get('settings','main')?.paused||projectTerminalLock(db,projectId,nodeId)||sourceSync.busy(projectId,nodeId)||db.list('runs').some(r=>r.nodeId===nodeId&&(r.status==='reconciling'||r.projectId===projectId&&!terminal.has(r.status))))throw Error('The related group chat is busy; finish its current work first');
+        if(projectTerminalLock(db,projectId,nodeId)||sourceSync.busy(projectId,nodeId)||db.list('runs').some(r=>r.nodeId===nodeId&&(r.status==='reconciling'||r.projectId===projectId&&!terminal.has(r.status))))throw Error('The related group chat is busy; finish its current work first');
         if(db.get('terminalSessions',b.operationId))throw Error('Terminal request is being prepared');
         const createdAt=entry?.createdAt||new Date().toISOString(),claim={id:b.operationId,kind:'native',catalogEntryId,projectId,nodeId,runtime:b.runtime,sessionId:b.sessionId||null,nativeFingerprint:fingerprint,status:'preparing',createdAt:new Date().toISOString()};
         db.transaction(()=>{if(fresh)db.put('nativeCatalogEntries',{...entry,id:catalogEntryId,nodeId,runtime:b.runtime,sessionId:freshSessionId,title:b.title.trim(),workspace:preview.workspace,origin:'dialog',status:'preparing',hasHistory:false,previewAvailable:false,createdAt,modifiedAt:new Date().toISOString()});activateFolderBinding(folderCandidate);db.put('terminalSessions',claim);});change();
@@ -967,7 +966,6 @@ const server = http.createServer(async (req, res) => {
       if(reconnectAction&&req.method==='GET')return json(res,devicesAdmin.reconnectStatus(reconnectAction[1]));
       if(reconnectAction&&req.method==='POST')return json(res,await devicesAdmin.reconnect(reconnectAction[1]));
       if (deviceAction && req.method === 'POST') {
-        if (db.get('settings','main')?.paused) throw new Error(tr('home.remoteExecutionPaused2'));
         const result = await (deviceAction[2] === 'check' ? devicesAdmin.check(deviceAction[1]) : devicesAdmin.provision(deviceAction[1]));
         return json(res, result);
       }
@@ -988,7 +986,6 @@ const server = http.createServer(async (req, res) => {
       }
       const workerConfig = pathname.match(/^\/api\/workers\/([^/]+)\/configuration$/);
       if (workerConfig && req.method === 'POST') {
-        if (db.get('settings','main')?.paused) throw new Error(tr('home.remoteExecutionPaused3'));
         const b = await body(req), worker = db.get('workers',workerConfig[1]);
         if (!worker) throw new Error(tr('home.deviceNotFound'));
         const checked = await workerQuery({nodeId:worker.id},'workspace_root',b.workspaceRoot);
@@ -1005,7 +1002,6 @@ const server = http.createServer(async (req, res) => {
         if (run?.status === 'reconciling') throw Object.assign(new Error(tr('home.runReconciling')),{code:'run_reconciling'});
         if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
         if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
-        if(db.get('settings','main')?.paused&&!allowsPausedAgentOperation(pathname,b))throw Object.assign(new Error(tr('home.remoteExecutionPaused')),{code:'paused'});
         if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
         if (pathname === '/api/agent/notify') {
           if (Object.keys(b).some(key=>!['runId','action','input'].includes(key))) throw new Error(tr('wechatChannel.toolGuide'));
@@ -1091,7 +1087,6 @@ const server = http.createServer(async (req, res) => {
         validateLocalSupervisor(db.get('workers', supervisor.nodeId), supervisor, online(supervisor.nodeId));
         if (typeof b.name !== 'string' || !b.name.trim() || b.name.length > 80) throw new Error(tr('home.projectNameMustBe1'));
         if (b.description !== undefined && (typeof b.description !== 'string' || b.description.length > 12000)) throw new Error(tr('home.projectDescriptionMustBeAt'));
-        if (db.get('settings', 'main')?.paused) throw new Error(tr('home.remoteExecutionPausedResumeIt'));
         const id = b.requestId || randomUUID();
         if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error(tr('home.invalidCreateRequestId'));
         const folder = folderName(b.folderName || `project-${id.slice(0,8)}`);
@@ -1400,7 +1395,6 @@ const server = http.createServer(async (req, res) => {
           if(existing.runId===r.id && existing.status==='prepared')return json(res,terminalLaunchView(existing));
           throw new Error(tr('home.projectOnDeviceAlreadyUnder'));
         }
-        if(db.get('settings','main')?.paused)throw new Error(tr('home.remoteExecutionPaused4'));
         if(!terminal.has(r.status) || db.list('runs').some(other=>other.projectId===r.projectId&&other.nodeId===r.nodeId&&!terminal.has(other.status)))throw new Error(tr('home.projectStillExecutingOnDevice'));
         const worker=db.get('workers',r.nodeId);
         if(worker?.capabilities?.terminalResume!==1)throw new Error(tr('home.upgradeWorkerOnDeviceFirst'));
@@ -1468,12 +1462,6 @@ const server = http.createServer(async (req, res) => {
         // Workers learn the new language immediately; viewers refresh via the change event.
         for (const ws of sockets.values()) send(ws, { type: 'language', language });
         change(); return json(res, { language });
-      }
-      if (pathname === '/api/settings' && req.method === 'POST') {
-        const b = await body(req);
-        const settings = db.put('settings', updatePausedSetting(db.get('settings', 'main'), b.paused));
-        for (const ws of sockets.values()) send(ws, { type: 'settings', ...settings, retention:retentionPolicy() });
-        change(); return json(res, settings);
       }
       // Data page: what Home and each device hold, what the retention policy lets go, and a cleanup on demand.
       if (pathname === '/api/settings/retention' && req.method === 'POST') {
@@ -1606,7 +1594,7 @@ wss.on('connection', ws => {
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId,runtimes:mergeReportedRuntimes(db.get('workers',nodeId)?.runtimes,m.node.runtimes), lastSeen: new Date().toISOString() });
         // Turns the Worker kept running through the disconnect continue; the ones it no longer has ended while it was away.
         nativeTurns.reconnected(nodeId, Array.isArray(m.nativeTurns) ? m.nativeTurns.filter(id => typeof id === 'string').slice(0, 200) : []);
-        send(ws, { type: 'registered', retention:retentionPolicy(), folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id),paused: !!db.get('settings', 'main')?.paused, language: getLanguage(),cliRecovery:1,readTools:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
+        send(ws, { type: 'registered', retention:retentionPolicy(), folderGrantIds:db.list('folderGrants').filter(g=>g.nodeId===m.node.id&&folderAccessFor(db,g.nodeId,g.scope)).map(g=>g.grant.id), language: getLanguage(),cliRecovery:1,readTools:0,...(m.node.capabilities?.cliCapacity===1?{capacity:limits.desiredCapacity}:{}) }); change(); return;
       }
       if (!nodeId || sockets.get(nodeId) !== ws) throw new Error(tr('home.nodeNotRegisteredYet'));
       if(['source_sync_receipt','source_sync_command_ack','source_sync_watch_ack','source_sync_watch_status','source_sync_dirty'].includes(m.type)){

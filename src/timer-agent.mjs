@@ -50,7 +50,6 @@ export class TimerAgentActions {
     if (action === 'update' && values.roleId === undefined && existing) values.roleId = existing.roleId;
     if (!supervisor && (existing && existing.roleId !== run.roleId || values.roleId !== undefined && values.roleId !== run.roleId)) throw new Error(tr('timerAgent.ownRemindersOnly'));
     if (['create', 'update'].includes(action) && values.roleId && this.db.get('roles', values.roleId)?.projectId !== run.projectId) throw new Error(tr('timerAgent.onlyRolesFromCurrentProject'));
-    if (this.db.get('settings', 'main')?.paused) throw new Error(tr('timerAgent.remoteExecutionPaused'));
     return this.db.transaction(() => {
       // The supervisor keeps its original keys; other roles get their own namespace so two roles may both use "remind-1".
       const id = `${run.projectId}:${conversationIdOf(run)===run.projectId?'':`${conversationIdOf(run)}:`}${supervisor?'':`${run.roleId}:`}${values.requestId}`;
