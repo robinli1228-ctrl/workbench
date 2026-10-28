@@ -633,6 +633,10 @@ The group Roles sidebar keeps the existing clickable project-folder/device entri
 
 ### Artifact source and report scope
 
+Browser file references share the transcript's `resolveToolFile` helper. Sessions supply only the current turn's existing tool summaries; group cards share a bounded, click-time reader of their originating Run's events and cache only explicit paths. A unique basename can select that recorded path, while multiple matches never choose a file. Explicit paths retain existing behavior, and preview reads retain their original native-session/Run identity and authorization. This adds no CLI input, filesystem discovery, artifact registration, or synchronization operation.
+
+When a completed page turn matches a native history prompt, the browser checks that prompt's reply prose against the saved final answer. Partial history rows remain stored and are temporarily hidden behind the saved reply until history contains it. History refresh reattaches the overlay even when cached nodes are reused; task state, execution queues, and native history remain unchanged. The shared top-bar sync dot is removed; connection information and file-sync controls remain in settings.
+
 Shared report aliases use the same registered-root and isolation filters as project file reads; co-located project/repository roots retain canonical report paths. Historical Run artifacts outside the shared scope use `recordedArtifacts: 1` and the original Worker’s `artifact_source` query. Home validates same-project/same-Run paths from retained tool/message evidence and supplies one absolute proof path if Worker event retention has removed it. The Worker still checks its saved Run root, registered Git common directory, sensitive names, symlinks, size and stable file identity. Only explicitly clean final repository versions select an immutable Git blob; input baselines and dirty/missing versions remain labelled snapshots. Card metadata pins hash and commit for subsequent content reads. Device errors are isolated by actual read node. No arbitrary filesystem scope or Agent bridge endpoint is added.
 ### Home-only conversation tasks
 

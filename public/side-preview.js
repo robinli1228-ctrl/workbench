@@ -2,6 +2,7 @@ import {t,dateLocale} from './i18n.js';
 import {renderMarkdown,normalizeDocumentAddress} from './markdown.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {setActionIcon} from './role-icons.js';
+import {resolveToolFile} from './native-transcript.js';
 
 /**
  * The shared right-side Preview tab: one message, picture, video, PDF, text or file view pinned beside the chat
@@ -102,9 +103,10 @@ export function createDocumentPreview({api}){
   const cache=new Map(),pending=new Map(),states=new Map();let cacheBytes=0,dialog=null,version=0;
   function reference(path,source={}){
     path=normalizeDocumentAddress(path);if(!path)return null;path=relativeTo(path,source.basePath);
+    const resolved=source.basePath?{path}:resolveToolFile(path,source.filePaths?.()||[]);path=resolved.path;
     const ref={...source,path};delete ref.basePath;
     ref.key=JSON.stringify([ref.kind,ref.runId,ref.projectId,ref.scopeId,ref.nodeId,ref.runtime,ref.sessionId,ref.entryId,ref.readMode,ref.sha256,ref.sourceCommit,ref.blockedReason,path]);
-    ref.blocked=ref.blockedReason||(privatePath(path)?t('Private Workbench file; publish it under shared documents before linking.'):
+    ref.blocked=ref.blockedReason||(resolved.reason?t('Multiple files in this turn have this name.'):null)||(privatePath(path)?t('Private Workbench file; publish it under shared documents before linking.'):
       ref.kind==='run'&&ref.runId||ref.kind==='project'&&ref.projectId&&ref.scopeId||ref.kind==='native'&&ref.nodeId&&ref.runtime&&(ref.sessionId||ref.entryId)?null:t('Document source is unavailable.'));
     return ref;
   }
@@ -129,7 +131,11 @@ export function createDocumentPreview({api}){
   function attach(link,path,source){
     const ref=reference(path,source);if(!ref)return;link.classList.add('document-reference');link.dataset.documentKey=ref.key;link.dataset.documentPath=ref.path;link.textContent=nameOf(ref.path);link.translate=false;
     link.setAttribute('href','#');link.removeAttribute('target');link.removeAttribute('rel');paint(link,ref);
-    link.addEventListener('click',event=>{if(event.button!==0)return;event.preventDefault();event.stopPropagation();void open(ref.path,ref);});
+    link.addEventListener('click',event=>{if(event.button!==0)return;event.preventDefault();event.stopPropagation();void (async()=>{
+      try{if(!source?.basePath&&!/[\\/]/.test(path))await source?.loadFilePaths?.();const fresh=reference(path,source);if(!fresh)return;
+        link.dataset.documentKey=fresh.key;link.dataset.documentPath=fresh.path;paint(link,fresh);await open(fresh.path,fresh);
+      }catch{failure(ref,t('Could not load this turn\'s file locations.'));}
+    })();});
   }
   function decorate(root,source){
     root.normalize();
@@ -141,9 +147,9 @@ export function createDocumentPreview({api}){
     }
     const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes=[];let node;
     while((node=walker.nextNode()))if(!node.parentElement.closest('a,pre,summary,.chat-reference-metadata'))nodes.push(node);
-    const pattern=/(?:file:\/\/\/(?:[^\s`<>"',;!?，。；：！？、()[\]]+)|\/(?:Users|srv|workspace|home|opt|tmp|var|mnt|Volumes)\/[^`\n<>"',;!?，。；：！？、()[\]]+?|(?:\.\.?\/|\.workbench\/docs\/|docs\/|references\/)[^`\n<>"',;!?，。；：！？、()[\]]+?)\.(?:md|markdown|txt)(?=$|[\s,.;:!?，。；：！？、()[\]<>])/gi;
+    const pattern=/(?:file:\/\/\/(?:[^\s`<>"',;!?，。；：！？、()[\]]+)|\/(?:Users|srv|workspace|home|opt|tmp|var|mnt|Volumes)\/[^`\n<>"',;!?，。；：！？、()[\]]+?|(?:\.\.?\/|\.workbench\/docs\/|docs\/|references\/)[^`\n<>"',;!?，。；：！？、()[\]]+?|[^\s`<>"',;!?，。；：！？、()[\]\\/]+)\.(?:md|markdown|txt)(?=$|[\s,.;:!?，。；：！？、()[\]<>])/gi;
     for(const text of nodes){
-      const exact=text.parentElement.tagName==='CODE'&&/[\/\\]/.test(text.textContent)&&normalizeDocumentAddress(text.textContent);
+      const exact=text.parentElement.tagName==='CODE'&&normalizeDocumentAddress(text.textContent);
       const hits=exact?[{index:0,0:text.textContent}]:[...text.textContent.matchAll(pattern)];if(!hits.length)continue;
       const fragment=document.createDocumentFragment();let cursor=0;
       for(const hit of hits){if(hit.index>0&&/[\w:/]/.test(text.textContent[hit.index-1]))continue;fragment.append(document.createTextNode(text.textContent.slice(cursor,hit.index)));const link=el('a');attach(link,hit[0],source);fragment.append(link);cursor=hit.index+hit[0].length;}

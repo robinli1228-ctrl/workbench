@@ -80,6 +80,8 @@ Cross-device collaboration passes work and its inputs between roles. It does not
 
 Open run details to inspect inputs, CLI output, tool calls, and results. View Markdown reports and file previews in a dialog or side panel. Long history and tool details load on demand.
 
+Bare filenames in replies use explicit file paths from the same turn's tool records when the match is unique. Group-chat history loads those records on a file click; ambiguous names remain unresolved. Completed session replies stay visible while native history catches up, then return to the history view without duplicating the final answer.
+
 Device availability, queues, failures, and supported Token or quota information help you decide where to assign the next task. Usage figures are observations from the CLI environment, not provider billing statements.
 
 ### Keep your existing CLI environment

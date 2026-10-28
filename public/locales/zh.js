@@ -4,6 +4,11 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  "Multiple files in this turn have this name.": "本轮有多个同名文件，无法确定位置。",
+  "File location not found in this turn.": "本轮记录中未找到文件位置。",
+  "Could not load this turn's file locations.": "暂时无法读取本轮的文件位置。",
+  "Tool history is incomplete; use a full path.": "工具记录尚不完整，请使用完整路径。",
+  "Click to locate file": "点击定位文件",
   "The linked file has no recorded version in this preview.": "此预览没有所链接文件的历史版本凭据，无法按原版本打开。",
   "Side preview":"侧边预览",
   "Document source is unavailable.":"缺少文档来源，暂时无法打开。",

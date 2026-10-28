@@ -18,7 +18,7 @@ import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,same
 import {stripAnsi} from './run-log-data.js';
 import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSummary} from './history-prompt.js';
 import {cachedHistory,saveHistory,forgetHistory,compactHistoryPage} from './history-cache.js';
-import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices} from './native-transcript.js';
+import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices,resolveToolFile,toolFilePaths,historyContainsReply} from './native-transcript.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -95,7 +95,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
  const gitCache=new Map();let gitKey=null,renaming=null;
  // A path keeps its latest mention; live replies (no timestamp yet) count as newest, unreadable times as oldest.
  const outputRank=value=>{if(!value)return Infinity;const time=Date.parse(value);return Number.isFinite(time)?time:0;};
- function noteOutputs(session,text,at){
+ function noteOutputs(session,text,at,filePaths=[]){
   const context=mediaContext(session);if(!context)return;
   const paths=mediaPathMatches(text);if(!paths.length)return;
   let items=outputs.get(context.key);
@@ -106,7 +106,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
    for(const old of outputs.keys()){if(outputs.size<=OUTPUT_SESSIONS)break;if(old!==keep&&old!==context.key)outputs.delete(old);}
   }
   let changed=false;
-  for(const {path} of paths){const prior=items.get(path);if(prior&&outputRank(prior.at)>=outputRank(at))continue;items.set(path,{path,at:at||null});changed=true;}
+  for(const ref of paths){const {path}=resolveToolFile(ref.path,filePaths),prior=items.get(path);if(prior&&outputRank(prior.at)>=outputRank(at))continue;items.set(path,{path,at:at||null,filePaths});changed=true;}
   if(changed&&sideTab==='outputs'&&selected&&mediaContext(selected)?.key===context.key){clearTimeout(outputsTimer);outputsTimer=setTimeout(renderOutputs,100);}
  }
  /**
@@ -286,7 +286,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   const mentioned=el('section','native-side-card native-files-half'),head=el('div','native-card-head'),body=el('div','native-files-body');head.append(el('h3','',t('Named in replies')));mentioned.append(head,body);
   const items=context&&outputs.has(context.key)?[...outputs.get(context.key).values()].sort((a,b)=>outputRank(b.at)-outputRank(a.at)):[];
   if(!items.length)body.append(emptyState('quote','No files mentioned yet'));
-  else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,context,{describe:index<12})));body.append(list);}
+  else{const list=el('div','native-output-list');items.slice(0,50).forEach((item,index)=>list.append(mediaCard(item.path,{...context,filePaths:()=>item.filePaths||[]},{describe:index<12})));body.append(list);}
   panel.append(outputsCard(selected),mentioned);renderFolder();
  }
  resetSide();
@@ -609,7 +609,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
    const kept=before.get(signature);
    if(kept){after.set(signature,kept);for(const [id,node] of kept.pieces)piecesAfter.set(id,node);nodes.push(...kept.nodes);
     // A reused turn is not drawn again, so the files it names are noted here (the Files tab list is rebuilt after a reset).
-    const last=[...turn.parts].reverse().find(part=>part.kind==='text');if(last?.text)noteOutputs(item,last.text,turn.endedAt);continue;}
+    const last=[...turn.parts].reverse().find(part=>part.kind==='text');if(last?.text)noteOutputs(item,last.text,turn.endedAt,toolFilePaths(turn.parts.filter(p=>p.kind==='tool').map(historyStep)));continue;}
    own=new Map();const turnNodes=renderHistoryTurn(turn,item,startedAt,piece);after.set(signature,{nodes:turnNodes,pieces:own});nodes.push(...turnNodes);
   }
   // Least recently drawn sessions go first: the one being read moves to the end on every refresh.
@@ -618,6 +618,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
  }
  function renderHistoryTurn(turn,item,startedAt,piece=(id,build)=>build()){
   const nodes=[],first=turn.parts[0],turnId=turn.prompt?.id||`${first?.id||first?.timestamp||''}`;
+  const paths=toolFilePaths(turn.parts.filter(part=>part.kind==='tool').map(historyStep)),pathsKey=JSON.stringify(paths);
   if(turn.prompt)nodes.push(piece(`${turnId}|prompt|${JSON.stringify(turn.prompt)}`,()=>renderHistoryRow(turn.prompt,item)));
   if(!turn.parts.length)return nodes;
   const frag=document.createDocumentFragment();let group=[],process=false;
@@ -625,9 +626,10 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   for(const [index,part] of turn.parts.entries()){if(part.kind==='tool'){group.push(part);continue;}flush();
    // A background task finished while this turn ran: one quiet line in place, the reply goes on below it.
    if(part.kind==='notice'){const line=el('div','nt-system nt-turn-notice');line.append(el('span','nt-system-mark','\u2699'),el('span','',`${t('Background task finished')} · ${part.task.slice(0,8)}`));if(part.timestamp)line.title=time(part.timestamp);frag.append(line);continue;}const text=simplifiedCliOutput(stripAnsi(part.text||''));if(!text.trim())continue;
-   frag.append(piece(`${turnId}|text|${index}|${part.timestamp}|${text}`,()=>{const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(item));documentPreview.decorate(md,documentContext(item));return md;}));}
+   frag.append(piece(`${turnId}|text|${index}|${part.timestamp}|${pathsKey}|${text}`,()=>{const md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,{...mediaContext(item),filePaths:()=>paths});documentPreview.decorate(md,{...documentContext(item),filePaths:()=>paths});return md;}));}
   flush();
-  const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag});
+  const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag,filePaths:paths});
+  row._replyTexts=turn.parts.filter(part=>part.kind==='text').map(part=>simplifiedCliOutput(stripAnsi(part.text||'')));
   row.dataset.role='assistant';if(process)row.dataset.process='1';
   if(startedAt&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(startedAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(startedAt,Date.parse(turn.endedAt));}
   nodes.push(row);
@@ -730,12 +732,13 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
  const mediaContext=session=>{const sessionId=session&&(nativeId(session)||session.sessionId);if(!session?.nodeId||!sessionId)return null;
   return {key:`native:${session.nodeId}:${session.runtime}:${sessionId}`,describe:path=>api(`${endpoint(session.nodeId)}/media?${new URLSearchParams({runtime:session.runtime,sessionId,path})}`)};};
  /** Transcript rows: assistant replies are plain prose with a small byline; prompts are a quiet block with a prompt mark. No card states or footers. */
- function chatRow(role,text,runtime,at,extra,state='completed',session,{content=null}={}){const agent=role!=='user',row=el('article',`nt-row ${agent?'nt-agent':'nt-user'} native-chat-row${state==='error'?' is-error':''}`);if(at)row.dataset.at=at;
+ function chatRow(role,text,runtime,at,extra,state='completed',session,{content=null,filePaths=[]}={}){const agent=role!=='user',row=el('article',`nt-row ${agent?'nt-agent':'nt-user'} native-chat-row${state==='error'?' is-error':''}`);if(at)row.dataset.at=at;
   const body=simplifiedCliOutput(text||''),main=el('div','nt-body');let files=null;
+  if(agent)row._replyTexts=[body];
   if(agent){const by=el('div','nt-byline');const avatar=el('span','nt-avatar');avatar.append(agentIconEl(runtime));const name=el('span','nt-name',names[runtime]||t('Assistant'));name.translate=false;by.append(avatar,name);if(at){const stamp=el('time','',clock(at));stamp.dateTime=at;stamp.title=time(at);by.append(stamp);}
    row.append(by);
-   if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));documentPreview.decorate(md,documentContext(session));main.append(md);}
-   if(body&&session)noteOutputs(session,body,at);}
+   if(content)main.append(content);else if(body){const md=renderMarkdown(body);md.classList?.add('markdown-body');linkMedia(md,{...mediaContext(session),filePaths:()=>filePaths});documentPreview.decorate(md,{...documentContext(session),filePaths:()=>filePaths});main.append(md);}
+   if(body&&session)noteOutputs(session,body,at,filePaths);}
   else{
    // Attachments sit above the bubble, outside it; the bubble holds only the text (none when the prompt is attachments alone).
    // Time, Copy and Full screen (when text is hidden) sit under the bubble, outside it.
@@ -752,7 +755,7 @@ export function createNativeSessionUI({api,documentPreview,getData,artifactRow=n
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
   if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);
    // Open on the right: the same text Copy takes, rendered as in the chat, pinned beside it (and kept while another session is open).
-   if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,mediaContext(session));documentPreview.decorate(md,documentContext(session));return md;}})));
+   if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,{...mediaContext(session),filePaths:()=>filePaths});documentPreview.decorate(md,{...documentContext(session),filePaths:()=>filePaths});return md;}})));
    row.append(foot);}
   return row;}
  let agentDetailsSignature='';
@@ -1035,6 +1038,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  const turnBlocks=new Map();
  function turnContent(turn,session,{live=false,open=false}={}){
   const frag=document.createDocumentFragment(),all=processRows(turn,{includeFinal:true});
+  const final=replyText(turn);
+  if(final.trim()&&!historyContainsReply(final,all.filter(row=>row.kind==='text'||row.kind==='message').map(row=>row.text)))all.push({kind:'message',text:final});
+  const paths=toolFilePaths(all.filter(row=>row.kind==='tool').map(row=>classifyStep(row.item,turn.status))),pathsKey=JSON.stringify(paths);
   const blocksBefore=turnBlocks.get(turn.id)||new Map(),blocksAfter=new Map();
   // A block still being written is drawn again, but its file cards are moved over from its previous drawing (only from
   // blocks this redraw does not keep), so a picture in it does not reload while the text around it grows.
@@ -1048,9 +1054,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    if(row.kind==='tool'||row.kind==='log'||row.kind==='error'){group.push(row);continue;}
    flush();const text=simplifiedCliOutput(stripAnsi(row.text||''));if(!text.trim())continue;
    // The same text twice in one reply is two blocks: keyed by text and occurrence.
-   const seen=(occurrences.get(text)||0)+1;occurrences.set(text,seen);const blockKey=`${seen}\u0000${text}`;
+   const seen=(occurrences.get(text)||0)+1;occurrences.set(text,seen);const blockKey=`${seen}:${pathsKey}\u0000${text}`;
    let md=blocksBefore.get(blockKey);blocksBefore.delete(blockKey);
-   if(!md){md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,mediaContext(session));documentPreview.decorate(md,documentContext(session));adopt(md);}
+   if(!md){md=renderMarkdown(text);md.classList?.add('markdown-body');linkMedia(md,{...mediaContext(session),filePaths:()=>paths});documentPreview.decorate(md,{...documentContext(session),filePaths:()=>paths});adopt(md);}
    blocksAfter.set(blockKey,md);frag.append(md);
   }
   flush();
@@ -1159,7 +1165,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const worker=getData().workers?.find(w=>w.id===value.nodeId);supported=worker?.capabilities?.nativeTurns===3;
    const eligible=readable&&value.canResume!==false&&!value.canReopen&&Boolean(value.workspace);
    if(!eligible){shell.remove();clearFeedMarks(historyEl);feedSignature='';markLatestDuration();return;}
-   if(shell.parentNode!==content)content.append(shell);render();void refresh();
+   // The timeline may have moved its cached nodes and removed our saved-reply overlay even when their IDs are unchanged.
+   feedSignature='';if(shell.parentNode!==content)content.append(shell);render();void refresh();
   }
   /** Turns already in native history keep their process next to the matching reply; others render as their own rows. */
   /** While a reply runs the turns are re-read every second. When only the live replies' own content changed, just those replies are
@@ -1170,10 +1177,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const signatureOf=()=>JSON.stringify([k(),[...(historyEl?.querySelectorAll('.native-chat-row:not(.native-turn-anchored)')||[])].map(serialOf),timeline.hasOlder(),[...openProcesses].sort(),
    turns.map(turn=>isLive(turn)&&!turn.control?[turn.id,turn.status,turn.prompt,turn.attachments,turn.createdAt]:turn)]);
   function renderFeed({historyChanged=false}={}){const signature=signatureOf();
-   if(signature===feedSignature&&[...liveReplies.values()].every(row=>row.isConnected)){
+   if(!historyChanged&&signature===feedSignature&&[...liveReplies.values()].every(row=>row.isConnected)){
     for(const [id,row] of liveReplies){const turn=turns.find(x=>x.id===id);if(!turn)continue;const content=el('div','nt-turn');content.append(turnContent(turn,current,{live:true,open:true}),workingLine(turn));row.querySelector('.nt-turn')?.replaceWith(content);}
-    // 更早的原生会话不改变当前会话签名，但新分段仍需归位；每秒文本刷新不重复遍历历史。
-    if(historyChanged)markLatestDuration();
     return;}
    feedSignature=signature;liveReplies.clear();
    feed.replaceChildren();clearFeedMarks(historyEl);
@@ -1219,14 +1224,18 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     }
     const state=turn.status==='failed'?'error':turn.status==='interrupted'?'stopped':turn.status==='queued'?'queued':turn.status==='waiting_user'||turn.phase==='waiting'?'waiting':['starting','running','stopping'].includes(turn.status)?'running':'completed';
     const live=['queued','starting','running','waiting_user','stopping'].includes(turn.status);
+    const paths=toolFilePaths(stepsOf(turn).steps);
     if(!live&&turn.endedAt&&turn.prompt.trim()){
      const index=promptIndex(turn,'user',promptKey(turn.prompt));
-     if(index>=0){used.add(index);let anchor=rows[index];for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++)anchor=rows[i];
+     if(index>=0){used.add(index);let anchor=rows[index];const replies=[];for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++){anchor=rows[i];if(anchor.dataset.role==='assistant')replies.push(anchor);}
       if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));attachFiles(rows[index],files);}
-      // No reply row follows the prompt in the loaded history (not written yet, or the next row is another prompt): the turn's own
-      // reply row goes right after the prompt. The prompt bubble never hosts a reply's activity.
-      if(anchor.dataset.role==='user'){const content=el('div','nt-turn');content.append(turnContent(turn,current,{open:openProcesses.has(turn.id)}));
-       const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content});reply.dataset.role='assistant';reply.classList.add('native-turn-anchored');footNote(reply,endNote(turn));if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());anchor.after(reply);continue;}
+      // A native history snapshot can contain only the initial commentary. Keep the saved reply until that same
+      // prompt's history includes its final prose; clearFeedMarks restores the original rows on the next refresh.
+      const final=simplifiedCliOutput(replyText(turn));
+      if(anchor.dataset.role==='user'||final.trim()&&!historyContainsReply(final,replies.flatMap(row=>row._replyTexts||[]))){
+       for(const row of replies){row.hidden=true;row.dataset.nativeLiveHidden='1';}
+       const content=el('div','nt-turn');content.append(turnContent(turn,current,{open:openProcesses.has(turn.id)}));
+       const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';reply.classList.add('native-turn-anchored');footNote(reply,endNote(turn));if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());rows[index].after(reply);continue;}
       const extra=el('div','native-turn-anchored nt-extra');
       if(hasProcess(turn)&&anchor.dataset.process!=='1')extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
       {const tasks=taskBlock(turn,t);if(tasks)extra.append(tasks);}
@@ -1242,7 +1251,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const userRow=liveIndex>=0?null:chatRow('user',turn.prompt,current.runtime,turn.createdAt,makeFiles());if(userRow){userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);}
     const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));
     if(live)content.append(workingLine(turn));
-    const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content});reply.dataset.role='assistant';if(!live)footNote(reply,endNote(turn));if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
+    const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';if(!live)footNote(reply,endNote(turn));if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
     if(live){feed.append(...(userRow?[userRow,reply]:[reply]));liveReplies.set(turn.id,reply);}else place([userRow,reply],turn.createdAt);
    }markLatestDuration();}
   /** A centred date line opens the transcript, and again on a new day or before a prompt after a pause of 30 minutes or more. */

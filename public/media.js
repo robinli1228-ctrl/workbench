@@ -1,6 +1,7 @@
 import {t,dateLocale} from './i18n.js';
 import {setActionIcon} from './role-icons.js';
 import {canOpenSide,openSide} from './side-preview.js';
+import {resolveToolFile} from './native-transcript.js';
 
 /**
  * One media card and one in-page viewer for group chat and native sessions. A file stays on the device that produced
@@ -25,7 +26,7 @@ export function fileGlyph(name='',className='native-file-icon'){
   node.innerHTML=`<svg viewBox="0 0 36 40" xmlns="http://www.w3.org/2000/svg"><path class="file-glyph-page" d="M7 1.5h15.5L32.5 11.5V36a2.5 2.5 0 0 1-2.5 2.5H7A2.5 2.5 0 0 1 4.5 36V4A2.5 2.5 0 0 1 7 1.5z"/><path class="file-glyph-fold" d="M22.5 1.5V9a2.5 2.5 0 0 0 2.5 2.5h7.5"/><rect class="file-glyph-label" x="1" y="21" width="${label.length>3?30:26}" height="12" rx="2.5"/><text x="${label.length>3?16:14}" y="30" text-anchor="middle">${label}</text></svg>`;
   return node;
 }
-const REASONS={source_offline:'Source device offline',worker_upgrade:'Device needs a Worker upgrade',media_missing:'File not found',media_not_file:'Not a file',invalid_media_path:'Path is outside the allowed folders'};
+const REASONS={source_offline:'Source device offline',worker_upgrade:'Device needs a Worker upgrade',media_missing:'File not found',media_not_file:'Not a file',invalid_media_path:'Path is outside the allowed folders',file_ambiguous:'Multiple files in this turn have this name.',file_unresolved:'File location not found in this turn.',file_lookup_failed:'Could not load this turn\'s file locations.'};
 
 export function mediaKindFromName(name) {
   const ext=String(name).split('.').at(-1).toLowerCase();
@@ -99,14 +100,25 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
   const kind=mediaKindFromName(path),card=el('button','media-card');card.type='button';card.dataset.kind=kind;card.title=path;card.setAttribute('translate','no');
   const icon=el('span','media-card-icon',ICON[kind]),text=el('span','media-card-text'),name=el('span','media-card-name',baseName(path)),meta=el('span','media-card-meta',t(kind==='file'?'Click to download or send':'Click to open'));
   text.append(name,meta);card.append(icon,text);
+  const bare=!/[\\/]/.test(path);
+  const resolvePath=()=>{const ref=resolveToolFile(path,context.filePaths?.()||[]);card.title=ref.path;return ref;};
   const show=info=>{
     if(!info.available){card.dataset.state=info.reason;meta.textContent=t(REASONS[info.reason]||'Unavailable');return;}
     card.dataset.state=info.copyOf?'copy':'ready';card.dataset.kind=info.kind;icon.textContent=ICON[info.kind]||ICON.file;markImageOpener(card,info.kind==='image');
     meta.textContent=[formatBytes(info.size),info.copyOf?t('Local copy'):''].filter(Boolean).join(' · ');
-    if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info,()=>describeQueued(context,path,{fresh:true}));
+    if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info,()=>describeQueued(context,resolvePath().path,{fresh:true}));
   };
-  if(describe)void describeQueued(context,path).then(show).catch(()=>{});
-  card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void openMediaViewer(path,context,{at:messageTime(card),from:card}).then(show).catch(()=>{});});
+  const describePath=async()=>{const ref=resolvePath();if(ref.reason)return {available:false,reason:ref.reason};const info=await describeQueued(context,ref.path);
+    return bare&&!ref.matched&&info.reason==='media_missing'?{...info,reason:'file_unresolved'}:info;};
+  const ref=resolvePath();
+  if(ref.reason)show({available:false,reason:ref.reason});
+  else if(bare&&context.loadFilePaths&&!context.filePaths?.().length){card.dataset.state='pending';meta.textContent=t('Click to locate file');}
+  else if(describe)void describePath().then(show).catch(()=>{});
+  card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void (async()=>{
+    try{if(bare)await context.loadFilePaths?.();const ref=resolvePath();if(ref.reason){show({available:false,reason:ref.reason});return;}
+      const info=await describePath();show(info);if(info.available)show(await openMediaViewer(ref.path,context,{at:messageTime(card),from:card}));
+    }catch{show({available:false,reason:'file_lookup_failed'});}
+  })();});
   markImageOpener(card,kind==='image');
   return card;
 }
