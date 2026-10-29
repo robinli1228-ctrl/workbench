@@ -254,6 +254,16 @@ button.usage-model-stack { display:flex; flex-direction:column-reverse; flex-shr
   margin: 0 0 10px;
   color: #63766a;
 }
+
+/* Project sync belongs in the group header, separate from navigation and connection details. */
+.topbar #connection-note { --dot:#8a909c; --halo:rgb(138 144 156 / 20%); font-size:0; width:18px; height:18px; min-height:18px; padding:0; margin:0 1px; border:0; border-radius:50%; box-shadow:none; cursor:default; background:radial-gradient(circle, var(--dot) 0 3px, var(--halo) 3.5px 6px, transparent 6.5px); }
+.topbar #connection-note[data-sync="green"] { --dot:#20a579; --halo:rgb(32 165 121 / 16%); }
+.topbar #connection-note[data-sync="orange"] { --dot:#e6a124; --halo:rgb(230 161 36 / 18%); }
+.topbar #connection-note[data-sync="red"] { --dot:#d95151; --halo:rgb(217 81 81 / 18%); cursor:pointer; }
+.topbar #connection-note[data-sync="red"][aria-disabled="false"]:hover { --halo:rgb(217 81 81 / 30%); }
+.topbar #connection-note[data-sync="red"][aria-disabled="true"] { cursor:progress; }
+.topbar #connection-note:focus-visible { box-shadow:var(--focus-ring); }
+body[data-navigation-mode="sessions"] #connection-note { display:none !important; }
 button.primary, button.secondary, button.danger, .pause-button { min-height: 38px; padding: 0 15px; border-radius: 9px; font-size: 13px; font-weight: 700; }
 button.primary { border: 1px solid var(--green); color: white; background: var(--green); }
 button.primary:hover:not(:disabled) { background: var(--green-dark); }
