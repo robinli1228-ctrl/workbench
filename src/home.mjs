@@ -45,7 +45,8 @@ import { pageSummaries } from './workspace-summaries.mjs';
 import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries, reviewDeliveryIssue } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
-import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updateConversationOrganizer,legacyExecutionPrompt } from './platform-prompts.mjs';
+import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updateConversationOrganizer,updateMemoryOrganizer,legacyExecutionPrompt } from './platform-prompts.mjs';
+import { PlatformMemory } from './platform-memory.mjs';
 import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -139,6 +140,8 @@ stampWaitSlots(db);
 
 const conversationContext = new ConversationContext(db);
 conversationContext.recover();
+const platformMemory = new PlatformMemory(db);
+platformMemory.recover();
 for(const task of db.list('tasks').filter(task=>task.origin==='chat'&&task.status==='ready'&&task.contextState==='pending'))db.put('tasks',{...task,contextState:null});
 const scheduledJobs = new ScheduledJobs(db,rooms);
 const proactiveFollowup=new ProactiveFollowup(db,rooms);
@@ -458,13 +461,32 @@ function scheduleChatTurn() {
   for(const nodeId of new Set(db.pendingCommands().filter(c=>(!c.lastSentAt||Date.now()-Date.parse(c.lastSentAt)>=5000)).map(c=>c.nodeId)))void dispatch(nodeId);
   if (scheduled.changed) change();
   // Queued work claims capacity first; background organization does not take up the queued waiting stage of business roles.
+  const settings=normalizePlatformSettings(db.get('settings','main')),memoryConfig=settings.memoryOrganizer;
+  // An organizer slot: the device is ready, offers the capability and has room beside running work and other organizers.
+  const organizerSlot=(nodeId,capability)=>online(nodeId) && sockets.get(nodeId).workerReady && db.get('workers',nodeId)?.capabilities?.[capability]===1
+    && db.activeRuns(nodeId).length+reservedTerminalSlots(db,nodeId)+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1);
   void conversationContext.drainOne({
-    config:normalizePlatformSettings(db.get('settings','main')).conversationOrganizer,
-    canRun:nodeId=>online(nodeId) && sockets.get(nodeId).workerReady
-      && db.get('workers',nodeId)?.capabilities?.summaryBatches===1
-      && db.activeRuns(nodeId).length+reservedTerminalSlots(db,nodeId)+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1),
+    config:settings.conversationOrganizer,
+    // A memory batch holds its device's organizer slot from before its AGENTS.md read until the model answers.
+    canRun:nodeId=>!(platformMemory.processing && memoryConfig.nodeId===nodeId) && organizerSlot(nodeId,'summaryBatches'),
     query:(snapshot,config)=>workerQuery({nodeId:config.nodeId},'conversation_summary',{snapshot,config},125000),change
   }).catch(error=>console.error(tr('home.backgroundConversationOrganizationFailed'),error.message));
+  // Memory organizing runs once a day (or when asked), one batch at a time, after conversation organizing on a shared device.
+  if(platformMemory.schedule(memoryConfig))change();
+  void platformMemory.drainOne({
+    config:memoryConfig,
+    canRun:nodeId=>!conversationContext.processing && organizerSlot(nodeId,'memoryOrganizer'),
+    query:(prompt,config)=>workerQuery({nodeId:config.nodeId},'memory_organize',{prompt,config},310000),
+    agentsMd:projectAgentsMd,change
+  }).catch(error=>console.error('Memory organizing:',error.message));
+}
+/** The project's own AGENTS.md from any online device holding its folder, so organizing does not repeat it; null when none is reachable. */
+async function projectAgentsMd(projectId) {
+  for(const binding of db.list('workspaces').filter(w=>w.projectId===projectId&&w.localRoot&&online(w.nodeId)&&db.get('workers',w.nodeId)?.capabilities?.nativeAgentsMd===1)) {
+    try {const result=await workerQuery({nodeId:binding.nodeId,projectId},'native_agents_md',{workspace:binding.localRoot,stopAt:binding.localRoot,projectId},15000);if(typeof result?.content==='string')return result.content;}
+    catch {}
+  }
+  return null;
 }
 async function body(req) {
   let raw = '';
@@ -987,6 +1009,11 @@ const server = http.createServer(async (req, res) => {
       if (pathname.startsWith('/api/agent/') && req.method === 'POST') {
         const b = await body(req);
         assertAgentSender(b,pathname);
+        // Sessions-page CLIs search platform memory without a Run; their Worker adds which CLI and device is asking.
+        if(pathname==='/api/agent/native-memory/search') {
+          if(Object.keys(b).some(k=>!['query','type','cli','device','since','limit','caller'].includes(k)))throw new Error(tr('platformMemory.searchUsage'));
+          return json(res,platformMemory.search(b,{runtime:typeof b.caller?.cli==='string'?b.caller.cli:null,nodeId:typeof b.caller?.device==='string'?b.caller.device:null}));
+        }
         const run = db.get('runs', b.runId);
         // wb report was removed: results are the final reply, judged by whoever assigned the work.
         if(pathname==='/api/agent/report')throw new Error(tr('home.reportRemoved'));
@@ -994,7 +1021,7 @@ const server = http.createServer(async (req, res) => {
         if (run?.status === 'reconciling') throw Object.assign(new Error(tr('home.runReconciling')),{code:'run_reconciling'});
         if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
         if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
-        if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
+        if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary','/api/agent/memory/search'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
         if(pathname==='/api/agent/source-sync'){const result=await sourceSync.agent.execute(run,b.action,b.input||{});change();return json(res,result);}
         if(pathname==='/api/agent/source-candidates'){const result=b.finish?await sourceSync.agent.completeCandidate(run,b.candidateId):sourceSync.agent.stageCandidate(run,b);change();return json(res,result);}
         if(pathname==='/api/agent/discussions') {
@@ -1008,6 +1035,10 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/agent/history/search') return json(res,new History(readView).search(run.projectId,agentConversationInput(run,b)));
         if (pathname === '/api/agent/history/read') return json(res,new History(readView).read(run.projectId,agentConversationInput(run,b)));
         if (pathname === '/api/agent/sessions/current') return json(res,sessionTools.current(run));
+        if (pathname === '/api/agent/memory/search') {
+          if(Object.keys(b).some(k=>!['runId','query','type','cli','device','since','limit'].includes(k)))throw new Error(tr('platformMemory.searchUsage'));
+          return json(res,platformMemory.search(b,{projectId:run.projectId,runtime:run.roleSnapshot?.runtime||null,nodeId:run.nodeId||null}));
+        }
         if (pathname === '/api/agent/conversation/summary') return json(res,new SessionTools(readView).chatSummary(run,b));
         if (pathname === '/api/agent/setup/catalog' && run.roleSnapshot?.platformAssistant) return json(res, assistant.catalog(run));
         if (pathname === '/api/agent/timers') {
@@ -1127,6 +1158,18 @@ const server = http.createServer(async (req, res) => {
         if(typeof input.enabled!=='boolean')return json(res,{error:tr('home.concurrentWritesNeedsBoolean')},400);
         const saved=db.put('projects',{...project,allowConcurrentWrites:input.enabled,updatedAt:new Date().toISOString()});
         change();scheduleChat();return json(res,{allowConcurrentWrites:saved.allowConcurrentWrites});
+      }
+      // Platform memory: one shared set for every project; Settings → Memory reads and edits it.
+      if((m=pathname.match(/^\/api\/memories(?:\/([^/]+))?$/))) {
+        const id=m[1]&&decodeURIComponent(m[1]);
+        if(!id&&req.method==='GET')return json(res,platformMemory.list(Object.fromEntries(['query','type','offset','limit'].filter(key=>url.searchParams.has(key)).map(key=>[key,url.searchParams.get(key)]))));
+        if(!id&&req.method==='POST'){const result=platformMemory.save(await body(req));change();return json(res,result);}
+        if(id==='organize'&&req.method==='POST'){
+          if(!normalizePlatformSettings(db.get('settings','main')).memoryOrganizer.nodeId)throw new Error(tr('platformMemory.organizerNotConfigured'));
+          const result=platformMemory.request();change();return json(res,result);
+        }
+        if(id&&req.method==='PUT'){const result=platformMemory.save({...await body(req),id});change();return json(res,result);}
+        if(id&&req.method==='DELETE'){const result=platformMemory.remove(id);change();return json(res,result);}
       }
       if((m=pathname.match(/^\/api\/tasks\/([^/]+)\/detail$/)) && req.method==='GET') {
         const task=db.get('tasks',decodeURIComponent(m[1]));
@@ -1489,16 +1532,29 @@ const server = http.createServer(async (req, res) => {
         const settings = db.put('settings', updatePlatformPrompts(db.get('settings', 'main'), await body(req)));
         change(); return json(res, settings);
       }
+      // Both organizers: the chosen device must be online (and new enough) and offer the chosen CLI and model.
+      const organizerDevice=(input,capability)=>{
+        if(!input.nodeId)return;
+        const worker=db.get('workers',input.nodeId);
+        if(!worker || !online(input.nodeId))throw new Error(tr('home.organizerDeviceNotOnline'));
+        if(capability&&worker.capabilities?.[capability]!==1)throw new Error(tr('platformMemory.upgradeWorker'));
+        const issue=runtimeIssue(worker,input.runtime,input.model);
+        if(issue)throw new Error(issue);
+      };
       if(pathname==='/api/settings/conversation-organizer' && req.method==='POST') {
         const input=await body(req);
-        if(input.nodeId) {
-          const worker=db.get('workers',input.nodeId);
-          if(!worker || !online(input.nodeId))throw new Error(tr('home.organizerDeviceNotOnline'));
-          const issue=runtimeIssue(worker,input.runtime,input.model);
-          if(issue)throw new Error(issue);
-        }
+        organizerDevice(input);
         const settings=db.put('settings',updateConversationOrganizer(db.get('settings','main'),input));
         change();return json(res,settings.conversationOrganizer);
+      }
+      if(pathname==='/api/settings/memory-organizer' && req.method==='POST') {
+        const input=await body(req);
+        organizerDevice(input,'memoryOrganizer');
+        const first=!normalizePlatformSettings(db.get('settings','main')).memoryOrganizer.nodeId;
+        const settings=db.put('settings',updateMemoryOrganizer(db.get('settings','main'),input));
+        // Turning organizing on with "from now on" leaves everything said so far out.
+        if(first&&input.nodeId&&input.startFrom==='now')platformMemory.skipHistory();
+        change();return json(res,settings.memoryOrganizer);
       }
       return json(res, { error: tr('home.endpointNotFound') }, 404);
     }
@@ -1508,6 +1564,7 @@ const server = http.createServer(async (req, res) => {
     files['/workspace-inspector.js']='workspace-inspector.js';
     files['/concurrent-writes.js']='concurrent-writes.js';
     files['/conversation-tasks.js']='conversation-tasks.js';
+    files['/platform-memory.js']='platform-memory.js';
     files['/conversation-task-state.js']='conversation-task-state.js';
     files['/delivery-summary.js']='delivery-summary.js';
     files['/retired-commands.js']='retired-commands.js';

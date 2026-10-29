@@ -234,6 +234,12 @@ export class Store {
   /** Home receipt order per message: the tie-breaker for messages created in the same millisecond. */
   receiptSeqs(projectId){return new Map(this.db.prepare('SELECT message_id,seq FROM room_message_receipts WHERE project_id=?').all(projectId).map(r=>[r.message_id,r.seq]));}
   messageCursor(projectId,conversationId=projectId){return this.db.prepare("SELECT COALESCE(MAX(m.seq),0) AS seq FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=?").get(projectId,conversationId).seq;}
+  /** Memory progress records with a pending request: the per-second organizer check reads only these. */
+  requestedMemoryProgress(){return this.db.prepare("SELECT data FROM records WHERE kind='memoryProgress' AND json_extract(data,'$.requestedAt') IS NOT NULL ORDER BY rowid").all().map(r=>JSON.parse(r.data));}
+  /** Receipts after a sequence number with their chat and whether they are summaries, read through the (project, seq) index. */
+  receiptsAfter(projectId,after){return this.db.prepare("SELECT m.seq AS seq,COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id) AS conversationId,COALESCE(json_extract(r.data,'$.kind'),'')='summary' AS summary FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND m.seq>? ORDER BY m.seq").all(projectId,after);}
+  /** The newest receipt of a project, from the index alone. */
+  projectReceiptCursor(projectId){return this.db.prepare('SELECT COALESCE(MAX(seq),0) AS seq FROM room_message_receipts WHERE project_id=?').get(projectId).seq;}
   messageArrivals(projectId,after,conversationId=projectId){return this.db.prepare("SELECT r.data,m.seq,m.received_at FROM room_message_receipts m JOIN records r ON r.kind='roomMessages' AND r.id=m.message_id WHERE m.project_id=? AND m.seq>? AND COALESCE(NULLIF(json_extract(r.data,'$.conversationId'),''),m.project_id)=? ORDER BY m.seq").all(projectId,after,conversationId).map(r=>({...JSON.parse(r.data),receiptSeq:r.seq,receivedAt:r.received_at}));}
   remove(kind, id) { if(this.revisionTracking)this.readRevision([]);this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind, id);this.recordChanged(kind); }
   /** A synchronous transaction makes the check and the creation a single operation, avoiding duplicate claims. */
@@ -294,6 +300,7 @@ export class Store {
       for (const t of this.list('tasks').filter(t => t.projectId === id)) this.remove('tasks', t.id);
       for (const m of this.list('roomMessages').filter(m => m.projectId === id)) this.remove('roomMessages', m.id);
       for (const c of this.listProject('groupConversations',id)) this.remove('groupConversations',c.id);
+      if(this.get('memoryProgress',id))this.remove('memoryProgress',id);
       for(const kind of ['conversationTasks','conversationTaskReads','conversationTaskActivity'])for(const record of this.listProject(kind,id))this.remove(kind,record.id);
       for(const followup of this.listProject('proactiveFollowups',id))this.remove('proactiveFollowups',followup.id);
       // Only explicit project deletion releases its private read evidence; there is no background eviction.

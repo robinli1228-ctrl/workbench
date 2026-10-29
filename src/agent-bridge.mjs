@@ -1,10 +1,10 @@
-import { mkdir, readdir, readFile, writeFile, rename, link, lstat, unlink, rmdir } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, rename, link, lstat, unlink, rmdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { tr } from './i18n.mjs';
 
 // Paths a role's wb command may reach; Home re-checks each request against the run and its role.
-const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary',
+const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary', '/api/agent/memory/search', '/api/agent/native-memory/search',
   '/api/agent/discussions', '/api/agent/source-sync']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -91,6 +91,15 @@ export async function homeRequest(home, token, pathname, payload) {
   }catch(error){if(!error.status)error.outcomeUnknown=true;throw error;}
 }
 
+/** The answer appears atomically (temp file, then a hard link), so a polling CLI never reads half of it. */
+async function publishResponse(directory, file, response) {
+  const responseFile = join(directory, file.replace('.request', '.response')), temporary = `${responseFile}.tmp`;
+  await unlink(temporary).catch(() => {});
+  await writeFile(temporary, JSON.stringify(response), { flag: 'wx', mode: 0o600 });
+  try { await link(temporary, responseFile); }
+  finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+}
+
 /** Each Run gets its own bridge directory, and on exit only the communication files it created are cleaned up. */
 export async function startAgentBridge({ workspace, runId, home, token, canSend, blockReason }) {
   const directory = join(workspace, `.wb-bridge-${runId}`);
@@ -114,13 +123,10 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend,
             const block=blockReason?blockReason(input.pathname,input.payload):canSend(input.pathname,input.payload)?null:'run_ended';
             if (block) throw Object.assign(new Error(blockMessage(block)),{code:block});
             if(input.payload?.runId&&input.payload.runId!==runId)throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));
+            if(input.pathname===NATIVE_BRIDGE_PATH)throw new Error(tr('agentBridge.operationNotAgentTool'));
             response = { result: await homeRequest(home, token, input.pathname, { ...input.payload, runId }) };
           } catch (error) { response = { error: error.message,status:error.status,code:error.code,outcomeUnknown:error.outcomeUnknown }; }
-          const responseFile = join(directory, file.replace('.request', '.response'));
-          const temporary = `${responseFile}.tmp`;
-          await writeFile(temporary, JSON.stringify(response), { flag: 'wx', mode: 0o600 });
-          try { await link(temporary, responseFile); }
-          finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+          await publishResponse(directory, file, response);
         };
         const task = handle(); pending.add(task);
         void task.finally(() => pending.delete(task)).catch(error => console.error('Failed to publish Agent bridge response:', error));
@@ -136,4 +142,62 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend,
     }
     await rmdir(directory).catch(() => {});
   } };
+}
+
+/**
+ * Sessions-page CLIs have no Run: each session gets its own request folder under the Worker's data (named in its env as
+ * WB_BRIDGE), and the Worker relays only memory search, adding that session's CLI and this device. Files are removed a
+ * minute after the answer is written.
+ */
+export const NATIVE_BRIDGE_PATH='/api/agent/native-memory/search';
+export async function nativeBridgeFolder(root,runtime,sessionId) {
+  const directory=join(root,createHash('sha256').update(`${runtime}/${sessionId}`).digest('hex').slice(0,24));
+  await mkdir(directory,{recursive:true,mode:0o700});
+  await writeFile(join(directory,'session.json'),JSON.stringify({runtime,sessionId}),{mode:0o600});
+  return directory;
+}
+export function startNativeBridges({root,home,token,device,canSend=()=>true,activeFor=12*3600e3}) {
+  // Only folders of sessions the page drove recently are scanned; no CLI survives a Worker restart, so old folders go.
+  const active=new Map(),consumed=new Set();let scanning=false;
+  const ready=rm(root,{recursive:true,force:true}).catch(()=>{});
+  async function answer(directory,file) {
+    try {
+      let response;
+      try {
+        const path=join(directory,file),info=await lstat(path);
+        if(!info.isFile()||info.size>65536)throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
+        const input=JSON.parse(await readFile(path,'utf8')),session=JSON.parse(await readFile(join(directory,'session.json'),'utf8'));
+        if(input.pathname!==NATIVE_BRIDGE_PATH)throw new Error(tr('agentBridge.operationNotAgentTool'));
+        assertAgentSender(input.payload,input.pathname);
+        if(!canSend())throw Object.assign(new Error(blockMessage('home_disconnected')),{code:'home_disconnected'});
+        response={result:await homeRequest(home,token,input.pathname,{...input.payload,caller:{cli:session.runtime,device}})};
+      } catch(error) { response={error:error.message,status:error.status,code:error.code}; }
+      await publishResponse(directory,file,response);
+    } finally {
+      setTimeout(()=>{for(const name of [file,file.replace('.request','.response')])unlink(join(directory,name)).catch(()=>{});consumed.delete(join(directory,file));},60000).unref();
+    }
+  }
+  async function scan() {
+    if(scanning)return;scanning=true;
+    try {
+      const now=Date.now();
+      for(const [directory,usedAt] of active) {
+        if(now-usedAt>activeFor){active.delete(directory);void rm(directory,{recursive:true,force:true}).catch(()=>{});continue;}
+        for(const file of await readdir(directory).catch(()=>[])) {
+          const key=join(directory,file);
+          // Stray files of a crashed wb or an answered request are aged out.
+          if(/\.tmp$/.test(file)||/\.response$/.test(file)){const info=await lstat(key).catch(()=>null);if(info&&now-info.mtimeMs>120000)await unlink(key).catch(()=>{});continue;}
+          if(!/^[a-f0-9-]{36}\.request$/.test(file)||consumed.has(key))continue;
+          consumed.add(key);
+          void answer(directory,file).catch(error=>console.error('Native bridge:',error.message));
+        }
+      }
+    } finally { scanning=false; }
+  }
+  const timer=setInterval(()=>{if(active.size)void scan();},200);timer.unref();
+  return {
+    /** A page turn is about to start in this session: create (or keep) its folder and scan it from now on. */
+    async open(runtime,sessionId){await ready;const directory=await nativeBridgeFolder(root,runtime,sessionId);active.set(directory,Date.now());return directory;},
+    stop(){clearInterval(timer);}
+  };
 }

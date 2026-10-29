@@ -4163,6 +4163,22 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 #settings-page .settings-row-icon svg { width: 20px; height: 20px; }
 #settings-page .settings-row > select { flex: none; width: 220px; }
 #settings-page .settings-list-note { margin: 0; padding: 10px 20px 14px; border-top: 1px solid #eef0f4; color: #656c7d; font-size: 12px; line-height: 1.6; }
+#settings-page .platform-memory-filter { display: flex; gap: 8px; padding: 0 20px 12px; }
+#settings-page .platform-memory-filter input { flex: 1 1 auto; min-width: 0; }
+#settings-page .platform-memory-filter select { flex: 0 0 auto; width: auto; }
+#settings-page .platform-memory-pager { display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 8px 20px; border-top: 1px solid #eef0f4; color: #656c7d; font-size: 12px; }
+#settings-page .platform-memory-pager #platform-memory-page { margin-right: 6px; }
+#settings-page .platform-memory-pager .settings-row-actions { margin-left: 0; }
+#settings-page .settings-row-main > .platform-memory-content { font-weight: 450; line-height: 1.5; white-space: pre-wrap; }
+#settings-page .platform-memory-row { align-items: flex-start; }
+/* Long entries wrap inside the text column; the icon and the actions stay on the same line, also on a phone. */
+#settings-page .settings-row.platform-memory-row { flex-wrap: nowrap; }
+#settings-page .platform-memory-row .settings-row-main { flex: 1 1 0; }
+@media (max-width: 700px) {
+  #settings-page .settings-row.platform-memory-row { gap: 10px; }
+  #settings-page .platform-memory-row .settings-row-actions { flex-direction: column; gap: 4px; }
+}
+#settings-page .platform-memory-row .settings-row-icon { margin-top: 2px; }
 #settings-page .settings-list-empty { display: flex; align-items: center; gap: 10px; padding: 18px 20px; border-top: 1px solid #eef0f4; color: #7a8191; font-size: 13px; }
 #settings-page .settings-list-empty svg { width: 20px; height: 20px; }
 .settings-chip { display: inline-flex; flex: none; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; color: #5b6273; background: #f1f3f7; font-size: 12px; line-height: 1.4; white-space: nowrap; }

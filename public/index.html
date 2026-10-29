@@ -131,6 +131,7 @@
               <button type="button" role="tab" data-settings-tab="devices">Devices and CLIs</button>
               <button type="button" role="tab" data-settings-tab="hosting">Code Hosting Accounts</button>
               <button type="button" role="tab" data-settings-tab="prompts">Prompts and Templates</button>
+              <button type="button" role="tab" data-settings-tab="memory">Memory</button>
               <button type="button" role="tab" data-settings-tab="data">Data</button>
               <button type="button" role="tab" data-settings-tab="information">About</button>
             </nav>
@@ -284,6 +285,51 @@
               </dialog>
             </section>
 
+            <section class="settings-panel" data-settings-panel="memory" data-layout="list" id="settings-memory-panel" hidden>
+              <section class="settings-list" aria-labelledby="memory-organizer-card-title">
+                <header class="settings-list-head"><div><h3 id="memory-organizer-card-title">Memory organizing (model)</h3><p>Turns all group chats into platform memory once a day; a small model is enough</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" id="edit-memory-organizer" type="button" aria-label="Edit memory organizing"></button></span></header>
+                <div class="settings-list-preview"><p id="memory-organizer-summary" class="settings-preview-text">Not configured; no memory is organized.</p></div>
+              </section>
+              <section class="settings-list" aria-labelledby="platform-memory-heading">
+                <header class="settings-list-head"><div><h3 id="platform-memory-heading">Memory</h3><p>One for the whole platform, shared by every project, role, CLI and device; roles look it up with wb memory search</p></div>
+                  <span class="settings-list-actions"><button class="icon-button" id="organize-platform-memory" type="button" aria-label="Organize now"></button><button class="icon-button" id="add-platform-memory" type="button" aria-label="Add memory"></button></span></header>
+                <div class="platform-memory-filter"><input id="platform-memory-search" type="search" placeholder="Filter" aria-label="Filter memory"><select id="platform-memory-type" aria-label="Memory type"></select></div>
+                <p id="platform-memory-status" class="settings-list-note" role="status"></p>
+                <div id="platform-memory-rows"></div>
+                <div id="platform-memory-pager" class="platform-memory-pager" hidden><span id="platform-memory-page"></span><span class="settings-row-actions"><button class="icon-button" id="platform-memory-previous" type="button" aria-label="Previous page"></button><button class="icon-button" id="platform-memory-next" type="button" aria-label="Next page"></button></span></div>
+                <p id="platform-memory-feedback" class="settings-list-note" role="status" hidden></p>
+              </section>
+              <dialog id="platform-memory-dialog" class="settings-edit-dialog" aria-labelledby="platform-memory-title">
+                <div class="dialog-heading"><h3 id="platform-memory-title">Add memory</h3><button class="icon-button" id="close-platform-memory" type="button" aria-label="Close">×</button></div>
+                <form id="platform-memory-form" class="settings-dialog-form">
+                  <label>Type<select name="type"></select></label>
+                  <label>Content<textarea name="content" rows="4" maxlength="4000" required></textarea></label>
+                  <label>CLI<select name="runtime"></select></label>
+                  <label>Device<select name="nodeId"></select></label>
+                  <p id="platform-memory-dialog-feedback" class="form-feedback" role="status" hidden></p>
+                  <div class="form-actions"><button class="secondary" id="cancel-platform-memory" type="button">Cancel</button><button class="primary" type="submit">Save</button></div>
+                </form>
+              </dialog>
+              <dialog id="memory-organizer-dialog" class="settings-edit-dialog prompt-edit-dialog" aria-labelledby="memory-organizer-title">
+                <div class="dialog-heading"><div><p class="eyebrow">PLATFORM MEMORY</p><h3 id="memory-organizer-title">Edit memory organizing</h3></div><button class="icon-button" id="close-memory-organizer" type="button" aria-label="Close">×</button></div>
+                <form id="memory-organizer-form" class="prompt-settings-grid">
+                  <div class="supervisor-defaults">
+                    <label>Device<select name="nodeId"></select></label>
+                    <label>CLI<select name="runtime"></select></label>
+                    <label>Model<select name="model"></select></label>
+                  </div>
+                  <p class="workspace-note full-width" data-model-usage-note role="note" hidden></p>
+                  <div class="supervisor-defaults">
+                    <label>Reasoning effort<select name="effort"></select></label>
+                    <label>Daily at<input name="time" type="time" required value="03:00"></label>
+                  </div>
+                  <label data-memory-start hidden>Start with<select name="startFrom"><option value="all">All earlier messages</option><option value="now">Only messages from now on</option></select></label>
+                  <p id="memory-organizer-feedback" class="form-feedback" role="status" hidden></p>
+                  <div class="form-actions prompt-settings-actions"><button class="secondary" id="cancel-memory-organizer" type="button">Cancel</button><button class="primary" type="submit">Save settings</button></div>
+                </form>
+              </dialog>
+            </section>
             <section class="settings-panel" data-settings-panel="data" data-layout="list" id="settings-data-panel" hidden>
               <section class="settings-list" aria-labelledby="data-retention-title">
                 <header class="settings-list-head"><div><h3 id="data-retention-title">Retention</h3><p>Finished sync bookkeeping and old sync snapshots are reclaimed; chat history, session turns, attachments and run logs are never touched</p></div>

@@ -1,5 +1,6 @@
 import { mkdir, open, rename, unlink, readFile, realpath, rm } from 'node:fs/promises';
-import { join, relative, isAbsolute } from 'node:path';
+import { join, relative, isAbsolute, dirname, delimiter } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { NativeTurnRunner } from './native-turns.mjs';
 import { createNativeSession } from './native-turn-sessions.mjs';
@@ -8,6 +9,9 @@ import { readNativeSession, registeredNativeSession, assertNativeSessionIdle } f
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { nativeTerminalProject, projectTerminalLock, terminalProcessIdentity, processIdentityKey, checkTerminalSession, stopTerminalSession } from './terminal-resume.mjs';
 import {nativeAgentSessionWorkspace} from './native-agent-switch-worker.mjs';
+import { agentProcessEnv, startNativeBridges } from './agent-bridge.mjs';
+
+const WB_BIN=join(dirname(fileURLToPath(import.meta.url)),'..','bin');
 
 const LIMIT=20*1024*1024,COUNT=6,uuid=/^[a-f0-9-]{36}$/;
 
@@ -77,6 +81,8 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
       })().finally(()=>retiring.delete(m.leaseId));retiring.set(m.leaseId,pending);return pending;
     }
   };
+  // `wb memory search` from a sessions-page CLI: requests land in this session's folder and are relayed to Home.
+  const bridges=startNativeBridges({root:join(data,'native-bridges'),home:homeHttp,token,device:nodeId,canSend:()=>!isDisconnected()});
   runner=new NativeTurnRunner({
     send,leases,onQuota,
     canStart:(m,{reusing})=>{
@@ -93,7 +99,10 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
       const images=m.runtime==='claude'?await Promise.all(files.filter(f=>f.mime.startsWith('image/')).map(async f=>({mime:f.mime,data:(await readFile(f.path)).toString('base64')}))):[];
       // One private gitconfig per session, rewritten every turn: a resident CLI picks up a newly bound account without restarting.
       const credential=m.gitCredential?.token?m.gitCredential:null;
-      const env=await runtimeGitEnvironment({directory:join(data,'git-auth'),key:nativeGitConfigKey(m.runtime,m.sessionId),repositories:credential?[{id:'session',repoUrl:credential.repoUrl}]:[],credentials:credential?{session:credential}:{}});
+      const gitEnv=await runtimeGitEnvironment({directory:join(data,'git-auth'),key:nativeGitConfigKey(m.runtime,m.sessionId),repositories:credential?[{id:'session',repoUrl:credential.repoUrl}]:[],credentials:credential?{session:credential}:{}});
+      // The CLI gets `wb` (memory search only) and never the Worker's own token.
+      // `wb` goes first; the Worker's node only last, as a fallback for its #!/usr/bin/env node, so the user's own tools still win.
+      const env=agentProcessEnv(gitEnv,{PATH:[WB_BIN,gitEnv.PATH||'',dirname(process.execPath)].filter(Boolean).join(delimiter),WB_BRIDGE:await bridges.open(m.runtime,m.sessionId),WB_NATIVE:'1'});
       return {files,images,env,handoffText};
     },
     resolveSession:async(runtime,sessionId,{message:m})=>{

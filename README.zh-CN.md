@@ -162,7 +162,7 @@ npm run worker   # Worker（在另一个终端中）
 
 ### 项目记忆：`AGENTS.md`
 
-每个受管项目只在项目根目录保留一个权威记忆文件 `AGENTS.md`。Workbench 创建项目文件夹或关联已有 Git 仓库时，仅在文件不存在时生成 `AGENTS.md` 模板（项目目标、规则和约定、构建和测试命令、关键决策；只写结论，约 200 行以内）和一行内容为 `@AGENTS.md` 的 `CLAUDE.md`。已有文件绝不覆盖。在 Git 仓库根目录中，只把新建的这两个文件在本地提交（`chore: add AGENTS.md project memory`），不暂存其他内容，也不推送。提交失败（例如未配置 Git 身份或被 hook 拒绝）时，文件保留为未提交状态并报告错误。Codex、Grok 和 Agy 原生读取 `AGENTS.md`；Claude Code 需要 2.1.281 及以上版本才支持 `AGENTS.md`，而 `CLAUDE.md` 指针覆盖了它的默认模式（只要存在 `CLAUDE.md` 就不读 `AGENTS.md`）。规则或关键决策变化时，任何角色都可以更新 `AGENTS.md`；保持简洁、只写结论，并提交修改。Workbench 不再保存自己的记忆（已移除 `wb memory` 以及 `.workbench/MEMORY.md` / `INDEX.md`；磁盘上的旧文件不会被删除）。过程历史用 `wb history search` 查询。
+每个受管项目只在项目根目录保留一个权威记忆文件 `AGENTS.md`。Workbench 创建项目文件夹或关联已有 Git 仓库时，仅在文件不存在时生成 `AGENTS.md` 模板（项目目标、规则和约定、构建和测试命令、关键决策；只写结论，约 200 行以内）和一行内容为 `@AGENTS.md` 的 `CLAUDE.md`。已有文件绝不覆盖。在 Git 仓库根目录中，只把新建的这两个文件在本地提交（`chore: add AGENTS.md project memory`），不暂存其他内容，也不推送。提交失败（例如未配置 Git 身份或被 hook 拒绝）时，文件保留为未提交状态并报告错误。Codex、Grok 和 Agy 原生读取 `AGENTS.md`；Claude Code 需要 2.1.281 及以上版本才支持 `AGENTS.md`，而 `CLAUDE.md` 指针覆盖了它的默认模式（只要存在 `CLAUDE.md` 就不读 `AGENTS.md`）。规则或关键决策变化时，任何角色都可以更新 `AGENTS.md`；保持简洁、只写结论，并提交修改。`AGENTS.md` 管规则和偏好。此外 Workbench 在 Home 上保存一份全平台共用的平台记忆：环境、账号与密钥、教训和解决办法、固定流程、个人信息、全平台的决定等跨项目有用的内容，所有项目、角色、CLI 和设备共用；只跟某个项目有关的决定和进度不记，用 `wb history search` 查该项目的聊天记录。它由单独配置的记忆整理模型（设置 → 记忆）每天从各项目的群聊消息里整理，每个群聊记录整理到哪条消息，失败的批次稍后重试；整理时会读项目的 `AGENTS.md`，已经写在里面的不重复记；偏好和只属于某个项目的规则不进记忆，由角色自己写进 `AGENTS.md`。整理模型每天还会检查一遍重复和冲突：重复的合并，冲突的以新的为准；整理用的 CLI 会话结束后即删除。记忆不注入提示词，群聊角色和会话页的 CLI 需要时都用 `wb memory search` 查；设置 → 记忆 里可以分页查看、筛选、添加、编辑和删除，人工保存的条目在事实变化时由整理原地改写，不会另外复制一条。旧的 `.workbench/MEMORY.md` / `INDEX.md` 不再使用（磁盘上的旧文件不会被删除）。过程历史用 `wb history search` 查询。
 
 ### 数据存放位置
 
