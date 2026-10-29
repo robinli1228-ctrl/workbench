@@ -1,3 +1,4 @@
+import {copyText,bindCopyFeedback} from './role-icons.js';
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
@@ -367,11 +368,11 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  /** Open iTerm at once; the link stays on the claim for "Open iTerm" / "Copy" if iTerm did not come up. */
  async function openInTerminal(item){const result=await prepareTerminal(item);if(result?.url)window.location.assign(result.url);return result;}
  /** Copy the ready-to-run command (ssh + launcher for a remote device). A page takeover must end first, since the link claims the session. */
- async function copyTerminalCommand(item){
+ async function copyTerminalCommand(item,button){
   if(takeover.releaseDisabled(item))throw Error('Wait for the current reply, send or upload to finish');
   if(takeover.isOn(item)||takeover.canChat(item)){if(!confirm(t('End the page takeover and prepare a terminal link for this session?')))throw Error(t('Cancelled'));await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
   const result=await prepareTerminal(item);if(!result?.command)throw Error('No terminal command was prepared');
-  await navigator.clipboard.writeText(result.command);await onStateRefresh();void load({quiet:true});return result.command;
+  await copyText(button,result.command);await onStateRefresh();void load({quiet:true});return result.command;
  }
  /**
   * Hand-over dialog: confirm first, then every step with its progress. To iTerm: end the page takeover, prepare the link,
@@ -404,7 +405,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
      if(step==='release'){if(takeover.releaseDisabled(item))throw Error('Wait for the current reply, send or upload to finish');await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
      else if(step==='prepare'){const result=await prepareTerminal(item);if(!result?.url&&!result?.command)throw Error('No terminal command was prepared');after.replaceChildren();
       if(result.url){const open=el('a','secondary',t('Open iTerm'));open.href=result.url;after.append(open);}
-      if(result.command){const copy=button('Copy terminal command',async b=>{await navigator.clipboard?.writeText(result.command).catch(()=>{});b.target.textContent=t('Copied');});after.append(copy);}
+      if(result.command){const copy=button('Copy terminal command',async b=>{await copyText(b.currentTarget,result.command).catch(()=>{});});after.append(copy);}
       after.prepend(el('span','native-side-hint',t('If iTerm did not open, use the link or copy the command.')));after.hidden=false;handoverDialog.dataset.url=result.url||'';}
      else if(step==='open'){const url=handoverDialog.dataset.url;if(url)window.location.assign(url);}
      else if(step==='stop'||step==='quit'){
@@ -672,7 +673,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  function openPromptFullscreen(text,at){
   if(!promptDialog){promptDialog=el('dialog','message-fullscreen');promptDialog.setAttribute('aria-label',t('Full message'));document.body.append(promptDialog);}
   const header=el('div','message-fullscreen-heading'),heading=el('strong','',at?`${t('Full message')} · ${time(at)}`:t('Full message'));
-  const copy=el('button','icon-button');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(text).catch(()=>{}));
+  const copy=el('button','icon-button');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void copyText(copy,text).catch(()=>{}));
   const close=el('button','icon-button');close.type='button';setActionIcon(close,'close',t('Close'));close.autofocus=true;close.addEventListener('click',()=>promptDialog.close());
   header.append(heading,copy,sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),at,copyText:text,render:()=>el('div','nt-side-prompt',text)}),{before:()=>promptDialog.close()}),close);
   const bodyEl=el('div','message-fullscreen-body'),content=el('div','message-fullscreen-content');content.append(el('div','chat-message-text',text));bodyEl.append(content);
@@ -696,7 +697,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    files=el('div','nt-prompt-files');const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(textEl);main.hidden=!body.trim();
    if(at){const stamp=el('time','nt-prompt-time',clock(at));stamp.dateTime=at;stamp.title=time(at);tools.append(stamp);}
    const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
-   const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
+   const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void copyText(copy,body).catch(()=>{}));if(session&&at)bindCopyFeedback(copy,`native:${key(session)}:${role}:${at}`);
    const pin=sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),subtitle:session?.title||'',at,copyText:body,render:()=>el('div','nt-side-prompt',body)}));pin.hidden||=!body.trim();
    tools.append(copy,expand,pin);row.dataset.tools='1';row._tools=tools;
    requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
@@ -704,7 +705,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   if(extra){if(agent)main.append(extra);else files.append(extra);}
   if(files)row.append(files);row.append(main);if(row._tools){row.append(row._tools);delete row._tools;}
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
-  if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);
+  if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void copyText(copy,body).catch(()=>{}));if(session&&at)bindCopyFeedback(copy,`native:${key(session)}:${role}:${at}`);foot.append(copy);
    // Open on the right: the same text Copy takes, rendered as in the chat, pinned beside it (and kept while another session is open).
    if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,{...mediaContext(session),filePaths:()=>filePaths});documentPreview.decorate(md,{...documentContext(session),filePaths:()=>filePaths});return md;}})));
    row.append(foot);}
@@ -874,7 +875,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   }});
  }
  /** Label/value rows with optional copy buttons, shared by the session, repository and runtime cards. */
- function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;if(typeof text==='string')valueText.title=text;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}
+ function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;if(typeof text==='string')valueText.title=text;data.append(valueText);if(copy){const b=button('',async()=>{try{await copyText(b,copy);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';bindCopyFeedback(b,`native-meta:${label}:${copy}`);data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}
  function metaCard(target,heading,rows){const section=el('section','native-side-card');section.append(el('h3','',t(heading)),metaList(rows));target.append(section);return section;}
  function renderSide(value,id,readable){
   side.dataset.sessionKey=key(value);
@@ -888,12 +889,12 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   // The session ID line under the This page / iTerm switch: the ID, copy it, and copy the command that opens it in iTerm.
   sessionIdRow=el('div','native-session-id-row');sessionIdRow.dataset.key=key(value);
   const idText=el('span','native-session-id-value',id||t('Not available yet'));idText.translate=false;idText.title=id?`${t('Session ID')} · ${id}`:'';sessionIdRow.append(idText);
-  if(id){const copyId=iconButton('copy','Copy session ID',async e=>{const b=e.currentTarget;try{await navigator.clipboard.writeText(id);setActionIcon(b,'check',t('Copied'));setTimeout(()=>setActionIcon(b,'copy',t('Copy session ID')),1500);}catch{}});sessionIdRow.append(copyId);}
+  if(id){const copyId=iconButton('copy','Copy session ID',async e=>{const b=e.currentTarget;try{await copyText(b,id);}catch{}});bindCopyFeedback(copyId,`native:${key(value)}:id`);sessionIdRow.append(copyId);}
   // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
   if(id&&value.workspace){const copy=iconButton('terminal','Copy iTerm command',async e=>{const b=e.currentTarget;b.disabled=true;b.dataset.pending='true';
-    try{await copyTerminalCommand(value);setActionIcon(b,'check',t('Copied'));setTimeout(()=>{setActionIcon(b,'terminal',t('Copy iTerm command'));delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}
+    try{await copyTerminalCommand(value,b);delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);}
     catch(error){delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'native-copy-command');
-   copy.disabled=takeover.releaseDisabled(value);sessionIdRow.append(copy);}
+   copy.disabled=takeover.releaseDisabled(value);bindCopyFeedback(copy,`native:${key(value)}:terminal`);sessionIdRow.append(copy);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
   void loadAgents(value);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
@@ -1448,7 +1449,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const input={runtime:r.value,sessionId:session&&!session.canReopen?nativeId(session):null,...(session?.entryId?{entryId:session.entryId}:{}),title:title.value.trim(),workspace:folder.value.trim(),allowAll:all.checked,useLocalSshKey:true},signature=JSON.stringify([d.value,input]);if(signature!==lastInput){operationId=crypto.randomUUID();lastInput=signature;}
    try{const result=await api(`/api/native-sessions/${encodeURIComponent(d.value)}/terminal`,{method:'POST',json:{...input,operationId}});prepared={nodeId:d.value,operationId};opened=false;if(!dialog.open||!dialog.contains(form)){await releaseUnused();return;}
     if(onPage){feedback.textContent=t('Starting the session…');await api(`/api/native-sessions/${encodeURIComponent(d.value)}/terminal`,{method:'POST',json:{action:'start',operationId}});opened=true;const created={nodeId:d.value,runtime:r.value,entryId:result.entryId||result.catalogEntryId};if(all.checked)pageOpened.add(key(created));dialog.close();await load();const item=items.find(x=>key(x)===key(created));if(item)void read(item);return;}
-    feedback.textContent=t('Ready. Open iTerm to start or resume the native CLI.');const a=el('a','primary',t('Open iTerm'));a.href=result.url;a.addEventListener('click',()=>{opened=true;});launch.append(a,button('Copy terminal command',async()=>{await navigator.clipboard.writeText(result.command);opened=true;feedback.textContent=t('Copied');}));void load({quiet:true});}catch(error){if(error.folderPreparationReleased){operationId=null;lastInput='';}feedback.textContent=t(error.message);}finally{submit.disabled=false;if(viaTerminal)viaTerminal.disabled=false;d.disabled=r.disabled=Boolean(session);folder.disabled=all.disabled=title.disabled=browseButton.disabled=false;}
+    feedback.textContent=t('Ready. Open iTerm to start or resume the native CLI.');const a=el('a','primary',t('Open iTerm'));a.href=result.url;a.addEventListener('click',()=>{opened=true;});launch.append(a,button('Copy terminal command',async e=>{await copyText(e.currentTarget,result.command);opened=true;feedback.textContent=t('Copied');}));void load({quiet:true});}catch(error){if(error.folderPreparationReleased){operationId=null;lastInput='';}feedback.textContent=t(error.message);}finally{submit.disabled=false;if(viaTerminal)viaTerminal.disabled=false;d.disabled=r.disabled=Boolean(session);folder.disabled=all.disabled=title.disabled=browseButton.disabled=false;}
   });dialog.showModal();if(!session&&projectRootOf())previewProjectFolder();else void fillDefaultFolder();
  }
  /** Segmented buttons share one mode transition; selecting the active side does not reload history. */

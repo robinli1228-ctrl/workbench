@@ -1,3 +1,4 @@
+import {copyText} from './role-icons.js';
 import { t } from './i18n.js';
 import {setActionIcon} from './role-icons.js';
 function element(tag, className, text) {
@@ -105,7 +106,7 @@ export function createHistoryViewer({ api, inline = false }) {
       try {
         while (!state.complete) if (!await requestPart(state)) return;
         render(view, state);
-        await navigator.clipboard.writeText(state.text);
+        await copyText(view.parts.copy,state.text);
         if (activeState === state) view.parts.status.textContent = t('Full text copied, {totalLength} characters', { totalLength: state.totalLength });
       } catch (error) { showError(view, state, error); }
       finally {

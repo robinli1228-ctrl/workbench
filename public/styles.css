@@ -2455,7 +2455,7 @@ dialog .dialog-heading h2 { color: var(--text-strong); font-size: var(--fs-xl); 
 .attachment-card { border-color: var(--card-hairline); border-radius: var(--r-md); background: #fff; }
 .chat-row.human .attachment-card { background: rgb(255 255 255 / 75%); }
 /* Include the bubble's bottom inset in the footer, then balance it above and below the controls. */
-.chat-card-footer { margin-bottom: -10px; padding-block: 4px; border-top-color: var(--card-hairline); color: var(--text-muted); }
+.chat-card-footer { margin-bottom: -10px; padding-block: 3.5px; border-top-color: var(--card-hairline); color: var(--text-muted); }
 .chat-card-actions .chat-icon-btn { height: 24.2px; }
 .chat-icon-btn { border-radius: var(--r-sm); color: var(--text-muted); }
 .chat-icon-btn:hover { color: var(--accent); background: var(--accent-tint); }
@@ -3301,7 +3301,7 @@ body[data-navigation-mode="sessions"] .native-session-gear { display: grid; plac
 .icon-button { width: 31px; height: 31px; border-radius: 8px; }
 .icon-button svg { width: 18px; height: 18px; }
 .chat-icon-btn svg { width: 14px; height: 14px; }
-.chat-card-actions .chat-icon-btn { width: 28px; height: 28px; }
+.chat-card-actions .chat-icon-btn { width: 28px; height: 28px; min-height: 28px; padding-block: 4px; }
 .sidebar-footer .icon-button svg, .topbar-actions .icon-button svg, .native-session-gear svg { width: 18px; height: 18px; }
 /* Buttons: 34px in cards and bars, 36px in dialog action rows; same radius and type. */
 button.primary, button.secondary, button.danger { min-height: 34px; padding: 0 14px; border-radius: 8px; font-size: 13px; line-height: 1.2; }
