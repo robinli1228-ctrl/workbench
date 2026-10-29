@@ -3464,6 +3464,7 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .nt-user.is-unsent .nt-body { opacity: .72; border-style: dashed; }
 .nt-user.is-unsent .nt-prompt-tools { opacity: 1; }
 .nt-unsent-note { margin-right: 8px; color: #b45309; font-size: 11.5px; }
+.nt-unsent-note.is-pending { color: #7a8191; }
 
 /* ---- Side cards: a hairline under every title bar; empty / loading / failed states as icon + few words ---- */
 .native-side-card { --card-pad: 14px; }
