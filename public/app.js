@@ -606,6 +606,8 @@ async function refreshState({ quiet = false } = {}) {
   } catch (error) {
     // Recover with a full snapshot after a failed read instead of extending an uncertain cursor.
     app.stateCache = null;
+    // Placeholders from the page shell stay only while a first load is still expected to arrive.
+    if (!app.lastStateAt) for (const node of document.querySelectorAll('#project-list > .list-skeleton, #chat-feed > .chat-skeleton')) node.remove();
     setError(error.message);
     setConnection('Home connection failed');
     // SSE may stay open without another change event, so failed reads also need the polling fallback.

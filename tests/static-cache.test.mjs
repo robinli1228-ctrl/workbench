@@ -22,10 +22,11 @@ test('static files revalidate with ETag and the service worker cache name follow
 
   const first=await fetch(url+'/app.js');
   const etag=first.headers.get('etag');
-  assert.equal(first.status,200);assert.match(etag||'',/^"[\w-]{22}"$/);assert.equal(first.headers.get('cache-control'),'no-cache');
+  assert.equal(first.status,200);assert.match(etag||'',/^W\/"[\w-]{22}"$/);assert.equal(first.headers.get('cache-control'),'no-cache');
   await first.arrayBuffer();
   const again=await fetch(url+'/app.js',{headers:{'If-None-Match':etag}});
   assert.equal(again.status,304,'an unchanged file is not sent again');assert.equal(again.headers.get('etag'),etag);
+  assert.equal((await fetch(url+'/app.js',{headers:{'If-None-Match':etag.slice(2)}})).status,304,'a strong form of the same validator also matches');
   const other=await fetch(url+'/app.js',{headers:{'If-None-Match':'"stale"'}});
   assert.equal(other.status,200);await other.arrayBuffer();
 
@@ -35,4 +36,10 @@ test('static files revalidate with ETag and the service worker cache name follow
   const served=worker.match(/^const CACHE = '([^']+)'/m)[1];
   assert.match(served,new RegExp(`^${declared}-[0-9a-f]{12}$`),'the served cache name adds the page-file fingerprint');
   assert.equal((await (await fetch(url+'/sw.js')).text()).match(/^const CACHE = '([^']+)'/m)[1],served,'stable while files are unchanged');
+  const build=served.slice(declared.length+1);
+  assert.equal((await (await fetch(url+'/healthz')).json()).build,build,'Home reports the same build it stamps into the worker');
+  assert.match(await (await fetch(url+'/')).text(),new RegExp(`<meta name="workbench-build" content="${build}">`),'the page states which build it is');
+  // Every precached path must be served, or one 404 fails the whole install and leaves users on old code.
+  const precached=[...source.matchAll(/'(\/[^']*)'/g)].map(m=>m[1]).filter(path=>path==='/'||/\.[a-z]+$/.test(path));
+  for(const path of precached){const response=await fetch(url+path);assert.equal(response.status,200,path);await response.arrayBuffer();}
 });

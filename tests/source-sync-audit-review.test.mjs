@@ -11,7 +11,7 @@ const op=path=>({repositoryId:'scope',path,source:'a',observed:{a:{exists:true,m
 const done={status:'succeeded',phase:'confirmed'};
 test('all precached assets and served script relative imports have Home static routes',async()=>{
  const home=await readFile(new URL('../src/home.mjs',import.meta.url),'utf8');
- const start=home.indexOf('const files = {'),end=home.indexOf('const file = files[pathname]',start);
+ const start=home.indexOf('const files = {'),end=home.indexOf('return files;',start);
  assert.ok(start>0&&end>start);
  const files=runInNewContext(home.slice(start,end)+';files');
  const sw=await readFile(new URL('../public/sw.js',import.meta.url),'utf8');

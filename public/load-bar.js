@@ -3,7 +3,8 @@
  * content is already on screen. It appears only after a short delay, so fast reads never flash, and stays a moment so a
  * burst of reads reads as one load.
  */
-const SHOW_AFTER = 250, HIDE_AFTER = 200;
+// A read that never settles (a half-open connection) stops counting after MAX_TRACKED, so the bar cannot stay on.
+const SHOW_AFTER = 250, HIDE_AFTER = 200, MAX_TRACKED = 30000;
 let pending = 0, showTimer = null, hideTimer = null, bar = null;
 
 function element() {
@@ -32,7 +33,10 @@ function end() {
 export function trackLoading(promise) {
   if (typeof document === 'undefined') return promise;
   begin();
-  return Promise.resolve(promise).finally(end);
+  let done = false;
+  const finish = () => { if (!done) { done = true; clearTimeout(cap); end(); } };
+  const cap = setTimeout(finish, MAX_TRACKED);
+  return Promise.resolve(promise).finally(finish);
 }
 
 /** Whether a tracked load is running (for tests and skeletons). */
