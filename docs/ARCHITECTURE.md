@@ -725,3 +725,5 @@ The empty Git repository used for worktree ignore evaluation is checked before r
 Native page polling allows one outstanding read for the current session generation. Switching sessions and confirming a send invalidate only the appropriate read; a late send response from another session cannot invalidate the current session. Copy-feedback timers belong to their rendered buttons, so an unused candidate node cannot cancel the visible button's three-second reset.
 
 A failed service-worker precache removes its incomplete cache. An explicit update reload unregisters the current scope when Home advertises a different build, then the newly loaded page registers its service worker again; a cache name alone is not proof that installation completed.
+
+A retiring capture can expose a hash proof of the manifest bundle already stored by Home. Cancellation compares that proof with the Worker's immutable saved result and sends only its compact receipt when they match; missing or mismatched proof falls back to the original upload. Active captures without an accepted result still withhold this proof so required file uploads cannot be skipped.
