@@ -11,19 +11,24 @@ const time=value=>value?new Intl.DateTimeFormat(dateLocale(),{hour:'2-digit',min
 
 /** A read-only projection of recorded events; a final snapshot is not appended a second time to its streamed reply. */
 export function liveSceneRows(events,run={}) {
-  const logs=partitionRunLog(events),rows=[];
-  const streamed=logs.output.filter(event=>event.type==='text').map(event=>event.payload?.text||'').join('');
+  // Native event previews are capped; ranges point to the complete parts in the existing text field.
+  const source=events.map(event=>{
+    if(event.type!=='message'||typeof run.text!=='string')return event;
+    const range=run.replyRanges?.find(r=>r.messageId?r.messageId===event.payload?.messageId:r.seq===event.seq);
+    if(!range||!Number.isInteger(range.offset)||!Number.isInteger(range.length)||range.offset<0||range.length<1||range.offset+range.length>run.text.length)return event;
+    return {...event,payload:{...event.payload,text:run.text.slice(range.offset,range.offset+range.length)}};
+  });
+  const logs=partitionRunLog(source),rows=[];
   for(const event of logs.output) {
     const body=event.payload?.text||event.payload?.error?.message||'';
     if(!body)continue;
-    if(event.type==='message'&&['commentary','final_answer'].includes(event.payload?.phase)&&streamed.includes(body))continue;
     const prior=rows.at(-1);
-    if(event.type==='text'&&prior?.kind==='text'&&prior.seq===event.seq-1){prior.text+=body;prior.seq=event.seq;}
-    else rows.push({key:`event:${event.id||event.seq}`,seq:event.seq,kind:event.type,text:body,createdAt:event.createdAt});
+    if(event.type==='text'&&prior?.kind==='text'&&prior.seq===event.seq-1&&prior.messageId===event.payload?.messageId){prior.text+=body;prior.seq=event.seq;}
+    else rows.push({key:`event:${event.id||event.seq}`,seq:event.seq,kind:event.type,text:body,messageId:event.payload?.messageId,phase:event.payload?.phase,aggregate:event.payload?.aggregate,createdAt:event.createdAt});
   }
   for(const tool of logs.tools)rows.push({key:`tool:${tool.item.id||tool.seq}`,seq:tool.seq,kind:'tool',item:tool.item,createdAt:tool.createdAt,updatedAt:tool.updatedAt});
   rows.sort((a,b)=>a.seq-b.seq);
-  if(run.result&&shouldShowFinalResult(run.result,events))rows.push({key:'stored-result',seq:Infinity,kind:'message',text:run.result,createdAt:run.finishedAt});
+  if(run.result&&shouldShowFinalResult(run.result,logs.output))rows.push({key:'stored-result',seq:Infinity,kind:'message',text:run.result,createdAt:run.finishedAt});
   return {input:logs.input,rows};
 }
 

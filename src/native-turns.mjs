@@ -62,11 +62,20 @@ export function applyNativeTurnEvent(turn,event){
  const next={...turn,updatedAt:now()},events=[...(turn.events||[])];
  const push=(type,payload)=>{const prior=events.at(-1);
   // Adjacent text deltas are merged into one event, so long replies stay within the bounded event list.
-  if(type==='text'&&prior?.type==='text')events[events.length-1]={...prior,payload:{text:(prior.payload.text+payload.text).slice(-MAX_EVENT_TEXT)}};
+  if(type==='text'&&prior?.type==='text'&&prior.payload.messageId===payload.messageId)events[events.length-1]={...prior,payload:{...payload,text:(prior.payload.text+payload.text).slice(-MAX_EVENT_TEXT)}};
   else events.push({seq:(prior?.seq||0)+1,type,payload,createdAt:now()});
   if(events.length>MAX_EVENTS)events.splice(0,events.length-MAX_EVENTS);};
- if(event.kind==='text'&&typeof event.text==='string'){next.live=((next.live||'')+event.text).slice(-MAX_TEXT);push('text',{text:event.text});next.phase='replying';}
- if(event.kind==='message'&&typeof event.text==='string'){next.parts=[...(next.parts||[]),event.text.slice(-MAX_TEXT)].slice(-20);while(next.parts.length>1&&next.parts.join('\n\n').length>MAX_TEXT)next.parts.shift();next.live='';push('message',{text:clip(event.text),phase:event.phase||null});next.phase='replying';}
+ const identity=typeof event.messageId==='string'&&event.messageId.length<=200?{messageId:event.messageId}:{};
+ if(event.kind==='text'&&typeof event.text==='string'){next.live=((next.live||'')+event.text).slice(-MAX_TEXT);if(identity.messageId)next.liveMessageId=identity.messageId;push('text',{text:event.text,...identity});next.phase='replying';}
+ if(event.kind==='message'&&typeof event.text==='string'&&event.text.trim()&&event.aggregate){push('message',{text:clip(event.text),phase:event.phase||null,aggregate:true});}
+ if(event.kind==='message'&&typeof event.text==='string'&&event.text.trim()&&!event.aggregate){
+  const parts=[...(next.parts||[])],ids=[...(next.partMessageIds||parts.map(()=>null))],index=identity.messageId?ids.indexOf(identity.messageId):-1;
+  if(index>=0)parts[index]=event.text.slice(-MAX_TEXT);else{parts.push(event.text.slice(-MAX_TEXT));ids.push(identity.messageId||null);}
+  while(parts.length>20||parts.length>1&&parts.join('\n\n').length>MAX_TEXT){parts.shift();ids.shift();}
+  next.parts=parts;if(identity.messageId||next.partMessageIds)next.partMessageIds=ids;
+  if(!identity.messageId||!next.liveMessageId||identity.messageId===next.liveMessageId){next.live='';delete next.liveMessageId;}
+  push('message',{text:clip(event.text),phase:event.phase||null,...identity});next.phase='replying';
+ }
  if(['text','message'].includes(event.kind))next.text=[...(next.parts||[]),next.live].filter(Boolean).join('\n\n').slice(-MAX_TEXT);
  // The latest context snapshot of the native session is kept on the turn, not in its event list.
  if(event.kind==='context_usage'&&event.sample&&typeof event.sample==='object')next.contextUsage={...event.sample};
@@ -108,9 +117,25 @@ export function applyNativeTurnEvent(turn,event){
  let bytes=2;next.events=[];for(let i=events.length-1;i>=0;i--){const size=Buffer.byteLength(JSON.stringify(events[i]))+1;if(bytes+size>MAX_EVENT_BYTES)break;bytes+=size;next.events.unshift(events[i]);}return next;
 }
 
+/** Locate complete saved reply parts in the already bounded text field; no body is duplicated in the API payload. */
+export function nativeReplyRanges(turn) {
+ const parts=turn.parts||[],ids=turn.partMessageIds||[],text=turn.text||'';
+ const whole=[...parts,turn.live].filter(Boolean).join('\n\n');
+ if(!parts.length||!text||!whole.endsWith(text))return [];
+ const legacy=(turn.events||[]).filter(e=>e.type==='message'&&e.payload?.text&&!e.payload.messageId&&!e.payload.aggregate);
+ const anonymous=parts.filter((body,i)=>body&&!ids[i]).length;let legacyIndex=legacy.length-anonymous,offset=0;
+ const trimmed=whole.length-text.length,ranges=[];
+ for(let i=0;i<parts.length;i++){
+  const body=parts[i];if(!body)continue;const messageId=ids[i],event=messageId?null:legacy[legacyIndex++],start=offset-trimmed;
+  if(body&&start>=0&&start+body.length<=text.length&&(messageId||event))ranges.push({...(messageId?{messageId}:{seq:event.seq}),offset:start,length:body.length});
+  if(body)offset+=body.length+2;
+ }
+ return ranges;
+}
+
 export function nativeTurnView(turn){
  const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question,disconnectedAt,tasks}=turn;
- return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
+ return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',replyRanges:nativeReplyRanges(turn),status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
   attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{}),...(tasks?.length?{tasks}:{})};
 }
 
@@ -121,7 +146,7 @@ export class NativeTurnsHome{
   db.db.exec("CREATE INDEX IF NOT EXISTS native_turn_active ON records(id) WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('starting','running','stopping')");
  }
  static owner(nodeId){return `native:${nodeId}`;}
- list(nodeId,runtime,sessionId){let bytes=0;return nativeTurnRows(this.db,{nodeId,runtime,sessionId}).map(t=>{let view=nativeTurnView(t);bytes+=Buffer.byteLength(JSON.stringify(view));if(bytes>2*1024*1024)view={...view,events:[],text:view.text.slice(-4000),truncated:true};return view;}).reverse();}
+ list(nodeId,runtime,sessionId){let bytes=0;return nativeTurnRows(this.db,{nodeId,runtime,sessionId}).map(t=>{let view=nativeTurnView(t);bytes+=Buffer.byteLength(JSON.stringify(view));if(bytes>2*1024*1024)view={...view,events:[],text:view.text.slice(-4000),replyRanges:[],truncated:true};return view;}).reverse();}
  active(nodeId,runtime,sessionId){return nativeTurnRows(this.db,{nodeId,runtime,sessionId,active:true,limit:1})[0];}
  process(nodeId,runtime,sessionId){const p=this.db.get('nativeTakeovers',sessionKey(nodeId,runtime,sessionId));return this.leases&&p?.leaseId?this.leases.held(p.leaseId):p?.status==='open';}
  /** A finished turn is not permission to reuse an exiting process; only its matching lease closure releases the queue. */
@@ -480,8 +505,8 @@ export class NativeTurnRunner{
     if(type==='status'&&['succeeded','failed','interrupted'].includes(p.status))return end(p.status,p.error);
     if(type==='status'&&p.status)this.event(m.id,{kind:'status',status:p.status});
     else if(type==='tool'&&p.item)this.event(m.id,{kind:'tool',text:p.text,item:p.item});
-    else if(type==='message'&&typeof p.text==='string')this.event(m.id,{kind:'message',text:p.text,phase:p.phase||null});
-    else if(type==='text'&&typeof p.text==='string')this.event(m.id,{kind:'text',text:p.text});
+    else if(type==='message'&&typeof p.text==='string')this.event(m.id,{kind:'message',text:p.text,phase:p.phase||null,...(p.aggregate?{aggregate:true}:{}),...(p.messageId?{messageId:p.messageId}:{})});
+    else if(type==='text'&&typeof p.text==='string')this.event(m.id,{kind:'text',text:p.text,...(p.messageId?{messageId:p.messageId}:{})});
     else if(type==='log'&&typeof p.text==='string')this.event(m.id,{kind:'log',text:p.text.slice(0,4000),thinking:/think|\u601d\u8003/i.test(p.text)});
     else if(type==='context_usage'&&p&&typeof p==='object')this.event(m.id,{kind:'context_usage',sample:p});
     else if(type==='question'&&p.id&&Array.isArray(p.questions))this.event(m.id,{kind:'question',id:String(p.id),questions:p.questions});

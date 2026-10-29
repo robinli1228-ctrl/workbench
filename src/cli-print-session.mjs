@@ -49,6 +49,7 @@ export class CliPrintSession {
     this.lastThinkingAt = 0;
     this.contextTracker = runtime==='claude'?new ClaudeContextUsage():null;
     this.answer = ''; this.textBuffer = ''; this.finalText = ''; this.runtimeError = '';
+    this.claudeMessages=new Map();this.claudeMessageAliases=new Map();this.messageId=null;this.bestAnswerId=null;this.messageSerial=0;
   }
   bin() {
     if (this.runtime === 'agy') return process.env.AGY_BIN || 'agy';
@@ -96,6 +97,7 @@ export class CliPrintSession {
     if(!this.keepAlive || !this.done || !this.proc || this.proc.killed || this.proc.exitCode!==null || this.proc.signalCode!==null)throw new Error(tr('cliPrintSession.cliProcessCannotBeReused'));
     Object.assign(this,options);this.done=false;this.stopping=false;this.awaitingBackground=false;
     this.answer='';this.textBuffer='';this.finalText='';this.bestAnswer='';this.runtimeError='';this.emittedFinal=false;
+    this.claudeMessages.clear();this.claudeMessageAliases.clear();this.messageId=null;this.bestAnswerId=null;this.messageSerial=0;
     this.lastThinkingAt=0;
   }
   async start(prompt) {
@@ -170,6 +172,7 @@ export class CliPrintSession {
     // Child streams still expose tool activity, but only the owner can supply the turn's answer or completion.
     const ownerMessage=!raw.parent_tool_use_id&&!m.parent_tool_use_id;
     const type = m.type || m.event || m.sessionUpdate || '';
+    if(this.runtime==='claude'&&ownerMessage&&type==='message_start')this.beginClaudeMessage(m.message?.id);
     const usage = m.usage || m.tokenUsage || raw.usage;
     if (usage && typeof usage === 'object') this.emit('usage', { ...usage, source: 'runtime' });
     // The native thinking stream is also evidence of activity; only a throttled signal is reported, and private reasoning content is not recorded and tokens are not estimated.
@@ -190,15 +193,15 @@ export class CliPrintSession {
     if (ownerMessage&&delta) this.appendText(delta);
     else if (ownerMessage&&(type === 'assistant' || type === 'agent_message_chunk' || type === 'agent_message')) {
       const text = extractText(m.message?.content || m.content || m.message || m.text);
-      if (text) this.appendSnapshot(text);
+      if (text) this.appendSnapshot(text,m.message?.id||m.id);
     }
     if (ownerMessage&&!delta && type === 'message' && (m.role === 'assistant' || m.content)) {
       const text = extractText(m.content || m.message);
-      if (text) this.appendSnapshot(text);
+      if (text) this.appendSnapshot(text,m.message?.id||m.id);
     }
     if (ownerMessage&&(type === 'result' || type === 'completion' || m.subtype === 'success')) {
       const text = typeof m.result === 'string' ? m.result : extractText(m.response || m.result || m.message || m.content);
-      if (text) this.finalText = text;
+      if (text?.trim()) this.finalText = text;
       if (m.is_error || m.status==='ERROR') {
         // result/response is partial body text, not the error reason; keep the real diagnostics received earlier.
         this.runtimeError = this.runtimeError || extractText(m.error) || tr('cliPrintSession.runtimeReturnedErrorResultCheck');
@@ -206,7 +209,7 @@ export class CliPrintSession {
       } else if(m.status==='SUCCESS' || m.subtype==='success') this.runtimeError='';
       if(this.keepAlive) {
         // Background tasks still run in this process: this reply is only progress, so the Run stays active (slot held, never pooled as idle).
-        if(!this.runtimeError&&this.backgroundTasks.size){this.awaitingBackground=true;this.flushText();this.bestAnswer='';return;}
+        if(!this.runtimeError&&this.backgroundTasks.size){this.awaitingBackground=true;this.flushText();this.bestAnswer='';this.bestAnswerId=null;this.finalText='';return;}
         this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);
         if(this.runtimeError)this.shutdown();
       }
@@ -244,20 +247,46 @@ export class CliPrintSession {
       }
     }
   }
+  /** Claude's stream belongs to a native assistant message, not to every snapshot in the turn. */
+  beginClaudeMessage(id) {
+    this.flushText();this.messageId=this.claudeMessageAliases.get(id)||id||`claude-message-${++this.messageSerial}`;
+    if(!this.claudeMessages.has(this.messageId))this.claudeMessages.set(this.messageId,{text:'',complete:false});
+  }
   appendText(text) {
     if (!text) return;
+    if(this.runtime==='claude'){
+      if(!this.messageId)this.beginClaudeMessage();
+      const message=this.claudeMessages.get(this.messageId);
+      if(message.complete)return; // A late replay cannot extend an already complete message.
+      message.text+=text;
+    }
     this.answer += text;
     this.textBuffer += text;
     if (!this.textTimer) this.textTimer = setTimeout(() => this.flushText(), 300);
   }
-  /** Some CLIs resend a cumulative snapshot after the deltas; only the newly appearing suffix of the snapshot is appended. */
-  appendSnapshot(text) {
+  /** Claude snapshots replace their identified message; other print adapters retain their cumulative-stream contract. */
+  appendSnapshot(text,id) {
+    if(this.runtime==='claude') {
+      if(!text?.trim())return;
+      this.flushText();
+      if(id&&!this.claudeMessages.has(id)&&this.messageId?.startsWith('claude-message-')&&!this.claudeMessages.get(this.messageId)?.complete)this.claudeMessageAliases.set(id,this.messageId);
+      id=this.claudeMessageAliases.get(id)||id;
+      // Native IDs distinguish genuinely separate replies even when their wording is identical.
+      if(!id){const current=this.claudeMessages.get(this.messageId);id=current&&!current.complete?this.messageId:`claude-message-${++this.messageSerial}`;}
+      const known=this.claudeMessages.has(id);
+      this.claudeMessages.set(id,{text,complete:true});
+      if(!known||!this.messageId)this.messageId=id;
+      this.answer=[...this.claudeMessages.values()].map(message=>message.text).join('');
+      if(id===this.bestAnswerId||text.length>(this.bestAnswer?.length||0)){this.bestAnswer=text;this.bestAnswerId=id;}
+      this.emit('message',{text,phase:'commentary',messageId:id});
+      return;
+    }
     if (!text || this.answer.endsWith(text) || this.answer.startsWith(text)) return;
     if (text.length > (this.bestAnswer?.length || 0)) this.bestAnswer = text;
     if (text.startsWith(this.answer)) this.appendText(text.slice(this.answer.length));
     else this.appendText(text);
   }
-  flushText() { clearTimeout(this.textTimer); this.textTimer = null; if (this.textBuffer) { this.emit('text', { text: this.textBuffer }); this.textBuffer = ''; } }
+  flushText() { clearTimeout(this.textTimer); this.textTimer = null; if (this.textBuffer) { this.emit('text', { text: this.textBuffer,...(this.runtime==='claude'&&this.messageId?{messageId:this.messageId}:{}) }); this.textBuffer = ''; } }
   approve() { throw new Error(tr('cliPrintSession.runtimeAutoApprovesInPrint')); }
   async stop() {
     if (this.done) return;
@@ -269,10 +298,13 @@ export class CliPrintSession {
     this.flushText();
     // Claude sometimes sends the full body as an assistant message while result only returns "see the body above".
     // Only override the short result when a single body is significantly more complete, to avoid mistaking an ordinary progress message for the final answer.
-    const answer = this.bestAnswer?.length > 500 && this.bestAnswer.length > (this.finalText?.length || 0) * 4
-      ? this.bestAnswer : this.finalText || this.answer;
+    const current=this.runtime==='claude'?this.claudeMessages.get(this.messageId):null;
+    const completed=this.finalText||(current?.complete?current.text:'');
+    const useBest=status==='succeeded'&&this.bestAnswer?.length>500&&this.bestAnswer.length>(completed.length||0)*4;
+    const answer=useBest?this.bestAnswer:completed||this.answer;
+    const aggregate=!completed&&!useBest;
     if (answer && !this.emittedFinal) {
-      this.emit('message', { text: answer, phase: 'final_answer' });
+      this.emit('message', { text: answer, phase: 'final_answer',...(aggregate?{aggregate:true}:{}),...(this.runtime==='claude'&&!aggregate&&this.messageId?{messageId:useBest?this.bestAnswerId:this.messageId}:{}) });
       this.emittedFinal = true;
     }
     this.done = true; this.awaitingBackground = false;

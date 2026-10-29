@@ -5,11 +5,42 @@ export function taskRunDisplayStatus(task,run,request) {
   return executionProgress({run,task,request}).state;
 }
 
+/** Read-only reply projection: a complete message supersedes its own provisional stream, never the tool records. */
+export function replyEvents(events=[]) {
+  const rows=[],completed=new Set(),ordered=mergeRunEvents([],events);
+  const legacyText=ordered.filter(e=>e.type==='text'&&!e.payload?.messageId);
+  for(const event of ordered) {
+    const payload=event.payload||{},id=payload.messageId;
+    if(event.type==='text'&&id&&completed.has(id))continue;
+    const aggregate=payload.aggregate||event.type==='message'&&payload.phase==='final_answer'&&!id&&legacyText.length>1&&legacyText.map(e=>e.payload?.text||'').join('')===payload.text;
+    if(aggregate){if(!rows.some(e=>['text','message'].includes(e.type)&&e.payload?.text))rows.push(event);continue;}
+    if(event.type==='message'&&['commentary','final_answer'].includes(payload.phase)&&!String(payload.text||'').trim())continue;
+    if(event.type==='message'&&payload.text&&['commentary','final_answer'].includes(payload.phase)) {
+      let matches=[];
+      if(id)matches=rows.map((row,i)=>row.payload?.messageId===id&&['text','message'].includes(row.type)?i:-1).filter(i=>i>=0);
+      if(!matches.length){
+        // Older recordings have no message IDs. Only the latest text segment is provisional;
+        // an earlier completed message or tool starts a separate segment. Logs do not split prose.
+        let last=rows.length-1;while(last>=0&&['log','error'].includes(rows[last].type))last--;
+        if(last>=0&&rows[last].type==='text'&&!rows[last].payload?.messageId){
+          for(let i=last;i>=0&&!['message','tool','input'].includes(rows[i].type);i--)if(rows[i].type==='text'&&!rows[i].payload?.messageId)matches.push(i);
+        }
+      }
+      // Keep the original event objects untouched. A corrected snapshot stays at its reply's position.
+      if(matches.length){const at=Math.min(...matches),first=rows[at],remove=new Set(matches),replacement={...event,seq:first.seq,createdAt:first.createdAt||event.createdAt};
+        const kept=rows.filter((_,i)=>!remove.has(i));kept.splice(at,0,replacement);rows.splice(0,rows.length,...kept);
+      }else rows.push(event);
+      if(id)completed.add(id);
+    }else rows.push(event);
+  }
+  return rows;
+}
+
 /** Execution details put only real tool calls on the tools page; status updates of the same tool are merged. */
 export function partitionRunLog(events = []) {
   const result = { input: null, output: [], tools: [] };
   const toolIndex = new Map();
-  for (const event of mergeRunEvents([],events)) {
+  for (const event of replyEvents(events)) {
     if (event.type === 'input') {
       result.input = event.payload || null;
       continue;
@@ -36,9 +67,6 @@ export function partitionRunLog(events = []) {
       result.tools.push(tool);
     }
   }
-  const streamedText = result.output.filter(event => event.type === 'text').map(event => event.payload?.text || '').join('');
-  result.output = result.output.filter(event => event.type !== 'message' || event.payload?.phase !== 'final_answer'
-    || !event.payload?.text || !streamedText.includes(event.payload.text));
   return result;
 }
 
@@ -70,8 +98,8 @@ export function runTimeline(events = []) {
       continue;
     }
     const kind=event.type==='error'?'error':'text';
-    if(last?.kind==='text'&&kind==='text'&&event.type==='text'&&last.streaming)last.text+=text;
-    else if(!(kind==='text'&&last?.kind==='text'&&last.text===text))rows.push({kind,seq:entry.seq,text,streaming:event.type==='text',createdAt:event.createdAt});
+    if(last?.kind==='text'&&kind==='text'&&event.type==='text'&&last.streaming&&last.messageId===payload.messageId)last.text+=text;
+    else rows.push({kind,seq:entry.seq,text,streaming:event.type==='text',messageId:payload.messageId,createdAt:event.createdAt});
   }
   return rows;
 }

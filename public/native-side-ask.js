@@ -34,14 +34,14 @@ function questionRows(q,session,files,live,preview,api){
  by.append(avatar,el('span','nt-name',names[session.runtime]),el('time','',clock(q.endedAt||q.createdAt)));reply.append(by);
  const markdown=value=>linkMedia(renderMarkdown(value),{key:`native:${session.nodeId}:${session.runtime}:${nativeId(session)}`,describe:path=>api(`${endpoint(session.nodeId)}/media?${new URLSearchParams({runtime:session.runtime,sessionId:nativeId(session),path})}`)});
  const body=el('div','nt-body'),content=el('div','nt-turn');body.append(content);reply.append(body);
- const rows=liveSceneRows(q.events||[],{status:q.status}).rows.filter(r=>!(r.kind==='log'&&/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/m.test(stripAnsi(r.text||''))));
- const messages=new Set(rows.filter(r=>r.kind==='message').map(r=>r.text.trim())),seen=new Set();let group=[];
+ const rows=liveSceneRows(q.events||[],q).rows.filter(r=>!(r.kind==='log'&&/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/m.test(stripAnsi(r.text||''))));
+ let shown=0,group=[];
  const flush=()=>{if(!group.length)return;content.append(activityBlock({steps:group.filter(r=>r.kind==='tool').map(r=>classifyStep(r.item,q.status)),notes:group.filter(r=>r.kind!=='tool'),t,live,open:live,onPreview:(step,path)=>preview.open(step,path)}));group=[];};
- for(const row of rows){if(['tool','log','error'].includes(row.kind)){group.push(row);continue;}flush();const value=simplifiedCliOutput(stripAnsi(row.text||''));if(!value.trim()||seen.has(value)||row.kind==='text'&&messages.has(row.text.trim()))continue;seen.add(value);content.append(markdown(value));}flush();
- if(!seen.size&&q.text)content.append(markdown(simplifiedCliOutput(q.text)));
+ for(const row of rows){if(['tool','log','error'].includes(row.kind)){group.push(row);continue;}flush();const value=simplifiedCliOutput(stripAnsi(row.text||''));if(!value.trim())continue;shown++;content.append(markdown(value));}flush();
+ if(!shown&&q.text)content.append(markdown(simplifiedCliOutput(q.text)));
  const tasks=taskBlock(q,t,{live});if(tasks)content.append(tasks);
  if(live){const line=el('div','nt-working');line.append(el('span','nt-pulse'),el('span','nt-working-time',elapsedText(q.createdAt)),el('span','nt-working-hint',t(q.status==='queued'?'Waiting for the device…':q.status==='starting'?'Starting the CLI…':'Working…')));content.append(line);}
- else{const foot=el('div','nt-reply-foot'),last=[...rows].reverse().find(r=>['message','text'].includes(r.kind));foot.append(iconButton('copy','Copy',e=>void copyText(e.currentTarget,last?.text||q.text||'').catch(()=>{}),'',`side:${q.id}:reply`));if(q.endedAt)foot.append(el('span','nt-duration',t('Took {duration}',{duration:elapsedText(q.createdAt,new Date(q.endedAt).getTime())})));if(q.status!=='succeeded')foot.append(el('span','nt-foot-status',`${t(q.status==='interrupted'?'Interrupted':'Failed')}${q.error?` · ${t(q.error)}`:''}`));reply.append(foot);}
+ else{const foot=el('div','nt-reply-foot'),last=[...rows].reverse().find(r=>r.phase==='final_answer'&&!r.aggregate)||[...rows].reverse().find(r=>['message','text'].includes(r.kind));foot.append(iconButton('copy','Copy',e=>void copyText(e.currentTarget,last?.text||q.text||'').catch(()=>{}),'',`side:${q.id}:reply`));if(q.endedAt)foot.append(el('span','nt-duration',t('Took {duration}',{duration:elapsedText(q.createdAt,new Date(q.endedAt).getTime())})));if(q.status!=='succeeded')foot.append(el('span','nt-foot-status',`${t(q.status==='interrupted'?'Interrupted':'Failed')}${q.error?` · ${t(q.error)}`:''}`));reply.append(foot);}
  return [user,reply];
 }
 
