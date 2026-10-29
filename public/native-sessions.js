@@ -961,11 +961,11 @@ const cliNoise=text=>/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/
 const promptKey=text=>simplifiedCliOutput(String(text||'')).replace(/\s+/g,' ').trim();
 /** A turn shows its process only when it holds more than the final reply: tools, runtime notes or intermediate messages. */
 const norm=text=>stripAnsi(String(text||'')).replace(/\s+/g,' ').trim();
-const allRows=turn=>liveSceneRows(turn.events||[],{status:turn.status}).rows.filter(r=>!(r.kind==='log'&&cliNoise(r.text)));
-/** The reply bubble shows the final message; the process keeps intermediate messages once each (streamed text that equals a message is dropped). */
-const finalReply=turn=>{const rows=allRows(turn),last=[...rows].reverse().find(r=>r.kind==='message'||r.kind==='text');return last||null;};
-const processRows=(turn,{includeFinal=false}={})=>{const rows=allRows(turn),messages=new Set(rows.filter(r=>r.kind==='message').map(r=>norm(r.text))),final=finalReply(turn),seen=new Set();
- return rows.filter(r=>{if(r.kind!=='message'&&r.kind!=='text')return true;const n=norm(r.text);if(!n||(r.kind==='text'&&messages.has(n))||seen.has(n)||(!includeFinal&&final&&n===norm(final.text)))return false;seen.add(n);return true;});};
+const allRows=turn=>liveSceneRows(turn.events||[],turn).rows.filter(r=>!(r.kind==='log'&&cliNoise(r.text)));
+/** The reply bubble shows the last projected reply; preceding replies and tools remain in the process by identity. */
+const finalReply=turn=>{const rows=allRows(turn),last=[...rows].reverse();return last.find(r=>r.phase==='final_answer'&&!r.aggregate)||last.find(r=>r.kind==='message'||r.kind==='text')||null;};
+const processRows=(turn,{includeFinal=false}={})=>{const rows=allRows(turn),final=finalReply(turn);
+ return rows.filter(r=>!['message','text'].includes(r.kind)||norm(r.text)&&(includeFinal||!final||r.key!==final.key));};
 const replyText=turn=>{const f=finalReply(turn);return f?f.text:turn.text||'';};
 const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind==='tool'||r.kind==='log'||r.kind==='error')||rows.some(r=>r.kind==='message'||r.kind==='text');};
  /** The group-chat live-scene projection orders text, messages, logs and merged tool states for one turn. */

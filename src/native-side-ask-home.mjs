@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {applyNativeTurnEvent} from './native-turns.mjs';
+import {applyNativeTurnEvent,nativeReplyRanges} from './native-turns.mjs';
 import {SIDE_ASK_LIMITS,SIDE_ASK_RUNTIMES} from './native-side-ask.mjs';
 
 /**
@@ -12,7 +12,7 @@ export function createHomeSideAsks({send,online,attachments=null,owner=nodeId=>n
  const sides=new Map(),closed=new Map();
  const stamp=()=>new Date(clock()).toISOString();
  const view=side=>({id:side.id,nodeId:side.nodeId,runtime:side.runtime,sessionId:side.sessionId,model:side.model||null,createdAt:side.createdAt,turns:side.turns??null,restarted:Boolean(side.restarted),
-  questions:side.questions.map(({id,prompt,text,status,phase,error,createdAt,endedAt,events,attachments:files,contextUsage})=>({id,prompt,text:text||'',status,phase:phase||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],attachments:(files||[]).map(({id,name,mime,size})=>({id,name,mime,size})),contextUsage:contextUsage||null}))});
+  questions:side.questions.map(question=>{const {id,prompt,text,status,phase,error,createdAt,endedAt,events,attachments:files,contextUsage}=question;return {id,prompt,text:text||'',status,phase:phase||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],attachments:(files||[]).map(({id,name,mime,size})=>({id,name,mime,size})),contextUsage:contextUsage||null,replyRanges:nativeReplyRanges(question)};})});
  function close(sideId,reason='closed',{tell=true}={}){
   const side=sides.get(sideId);if(!side)return false;
   sides.delete(sideId);closed.set(sideId,{reason,at:clock()});if(closed.size>64)closed.delete(closed.keys().next().value);

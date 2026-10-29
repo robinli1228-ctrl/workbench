@@ -221,8 +221,8 @@ export class SideAsks{
     if(type==='status'&&p.threadId&&runtime==='codex'){const current=this.record(sideId);if(current&&!current.forkId&&p.threadId!==sessionId)this.db.put('sideAsks',{...current,forkId:p.threadId});}
     if(type==='status'&&['succeeded','failed','interrupted','reconciling'].includes(p.status))return void end(p.status==='reconciling'?'failed':p.status,p.error);
     if(type==='status'&&p.status)this.event(sideId,questionId,{kind:'status',status:p.status});
-    else if(type==='message'&&typeof p.text==='string')this.event(sideId,questionId,{kind:'message',text:p.text,phase:p.phase||null});
-    else if(type==='text'&&typeof p.text==='string')this.event(sideId,questionId,{kind:'text',text:p.text});
+    else if(type==='message'&&typeof p.text==='string')this.event(sideId,questionId,{kind:'message',text:p.text,phase:p.phase||null,...(p.aggregate?{aggregate:true}:{}),...(p.messageId?{messageId:p.messageId}:{})});
+    else if(type==='text'&&typeof p.text==='string')this.event(sideId,questionId,{kind:'text',text:p.text,...(p.messageId?{messageId:p.messageId}:{})});
     else if(type==='tool'&&p.item)this.event(sideId,questionId,{kind:'tool',text:p.text,item:p.item});
     else if(type==='context_usage'&&p&&typeof p==='object')this.event(sideId,questionId,{kind:'context_usage',sample:p});
    };
