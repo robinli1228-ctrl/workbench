@@ -169,7 +169,7 @@ export function dialogueReplyDirection(message,messages,data) {
 /** Subtasks created by the supervisor's plan may not be written to a visible message's taskIds, yet must still appear in the live chat area. */
 export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
   const linkedTaskIds=new Set(messages.flatMap(message=>message.taskIds || []));
-  const reportedRunIds=new Set(messages.map(message=>message.runId).filter(Boolean));
+  const reportedRunIds=new Set(messages.filter(message=>message.runId&&message.id===`result-${message.runId}`).map(message=>message.runId));
   const runById=new Map(runs.map(run=>[run.id,run]));
   return tasks.filter(task=>{
     if(task.switchOperationId || task.projectId!==projectId || linkedTaskIds.has(task.id))return false;
@@ -930,7 +930,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     return wrap;
   }
 
-  function renderLiveBubble(task, messages) {
+  function renderLiveBubble(task, messages, retainedText = '') {
     // A recalled draft never ran: keep its human history, without inventing a stopped Agent reply.
     if(task.queueEditId&&!task.currentRunId)return null;
     // Share the queue's actual displayed membership rather than maintaining a second eligibility rule.
@@ -938,7 +938,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const run = data.runs?.find(r => r.id === task.currentRunId);
     const recoveryButton=cliRecoveryUI.button(task);
     if(task.backgroundFollowup||run?.backgroundFollowup){const approvals=run?renderApprovalsInline(run):null;if(!recoveryButton)return approvals;const entry=create('div','chat-approvals');if(approvals)entry.append(approvals);entry.append(recoveryButton);return entry;}
-    if (run && messages.some(m => m.runId === run.id)) return null;
+    if (run && messages.some(m => m.id === `result-${run.id}` && m.runId === run.id)) return null;
     const role = task.roleSnapshot || {};
     if (quietHandoff(run, data)) {
       // The handoff cards already carry the work; keep only a compact waiting line, without replaying this turn's text.
@@ -993,7 +993,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       }
       bubble.append(quote);
     }
-    const preview = run && !run.explicitPublish ? liveText(run.id) : '';
+    const preview = run && !run.explicitPublish ? liveText(run.id) || retainedText : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id,`run:${run?.id || task.id}`));
     else if(progress.state==='error')bubble.append(create('div','chat-message-text',progress.reason||run?.error||task.error||t(progress.detail)));
     else {
@@ -1039,7 +1039,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     footer.append(status, actionBar); bubble.append(footer);
     row.append(col);
     if (run && ['starting', 'running', 'waiting_user', 'stopping'].includes(run.status)) void pullLive(run.id);
-    return row;
+    drawnLiveText.set(row,preview);return row;
   }
 
   function renderMessageRow(m, messages) {
@@ -1152,7 +1152,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
 
   // Each chat entry keeps its DOM node while what it shows is unchanged (see renderMessages).
-  const finishedAt=new Map(),drawnMarkup=new WeakMap();let holdTimer=null;
+  const drawnMarkup=new WeakMap(),drawnLiveText=new WeakMap();
   // A clicked card may change itself (a busy button, a cleared icon after a failed stop): it is drawn afresh next time.
   feed.addEventListener('click',event=>{const node=event.target.closest?.('[data-entry-key]');if(node)drawnMarkup.delete(node);},true);
   function renderMessages() {
@@ -1175,28 +1175,42 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     // One timeline, one key: trigger time. Messages carry the server's order; a running role's card sits where its run was
     // triggered (the same place its reply will take). Queued messages stay in the timeline, marked Queued.
     const entries=[],orderOf=m=>String(m.orderAt||m.createdAt||'');
-    messages.forEach((m,i)=>entries.push({key:`m:${m.id}`,at:orderOf(m),rank:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)}));
-    for(const item of notices)entries.push({key:`n:${item.request.id}`,at:String(item.request.createdAt||item.at||''),rank:1,seq:0,node:()=>renderResumeNotice(item.request,item.at)});
     const liveTasks=new Map(),sourceOf=new Map();
     for(const m of messages)for(const id of m.taskIds||[]){sourceOf.set(id,m);const task=data.tasks?.find(t=>t.id===id);if(task)liveTasks.set(task.id,task);}
+    const triggerAt=(run,task,source)=>{let at=String(run?.createdAt||task?.createdAt||'');if(source&&orderOf(source)>at)at=orderOf(source);return at;};
+    messages.forEach((m,i)=>{
+      const run=m.runId&&m.id===`result-${m.runId}`?data.runs?.find(r=>r.id===m.runId):null,task=run&&data.tasks?.find(t=>t.id===run.taskId);
+      const source=run&&(sourceOf.get(run.taskId)||messages.find(item=>item.id===(task?.sourceMessageId||m.replyToId)));
+      entries.push({key:`m:${m.id}`,at:run?triggerAt(run,task,source)||orderOf(m):orderOf(m),rank:run?2:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)});
+    });
+    for(const item of notices)entries.push({key:`n:${item.request.id}`,at:String(item.request.createdAt||item.at||''),rank:1,seq:0,node:()=>renderResumeNotice(item.request,item.at)});
     for(const task of unlinkedLiveTasks(messages,data.tasks || [],data.runs || [],projectId))liveTasks.set(task.id,task);
-    const now=Date.now();
+    const reportedRunIds=new Set(messages.filter(m=>m.runId&&m.id===`result-${m.runId}`).map(m=>m.runId));
+    // 与 Rooms.complete 的发布边界一致，私有讨论和显式发布不等待额外 result 卡。
+    const waitsForResult=run=>{const report=data.runReports?.find(item=>item.id===run?.id)||run?.report;return run?.status==='succeeded'&&Boolean(run.roleId)&&!run.discussionDeliveryId&&!run.switchOperationId&&!run.backgroundFollowup&&(!run.explicitPublish||report?.verdict==='needs_input')&&!quietHandoff(run,data);};
+    const previous=new Map([...feed.children].filter(node=>node.dataset.entryKey&&node.dataset.entryScope===scopeId).map(node=>[node.dataset.entryKey,node]));
     for(const task of liveTasks.values()){
       // The asking message by its task link, or by the task's source id (which is also the id a pending send is drawn under).
       const run=data.runs?.find(r=>r.id===task.currentRunId),source=sourceOf.get(task.id)||(task.sourceMessageId&&messages.find(m=>m.id===task.sourceMessageId));
       // Each run is its own card. Before it starts, the card sits right under the message that asked for it (when that is
       // loaded; a relayed or older source keeps the card at its own time), so queued work never shows above its question.
-      let at=String(run?.createdAt||task.createdAt||'');if(source&&orderOf(source)>at)at=orderOf(source);
-      // A run that just ended keeps its last drawing for a moment while its reply is read, instead of an empty "Completed" card.
-      // Only a run that succeeded and posts its own reply is held: a failed, stopped or handed-off run shows its end at once.
-      const ended=run?.status==='succeeded'&&!quietHandoff(run,data)&&!messages.some(m=>m.runId===run.id);
-      if(ended&&!finishedAt.has(run.id))finishedAt.set(run.id,now);
-      const hold=ended&&now-finishedAt.get(run.id)<4000;
-      if(hold){clearTimeout(holdTimer);holdTimer=setTimeout(()=>{holdTimer=null;renderMessages();},4000-(now-finishedAt.get(run.id))+50);}
-      entries.push({key:run?`run:${run.id}`:`task:${task.id}`,at,rank:2,seq:0,hold,node:()=>renderLiveBubble(task,messages)});
+      const at=triggerAt(run,task,source);
+      // 已显示的正文保留到本轮正式回复读回，不能用超时推断历史已到达。
+      if(run&&reportedRunIds.has(run.id))continue;
+      const hold=waitsForResult(run);
+      entries.push({key:run?`run:${run.id}`:`task:${task.id}`,at,rank:2,seq:0,hold,node:retained=>renderLiveBubble(task,messages,retained)});
     }
-    for(const run of (data.runs||[]).filter(r=>r.projectId===projectId&&r.discussionDeliveryId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)))
+    for(const run of (data.runs||[]).filter(r=>r.projectId===projectId&&!reportedRunIds.has(r.id)&&r.discussionDeliveryId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)))
       entries.push({key:`run:${run.id}`,at:String(run.createdAt||''),rank:2,seq:0,node:()=>renderLiveBubble({id:run.taskId,currentRunId:run.id,roleSnapshot:run.roleSnapshot},messages)});
+    // task.currentRunId 可先进入下一轮；上一轮卡片仍按 runId 等待自己的正式回复。
+    for(const [key,old] of previous){
+      if(!key.startsWith('run:')||entries.some(entry=>entry.key===key))continue;
+      const id=key.slice(4);if(reportedRunIds.has(id))continue;
+      const run=data.runs?.find(item=>item.id===id),task=data.tasks?.find(item=>item.id===run?.taskId);
+      const hold=!run||waitsForResult(run);
+      entries.push({key,at:old.dataset.entryAt||String(run?.createdAt||''),rank:2,seq:0,hold,missingRun:!run,
+        node:retained=>renderLiveBubble({...task,id:task?.id||run?.taskId,currentRunId:id,roleSnapshot:task?.roleSnapshot||run?.roleSnapshot},messages,retained)});
+    }
     entries.sort((a,b)=>a.at.localeCompare(b.at)||a.rank-b.rank||a.seq-b.seq);
     const skeleton=!history&&[...pendingReads].some(key=>key.startsWith(`${scopeId}:`));
     if (!messages.length) entries.push({key:'empty',node:()=>skeleton?chatSkeleton():create('div', 'chat-empty', history
@@ -1207,13 +1221,14 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     entries.push({key:'queue',node:()=>renderSessionQueue(data.sessionQueues?.[projectId],{create,api,refreshState,projectId,roleName:id=>(data.roles||[]).find(r=>r.id===id)?.name||id})});
     // Keyed update: a node whose freshly drawn markup is unchanged stays in place (no flash, images and selection survive);
     // only changed entries are swapped and nodes are moved only when the order changed.
-    const previous=new Map([...feed.children].filter(node=>node.dataset.entryKey).map(node=>[node.dataset.entryKey,node])),next=[];
+    const next=[];
     for(const entry of entries){
       const old=previous.get(entry.key);
-      if(entry.hold&&old){next.push(old);continue;}
-      const node=entry.node();if(!node)continue;
+      if(entry.missingRun&&old){next.push(old);continue;}
+      // 只保留正文；状态外壳重新绘制，成功后不再留下 Stop 或运行计时。
+      const node=entry.node(entry.hold&&old?drawnLiveText.get(old)||'':'');if(!node)continue;
       // Running timers tick on their own, so their seconds are left out of the comparison.
-      node.dataset.entryKey=entry.key;const markup=node.outerHTML.replace(/(class="[^"]*elapsed-time[^"]*"[^>]*>)[^<]*/g,'$1');
+      node.dataset.entryKey=entry.key;node.dataset.entryScope=scopeId;node.dataset.entryAt=entry.at||'';const markup=node.outerHTML.replace(/(class="[^"]*elapsed-time[^"]*"[^>]*>)[^<]*/g,'$1');
       if(old&&drawnMarkup.get(old)===markup){next.push(old);continue;}
       drawnMarkup.set(node,markup);next.push(node);
     }
@@ -1223,7 +1238,6 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     let cursor=feed.firstElementChild;
     for(const node of next){if(node===cursor){cursor=cursor.nextElementSibling;continue;}feed.insertBefore(node,cursor);}
     while(cursor){const after=cursor.nextElementSibling;cursor.remove();cursor=after;}
-    for(const id of finishedAt.keys())if(!data.runs?.some(r=>r.id===id))finishedAt.delete(id);
     feed.querySelectorAll('.chat-reply-preview').forEach(node => {
       const position = previewScroll.get(node.dataset.previewKey);
       if (position) { node.scrollTop = position.top; node.scrollLeft = position.left; }

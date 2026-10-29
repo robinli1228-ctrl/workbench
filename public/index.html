@@ -685,8 +685,9 @@
             reload.disabled = true;
             try {
               const build = (await (await fetch('/healthz', { cache: 'no-store' })).json()).build;
-              const keys = await caches.keys();
-              if (build && !keys.some(key => key.endsWith(`-${build}`))) for (const registration of await navigator.serviceWorker.getRegistrations()) await registration.unregister();
+              // A named cache does not prove the new worker installed or controls this page. Release the old
+              // controller on an explicit reload; the fresh page registers the worker again after loading.
+              if (build && build !== running) await (await navigator.serviceWorker.getRegistration())?.unregister();
             } catch {}
             location.reload();
           });

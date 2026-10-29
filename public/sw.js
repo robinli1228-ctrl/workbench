@@ -32,7 +32,11 @@ const staticPaths = new Set(STATIC);
 const precache = STATIC.filter(path => !['/app-icon.png', '/agent-codex.png'].includes(path));
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(precache)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(precache)).catch(async error => {
+    // A failed install must not leave an empty cache that looks ready to the page.
+    await caches.delete(CACHE);
+    throw error;
+  }).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {

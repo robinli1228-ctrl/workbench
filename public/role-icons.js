@@ -279,11 +279,11 @@ export function setActionIcon(button,name,label) {
 
 
 const copiedButtons=new WeakMap(),copyKeys=new WeakMap(),copiedKeys=new Map();
-/** A rerendered card adopts its existing deadline instead of losing or restarting feedback. */
+/** A rerendered card adopts its deadline; keep the original button's timer if keyed rendering retains it. */
 export function bindCopyFeedback(button,key) {
   if(!key)return button;copyKeys.set(button,key);
   const state=copiedKeys.get(key);
-  if(state&&state.until>Date.now()){clearTimeout(state.timer);showCopySuccess(button,state.until);}
+  if(state&&state.until>Date.now())showCopySuccess(button,state.until);
   return button;
 }
 /** Show success only after a completed copy; repeated clicks restart the same three-second feedback. */
