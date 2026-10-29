@@ -1,3 +1,4 @@
+import {copyText,pendingAction,bindPendingAction,bindCopyFeedback} from './role-icons.js';
 import {createDocumentPreview} from './side-preview.js';
 import {deliveryRepositorySummary} from './delivery-summary.js';
 import {renderRetiredCommandWarning} from './retired-commands.js';
@@ -1175,7 +1176,7 @@ function openRoleTerminal(role) {
         const open=create('a','secondary',remote?(claim.kind==='new'?'Open new session via SSH':'Resume via SSH'):(claim.kind==='new'?'Open in iTerm':'Continue in iTerm'));open.href=claim.url;
         open.title='iTerm will ask you to confirm the command; it opens only once and does not repeat automatically';actions.append(open);
         const copy=create('button','secondary',remote?'Copy SSH command':claim.kind==='new'?'Copy command':'Copy resume command');copy.type='button';
-        copy.onclick=async()=>{try{await navigator.clipboard.writeText(claim.command);copy.textContent='Copied';}catch{feedback.hidden=false;feedback.textContent='Clipboard unavailable; use the iTerm entry.';}};actions.append(copy);
+        copy.onclick=async()=>{try{await copyText(copy,claim.command);}catch{feedback.hidden=false;feedback.textContent='Clipboard unavailable; use the iTerm entry.';}};actions.append(copy);
       }
       const release=create('button','secondary','Return to platform');release.type='button';
       const stop=create('button','danger','Stop CLI and return');stop.type='button';
@@ -1573,7 +1574,7 @@ function renderTaskDetail() {
 function renderRunToolbar(task, run) {
   if (run && ['queued', 'starting', 'running', 'waiting_user'].includes(run.status)) {
     const stop = create('button', 'secondary run-stop-button', 'Stop'); stop.type = 'button';
-    stop.addEventListener('click', () => stopRun(run, stop));
+    bindPendingAction(stop,`stop:${run.id}`);stop.addEventListener('click', () => stopRun(run, stop));
     dom.runStatus.append(stop);
   }
   if (task.origin === 'chat') return;
@@ -1633,8 +1634,8 @@ function renderRunResult(result) {
 /** Copy always uses the original value, even when the visible ID or input is abbreviated. */
 function runCopyButton(value) {
   const button=create('button','icon-button run-copy');button.type='button';setActionIcon(button,'copy','Copy');
-  button.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(value);button.title=t('Copied');}catch{button.title=t('Copy failed');}});
-  return button;
+  button.addEventListener('click',async()=>{try{await copyText(button,value);}catch{button.title=t('Copy failed');}});
+  return bindCopyFeedback(button,`run:${app.detailRunId}:${value}`);
 }
 
 function renderRunSummary(run) {
@@ -1979,13 +1980,14 @@ async function refreshRunDetails() {
 /**
  * A write operation's commandId is kept while the network state is uncertain; it is released only after a definite HTTP result.
  */
-async function commandRequest(key, path, json, button) {
+async function commandRequest(key, path, json, button, busyIcon=false) {
   const commandId = app.commands[key] || crypto.randomUUID();
   app.commands[key] = commandId;
   saveCommands();
+  const original = button.innerHTML;
+  const restore=busyIcon?pendingAction(button):null;
   button.disabled = true;
-  const original = button.textContent;
-  button.textContent = 'Submitting…';
+  if(!busyIcon)button.textContent = 'Submitting…';
   try {
     const result = await api(path, { method: 'POST', json: { ...json, commandId } });
     delete app.commands[key];
@@ -2000,8 +2002,7 @@ async function commandRequest(key, path, json, button) {
     setError(error.isNetworkError ? t('{message}\nClick again; the system will reuse the same commandId to look up the original operation.', { message: error.message }) : error.message);
     return null;
   } finally {
-    button.disabled = false;
-    button.textContent = original;
+    if(restore)restore();else{button.disabled=false;button.innerHTML=original;}
   }
 }
 
@@ -2012,7 +2013,7 @@ async function startTask(task, nodeId, button) {
 }
 
 async function stopRun(run, button) {
-  const result = await commandRequest(`stop:${run.id}`, `/api/runs/${encodeURIComponent(run.id)}/stop`, {}, button);
+  const result = await commandRequest(`stop:${run.id}`, `/api/runs/${encodeURIComponent(run.id)}/stop`, {}, button, true);
   if (result) await refreshState({ quiet: true });
 }
 

@@ -1,3 +1,4 @@
+import {copyText} from './role-icons.js';
 import { t, dateLocale } from './i18n.js';
 import {renderMarkdown} from './markdown.js';
 import {simplifiedCliOutput} from './output-language.js';
@@ -30,7 +31,7 @@ async function openDocument(){
   if(result.syncState==='conflict'||result.syncState==='local_changes')status.textContent+=' · '+t(result.syncState==='conflict'?'Conflict detected; showing actual local file.':'Showing local changes; synchronization pending.');
   copy.hidden=false;
   copy.addEventListener('click',async()=>{
-    try {await navigator.clipboard.writeText(text);status.textContent=t('Full text copied · {v} characters', { v: text.length.toLocaleString(dateLocale()) });}
+    try {await copyText(copy,text);status.textContent=t('Full text copied · {v} characters', { v: text.length.toLocaleString(dateLocale()) });}
     catch(error){status.textContent=t('Copy failed: {message}', { message: error.message });}
   });
 }

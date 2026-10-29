@@ -244,6 +244,7 @@ export const UI_ICON = {
   plus: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M12 5v14M5 12h14"/></svg>`,
   quote: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M9 17 4 12l5-5"/><path d="M4 12h10a6 6 0 0 1 6 6"/></svg>`,
   copy: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg>`,
+  spinner: `<svg viewBox="0 0 24 24" class="message-queue-spinner" width="18" height="18" ${STROKE} aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>`,
   check: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m5 12 4 4L19 6"/></svg>`,
   // A speech bubble with two lines: a side question beside the session.
   sideAsk: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L4 21l1.6-4.4A8.5 8.5 0 1 1 21 12Z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></svg>`,
@@ -274,6 +275,77 @@ export function setActionIcon(button,name,label) {
   button.title=title;button.setAttribute('aria-label',title);
   button.querySelector('svg').setAttribute('aria-hidden','true');
   return button;
+}
+
+
+const copiedButtons=new WeakMap(),copyKeys=new WeakMap(),copiedKeys=new Map();
+/** A rerendered card adopts its existing deadline instead of losing or restarting feedback. */
+export function bindCopyFeedback(button,key) {
+  if(!key)return button;copyKeys.set(button,key);
+  const state=copiedKeys.get(key);
+  if(state&&state.until>Date.now()){clearTimeout(state.timer);showCopySuccess(button,state.until);}
+  return button;
+}
+/** Show success only after a completed copy; repeated clicks restart the same three-second feedback. */
+export function showCopySuccess(button,until=Date.now()+3000) {
+  if(!button)return;
+  const previous=copiedButtons.get(button),current=previous&&button.contains(previous.mark);
+  if(previous)clearTimeout(previous.timer);
+  const original=current?previous.original:{html:button.innerHTML,title:button.getAttribute('title'),label:button.getAttribute('aria-label')};
+  const holder=document.createElement('span');holder.innerHTML=UI_ICON.check;
+  const mark=holder.firstElementChild,old=button.querySelector('svg');
+  mark.setAttribute('aria-hidden','true');mark.setAttribute('width','18');mark.setAttribute('height','18');
+  if(old)old.replaceWith(mark);else{mark.style.verticalAlign='middle';mark.style.marginRight='6px';button.prepend(mark);}
+  button.title=t('Copied');button.setAttribute('aria-label',t('Copied'));button.dataset.copyState='copied';
+  const key=copyKeys.get(button);
+  const state={original,mark,until,timer:setTimeout(()=>{
+    if(copiedButtons.get(button)!==state)return;
+    if(button.contains(mark)){
+      button.innerHTML=original.html;
+      for(const [name,value] of [['title',original.title],['aria-label',original.label]])if(value===null)button.removeAttribute(name);else button.setAttribute(name,value);
+    }
+    delete button.dataset.copyState;copiedButtons.delete(button);
+    if(key&&copiedKeys.get(key)===state)copiedKeys.delete(key);
+  },Math.max(0,until-Date.now()))};
+  copiedButtons.set(button,state);if(key)copiedKeys.set(key,state);
+}
+
+/** Preserve the original text and the plain-HTTP fallback, and never show a check for a rejected copy. */
+export async function copyText(button,value) {
+  const text=String(value??'');
+  if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(text);
+  else {
+    const field=document.createElement('textarea'),focused=document.activeElement;
+    field.className='sr-only';field.value=text;field.readOnly=true;document.body.append(field);
+    try{field.select();if(!document.execCommand('copy'))throw Error('The browser did not allow copying');}
+    finally{field.remove();focused?.focus({preventScroll:true});}
+  }
+  showCopySuccess(button);
+}
+
+/** Keep a stop control's footprint while its request is pending; restoration also handles failures. */
+function applyPendingAction(button,label) {
+  const original={html:button.innerHTML,title:button.getAttribute('title'),label:button.getAttribute('aria-label'),busy:button.getAttribute('aria-busy'),disabled:button.disabled,minWidth:button.style.minWidth,minHeight:button.style.minHeight};
+  const bounds=button.getBoundingClientRect();button.style.minWidth=`${bounds.width}px`;button.style.minHeight=`${bounds.height}px`;
+  button.disabled=true;button.innerHTML=UI_ICON.spinner;button.title=label;button.setAttribute('aria-label',label);button.setAttribute('aria-busy','true');
+  return ()=>{button.innerHTML=original.html;button.disabled=original.disabled;button.style.minWidth=original.minWidth;button.style.minHeight=original.minHeight;
+    for(const [name,value] of [['title',original.title],['aria-label',original.label],['aria-busy',original.busy]])if(value===null)button.removeAttribute(name);else button.setAttribute(name,value);
+  };
+}
+
+
+const pendingKeys=new WeakMap(),pendingActions=new Map();
+/** Keep the same pending request visible when a group card is redrawn by live updates. */
+export function bindPendingAction(button,key) {
+  pendingKeys.set(button,key);const state=pendingActions.get(key);
+  if(state){state.restores=state.restores.filter(item=>item.button.isConnected);state.restores.push({button,restore:applyPendingAction(button,state.label)});}
+  return button;
+}
+export function pendingAction(button,label=t('Stopping')) {
+  const restore=applyPendingAction(button,label),key=pendingKeys.get(button);
+  if(!key)return restore;
+  const state={label,restores:[{button,restore}]};pendingActions.set(key,state);
+  return ()=>{for(const item of state.restores)item.restore();if(pendingActions.get(key)===state)pendingActions.delete(key);};
 }
 
 

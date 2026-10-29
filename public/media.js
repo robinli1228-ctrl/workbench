@@ -1,3 +1,4 @@
+import {copyText,showCopySuccess} from './role-icons.js';
 import {t,dateLocale} from './i18n.js';
 import {setActionIcon} from './role-icons.js';
 import {canOpenSide,openSide} from './side-preview.js';
@@ -153,10 +154,9 @@ const stamp=value=>{const date=new Date(value||'');return Number.isNaN(date.getT
 async function toPng(blob){if(blob.type==='image/png')return blob;const bitmap=await createImageBitmap(blob),canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;canvas.getContext('2d').drawImage(bitmap,0,0);return new Promise((resolve,reject)=>canvas.toBlob(png=>png?resolve(png):reject(Error('PNG')),'image/png'));}
 export function copyAction(button,{url,kind,text}){
   button.hidden=false;
-  const done=()=>{setActionIcon(button,'check',t('Copied'));setTimeout(()=>setActionIcon(button,'copy',t('Copy')),1500);};
   button.onclick=async()=>{
-    try{if(kind==='image'&&url&&window.ClipboardItem&&navigator.clipboard?.write){await navigator.clipboard.write([new ClipboardItem({'image/png':fetch(url).then(r=>r.blob()).then(toPng)})]);done();return;}}catch{}
-    try{await navigator.clipboard.writeText(text);done();}catch{}
+    try{if(kind==='image'&&url&&window.ClipboardItem&&navigator.clipboard?.write){await navigator.clipboard.write([new ClipboardItem({'image/png':fetch(url).then(r=>r.blob()).then(toPng)})]);showCopySuccess(button);return;}}catch{}
+    try{await copyText(button,text);}catch{}
   };
 }
 

@@ -1,3 +1,4 @@
+import {copyText,pendingAction,bindCopyFeedback,bindPendingAction} from './role-icons.js';
 import {renderRetiredCommandWarning} from './retired-commands.js';
 import {sideButton} from './side-preview.js';
 import {renderSessionQueue} from './session-queue.js';
@@ -18,9 +19,7 @@ import { renderPermissionScope, permissionScopeValue } from './permission-scope.
 import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl } from './elapsed.js';
-import {classifyStep,stepTitle,toolFilePaths} from './native-transcript.js';
-import stepZh from './locales/native-takeover-zh.js';
-import { getLanguage } from './i18n.js';
+import {classifyStep,toolFilePaths} from './native-transcript.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
 import { pastesAsFile, pastedTextName } from './pasted-text.js';
 
@@ -656,18 +655,6 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   function liveText(runId) {
     return liveByRun.get(runId)?.text || '';
   }
-  // Step verbs ("Read", "Ran") share the Sessions page's own translations.
-  const stepT=(text,params)=>{const own=getLanguage()==='zh'?stepZh[text]:undefined;return own===undefined?t(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
-  /** What a running role is doing right now, from its live events: the latest tool still in progress, else '' (thinking or
-   * writing). A tool's later events (its result) carry the same id, so a finished tool no longer counts. */
-  function liveStep(events) {
-    const tools=new Map();
-    for(const e of events)if(e.type==='tool'&&e.payload?.item?.id){const prior=tools.get(e.payload.item.id);tools.delete(e.payload.item.id);tools.set(e.payload.item.id,{...prior,...e.payload.item,name:e.payload.item.name||prior?.name,input:e.payload.item.input??prior?.input,arguments:e.payload.item.arguments??prior?.arguments});}
-    // Codex and others mark a running item inProgress; Claude's tool_use has no status until its tool_result arrives.
-    const running=[...tools.values()].reverse().find(item=>item.status==='inProgress'||item.type==='tool_use'&&!item.status);
-    if(!running)return '';const {verb,target}=stepTitle(classifyStep(running,'running'),stepT),text=`${verb} ${target}`.trim();return text.length>36?`${text.slice(0,35)}…`:text;
-  }
-
   async function pullLive(runId) {
     if (!runId || liveFetching.has(runId)) return;
     liveFetching.add(runId);
@@ -675,11 +662,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       const prior=liveByRun.get(runId);
       const result = await api(`/api/runs/${encodeURIComponent(runId)}/events?after=${prior?.seq || 0}`);
       const events = [...new Map([...(prior?.events || []),...(Array.isArray(result?.events)?result.events:[])].map(e=>[e.seq,e])).values()].sort((a,b)=>a.seq-b.seq);
-      const text = extractLiveText(events), step = liveStep(events);
+      const text = extractLiveText(events);
       const prev = liveByRun.get(runId);
-      liveByRun.set(runId, { text, step, events, seq:events.at(-1)?.seq || 0, at: Date.now() });
+      liveByRun.set(runId, { text, events, seq:events.at(-1)?.seq || 0, at: Date.now() });
       updateLiveFullscreen();
-      if ((text !== (prev?.text || '') || step !== (prev?.step || '')) && projectId) renderMessages();
+      if (text !== (prev?.text || '') && projectId) renderMessages();
     } catch {
       if(fullscreenView?.runId===runId)fullscreenView.heading.textContent='Live reply · connection unavailable; content already received is kept';
     } finally { liveFetching.delete(runId); }
@@ -767,36 +754,21 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
 
   /** Copy the original message text without the rendered action buttons, time or quote summary. */
-  function copyMessageButton(text) {
+  function copyMessageButton(text,key) {
     const copy = iconAction('copy', 'Copy', async b => {
       b.disabled = true;
       try {
         const value=typeof text==='function'?text():text;
         if (!value) { b.disabled=false;return; }
-        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
-        else {
-          // Plain HTTP access has no Clipboard API; fall back to the browser's user-click copy ability.
-          const field = create('textarea', 'sr-only');
-          const focused = document.activeElement;
-          field.value = value; field.readOnly = true; document.body.append(field);
-          try {
-            field.select();
-            if (!document.execCommand('copy')) throw new Error('The browser did not allow copying');
-          } finally { field.remove(); focused?.focus({ preventScroll: true }); }
-        }
-        b.innerHTML = UI_ICON.check;
-        b.title = 'Copied'; b.setAttribute('aria-label', 'Copied');
-        setTimeout(() => {
-          b.innerHTML = UI_ICON.copy;
-          b.title = 'Copy'; b.setAttribute('aria-label', 'Copy'); b.disabled = false;
-        }, 1500);
+        await copyText(b,value);
+        b.disabled=false;
       } catch {
         b.disabled = false;
         setError('Copy failed. Allow clipboard access, or select the text and copy it manually.');
       }
     });
     copy.disabled = !text;
-    return copy;
+    return bindCopyFeedback(copy,key);
   }
 
   /** Chat prose is simplified for display only; copying and the Original view retain the complete stored text. */
@@ -1005,11 +977,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const approvals = run ? renderApprovalsInline(run) : null;
     if (approvals) col.append(approvals);
     const actions = [],stateActions=[];
-    if (preview) actions.push(copyMessageButton(preview));
+    if (preview) actions.push(copyMessageButton(preview,`group:${scopeId}:run:${run.id}`));
     actions.push(fullscreenMessageButton(preview, role.name, true, [], task.id, run?.id));
     actions.push(sideMessageButton(preview,role.name,true,[],run?.id));
     if (run && ['queued', 'starting', 'running', 'waiting_user'].includes(run.status)) {
-      stateActions.push(iconAction('stop', 'Stop', b => stopRun(run, b)));
+      stateActions.push(bindPendingAction(iconAction('stop', 'Stop', b => stopRun(run, b)),`stop:${run.id}`));
     }
     if (task.status === 'ready' && !run) {
       stateActions.push(iconAction('stop', 'Cancel queued item', async b => {
@@ -1022,10 +994,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (run) actions.push(iconAction('live', 'Log', () => openTask(task.id,run.id)));
     actions.push(...stateActions);
     // Status and actions sit inside the card, the same footer as finished messages.
-    // The footer names the stage: queued, the CLI getting ready (workspace, start, resume), then thinking, the step it is
-    // running, or replying, with the time it has taken so far.
-    const preparing=progress.stage==='worker_received',step=running?liveByRun.get(run.id)?.step:'';
-    const stage=preparing?t('CLI preparing'):progress.stage==='queued'?t('Queued'):running?(step||t(preview?'Replying':'Thinking')):label;
+    // Keep the footer concise; tool names and arguments belong in the run log.
+    const preparing=progress.stage==='worker_received';
+    const stage=progress.stage==='stopping'?t('Stopping'):label;
     const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', stage);status.title=stage;
     if (running||preparing) { const elapsed = elapsedEl(create, running?run.startedAt:run.createdAt); if (elapsed) status.append(elapsed); }
     const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
@@ -1098,11 +1069,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
         try{await api(`/api/projects/${encodeURIComponent(m.projectId)}/discussions/${encodeURIComponent(discussion.thread.id)}/resolve`,{method:'POST',json:{requestId,expectedQuestionId:discussion.questionId,revision:discussion.thread.revision,directionRevision:discussion.thread.directionRevision,...(discussion.canResume?{resumeAfterRunId:discussion.resumeAfterRunId}:{}),conclusion:discussion.canResume?'User reviewed the exception log and actual changes and explicitly chose to continue the original task':'User explicitly marked this question as handled in the web UI'}});await refreshState({quiet:true});}catch(e){setError(e.message);b.disabled=false;}
       }));
     }
-    if(discussion?.canStop)discussionActions.push(iconAction('stop','Stop original task',async b=>{
-      b.disabled=true;
-      try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);b.disabled=false;}
-    }));
-    actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text));
+    if(discussion?.canStop)discussionActions.push(bindPendingAction(iconAction('stop','Stop original task',async b=>{
+      const restore=pendingAction(b);
+      try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);}finally{restore();}
+    }),`stop:${discussion.stopRunId}`));
+    actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text,`group:${scopeId}:message:${m.id}`));
     actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, m.senderName, agent || Boolean(handoff), m.attachments, null, m.runId));
     actions.push(sideMessageButton(handoff ? m.handoff.summary || m.text : m.text,m.senderName,agent||Boolean(handoff),m.attachments,m.runId));
     if(agent&&m.runId&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk(m)));
