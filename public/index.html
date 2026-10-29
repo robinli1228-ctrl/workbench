@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8">
+    <meta name="workbench-build" content="">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#4f5bce">
@@ -14,6 +15,7 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body data-mobile-panel="chat" data-project-sidebar="expanded">
+    <div id="load-bar" class="is-active" aria-hidden="true"></div>
     <div class="app-shell">
       <aside class="project-sidebar" id="project-sidebar" aria-label="Project navigation">
         <div class="brand">
@@ -31,7 +33,7 @@
           </div>
           <button class="icon-button inverse new-conversation-button" id="show-project-form" type="button" aria-label="New project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h1v3l4-3h8a2 2 0 0 0 2-2v-5"/><path d="M19 2v6m-3-3h6"/></svg></button>
         </div>
-        <nav class="project-list" id="project-list" aria-live="polite"></nav>
+        <nav class="project-list" id="project-list" aria-live="polite"><div class="list-skeleton" aria-hidden="true"><span></span><span></span><span></span></div></nav>
         <div class="sidebar-footer">
           <button class="icon-button" id="show-token-usage" type="button" aria-label="Token Usage" title="Token Usage">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 20h16M6 17v-5m6 5V5m6 12V9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -452,7 +454,7 @@
           <div class="chat-scroll" id="chat-scroll">
           <button class="secondary compact" id="load-older" type="button" hidden>Load earlier messages</button>
           <section id="setup-proposals" class="setup-proposals" aria-label="Manager setup suggestions" hidden></section>
-          <div class="chat-feed" id="chat-feed" aria-label="Project chat"></div>
+          <div class="chat-feed" id="chat-feed" aria-label="Project chat"><div class="chat-skeleton" aria-hidden="true"><div class="chat-skeleton-row is-in"><span class="chat-skeleton-avatar"></span><span class="chat-skeleton-bubble"></span></div><div class="chat-skeleton-row is-out"><span class="chat-skeleton-avatar"></span><span class="chat-skeleton-bubble"></span></div><div class="chat-skeleton-row is-in"><span class="chat-skeleton-avatar"></span><span class="chat-skeleton-bubble"></span></div></div></div>
           </div>
           <div class="chat-composer-shell">
           <details id="message-queue" class="message-queue" hidden><summary>Queue</summary><div class="message-queue-list"></div></details>
@@ -623,6 +625,37 @@
     <script>
       if ('serviceWorker' in navigator && window.isSecureContext) {
         window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(error => console.warn('PWA registration failed', error)));
+        // Page code is served from the local cache first. The page knows its own build (the meta tag Home stamps into
+        // index.html) and compares it with Home's (/healthz): when they differ it asks the worker to update and offers a
+        // reload instead of switching code under a running page. If the new worker still has not installed by then
+        // (a failed precache on a flaky link), the reload bypasses the cache once so fresh code always arrives.
+        const running = document.querySelector('meta[name="workbench-build"]')?.content || '';
+        const offer = () => {
+          if (document.querySelector('#update-ready')) return;
+          const bar = document.createElement('div');bar.id = 'update-ready';bar.setAttribute('role', 'status');
+          const text = document.createElement('span');text.textContent = 'A new version is ready';
+          const reload = document.createElement('button');reload.type = 'button';reload.textContent = 'Reload';
+          reload.addEventListener('click', async () => {
+            reload.disabled = true;
+            try {
+              const build = (await (await fetch('/healthz', { cache: 'no-store' })).json()).build;
+              const keys = await caches.keys();
+              if (build && !keys.some(key => key.endsWith(`-${build}`))) for (const registration of await navigator.serviceWorker.getRegistrations()) await registration.unregister();
+            } catch {}
+            location.reload();
+          });
+          bar.append(text, reload);document.body.append(bar);
+        };
+        const check = async () => {
+          try {
+            const build = (await (await fetch('/healthz', { cache: 'no-store' })).json()).build;
+            if (!running || !build || build === running) return;
+            (await navigator.serviceWorker.getRegistration())?.update().catch(() => {});
+            offer();
+          } catch {}
+        };
+        window.addEventListener('load', () => setTimeout(check, 3000));
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) void check(); });
       }
     </script>
   </body>

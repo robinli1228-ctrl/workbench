@@ -2,6 +2,7 @@ import {renderRetiredCommandWarning} from './retired-commands.js';
 import {sideButton} from './side-preview.js';
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
+import { trackLoading } from './load-bar.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, renderMessageMarkdown } from './markdown.js';
 import { linkMedia, openImageLightbox, markImageOpener, fileGlyph } from './media.js';
@@ -1135,6 +1136,12 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     row.append(avatarFor(role,role.name),col);return row;
   }
 
+  function chatSkeleton() {
+    const box = create('div', 'chat-skeleton');box.setAttribute('aria-hidden', 'true');
+    for (const side of ['in', 'out', 'in']) { const row = create('div', `chat-skeleton-row is-${side}`); row.append(create('span', 'chat-skeleton-avatar'), create('span', 'chat-skeleton-bubble')); box.append(row); }
+    return box;
+  }
+
   function renderMessages() {
     cliRecoveryUI.refresh();
     const history = histories.get(scopeId), messages = history?.messages || [];
@@ -1143,8 +1150,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     // 状态刷新会重建消息节点，按消息身份保留正文阅读位置，不抢回顶部。
     const previewScroll = new Map([...feed.querySelectorAll('.chat-reply-preview')].map(node => [node.dataset.previewKey, { top: node.scrollTop, left: node.scrollLeft }]));
     feed.replaceChildren();
+    // A chat opened for the first time shows placeholder bubbles until its history arrives.
+    const skeleton = !history && [...pendingReads].some(key => key.startsWith(`${scopeId}:`));
+    if (skeleton) feed.append(chatSkeleton());
     older.hidden = !history?.hasMore;
-    if (!messages.length) feed.append(create('div', 'chat-empty', history
+    if (!messages.length && !skeleton) feed.append(create('div', 'chat-empty', history
       ? data.projects?.find(p=>p.id===projectId)?.supervisorRoleId
         ? 'This is the project chat. New messages without @ go to the manager; replies target their sender; multiple @ mentions dispatch to each role; @everyone only sends a notification and does not start an Agent.'
         : 'This is the project chat. Without @ it is only logged; @someone dispatches to them; @everyone only sends a notification and does not start an Agent.'
@@ -1210,9 +1220,12 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const id = scopeId, targetProjectId=projectId, targetConversationId=conversationId, key = `${id}:${revision}`;
     if (pendingReads.has(key)) return;
     pendingReads.add(key);
+    if (!previous && id === scopeId) renderMessages();
     try {
       const receiptQuery=Number.isSafeInteger(previous?.receiptCursor)?`&afterReceipt=${previous.receiptCursor}`:'';
-      const result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}${receiptQuery}`);
+      // Opening a chat whose history is not on screen yet shows the top bar; live-update re-reads stay silent.
+      const read = api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}${receiptQuery}`);
+      const result = await (previous ? read : trackLoading(read));
       const current = histories.get(id);
       if ((current?.revision ?? -1) > revision) return;
       const recentIds = new Set(result.messages.map(m => m.id));
@@ -1220,7 +1233,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
         hasMore: current ? current.hasMore : result.hasMore, nextBefore: current?.nextBefore || result.nextBefore, revision:result.hasMoreUpdates?null:revision });
       if (id === scopeId) renderMessages();
     } catch (e) { if (id === scopeId) setError(t('Failed to load chat: {message}', { message: e.message })); }
-    finally { pendingReads.delete(key); }
+    finally { pendingReads.delete(key); if (id === scopeId && !histories.get(id)) renderMessages(); }
   }
 
   older.addEventListener('click', async () => {

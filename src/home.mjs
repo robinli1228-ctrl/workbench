@@ -4,7 +4,7 @@ import {noteRoleCompaction,dueRoleCompactions,recordRoleCompaction} from './role
 import {createRemoteAccessSettings} from './remote-access-settings.mjs';
 import http from 'node:http';
 import { sendBufferedResponse } from './http-response.mjs';
-import { readFile, mkdir, writeFile, chmod } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, chmod, stat as statFile } from 'node:fs/promises';
 import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
@@ -471,6 +471,70 @@ async function body(req) {
   for await (const chunk of req) { raw += chunk; if (raw.length > 128000) throw new Error(tr('home.requestTooLarge')); }
   return raw ? JSON.parse(raw) : {};
 }
+/** The page files Home serves, by URL path; also the set the service-worker fingerprint covers. */
+function pageFileMap() {
+  const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/send-state.js':'send-state.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
+  Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
+  files['/workspace-inspector.js']='workspace-inspector.js';
+  files['/concurrent-writes.js']='concurrent-writes.js';
+  files['/conversation-tasks.js']='conversation-tasks.js';
+  files['/conversation-task-state.js']='conversation-task-state.js';
+  files['/delivery-summary.js']='delivery-summary.js';
+  files['/retired-commands.js']='retired-commands.js';
+  files['/source-sync.js']='source-sync.js';
+  files['/source-sync-audit.js']='source-sync-audit.js';
+  files['/quota-state.js']='quota-state.js';
+  files['/chat-card-state.js']='chat-card-state.js';
+  files['/state-data.js']='state-data.js';
+  files['/group-conversations.js']='group-conversations.js';
+  files['/project-team-copy.js']='project-team-copy.js';
+  files['/execution-progress.js']='execution-progress.js';
+  files['/live-scene.js']='live-scene.js';
+  files['/cli-recovery.js']='cli-recovery.js';
+  files['/session-queue.js']='session-queue.js';
+  files['/browser-token.js']='browser-token.js';
+  files['/configuration-information.js']='configuration-information.js';
+  files['/role-switch.js']='role-switch.js';
+  files['/role-history.js']='role-history.js';
+  files['/role-templates.js']='role-templates.js';
+  files['/i18n.js']='i18n.js';
+  files['/output-language.js']='output-language.js';
+  files['/native-side-ask.js']='native-side-ask.js';
+  files['/group-side-ask.js']='group-side-ask.js';
+  files['/native-sessions.js']='native-sessions.js';
+  files['/native-agent-switch.js']='native-agent-switch.js';
+  files['/native-transcript.js']='native-transcript.js';
+  files['/media.js']='media.js';
+  files['/pasted-text.js']='pasted-text.js';
+  files['/side-preview.js']='side-preview.js';
+  files['/history-prompt.js']='history-prompt.js';
+  files['/history-cache.js']='history-cache.js';
+  files['/data-settings.js']='data-settings.js';
+  files['/remote-access-settings.js']='remote-access-settings.js';
+  files['/native-history-timeline.js']='native-history-timeline.js';
+  files['/native-session-groups.js']='native-session-groups.js';
+  files['/create-folder.js']='create-folder.js';
+  files['/list-order.js']='list-order.js';files['/select-controls.js']='select-controls.js';files['/model-usage.js']='model-usage.js';
+  files['/mention-input.js']='mention-input.js';
+  files['/context-usage.js']='context-usage.js';
+  files['/vendor/opencc-t2cn.js']='vendor/opencc-t2cn.js';
+  files['/load-bar.js']='load-bar.js';
+  files['/locales/zh.js']='locales/zh.js';
+  files['/locales/native-takeover-zh.js']='locales/native-takeover-zh.js';
+  return files;
+}
+/** One hash over every served page file (excluding the service worker itself), recomputed only when a file changes. */
+let fingerprintCache = null;
+async function staticFingerprint(files) {
+  const names = [...new Set(Object.values(files))].filter(name => name !== 'sw.js').sort();
+  const stamps = await Promise.all(names.map(async name => { try { const info = await statFile(join(base, 'public', name)); return `${name}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`; } catch { return `${name}:missing`; } }));
+  const key = stamps.join('|');
+  if (fingerprintCache?.key === key) return fingerprintCache.value;
+  const hash = createHash('sha256');
+  for (const name of names) { hash.update(name); try { hash.update(await readFile(join(base, 'public', name))); } catch {} }
+  fingerprintCache = { key, value: hash.digest('hex').slice(0, 12) };
+  return fingerprintCache.value;
+}
 function json(res, data, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); }
 /** Path checks and file reads are both done by the target Worker; Home does not probe the remote filesystem. */
 function workerQuery(run, action, path, timeout = 10000) {
@@ -596,7 +660,7 @@ const server = http.createServer(async (req, res) => {
     if(mediaUpload)return mediaStreams.receive(req,res,mediaUpload[1]);
     const mediaRead=pathname.match(/^\/media\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/);
     if(mediaRead)return mediaStreams.serve(req,res,mediaRead[1],{download:url.searchParams.get('download')==='1'});
-      if (pathname === '/healthz') return json(res, { ok: true, version: '0.4.0', toolProtocol:2 });
+      if (pathname === '/healthz') return json(res, { ok: true, version: '0.4.0', toolProtocol:2, build: await staticFingerprint(pageFileMap()) });
     if (pathname.startsWith('/api/')) {
       const bearer = req.headers.authorization || '';
       const workerOk = matches(bearer, `Bearer ${workerToken}`);
@@ -1503,56 +1567,19 @@ const server = http.createServer(async (req, res) => {
       return json(res, { error: tr('home.endpointNotFound') }, 404);
     }
     if (req.method !== 'GET') return json(res, { error: tr('home.unsupportedRequest') }, 405);
-    const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/send-state.js':'send-state.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
-    Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
-    files['/workspace-inspector.js']='workspace-inspector.js';
-    files['/concurrent-writes.js']='concurrent-writes.js';
-    files['/conversation-tasks.js']='conversation-tasks.js';
-    files['/conversation-task-state.js']='conversation-task-state.js';
-    files['/delivery-summary.js']='delivery-summary.js';
-    files['/retired-commands.js']='retired-commands.js';
-    files['/source-sync.js']='source-sync.js';
-    files['/source-sync-audit.js']='source-sync-audit.js';
-    files['/quota-state.js']='quota-state.js';
-    files['/chat-card-state.js']='chat-card-state.js';
-    files['/state-data.js']='state-data.js';
-    files['/group-conversations.js']='group-conversations.js';
-    files['/project-team-copy.js']='project-team-copy.js';
-    files['/execution-progress.js']='execution-progress.js';
-    files['/live-scene.js']='live-scene.js';
-    files['/cli-recovery.js']='cli-recovery.js';
-    files['/session-queue.js']='session-queue.js';
-    files['/browser-token.js']='browser-token.js';
-    files['/configuration-information.js']='configuration-information.js';
-    files['/role-switch.js']='role-switch.js';
-    files['/role-history.js']='role-history.js';
-    files['/role-templates.js']='role-templates.js';
-    files['/i18n.js']='i18n.js';
-    files['/output-language.js']='output-language.js';
-    files['/native-side-ask.js']='native-side-ask.js';
-    files['/group-side-ask.js']='group-side-ask.js';
-    files['/native-sessions.js']='native-sessions.js';
-    files['/native-agent-switch.js']='native-agent-switch.js';
-    files['/native-transcript.js']='native-transcript.js';
-    files['/media.js']='media.js';
-    files['/pasted-text.js']='pasted-text.js';
-    files['/side-preview.js']='side-preview.js';
-    files['/history-prompt.js']='history-prompt.js';
-    files['/history-cache.js']='history-cache.js';
-    files['/data-settings.js']='data-settings.js';
-    files['/remote-access-settings.js']='remote-access-settings.js';
-    files['/native-history-timeline.js']='native-history-timeline.js';
-    files['/native-session-groups.js']='native-session-groups.js';
-    files['/create-folder.js']='create-folder.js';
-    files['/list-order.js']='list-order.js';files['/select-controls.js']='select-controls.js';files['/model-usage.js']='model-usage.js';
-    files['/mention-input.js']='mention-input.js';
-    files['/context-usage.js']='context-usage.js';
-    files['/vendor/opencc-t2cn.js']='vendor/opencc-t2cn.js';
-    files['/locales/zh.js']='locales/zh.js';
-    files['/locales/native-takeover-zh.js']='locales/native-takeover-zh.js';
+    const files = pageFileMap();
     const file = files[pathname]; if (!file) return json(res, { error: tr('home.pageNotFound') }, 404);
-    const bytes = await readFile(join(base, 'public', file));
-    await sendBufferedResponse(req,res,bytes,{ 'Content-Type': { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' }[extname(file)], 'Cache-Control': 'no-cache' });
+    let bytes = await readFile(join(base, 'public', file));
+    // The service worker's cache name carries a fingerprint of every page file, so any change installs a fresh cache.
+    if (pathname === '/sw.js') bytes = Buffer.from(String(bytes).replace(/^(const CACHE = 'agent-workbench-static-[^']*)'/m, `$1-${await staticFingerprint(files)}'`));
+    // The page states which build it is, so a page running from an older cache can notice a newer Home (/healthz build).
+    if (file === 'index.html') bytes = Buffer.from(String(bytes).replace('<meta name="workbench-build" content="">', `<meta name="workbench-build" content="${await staticFingerprint(files)}">`));
+    // Unchanged files answer 304, so revalidation costs one small round trip instead of the whole file.
+    // Weak, since the same validator covers the gzip and the plain body.
+    const etag = `W/"${createHash('sha256').update(bytes).digest('base64url').slice(0, 22)}"`;
+    const asked = String(req.headers['if-none-match'] || '').split(',').map(value => value.trim().replace(/^W\//, ''));
+    if (asked.includes('*') || asked.includes(etag.slice(2))) { res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding' }); return res.end(); }
+    await sendBufferedResponse(req,res,bytes,{ 'Content-Type': { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' }[extname(file)], 'Cache-Control': 'no-cache', ETag: etag });
   } catch (e) { if (!res.headersSent) json(res, { error: e.message,...(e.folderPreparationReleased===true?{folderPreparationReleased:true}:{}),...(e.code?{code:e.code}:{}),...(e.limit?{limit:e.limit}:{}) }, 400); else res.end(); }
 });
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });

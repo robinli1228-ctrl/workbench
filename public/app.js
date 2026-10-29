@@ -5,6 +5,7 @@ import {createConversationTaskUI} from './conversation-tasks.js';
 import {createDataSettingsUI} from './data-settings.js';
 import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
 import { t, getLanguage, setLanguage, onLanguageChange, syncLanguageWithBackend, dateLocale } from './i18n.js';
+import { trackLoading } from './load-bar.js';
 import {activityBlock,classifyStep,createPreviewSheet} from './native-transcript.js';
 import stepZh from './locales/native-takeover-zh.js';
 import {renderMarkdown} from './markdown.js';
@@ -541,16 +542,20 @@ async function refreshState({ quiet = false } = {}) {
   app.loadingState = true;
   const requestedProject=app.selectedProjectId,requestedConversation=app.selectedConversationId,generation=app.stateGeneration;
   if (!quiet) setConnection('Syncing Home…');
+  // The top bar shows a read the user is waiting for: the first load, a visible sync, or a chat whose state is not loaded yet.
+  // Background polls and live-update refreshes of the same chat stay silent.
+  const indicate=!quiet||app.stateCache?.projectId!==requestedProject||(app.stateCache?.conversationId||requestedProject)!==requestedConversation;
+  const read=path=>indicate?trackLoading(readState(path)):readState(path);
   try {
     const params=new URLSearchParams({view:'workspace'});
     if(requestedProject)params.set('projectId',requestedProject);
     if(requestedConversation)params.set('conversationId',requestedConversation);
     if(app.stateCache?.projectId===requestedProject&&app.stateCache?.conversationId===requestedConversation)params.set('cursor',app.stateCache.cursor);
-    let update=await readState(`/api/state?${params}`);
+    let update=await read(`/api/state?${params}`);
     if(generation!==app.stateGeneration||requestedProject!==app.selectedProjectId||requestedConversation!==app.selectedConversationId){app.pendingStateRefresh=true;return;}
     try {app.stateCache=update.schema===1?applyStateUpdate(app.stateCache,update):{projectId:requestedProject||update.projects?.[0]?.id||null,cursor:null,state:update};}
     catch {
-      params.delete('cursor');update=await readState(`/api/state?${params}`);
+      params.delete('cursor');update=await read(`/api/state?${params}`);
       if(generation!==app.stateGeneration||requestedProject!==app.selectedProjectId||requestedConversation!==app.selectedConversationId){app.pendingStateRefresh=true;return;}
       app.stateCache=applyStateUpdate(null,update);
     }
@@ -601,6 +606,8 @@ async function refreshState({ quiet = false } = {}) {
   } catch (error) {
     // Recover with a full snapshot after a failed read instead of extending an uncertain cursor.
     app.stateCache = null;
+    // Placeholders from the page shell stay only while a first load is still expected to arrive.
+    if (!app.lastStateAt) for (const node of document.querySelectorAll('#project-list > .list-skeleton, #chat-feed > .chat-skeleton')) node.remove();
     setError(error.message);
     setConnection('Home connection failed');
     // SSE may stay open without another change event, so failed reads also need the polling fallback.
