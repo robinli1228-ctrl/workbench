@@ -1,3 +1,4 @@
+import {copyText} from './role-icons.js';
 /** Session transcript rendering: one activity line per turn (expandable steps), file chips with a preview sheet, and a single working line.
  * Pure DOM helpers; the data still comes from the turn events (live-scene rows) that the Sessions page already loads. */
 import {stripAnsi} from './run-log-data.js';
@@ -322,7 +323,7 @@ export function createPreviewSheet(host,t,{onSide=null,canSide=()=>Boolean(onSid
   if(kind)head.append(el('span','nt-sheet-kind',kind));
   for(const action of actions){const b=el('button','nt-sheet-btn');b.type='button';b.textContent=action.label;b.addEventListener('click',()=>action.onClick(b));head.append(b);}
   if(side&&canSide()){const b=el('button','nt-sheet-btn is-side');b.type='button';b.textContent=t('Open on the right');b.addEventListener('click',()=>{const item=side();close();onSide(item);});head.append(b);}
-  const copy=el('button','nt-sheet-btn');copy.type='button';copy.textContent=t('Copy path');copy.addEventListener('click',()=>void navigator.clipboard?.writeText(path).catch(()=>{}));
+  const copy=el('button','nt-sheet-btn');copy.type='button';copy.textContent=t('Copy path');copy.addEventListener('click',()=>void copyText(copy,path).catch(()=>{}));
   const x=el('button','nt-sheet-btn is-close');x.type='button';x.setAttribute('aria-label',t('Close'));x.textContent='\u00d7';x.addEventListener('click',close);
   head.append(copy,x);
   const body=el('div','nt-sheet-body');sheet.append(head,body);host.append(sheet);host.classList.add('has-preview');document.addEventListener('keydown',onKey);

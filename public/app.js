@@ -1,3 +1,4 @@
+import {copyText,pendingAction,bindPendingAction,bindCopyFeedback} from './role-icons.js';
 import {createDocumentPreview} from './side-preview.js';
 import {deliveryRepositorySummary} from './delivery-summary.js';
 import {renderRetiredCommandWarning} from './retired-commands.js';
@@ -5,6 +6,7 @@ import {createConversationTaskUI} from './conversation-tasks.js';
 import {createDataSettingsUI} from './data-settings.js';
 import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
 import { t, getLanguage, setLanguage, onLanguageChange, syncLanguageWithBackend, dateLocale } from './i18n.js';
+import { trackLoading } from './load-bar.js';
 import {activityBlock,classifyStep,createPreviewSheet} from './native-transcript.js';
 import stepZh from './locales/native-takeover-zh.js';
 import {renderMarkdown} from './markdown.js';
@@ -31,6 +33,7 @@ import { roleTemplatesUI } from './role-templates.js';
 import { rememberSupervisorChoice, projectSetupUI } from './project-setup.js';
 import { deviceEntries, platformAdminUI } from './platform-admin.js';
 import { projectSpaceUI } from './project-space.js';
+import { platformMemoryUI } from './platform-memory.js';
 import { tokenUsageUI } from './token-usage.js';
 import { createScheduledJobsUI } from './scheduled-jobs.js';
 import { formatGitVersionStatus, formatProjectGitSummary } from './git-version.js';
@@ -159,7 +162,7 @@ const room = createRoomUI({ api, documentPreview, openSideAsk:message=>inspector
 // stay text-only, the same as the confirm buttons at the bottom of dialogs, so a row never mixes the two styles.
 for(const [selector,icon,label] of [
   ['#close-settings-page, dialog button.icon-button[id^="close-"], #folder-close, #close-project-form','close'],['#show-device-enroll','plus'],
-  ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit background organizing'],['#manage-role-templates','edit','Manage role templates'],['#edit-api-token','edit'],
+  ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit background organizing'],['#edit-memory-organizer','edit','Edit memory organizing'],['#manage-role-templates','edit','Manage role templates'],['#edit-api-token','edit'],
   ['#token-usage-form [type=submit]','search'],['#token-usage-refresh','refresh'],['#open-project-timers','history'],
   ['#refresh-followup','refresh'],['#view-followup','log'],['#data-refresh','refresh'],['#check-software-updates','refresh'],
   ['#copy-setup-guide','copy'],['#toggle-setup-guide','overview']
@@ -170,6 +173,7 @@ const roleTemplates = roleTemplatesUI({ api, getData: () => app.data, refreshSta
 const setupUI = projectSetupUI({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create, setError,openFolder:projectsUI.openFolder });
 const platformUI = platformAdminUI({api,getData:()=>app.data,refreshState,create});
 const spacesUI = projectSpaceUI({api,getData:()=>app.data,getProject:getCurrentProject,refreshState,create,openFolder:(...args)=>projectsUI.openFolder(...args)});
+const memoryUI = platformMemoryUI({api,getData:()=>app.data,create,formatTime,visible:()=>app.view==='settings'&&app.settingsTab==='memory'});
 const tokenUI = tokenUsageUI({api,getData:()=>app.data,create});
 const dataUI = createDataSettingsUI({api});
 const schedulesUI = createScheduledJobsUI({api,getData:()=>app.data,getProject:getCurrentProject,getConversationId:()=>app.selectedConversationId,refreshState,create,
@@ -299,6 +303,7 @@ function openSettings(value = 'general') {
   platformUI.refresh(); spacesUI.refresh(); tokenUI.refresh();
   if (tab === 'usage') tokenUI.show({resetScroll:true});
   if (tab === 'data') dataUI.show();
+  if (tab === 'memory') { renderMemoryOrganizer(); void memoryUI.load(); }
   if (tab === 'general') void remoteAccessUI.refresh();
   if (tab === 'timers') schedulesUI.show();
   if (tab === 'prompts') renderPlatformPrompts();
@@ -541,16 +546,20 @@ async function refreshState({ quiet = false } = {}) {
   app.loadingState = true;
   const requestedProject=app.selectedProjectId,requestedConversation=app.selectedConversationId,generation=app.stateGeneration;
   if (!quiet) setConnection('Syncing Home…');
+  // The top bar shows a read the user is waiting for: the first load, a visible sync, or a chat whose state is not loaded yet.
+  // Background polls and live-update refreshes of the same chat stay silent.
+  const indicate=!quiet||app.stateCache?.projectId!==requestedProject||(app.stateCache?.conversationId||requestedProject)!==requestedConversation;
+  const read=path=>indicate?trackLoading(readState(path)):readState(path);
   try {
     const params=new URLSearchParams({view:'workspace'});
     if(requestedProject)params.set('projectId',requestedProject);
     if(requestedConversation)params.set('conversationId',requestedConversation);
     if(app.stateCache?.projectId===requestedProject&&app.stateCache?.conversationId===requestedConversation)params.set('cursor',app.stateCache.cursor);
-    let update=await readState(`/api/state?${params}`);
+    let update=await read(`/api/state?${params}`);
     if(generation!==app.stateGeneration||requestedProject!==app.selectedProjectId||requestedConversation!==app.selectedConversationId){app.pendingStateRefresh=true;return;}
     try {app.stateCache=update.schema===1?applyStateUpdate(app.stateCache,update):{projectId:requestedProject||update.projects?.[0]?.id||null,cursor:null,state:update};}
     catch {
-      params.delete('cursor');update=await readState(`/api/state?${params}`);
+      params.delete('cursor');update=await read(`/api/state?${params}`);
       if(generation!==app.stateGeneration||requestedProject!==app.selectedProjectId||requestedConversation!==app.selectedConversationId){app.pendingStateRefresh=true;return;}
       app.stateCache=applyStateUpdate(null,update);
     }
@@ -601,6 +610,8 @@ async function refreshState({ quiet = false } = {}) {
   } catch (error) {
     // Recover with a full snapshot after a failed read instead of extending an uncertain cursor.
     app.stateCache = null;
+    // Placeholders from the page shell stay only while a first load is still expected to arrive.
+    if (!app.lastStateAt) for (const node of document.querySelectorAll('#project-list > .list-skeleton, #chat-feed > .chat-skeleton')) node.remove();
     setError(error.message);
     setConnection('Home connection failed');
     // SSE may stay open without another change event, so failed reads also need the polling fallback.
@@ -640,7 +651,7 @@ function render() {
   projectsUI.refreshNodes();
   projectsUI.refreshConcurrent();
   setupUI.refresh();
-  platformUI.refresh(); spacesUI.refresh();
+  platformUI.refresh(); spacesUI.refresh(); memoryUI.refresh();
   if(!nativeSessionUI.active())void room.refresh(app.data, app.selectedProjectId,app.selectedConversationId);
   nativeSessionUI.sync();
 }
@@ -1165,7 +1176,7 @@ function openRoleTerminal(role) {
         const open=create('a','secondary',remote?(claim.kind==='new'?'Open new session via SSH':'Resume via SSH'):(claim.kind==='new'?'Open in iTerm':'Continue in iTerm'));open.href=claim.url;
         open.title='iTerm will ask you to confirm the command; it opens only once and does not repeat automatically';actions.append(open);
         const copy=create('button','secondary',remote?'Copy SSH command':claim.kind==='new'?'Copy command':'Copy resume command');copy.type='button';
-        copy.onclick=async()=>{try{await navigator.clipboard.writeText(claim.command);copy.textContent='Copied';}catch{feedback.hidden=false;feedback.textContent='Clipboard unavailable; use the iTerm entry.';}};actions.append(copy);
+        copy.onclick=async()=>{try{await copyText(copy,claim.command);}catch{feedback.hidden=false;feedback.textContent='Clipboard unavailable; use the iTerm entry.';}};actions.append(copy);
       }
       const release=create('button','secondary','Return to platform');release.type='button';
       const stop=create('button','danger','Stop CLI and return');stop.type='button';
@@ -1327,27 +1338,26 @@ function renderPlatformPrompts() {
   document.querySelector('#conversation-organizer-summary').textContent=organizer.nodeId
     ? t('{v} · {runtime} · {model}{v2}\nLast updated: {v3}', { v: worker?.name||organizer.nodeId, runtime: organizer.runtime, model: organizer.model, v2: organizer.effort?` · ${organizer.effort}`:'', v3: organizer.updatedAt?formatTime(organizer.updatedAt):t('not recorded') })
     : 'Not configured; dispatch uses original excerpts.';
+  renderMemoryOrganizer();
 }
 
-const organizerDialog=document.querySelector('#conversation-organizer-dialog');
-const organizerForm=document.querySelector('#conversation-organizer-form');
 function organizerOptions(select,items,value,blank) {
   select.replaceChildren();
   const empty=create('option','',blank);empty.value='';select.append(empty);
   for(const item of items){const option=create('option','',item.name||item.label||item.id);option.value=item.id;select.append(option);}
   select.value=items.some(item=>item.id===value)?value:'';
 }
-function refreshOrganizerChoices(saved={}) {
-  const workers=(app.data.workers||[]).filter(worker=>worker.online&&worker.capabilities?.managedResume===1);
-  organizerOptions(organizerForm.elements.nodeId,workers.map(worker=>({id:worker.id,name:worker.name})),saved.nodeId||organizerForm.elements.nodeId.value,'Not enabled for now');
-  const worker=workers.find(item=>item.id===organizerForm.elements.nodeId.value);
+function refreshOrganizerChoices(saved,form,usable) {
+  const workers=(app.data.workers||[]).filter(worker=>worker.online&&usable(worker));
+  organizerOptions(form.elements.nodeId,workers.map(worker=>({id:worker.id,name:worker.name})),saved.nodeId||form.elements.nodeId.value,'Not enabled for now');
+  const worker=workers.find(item=>item.id===form.elements.nodeId.value);
   const runtimes=(worker?.runtimes||[]).filter(runtime=>['codex','claude','grok','agy'].includes(runtime.type)&&runtime.available&&runtime.authReady===true);
-  organizerOptions(organizerForm.elements.runtime,runtimes.map(runtime=>({id:runtime.type,name:runtime.label||runtime.type})),saved.runtime||organizerForm.elements.runtime.value,'Select CLI');
-  const runtime=runtimes.find(item=>item.type===organizerForm.elements.runtime.value);
-  organizerOptions(organizerForm.elements.model,(runtime?.models||[]).map(model=>({id:model.id,name:model.name||model.id})),saved.model||organizerForm.elements.model.value,'Select model');
-  const model=runtime?.models?.find(item=>item.id===organizerForm.elements.model.value);
-  renderModelUsageNotice(organizerForm.querySelector('[data-model-usage-note]'),runtime?.type,model||{id:organizerForm.elements.model.value});
-  organizerOptions(organizerForm.elements.effort,[...new Set(model?.efforts||runtime?.efforts||[])].map(id=>({id})),saved.effort||organizerForm.elements.effort.value,'CLI default');
+  organizerOptions(form.elements.runtime,runtimes.map(runtime=>({id:runtime.type,name:runtime.label||runtime.type})),saved.runtime||form.elements.runtime.value,'Select CLI');
+  const runtime=runtimes.find(item=>item.type===form.elements.runtime.value);
+  organizerOptions(form.elements.model,(runtime?.models||[]).map(model=>({id:model.id,name:model.name||model.id})),saved.model||form.elements.model.value,'Select model');
+  const model=runtime?.models?.find(item=>item.id===form.elements.model.value);
+  renderModelUsageNotice(form.querySelector('[data-model-usage-note]'),runtime?.type,model||{id:form.elements.model.value});
+  organizerOptions(form.elements.effort,[...new Set(model?.efforts||runtime?.efforts||[])].map(id=>({id})),saved.effort||form.elements.effort.value,'CLI default');
 }
 
 /** Reuse one editor; the project entry edits only the shared supervisor prompt, not model defaults. */
@@ -1564,7 +1574,7 @@ function renderTaskDetail() {
 function renderRunToolbar(task, run) {
   if (run && ['queued', 'starting', 'running', 'waiting_user'].includes(run.status)) {
     const stop = create('button', 'secondary run-stop-button', 'Stop'); stop.type = 'button';
-    stop.addEventListener('click', () => stopRun(run, stop));
+    bindPendingAction(stop,`stop:${run.id}`);stop.addEventListener('click', () => stopRun(run, stop));
     dom.runStatus.append(stop);
   }
   if (task.origin === 'chat') return;
@@ -1624,8 +1634,8 @@ function renderRunResult(result) {
 /** Copy always uses the original value, even when the visible ID or input is abbreviated. */
 function runCopyButton(value) {
   const button=create('button','icon-button run-copy');button.type='button';setActionIcon(button,'copy','Copy');
-  button.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(value);button.title=t('Copied');}catch{button.title=t('Copy failed');}});
-  return button;
+  button.addEventListener('click',async()=>{try{await copyText(button,value);}catch{button.title=t('Copy failed');}});
+  return bindCopyFeedback(button,`run:${app.detailRunId}:${value}`);
 }
 
 function renderRunSummary(run) {
@@ -1970,13 +1980,14 @@ async function refreshRunDetails() {
 /**
  * A write operation's commandId is kept while the network state is uncertain; it is released only after a definite HTTP result.
  */
-async function commandRequest(key, path, json, button) {
+async function commandRequest(key, path, json, button, busyIcon=false) {
   const commandId = app.commands[key] || crypto.randomUUID();
   app.commands[key] = commandId;
   saveCommands();
+  const original = button.innerHTML;
+  const restore=busyIcon?pendingAction(button):null;
   button.disabled = true;
-  const original = button.textContent;
-  button.textContent = 'Submitting…';
+  if(!busyIcon)button.textContent = 'Submitting…';
   try {
     const result = await api(path, { method: 'POST', json: { ...json, commandId } });
     delete app.commands[key];
@@ -1991,8 +2002,7 @@ async function commandRequest(key, path, json, button) {
     setError(error.isNetworkError ? t('{message}\nClick again; the system will reuse the same commandId to look up the original operation.', { message: error.message }) : error.message);
     return null;
   } finally {
-    button.disabled = false;
-    button.textContent = original;
+    if(restore)restore();else{button.disabled=false;button.innerHTML=original;}
   }
 }
 
@@ -2003,7 +2013,7 @@ async function startTask(task, nodeId, button) {
 }
 
 async function stopRun(run, button) {
-  const result = await commandRequest(`stop:${run.id}`, `/api/runs/${encodeURIComponent(run.id)}/stop`, {}, button);
+  const result = await commandRequest(`stop:${run.id}`, `/api/runs/${encodeURIComponent(run.id)}/stop`, {}, button, true);
   if (result) await refreshState({ quiet: true });
 }
 
@@ -2227,28 +2237,42 @@ dom.settingsPage?.querySelectorAll('[data-settings-tab]').forEach(button => {
 });
 
 document.querySelectorAll('[data-prompt-edit]').forEach(button => button.addEventListener('click', () => openPromptEditor(button.dataset.promptEdit)));
-document.querySelector('#edit-conversation-organizer')?.addEventListener('click',()=>{
-  const saved=app.data.settings?.conversationOrganizer||{};
-  for(const key of ['nodeId','runtime','model','effort'])organizerForm.elements[key].value='';
-  refreshOrganizerChoices(saved);
-  organizerForm.elements.prompt.value=saved.prompt||'';
-  document.querySelector('#conversation-organizer-feedback').hidden=true;
-  organizerDialog.showModal();
-});
-for(const id of ['#close-conversation-organizer','#cancel-conversation-organizer'])document.querySelector(id)?.addEventListener('click',()=>organizerDialog.close());
-organizerForm?.elements.nodeId?.addEventListener('change',()=>refreshOrganizerChoices({nodeId:organizerForm.elements.nodeId.value}));
-organizerForm?.elements.runtime?.addEventListener('change',()=>refreshOrganizerChoices({nodeId:organizerForm.elements.nodeId.value,runtime:organizerForm.elements.runtime.value}));
-organizerForm?.elements.model?.addEventListener('change',()=>refreshOrganizerChoices({nodeId:organizerForm.elements.nodeId.value,runtime:organizerForm.elements.runtime.value,model:organizerForm.elements.model.value}));
-organizerForm?.addEventListener('submit',async event=>{
-  event.preventDefault();const button=organizerForm.querySelector('[type=submit]');button.disabled=true;
-  const feedback=document.querySelector('#conversation-organizer-feedback');feedback.hidden=true;
-  try {
-    const values=Object.fromEntries(new FormData(organizerForm));
-    app.data.settings.conversationOrganizer=await api('/api/settings/conversation-organizer',{method:'POST',json:values});
-    renderPlatformPrompts();organizerDialog.close();
-  } catch(error) {feedback.textContent=error.message;feedback.hidden=false;}
-  finally {button.disabled=false;}
-});
+/**
+ * One editor for both organizer dialogs (background organizing and memory organizing): device → CLI → model → effort
+ * choices narrowed as each is picked, then a save to the dialog's route.
+ */
+function organizerEditor({key,name,route,usable,fill=()=>{},values=form=>Object.fromEntries(new FormData(form)),saved=()=>{}}) {
+  const dialog=document.querySelector(`#${name}-dialog`),form=document.querySelector(`#${name}-form`),feedback=document.querySelector(`#${name}-feedback`);
+  if(!form)return;
+  const choices=picked=>refreshOrganizerChoices(picked,form,usable);
+  document.querySelector(`#edit-${name}`)?.addEventListener('click',()=>{
+    const current=app.data.settings?.[key]||{};
+    for(const field of ['nodeId','runtime','model','effort'])form.elements[field].value='';
+    choices(current);fill(current,form);feedback.hidden=true;dialog.showModal();
+  });
+  for(const id of [`#close-${name}`,`#cancel-${name}`])document.querySelector(id)?.addEventListener('click',()=>dialog.close());
+  for(const [field,keep] of [['nodeId',['nodeId']],['runtime',['nodeId','runtime']],['model',['nodeId','runtime','model']]])
+    form.elements[field]?.addEventListener('change',()=>choices(Object.fromEntries(keep.map(item=>[item,form.elements[item].value]))));
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();const button=form.querySelector('[type=submit]');button.disabled=true;feedback.hidden=true;
+    try {app.data.settings[key]=await api(route,{method:'POST',json:values(form)});saved();dialog.close();}
+    catch(error) {feedback.textContent=error.message;feedback.hidden=false;}
+    finally {button.disabled=false;}
+  });
+}
+organizerEditor({key:'conversationOrganizer',name:'conversation-organizer',route:'/api/settings/conversation-organizer',usable:worker=>worker.capabilities?.managedResume===1,
+  fill:(current,form)=>{form.elements.prompt.value=current.prompt||'';},saved:renderPlatformPrompts});
+function renderMemoryOrganizer() {
+  const settings=app.data.settings||{};
+  const memory=settings.memoryOrganizer||{},memoryWorker=app.data.workers?.find(item=>item.id===memory.nodeId);
+  document.querySelector('#memory-organizer-summary').textContent=memory.nodeId
+    ? t('{v} · {runtime} · {model}{v2}\nDaily at {time}', { v: memoryWorker?.name||memory.nodeId, runtime: memory.runtime, model: memory.model, v2: memory.effort?` · ${memory.effort}`:'', time: memory.time||'03:00' })
+    : t('Not configured; no memory is organized.');
+}
+organizerEditor({key:'memoryOrganizer',name:'memory-organizer',route:'/api/settings/memory-organizer',usable:worker=>worker.capabilities?.memoryOrganizer===1,
+  // Only the first setup asks where to start; later saves keep how far organizing has got.
+  fill:(current,form)=>{form.elements.time.value=current.time||'03:00';form.querySelector('[data-memory-start]').hidden=Boolean(current.nodeId);form.elements.startFrom.value='all';},
+  values:form=>({...Object.fromEntries(new FormData(form)),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||''}),saved:()=>{renderMemoryOrganizer();memoryUI.refresh();}});
 for (const id of ['#close-platform-prompts-dialog', '#cancel-platform-prompts-dialog']) document.querySelector(id)?.addEventListener('click', () => dom.promptsDialog.close());
 dom.promptsDialog?.addEventListener('close', renderPlatformPrompts);
 document.querySelector('#restore-platform-prompts')?.addEventListener('click', () => {

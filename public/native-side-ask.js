@@ -1,3 +1,4 @@
+import {copyText,bindCopyFeedback} from './role-icons.js';
 import {t as globalT,getLanguage,dateLocale} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {UI_ICON,agentIconEl,closeIcon} from './role-icons.js';
@@ -12,7 +13,7 @@ const t=(text,params)=>{const own=getLanguage()==='zh'?pageZh[text]:undefined;re
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
 const button=(text,fn,cls='secondary')=>{const n=el('button',cls,t(text));n.type='button';n.addEventListener('click',fn);return n;};
 const setActionIcon=(node,name,label)=>{node.innerHTML=UI_ICON[name]||'';node.title=label;node.setAttribute('aria-label',label);};
-const iconButton=(name,label,fn,cls='')=>{const node=button('',fn,`icon-button ${cls}`);setActionIcon(node,name,t(label));return node;};
+const iconButton=(name,label,fn,cls='',feedbackKey)=>{const node=button('',fn,`icon-button ${cls}`);setActionIcon(node,name,t(label));return bindCopyFeedback(node,feedbackKey);};
 const endpoint=nodeId=>`/api/native-sessions/${encodeURIComponent(nodeId)}`;
 const nativeId=value=>value.sessionId||value.id;
 const clock=value=>new Date(value).toLocaleTimeString(dateLocale(),{hour:'2-digit',minute:'2-digit'});
@@ -20,7 +21,7 @@ const names={claude:'Claude Code',codex:'Codex'};
 /** Long prompts retain the Sessions full-text action instead of trapping text behind the three-line clamp. */
 function showPrompt(text){
  const dialog=el('dialog','message-fullscreen'),header=el('header','message-fullscreen-header'),body=el('div','message-fullscreen-body'),content=el('div','message-fullscreen-content');
- header.append(el('h2','',t('My message')),iconButton('copy','Copy',()=>void navigator.clipboard?.writeText(text)),sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),copyText:text,render:()=>el('div','nt-side-prompt',text)}),{before:()=>dialog.close()}),iconButton('close','Close',()=>dialog.close()));content.append(el('div','chat-message-text',text));body.append(content);dialog.append(header,body);dialog.addEventListener('close',()=>dialog.remove(),{once:true});document.body.append(dialog);dialog.showModal();
+ header.append(el('h2','',t('My message')),iconButton('copy','Copy',e=>void copyText(e.currentTarget,text).catch(()=>{})),sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),copyText:text,render:()=>el('div','nt-side-prompt',text)}),{before:()=>dialog.close()}),iconButton('close','Close',()=>dialog.close()));content.append(el('div','chat-message-text',text));body.append(content);dialog.append(header,body);dialog.addEventListener('close',()=>dialog.remove(),{once:true});document.body.append(dialog);dialog.showModal();
 }
 
 
@@ -28,19 +29,19 @@ function showPrompt(text){
 function questionRows(q,session,files,live,preview,api){
  const user=el('article','nt-row nt-user native-chat-row'),userBody=el('div','nt-body'),text=el('div','nt-prompt-text',q.prompt);
  userBody.append(text);userBody.hidden=!q.prompt?.trim();if(files)user.append(files);user.append(userBody);
- const tools=el('div','nt-prompt-tools');tools.append(el('time','nt-prompt-time',clock(q.createdAt)),iconButton('copy','Copy',()=>void navigator.clipboard?.writeText(q.prompt||'')));const expand=iconButton('fullscreen','Full screen',()=>showPrompt(q.prompt||''),'nt-prompt-expand');expand.hidden=true;tools.append(expand);if(q.prompt?.trim())tools.append(sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),copyText:q.prompt,render:()=>el('div','nt-side-prompt',q.prompt)})));requestAnimationFrame(()=>{expand.hidden=!(text.isConnected&&text.scrollHeight>text.clientHeight+1);});user.append(tools);
+ const tools=el('div','nt-prompt-tools');tools.append(el('time','nt-prompt-time',clock(q.createdAt)),iconButton('copy','Copy',e=>void copyText(e.currentTarget,q.prompt||'').catch(()=>{}),'',`side:${q.id}:prompt`));const expand=iconButton('fullscreen','Full screen',()=>showPrompt(q.prompt||''),'nt-prompt-expand');expand.hidden=true;tools.append(expand);if(q.prompt?.trim())tools.append(sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),copyText:q.prompt,render:()=>el('div','nt-side-prompt',q.prompt)})));requestAnimationFrame(()=>{expand.hidden=!(text.isConnected&&text.scrollHeight>text.clientHeight+1);});user.append(tools);
  const reply=el('article',`nt-row nt-agent native-chat-row${q.status==='failed'?' is-error':''}`),by=el('div','nt-byline'),avatar=el('span','nt-avatar');avatar.append(agentIconEl(session.runtime));
  by.append(avatar,el('span','nt-name',names[session.runtime]),el('time','',clock(q.endedAt||q.createdAt)));reply.append(by);
  const markdown=value=>linkMedia(renderMarkdown(value),{key:`native:${session.nodeId}:${session.runtime}:${nativeId(session)}`,describe:path=>api(`${endpoint(session.nodeId)}/media?${new URLSearchParams({runtime:session.runtime,sessionId:nativeId(session),path})}`)});
  const body=el('div','nt-body'),content=el('div','nt-turn');body.append(content);reply.append(body);
- const rows=liveSceneRows(q.events||[],{status:q.status}).rows.filter(r=>!(r.kind==='log'&&/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/m.test(stripAnsi(r.text||''))));
- const messages=new Set(rows.filter(r=>r.kind==='message').map(r=>r.text.trim())),seen=new Set();let group=[];
+ const rows=liveSceneRows(q.events||[],q).rows.filter(r=>!(r.kind==='log'&&/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/m.test(stripAnsi(r.text||''))));
+ let shown=0,group=[];
  const flush=()=>{if(!group.length)return;content.append(activityBlock({steps:group.filter(r=>r.kind==='tool').map(r=>classifyStep(r.item,q.status)),notes:group.filter(r=>r.kind!=='tool'),t,live,open:live,onPreview:(step,path)=>preview.open(step,path)}));group=[];};
- for(const row of rows){if(['tool','log','error'].includes(row.kind)){group.push(row);continue;}flush();const value=simplifiedCliOutput(stripAnsi(row.text||''));if(!value.trim()||seen.has(value)||row.kind==='text'&&messages.has(row.text.trim()))continue;seen.add(value);content.append(markdown(value));}flush();
- if(!seen.size&&q.text)content.append(markdown(simplifiedCliOutput(q.text)));
+ for(const row of rows){if(['tool','log','error'].includes(row.kind)){group.push(row);continue;}flush();const value=simplifiedCliOutput(stripAnsi(row.text||''));if(!value.trim())continue;shown++;content.append(markdown(value));}flush();
+ if(!shown&&q.text)content.append(markdown(simplifiedCliOutput(q.text)));
  const tasks=taskBlock(q,t,{live});if(tasks)content.append(tasks);
  if(live){const line=el('div','nt-working');line.append(el('span','nt-pulse'),el('span','nt-working-time',elapsedText(q.createdAt)),el('span','nt-working-hint',t(q.status==='queued'?'Waiting for the device…':q.status==='starting'?'Starting the CLI…':'Working…')));content.append(line);}
- else{const foot=el('div','nt-reply-foot'),last=[...rows].reverse().find(r=>['message','text'].includes(r.kind));foot.append(iconButton('copy','Copy',()=>void navigator.clipboard?.writeText(last?.text||q.text||'')));if(q.endedAt)foot.append(el('span','nt-duration',t('Took {duration}',{duration:elapsedText(q.createdAt,new Date(q.endedAt).getTime())})));if(q.status!=='succeeded')foot.append(el('span','nt-foot-status',`${t(q.status==='interrupted'?'Interrupted':'Failed')}${q.error?` · ${t(q.error)}`:''}`));reply.append(foot);}
+ else{const foot=el('div','nt-reply-foot'),last=[...rows].reverse().find(r=>r.phase==='final_answer'&&!r.aggregate)||[...rows].reverse().find(r=>['message','text'].includes(r.kind));foot.append(iconButton('copy','Copy',e=>void copyText(e.currentTarget,last?.text||q.text||'').catch(()=>{}),'',`side:${q.id}:reply`));if(q.endedAt)foot.append(el('span','nt-duration',t('Took {duration}',{duration:elapsedText(q.createdAt,new Date(q.endedAt).getTime())})));if(q.status!=='succeeded')foot.append(el('span','nt-foot-status',`${t(q.status==='interrupted'?'Interrupted':'Failed')}${q.error?` · ${t(q.error)}`:''}`));reply.append(foot);}
  return [user,reply];
 }
 

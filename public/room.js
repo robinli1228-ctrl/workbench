@@ -1,7 +1,9 @@
+import {copyText,pendingAction,bindCopyFeedback,bindPendingAction} from './role-icons.js';
 import {renderRetiredCommandWarning} from './retired-commands.js';
 import {sideButton} from './side-preview.js';
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale } from './i18n.js';
+import { trackLoading } from './load-bar.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, renderMessageMarkdown } from './markdown.js';
 import { linkMedia, openImageLightbox, markImageOpener, fileGlyph } from './media.js';
@@ -17,9 +19,7 @@ import { renderPermissionScope, permissionScopeValue } from './permission-scope.
 import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl } from './elapsed.js';
-import {classifyStep,stepTitle,toolFilePaths} from './native-transcript.js';
-import stepZh from './locales/native-takeover-zh.js';
-import { getLanguage } from './i18n.js';
+import {classifyStep,toolFilePaths} from './native-transcript.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
 import { pastesAsFile, pastedTextName } from './pasted-text.js';
 
@@ -169,7 +169,7 @@ export function dialogueReplyDirection(message,messages,data) {
 /** Subtasks created by the supervisor's plan may not be written to a visible message's taskIds, yet must still appear in the live chat area. */
 export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
   const linkedTaskIds=new Set(messages.flatMap(message=>message.taskIds || []));
-  const reportedRunIds=new Set(messages.map(message=>message.runId).filter(Boolean));
+  const reportedRunIds=new Set(messages.filter(message=>message.runId&&message.id===`result-${message.runId}`).map(message=>message.runId));
   const runById=new Map(runs.map(run=>[run.id,run]));
   return tasks.filter(task=>{
     if(task.switchOperationId || task.projectId!==projectId || linkedTaskIds.has(task.id))return false;
@@ -569,17 +569,39 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   const verifying = new Set(), verifiedAt = new Map(), submitLocks = new Set();
   const sendState = (d, ownerId = scopeId) => sendStateOf(d, sendingProject === ownerId);
   const scopeProject = ownerId => { try { return ownerId.startsWith('[') ? JSON.parse(ownerId)[0] : ownerId; } catch { return ownerId; } };
+  /** Home's stored copy of a send goes straight into the chat, before any state refresh or history read. */
+  function adoptSent(ownerId, stored) {
+    if (!stored?.id || !histories.has(ownerId)) return;
+    const history = histories.get(ownerId);
+    if (!history.messages.some(m => m.id === stored.id)) histories.set(ownerId, { ...history, messages: [...history.messages, stored] });
+  }
+  // Home starts the reply within a second or two; a polling page would otherwise learn of it only on its next poll.
+  const followSend = () => { for (const ms of [1000, 3000, 6000]) setTimeout(() => void refreshState({ quiet: true }).catch(() => {}), ms); };
+  // A send confirmed by lookup (its response was lost) stays drawn until Home's copy reaches the history.
+  const confirmedEchoes = new Map();
+  /** The scope's pending send as a chat message, until Home's copy of the same id is in the history. */
+  function pendingEcho(ownerId, messages) {
+    const confirmed = confirmedEchoes.get(ownerId);
+    if (confirmed && messages.some(m => m.id === confirmed.id)) confirmedEchoes.delete(ownerId);
+    const d = drafts[ownerId], sent = d?.pending;
+    if (!sent) return confirmedEchoes.get(ownerId) || null;
+    if (sent.discussion || messages.some(m => m.id === sent.clientMessageId)) return null;
+    const ids = new Set(sent.attachmentIds || []);
+    return { id: sent.clientMessageId, projectId: d.projectId || scopeProject(ownerId), conversationId: sent.conversationId || scopeProject(ownerId), sender: 'human', text: sent.text || '', replyToId: sent.replyToId || null, attachments: (d.attachments || []).filter(a => ids.has(a.id)),
+      taskIds: [], createdAt: d.sentAt || new Date().toISOString(), orderAt: '\uffff', localSend: sendState(d, ownerId) };
+  }
   /** Clear only what the confirmed send carried; text typed afterwards or another scope's draft is never touched. */
   function settleSent(ownerId, sent) {
     const d = drafts[ownerId];
     if (!d) return;
     if ((d.text || '') === (sent.text || '')) {
       drafts[ownerId] = { projectId: d.projectId || scopeProject(ownerId), text: '', replyToId: null, replyLabel: '' };
+      if (ownerId === scopeId) renderMessages();
       if (ownerId === scopeId) input.value = '';
       return;
     }
     const carried = new Set(sent.attachmentIds || []);
-    delete d.pending; delete d.sendState;
+    delete d.pending; delete d.sendState; delete d.sentAt;
     d.attachments = (d.attachments || []).filter(a => !carried.has(a.id));
     if (d.replyToId === sent.replyToId) { d.replyToId = null; d.replyLabel = ''; delete d.replyMention; delete d.discussion; }
   }
@@ -597,12 +619,17 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
         ? await api(`/api/projects/${encodeURIComponent(targetProjectId)}/discussions/${encodeURIComponent(sent.discussion.threadId)}/reply?requestId=${encodeURIComponent(sent.clientMessageId)}`)
         : await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(sent.conversationId || targetProjectId)}&id=${encodeURIComponent(sent.clientMessageId)}`);
       if (drafts[ownerId]?.pending?.clientMessageId !== sent.clientMessageId) return;
-      if (receipt?.exists === true) { settleSent(ownerId, sent); if (ownerId === scopeId) setError(''); }
+      if (receipt?.exists === true) {
+        const echo = pendingEcho(ownerId, histories.get(ownerId)?.messages || []);
+        if (echo) confirmedEchoes.set(ownerId, { ...echo, localSend: 'stored', confirmedAt: Date.now() });
+        settleSent(ownerId, sent); if (ownerId === scopeId) setError('');
+        void refreshState({ quiet: true }).catch(() => {}); followSend();
+      }
       else if (receipt?.exists === false) drafts[ownerId].sendState = 'failed';
     } catch (error) {
       // 401/403/429 or an unreachable Home say nothing about the original POST: stay unknown and look again later.
       if (drafts[ownerId]?.pending?.clientMessageId === sent.clientMessageId) drafts[ownerId].sendState = lookupFailureState(error);
-    } finally { verifying.delete(ownerId); saveDrafts(); if (ownerId === scopeId) composer(); }
+    } finally { verifying.delete(ownerId); saveDrafts(); if (ownerId === scopeId) { composer(); renderMessages(); } }
   }
   const mentionInput=createMentionInput(input,()=>{
     const names=[...(data.roles||[]),...(data.supervisorRoles||[])].filter(r=>r.projectId===projectId&&!r.archivedAt).map(r=>r.name);
@@ -638,13 +665,16 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     sendLabel(SEND_LABELS[state] || 'Send');
     if(d.queueEdit){sendLabel(queueEditing.has(scopeId)?'Retrieving queued message…':'Retry editing queued message');send.disabled=queueEditing.has(scopeId)||!!sendingProject;}
     attachTray.replaceChildren();
-    for (const item of d.attachments || []) attachTray.append(attachmentCard(item,true));
+    // A pending send is drawn in the chat as its own message, so the box shows neither its text nor its files.
+    const echoed = d.pending && !d.pending.discussion;
+    if (echoed && input.value === (d.pending.text || '')) input.value = '';
+    for (const item of echoed ? [] : d.attachments || []) attachTray.append(attachmentCard(item,true));
     for (const entry of d.textFiles || []) attachTray.append(textDraftCard(entry, scopeId));
     if (uploadCounts.get(scopeId)) attachTray.append(create('span','attachment-uploading','Uploading attachments…'));
     attachTray.hidden = !attachTray.childElementCount;
     resizeInput();
     quoteBar.replaceChildren(); quoteBar.hidden = !d.replyToId;
-    if (d.replyToId) quoteBar.append(create('span', '', t('Quoting {replyLabel}', { replyLabel: d.replyLabel })), iconAction('close', 'Cancel quote', () => {
+    if (d.replyToId && !echoed) quoteBar.append(create('span', '', t('Quoting {replyLabel}', { replyLabel: d.replyLabel })), iconAction('close', 'Cancel quote', () => {
       if (d.pending || busy) return;
       if(d.replyMention&&input.value.startsWith(d.replyMention)){input.value=input.value.slice(d.replyMention.length);d.text=input.value;}
       delete d.replyMention;
@@ -655,18 +685,6 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   function liveText(runId) {
     return liveByRun.get(runId)?.text || '';
   }
-  // Step verbs ("Read", "Ran") share the Sessions page's own translations.
-  const stepT=(text,params)=>{const own=getLanguage()==='zh'?stepZh[text]:undefined;return own===undefined?t(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
-  /** What a running role is doing right now, from its live events: the latest tool still in progress, else '' (thinking or
-   * writing). A tool's later events (its result) carry the same id, so a finished tool no longer counts. */
-  function liveStep(events) {
-    const tools=new Map();
-    for(const e of events)if(e.type==='tool'&&e.payload?.item?.id){const prior=tools.get(e.payload.item.id);tools.delete(e.payload.item.id);tools.set(e.payload.item.id,{...prior,...e.payload.item,name:e.payload.item.name||prior?.name,input:e.payload.item.input??prior?.input,arguments:e.payload.item.arguments??prior?.arguments});}
-    // Codex and others mark a running item inProgress; Claude's tool_use has no status until its tool_result arrives.
-    const running=[...tools.values()].reverse().find(item=>item.status==='inProgress'||item.type==='tool_use'&&!item.status);
-    if(!running)return '';const {verb,target}=stepTitle(classifyStep(running,'running'),stepT),text=`${verb} ${target}`.trim();return text.length>36?`${text.slice(0,35)}…`:text;
-  }
-
   async function pullLive(runId) {
     if (!runId || liveFetching.has(runId)) return;
     liveFetching.add(runId);
@@ -674,11 +692,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       const prior=liveByRun.get(runId);
       const result = await api(`/api/runs/${encodeURIComponent(runId)}/events?after=${prior?.seq || 0}`);
       const events = [...new Map([...(prior?.events || []),...(Array.isArray(result?.events)?result.events:[])].map(e=>[e.seq,e])).values()].sort((a,b)=>a.seq-b.seq);
-      const text = extractLiveText(events), step = liveStep(events);
+      const text = extractLiveText(events);
       const prev = liveByRun.get(runId);
-      liveByRun.set(runId, { text, step, events, seq:events.at(-1)?.seq || 0, at: Date.now() });
+      liveByRun.set(runId, { text, events, seq:events.at(-1)?.seq || 0, at: Date.now() });
       updateLiveFullscreen();
-      if ((text !== (prev?.text || '') || step !== (prev?.step || '')) && projectId) renderMessages();
+      if (text !== (prev?.text || '') && projectId) renderMessages();
     } catch {
       if(fullscreenView?.runId===runId)fullscreenView.heading.textContent='Live reply · connection unavailable; content already received is kept';
     } finally { liveFetching.delete(runId); }
@@ -752,6 +770,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const kind=message.kind==='discussion'?'Question':message.kind==='handoff'
       ? ({consult:'Question',direct:'Instruction',transfer:'Transfer',note:'Notice'}[message.handoff?.kind]||'Instruction')
       : message.sender==='agent'?'Reply':'Message';
+    // A send still on its way says so; one Home stored but whose work waits in the queue says Queued.
+    if(message.localSend==='stored')return {kind,status:'Completed'};
+    if(message.localSend)return {kind,status:{sending:'Sending…',checking:'Checking…',offline:'Waiting for network…',failed:'Not sent'}[message.localSend]||'Sending…',state:message.localSend==='failed'?'failed':'waiting'};
+    if(message.sender==='human'&&message.taskIds?.length&&message.taskIds.every(id=>messageQueue.hasTask(id)))return {kind,status:'Queued',state:'waiting'};
     if(outbound)return {kind,status:'Completed'};
     const run=data.runs?.find(item=>item.id===message.runId);
     const task=run&&data.tasks?.find(item=>item.id===run.taskId);
@@ -766,36 +788,21 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
 
   /** Copy the original message text without the rendered action buttons, time or quote summary. */
-  function copyMessageButton(text) {
+  function copyMessageButton(text,key) {
     const copy = iconAction('copy', 'Copy', async b => {
       b.disabled = true;
       try {
         const value=typeof text==='function'?text():text;
         if (!value) { b.disabled=false;return; }
-        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
-        else {
-          // Plain HTTP access has no Clipboard API; fall back to the browser's user-click copy ability.
-          const field = create('textarea', 'sr-only');
-          const focused = document.activeElement;
-          field.value = value; field.readOnly = true; document.body.append(field);
-          try {
-            field.select();
-            if (!document.execCommand('copy')) throw new Error('The browser did not allow copying');
-          } finally { field.remove(); focused?.focus({ preventScroll: true }); }
-        }
-        b.innerHTML = UI_ICON.check;
-        b.title = 'Copied'; b.setAttribute('aria-label', 'Copied');
-        setTimeout(() => {
-          b.innerHTML = UI_ICON.copy;
-          b.title = 'Copy'; b.setAttribute('aria-label', 'Copy'); b.disabled = false;
-        }, 1500);
+        await copyText(b,value);
+        b.disabled=false;
       } catch {
         b.disabled = false;
         setError('Copy failed. Allow clipboard access, or select the text and copy it manually.');
       }
     });
     copy.disabled = !text;
-    return copy;
+    return bindCopyFeedback(copy,key);
   }
 
   /** Chat prose is simplified for display only; copying and the Original view retain the complete stored text. */
@@ -910,7 +917,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (!list.length) return null;
     const wrap = create('div', 'chat-approvals');
     for (const approval of list) {
-      const card = create('div', 'chat-approval');
+      const card = create('div', 'chat-approval');card.dataset.approval=`${approval.id}:${approval.status||''}:${approval.updatedAt||''}`;
       const method = approval.method?.includes('fileChange') ? 'File change' : approval.method?.includes('command') ? 'Command' : 'Action';
       card.append(create('p', '', t('Confirmation needed: {method}', { method })));
       const actions = create('div', 'chat-approval-actions');
@@ -923,7 +930,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     return wrap;
   }
 
-  function renderLiveBubble(task, messages) {
+  function renderLiveBubble(task, messages, retainedText = '') {
     // A recalled draft never ran: keep its human history, without inventing a stopped Agent reply.
     if(task.queueEditId&&!task.currentRunId)return null;
     // Share the queue's actual displayed membership rather than maintaining a second eligibility rule.
@@ -931,7 +938,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const run = data.runs?.find(r => r.id === task.currentRunId);
     const recoveryButton=cliRecoveryUI.button(task);
     if(task.backgroundFollowup||run?.backgroundFollowup){const approvals=run?renderApprovalsInline(run):null;if(!recoveryButton)return approvals;const entry=create('div','chat-approvals');if(approvals)entry.append(approvals);entry.append(recoveryButton);return entry;}
-    if (run && messages.some(m => m.runId === run.id)) return null;
+    if (run && messages.some(m => m.id === `result-${run.id}` && m.runId === run.id)) return null;
     const role = task.roleSnapshot || {};
     if (quietHandoff(run, data)) {
       // The handoff cards already carry the work; keep only a compact waiting line, without replaying this turn's text.
@@ -986,7 +993,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       }
       bubble.append(quote);
     }
-    const preview = run && !run.explicitPublish ? liveText(run.id) : '';
+    const preview = run && !run.explicitPublish ? liveText(run.id) || retainedText : '';
     if (preview) bubble.append(replyPreview(preview,true,run?.id,`run:${run?.id || task.id}`));
     else if(progress.state==='error')bubble.append(create('div','chat-message-text',progress.reason||run?.error||task.error||t(progress.detail)));
     else {
@@ -1004,11 +1011,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const approvals = run ? renderApprovalsInline(run) : null;
     if (approvals) col.append(approvals);
     const actions = [],stateActions=[];
-    if (preview) actions.push(copyMessageButton(preview));
+    if (preview) actions.push(copyMessageButton(preview,`group:${scopeId}:run:${run.id}`));
     actions.push(fullscreenMessageButton(preview, role.name, true, [], task.id, run?.id));
     actions.push(sideMessageButton(preview,role.name,true,[],run?.id));
     if (run && ['queued', 'starting', 'running', 'waiting_user'].includes(run.status)) {
-      stateActions.push(iconAction('stop', 'Stop', b => stopRun(run, b)));
+      stateActions.push(bindPendingAction(iconAction('stop', 'Stop', b => stopRun(run, b)),`stop:${run.id}`));
     }
     if (task.status === 'ready' && !run) {
       stateActions.push(iconAction('stop', 'Cancel queued item', async b => {
@@ -1021,10 +1028,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (run) actions.push(iconAction('live', 'Log', () => openTask(task.id,run.id)));
     actions.push(...stateActions);
     // Status and actions sit inside the card, the same footer as finished messages.
-    // The footer names the stage: queued, the CLI getting ready (workspace, start, resume), then thinking, the step it is
-    // running, or replying, with the time it has taken so far.
-    const preparing=progress.stage==='worker_received',step=running?liveByRun.get(run.id)?.step:'';
-    const stage=preparing?t('CLI preparing'):progress.stage==='queued'?t('Queued'):running?(step||t(preview?'Replying':'Thinking')):label;
+    // Keep the footer concise; tool names and arguments belong in the run log.
+    const preparing=progress.stage==='worker_received';
+    const stage=progress.stage==='stopping'?t('Stopping'):label;
     const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', stage);status.title=stage;
     if (running||preparing) { const elapsed = elapsedEl(create, running?run.startedAt:run.createdAt); if (elapsed) status.append(elapsed); }
     const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
@@ -1033,7 +1039,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     footer.append(status, actionBar); bubble.append(footer);
     row.append(col);
     if (run && ['starting', 'running', 'waiting_user', 'stopping'].includes(run.status)) void pullLive(run.id);
-    return row;
+    drawnLiveText.set(row,preview);return row;
   }
 
   function renderMessageRow(m, messages) {
@@ -1041,8 +1047,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const handoff = m.kind === 'handoff' && m.handoff;
     const replyDirection=dialogueReplyDirection(m,messages,data);
     const discussion=discussionDisplay(m,data);
+    // What the question buttons send (revisions, question, run) is part of the drawing, so a kept node never sends stale values.
+    const discussionKey=discussion?JSON.stringify([discussion.thread?.id,discussion.thread?.revision,discussion.thread?.directionRevision,discussion.questionId,discussion.stopRunId,discussion.canReply,discussion.canResume,discussion.canStop]):'';
     const row = create('article', `chat-row ${agent ? 'agent' : 'human'}${handoff || replyDirection ? ' is-handoff' : ''}`);
-    row.dataset.messageId=m.id;
+    row.dataset.messageId=m.id;if(discussionKey)row.dataset.discussion=discussionKey;
     const role = agent ? (data.roles || []).find(r => r.id === m.roleId) || (data.runs || []).find(r => r.id === m.runId)?.roleSnapshot : null;
     if (agent) row.append(avatarFor(role, m.senderName));
     const col = create('div', 'chat-col');
@@ -1097,11 +1105,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
         try{await api(`/api/projects/${encodeURIComponent(m.projectId)}/discussions/${encodeURIComponent(discussion.thread.id)}/resolve`,{method:'POST',json:{requestId,expectedQuestionId:discussion.questionId,revision:discussion.thread.revision,directionRevision:discussion.thread.directionRevision,...(discussion.canResume?{resumeAfterRunId:discussion.resumeAfterRunId}:{}),conclusion:discussion.canResume?'User reviewed the exception log and actual changes and explicitly chose to continue the original task':'User explicitly marked this question as handled in the web UI'}});await refreshState({quiet:true});}catch(e){setError(e.message);b.disabled=false;}
       }));
     }
-    if(discussion?.canStop)discussionActions.push(iconAction('stop','Stop original task',async b=>{
-      b.disabled=true;
-      try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);b.disabled=false;}
-    }));
-    actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text));
+    if(discussion?.canStop)discussionActions.push(bindPendingAction(iconAction('stop','Stop original task',async b=>{
+      const restore=pendingAction(b);
+      try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);}finally{restore();}
+    }),`stop:${discussion.stopRunId}`));
+    actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text,`group:${scopeId}:message:${m.id}`));
     actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, m.senderName, agent || Boolean(handoff), m.attachments, null, m.runId));
     actions.push(sideMessageButton(handoff ? m.handoff.summary || m.text : m.text,m.senderName,agent||Boolean(handoff),m.attachments,m.runId));
     if(agent&&m.runId&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk(m)));
@@ -1110,6 +1118,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       if (run) actions.push(iconAction('live', 'Log', () => openTask(run.taskId,run.id)));
     }
     actions.push(...discussionActions);
+    // A send not yet stored offers only Copy: there is nothing to reply to, open or ask about until Home has it.
+    if(m.localSend)actions.splice(0,actions.length,copyMessageButton(m.text));
     const cardMeta=messageCardMeta(m),footer=create('div','chat-card-footer');setChatCardState(bubble,cardMeta.state);
     footer.append(create('span','chat-card-kind',t('{kind} · {status}',{kind:t(cardMeta.kind),status:t(cardMeta.status)})+(cardMeta.duration?` · ${cardMeta.duration}`:'')));
     const actionBar=create('div','chat-card-actions');actionBar.append(...actions);footer.append(actionBar);bubble.append(footer);
@@ -1135,20 +1145,25 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     row.append(avatarFor(role,role.name),col);return row;
   }
 
+  function chatSkeleton() {
+    const box = create('div', 'chat-skeleton');box.setAttribute('aria-hidden', 'true');
+    for (const side of ['in', 'out', 'in']) { const row = create('div', `chat-skeleton-row is-${side}`); row.append(create('span', 'chat-skeleton-avatar'), create('span', 'chat-skeleton-bubble')); box.append(row); }
+    return box;
+  }
+
+  // Each chat entry keeps its DOM node while what it shows is unchanged (see renderMessages).
+  const drawnMarkup=new WeakMap(),drawnLiveText=new WeakMap();
+  // A clicked card may change itself (a busy button, a cleared icon after a failed stop): it is drawn afresh next time.
+  feed.addEventListener('click',event=>{const node=event.target.closest?.('[data-entry-key]');if(node)drawnMarkup.delete(node);},true);
   function renderMessages() {
     cliRecoveryUI.refresh();
-    const history = histories.get(scopeId), messages = history?.messages || [];
+    const history = histories.get(scopeId), stored = history?.messages || [];
+    const echo = pendingEcho(scopeId, stored), messages = echo ? [...stored, echo] : stored;
     const scrollTop = scroller.scrollTop;
     const atBottom = scroller.scrollHeight - scroller.clientHeight - scrollTop < 120;
     // 状态刷新会重建消息节点，按消息身份保留正文阅读位置，不抢回顶部。
     const previewScroll = new Map([...feed.querySelectorAll('.chat-reply-preview')].map(node => [node.dataset.previewKey, { top: node.scrollTop, left: node.scrollLeft }]));
-    feed.replaceChildren();
     older.hidden = !history?.hasMore;
-    if (!messages.length) feed.append(create('div', 'chat-empty', history
-      ? data.projects?.find(p=>p.id===projectId)?.supervisorRoleId
-        ? 'This is the project chat. New messages without @ go to the manager; replies target their sender; multiple @ mentions dispatch to each role; @everyone only sends a notification and does not start an Agent.'
-        : 'This is the project chat. Without @ it is only logged; @someone dispatches to them; @everyone only sends a notification and does not start an Agent.'
-      : 'Loading chat…'));
     // Use the saved error time, never refresh time. Older notices follow the same history window as messages.
     const eventTime=value=>Date.parse(value)||0;
     const notices=(data.requests||[]).filter(r=>r.projectId===projectId&&(r.conversationId||r.projectId)===conversationId&&!r.continuationRequestId&&
@@ -1158,24 +1173,71 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       .filter(item=>!history?.hasMore||messages.length&&eventTime(item.at)>=eventTime(messages[0].createdAt))
       .sort((a,b)=>eventTime(a.at)-eventTime(b.at)||a.request.id.localeCompare(b.request.id));
     // One timeline, one key: trigger time. Messages carry the server's order; a running role's card sits where its run was
-    // triggered (the same place its reply will take), so nothing moves once placed. Queued work is not in the timeline.
+    // triggered (the same place its reply will take). Queued messages stay in the timeline, marked Queued.
     const entries=[],orderOf=m=>String(m.orderAt||m.createdAt||'');
+    const liveTasks=new Map(),sourceOf=new Map();
+    for(const m of messages)for(const id of m.taskIds||[]){sourceOf.set(id,m);const task=data.tasks?.find(t=>t.id===id);if(task)liveTasks.set(task.id,task);}
+    const triggerAt=(run,task,source)=>{let at=String(run?.createdAt||task?.createdAt||'');if(source&&orderOf(source)>at)at=orderOf(source);return at;};
     messages.forEach((m,i)=>{
-      // Hide only wholly queued user inputs; keep the original record available for quotes and multi-role replies.
-      if(m.sender==='human'&&m.taskIds?.length&&m.taskIds.every(id=>messageQueue.hasTask(id)))return;
-      entries.push({at:orderOf(m),rank:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)});
+      const run=m.runId&&m.id===`result-${m.runId}`?data.runs?.find(r=>r.id===m.runId):null,task=run&&data.tasks?.find(t=>t.id===run.taskId);
+      const source=run&&(sourceOf.get(run.taskId)||messages.find(item=>item.id===(task?.sourceMessageId||m.replyToId)));
+      entries.push({key:`m:${m.id}`,at:run?triggerAt(run,task,source)||orderOf(m):orderOf(m),rank:run?2:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)});
     });
-    for(const item of notices)entries.push({at:String(item.request.createdAt||item.at||''),rank:1,seq:0,node:()=>renderResumeNotice(item.request,item.at)});
-    const liveTasks=new Map();
-    for(const m of messages)for(const id of m.taskIds||[]){const task=data.tasks?.find(t=>t.id===id);if(task)liveTasks.set(task.id,task);}
+    for(const item of notices)entries.push({key:`n:${item.request.id}`,at:String(item.request.createdAt||item.at||''),rank:1,seq:0,node:()=>renderResumeNotice(item.request,item.at)});
     for(const task of unlinkedLiveTasks(messages,data.tasks || [],data.runs || [],projectId))liveTasks.set(task.id,task);
-    for(const task of liveTasks.values()){const run=data.runs?.find(r=>r.id===task.currentRunId);entries.push({at:String(run?.createdAt||task.createdAt||''),rank:2,seq:0,node:()=>renderLiveBubble(task,messages)});}
-    for(const run of (data.runs||[]).filter(r=>r.projectId===projectId&&r.discussionDeliveryId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)))
-      entries.push({at:String(run.createdAt||''),rank:2,seq:0,node:()=>renderLiveBubble({id:run.taskId,currentRunId:run.id,roleSnapshot:run.roleSnapshot},messages)});
+    const reportedRunIds=new Set(messages.filter(m=>m.runId&&m.id===`result-${m.runId}`).map(m=>m.runId));
+    // 与 Rooms.complete 的发布边界一致，私有讨论和显式发布不等待额外 result 卡。
+    const waitsForResult=run=>{const report=data.runReports?.find(item=>item.id===run?.id)||run?.report;return run?.status==='succeeded'&&Boolean(run.roleId)&&!run.discussionDeliveryId&&!run.switchOperationId&&!run.backgroundFollowup&&(!run.explicitPublish||report?.verdict==='needs_input')&&!quietHandoff(run,data);};
+    const previous=new Map([...feed.children].filter(node=>node.dataset.entryKey&&node.dataset.entryScope===scopeId).map(node=>[node.dataset.entryKey,node]));
+    for(const task of liveTasks.values()){
+      // The asking message by its task link, or by the task's source id (which is also the id a pending send is drawn under).
+      const run=data.runs?.find(r=>r.id===task.currentRunId),source=sourceOf.get(task.id)||(task.sourceMessageId&&messages.find(m=>m.id===task.sourceMessageId));
+      // Each run is its own card. Before it starts, the card sits right under the message that asked for it (when that is
+      // loaded; a relayed or older source keeps the card at its own time), so queued work never shows above its question.
+      const at=triggerAt(run,task,source);
+      // 已显示的正文保留到本轮正式回复读回，不能用超时推断历史已到达。
+      if(run&&reportedRunIds.has(run.id))continue;
+      const hold=waitsForResult(run);
+      entries.push({key:run?`run:${run.id}`:`task:${task.id}`,at,rank:2,seq:0,hold,node:retained=>renderLiveBubble(task,messages,retained)});
+    }
+    for(const run of (data.runs||[]).filter(r=>r.projectId===projectId&&!reportedRunIds.has(r.id)&&r.discussionDeliveryId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)))
+      entries.push({key:`run:${run.id}`,at:String(run.createdAt||''),rank:2,seq:0,node:()=>renderLiveBubble({id:run.taskId,currentRunId:run.id,roleSnapshot:run.roleSnapshot},messages)});
+    // task.currentRunId 可先进入下一轮；上一轮卡片仍按 runId 等待自己的正式回复。
+    for(const [key,old] of previous){
+      if(!key.startsWith('run:')||entries.some(entry=>entry.key===key))continue;
+      const id=key.slice(4);if(reportedRunIds.has(id))continue;
+      const run=data.runs?.find(item=>item.id===id),task=data.tasks?.find(item=>item.id===run?.taskId);
+      const hold=!run||waitsForResult(run);
+      entries.push({key,at:old.dataset.entryAt||String(run?.createdAt||''),rank:2,seq:0,hold,missingRun:!run,
+        node:retained=>renderLiveBubble({...task,id:task?.id||run?.taskId,currentRunId:id,roleSnapshot:task?.roleSnapshot||run?.roleSnapshot},messages,retained)});
+    }
     entries.sort((a,b)=>a.at.localeCompare(b.at)||a.rank-b.rank||a.seq-b.seq);
-    for(const entry of entries){const node=entry.node();if(node)feed.append(node);}
-    const queueStrip=renderSessionQueue(data.sessionQueues?.[projectId],{create,api,refreshState,projectId,roleName:id=>(data.roles||[]).find(r=>r.id===id)?.name||id});
-    if(queueStrip)feed.append(queueStrip);
+    const skeleton=!history&&[...pendingReads].some(key=>key.startsWith(`${scopeId}:`));
+    if (!messages.length) entries.push({key:'empty',node:()=>skeleton?chatSkeleton():create('div', 'chat-empty', history
+      ? data.projects?.find(p=>p.id===projectId)?.supervisorRoleId
+        ? 'This is the project chat. New messages without @ go to the manager; replies target their sender; multiple @ mentions dispatch to each role; @everyone only sends a notification and does not start an Agent.'
+        : 'This is the project chat. Without @ it is only logged; @someone dispatches to them; @everyone only sends a notification and does not start an Agent.'
+      : 'Loading chat…')});
+    entries.push({key:'queue',node:()=>renderSessionQueue(data.sessionQueues?.[projectId],{create,api,refreshState,projectId,roleName:id=>(data.roles||[]).find(r=>r.id===id)?.name||id})});
+    // Keyed update: a node whose freshly drawn markup is unchanged stays in place (no flash, images and selection survive);
+    // only changed entries are swapped and nodes are moved only when the order changed.
+    const next=[];
+    for(const entry of entries){
+      const old=previous.get(entry.key);
+      if(entry.missingRun&&old){next.push(old);continue;}
+      // 只保留正文；状态外壳重新绘制，成功后不再留下 Stop 或运行计时。
+      const node=entry.node(entry.hold&&old?drawnLiveText.get(old)||'':'');if(!node)continue;
+      // Running timers tick on their own, so their seconds are left out of the comparison.
+      node.dataset.entryKey=entry.key;node.dataset.entryScope=scopeId;node.dataset.entryAt=entry.at||'';const markup=node.outerHTML.replace(/(class="[^"]*elapsed-time[^"]*"[^>]*>)[^<]*/g,'$1');
+      if(old&&drawnMarkup.get(old)===markup){next.push(old);continue;}
+      drawnMarkup.set(node,markup);next.push(node);
+    }
+    // Drop what is gone first, then insert or move only what is out of place: a kept node is never taken out, so its
+    // animations, playback and selection go on.
+    const keep=new Set(next);for(const node of [...feed.children])if(!keep.has(node))node.remove();
+    let cursor=feed.firstElementChild;
+    for(const node of next){if(node===cursor){cursor=cursor.nextElementSibling;continue;}feed.insertBefore(node,cursor);}
+    while(cursor){const after=cursor.nextElementSibling;cursor.remove();cursor=after;}
     feed.querySelectorAll('.chat-reply-preview').forEach(node => {
       const position = previewScroll.get(node.dataset.previewKey);
       if (position) { node.scrollTop = position.top; node.scrollLeft = position.left; }
@@ -1194,7 +1256,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       if(messageFullscreen?.open)messageFullscreen.close();
       projectId = nextProjectId;
       conversationId=nextConversationId;scopeId=conversationId===projectId?projectId:JSON.stringify([projectId,conversationId]);
-      if (projectId) input.value = draft().text || '';
+      if (projectId) input.value = draft().pending && !draft().pending.discussion ? '' : draft().text || '';
     }
     if (!projectId) return;
     messageQueue.update(data,projectId);composer(); renderMessages();
@@ -1209,18 +1271,23 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (previous?.revision === revision) return;
     const id = scopeId, targetProjectId=projectId, targetConversationId=conversationId, key = `${id}:${revision}`;
     if (pendingReads.has(key)) return;
-    pendingReads.add(key);
+    pendingReads.add(key);const readStarted=Date.now();
+    if (!previous && id === scopeId) renderMessages();
     try {
       const receiptQuery=Number.isSafeInteger(previous?.receiptCursor)?`&afterReceipt=${previous.receiptCursor}`:'';
-      const result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}${receiptQuery}`);
+      // Opening a chat whose history is not on screen yet shows the top bar; live-update re-reads stay silent.
+      const read = api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}${receiptQuery}`);
+      const result = await (previous ? read : trackLoading(read));
       const current = histories.get(id);
       if ((current?.revision ?? -1) > revision) return;
       const recentIds = new Set(result.messages.map(m => m.id));
       histories.set(id, { ...result, messages: [...(current?.messages || []).filter(m => !recentIds.has(m.id)), ...result.messages],
         hasMore: current ? current.hasMore : result.hasMore, nextBefore: current?.nextBefore || result.nextBefore, revision:result.hasMoreUpdates?null:revision });
+      // A confirmed send whose copy sits outside the loaded window (an old draft restored late) is not kept drawn at the bottom.
+      if (confirmedEchoes.get(id)?.confirmedAt < readStarted) confirmedEchoes.delete(id);
       if (id === scopeId) renderMessages();
     } catch (e) { if (id === scopeId) setError(t('Failed to load chat: {message}', { message: e.message })); }
-    finally { pendingReads.delete(key); }
+    finally { pendingReads.delete(key); if (id === scopeId && !histories.get(id)) renderMessages(); }
   }
 
   older.addEventListener('click', async () => {
@@ -1354,24 +1421,24 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
       d.pending = { clientMessageId: sameSend(d.rejected?.payload, payload) ? d.rejected.clientMessageId : crypto.randomUUID(), ...payload };
     }
-    delete d.rejected; d.sendState = 'sending'; d.projectId ||= id;
+    delete d.rejected; d.sendState = 'sending'; d.projectId ||= id; d.sentAt ||= new Date().toISOString();
     const sent = d.pending;
-    saveDrafts(); sendingProject = ownerId; composer();
+    // The message appears in the chat now, under the id it is sent with; Home's copy replaces it when it arrives.
+    saveDrafts(); sendingProject = ownerId; composer(); if (scopeId === ownerId) renderMessages();
     try {
       if(sent.discussion)await api(`/api/projects/${encodeURIComponent(id)}/discussions/${encodeURIComponent(sent.discussion.threadId)}/reply`,{method:'POST',json:{...sent.discussion,requestId:sent.clientMessageId,text:sent.text}});
-      else await api(`/api/projects/${encodeURIComponent(id)}/messages`, { method: 'POST', json: sent });
+      else { const stored = await api(`/api/projects/${encodeURIComponent(id)}/messages`, { method: 'POST', json: sent }); adoptSent(ownerId, stored); }
       settleSent(ownerId, sent);
       setError('');
       await refreshState({ quiet: true });
-      // Home starts the reply within a second or two; a polling page would otherwise learn of it only on its next poll.
-      for (const ms of [1000, 3000, 6000]) setTimeout(() => void refreshState({ quiet: true }).catch(() => {}), ms);
+      followSend();
     } catch (error) {
       // Lost connections, timeouts and server errors leave the outcome unknown: keep the id and look it up.
       // A definite rejection (4xx) stored nothing, so the draft becomes editable again with its text and files.
       if (uncertainSend(error)) d.sendState = 'checking';
-      else { const { clientMessageId, ...payload } = sent; d.rejected = { clientMessageId, payload }; delete d.pending; delete d.sendState; }
+      else { const { clientMessageId, ...payload } = sent; d.rejected = { clientMessageId, payload }; delete d.pending; delete d.sendState; delete d.sentAt; if (scopeId === ownerId) input.value = d.text || ''; }
       if (scopeId === ownerId) setError(error.message);
-    } finally { sendingProject = null; saveDrafts(); composer(); if (drafts[ownerId]?.pending === sent && drafts[ownerId].sendState === 'checking') void verifyPending(ownerId, true); }
+    } finally { sendingProject = null; saveDrafts(); composer(); if (scopeId === ownerId) renderMessages(); if (drafts[ownerId]?.pending === sent && drafts[ownerId].sendState === 'checking') void verifyPending(ownerId, true); }
     } finally { submitLocks.delete(ownerId); }
   });
 

@@ -18,20 +18,23 @@ function env(name, fallback = '') {
 /** wb history search [KEYWORDS] [--role NAME]... [--file PATH] [--since TIME] [--until TIME] [--limit N] [--cursor C] [-- KEYWORDS]
  *  TIME: 30m / 2h / 3d / 1w (that long ago), today / yesterday (local midnight), a date (local; --until covers the whole day)
  *  or a full time. Times are resolved here, on the machine the CLI runs on, and sent to Home as ISO times. */
+/** TIME for --since/--until: 30m / 2h / 3d / 1w ago, today / yesterday, a local date (--until: the whole day) or a full time. */
+export function cliTime(value, end, now = new Date(), usage = 'wbTools.historySearchUsage') {
+  const day = (offset, last) => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + offset + (last ? 1 : 0)); return last ? new Date(d.getTime() - 1) : d; };
+  const text = String(value || '').trim(), relative = text.match(/^(\d+)\s*(m|min|h|d|w)$/i);
+  if (relative) { const unit = { m: 60e3, min: 60e3, h: 3600e3, d: 86400e3, w: 604800e3 }[relative[2].toLowerCase()]; return new Date(now.getTime() - Number(relative[1]) * unit).toISOString(); }
+  if (/^(today|\u4eca\u5929)$/i.test(text)) return (end ? now : day(0, false)).toISOString();
+  if (/^(yesterday|\u6628\u5929)$/i.test(text)) return day(-1, end).toISOString();
+  const date = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (date) { const d = new Date(Number(date[1]), Number(date[2]) - 1, Number(date[3])); if (end) d.setDate(d.getDate() + 1); return new Date(d.getTime() - (end ? 1 : 0)).toISOString(); }
+  const ms = Date.parse(text);
+  if (!Number.isFinite(ms)) throw new Error(tr(usage));
+  return new Date(ms).toISOString();
+}
+
 export function historySearchInput(args, now = new Date()) {
   const input = {}, words = [], roles = [];
-  const day = (offset, end) => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + offset + (end ? 1 : 0)); return end ? new Date(d.getTime() - 1) : d; };
-  const time = (value, end) => {
-    const text = String(value || '').trim(), relative = text.match(/^(\d+)\s*(m|min|h|d|w)$/i);
-    if (relative) { const unit = { m: 60e3, min: 60e3, h: 3600e3, d: 86400e3, w: 604800e3 }[relative[2].toLowerCase()]; return new Date(now.getTime() - Number(relative[1]) * unit).toISOString(); }
-    if (/^(today|\u4eca\u5929)$/i.test(text)) return (end ? now : day(0, false)).toISOString();
-    if (/^(yesterday|\u6628\u5929)$/i.test(text)) return day(-1, end).toISOString();
-    const date = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (date) { const d = new Date(Number(date[1]), Number(date[2]) - 1, Number(date[3])); if (end) d.setDate(d.getDate() + 1); return new Date(d.getTime() - (end ? 1 : 0)).toISOString(); }
-    const ms = Date.parse(text);
-    if (!Number.isFinite(ms)) throw new Error(tr('wbTools.historySearchUsage'));
-    return new Date(ms).toISOString();
-  };
+  const time = (value, end) => cliTime(value, end, now);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--') { words.push(...args.slice(i + 1)); break; }
@@ -45,6 +48,21 @@ export function historySearchInput(args, now = new Date()) {
     else input[arg.slice(2)] = value;
   }
   if (roles.length) input.role = roles.length === 1 ? roles[0] : roles;
+  return { query: words.join(' '), ...input };
+}
+
+/** wb memory search [WORDS] [--type TYPE] [--cli CLI] [--device DEVICE] [--since TIME] [--limit N] [-- WORDS] */
+export function memorySearchInput(args, now = new Date()) {
+  const input = {}, words = [], usage = 'platformMemory.searchUsage';
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--') { words.push(...args.slice(i + 1)); break; }
+    if (!arg.startsWith('--')) { words.push(arg); continue; }
+    const value = args[++i], key = arg.slice(2);
+    if (value === undefined || !['type', 'cli', 'device', 'since', 'limit'].includes(key) || input[key] !== undefined) throw new Error(tr(usage));
+    if (key === 'limit') { if (!/^\d+$/.test(value)) throw new Error(tr(usage)); input.limit = Number(value); }
+    else input[key] = key === 'since' ? cliTime(value, false, now, usage) : value;
+  }
   return { query: words.join(' '), ...input };
 }
 

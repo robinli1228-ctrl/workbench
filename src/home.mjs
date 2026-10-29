@@ -4,7 +4,7 @@ import {noteRoleCompaction,dueRoleCompactions,recordRoleCompaction} from './role
 import {createRemoteAccessSettings} from './remote-access-settings.mjs';
 import http from 'node:http';
 import { sendBufferedResponse } from './http-response.mjs';
-import { readFile, mkdir, writeFile, chmod } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, chmod, stat as statFile } from 'node:fs/promises';
 import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
@@ -45,7 +45,8 @@ import { pageSummaries } from './workspace-summaries.mjs';
 import { messageProgress, messageProgressView, reconcileCallResults } from './message-progress.mjs';
 import { Deliveries, reviewDeliveryIssue } from './git-delivery.mjs';
 import { visibleRuntimes, runtimeIssue } from './runtime-probe.mjs';
-import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updateConversationOrganizer,legacyExecutionPrompt } from './platform-prompts.mjs';
+import { defaultPlatformPrompt, defaultSupervisorPrompt, normalizePlatformSettings, updatePlatformPrompts, updateConversationOrganizer,updateMemoryOrganizer,legacyExecutionPrompt } from './platform-prompts.mjs';
+import { PlatformMemory } from './platform-memory.mjs';
 import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
@@ -139,6 +140,8 @@ stampWaitSlots(db);
 
 const conversationContext = new ConversationContext(db);
 conversationContext.recover();
+const platformMemory = new PlatformMemory(db);
+platformMemory.recover();
 for(const task of db.list('tasks').filter(task=>task.origin==='chat'&&task.status==='ready'&&task.contextState==='pending'))db.put('tasks',{...task,contextState:null});
 const scheduledJobs = new ScheduledJobs(db,rooms);
 const proactiveFollowup=new ProactiveFollowup(db,rooms);
@@ -458,18 +461,102 @@ function scheduleChatTurn() {
   for(const nodeId of new Set(db.pendingCommands().filter(c=>(!c.lastSentAt||Date.now()-Date.parse(c.lastSentAt)>=5000)).map(c=>c.nodeId)))void dispatch(nodeId);
   if (scheduled.changed) change();
   // Queued work claims capacity first; background organization does not take up the queued waiting stage of business roles.
+  const settings=normalizePlatformSettings(db.get('settings','main')),memoryConfig=settings.memoryOrganizer;
+  // An organizer slot: the device is ready, offers the capability and has room beside running work and other organizers.
+  const organizerSlot=(nodeId,capability)=>online(nodeId) && sockets.get(nodeId).workerReady && db.get('workers',nodeId)?.capabilities?.[capability]===1
+    && db.activeRuns(nodeId).length+reservedTerminalSlots(db,nodeId)+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1);
   void conversationContext.drainOne({
-    config:normalizePlatformSettings(db.get('settings','main')).conversationOrganizer,
-    canRun:nodeId=>online(nodeId) && sockets.get(nodeId).workerReady
-      && db.get('workers',nodeId)?.capabilities?.summaryBatches===1
-      && db.activeRuns(nodeId).length+reservedTerminalSlots(db,nodeId)+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1),
+    config:settings.conversationOrganizer,
+    // A memory batch holds its device's organizer slot from before its AGENTS.md read until the model answers.
+    canRun:nodeId=>!(platformMemory.processing && memoryConfig.nodeId===nodeId) && organizerSlot(nodeId,'summaryBatches'),
     query:(snapshot,config)=>workerQuery({nodeId:config.nodeId},'conversation_summary',{snapshot,config},125000),change
   }).catch(error=>console.error(tr('home.backgroundConversationOrganizationFailed'),error.message));
+  // Memory organizing runs once a day (or when asked), one batch at a time, after conversation organizing on a shared device.
+  if(platformMemory.schedule(memoryConfig))change();
+  void platformMemory.drainOne({
+    config:memoryConfig,
+    canRun:nodeId=>!conversationContext.processing && organizerSlot(nodeId,'memoryOrganizer'),
+    query:(prompt,config)=>workerQuery({nodeId:config.nodeId},'memory_organize',{prompt,config},310000),
+    agentsMd:projectAgentsMd,change
+  }).catch(error=>console.error('Memory organizing:',error.message));
+}
+/** The project's own AGENTS.md from any online device holding its folder, so organizing does not repeat it; null when none is reachable. */
+async function projectAgentsMd(projectId) {
+  for(const binding of db.list('workspaces').filter(w=>w.projectId===projectId&&w.localRoot&&online(w.nodeId)&&db.get('workers',w.nodeId)?.capabilities?.nativeAgentsMd===1)) {
+    try {const result=await workerQuery({nodeId:binding.nodeId,projectId},'native_agents_md',{workspace:binding.localRoot,stopAt:binding.localRoot,projectId},15000);if(typeof result?.content==='string')return result.content;}
+    catch {}
+  }
+  return null;
 }
 async function body(req) {
   let raw = '';
   for await (const chunk of req) { raw += chunk; if (raw.length > 128000) throw new Error(tr('home.requestTooLarge')); }
   return raw ? JSON.parse(raw) : {};
+}
+/** The page files Home serves, by URL path; also the set the service-worker fingerprint covers. */
+function pageFileMap() {
+  const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/send-state.js':'send-state.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
+  Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
+  files['/workspace-inspector.js']='workspace-inspector.js';
+  files['/concurrent-writes.js']='concurrent-writes.js';
+  files['/platform-memory.js']='platform-memory.js';
+  files['/conversation-tasks.js']='conversation-tasks.js';
+  files['/conversation-task-state.js']='conversation-task-state.js';
+  files['/delivery-summary.js']='delivery-summary.js';
+  files['/retired-commands.js']='retired-commands.js';
+  files['/source-sync.js']='source-sync.js';
+  files['/source-sync-audit.js']='source-sync-audit.js';
+  files['/quota-state.js']='quota-state.js';
+  files['/chat-card-state.js']='chat-card-state.js';
+  files['/state-data.js']='state-data.js';
+  files['/group-conversations.js']='group-conversations.js';
+  files['/project-team-copy.js']='project-team-copy.js';
+  files['/execution-progress.js']='execution-progress.js';
+  files['/live-scene.js']='live-scene.js';
+  files['/cli-recovery.js']='cli-recovery.js';
+  files['/session-queue.js']='session-queue.js';
+  files['/browser-token.js']='browser-token.js';
+  files['/configuration-information.js']='configuration-information.js';
+  files['/role-switch.js']='role-switch.js';
+  files['/role-history.js']='role-history.js';
+  files['/role-templates.js']='role-templates.js';
+  files['/i18n.js']='i18n.js';
+  files['/output-language.js']='output-language.js';
+  files['/native-side-ask.js']='native-side-ask.js';
+  files['/group-side-ask.js']='group-side-ask.js';
+  files['/native-sessions.js']='native-sessions.js';
+  files['/native-agent-switch.js']='native-agent-switch.js';
+  files['/native-transcript.js']='native-transcript.js';
+  files['/media.js']='media.js';
+  files['/pasted-text.js']='pasted-text.js';
+  files['/side-preview.js']='side-preview.js';
+  files['/history-prompt.js']='history-prompt.js';
+  files['/history-cache.js']='history-cache.js';
+  files['/data-settings.js']='data-settings.js';
+  files['/remote-access-settings.js']='remote-access-settings.js';
+  files['/native-history-timeline.js']='native-history-timeline.js';
+  files['/native-session-groups.js']='native-session-groups.js';
+  files['/create-folder.js']='create-folder.js';
+  files['/list-order.js']='list-order.js';files['/select-controls.js']='select-controls.js';files['/model-usage.js']='model-usage.js';
+  files['/mention-input.js']='mention-input.js';
+  files['/context-usage.js']='context-usage.js';
+  files['/vendor/opencc-t2cn.js']='vendor/opencc-t2cn.js';
+  files['/load-bar.js']='load-bar.js';
+  files['/locales/zh.js']='locales/zh.js';
+  files['/locales/native-takeover-zh.js']='locales/native-takeover-zh.js';
+  return files;
+}
+/** One hash over every served page file (excluding the service worker itself), recomputed only when a file changes. */
+let fingerprintCache = null;
+async function staticFingerprint(files) {
+  const names = [...new Set(Object.values(files))].filter(name => name !== 'sw.js').sort();
+  const stamps = await Promise.all(names.map(async name => { try { const info = await statFile(join(base, 'public', name)); return `${name}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`; } catch { return `${name}:missing`; } }));
+  const key = stamps.join('|');
+  if (fingerprintCache?.key === key) return fingerprintCache.value;
+  const hash = createHash('sha256');
+  for (const name of names) { hash.update(name); try { hash.update(await readFile(join(base, 'public', name))); } catch {} }
+  fingerprintCache = { key, value: hash.digest('hex').slice(0, 12) };
+  return fingerprintCache.value;
 }
 function json(res, data, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); }
 /** Path checks and file reads are both done by the target Worker; Home does not probe the remote filesystem. */
@@ -596,7 +683,7 @@ const server = http.createServer(async (req, res) => {
     if(mediaUpload)return mediaStreams.receive(req,res,mediaUpload[1]);
     const mediaRead=pathname.match(/^\/media\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/);
     if(mediaRead)return mediaStreams.serve(req,res,mediaRead[1],{download:url.searchParams.get('download')==='1'});
-      if (pathname === '/healthz') return json(res, { ok: true, version: '0.4.0', toolProtocol:2 });
+      if (pathname === '/healthz') return json(res, { ok: true, version: '0.4.0', toolProtocol:2, build: await staticFingerprint(pageFileMap()) });
     if (pathname.startsWith('/api/')) {
       const bearer = req.headers.authorization || '';
       const workerOk = matches(bearer, `Bearer ${workerToken}`);
@@ -987,6 +1074,11 @@ const server = http.createServer(async (req, res) => {
       if (pathname.startsWith('/api/agent/') && req.method === 'POST') {
         const b = await body(req);
         assertAgentSender(b,pathname);
+        // Sessions-page CLIs search platform memory without a Run; their Worker adds which CLI and device is asking.
+        if(pathname==='/api/agent/native-memory/search') {
+          if(Object.keys(b).some(k=>!['query','type','cli','device','since','limit','caller'].includes(k)))throw new Error(tr('platformMemory.searchUsage'));
+          return json(res,platformMemory.search(b,{runtime:typeof b.caller?.cli==='string'?b.caller.cli:null,nodeId:typeof b.caller?.device==='string'?b.caller.device:null}));
+        }
         const run = db.get('runs', b.runId);
         // wb report was removed: results are the final reply, judged by whoever assigned the work.
         if(pathname==='/api/agent/report')throw new Error(tr('home.reportRemoved'));
@@ -994,7 +1086,7 @@ const server = http.createServer(async (req, res) => {
         if (run?.status === 'reconciling') throw Object.assign(new Error(tr('home.runReconciling')),{code:'run_reconciling'});
         if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
         if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
-        if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
+        if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary','/api/agent/memory/search'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
         if(pathname==='/api/agent/source-sync'){const result=await sourceSync.agent.execute(run,b.action,b.input||{});change();return json(res,result);}
         if(pathname==='/api/agent/source-candidates'){const result=b.finish?await sourceSync.agent.completeCandidate(run,b.candidateId):sourceSync.agent.stageCandidate(run,b);change();return json(res,result);}
         if(pathname==='/api/agent/discussions') {
@@ -1008,6 +1100,10 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/agent/history/search') return json(res,new History(readView).search(run.projectId,agentConversationInput(run,b)));
         if (pathname === '/api/agent/history/read') return json(res,new History(readView).read(run.projectId,agentConversationInput(run,b)));
         if (pathname === '/api/agent/sessions/current') return json(res,sessionTools.current(run));
+        if (pathname === '/api/agent/memory/search') {
+          if(Object.keys(b).some(k=>!['runId','query','type','cli','device','since','limit'].includes(k)))throw new Error(tr('platformMemory.searchUsage'));
+          return json(res,platformMemory.search(b,{projectId:run.projectId,runtime:run.roleSnapshot?.runtime||null,nodeId:run.nodeId||null}));
+        }
         if (pathname === '/api/agent/conversation/summary') return json(res,new SessionTools(readView).chatSummary(run,b));
         if (pathname === '/api/agent/setup/catalog' && run.roleSnapshot?.platformAssistant) return json(res, assistant.catalog(run));
         if (pathname === '/api/agent/timers') {
@@ -1127,6 +1223,18 @@ const server = http.createServer(async (req, res) => {
         if(typeof input.enabled!=='boolean')return json(res,{error:tr('home.concurrentWritesNeedsBoolean')},400);
         const saved=db.put('projects',{...project,allowConcurrentWrites:input.enabled,updatedAt:new Date().toISOString()});
         change();scheduleChat();return json(res,{allowConcurrentWrites:saved.allowConcurrentWrites});
+      }
+      // Platform memory: one shared set for every project; Settings → Memory reads and edits it.
+      if((m=pathname.match(/^\/api\/memories(?:\/([^/]+))?$/))) {
+        const id=m[1]&&decodeURIComponent(m[1]);
+        if(!id&&req.method==='GET')return json(res,platformMemory.list(Object.fromEntries(['query','type','offset','limit'].filter(key=>url.searchParams.has(key)).map(key=>[key,url.searchParams.get(key)]))));
+        if(!id&&req.method==='POST'){const result=platformMemory.save(await body(req));change();return json(res,result);}
+        if(id==='organize'&&req.method==='POST'){
+          if(!normalizePlatformSettings(db.get('settings','main')).memoryOrganizer.nodeId)throw new Error(tr('platformMemory.organizerNotConfigured'));
+          const result=platformMemory.request();change();return json(res,result);
+        }
+        if(id&&req.method==='PUT'){const result=platformMemory.save({...await body(req),id});change();return json(res,result);}
+        if(id&&req.method==='DELETE'){const result=platformMemory.remove(id);change();return json(res,result);}
       }
       if((m=pathname.match(/^\/api\/tasks\/([^/]+)\/detail$/)) && req.method==='GET') {
         const task=db.get('tasks',decodeURIComponent(m[1]));
@@ -1489,70 +1597,46 @@ const server = http.createServer(async (req, res) => {
         const settings = db.put('settings', updatePlatformPrompts(db.get('settings', 'main'), await body(req)));
         change(); return json(res, settings);
       }
+      // Both organizers: the chosen device must be online (and new enough) and offer the chosen CLI and model.
+      const organizerDevice=(input,capability)=>{
+        if(!input.nodeId)return;
+        const worker=db.get('workers',input.nodeId);
+        if(!worker || !online(input.nodeId))throw new Error(tr('home.organizerDeviceNotOnline'));
+        if(capability&&worker.capabilities?.[capability]!==1)throw new Error(tr('platformMemory.upgradeWorker'));
+        const issue=runtimeIssue(worker,input.runtime,input.model);
+        if(issue)throw new Error(issue);
+      };
       if(pathname==='/api/settings/conversation-organizer' && req.method==='POST') {
         const input=await body(req);
-        if(input.nodeId) {
-          const worker=db.get('workers',input.nodeId);
-          if(!worker || !online(input.nodeId))throw new Error(tr('home.organizerDeviceNotOnline'));
-          const issue=runtimeIssue(worker,input.runtime,input.model);
-          if(issue)throw new Error(issue);
-        }
+        organizerDevice(input);
         const settings=db.put('settings',updateConversationOrganizer(db.get('settings','main'),input));
         change();return json(res,settings.conversationOrganizer);
+      }
+      if(pathname==='/api/settings/memory-organizer' && req.method==='POST') {
+        const input=await body(req);
+        organizerDevice(input,'memoryOrganizer');
+        const first=!normalizePlatformSettings(db.get('settings','main')).memoryOrganizer.nodeId;
+        const settings=db.put('settings',updateMemoryOrganizer(db.get('settings','main'),input));
+        // Turning organizing on with "from now on" leaves everything said so far out.
+        if(first&&input.nodeId&&input.startFrom==='now')platformMemory.skipHistory();
+        change();return json(res,settings.memoryOrganizer);
       }
       return json(res, { error: tr('home.endpointNotFound') }, 404);
     }
     if (req.method !== 'GET') return json(res, { error: tr('home.unsupportedRequest') }, 405);
-    const files = { '/': 'index.html', '/platform-admin.js':'platform-admin.js', '/project-space.js':'project-space.js', '/token-usage.js':'token-usage.js', '/app-icon.png': 'app-icon.png', '/agent-codex.png':'agent-codex.png', '/agent-antigravity.png':'agent-antigravity.png', '/app.js': 'app.js', '/run-log-data.js':'run-log-data.js', '/room.js': 'room.js', '/markdown.js':'markdown.js', '/project-settings.js': 'project-settings.js', '/role-icons.js': 'role-icons.js', '/settings-page.js': 'settings-page.js', '/supervisor-settings.js':'supervisor-settings.js', '/elapsed.js':'elapsed.js', '/send-state.js':'send-state.js', '/permission-scope.js':'permission-scope.js', '/project-setup.js':'project-setup.js', '/styles.css':'styles.css' };
-    Object.assign(files,{'/history-view.js':'history-view.js','/scheduled-jobs.js':'scheduled-jobs.js','/git-version.js':'git-version.js','/plan-dock.js':'plan-dock.js','/document.html':'document.html','/document.js':'document.js','/manifest.webmanifest':'manifest.webmanifest','/sw.js':'sw.js','/app-icon-192.png':'app-icon-192.png'});
-    files['/workspace-inspector.js']='workspace-inspector.js';
-    files['/concurrent-writes.js']='concurrent-writes.js';
-    files['/conversation-tasks.js']='conversation-tasks.js';
-    files['/conversation-task-state.js']='conversation-task-state.js';
-    files['/delivery-summary.js']='delivery-summary.js';
-    files['/retired-commands.js']='retired-commands.js';
-    files['/source-sync.js']='source-sync.js';
-    files['/source-sync-audit.js']='source-sync-audit.js';
-    files['/quota-state.js']='quota-state.js';
-    files['/chat-card-state.js']='chat-card-state.js';
-    files['/state-data.js']='state-data.js';
-    files['/group-conversations.js']='group-conversations.js';
-    files['/project-team-copy.js']='project-team-copy.js';
-    files['/execution-progress.js']='execution-progress.js';
-    files['/live-scene.js']='live-scene.js';
-    files['/cli-recovery.js']='cli-recovery.js';
-    files['/session-queue.js']='session-queue.js';
-    files['/browser-token.js']='browser-token.js';
-    files['/configuration-information.js']='configuration-information.js';
-    files['/role-switch.js']='role-switch.js';
-    files['/role-history.js']='role-history.js';
-    files['/role-templates.js']='role-templates.js';
-    files['/i18n.js']='i18n.js';
-    files['/output-language.js']='output-language.js';
-    files['/native-side-ask.js']='native-side-ask.js';
-    files['/group-side-ask.js']='group-side-ask.js';
-    files['/native-sessions.js']='native-sessions.js';
-    files['/native-agent-switch.js']='native-agent-switch.js';
-    files['/native-transcript.js']='native-transcript.js';
-    files['/media.js']='media.js';
-    files['/pasted-text.js']='pasted-text.js';
-    files['/side-preview.js']='side-preview.js';
-    files['/history-prompt.js']='history-prompt.js';
-    files['/history-cache.js']='history-cache.js';
-    files['/data-settings.js']='data-settings.js';
-    files['/remote-access-settings.js']='remote-access-settings.js';
-    files['/native-history-timeline.js']='native-history-timeline.js';
-    files['/native-session-groups.js']='native-session-groups.js';
-    files['/create-folder.js']='create-folder.js';
-    files['/list-order.js']='list-order.js';files['/select-controls.js']='select-controls.js';files['/model-usage.js']='model-usage.js';
-    files['/mention-input.js']='mention-input.js';
-    files['/context-usage.js']='context-usage.js';
-    files['/vendor/opencc-t2cn.js']='vendor/opencc-t2cn.js';
-    files['/locales/zh.js']='locales/zh.js';
-    files['/locales/native-takeover-zh.js']='locales/native-takeover-zh.js';
+    const files = pageFileMap();
     const file = files[pathname]; if (!file) return json(res, { error: tr('home.pageNotFound') }, 404);
-    const bytes = await readFile(join(base, 'public', file));
-    await sendBufferedResponse(req,res,bytes,{ 'Content-Type': { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' }[extname(file)], 'Cache-Control': 'no-cache' });
+    let bytes = await readFile(join(base, 'public', file));
+    // The service worker's cache name carries a fingerprint of every page file, so any change installs a fresh cache.
+    if (pathname === '/sw.js') bytes = Buffer.from(String(bytes).replace(/^(const CACHE = 'agent-workbench-static-[^']*)'/m, `$1-${await staticFingerprint(files)}'`));
+    // The page states which build it is, so a page running from an older cache can notice a newer Home (/healthz build).
+    if (file === 'index.html') bytes = Buffer.from(String(bytes).replace('<meta name="workbench-build" content="">', `<meta name="workbench-build" content="${await staticFingerprint(files)}">`));
+    // Unchanged files answer 304, so revalidation costs one small round trip instead of the whole file.
+    // Weak, since the same validator covers the gzip and the plain body.
+    const etag = `W/"${createHash('sha256').update(bytes).digest('base64url').slice(0, 22)}"`;
+    const asked = String(req.headers['if-none-match'] || '').split(',').map(value => value.trim().replace(/^W\//, ''));
+    if (asked.includes('*') || asked.includes(etag.slice(2))) { res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding' }); return res.end(); }
+    await sendBufferedResponse(req,res,bytes,{ 'Content-Type': { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' }[extname(file)], 'Cache-Control': 'no-cache', ETag: etag });
   } catch (e) { if (!res.headersSent) json(res, { error: e.message,...(e.folderPreparationReleased===true?{folderPreparationReleased:true}:{}),...(e.code?{code:e.code}:{}),...(e.limit?{limit:e.limit}:{}) }, 400); else res.end(); }
 });
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });

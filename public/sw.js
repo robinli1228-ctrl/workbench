@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v216-group-sync-indicator';
+const CACHE = 'agent-workbench-static-v220-release-259';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
@@ -19,20 +19,24 @@ const STATIC = [
   '/history-cache.js',
   '/data-settings.js',
   '/', '/styles.css', '/delivery-summary.js', '/app.js', '/native-sessions.js', '/list-order.js', '/select-controls.js', '/mention-input.js', '/context-usage.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png', '/retired-commands.js',
-  '/platform-admin.js', '/configuration-information.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',
+  '/platform-admin.js', '/configuration-information.js', '/project-space.js', '/platform-memory.js', '/token-usage.js', '/run-log-data.js', '/room.js',
   '/markdown.js', '/media.js', '/project-settings.js', '/role-icons.js', '/settings-page.js',
   '/supervisor-settings.js', '/elapsed.js', '/send-state.js', '/permission-scope.js', '/role-templates.js', '/role-switch.js', '/role-history.js', '/project-setup.js', '/history-view.js', '/scheduled-jobs.js',
   '/git-version.js', '/plan-dock.js', '/agent-codex.png', '/agent-antigravity.png',
   '/document.html', '/document.js', '/workspace-inspector.js', '/concurrent-writes.js', '/state-data.js', '/execution-progress.js', '/live-scene.js',
   '/i18n.js', '/locales/zh.js', '/locales/native-takeover-zh.js', '/browser-token.js', '/source-sync.js',
-  '/output-language.js', '/vendor/opencc-t2cn.js', '/cli-recovery.js', '/session-queue.js'
+  '/output-language.js', '/vendor/opencc-t2cn.js', '/cli-recovery.js', '/session-queue.js', '/load-bar.js'
 ];
 const staticPaths = new Set(STATIC);
 // These large optional images are cached only if requested, so first install cannot starve state/chat reads over SSH.
 const precache = STATIC.filter(path => !['/app-icon.png', '/agent-codex.png'].includes(path));
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(precache)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(precache)).catch(async error => {
+    // A failed install must not leave an empty cache that looks ready to the page.
+    await caches.delete(CACHE);
+    throw error;
+  }).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
@@ -48,16 +52,15 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   // Cache public static assets only; APIs carrying chats, tasks and credentials always go to Home.
   if (url.origin !== self.location.origin || !staticPaths.has(url.pathname)) return;
+  // Cache first: Home puts a fingerprint of every page file into CACHE, so a changed file always arrives as a new service
+  // worker with a fresh cache, and a cached copy is never stale within its version. Only files missing from the cache
+  // (optional images, or a precache that failed) go to the network.
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
-    try {
-      const response = await fetch(request);
-      if (response.ok) await cache.put(url.pathname, response.clone()).catch(() => {});
-      return response;
-    } catch (error) {
-      const cached = await cache.match(url.pathname);
-      if (cached) return cached;
-      throw error;
-    }
+    const cached = await cache.match(url.pathname);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (response.ok) await cache.put(url.pathname, response.clone()).catch(() => {});
+    return response;
   })());
 });

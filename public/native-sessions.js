@@ -1,3 +1,5 @@
+import { trackLoading } from './load-bar.js';
+import {copyText,bindCopyFeedback} from './role-icons.js';
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
@@ -367,11 +369,11 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  /** Open iTerm at once; the link stays on the claim for "Open iTerm" / "Copy" if iTerm did not come up. */
  async function openInTerminal(item){const result=await prepareTerminal(item);if(result?.url)window.location.assign(result.url);return result;}
  /** Copy the ready-to-run command (ssh + launcher for a remote device). A page takeover must end first, since the link claims the session. */
- async function copyTerminalCommand(item){
+ async function copyTerminalCommand(item,button){
   if(takeover.releaseDisabled(item))throw Error('Wait for the current reply, send or upload to finish');
   if(takeover.isOn(item)||takeover.canChat(item)){if(!confirm(t('End the page takeover and prepare a terminal link for this session?')))throw Error(t('Cancelled'));await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
   const result=await prepareTerminal(item);if(!result?.command)throw Error('No terminal command was prepared');
-  await navigator.clipboard.writeText(result.command);await onStateRefresh();void load({quiet:true});return result.command;
+  await copyText(button,result.command);await onStateRefresh();void load({quiet:true});return result.command;
  }
  /**
   * Hand-over dialog: confirm first, then every step with its progress. To iTerm: end the page takeover, prepare the link,
@@ -404,7 +406,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
      if(step==='release'){if(takeover.releaseDisabled(item))throw Error('Wait for the current reply, send or upload to finish');await takeover.release(item);if(!await waitUntil(()=>!takeover.isReleasing(item),20000))throw Error('The page takeover is still closing; try again in a moment');}
      else if(step==='prepare'){const result=await prepareTerminal(item);if(!result?.url&&!result?.command)throw Error('No terminal command was prepared');after.replaceChildren();
       if(result.url){const open=el('a','secondary',t('Open iTerm'));open.href=result.url;after.append(open);}
-      if(result.command){const copy=button('Copy terminal command',async b=>{await navigator.clipboard?.writeText(result.command).catch(()=>{});b.target.textContent=t('Copied');});after.append(copy);}
+      if(result.command){const copy=button('Copy terminal command',async b=>{await copyText(b.currentTarget,result.command).catch(()=>{});});after.append(copy);}
       after.prepend(el('span','native-side-hint',t('If iTerm did not open, use the link or copy the command.')));after.hidden=false;handoverDialog.dataset.url=result.url||'';}
      else if(step==='open'){const url=handoverDialog.dataset.url;if(url)window.location.assign(url);}
      else if(step==='stop'||step==='quit'){
@@ -479,7 +481,9 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   list.scrollTop=scroll;
  }
  /** Fetch at most two device catalogues at a time; one unavailable device must not hide the others. */
- async function load({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet)note.textContent=t('Loading native sessions…');
+ /** A visible reload of the list shows the top bar; quiet background refreshes do not. */
+ function load(options={}){return options.quiet?loadList(options):trackLoading(loadList(options));}
+ async function loadList({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet)note.textContent=t('Loading native sessions…');
   // Both device filters and All include registered independent entries plus managed role history.
   const scopes=['created','group'].includes(device.value)?[device.value]:['all','group'];
   const jobs=workers().flatMap(w=>(tool.value==='all'?Object.keys(names):[tool.value]).filter(runtime=>device.value==='created'||w.runtimes?.some(r=>r.type===runtime&&r.available&&r.supported!==false)).flatMap(runtime=>scopes.map(scope=>({nodeId:w.id,runtime,scope})))),results=[],errors=[],failedJobs=new Set();let partial=false,index=0;
@@ -612,11 +616,15 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  }
  /** Errors that mean the saved snapshot no longer fits the history file. */
  const staleCopy=error=>/changed|Invalid native history cursor/i.test(error?.message||'');
- async function read(item,{quiet=false}={}){if(item.conversationBinding){const group=groupNativeSessions(items).find(g=>g.id===`conversation:${item.conversationBinding.id}`);if(group)item=group.latest;}
+ /** Placeholder turns while a session's history is read for the first time. */
+ function transcriptSkeleton(){const box=el('div','chat-skeleton');box.setAttribute('aria-hidden','true');for(const side of ['out','in','in']){const row=el('div',`chat-skeleton-row is-${side}`);row.append(el('span','chat-skeleton-avatar'),el('span','chat-skeleton-bubble'));box.append(row);}return box;}
+ /** Opening a session's history shows the top bar; quiet re-reads of the one on screen do not. */
+ function read(item,options={}){return options.quiet?readDetail(item,options):trackLoading(readDetail(item,options));}
+ async function readDetail(item,{quiet=false}={}){if(item.conversationBinding){const group=groupNativeSessions(items).find(g=>g.id===`conversation:${item.conversationBinding.id}`);if(group)item=group.latest;}
   const ticket=++detailVersion;historyLoading={key:key(item),sessionId:nativeId(item),ticket};selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
   const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];
   const restart=()=>{timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));detailSignature=detailMeta='';};
-  if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);}
+  if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(transcriptSkeleton());content.replaceChildren(scroll);}
   const id=nativeId(item),readable=id&&item.hasHistory!==false,current=()=>ticket===detailVersion&&active()&&key(selected)===key(item)&&nativeId(selected)===id;
   /** Draw a page: a full one (opening, or a fallback) or rows appended since the last read (`delta`). */
   const present=(base,page,{quietly})=>{
@@ -672,7 +680,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  function openPromptFullscreen(text,at){
   if(!promptDialog){promptDialog=el('dialog','message-fullscreen');promptDialog.setAttribute('aria-label',t('Full message'));document.body.append(promptDialog);}
   const header=el('div','message-fullscreen-heading'),heading=el('strong','',at?`${t('Full message')} · ${time(at)}`:t('Full message'));
-  const copy=el('button','icon-button');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(text).catch(()=>{}));
+  const copy=el('button','icon-button');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void copyText(copy,text).catch(()=>{}));
   const close=el('button','icon-button');close.type='button';setActionIcon(close,'close',t('Close'));close.autofocus=true;close.addEventListener('click',()=>promptDialog.close());
   header.append(heading,copy,sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),at,copyText:text,render:()=>el('div','nt-side-prompt',text)}),{before:()=>promptDialog.close()}),close);
   const bodyEl=el('div','message-fullscreen-body'),content=el('div','message-fullscreen-content');content.append(el('div','chat-message-text',text));bodyEl.append(content);
@@ -696,7 +704,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    files=el('div','nt-prompt-files');const textEl=el('div','nt-prompt-text',body),tools=el('div','nt-prompt-tools');main.append(textEl);main.hidden=!body.trim();
    if(at){const stamp=el('time','nt-prompt-time',clock(at));stamp.dateTime=at;stamp.title=time(at);tools.append(stamp);}
    const expand=el('button','icon-button nt-prompt-expand');expand.type='button';setActionIcon(expand,'fullscreen',t('Full screen'));expand.hidden=true;expand.addEventListener('click',()=>openPromptFullscreen(body,at));
-   const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));
+   const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void copyText(copy,body).catch(()=>{}));if(session&&at)bindCopyFeedback(copy,`native:${key(session)}:${role}:${at}`);
    const pin=sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),subtitle:session?.title||'',at,copyText:body,render:()=>el('div','nt-side-prompt',body)}));pin.hidden||=!body.trim();
    tools.append(copy,expand,pin);row.dataset.tools='1';row._tools=tools;
    requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
@@ -704,7 +712,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   if(extra){if(agent)main.append(extra);else files.append(extra);}
   if(files)row.append(files);row.append(main);if(row._tools){row.append(row._tools);delete row._tools;}
   // Finished replies end with a footer: Copy, then (on the newest reply) how long the turn took. Live replies have no footer yet.
-  if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void navigator.clipboard?.writeText(body).catch(()=>{}));foot.append(copy);
+  if(agent&&!['running','queued','waiting'].includes(state)){const foot=el('div','nt-reply-foot'),copy=el('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void copyText(copy,body).catch(()=>{}));if(session&&at)bindCopyFeedback(copy,`native:${key(session)}:${role}:${at}`);foot.append(copy);
    // Open on the right: the same text Copy takes, rendered as in the chat, pinned beside it (and kept while another session is open).
    if(body.trim())foot.append(sideButton('icon-button nt-side',t('Open on the right'),()=>({title:names[runtime]||t('Assistant'),subtitle:session?.title||'',at,copyText:body,render:()=>{const md=renderMarkdown(body);md.classList?.add('markdown-body','nt-side-reply');linkMedia(md,{...mediaContext(session),filePaths:()=>filePaths});documentPreview.decorate(md,{...documentContext(session),filePaths:()=>filePaths});return md;}})));
    row.append(foot);}
@@ -874,7 +882,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   }});
  }
  /** Label/value rows with optional copy buttons, shared by the session, repository and runtime cards. */
- function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;if(typeof text==='string')valueText.title=text;data.append(valueText);if(copy){const b=button('',async()=>{try{await navigator.clipboard.writeText(copy);b.classList.add('is-copied');b.title=t('Copied');setTimeout(()=>{b.classList.remove('is-copied');b.title=t('Copy');},1500);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}
+ function metaList(rows){const list=el('dl','native-session-meta');for(const[label,text,copy]of rows){const term=el('dt','',t(label)),data=el('dd','');const valueText=el('span','native-meta-value',text);valueText.translate=false;if(typeof text==='string')valueText.title=text;data.append(valueText);if(copy){const b=button('',async()=>{try{await copyText(b,copy);}catch{}},'icon-button native-copy');b.title=t('Copy');b.setAttribute('aria-label',t('Copy {label}',{label:t(label)}));b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';bindCopyFeedback(b,`native-meta:${label}:${copy}`);data.append(b);data.classList.add('has-copy');}list.append(term,data);}return list;}
  function metaCard(target,heading,rows){const section=el('section','native-side-card');section.append(el('h3','',t(heading)),metaList(rows));target.append(section);return section;}
  function renderSide(value,id,readable){
   side.dataset.sessionKey=key(value);
@@ -888,12 +896,12 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   // The session ID line under the This page / iTerm switch: the ID, copy it, and copy the command that opens it in iTerm.
   sessionIdRow=el('div','native-session-id-row');sessionIdRow.dataset.key=key(value);
   const idText=el('span','native-session-id-value',id||t('Not available yet'));idText.translate=false;idText.title=id?`${t('Session ID')} · ${id}`:'';sessionIdRow.append(idText);
-  if(id){const copyId=iconButton('copy','Copy session ID',async e=>{const b=e.currentTarget;try{await navigator.clipboard.writeText(id);setActionIcon(b,'check',t('Copied'));setTimeout(()=>setActionIcon(b,'copy',t('Copy session ID')),1500);}catch{}});sessionIdRow.append(copyId);}
+  if(id){const copyId=iconButton('copy','Copy session ID',async e=>{const b=e.currentTarget;try{await copyText(b,id);}catch{}});bindCopyFeedback(copyId,`native:${key(value)}:id`);sessionIdRow.append(copyId);}
   // The command that opens this exact session in a terminal (ssh + launcher for a remote device): copy it into iTerm as is.
   if(id&&value.workspace){const copy=iconButton('terminal','Copy iTerm command',async e=>{const b=e.currentTarget;b.disabled=true;b.dataset.pending='true';
-    try{await copyTerminalCommand(value);setActionIcon(b,'check',t('Copied'));setTimeout(()=>{setActionIcon(b,'terminal',t('Copy iTerm command'));delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);},1800);}
+    try{await copyTerminalCommand(value,b);delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);}
     catch(error){delete b.dataset.pending;b.disabled=takeover.releaseDisabled(value);controlFeedback={key:key(value),text:error.message};renderSessionControls(value);}},'native-copy-command');
-   copy.disabled=takeover.releaseDisabled(value);sessionIdRow.append(copy);}
+   copy.disabled=takeover.releaseDisabled(value);bindCopyFeedback(copy,`native:${key(value)}:terminal`);sessionIdRow.append(copy);}
   // Repository facts are read once per selected session (or on Refresh), never polled.
   void loadAgents(value);
   if(gitKey!==key(value)){gitKey=key(value);void loadGit(value,true);}else renderGit(value);
@@ -961,11 +969,11 @@ const cliNoise=text=>/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/
 const promptKey=text=>simplifiedCliOutput(String(text||'')).replace(/\s+/g,' ').trim();
 /** A turn shows its process only when it holds more than the final reply: tools, runtime notes or intermediate messages. */
 const norm=text=>stripAnsi(String(text||'')).replace(/\s+/g,' ').trim();
-const allRows=turn=>liveSceneRows(turn.events||[],{status:turn.status}).rows.filter(r=>!(r.kind==='log'&&cliNoise(r.text)));
-/** The reply bubble shows the final message; the process keeps intermediate messages once each (streamed text that equals a message is dropped). */
-const finalReply=turn=>{const rows=allRows(turn),last=[...rows].reverse().find(r=>r.kind==='message'||r.kind==='text');return last||null;};
-const processRows=(turn,{includeFinal=false}={})=>{const rows=allRows(turn),messages=new Set(rows.filter(r=>r.kind==='message').map(r=>norm(r.text))),final=finalReply(turn),seen=new Set();
- return rows.filter(r=>{if(r.kind!=='message'&&r.kind!=='text')return true;const n=norm(r.text);if(!n||(r.kind==='text'&&messages.has(n))||seen.has(n)||(!includeFinal&&final&&n===norm(final.text)))return false;seen.add(n);return true;});};
+const allRows=turn=>liveSceneRows(turn.events||[],turn).rows.filter(r=>!(r.kind==='log'&&cliNoise(r.text)));
+/** The reply bubble shows the last projected reply; preceding replies and tools remain in the process by identity. */
+const finalReply=turn=>{const rows=allRows(turn),last=[...rows].reverse();return last.find(r=>r.phase==='final_answer'&&!r.aggregate)||last.find(r=>r.kind==='message'||r.kind==='text')||null;};
+const processRows=(turn,{includeFinal=false}={})=>{const rows=allRows(turn),final=finalReply(turn);
+ return rows.filter(r=>!['message','text'].includes(r.kind)||norm(r.text)&&(includeFinal||!final||r.key!==final.key));};
 const replyText=turn=>{const f=finalReply(turn);return f?f.text:turn.text||'';};
 const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind==='tool'||r.kind==='log'||r.kind==='error')||rows.some(r=>r.kind==='message'||r.kind==='text');};
  /** The group-chat live-scene projection orders text, messages, logs and merged tool states for one turn. */
@@ -1011,7 +1019,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    blocksAfter.set(blockKey,md);frag.append(md);
   }
   flush();
-  const tasks=taskBlock(turn,t,{live});if(tasks)frag.append(tasks);
+  // Background tasks go before the closing prose, where the history drawing puts them, so nothing jumps when the turn ends.
+  const tasks=taskBlock(turn,t,{live});if(tasks){const last=frag.lastChild;if(!live&&last?.classList?.contains('markdown-body'))frag.insertBefore(tasks,last);else frag.append(tasks);}
   if(turn.id){turnBlocks.delete(turn.id);turnBlocks.set(turn.id,blocksAfter);if(turnBlocks.size>64)turnBlocks.delete(turnBlocks.keys().next().value);}
   return frag;
  }
@@ -1030,7 +1039,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const returnedKey='agent-workbench.native-returned-chat',returned=new Set(stored(returnedKey,[]));
   const save=()=>{try{sessionStorage.setItem(consentKey,JSON.stringify([...on]));sessionStorage.setItem(returnedKey,JSON.stringify([...returned]));sessionStorage.setItem('agent-workbench.native-takeover-drafts',JSON.stringify(drafts));}catch{}};
   const feed=el('div','native-takeover-feed'),shell=el('div','chat-composer-shell native-session-footer'),urls=new Map(),historyAnchors=new Map();
-  let current=null,turns=[],poll=null,historyAt=0,historyEl=null,supported=true,fetchTicket=0,residentState='closed',settings={model:null,effort:null},controls=false;
+  let current=null,turns=[],poll=null,historyAt=0,historyEl=null,supported=true,fetchTicket=0,refreshRequest=null,residentState='closed',settings={model:null,effort:null},controls=false;
   const sessionKey=value=>value?`${value.nodeId}/${value.runtime}/${value.sessionId}`:'';
   const k=()=>sessionKey(current);
   /** Draft identity follows the conversation; execution receipts continue using exact native segment identities. */
@@ -1056,14 +1065,14 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   /** Clear only what the confirmed send carried; text typed afterwards stays. */
   function settleTurn(id,sent){const d=drafts[draftId(id)];if(!d)return;
    if((d.text||'')===(sent.text||'')){drafts[draftId(id)]={text:'',attachments:[]};if(k()===id)input.value='';}
-   else{const carried=new Set(sent.attachmentIds||[]);delete d.pending;delete d.sendState;d.attachments=(d.attachments||[]).filter(a=>!carried.has(a.id));}
+   else{const carried=new Set(sent.attachmentIds||[]);delete d.pending;delete d.sendState;delete d.sentAt;d.attachments=(d.attachments||[]).filter(a=>!carried.has(a.id));}
    operation(id).message='';save();}
   /** Exact read-only receipt for the frozen clientTurnId in this session; only a confirmed absence re-enables Send. */
   async function verifyTurn(id){const d=drafts[draftId(id)],op=operation(id),value=current;if(!d?.pending||op.sending||op.verifying||d.sendState==='failed'||!value||k()!==id)return;
    op.verifying=true;checkedAt=Date.now();const sent=d.pending;render();
    try{const receipt=await api(`${endpoint(value.nodeId)}/turns?${new URLSearchParams({runtime:value.runtime,sessionId:value.sessionId,clientTurnId:sent.clientTurnId})}`);
     if(drafts[draftId(id)]?.pending?.clientTurnId!==sent.clientTurnId)return;
-    if(receipt?.exists===true)settleTurn(id,sent);else if(receipt?.exists===false)drafts[draftId(id)].sendState='failed';}
+    if(receipt?.exists===true){const d=drafts[draftId(id)];confirmedSends.set(draftId(id),{pending:sent,attachments:d.attachments,sentAt:d.sentAt,confirmed:true});settleTurn(id,sent);void refresh();}else if(receipt?.exists===false)drafts[draftId(id)].sendState='failed';}
    catch(error){
     // An unreachable Home or 401/403/429 says nothing about the original POST: stay unknown and look again later.
     if(drafts[draftId(id)]?.pending?.clientTurnId===sent.clientTurnId)drafts[draftId(id)].sendState=lookupFailureState(error);op.message=t(error.message);}
@@ -1108,11 +1117,11 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    for(const old of root.querySelectorAll('.native-turn-anchored,.nt-system-detail'))old.remove();
    for(const row of root.querySelectorAll('[data-native-live-hidden]')){row.hidden=false;delete row.dataset.nativeLiveHidden;}
    for(const row of root.querySelectorAll('[data-history-duration]')){if(row.dataset.historyDuration)row.dataset.duration=row.dataset.historyDuration;else delete row.dataset.duration;delete row.dataset.historyDuration;}}
-  function detach(){clearFeedMarks(historyEl);current=null;turns=[];historyEl=null;historyAnchors.clear();feedSignature='';liveReplies.clear();feed.replaceChildren();shell.remove();clearInterval(poll);poll=null;revokeUrls();}
+  function detach(){suspend();clearFeedMarks(historyEl);current=null;turns=[];historyEl=null;historyAnchors.clear();feedSignature='';liveReplies.clear();feed.replaceChildren();shell.remove();revokeUrls();}
   // 切换导航只暂停读取，保留底部和历史布局，返回时不必等异步刷新才能显示。
-  function suspend(){fetchTicket++;clearInterval(poll);poll=null;}
+  function suspend(){fetchTicket++;refreshRequest=null;clearInterval(poll);poll=null;}
   function resume(){if(current)void refresh();}
-  function attach(value,{readable,historyAt:at,history}){bindConversation(value);const same=current&&k()===`${value.nodeId}/${value.runtime}/${value.sessionId}`;current=value;historyAt=at;historyEl=history;if(!same){turns=[];historyAnchors.clear();feed.replaceChildren();}
+  function attach(value,{readable,historyAt:at,history}){bindConversation(value);const same=current&&k()===`${value.nodeId}/${value.runtime}/${value.sessionId}`;current=value;historyAt=at;historyEl=history;if(!same){suspend();turns=[];historyAnchors.clear();feed.replaceChildren();}
    const worker=getData().workers?.find(w=>w.id===value.nodeId);supported=worker?.capabilities?.nativeTurns===3;
    const eligible=readable&&value.canResume!==false&&!value.canReopen&&Boolean(value.workspace);
    if(!eligible){shell.remove();clearFeedMarks(historyEl);feedSignature='';markLatestDuration();return;}
@@ -1125,7 +1134,15 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   const liveReplies=new Map(),rowSerials=new WeakMap();let feedSignature='',rowSerial=0;
   const serialOf=row=>{if(!rowSerials.has(row))rowSerials.set(row,++rowSerial);return rowSerials.get(row);};
   const isLive=turn=>['queued','starting','running','waiting_user','stopping'].includes(turn.status);
-  const signatureOf=()=>JSON.stringify([k(),[...(historyEl?.querySelectorAll('.native-chat-row:not(.native-turn-anchored)')||[])].map(serialOf),timeline.hasOlder(),[...openProcesses].sort(),
+  // A send confirmed by lookup (its response was lost) stays drawn until its turn is read back.
+  const confirmedSends=new Map();
+  const pendingSend=()=>{const id=draftId(k()),d=drafts[id],confirmed=confirmedSends.get(id);
+   if(confirmed&&turns.some(turn=>turn.clientTurnId===confirmed.pending.clientTurnId))confirmedSends.delete(id);
+   if(!d?.pending)return confirmedSends.get(id)||null;
+   return !turns.some(turn=>turn.clientTurnId===d.pending.clientTurnId)?d:null;};
+  // A send made while a reply runs is queued by Home, so it is drawn in the queue strip rather than the transcript.
+  const queuesBehind=()=>Boolean(activeTurn());
+  const signatureOf=()=>JSON.stringify([k(),queuesBehind(),(d=>d?[d.pending.clientTurnId,d.confirmed?'stored':sendState(d,operation(k()))]:null)(pendingSend()),[...(historyEl?.querySelectorAll('.native-chat-row:not(.native-turn-anchored)')||[])].map(serialOf),timeline.hasOlder(),[...openProcesses].sort(),
    turns.map(turn=>isLive(turn)&&!turn.control?[turn.id,turn.status,turn.prompt,turn.attachments,turn.createdAt]:turn)]);
   function renderFeed({historyChanged=false}={}){const signature=signatureOf();
    if(!historyChanged&&signature===feedSignature&&[...liveReplies.values()].every(row=>row.isConnected)){
@@ -1204,7 +1221,13 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(live)content.append(workingLine(turn));
     const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';if(!live)footNote(reply,endNote(turn));if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
     if(live){feed.append(...(userRow?[userRow,reply]:[reply]));liveReplies.set(turn.id,reply);}else place([userRow,reply],turn.createdAt);
-   }markLatestDuration();}
+   }
+   // The send on its way, drawn at once under its own id with what is known about it; Home's turn replaces it.
+   {const d=pendingSend();if(d&&!queuesBehind()){const ids=new Set(d.pending.attachmentIds||[]),files=el('div','chat-attachments native-turn-files');for(const item of (d.attachments||[]).filter(a=>ids.has(a.id)))files.append(attachmentCard(item));
+    if(!d.sentAt){d.sentAt=new Date().toISOString();save();}
+    const row=chatRow('user',d.pending.text||'',current.runtime,d.sentAt,files.childElementCount?files:null),state=d.confirmed?'stored':sendState(d,operation(k()));row.dataset.role='user';row.classList.add('is-pending-send');if(state==='failed')row.classList.add('is-unsent');
+    const label={sending:'Sending…',checking:'Checking…',offline:'Waiting for network…',failed:'Not sent'}[state];if(label){const note=el('span',state==='failed'?'nt-unsent-note':'nt-unsent-note is-pending',t(label)),tools=row.querySelector('.nt-prompt-tools');if(tools)tools.prepend(note);else row.append(note);}feed.append(row);}}
+   markLatestDuration();}
   /** A centred date line opens the transcript, and again on a new day or before a prompt after a pause of 30 minutes or more. */
   function markDays(){for(const old of scroll.querySelectorAll('.nt-day'))old.remove();let last=null;
    for(const row of scroll.querySelectorAll('.native-chat-row')){if(row.hidden||!row.dataset.at)continue;const at=new Date(row.dataset.at);if(Number.isNaN(at.getTime()))continue;
@@ -1276,11 +1299,13 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   }
   function renderQueue(){
    const pos=optimisticOrder?new Map(optimisticOrder.map((id,i)=>[id,i])):null;
+   const provisional=queuesBehind()?pendingSend():null;
    const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||(pos?(pos.get(a.id)??Infinity)-(pos.get(b.id)??Infinity):0)||queueRank(a)-queueRank(b));
-   const signature=JSON.stringify([k(),waiting.map(x=>[x.id,x.prompt,Boolean(x.steer),x.createdAt,(x.attachments||[]).map(a=>a.id)]),queueState,[...queuePending]]);
+   const signature=JSON.stringify([k(),waiting.map(x=>[x.id,x.prompt,Boolean(x.steer),x.createdAt,(x.attachments||[]).map(a=>a.id)]),queueState,[...queuePending],provisional?[provisional.pending.clientTurnId,provisional.confirmed?'stored':sendState(provisional,operation(k()))]:null]);
    if(queueOrder.active()||signature===queueSignature)return;queueSignature=signature;
-   queue.hidden=!waiting.length;queueList.replaceChildren();if(!waiting.length)return;
-   const paused=Boolean(queueState?.paused),head=[el('span','message-queue-title',t('Queue · {v}',{v:waiting.length}))];queue.classList.toggle('is-paused',paused);
+   const count=waiting.length+(provisional?1:0);
+   queue.hidden=!count;queueList.replaceChildren();if(!count)return;
+   const paused=Boolean(queueState?.paused),head=[el('span','message-queue-title',t('Queue · {v}',{v:count}))];queue.classList.toggle('is-paused',paused);
    if(paused)head.push(el('span','message-queue-paused',t('Paused')));
    if(queueState){const toggle=iconButton(paused?'play':'pause',paused?'Resume the queue':'Pause the queue: keep these messages after the reply ends',e=>{e.preventDefault();e.stopPropagation();void setQueuePaused(!paused);},`message-queue-pause${paused?' is-paused':''}`);head.push(toggle);}
    queueSummary.replaceChildren(...head);
@@ -1294,7 +1319,10 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     row.append(steer);
     if(queueState){const edit=iconButton('edit','Edit: back to the input box',()=>void editQueued(turn),'message-queue-edit');edit.disabled=busy||Boolean(operation().editing);row.append(edit);}
     const remove=iconButton('trash','Delete',()=>void withdrawQueued(turn),'message-queue-delete');remove.disabled=queuePending.has(turn.id);row.append(remove);
-    queueList.append(row);});}
+    queueList.append(row);});
+   // The send on its way, last in line, with no controls until Home has stored it.
+   if(provisional){const row=el('div','message-queue-item is-pending'),info=el('div','message-queue-info'),text=provisional.pending.text||(provisional.attachments||[]).map(a=>a.name).join(', '),title=el('strong','',`${count}. ${text}`);title.title=text;title.translate=false;
+    const state=provisional.confirmed?null:sendState(provisional,operation(k())),label={sending:'Sending…',checking:'Checking…',offline:'Waiting for network…',failed:'Not sent'}[state];info.append(title);if(label)info.append(el('span','message-queue-time',t(label)));row.append(info);queueList.append(row);}}
   /** Stop only while a reply runs and nothing is typed; with text or files the button sends, and Home queues the message. */
   function syncSendButton(){if(!current)return;const d=draft(),op=operation(),state=sendState(d,op),live=activeTurn(),stopping=live?.status==='stopping',typing=Boolean(input.value.trim())||Boolean(d.attachments?.length)||Boolean(d.pending);
    const stopMode=Boolean(live)&&!typing;
@@ -1306,9 +1334,10 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    if(!current)return;const value=current,taken=isOn(value);renderFeed();renderSessionControls(value);
    if(!taken&&!(supported&&canChat(value))){const bar=el('div','native-takeover-bar');const copy=el('div','native-takeover-copy');copy.append(el('strong','',t('Read-only preview')),el('span','',t(supported?'Take over to keep chatting in this exact native session here.':'Upgrade this Worker to take over native sessions')));const b=button('Take over session',()=>enable(value),'primary native-takeover-button');b.disabled=!supported;bar.append(copy,b);shell.replaceChildren(bar);return;}
    const id=k(),d=draft(id),op=operation(id);
-   if(input.value!==d.text)input.value=d.text||'';
+   // A pending send is drawn in the transcript as its own message, so the box shows neither its text nor its files.
+   const boxText=d.pending?'':d.text||'';if(input.value!==boxText)input.value=boxText;
    note.textContent=op.message||'';note.hidden=!note.textContent;note.classList.toggle('chat-bubble',Boolean(op.message));note.classList.toggle('is-error-card',Boolean(op.message));const state=sendState(d,op);
-   tray.replaceChildren();for(const item of d.attachments||[])tray.append(attachmentCard(item,()=>{if(!d.pending)void removeAttachment(id,value.nodeId,item);}));
+   tray.replaceChildren();for(const item of d.pending?[]:d.attachments||[])tray.append(attachmentCard(item,()=>{if(!d.pending)void removeAttachment(id,value.nodeId,item);}));
    if(op.uploads)tray.append(el('span','attachment-uploading',t('Uploading attachments…')));tray.hidden=!tray.childElementCount;
    syncSendButton();renderQueue();renderAsk();
    // Disabling the textarea while a send is in flight drops focus; give it back once typing is possible again.
@@ -1360,13 +1389,16 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    if(!d.pending){const payload={text:input.value,attachmentIds:(d.attachments||[]).map(a=>a.id)};
     // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
     d.pending={clientTurnId:sameSend(d.rejected?.payload,payload)?d.rejected.clientTurnId:crypto.randomUUID(),...payload};}
-   delete d.rejected;d.sendState='sending';const sent=d.pending;save();op.sending=true;render();
-   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});drafts[draftId(id)]={text:'',attachments:[]};if(k()===id){input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
-   catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;}op.message=t(error.message);}
+   delete d.rejected;d.sendState='sending';d.sentAt||=new Date().toISOString();const sent=d.pending;save();op.sending=true;render();if(k()===id)scroll.scrollTop=scroll.scrollHeight;
+   try{const turn=await api(`${endpoint(value.nodeId)}/turns`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId,allowAll:true,...d.pending}});drafts[draftId(id)]={text:'',attachments:[]};if(k()===id){fetchTicket++;input.value='';turns=[...turns.filter(x=>x.id!==turn.id),turn];}}
+   catch(error){if(uncertainSend(error))d.sendState='checking';else{const {clientTurnId,...payload}=sent;d.rejected={clientTurnId,payload};delete d.pending;delete d.sendState;delete d.sentAt;}op.message=t(error.message);}
    finally{op.sending=false;save();if(current){render();schedule();if(k()===id)scroll.scrollTop=scroll.scrollHeight;if(drafts[draftId(id)]?.pending&&drafts[draftId(id)].sendState==='checking')void verifyTurn(id);}}}
   async function stop(turn){const op=operation();try{const next=await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/stop`,{method:'POST',json:{}});turns=turns.map(x=>x.id===next.id?next:x);render();}catch(error){op.message=t(error.message);render();}}
-  async function refresh(){if(!current||!active())return;const ticket=++fetchTicket,id=k(),op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;controls=result.controls===true;settings=result.settings||{model:null,effort:null};residentState=result.process||'closed';turns=result.items||[];queueState=result.queue||null;{const d=drafts[draftId(id)];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});schedule();if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){if(ticket!==fetchTicket||k()!==id)return;op.message=t(error.message);render();schedule();}}
-  function schedule(){clearInterval(poll);poll=null;if(active()&&current&&(activeTurn()||turns.some(x=>x.status==='waiting')||operation().releasing))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
+  /** 同一会话代次只保留一个在途读取，慢请求完成前的轮询不再作废它。 */
+  async function refresh(){if(!current||!active())return;const id=k();if(refreshRequest?.id===id&&refreshRequest.ticket===fetchTicket)return;
+   const ticket=++fetchTicket,request=refreshRequest={id,ticket},op=operation(id);try{const result=await api(`${turnsUrl()}?${new URLSearchParams({runtime:current.runtime,sessionId:current.sessionId})}`);if(ticket!==fetchTicket||k()!==id)return;const wasActive=Boolean(activeTurn()),bottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;supported=result.supported!==false;controls=result.controls===true;settings=result.settings||{model:null,effort:null};residentState=result.process||'closed';turns=result.items||[];queueState=result.queue||null;{const d=drafts[draftId(id)];if(d?.pending&&!op.sending&&turns.some(x=>x.clientTurnId===d.pending.clientTurnId))settleTurn(id,d.pending);}if(op.releasing&&result.process==='closed'){op.releasing=false;on.delete(id);returned.add(id);save();await onStateRefresh();if(ticket!==fetchTicket||k()!==id)return;}render();renderSide(current,current.sessionId,true);if(wasActive&&!activeTurn()&&selected)void read(selected,{quiet:true});if(bottom)scroll.scrollTop=scroll.scrollHeight;}catch(error){if(ticket!==fetchTicket||k()!==id)return;op.message=t(error.message);render();}
+   finally{if(refreshRequest===request){refreshRequest=null;if(ticket===fetchTicket&&k()===id)schedule();}}}
+  function schedule(){clearInterval(poll);poll=null;if(active()&&current&&(activeTurn()||turns.some(x=>x.status==='waiting')||operation().releasing||confirmedSends.has(draftId(k()))))poll=setInterval(()=>{if(!document.hidden)void refresh();},1000);}
   /** Start chatting here without an extra permission prompt; terminal handover keeps its separate ownership checks. */
   function enable(value,{focus=true}={}){if(!value?.sessionId)return false;const id=sessionKey(value);if(!on.has(id)){on.add(id);save();}if(current&&k()===id){render();renderSide(value,value.sessionId,true);if(focus)input.focus();}return true;}
   /** Files touched by this session's page turns, newest turn first; an edit or write wins over a read of the same path. */
@@ -1448,7 +1480,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const input={runtime:r.value,sessionId:session&&!session.canReopen?nativeId(session):null,...(session?.entryId?{entryId:session.entryId}:{}),title:title.value.trim(),workspace:folder.value.trim(),allowAll:all.checked,useLocalSshKey:true},signature=JSON.stringify([d.value,input]);if(signature!==lastInput){operationId=crypto.randomUUID();lastInput=signature;}
    try{const result=await api(`/api/native-sessions/${encodeURIComponent(d.value)}/terminal`,{method:'POST',json:{...input,operationId}});prepared={nodeId:d.value,operationId};opened=false;if(!dialog.open||!dialog.contains(form)){await releaseUnused();return;}
     if(onPage){feedback.textContent=t('Starting the session…');await api(`/api/native-sessions/${encodeURIComponent(d.value)}/terminal`,{method:'POST',json:{action:'start',operationId}});opened=true;const created={nodeId:d.value,runtime:r.value,entryId:result.entryId||result.catalogEntryId};if(all.checked)pageOpened.add(key(created));dialog.close();await load();const item=items.find(x=>key(x)===key(created));if(item)void read(item);return;}
-    feedback.textContent=t('Ready. Open iTerm to start or resume the native CLI.');const a=el('a','primary',t('Open iTerm'));a.href=result.url;a.addEventListener('click',()=>{opened=true;});launch.append(a,button('Copy terminal command',async()=>{await navigator.clipboard.writeText(result.command);opened=true;feedback.textContent=t('Copied');}));void load({quiet:true});}catch(error){if(error.folderPreparationReleased){operationId=null;lastInput='';}feedback.textContent=t(error.message);}finally{submit.disabled=false;if(viaTerminal)viaTerminal.disabled=false;d.disabled=r.disabled=Boolean(session);folder.disabled=all.disabled=title.disabled=browseButton.disabled=false;}
+    feedback.textContent=t('Ready. Open iTerm to start or resume the native CLI.');const a=el('a','primary',t('Open iTerm'));a.href=result.url;a.addEventListener('click',()=>{opened=true;});launch.append(a,button('Copy terminal command',async e=>{await copyText(e.currentTarget,result.command);opened=true;feedback.textContent=t('Copied');}));void load({quiet:true});}catch(error){if(error.folderPreparationReleased){operationId=null;lastInput='';}feedback.textContent=t(error.message);}finally{submit.disabled=false;if(viaTerminal)viaTerminal.disabled=false;d.disabled=r.disabled=Boolean(session);folder.disabled=all.disabled=title.disabled=browseButton.disabled=false;}
   });dialog.showModal();if(!session&&projectRootOf())previewProjectFolder();else void fillDefaultFolder();
  }
  /** Segmented buttons share one mode transition; selecting the active side does not reload history. */

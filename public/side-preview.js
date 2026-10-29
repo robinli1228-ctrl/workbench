@@ -1,3 +1,4 @@
+import {copyText} from './role-icons.js';
 import {t,dateLocale} from './i18n.js';
 import {renderMarkdown,normalizeDocumentAddress} from './markdown.js';
 import {simplifiedCliOutput} from './output-language.js';
@@ -68,7 +69,7 @@ export function createSidePreview({t,formatSize=()=>'',stamp=()=>'',copyAction=n
     const download=setActionIcon(el('a','chat-icon-btn side-preview-download'),'follow',t('Download'));download.hidden=true;download.setAttribute('download',item.downloadName||item.title||'');
     const copy=iconButton('copy',t('Copy'),()=>{});copy.hidden=true;
     actions.append(download,copy,iconButton('close',t('Close preview'),clear));
-    const setCopy=options=>{if(copyAction)copyAction(copy,options);else{copy.hidden=false;copy.onclick=()=>void navigator.clipboard?.writeText(options.text||'').catch(()=>{});}};
+    const setCopy=options=>{if(copyAction)copyAction(copy,options);else{copy.hidden=false;copy.onclick=()=>void copyText(copy,options.text||'').catch(()=>{});}};
     try{
       let node;
       if(item.render){node=item.render();if(item.copyText!=null)setCopy({text:item.copyText});}
@@ -168,7 +169,7 @@ export function createDocumentPreview({api}){
       const context=result.shared&&result.projectId&&result.scopeId?{kind:'project',projectId:result.projectId,scopeId:result.scopeId,basePath:result.relativePath||ref.path}:{...ref,basePath:result.path||ref.path,...(ref.readMode==='recorded'?{blockedReason:t('The linked file has no recorded version in this preview.')}:{})};
       const render=()=>/\.(?:md|markdown)$/i.test(ref.path)?decorate(renderMarkdown(simplifiedCliOutput(result.content)),context):el('pre','artifact-code',result.content);
       content.append(render());if(ref.readMode==='recorded')content.prepend(el('p','workspace-note',[t('Read-only source file'),t(ref.versionEvidence==='recorded_commit'?'Recorded commit':'Source workspace snapshot; execution-time version not recorded'),ref.sourceCommit?.slice(0,12),ref.sha256?`SHA256 ${ref.sha256.slice(0,12)}`:''].filter(Boolean).join(' · ')));if(result.syncState==='conflict'||result.syncState==='pending')content.prepend(el('p','workspace-note',t(result.syncState==='conflict'?'Conflict detected; showing actual local file.':'Showing local changes; synchronization pending.')));status.textContent=t('Full text loaded · {v} characters',{v:result.content.length.toLocaleString(dateLocale())});
-      sideItem={title:nameOf(ref.path),subtitle:result.path||ref.path,copyText:result.content,render};side.hidden=!canOpenSide();copy.disabled=false;copy.onclick=()=>void navigator.clipboard?.writeText(result.content).catch(()=>{});
+      sideItem={title:nameOf(ref.path),subtitle:result.path||ref.path,copyText:result.content,render};side.hidden=!canOpenSide();copy.disabled=false;copy.onclick=()=>void copyText(copy,result.content).catch(()=>{});
     }catch(error){if(ticket===version&&dialog.open)status.textContent=t('Unable to open document: {message}',{message:error.message});}
   }
   return {decorate,open,close:()=>dialog?.close()};

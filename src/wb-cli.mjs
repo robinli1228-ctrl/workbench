@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { loadTurnContext } from './turn-context.mjs';
 import { agentRequest } from './agent-bridge.mjs';
 import { setupCatalog, setupPropose } from './setup-tools.mjs';
-import { conversationTask, helpText, historySearchInput, chatPost, callRole, waitForRole, requestDelivery, parseDeliveryArgs } from './wb-tools.mjs';
+import { conversationTask, helpText, historySearchInput, memorySearchInput, chatPost, callRole, waitForRole, requestDelivery, parseDeliveryArgs } from './wb-tools.mjs';
 import { tr } from './i18n.mjs';
 
 function out(data) {
@@ -22,7 +22,7 @@ function sessionOptions(args) {
   return values;
 }
 
-const COMMANDS=['task','sync','discuss','capabilities','session','setup','history','timer','note','wait','deliver','call'];
+const COMMANDS=['task','sync','discuss','capabilities','session','setup','history','memory','timer','note','wait','deliver','call'];
 
 export async function main(argv = process.argv.slice(2)) {
   const turnId=argv[0]==='--turn'?argv[1]:undefined;
@@ -32,6 +32,12 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     // Discovery must work even when a retained process inherited a deleted turn context.
     // Long-form guidance that left the platform template: read on demand, no turn context needed.
+    // A sessions-page CLI has no Run and no collaboration tools: only platform memory search, relayed by its Worker.
+    if(process.env.WB_NATIVE==='1'){
+      if(cmd==='memory'&&sub==='search'&&!tail.some(value=>['--help','-h'].includes(value)))return out(await agentRequest('/api/agent/native-memory/search',memorySearchInput(rest)));
+      if(!cmd||['help','-h','--help'].includes(cmd)||cmd==='memory')return out(tr('wbCli.nativeHelp'));
+      throw new Error(tr('wbCli.nativeHelp'));
+    }
     if(['help','-h','--help'].includes(cmd)&&['review','sync','errors'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
     if(!cmd||['help','-h','--help'].includes(cmd)||(tail.some(value=>['--help','-h'].includes(value))&&!tail.includes('--'))||(cmd==='deliver'&&sub==='help'))
       return out(helpText());
@@ -58,7 +64,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (cmd === 'capabilities') return out({protocol:2,sourceSyncTools:sourceSync?1:0,sessionTools:1,timerTools:1,transfer:1,
       tools:[...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),'task list','task show','task create','task update','discuss peers','call','wait','note','timer',
-        'history','history search','history read','history summary','deliver','session current',...(process.env.WB_PLATFORM_ASSISTANT==='1'?['setup catalog','setup propose']:[])]});
+        'history','history search','history read','history summary','memory search','deliver','session current',...(process.env.WB_PLATFORM_ASSISTANT==='1'?['setup catalog','setup propose']:[])]});
     if (cmd === 'session' && sub === 'current') return out(await agentRequest('/api/agent/sessions/current',{runId:process.env.WB_RUN_ID}));
     // Configuration cards belong to the platform assistant; project roles read the team with wb discuss peers.
     if (cmd === 'setup' && process.env.WB_PLATFORM_ASSISTANT === '1' && sub === 'catalog') return out(await setupCatalog());
@@ -72,6 +78,10 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'history' && sub === 'summary') return out(await agentRequest('/api/agent/conversation/summary',{runId:process.env.WB_RUN_ID,...sessionOptions(rest)}));
     // Bare wb history lists the latest messages; any other words are search terms, as with wb history search.
     if (cmd === 'history') return out(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(tail)}));
+    if (cmd === 'memory') {
+      if (sub !== 'search') throw new Error(tr('platformMemory.searchUsage'));
+      return out(await agentRequest('/api/agent/memory/search',{runId:process.env.WB_RUN_ID,...memorySearchInput(rest)}));
+    }
     if (cmd === 'timer') {
       if (sub === 'list' && !rest.length) return out(await agentRequest('/api/agent/timers',{runId:process.env.WB_RUN_ID,action:'list'}));
       if (!['create','update','pause','resume','delete'].includes(sub) || rest.length !== 1) throw new Error(tr('wbCli.usageWbTimerListWb'));
