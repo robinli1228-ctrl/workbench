@@ -39,6 +39,6 @@ export function createCliRecoveryUI({api,refreshState,getData,create}) {
     if(!record)return null;
     // An icon like the other card actions; the dialog behind it is unchanged.
     const button=create('button','chat-icon-btn cli-recovery-open');button.type='button';button.innerHTML=UI_ICON.diagnose;
-    button.title=t('Check CLI session occupancy');button.setAttribute('aria-label',button.title);button.onclick=()=>{selected={taskId:task.id,projectId:task.projectId,requestId:record.requestId};dialog.showModal();refresh();};return button;
+    button.dataset.recovery=`${record.requestId||''}:${record.state||''}`;button.title=t('Check CLI session occupancy');button.setAttribute('aria-label',button.title);button.onclick=()=>{selected={taskId:task.id,projectId:task.projectId,requestId:record.requestId};dialog.showModal();refresh();};return button;
   }};
 }
