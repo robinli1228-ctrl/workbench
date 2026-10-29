@@ -358,7 +358,7 @@ const syncRetrying=new Set();
 function syncDotProjectId(){return document.body.dataset.navigationMode==='groups'?app.selectedProjectId||null:null;}
 function renderSyncDot(){
   const dot=dom.connectionNote,projectId=syncDotProjectId();if(!dot)return;dot.hidden=!projectId;if(!projectId)return;
-  const connected=Boolean(app.lastStateAt)&&app.connection?.state!=='error';
+  const connected=Boolean(app.lastStateAt)&&app.connection?.state==='connected';
   const indicator=connected?(app.data?.sourceSyncSummaries||[]).find(s=>s.projectId===projectId)?.indicator:null;
   const state=connected&&['green','orange','red'].includes(indicator?.state)?indicator.state:'gray';
   const title=connected?indicator?.title||t('File sync is off for this project'):t('{connection} · sync status unknown',{connection:t(app.connection?.message||'Connecting to Home…')});
@@ -367,7 +367,7 @@ function renderSyncDot(){
 }
 /** Preserve the existing explicit retry/settings action, without dispatching anything on display or in Sessions. */
 async function syncDotClick(){
-  const projectId=syncDotProjectId();if(!projectId||!app.lastStateAt||app.connection?.state==='error'||syncRetrying.has(projectId))return;
+  const projectId=syncDotProjectId();if(!projectId||!app.lastStateAt||app.connection?.state!=='connected'||syncRetrying.has(projectId))return;
   const indicator=(app.data?.sourceSyncSummaries||[]).find(s=>s.projectId===projectId)?.indicator;if(indicator?.state!=='red')return;
   if(!indicator.retry){openSettings('project');document.querySelector('#project-tab-sync')?.click();return;}
   syncRetrying.add(projectId);renderSyncDot();
