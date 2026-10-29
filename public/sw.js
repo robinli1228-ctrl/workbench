@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v216-group-sync-indicator';
+const CACHE = 'agent-workbench-static-v217-cache-first';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
@@ -25,7 +25,7 @@ const STATIC = [
   '/git-version.js', '/plan-dock.js', '/agent-codex.png', '/agent-antigravity.png',
   '/document.html', '/document.js', '/workspace-inspector.js', '/concurrent-writes.js', '/state-data.js', '/execution-progress.js', '/live-scene.js',
   '/i18n.js', '/locales/zh.js', '/locales/native-takeover-zh.js', '/browser-token.js', '/source-sync.js',
-  '/output-language.js', '/vendor/opencc-t2cn.js', '/cli-recovery.js', '/session-queue.js'
+  '/output-language.js', '/vendor/opencc-t2cn.js', '/cli-recovery.js', '/session-queue.js', '/load-bar.js'
 ];
 const staticPaths = new Set(STATIC);
 // These large optional images are cached only if requested, so first install cannot starve state/chat reads over SSH.
@@ -48,16 +48,15 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   // Cache public static assets only; APIs carrying chats, tasks and credentials always go to Home.
   if (url.origin !== self.location.origin || !staticPaths.has(url.pathname)) return;
+  // Cache first: Home puts a fingerprint of every page file into CACHE, so a changed file always arrives as a new service
+  // worker with a fresh cache, and a cached copy is never stale within its version. Only files missing from the cache
+  // (optional images, or a precache that failed) go to the network.
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
-    try {
-      const response = await fetch(request);
-      if (response.ok) await cache.put(url.pathname, response.clone()).catch(() => {});
-      return response;
-    } catch (error) {
-      const cached = await cache.match(url.pathname);
-      if (cached) return cached;
-      throw error;
-    }
+    const cached = await cache.match(url.pathname);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (response.ok) await cache.put(url.pathname, response.clone()).catch(() => {});
+    return response;
   })());
 });

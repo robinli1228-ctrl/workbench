@@ -1,3 +1,4 @@
+import { trackLoading } from './load-bar.js';
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
 import {simplifiedCliOutput} from './output-language.js';
@@ -479,7 +480,9 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   list.scrollTop=scroll;
  }
  /** Fetch at most two device catalogues at a time; one unavailable device must not hide the others. */
- async function load({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet)note.textContent=t('Loading native sessions…');
+ /** A visible reload of the list shows the top bar; quiet background refreshes do not. */
+ function load(options={}){return options.quiet?loadList(options):trackLoading(loadList(options));}
+ async function loadList({quiet=false}={}){if(!active())return;if(quiet&&loading){pendingRefresh=true;return;}pendingRefresh=false;const ticket=++version;loading=true;lastRefresh=Date.now();if(!quiet)note.textContent=t('Loading native sessions…');
   // Both device filters and All include registered independent entries plus managed role history.
   const scopes=['created','group'].includes(device.value)?[device.value]:['all','group'];
   const jobs=workers().flatMap(w=>(tool.value==='all'?Object.keys(names):[tool.value]).filter(runtime=>device.value==='created'||w.runtimes?.some(r=>r.type===runtime&&r.available&&r.supported!==false)).flatMap(runtime=>scopes.map(scope=>({nodeId:w.id,runtime,scope})))),results=[],errors=[],failedJobs=new Set();let partial=false,index=0;
@@ -612,11 +615,15 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  }
  /** Errors that mean the saved snapshot no longer fits the history file. */
  const staleCopy=error=>/changed|Invalid native history cursor/i.test(error?.message||'');
- async function read(item,{quiet=false}={}){if(item.conversationBinding){const group=groupNativeSessions(items).find(g=>g.id===`conversation:${item.conversationBinding.id}`);if(group)item=group.latest;}
+ /** Placeholder turns while a session's history is read for the first time. */
+ function transcriptSkeleton(){const box=el('div','chat-skeleton');box.setAttribute('aria-hidden','true');for(const side of ['out','in','in']){const row=el('div',`chat-skeleton-row is-${side}`);row.append(el('span','chat-skeleton-avatar'),el('span','chat-skeleton-bubble'));box.append(row);}return box;}
+ /** Opening a session's history shows the top bar; quiet re-reads of the one on screen do not. */
+ function read(item,options={}){return options.quiet?readDetail(item,options):trackLoading(readDetail(item,options));}
+ async function readDetail(item,{quiet=false}={}){if(item.conversationBinding){const group=groupNativeSessions(items).find(g=>g.id===`conversation:${item.conversationBinding.id}`);if(group)item=group.latest;}
   const ticket=++detailVersion;historyLoading={key:key(item),sessionId:nativeId(item),ticket};selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
   const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];
   const restart=()=>{timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));detailSignature=detailMeta='';};
-  if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(el('p','workspace-note',t('Loading…')));content.replaceChildren(scroll);}
+  if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(transcriptSkeleton());content.replaceChildren(scroll);}
   const id=nativeId(item),readable=id&&item.hasHistory!==false,current=()=>ticket===detailVersion&&active()&&key(selected)===key(item)&&nativeId(selected)===id;
   /** Draw a page: a full one (opening, or a fallback) or rows appended since the last read (`delta`). */
   const present=(base,page,{quietly})=>{

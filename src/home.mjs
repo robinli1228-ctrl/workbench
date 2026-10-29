@@ -4,7 +4,7 @@ import {noteRoleCompaction,dueRoleCompactions,recordRoleCompaction} from './role
 import {createRemoteAccessSettings} from './remote-access-settings.mjs';
 import http from 'node:http';
 import { sendBufferedResponse } from './http-response.mjs';
-import { readFile, mkdir, writeFile, chmod } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, chmod, stat as statFile } from 'node:fs/promises';
 import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
@@ -470,6 +470,18 @@ async function body(req) {
   let raw = '';
   for await (const chunk of req) { raw += chunk; if (raw.length > 128000) throw new Error(tr('home.requestTooLarge')); }
   return raw ? JSON.parse(raw) : {};
+}
+/** One hash over every served page file (excluding the service worker itself), recomputed only when a file changes. */
+let fingerprintCache = null;
+async function staticFingerprint(files) {
+  const names = [...new Set(Object.values(files))].filter(name => name !== 'sw.js').sort();
+  const stamps = await Promise.all(names.map(async name => { try { const info = await statFile(join(base, 'public', name)); return `${name}:${info.size}:${info.mtimeMs}`; } catch { return `${name}:missing`; } }));
+  const key = stamps.join('|');
+  if (fingerprintCache?.key === key) return fingerprintCache.value;
+  const hash = createHash('sha256');
+  for (const name of names) { hash.update(name); try { hash.update(await readFile(join(base, 'public', name))); } catch {} }
+  fingerprintCache = { key, value: hash.digest('hex').slice(0, 12) };
+  return fingerprintCache.value;
 }
 function json(res, data, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); }
 /** Path checks and file reads are both done by the target Worker; Home does not probe the remote filesystem. */
@@ -1548,11 +1560,17 @@ const server = http.createServer(async (req, res) => {
     files['/mention-input.js']='mention-input.js';
     files['/context-usage.js']='context-usage.js';
     files['/vendor/opencc-t2cn.js']='vendor/opencc-t2cn.js';
+    files['/load-bar.js']='load-bar.js';
     files['/locales/zh.js']='locales/zh.js';
     files['/locales/native-takeover-zh.js']='locales/native-takeover-zh.js';
     const file = files[pathname]; if (!file) return json(res, { error: tr('home.pageNotFound') }, 404);
-    const bytes = await readFile(join(base, 'public', file));
-    await sendBufferedResponse(req,res,bytes,{ 'Content-Type': { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' }[extname(file)], 'Cache-Control': 'no-cache' });
+    let bytes = await readFile(join(base, 'public', file));
+    // The service worker's cache name carries a fingerprint of every page file, so any change installs a fresh cache.
+    if (pathname === '/sw.js') bytes = Buffer.from(String(bytes).replace(/^(const CACHE = 'agent-workbench-static-[^']*)'/m, `$1-${await staticFingerprint(files)}'`));
+    // Unchanged files answer 304, so revalidation costs one small round trip instead of the whole file.
+    const etag = `"${createHash('sha256').update(bytes).digest('base64url').slice(0, 22)}"`;
+    if (String(req.headers['if-none-match'] || '').split(',').map(value => value.trim()).includes(etag)) { res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' }); return res.end(); }
+    await sendBufferedResponse(req,res,bytes,{ 'Content-Type': { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' }[extname(file)], 'Cache-Control': 'no-cache', ETag: etag });
   } catch (e) { if (!res.headersSent) json(res, { error: e.message,...(e.folderPreparationReleased===true?{folderPreparationReleased:true}:{}),...(e.code?{code:e.code}:{}),...(e.limit?{limit:e.limit}:{}) }, 400); else res.end(); }
 });
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });

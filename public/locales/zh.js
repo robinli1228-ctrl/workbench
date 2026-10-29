@@ -2118,4 +2118,6 @@ export default {
   "Save and enable": "保存并启用",
   "Settings saved.": "设置已保存。",
   "The manager can run locally or on a server; other devices can join in project settings.": "主管可以在本机或服务器上运行；其他设备可在项目设置里加入。",
+  "A new version is ready": "新版本已就绪",
+  "Reload": "刷新",
 };
