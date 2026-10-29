@@ -222,7 +222,7 @@ export class SourceSyncHome {
     if(m[2]==='receipt'&&req.method==='GET'){
       // A small proof avoids retransmitting historical manifests over a slow or recovering connection.
       const uploaded=c.action!=='capture'?this.db.get('sourceSyncUploadReceipts',c.id)?.result:null;
-      const bundle=c.action==='capture'&&(c.result||batch.status==='cancelled')?this.db.get('sourceSyncUploads',c.id)?.bundle:null;
+      const bundle=c.action==='capture'&&(c.result||retiring(batch))?this.db.get('sourceSyncUploads',c.id)?.bundle:null;
       const result=(['read','stage'].includes(c.action)&&!c.result?null:uploaded)||(bundle?{status:'completed',...bundle}:null);
       json(res,{receiptHash:result?contentHash(JSON.stringify(result)):null});return true;
     }
@@ -414,7 +414,10 @@ export class SourceSyncClient {
     if(this.inFlight.has(id))return;
     this.inFlight.add(id);
     try{
-      await this.request(message,'capture','PUT',{base:result.base,manifest:result.manifest});
+      // Cancellation settles the saved capture receipt; an already stored manifest must not block exit with another full upload.
+      let stored=false;
+      try{stored=(await (await this.request(message,'receipt')).json()).receiptHash===contentHash(JSON.stringify(result));}catch{ /* Older Homes and missing receipt proofs retain the original full-evidence fallback. */ }
+      if(!stored)await this.request(message,'capture','PUT',{base:result.base,manifest:result.manifest});
       this.send(receiptEnvelope(id,result));
     }catch(error){
       // Only a quota rejection becomes terminal; anything else keeps the saved capture receipt for the next reminder.
