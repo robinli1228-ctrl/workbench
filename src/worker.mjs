@@ -61,7 +61,7 @@ import { inspectExecutionRepositories, prepareExecutionWorkspace, executionConfl
 import { createRunInput, instructionDelivery,executionInstructionComponents,executionEnvironmentHint } from './run-input.mjs';
 import { inspectGitRepositoryVersion } from './git-version.mjs';
 import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseline.mjs';
-import { runOrganizer } from './conversation-organizer.mjs';
+import { runOrganizer, runModelPrompt } from './conversation-organizer.mjs';
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
 import { executionText, traditionalInput, sentText } from './input-language.mjs';
@@ -793,19 +793,27 @@ async function query(m,emit=send) {
       await exec('/usr/bin/open',[folder],{timeout:10000});
       send({type:'reply',id:m.id,result:{opened:true,path:folder}});return;
     }
-    if(m.action==='conversation_summary') {
+    // Background conversation organizing and memory organizing: a tool-less model run in an organizer slot of this device.
+    if(['conversation_summary','memory_organize'].includes(m.action)) {
       if(homeDisconnected || quitting)throw new Error(tr('worker.homeNotConnected'));
       if(occupiedSlots()>=capacity)throw new Error(tr('worker.organizerDeviceCurrentlyHasNo'));
-      const {snapshot,config}=m.path||{};
-      if(!snapshot?.projectId || !Array.isArray(snapshot.delta) || !config?.model)throw new Error(tr('worker.conversationOrganizerParametersIncomplete'));
-      if(JSON.stringify(snapshot).length>50000)throw new Error(tr('worker.conversationOrganizerInputTooLong'));
+      const {snapshot,prompt,config}=m.path||{};
+      if(!config?.model)throw new Error(tr('worker.conversationOrganizerParametersIncomplete'));
+      if(m.action==='conversation_summary') {
+        if(!snapshot?.projectId || !Array.isArray(snapshot.delta))throw new Error(tr('worker.conversationOrganizerParametersIncomplete'));
+        if(JSON.stringify(snapshot).length>50000)throw new Error(tr('worker.conversationOrganizerInputTooLong'));
+      } else if(typeof prompt!=='string' || !prompt || Buffer.byteLength(prompt)>126000)throw new Error(tr('worker.conversationOrganizerParametersIncomplete'));
       const issue=runtimeIssue({capabilities:{runtimeDiscovery:true},runtimes},config.runtime,config.model);
       if(issue)throw new Error(issue);
       organizerRunning++;
       const controller=new AbortController();organizerControllers.add(controller);
       let release;controller.finished=new Promise(resolve=>{release=resolve;});
       send({type:'organizer_busy',count:organizerRunning});
-      try {await warmSessions.trim(occupiedSlots());reportCapacity();send({type:'reply',id:m.id,result:await runOrganizer({snapshot,config,dataRoot:data,signal:controller.signal})});}
+      try {
+        await warmSessions.trim(occupiedSlots());reportCapacity();
+        const result=m.action==='conversation_summary'?await runOrganizer({snapshot,config,dataRoot:data,signal:controller.signal}):await runModelPrompt({prompt,config,dataRoot:data,timeoutMs:300000,signal:controller.signal});
+        send({type:'reply',id:m.id,result});
+      }
       finally {organizerControllers.delete(controller);organizerRunning--;send({type:'organizer_busy',count:organizerRunning});release();reportCapacity();}
       return;
     }
@@ -1210,7 +1218,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,memoryOrganizer:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

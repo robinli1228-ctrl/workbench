@@ -32,6 +32,7 @@ import { roleTemplatesUI } from './role-templates.js';
 import { rememberSupervisorChoice, projectSetupUI } from './project-setup.js';
 import { deviceEntries, platformAdminUI } from './platform-admin.js';
 import { projectSpaceUI } from './project-space.js';
+import { platformMemoryUI } from './platform-memory.js';
 import { tokenUsageUI } from './token-usage.js';
 import { createScheduledJobsUI } from './scheduled-jobs.js';
 import { formatGitVersionStatus, formatProjectGitSummary } from './git-version.js';
@@ -160,7 +161,7 @@ const room = createRoomUI({ api, documentPreview, openSideAsk:message=>inspector
 // stay text-only, the same as the confirm buttons at the bottom of dialogs, so a row never mixes the two styles.
 for(const [selector,icon,label] of [
   ['#close-settings-page, dialog button.icon-button[id^="close-"], #folder-close, #close-project-form','close'],['#show-device-enroll','plus'],
-  ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit background organizing'],['#manage-role-templates','edit','Manage role templates'],['#edit-api-token','edit'],
+  ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit background organizing'],['#edit-memory-organizer','edit','Edit memory organizing'],['#manage-role-templates','edit','Manage role templates'],['#edit-api-token','edit'],
   ['#token-usage-form [type=submit]','search'],['#token-usage-refresh','refresh'],['#open-project-timers','history'],
   ['#refresh-followup','refresh'],['#view-followup','log'],['#data-refresh','refresh'],['#check-software-updates','refresh'],
   ['#copy-setup-guide','copy'],['#toggle-setup-guide','overview']
@@ -171,6 +172,7 @@ const roleTemplates = roleTemplatesUI({ api, getData: () => app.data, refreshSta
 const setupUI = projectSetupUI({ api, getData: () => app.data, getProject: getCurrentProject, refreshState, create, setError,openFolder:projectsUI.openFolder });
 const platformUI = platformAdminUI({api,getData:()=>app.data,refreshState,create});
 const spacesUI = projectSpaceUI({api,getData:()=>app.data,getProject:getCurrentProject,refreshState,create,openFolder:(...args)=>projectsUI.openFolder(...args)});
+const memoryUI = platformMemoryUI({api,getData:()=>app.data,create,formatTime,visible:()=>app.view==='settings'&&app.settingsTab==='memory'});
 const tokenUI = tokenUsageUI({api,getData:()=>app.data,create});
 const dataUI = createDataSettingsUI({api});
 const schedulesUI = createScheduledJobsUI({api,getData:()=>app.data,getProject:getCurrentProject,getConversationId:()=>app.selectedConversationId,refreshState,create,
@@ -300,6 +302,7 @@ function openSettings(value = 'general') {
   platformUI.refresh(); spacesUI.refresh(); tokenUI.refresh();
   if (tab === 'usage') tokenUI.show({resetScroll:true});
   if (tab === 'data') dataUI.show();
+  if (tab === 'memory') { renderMemoryOrganizer(); void memoryUI.load(); }
   if (tab === 'general') void remoteAccessUI.refresh();
   if (tab === 'timers') schedulesUI.show();
   if (tab === 'prompts') renderPlatformPrompts();
@@ -647,7 +650,7 @@ function render() {
   projectsUI.refreshNodes();
   projectsUI.refreshConcurrent();
   setupUI.refresh();
-  platformUI.refresh(); spacesUI.refresh();
+  platformUI.refresh(); spacesUI.refresh(); memoryUI.refresh();
   if(!nativeSessionUI.active())void room.refresh(app.data, app.selectedProjectId,app.selectedConversationId);
   nativeSessionUI.sync();
 }
@@ -1334,27 +1337,26 @@ function renderPlatformPrompts() {
   document.querySelector('#conversation-organizer-summary').textContent=organizer.nodeId
     ? t('{v} · {runtime} · {model}{v2}\nLast updated: {v3}', { v: worker?.name||organizer.nodeId, runtime: organizer.runtime, model: organizer.model, v2: organizer.effort?` · ${organizer.effort}`:'', v3: organizer.updatedAt?formatTime(organizer.updatedAt):t('not recorded') })
     : 'Not configured; dispatch uses original excerpts.';
+  renderMemoryOrganizer();
 }
 
-const organizerDialog=document.querySelector('#conversation-organizer-dialog');
-const organizerForm=document.querySelector('#conversation-organizer-form');
 function organizerOptions(select,items,value,blank) {
   select.replaceChildren();
   const empty=create('option','',blank);empty.value='';select.append(empty);
   for(const item of items){const option=create('option','',item.name||item.label||item.id);option.value=item.id;select.append(option);}
   select.value=items.some(item=>item.id===value)?value:'';
 }
-function refreshOrganizerChoices(saved={}) {
-  const workers=(app.data.workers||[]).filter(worker=>worker.online&&worker.capabilities?.managedResume===1);
-  organizerOptions(organizerForm.elements.nodeId,workers.map(worker=>({id:worker.id,name:worker.name})),saved.nodeId||organizerForm.elements.nodeId.value,'Not enabled for now');
-  const worker=workers.find(item=>item.id===organizerForm.elements.nodeId.value);
+function refreshOrganizerChoices(saved,form,usable) {
+  const workers=(app.data.workers||[]).filter(worker=>worker.online&&usable(worker));
+  organizerOptions(form.elements.nodeId,workers.map(worker=>({id:worker.id,name:worker.name})),saved.nodeId||form.elements.nodeId.value,'Not enabled for now');
+  const worker=workers.find(item=>item.id===form.elements.nodeId.value);
   const runtimes=(worker?.runtimes||[]).filter(runtime=>['codex','claude','grok','agy'].includes(runtime.type)&&runtime.available&&runtime.authReady===true);
-  organizerOptions(organizerForm.elements.runtime,runtimes.map(runtime=>({id:runtime.type,name:runtime.label||runtime.type})),saved.runtime||organizerForm.elements.runtime.value,'Select CLI');
-  const runtime=runtimes.find(item=>item.type===organizerForm.elements.runtime.value);
-  organizerOptions(organizerForm.elements.model,(runtime?.models||[]).map(model=>({id:model.id,name:model.name||model.id})),saved.model||organizerForm.elements.model.value,'Select model');
-  const model=runtime?.models?.find(item=>item.id===organizerForm.elements.model.value);
-  renderModelUsageNotice(organizerForm.querySelector('[data-model-usage-note]'),runtime?.type,model||{id:organizerForm.elements.model.value});
-  organizerOptions(organizerForm.elements.effort,[...new Set(model?.efforts||runtime?.efforts||[])].map(id=>({id})),saved.effort||organizerForm.elements.effort.value,'CLI default');
+  organizerOptions(form.elements.runtime,runtimes.map(runtime=>({id:runtime.type,name:runtime.label||runtime.type})),saved.runtime||form.elements.runtime.value,'Select CLI');
+  const runtime=runtimes.find(item=>item.type===form.elements.runtime.value);
+  organizerOptions(form.elements.model,(runtime?.models||[]).map(model=>({id:model.id,name:model.name||model.id})),saved.model||form.elements.model.value,'Select model');
+  const model=runtime?.models?.find(item=>item.id===form.elements.model.value);
+  renderModelUsageNotice(form.querySelector('[data-model-usage-note]'),runtime?.type,model||{id:form.elements.model.value});
+  organizerOptions(form.elements.effort,[...new Set(model?.efforts||runtime?.efforts||[])].map(id=>({id})),saved.effort||form.elements.effort.value,'CLI default');
 }
 
 /** Reuse one editor; the project entry edits only the shared supervisor prompt, not model defaults. */
@@ -2234,28 +2236,42 @@ dom.settingsPage?.querySelectorAll('[data-settings-tab]').forEach(button => {
 });
 
 document.querySelectorAll('[data-prompt-edit]').forEach(button => button.addEventListener('click', () => openPromptEditor(button.dataset.promptEdit)));
-document.querySelector('#edit-conversation-organizer')?.addEventListener('click',()=>{
-  const saved=app.data.settings?.conversationOrganizer||{};
-  for(const key of ['nodeId','runtime','model','effort'])organizerForm.elements[key].value='';
-  refreshOrganizerChoices(saved);
-  organizerForm.elements.prompt.value=saved.prompt||'';
-  document.querySelector('#conversation-organizer-feedback').hidden=true;
-  organizerDialog.showModal();
-});
-for(const id of ['#close-conversation-organizer','#cancel-conversation-organizer'])document.querySelector(id)?.addEventListener('click',()=>organizerDialog.close());
-organizerForm?.elements.nodeId?.addEventListener('change',()=>refreshOrganizerChoices({nodeId:organizerForm.elements.nodeId.value}));
-organizerForm?.elements.runtime?.addEventListener('change',()=>refreshOrganizerChoices({nodeId:organizerForm.elements.nodeId.value,runtime:organizerForm.elements.runtime.value}));
-organizerForm?.elements.model?.addEventListener('change',()=>refreshOrganizerChoices({nodeId:organizerForm.elements.nodeId.value,runtime:organizerForm.elements.runtime.value,model:organizerForm.elements.model.value}));
-organizerForm?.addEventListener('submit',async event=>{
-  event.preventDefault();const button=organizerForm.querySelector('[type=submit]');button.disabled=true;
-  const feedback=document.querySelector('#conversation-organizer-feedback');feedback.hidden=true;
-  try {
-    const values=Object.fromEntries(new FormData(organizerForm));
-    app.data.settings.conversationOrganizer=await api('/api/settings/conversation-organizer',{method:'POST',json:values});
-    renderPlatformPrompts();organizerDialog.close();
-  } catch(error) {feedback.textContent=error.message;feedback.hidden=false;}
-  finally {button.disabled=false;}
-});
+/**
+ * One editor for both organizer dialogs (background organizing and memory organizing): device → CLI → model → effort
+ * choices narrowed as each is picked, then a save to the dialog's route.
+ */
+function organizerEditor({key,name,route,usable,fill=()=>{},values=form=>Object.fromEntries(new FormData(form)),saved=()=>{}}) {
+  const dialog=document.querySelector(`#${name}-dialog`),form=document.querySelector(`#${name}-form`),feedback=document.querySelector(`#${name}-feedback`);
+  if(!form)return;
+  const choices=picked=>refreshOrganizerChoices(picked,form,usable);
+  document.querySelector(`#edit-${name}`)?.addEventListener('click',()=>{
+    const current=app.data.settings?.[key]||{};
+    for(const field of ['nodeId','runtime','model','effort'])form.elements[field].value='';
+    choices(current);fill(current,form);feedback.hidden=true;dialog.showModal();
+  });
+  for(const id of [`#close-${name}`,`#cancel-${name}`])document.querySelector(id)?.addEventListener('click',()=>dialog.close());
+  for(const [field,keep] of [['nodeId',['nodeId']],['runtime',['nodeId','runtime']],['model',['nodeId','runtime','model']]])
+    form.elements[field]?.addEventListener('change',()=>choices(Object.fromEntries(keep.map(item=>[item,form.elements[item].value]))));
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();const button=form.querySelector('[type=submit]');button.disabled=true;feedback.hidden=true;
+    try {app.data.settings[key]=await api(route,{method:'POST',json:values(form)});saved();dialog.close();}
+    catch(error) {feedback.textContent=error.message;feedback.hidden=false;}
+    finally {button.disabled=false;}
+  });
+}
+organizerEditor({key:'conversationOrganizer',name:'conversation-organizer',route:'/api/settings/conversation-organizer',usable:worker=>worker.capabilities?.managedResume===1,
+  fill:(current,form)=>{form.elements.prompt.value=current.prompt||'';},saved:renderPlatformPrompts});
+function renderMemoryOrganizer() {
+  const settings=app.data.settings||{};
+  const memory=settings.memoryOrganizer||{},memoryWorker=app.data.workers?.find(item=>item.id===memory.nodeId);
+  document.querySelector('#memory-organizer-summary').textContent=memory.nodeId
+    ? t('{v} · {runtime} · {model}{v2}\nDaily at {time}', { v: memoryWorker?.name||memory.nodeId, runtime: memory.runtime, model: memory.model, v2: memory.effort?` · ${memory.effort}`:'', time: memory.time||'03:00' })
+    : t('Not configured; no memory is organized.');
+}
+organizerEditor({key:'memoryOrganizer',name:'memory-organizer',route:'/api/settings/memory-organizer',usable:worker=>worker.capabilities?.memoryOrganizer===1,
+  // Only the first setup asks where to start; later saves keep how far organizing has got.
+  fill:(current,form)=>{form.elements.time.value=current.time||'03:00';form.querySelector('[data-memory-start]').hidden=Boolean(current.nodeId);form.elements.startFrom.value='all';},
+  values:form=>({...Object.fromEntries(new FormData(form)),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||''}),saved:()=>{renderMemoryOrganizer();memoryUI.refresh();}});
 for (const id of ['#close-platform-prompts-dialog', '#cancel-platform-prompts-dialog']) document.querySelector(id)?.addEventListener('click', () => dom.promptsDialog.close());
 dom.promptsDialog?.addEventListener('close', renderPlatformPrompts);
 document.querySelector('#restore-platform-prompts')?.addEventListener('click', () => {

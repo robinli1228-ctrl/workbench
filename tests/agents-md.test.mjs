@@ -39,12 +39,16 @@ test('existing AGENTS.md and CLAUDE.md are never overwritten', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('wb memory is no longer offered', () => {
+// The old file memory (MEMORY.md, wb memory show/remember) stays retired; platform memory is search-only and organized by Home.
+test('wb memory only searches platform memory', () => {
   const run = (...args) => spawnSync(process.execPath, [join(root, 'src', 'wb-cli.mjs'), ...args], { encoding: 'utf8' });
   const tools = JSON.parse(run('capabilities').stdout).tools;
-  assert.ok(!tools.some(t => t.startsWith('memory')), tools.join(','));
-  assert.ok(!/wb memory|MEMORY\.md/.test(run('help').stdout));
+  assert.deepEqual(tools.filter(t => t.startsWith('memory')), ['memory search'], tools.join(','));
+  const help = run('help').stdout;
+  assert.match(help, /wb memory search/);
+  assert.ok(!/MEMORY\.md|wb memory (?:show|remember|read)/.test(help));
   assert.notEqual(run('memory').status, 0);
+  assert.notEqual(run('memory', 'remember', 'x').status, 0);
 });
 
 const gitIn = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' } });

@@ -33,7 +33,7 @@ const CONTROLS=new Set(['compact','model','effort']);
  * front of the first prompt this page sends (the page hides system-reminder blocks), never again until the text changes.
  * A nudge, not a rule: the page shows the model's questions as cards, so prefer asking to guessing.
  */
-export const PAGE_INSTRUCTIONS='This session is now also driven from a Workbench page, which shows AskUserQuestion / request_user_input as a card with options and a free-text field. When a requirement is unclear or a choice belongs to the user, prefer asking with that tool over guessing or listing the options as plain text. Keep questions short, with a few options and the recommended one marked.';
+export const PAGE_INSTRUCTIONS='This session is now also driven from a Workbench page, which shows AskUserQuestion / request_user_input as a card with options and a free-text field. When a requirement is unclear or a choice belongs to the user, prefer asking with that tool over guessing or listing the options as plain text. Keep questions short, with a few options and the recommended one marked. Workbench also keeps one platform memory shared by every project, device and CLI (environment, accounts and secrets, lessons, procedures); search it in the shell with `wb memory search WORDS` when the environment, accounts or earlier pitfalls matter.';
 export const PAGE_INSTRUCTIONS_VERSION=createHash('sha256').update(PAGE_INSTRUCTIONS).digest('hex').slice(0,16);
 const PAGE_INSTRUCTION_RUNTIMES=new Set(['claude','codex']);
 /** The prompt a CLI receives: the page instructions block (when this turn carries it), then the person's words. */

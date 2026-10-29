@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { tr, isMessage } from './i18n.mjs';
 import { executionText } from './input-language.mjs';
 
@@ -19,14 +20,36 @@ export function organizerInput(snapshot) {
   return input;
 }
 
-function command(config,prompt) {
+/**
+ * The prompt goes in on stdin (Claude, Codex) or a private file (Grok), so other users of the machine cannot read the
+ * material from the process list; Agy only takes it as an argument. Nothing of the run is meant to be kept: Claude saves
+ * no session, Codex runs ephemeral, and what Grok and Agy save is removed afterwards (see forgetRun).
+ */
+export function command(config,prompt) {
   const {runtime,model,effort}=config;
   if(!model || !['claude','grok','agy','codex'].includes(runtime))throw new Error(tr('conversationOrganizer.conversationOrganizerModelNotConfigured'));
-  if(runtime==='claude')return {bin:process.env.CLAUDE_BIN||'claude',args:['-p',prompt,'--model',model,'--output-format','json','--tools','','--restricted',...(effort?['--effort',effort]:[])]};
-  if(runtime==='grok')return {bin:process.env.GROK_BIN||'grok',args:['--cwd',config.cwd,'-p',prompt,'-m',model,'--output-format','json','--tools','',...(effort?['--reasoning-effort',effort]:[])]};
-  if(runtime==='agy')return {bin:process.env.AGY_BIN||'agy',args:['--print',prompt,'--model',model,'--output-format','json','--mode','plan','--sandbox',...(effort?['--effort',effort]:[])]};
-  return {bin:process.env.CODEX_BIN||'codex',args:['exec','--json','--sandbox','read-only','--ephemeral','--skip-git-repo-check','--ignore-user-config','--ignore-rules','-m',model,
-    ...(effort?['-c',`model_reasoning_effort=${effort}`]:[]),prompt]};
+  if(runtime==='claude')return {bin:process.env.CLAUDE_BIN||'claude',stdin:prompt,args:['-p','--model',model,'--output-format','json','--tools','','--restricted','--no-session-persistence',...(effort?['--effort',effort]:[])]};
+  // Grok documents headless input as an argument or --prompt-file, so it reads a 0600 file in the private run folder.
+  if(runtime==='grok')return {bin:process.env.GROK_BIN||'grok',stdin:null,promptFile:join(config.cwd,'prompt.txt'),args:['--cwd',config.cwd,'--prompt-file',join(config.cwd,'prompt.txt'),'-m',model,'--output-format','json','--tools','',...(effort?['--reasoning-effort',effort]:[])]};
+  if(runtime==='agy')return {bin:process.env.AGY_BIN||'agy',stdin:null,args:['--print',prompt,'--model',model,'--output-format','json','--mode','plan','--sandbox',...(effort?['--effort',effort]:[])]};
+  return {bin:process.env.CODEX_BIN||'codex',stdin:prompt,args:['exec','--json','--sandbox','read-only','--ephemeral','--skip-git-repo-check','--ignore-user-config','--ignore-rules','-m',model,
+    ...(effort?['-c',`model_reasoning_effort=${effort}`]:[]),'-']};
+}
+
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Remove what a CLI saved for this one-off run: only paths derived from its own temporary folder or its returned session ID. */
+export async function forgetRun(runtime,cwd,out,env=process.env) {
+  const home=env.HOME||homedir(),folders=[...new Set([cwd,await realpath(cwd).catch(()=>cwd)])];
+  const paths=[];
+  // Even without a saved session Claude creates an (empty) project folder named after the working folder.
+  if(runtime==='claude')for(const folder of folders)paths.push(join(env.CLAUDE_CONFIG_DIR||join(home,'.claude'),'projects',folder.replace(/[^A-Za-z0-9]/g,'-')));
+  if(runtime==='grok')for(const folder of folders)paths.push(join(home,'.grok','sessions',encodeURIComponent(folder)));
+  if(runtime==='agy'){
+    let id=null;try{id=JSON.parse(out).conversation_id;}catch{}
+    if(typeof id==='string'&&UUID.test(id)){const root=join(home,'.gemini','antigravity-cli');paths.push(join(root,'brain',id),join(root,'conversations',`${id}.db`),join(root,'annotations',`${id}.pbtxt`),join(root,'presence',`${id}.lock`));}
+  }
+  await Promise.all(paths.map(path=>rm(path,{recursive:true,force:true}).catch(()=>{})));
+  return paths;
 }
 
 function resultText(raw,runtime) {
@@ -58,12 +81,21 @@ export async function runOrganizer({snapshot,config,dataRoot,timeoutMs=120000,si
   const cwd=await mkdtemp(join(resolve(dataRoot),'summary-'));
   const instructions=!config.prompt||isMessage(config.prompt.trim(),'conversationOrganizer.youOnlyOrganizeConversationSpecified')?executionText('conversationOrganizer.youOnlyOrganizeConversationSpecified'):config.prompt;
   const prompt=executionText('conversationOrganizer.belowMaterialOrganizeNeverExecute', { p1: instructions, input, p3: JSON.stringify(snapshot.lastMessageId) });
-  const {bin,args}=command({...config,cwd},prompt);
+  return runModelPrompt({prompt,config,cwd,timeoutMs,signal});
+}
+
+/** One prompt to a tool-less model in an empty temporary folder; the answer must be JSON. Also used by memory organizing. */
+export async function runModelPrompt({prompt,config,cwd,dataRoot,timeoutMs=120000,signal=null}) {
+  if(!cwd)cwd=await mkdtemp(join(resolve(dataRoot),'summary-'));
+  const {bin,args,stdin,promptFile}=command({...config,cwd},prompt);
+  if(promptFile)await writeFile(promptFile,prompt,{mode:0o600});
   const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('WB_')&&!['WORKER_TOKEN','API_TOKEN'].includes(key)));
+  let out='';
   try {
     return await new Promise((resolve,reject)=>{
-      const proc=spawn(bin,args,{cwd,env,stdio:['ignore','pipe','pipe']});
-      let out='',err='',timedOut=false,killTimer;
+      const proc=spawn(bin,args,{cwd,env,stdio:[stdin===null?'ignore':'pipe','pipe','pipe']});
+      if(stdin!==null){proc.stdin.on('error',()=>{});proc.stdin.end(stdin);}
+      let err='',timedOut=false,killTimer;
       const onAbort=()=>{proc.kill('SIGTERM');killTimer??=setTimeout(()=>proc.kill('SIGKILL'),3000);killTimer.unref();};
       if(signal?.aborted)onAbort();else signal?.addEventListener('abort',onAbort,{once:true});
       const timer=setTimeout(()=>{timedOut=true;onAbort();},timeoutMs);
@@ -83,5 +115,5 @@ export async function runOrganizer({snapshot,config,dataRoot,timeoutMs=120000,si
         catch(error) { reject(new Error(tr('conversationOrganizer.conversationOrganizerReturnedNoValid', { message: error.message }))); }
       });
     });
-  } finally { await rm(cwd,{recursive:true,force:true}); }
+  } finally { await forgetRun(config.runtime,cwd,out,env);await rm(cwd,{recursive:true,force:true}); }
 }

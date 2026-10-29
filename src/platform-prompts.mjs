@@ -147,6 +147,7 @@ export function normalizePlatformSettings(record = {}) {
     defaultSupervisorEffort: typeof record.defaultSupervisorEffort === 'string' ? record.defaultSupervisorEffort : '',
     conversationOrganizer: record.conversationOrganizer && typeof record.conversationOrganizer==='object' ? {...record.conversationOrganizer,...(typeof record.conversationOrganizer.prompt==='string'&&isMessage(record.conversationOrganizer.prompt.trim(),'conversationOrganizer.youOnlyOrganizeConversationSpecified')?{prompt:defaultOrganizerPrompt()}:{})} :
       {nodeId:'',runtime:'',model:'',effort:'',prompt:defaultOrganizerPrompt(),revision:0},
+    memoryOrganizer: record.memoryOrganizer && typeof record.memoryOrganizer==='object' ? {time:'03:00',...record.memoryOrganizer} : {nodeId:'',runtime:'',model:'',effort:'',time:'03:00',revision:0},
     promptsUpdatedAt: record.promptsUpdatedAt || null
   };
 }
@@ -162,6 +163,26 @@ export function updateConversationOrganizer(record,input) {
   if(fields.nodeId && (!fields.runtime || !fields.model))throw new Error(tr('platformPrompts.selectOrganizerDeviceCliModel'));
   if(!fields.nodeId && (fields.runtime || fields.model))throw new Error(tr('platformPrompts.organizerDeviceNotSelected'));
   return {...current,conversationOrganizer:{...fields,revision:(current.conversationOrganizer?.revision||0)+1,updatedAt:new Date().toISOString()}};
+}
+
+/** The memory organizer is its own device/CLI/model, usually a cheap one; it runs once a day at a local time on Home. */
+export function updateMemoryOrganizer(record,input) {
+  const current=normalizePlatformSettings(record);
+  const fields={};
+  for(const key of ['nodeId','runtime','model','effort','time']) {
+    if(typeof input?.[key]!=='string' || input[key].length>128)throw new Error(tr('platformMemory.invalidSetting', { key }));
+    fields[key]=input[key].trim();
+  }
+  if(!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(fields.time))throw new Error(tr('platformMemory.invalidSetting', { key:'time' }));
+  // The browser's zone, so "daily at 03:00" means the user's 03:00 even when Home runs elsewhere; Home's own zone if absent.
+  if(input?.timezone!==undefined) {
+    if(typeof input.timezone!=='string' || input.timezone.length>64)throw new Error(tr('platformMemory.invalidSetting', { key:'timezone' }));
+    try { new Intl.DateTimeFormat('en',{timeZone:input.timezone||undefined}); } catch { throw new Error(tr('platformMemory.invalidSetting', { key:'timezone' })); }
+    fields.timezone=input.timezone.trim();
+  }
+  if(fields.nodeId && (!fields.runtime || !fields.model))throw new Error(tr('platformMemory.selectDeviceCliModel'));
+  if(!fields.nodeId && (fields.runtime || fields.model))throw new Error(tr('platformMemory.selectDeviceCliModel'));
+  return {...current,memoryOrganizer:{...fields,revision:(current.memoryOrganizer?.revision||0)+1,updatedAt:new Date().toISOString()}};
 }
 
 function promptValue(value, label) {

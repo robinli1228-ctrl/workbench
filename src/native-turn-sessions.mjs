@@ -31,7 +31,11 @@ export class NativeCodexSession extends CodexSession {
   launchArgs(){return this.questionsSupported?['-c','features.default_mode_request_user_input=true',...super.launchArgs()]:super.launchArgs();}
   async openThread() {
     if(this.threadId)return {id:this.threadId};
-    const response=await this.request('thread/resume',{threadId:this.resumeSessionId,cwd:this.cwd,approvalPolicy:'never',sandbox:'workspace-write',...(this.model?{model:this.model}:{})});
+    // With a memory bridge the shell gets `wb` and the bridge folder becomes writable; the workspace stays the only other writable root.
+    // These overrides replace a writable_roots or PATH set in the user's Codex config for this thread; network and the other sandbox keys stay as configured.
+    const bridge=typeof this.env?.WB_BRIDGE==='string'&&this.env.WB_BRIDGE?{config:{'shell_environment_policy.set.WB_BRIDGE':this.env.WB_BRIDGE,'shell_environment_policy.set.WB_NATIVE':'1',
+      'shell_environment_policy.set.PATH':this.env.PATH||'','sandbox_workspace_write.writable_roots':[...new Set([...(this.writableRoots||[this.cwd]),this.env.WB_BRIDGE])]}}:{};
+    const response=await this.request('thread/resume',{threadId:this.resumeSessionId,cwd:this.cwd,approvalPolicy:'never',sandbox:'workspace-write',...(this.model?{model:this.model}:{}),...bridge});
     if(response.thread?.id!==this.resumeSessionId)throw new Error(tr('codex.resumedCodexSessionIdDoes'));
     return response.thread;
   }

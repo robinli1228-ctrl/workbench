@@ -1,4 +1,4 @@
-const CACHE = 'agent-workbench-static-v217-cache-first';
+const CACHE = 'agent-workbench-static-v220-release-259';
 const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
@@ -19,7 +19,7 @@ const STATIC = [
   '/history-cache.js',
   '/data-settings.js',
   '/', '/styles.css', '/delivery-summary.js', '/app.js', '/native-sessions.js', '/list-order.js', '/select-controls.js', '/mention-input.js', '/context-usage.js', '/manifest.webmanifest', '/app-icon.png', '/app-icon-192.png', '/retired-commands.js',
-  '/platform-admin.js', '/configuration-information.js', '/project-space.js', '/token-usage.js', '/run-log-data.js', '/room.js',
+  '/platform-admin.js', '/configuration-information.js', '/project-space.js', '/platform-memory.js', '/token-usage.js', '/run-log-data.js', '/room.js',
   '/markdown.js', '/media.js', '/project-settings.js', '/role-icons.js', '/settings-page.js',
   '/supervisor-settings.js', '/elapsed.js', '/send-state.js', '/permission-scope.js', '/role-templates.js', '/role-switch.js', '/role-history.js', '/project-setup.js', '/history-view.js', '/scheduled-jobs.js',
   '/git-version.js', '/plan-dock.js', '/agent-codex.png', '/agent-antigravity.png',

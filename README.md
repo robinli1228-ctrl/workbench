@@ -88,7 +88,7 @@ Device availability, queues, failures, and supported Token or quota information 
 
 Install and log in to the CLIs on the devices where they will run. Workbench uses those native runtimes and their tool environments. GitHub and Gitee repository hosting are supported.
 
-Shared project rules belong in the project's `AGENTS.md`, with a `CLAUDE.md` pointer where needed. Existing instruction files are preserved when a project is prepared. Role-specific instructions can define how each collaborator contributes.
+Shared project rules and preferences belong in the project's `AGENTS.md`, with a `CLAUDE.md` pointer where needed. Workbench also keeps one platform memory shared by every project (environment, accounts and secrets, lessons, procedures, personal details, platform-wide decisions), organized once a day from all group chats by a separately configured small model (which also merges duplicates daily) and searched with `wb memory search` by roles and by CLIs on the Sessions page; a project's own decisions stay in its chat history (`wb history search`). It is not added to prompts and can be edited in Settings → Memory. Existing instruction files are preserved when a project is prepared. Role-specific instructions can define how each collaborator contributes.
 
 ## Architecture overview
 

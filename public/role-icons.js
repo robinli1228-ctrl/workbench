@@ -221,6 +221,10 @@ export const UI_ICON = {
   search: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg>`,
   save: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M4 3h13l4 4v14H3V3h1ZM7 3v6h9V3M7 21v-8h10v8"/></svg>`,
   brush: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 21 21" ${STROKE}><path d="m13 11 6-8M9 9l6 4-2 3-6-4Z"/><path d="m7 12-4 8 10 1v-5M7 16l-2 5m5-4-1 4"/></svg>`,
+  previous: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m15 6-6 6 6 6"/></svg>`,
+  next: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m9 6 6 6-6 6"/></svg>`,
+  /* A bookmark on a page: shared platform memory. */
+  memory: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M5 4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z"/><path d="M10 3v7l2-1.5 2 1.5V3"/></svg>`,
   trash: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>`,
   send: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m3 3 18 9-18 9 3-9-3-9ZM6 12h15"/></svg>`,
   folder: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z"/><path d="M3 9h18"/></svg>`,
