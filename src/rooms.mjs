@@ -41,6 +41,17 @@ export function reorderedQueueKeys(tasks,taskIds) {
   const keys=taskIds.map(id=>queueKey(byId.get(id))).sort((a,b)=>a-b);
   return taskIds.map((id,index)=>[id,keys[index]+index*1e-3]);
 }
+/**
+ * A message that waited in the queue joins the chat when its first reply starts (the page holds it in the queue until then),
+ * so it never lands above messages sent while it waited. Not when another recipient already started: it is in the chat.
+ */
+function placeAtStart(db,task,startedAt) {
+  const message=task.sourceMessageId&&db.get('roomMessages',task.sourceMessageId);
+  if(message?.sender!=='human'||message.orderAt)return;
+  if((message.taskIds||[]).some(id=>id!==task.id&&!['ready','cancelled'].includes(db.get('tasks',id)?.status)))return;
+  // The run's own start: its reply sorts there too, and on a tie the message's earlier receipt keeps it first.
+  db.put('roomMessages',{...message,orderAt:startedAt||new Date().toISOString()});
+}
 export function mentionNames(text) {
   return [...new Set([...text.matchAll(/(?:^|[\s,.!?;:(\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a\uff08])@([\p{L}\p{N}_-]+)/gu)].map(m => m[1]))];
 }
@@ -533,7 +544,7 @@ export class Rooms {
       try {
         if(task.discussionDeliveryId){const delivery=this.db.get('discussionDeliveries',task.discussionDeliveryId);this.db.startDiscussionRun({deliveryId:delivery.id,commandId:`discussion:${delivery.id}:${delivery.recoveryCount}`,nodeId:role.nodeId},{online:isReady});}
         else if(task.discussionIntentId)this.db.resumeDiscussionTask({intentId:task.discussionIntentId,commandId:`resume:${task.discussionIntentId}`,nodeId:role.nodeId},{online:isReady});
-        else if(!this.db.startTask(task.id, { commandId: `chat-${task.id}`, nodeId: role.nodeId })){changed=true;continue;}
+        else{const run=this.db.startTask(task.id, { commandId: `chat-${task.id}`, nodeId: role.nodeId });if(!run){changed=true;continue;}if(task.waitingReason)placeAtStart(this.db,task,run.createdAt);}
         this.db.put('discussionQueueTurns',{id:role.nodeId,priorityUsed:discussion});
         nodes.add(role.nodeId); changed = true;
       } catch (error) {
