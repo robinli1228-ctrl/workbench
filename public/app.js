@@ -456,12 +456,14 @@ function create(tag, className, text) {
   return node;
 }
 
+// Building a date formatter is far slower than using one; every card shows a time, so one formatter per locale is kept.
+const timeFormats = new Map();
 function formatTime(value) {
   if (!value) return 'Unknown';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat(dateLocale(), {
-    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
-  }).format(date);
+  const date = new Date(value), locale = dateLocale();
+  if (Number.isNaN(date.getTime())) return String(value);
+  if (!timeFormats.has(locale)) timeFormats.set(locale, new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  return timeFormats.get(locale).format(date);
 }
 
 function statusChip(status) {
@@ -496,11 +498,16 @@ function getDetailRun(taskId) {
 const teamCopyUI=createProjectTeamCopyUI({api,getData:()=>app.data,onCreated:async op=>{closeSettings();selectProject(op.destinationProjectId);render();await refreshState({quiet:true});}});
 createGroupConversationUI({api,getSelection:()=>({projectId:app.selectedProjectId,conversationId:app.selectedConversationId||app.selectedProjectId}),onCopyTeam:selection=>teamCopyUI.open(selection.projectId),onCreated:async chat=>{closeSettings();selectProject(chat.projectId,chat.id);render();await refreshState({quiet:true});}});
 
+// The last state of the few chats seen most recently: a chat opened again is drawn at once from its own last state (its cards
+// are then reused, not drawn again), and Home is asked only for what changed since.
+const chatStates = new Map(), chatStateKey = (projectId, conversationId) => `${projectId}\u0000${conversationId || projectId}`;
 function selectProject(projectId,conversationId=projectId) {
   liveScene.close();
+  if(app.stateCache?.projectId){const key=chatStateKey(app.stateCache.projectId,app.stateCache.conversationId);chatStates.delete(key);chatStates.set(key,app.stateCache);while(chatStates.size>6)chatStates.delete(chatStates.keys().next().value);}
+  const cached=chatStates.get(chatStateKey(projectId,conversationId))||null;
   app.selectedProjectId=projectId;app.selectedConversationId=conversationId;app.selectedTaskId=null;app.stateGeneration++;
-  app.stateCache=null;app.fullRun=null;app.fullTask=null;app.requestVersion++;
-  for(const key of ['tasks','runs','requests','executionPlans','runReports','runAlerts','discussionThreads','discussionDeliveries','roleSessions','roleSwitches'])app.data[key]=[];
+  app.stateCache=cached;app.fullRun=null;app.fullTask=null;app.requestVersion++;
+  for(const key of ['tasks','runs','requests','executionPlans','runReports','runAlerts','discussionThreads','discussionDeliveries','roleSessions','roleSwitches'])app.data[key]=Array.isArray(cached?.state?.[key])?cached.state[key]:[];
   if(dom.runDialog.open)dom.runDialog.close();
 }
 
