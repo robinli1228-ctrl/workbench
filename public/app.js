@@ -1100,7 +1100,8 @@ function renderProjectGitVersion() {
   const panel=dom.projectGitSummary;if(!panel)return;
   const project=getCurrentProject();
   panel.hidden=!project;
-  if(panel.hidden||!panel.getClientRects().length)return;
+  // Hidden ancestors and the workspace view are checked first: measuring the panel forces a layout on every render.
+  if(panel.hidden||panel.parentElement?.closest('[hidden]')||document.body.dataset.workspaceView!=='settings'||!panel.getClientRects().length)return;
   const repositories=(app.data.repositories||[]).filter(repo=>repo.projectId===project.id);
   const status=currentGitVersion(project.id),busy=gitVersionRequests.has(project.id);
   panel.replaceChildren();

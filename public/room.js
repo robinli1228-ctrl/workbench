@@ -525,7 +525,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   inputField.addEventListener('dragleave',()=>inputField.classList.remove('is-dragging'));
   inputField.addEventListener('drop',e=>{inputField.classList.remove('is-dragging');if(e.dataTransfer?.files.length){e.preventDefault();void uploadFiles(e.dataTransfer.files);}});
   // Respect the compact CSS baseline while retaining automatic growth for actual text.
-  function resizeInput() { input.style.height='auto'; input.style.height=`${Math.min(120,Math.max(parseFloat(getComputedStyle(input).minHeight),input.scrollHeight))}px`;mentionInput.refresh(); }
+  // Measuring the box forces a layout of the whole page; it is measured again only when its text changed (or the window did).
+  let sizedFor=null;
+  function resizeInput() { sizedFor=input.value; input.style.height='auto'; input.style.height=`${Math.min(120,Math.max(parseFloat(getComputedStyle(input).minHeight),input.scrollHeight))}px`;mentionInput.refresh(); }
   let mentionChoices = [];
   let mentionIndex = 0;
   let mentionRange = null;
@@ -739,7 +741,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     for (const entry of d.textFiles || []) attachTray.append(textDraftCard(entry, scopeId));
     if (uploadCounts.get(scopeId)) attachTray.append(create('span','attachment-uploading','Uploading attachments…'));
     attachTray.hidden = !attachTray.childElementCount;
-    resizeInput();
+    if (input.value !== sizedFor) resizeInput();
     quoteBar.replaceChildren(); quoteBar.hidden = !d.replyToId;
     if (d.replyToId && !echoed) quoteBar.append(create('span', '', t('Quoting {replyLabel}', { replyLabel: d.replyLabel })), iconAction('close', 'Cancel quote', () => {
       if (d.pending || busy) return;
@@ -1214,8 +1216,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const echo = pendingEcho(scopeId, stored), messages = (echo ? [...stored, echo] : stored).filter(m => !inQueue(m)).map(startedAt);
     const scrollTop = scroller.scrollTop;
     const atBottom = scroller.scrollHeight - scroller.clientHeight - scrollTop < 120;
-    // 状态刷新会重建消息节点，按消息身份保留正文阅读位置，不抢回顶部。
-    const previewScroll = new Map([...feed.querySelectorAll('.chat-reply-preview')].map(node => [node.dataset.previewKey, { top: node.scrollTop, left: node.scrollLeft }]));
+    // 状态刷新会重建消息节点，按消息身份保留正文阅读位置，不抢回顶部。Read once before any change (one layout at most); only
+    // previews actually scrolled are remembered, and only rebuilt ones get their position back (kept nodes keep it).
+    const previewScroll = new Map();
+    for (const node of feed.querySelectorAll('.chat-reply-preview')) if (node.scrollTop || node.scrollLeft) previewScroll.set(node.dataset.previewKey, { top: node.scrollTop, left: node.scrollLeft });
     older.hidden = !history?.hasMore;
     // Use the saved error time, never refresh time. Older notices follow the same history window as messages.
     const eventTime=value=>Date.parse(value)||0;
@@ -1287,13 +1291,16 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     }
     // Drop what is gone first, then insert or move only what is out of place: a kept node is never taken out, so its
     // animations, playback and selection go on.
-    const keep=new Set(next);for(const node of [...feed.children])if(!keep.has(node))node.remove();
+    let moved=false;
+    const keep=new Set(next);for(const node of [...feed.children])if(!keep.has(node)){node.remove();moved=true;}
     let cursor=feed.firstElementChild;
-    for(const node of next){if(node===cursor){cursor=cursor.nextElementSibling;continue;}feed.insertBefore(node,cursor);}
-    while(cursor){const after=cursor.nextElementSibling;cursor.remove();cursor=after;}
-    feed.querySelectorAll('.chat-reply-preview').forEach(node => {
-      const position = previewScroll.get(node.dataset.previewKey);
-      if (position) { node.scrollTop = position.top; node.scrollLeft = position.left; }
+    for(const node of next){if(node===cursor){cursor=cursor.nextElementSibling;continue;}feed.insertBefore(node,cursor);moved=true;}
+    while(cursor){const after=cursor.nextElementSibling;cursor.remove();cursor=after;moved=true;}
+    // Nothing changed in the feed: no scroll position to restore and nothing to measure, so no layout is forced.
+    if(!moved)return void updateLiveFullscreen();
+    if(previewScroll.size)for(const node of next)if(!previous.has(node.dataset.entryKey)||previous.get(node.dataset.entryKey)!==node)node.querySelectorAll('.chat-reply-preview').forEach(preview => {
+      const position = previewScroll.get(preview.dataset.previewKey);
+      if (position) { preview.scrollTop = position.top; preview.scrollLeft = position.left; }
     });
     highlightLatestChatCard(feed);
     scroller.scrollTop = atBottom ? scroller.scrollHeight : scrollTop;
@@ -1449,7 +1456,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (window.matchMedia('(max-width: 1000px)').matches) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !send.disabled) { e.preventDefault(); form.requestSubmit(); }
   });
-  window.addEventListener('resize', composer);
+  window.addEventListener('resize', () => { sizedFor = null; composer(); });
   form.addEventListener('submit', async e => {
     e.preventDefault();
     hideMentionMenu();

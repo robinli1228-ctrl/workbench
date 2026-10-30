@@ -51,6 +51,14 @@ const busyState=icon=>stateBlock(icon,'',{tone:'busy'});
 const emptyState=(icon,label,busy=false)=>busy?busyState(icon):stateBlock(icon,label);
 
 /** The session view reads native history and prepares terminal links. Only after an explicit takeover does it submit turns, resuming the same native ID. */
+/** Prompt boxes clipped to three lines show Full screen. All rows drawn in one pass are measured together in the next frame:
+ * reads first, then writes, so the page is laid out once instead of once per row. */
+const clampChecks=[];
+function checkClamped(){
+  const rows=clampChecks.splice(0),clipped=rows.map(([,text])=>text.isConnected&&text.scrollHeight>text.clientHeight+1);
+  rows.forEach(([expand],i)=>{expand.hidden=!clipped[i];});
+}
+
 export function createNativeSessionUI({api,documentPreview,getData,onModeChange,onPreview,onSelect=()=>{},onStateRefresh=async()=>{}}){
  const mode=document.querySelector('#navigation-mode'),list=el('nav','project-list native-session-list'),content=el('section','native-session-content panel'),side=el('section','native-session-sidebar');
  list.id='native-session-list';content.id='native-session-content';side.id='native-session-sidebar';
@@ -707,7 +715,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    const copy=el('button','icon-button nt-prompt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));copy.addEventListener('click',()=>void copyText(copy,body).catch(()=>{}));if(session&&at)bindCopyFeedback(copy,`native:${key(session)}:${role}:${at}`);
    const pin=sideButton('icon-button nt-prompt-side',t('Open on the right'),()=>({title:t('My message'),subtitle:session?.title||'',at,copyText:body,render:()=>el('div','nt-side-prompt',body)}));pin.hidden||=!body.trim();
    tools.append(copy,expand,pin);row.dataset.tools='1';row._tools=tools;
-   requestAnimationFrame(()=>{expand.hidden=!(textEl.isConnected&&textEl.scrollHeight>textEl.clientHeight+1);});
+   clampChecks.push([expand,textEl]);if(clampChecks.length===1)requestAnimationFrame(checkClamped);
   }
   if(extra){if(agent)main.append(extra);else files.append(extra);}
   if(files)row.append(files);row.append(main);if(row._tools){row.append(row._tools);delete row._tools;}
@@ -1343,7 +1351,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    // Disabling the textarea while a send is in flight drops focus; give it back once typing is possible again.
    const locked=op.sending||op.releasing||op.editing||Boolean(d.pending)||agentSwitchUI.busy(value);if(locked&&!input.disabled&&[input,sendButton].includes(document.activeElement))refocus=true;
    input.disabled=locked;attachButton.disabled=locked;
-   if(!shell.contains(form))shell.replaceChildren(queue,ask,form);resize();
+   if(!shell.contains(form))shell.replaceChildren(queue,ask,form);if(input.value!==sizedFor)resize();
    if(refocus&&!locked){refocus=false;if(document.activeElement===document.body||document.activeElement===sendButton)input.focus({preventScroll:true});}
   }
   async function endTakeover(value){const id=sessionKey(value),op=operation(id);if(op.releasing)return;op.releasing=true;op.message='';if(k()===id){render();renderSide(value,value.sessionId,true);}try{await api(`${endpoint(value.nodeId)}/takeover/release`,{method:'POST',json:{runtime:value.runtime,sessionId:value.sessionId}});if(k()===id)await refresh();else await onStateRefresh();}catch(error){op.releasing=false;op.message=t(error.message);if(k()===id){render();renderSide(value,value.sessionId,true);}}}
@@ -1378,7 +1386,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   shell.addEventListener('dragover',e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();shell.classList.add('is-dragging');}});
   shell.addEventListener('dragleave',()=>shell.classList.remove('is-dragging'));
   shell.addEventListener('drop',e=>{shell.classList.remove('is-dragging');if(e.dataTransfer?.files.length&&current&&(isOn(current)||canChat(current))){e.preventDefault();void upload(e.dataTransfer.files);}});
-  const resize=()=>{input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;};
+  // Measuring the box forces a layout; on redraws it is measured again only when its text changed.
+  let sizedFor=null;const resize=()=>{sizedFor=input.value;input.style.height='auto';input.style.height=`${Math.min(120,Math.max(36,input.scrollHeight))}px`;};
+  window.addEventListener('resize',()=>{if(input.isConnected)resize();});
   input.addEventListener('input',()=>{draft().text=input.value;save();resize();syncSendButton();});
   input.addEventListener('keydown',e=>{if(window.matchMedia('(max-width: 1000px)').matches)return;if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!sendButton.disabled){e.preventDefault();input.form?.requestSubmit();}});
   async function submit(){if(!current||agentSwitchUI.busy(current))return;const id=k(),value=current,d=draft(id),op=operation(id);if(op.sending||op.releasing||op.editing||op.uploads)return;
