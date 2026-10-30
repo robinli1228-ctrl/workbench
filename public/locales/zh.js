@@ -1913,7 +1913,6 @@ export default {
   "Keep or send the current draft before editing a queued message": "请先保留或发送输入框中的草稿，再编辑排队消息",
   "Retrieving queued message…": "正在取回排队消息…",
   "Retry editing queued message": "重试取回排队消息",
-  "Waiting for {names} to reply": "等待 {names} 回复",
   "Fable may use paid usage credits depending on your plan. Workbench runs Claude Code non-interactively, so charges may occur without another confirmation. Check your account billing before saving. Discovery does not run the model or enable credit purchases; current tasks keep their model.": "Fable 可能按你的套餐使用额外付费 credits。Workbench 通过非交互方式运行 Claude Code，可能直接计费，不会再次弹出费用确认。保存前请核对账号计费设置。模型探测不会发起推理或开启购买；正在执行的任务仍使用原模型。",
   "Click to download or send": "点击下载或传到设备",
   "Click to open": "点击打开",
