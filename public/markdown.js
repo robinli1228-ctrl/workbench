@@ -278,13 +278,16 @@ function safeLink(href) {
   return /^(?:https?:\/\/|mailto:|#|\/|\.\.?\/)/i.test(value)||Boolean(normalizeDocumentAddress(value));
 }
 
+/** A shell wildcard such as after-*.png or docs/{a,b}.md names files to come or many files, never one file to open. */
+export const wildcardPath=path=>/[*?{}]/.test(path);
+
 /** Normalize only explicit local document destinations; protocol-bearing web links never become device paths. */
 export function normalizeDocumentAddress(value){
   if(typeof value!=='string')return null;let path=value.trim().replace(/^<([^>]+)>$/,'$1');
   if(/^file:/i.test(path)){try{const url=new URL(path);if(url.hostname&&url.hostname!=='localhost')return null;path=decodeURIComponent(url.pathname);}catch{return null;}}
   else if(/^[a-z][a-z0-9+.-]*:|^\/\//i.test(path))return null;
   else try{path=decodeURIComponent(path);}catch{return null;}
-  if(/[\x00-\x1f\x7f]/.test(path)||!path||path.length>4096)return null;
+  if(/[\x00-\x1f\x7f]/.test(path)||!path||path.length>4096||wildcardPath(path))return null;
   path=path.replace(/#.*$/,'').replace(/(\.(?:md|markdown|txt)):[1-9]\d*(?::[1-9]\d*)?$/i,'$1');
   return /\.(?:md|markdown|txt)$/i.test(path)?path:null;
 }

@@ -3,6 +3,7 @@ import {t,dateLocale} from './i18n.js';
 import {setActionIcon} from './role-icons.js';
 import {canOpenSide,openSide} from './side-preview.js';
 import {resolveToolFile} from './native-transcript.js';
+import {wildcardPath} from './markdown.js';
 
 /**
  * One media card and one in-page viewer for group chat and native sessions. A file stays on the device that produced
@@ -76,7 +77,7 @@ export function mediaPathMatches(text) {
   const value=String(text||''),found=[];
   for(const word of value.matchAll(WORD)){
     const end=word.index+word[0].length;
-    if(word[0].length>MAX_PATH||!MEDIA_END.test(word[0])||end<value.length&&!AFTER_PATH.test(value[end]))continue;
+    if(word[0].length>MAX_PATH||!MEDIA_END.test(word[0])||end<value.length&&!AFTER_PATH.test(value[end])||wildcardPath(word[0]))continue;
     // Within one word PATTERN finds exactly what it finds in the whole text: no part of it can cross a stop character.
     for(const match of word[0].matchAll(PATTERN)){const index=word.index+match.index;if(index>0&&/[\w:/.]/.test(value[index-1]))continue;found.push({index,path:match[0]});}
   }
@@ -93,7 +94,7 @@ export function linkMedia(root,context) {
   // Cards in a message show a preview (image thumbnail, video first frame) once the file is described.
   const card=path=>{const item=mediaCard(path,context,{describe:described++<12,preview:true});return item;};
   for(const text of nodes){
-    const value=text.textContent,exact=text.parentElement.tagName==='CODE'&&EXACT.test(value.trim());
+    const value=text.textContent,exact=text.parentElement.tagName==='CODE'&&EXACT.test(value.trim())&&!wildcardPath(value);
     const matches=exact?[{index:value.indexOf(value.trim()),path:value.trim()}]:mediaPathMatches(value);if(!matches.length)continue;
     const fragment=document.createDocumentFragment();let cursor=0;
     for(const match of matches){fragment.append(document.createTextNode(value.slice(cursor,match.index)),card(match.path));cursor=match.index+match.path.length;}
@@ -103,7 +104,7 @@ export function linkMedia(root,context) {
   }
   for(const link of [...root.querySelectorAll('a[href]')]){
     const href=link.getAttribute('href');
-    if(!href||/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)||!EXACT.test(href))continue;
+    if(!href||/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)||!EXACT.test(href)||wildcardPath(href))continue;
     link.replaceWith(card(href));
   }
   return root;

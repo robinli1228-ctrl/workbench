@@ -55,3 +55,9 @@ test('inline document paths: same as the old rule at every position, linear on l
   for (let cursor = 0; cursor < word.length; cursor++) if (word[cursor] === '/') documentPathAt(word, cursor, words);
   assert.ok(performance.now() - started < 200, 'every "/" of a 40,000-character word is checked without rescanning it');
 });
+
+test('a wildcard is never a document to open', async () => {
+  const { normalizeDocumentAddress } = await import('../public/markdown.js');
+  for (const path of ['docs/*.md', 'notes/day-?.txt', '.workbench/docs/{a,b}.md', 'file:///srv/x/*.md']) assert.equal(normalizeDocumentAddress(path), null, path);
+  assert.equal(normalizeDocumentAddress('docs/report.md'), 'docs/report.md');
+});

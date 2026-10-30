@@ -261,6 +261,8 @@ test('chat text turns media paths into cards and leaves URLs and documents alone
   assert.deepEqual(paths('see outputs/clip.webm and ./a/b.png (preview)'),['outputs/clip.webm','./a/b.png']);
   assert.deepEqual(paths('报告在 .workbench/docs/report.pdf。'),['.workbench/docs/report.pdf']);
   assert.deepEqual(paths('final.MOV'),['final.MOV']);
+  // Wildcards name files to come or many files (an instruction: put after-*.png in the folder), never one file to open.
+  assert.deepEqual(paths('下放 11 张 after-*.png 和 shot-?.jpg、out/{a,b}.mp4，以及 real.png'),['real.png']);
   assert.deepEqual(paths('https://example.com/video.mp4 and notes.md and src/app.js'),[]);
   assert.equal(mediaKindFromName('a.mkv'),'video');assert.equal(mediaKindFromName('a.flac'),'audio');assert.equal(mediaKindFromName('a.zip'),'file');
   assert.equal(formatBytes(25*1024*1024),'25 MB');assert.equal(formatBytes(1536),'1.5 KB');
