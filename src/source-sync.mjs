@@ -26,6 +26,7 @@ export class SourceSync {
       return dropped?{...record,entries,...(record.origins?{origins}:{})}:null;};
     let changed=0;
     this.db.transaction(()=>{
+      for(const command of this.db.listSourceSyncCommands({pending:true}))if(this.fenceExcludedCommand(command))changed++;
       for(const manifest of this.db.list('sourceSyncManifests')){policies.set(manifest.id,manifest.scopePolicy||{});const next=strip(manifest,manifest.scopePolicy||{});if(!next)continue;
         const digest=manifestDigest(next.entries,next.scopePolicy),updated={...next,digest,revision:next.revision+Number(digest!==next.digest)};
         this.db.put('sourceSyncManifests',updated);this.db.put('sourceSyncVersions',{...updated,id:identity(updated.projectId,updated.repositoryId,updated.generation,updated.revision,updated.digest)});changed++;}
@@ -38,6 +39,17 @@ export class SourceSync {
           for(const task of tasks.filter(t=>t.projectId===conflict.projectId&&[t.sourceConflictId,t.sourceConflictPeerId,t.sourceConflictAssignmentRequestId].includes(conflict.id)&&!t.currentRunId))this.db.put('tasks',{...task,status:'cancelled'});}}
     });
     return changed;
+  }
+  /** Preserve original commands for reconciliation; excluded operations may only be cancelled, not redispatched. */
+  commandHasExcludedPaths(command){return command.action!=='cleanup'&&[...command.changes||[],...command.paths||[]].some(item=>[item.path,item.move?.from,item.move?.to].filter(Boolean).some(path=>excludedSourcePath(path,command.scopePolicy)));}
+  /** Existing blocked/cancel flow waits for real receipts without falsely declaring started writes cancelled. */
+  fenceExcludedCommand(command){
+    if(command.result||command.action==='cleanup')return false;
+    const batch=this.db.get('sourceSyncBatches',command.batchId);
+    if(!batch||['blocked','cancelling','cancelled'].includes(batch.status))return false;
+    // Completed metadata reads still retain operations that could generate a later apply.
+    if(!this.commandHasExcludedPaths(command)&&!batch.metadataOperations?.some(op=>excludedSourcePath(op.path,batch.bindings.find(b=>b.repositoryId===op.repositoryId)?.scopePolicy)))return false;
+    this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason:'source_scope_changed',sourceInputsReady:false,revision:batch.revision+1});return true;
   }
   /** A source is a workspace endpoint, not just a device; isolated outputs remain distinct from registered receivers. */
   side(projectId,repositoryId,nodeId,entry,origin={},unknown=false){
@@ -164,6 +176,8 @@ export class SourceSync {
   captures(batch,repositoryId){return this.db.listSourceSyncCommands({projectId:batch.projectId,batchId:batch.id,repositoryId,action:'capture'});}
   /** Returns persistent commands; connection code supplies resend timing and node authentication. */
   schedule(){
+    // Startup migration may have rolled back; fence again before dispatching any old operation.
+    for(const command of this.db.listSourceSyncCommands({pending:true}))this.fenceExcludedCommand(command);
     // Queued and in-progress batches come from the open-batch index; finished history is never read here.
     for(const batch of this.db.listSourceSyncBatches({status:'queued'})){
       if(this.db.listSourceSyncBatches({projectId:batch.projectId}).some(b=>b.id!==batch.id&&b.status!=='queued'))continue;
@@ -196,6 +210,7 @@ export class SourceSync {
   acceptReceipt(nodeId,receipt){return this.db.transaction(()=>{try{
     const command=this.db.get('sourceSyncCommands',receipt.commandId);
     if(!command||command.nodeId!==nodeId)throw syncError('receipt_owner_mismatch');
+    this.fenceExcludedCommand(command);
     const batch=this.db.get('sourceSyncBatches',command.batchId);if(!batch||batch.status==='cancelled'&&!(command.detection==='metadata'&&command.action==='cleanup'))return {discarded:true};
     if(command.result)return command.result;
     if(command.detection==='metadata'&&command.action==='cleanup'){
@@ -228,10 +243,11 @@ export class SourceSync {
     this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason,...details});this.audit.observe(this.db.get('sourceSyncBatches',batch.id));
     if(['resolution','evidence'].includes(batch.kind)){
       const conflict=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);
-      if(conflict?.generation===batch.conflictGeneration)this.db.put('sourceSyncConflicts',{...conflict,status:'needs_input',reason});
+      if(conflict?.generation===batch.conflictGeneration&&conflict.status!=='cancelled')this.db.put('sourceSyncConflicts',{...conflict,status:'needs_input',reason});
     }
   }
   prepare(batch){
+    if(['resolution','evidence'].includes(batch.kind)&&this.db.get('sourceSyncConflicts',batch.conflictIds[0])?.status==='cancelled'){this.blockPreparation(batch,'conflict_changed');return;}
     if(batch.detection==='metadata')return this.metadata.prepare(batch);
     // Count distinct changed content across scopes before advancing any baseline, not one repository at a time.
     if(batch.contentMode==='source-and-outputs'&&!batch.boundedTransfers){
@@ -313,7 +329,8 @@ export class SourceSync {
     let conflict=batch.kind==='resolution'?false:batch.conflictIds.length>0;
     const conflictIds=new Set(batch.conflictIds);
     for(const c of commands){const id=`${batch.projectId}:${c.repositoryId}:${c.nodeId}`,ack=this.db.get('sourceSyncDevices',id),entries={...ack.entries};
-      for(const f of c.result.files||[]){if(f.status==='conflict'){
+      // Preserve the original receipt without restoring excluded device or conflict entries.
+      for(const f of c.result.files||[]){if(excludedSourcePath(f.path,c.scopePolicy))continue;if(f.status==='conflict'){
         conflict=true;const change=c.changes.find(x=>x.path===f.path),origin=this.db.get('sourceSyncManifests',`${batch.projectId}:${c.repositoryId}`)?.origins?.[f.path]||{},record=this.recordConflict({projectId:batch.projectId,repositoryId:c.repositoryId,path:f.path,syncGeneration:batch.generation,base:change.before,
           sides:[this.side(batch.projectId,c.repositoryId,origin.nodeId||batch.sourceNodeId,change.after,origin),this.side(batch.projectId,c.repositoryId,c.nodeId,f.observed??null,c,f.observed===undefined)],evidencePending:true,batchId:batch.id});
         const key=record.id;
@@ -323,12 +340,12 @@ export class SourceSync {
     }
     const blocked=Boolean(failed||stale||batch.status==='blocked');
     this.db.put('sourceSyncBatches',{...batch,conflictIds:[...conflictIds],status:batch.status==='cancelling'?'cancelled':blocked?'blocked':conflict?'partial_conflict':'completed',...(blocked?{sourceInputsReady:false,reason:batch.reason||failed?.result.reason||(stale?'configuration_changed':'target_failed')}:{}),revision:batch.revision+1,updatedAt:stamp()});
-    if(batch.kind==='resolution'&&!conflict&&!blocked&&batch.status!=='cancelling'){const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);if(c?.generation===batch.conflictGeneration)this.db.put('sourceSyncConflicts',{...c,status:'resolved',resolvedAt:stamp()});}
-    if(batch.kind==='resolution'&&(blocked||batch.status==='cancelling')){const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);if(c?.generation===batch.conflictGeneration)this.db.put('sourceSyncConflicts',{...c,status:'needs_input',reason:'distribution_incomplete'});}
+    if(batch.kind==='resolution'&&!conflict&&!blocked&&batch.status!=='cancelling'){const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);if(c?.generation===batch.conflictGeneration&&c.status!=='cancelled')this.db.put('sourceSyncConflicts',{...c,status:'resolved',resolvedAt:stamp()});}
+    if(batch.kind==='resolution'&&(blocked||batch.status==='cancelling')){const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);if(c?.generation===batch.conflictGeneration&&c.status!=='cancelled')this.db.put('sourceSyncConflicts',{...c,status:'needs_input',reason:'distribution_incomplete'});}
   }
   prepareResolution(batch){
     const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]),captures=this.captures(batch,batch.repositoryIds[0]),targets=captures.filter(v=>v.captureRole!=='source');
-    if(!c||c.generation!==batch.conflictGeneration){this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason:'conflict_changed'});return;}
+    if(!c||c.status==='cancelled'||c.generation!==batch.conflictGeneration){this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason:'conflict_changed'});return;}
     const sides=[];
     for(const side of c.sides){
       if(!side.root||!side.endpointId){this.blockPreparation(batch,'source_endpoint_missing');return;}

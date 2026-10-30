@@ -78,7 +78,7 @@ export class SourceSyncConflicts {
   });}
   owns(run,c){return run?.projectId===c.projectId&&run.roleId===c.ownerRoleId&&run.sourceConflictId===c.id&&run.sourceConflictGeneration===c.generation&&run.sourceConflictAssignmentId===c.assignmentId;}
   propose(run,input){return this.db.transaction(()=>{
-    const c=this.db.get('sourceSyncConflicts',input.conflictId);if(!c||!this.owns(run,c)||input.generation!==c.generation||terminal.has(run.status))throw syncError('conflict_changed');
+    const c=this.db.get('sourceSyncConflicts',input.conflictId);if(!c||c.status==='cancelled'||!this.owns(run,c)||input.generation!==c.generation||terminal.has(run.status))throw syncError('conflict_changed');
     const expected=conflictHashes(c);if(input.expectedHashes?.base!==expected.base||!Array.isArray(input.expectedHashes?.sides)||input.expectedHashes.sides.length!==expected.sides.length||input.expectedHashes.sides.some((hash,i)=>hash!==expected.sides[i]))throw syncError('conflict_changed');
     if(typeof input.rationale!=='string'||!input.rationale.trim()||input.rationale.length>3000||!Array.isArray(input.evidence)||!input.evidence.length||input.evidence.length>20||input.evidence.some(e=>typeof e!=='string'||!e||e.length>1500))throw syncError('verification_required');
     const candidate=this.db.get('sourceSyncCandidates',input.candidateId);
@@ -91,7 +91,7 @@ export class SourceSyncConflicts {
   });}
   finish(runId){
     const run=this.db.get('runs',runId),c=run?.sourceConflictId&&this.db.get('sourceSyncConflicts',run.sourceConflictId);
-    if(!c||!this.owns(run,c)||!terminal.has(run.status)||c.handledRunIds?.includes(runId)||['resolved','resolved_pending_sync','verifying','needs_input'].includes(c.status))return;
+    if(!c||!this.owns(run,c)||!terminal.has(run.status)||c.handledRunIds?.includes(runId)||['resolved','cancelled','resolved_pending_sync','verifying','needs_input'].includes(c.status))return;
     const request=run.requestId?this.db.get('coordinationRequests',run.requestId):this.db.list('coordinationRequests').find(r=>r.taskId===run.taskId);
     if(request&&(request.status==='waiting_call'||request.continuationRequestId))return;
     const updated={...c,handledRunIds:[...c.handledRunIds||[],runId]};
