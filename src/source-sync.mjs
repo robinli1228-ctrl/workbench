@@ -12,7 +12,7 @@ const identity=(...parts)=>contentHash(JSON.stringify(parts));
 
 /** Home owns metadata only; no filesystem or model operation runs inside its SQLite transactions. */
 export class SourceSync {
-  constructor({db,online=()=>false,change=()=>{},now=Date.now}){Object.assign(this,{db,online,change});this.metadata=new SourceSyncMetadata(this);this.audit=new SourceSyncAudit({db,now});}
+  constructor({db,online=()=>false,change=()=>{},now=Date.now}){Object.assign(this,{db,online,change,fenceStartCommands:true});this.metadata=new SourceSyncMetadata(this);this.audit=new SourceSyncAudit({db,now});}
   supportsBatching(nodeIds){return nodeIds.length>0&&nodeIds.every(id=>this.db.get('workers',id)?.capabilities?.sourceSyncBatching===1);}
   config(projectId){return this.db.get('sourceSyncConfigs',projectId)||{id:projectId,projectId,enabled:false,revision:0,generation:0};}
   /** Paths that became mandatory exclusions after they were synchronized (role worktrees under .worktrees, October 2026) leave
@@ -176,8 +176,9 @@ export class SourceSync {
   captures(batch,repositoryId){return this.db.listSourceSyncCommands({projectId:batch.projectId,batchId:batch.id,repositoryId,action:'capture'});}
   /** Returns persistent commands; connection code supplies resend timing and node authentication. */
   schedule(){
-    // Startup migration may have rolled back; fence again before dispatching any old operation.
-    for(const command of this.db.listSourceSyncCommands({pending:true}))this.fenceExcludedCommand(command);
+    // Only commands from before this start can carry paths excluded since; the startup cleanup may have rolled back, so
+    // fence them once before dispatching anything. Later commands come from validated captures and need no scan.
+    if(this.fenceStartCommands){for(const command of this.db.listSourceSyncCommands({pending:true}))this.fenceExcludedCommand(command);this.fenceStartCommands=false;}
     // Queued and in-progress batches come from the open-batch index; finished history is never read here.
     for(const batch of this.db.listSourceSyncBatches({status:'queued'})){
       if(this.db.listSourceSyncBatches({projectId:batch.projectId}).some(b=>b.id!==batch.id&&b.status!=='queued'))continue;

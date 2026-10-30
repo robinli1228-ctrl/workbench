@@ -663,8 +663,6 @@ button.quoted-message:hover { color:#315b84; background:#e7eef5; }
 .chat-typing span:nth-child(2) { animation-delay: .15s; }
 .chat-typing span:nth-child(3) { animation-delay: .3s; }
 .chat-typing-label { margin-left: 8px; color: #656c7d; font-size: 12px; }
-.chat-row.is-handoff-wait .handoff-wait-line { color: #656c7d; font-size: 12px; font-weight: 500; }
-.chat-row.is-handoff-wait .chat-meta { margin-top: 2px; }
 @keyframes chat-dot { 0%, 80%, 100% { opacity: .3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
 .chat-approvals { display: grid; gap: 8px; margin-top: 4px; width: 100%; }
 .chat-approval { padding: 10px; border-radius: 10px; background: #fff8e8; color: #5d4a2c; font-size: 12px; }
@@ -2854,7 +2852,7 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .chat-row > .chat-col > .chat-bubble.is-error-card, .chat-bubble.is-error-card, .message-queue-item.is-error-card {
   background: linear-gradient(rgb(220 38 38 / 4%), rgb(220 38 38 / 4%)), #fff;
 }
-.is-resume-notice .chat-message-text, .is-handoff-wait .chat-message-text {
+.is-resume-notice .chat-message-text {
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .is-resume-notice .chat-message-text + .chat-message-text { margin-top: 8px; }

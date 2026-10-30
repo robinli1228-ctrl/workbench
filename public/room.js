@@ -116,20 +116,13 @@ export function extractLiveText(events) {
 export function fullRunReply(run, text, message) { return run?.result || text || message?.text || ''; }
 
 /** Match the room publisher: explicit business reports are never replaced by a compact handoff wait. */
+/** A note a role posted during its turn (wb note) is sent and done: only the turn's final reply (`result-<runId>`) follows
+ * its run, so a role shows one running state however many notes it posts. */
+export const midTurnNote = message => message?.sender === 'agent' && Boolean(message.runId) && message.id !== `result-${message.runId}`;
+
 export function quietHandoff(run,data={}) {
   const report=data.runReports?.find(report=>report.id===run?.id)||run?.report;
   return run?.status==='succeeded'&&Boolean(run.handoffWait?.requestId)&&!['passed','failed','blocked','needs_input'].includes(report?.verdict);
-}
-
-/** A succeeded turn that only handed work off shows one waiting line until its continuation takes over; null hides it. */
-export function handoffWaitState(run, data) {
-  if(!quietHandoff(run,data))return null;
-  const parent=data.requests?.find(r=>r.id===run.handoffWait.requestId);
-  if(!parent||parent.status!=='waiting_call'||parent.resumeError?.kind==='transient'||parent.continuationRequestId||(parent.currentRunId&&parent.currentRunId!==run.id))return null;
-  const ids=parent.waitRequestIds||run.handoffWait.requestIds||[];
-  const names=[...new Set(ids.map(id=>data.requests?.find(r=>r.id===id)).filter(Boolean)
-    .map(r=>data.roles?.find(role=>role.id===r.targetRoleId)?.name||r.targetSnapshot?.name).filter(Boolean))];
-  return {names:names.length>4?[...names.slice(0,4),`+${names.length-4}`]:names};
 }
 
 /** Delivery status does not mean understanding or business approval; late records can only serve as historical material. */
@@ -181,7 +174,7 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
 }
 
 /** Show existing dispatches without creating a separate queue; request retries reuse the ID to avoid repeated interruptions. */
-function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued,getConversationId}) {
+function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued,getConversationId,getSending=()=>[]}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
   // The displayed queue owns these tasks until its next render, including while a drag is active.
   let displayedTaskIds=new Set();
@@ -197,7 +190,8 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     }});
   const view={hasTask:id=>displayedTaskIds.has(id),update(data,projectId){
     lastData=data;if(order.active())return;
-    if(currentProject!==projectId){panel.open=false;currentProject=projectId;optimistic=null;}
+    // Open on each project, as the Sessions queue: queued messages and waits are shown only here. A fold stays for this project.
+    if(currentProject!==projectId){panel.open=true;currentProject=projectId;optimistic=null;}
     const rank=new Map((optimistic||[]).map((id,index)=>[id,index]));
     const runs=new Map((data.runs||[]).map(run=>[run.id,run]));
     let tasks=(data.tasks||[]).filter(task=>{
@@ -222,12 +216,14 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     const roleName=id=>(data.roles||[]).find(r=>r.id===id)?.name||t('Role');
     const items=[...tasks.map(task=>({id:task.id,task,key:queueKey(task)})),...waits.map(wait=>({id:wait.id,wait,key:wait.queueOrder}))]
       .sort((a,b)=>Number(Boolean(b.task?.steering))-Number(Boolean(a.task?.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||a.key-b.key);
+    // A send that will wait is listed here at once, last, until Home's queued tasks for it arrive.
+    for(const sending of getSending())items.push({id:`sending:${sending.id}`,sending});
     displayedTaskIds=new Set(tasks.map(task=>task.id));
     list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&items.length>1);
     panel.hidden=!items.length;list.replaceChildren();
     const title=create('span','message-queue-title',t('Queue · {v}', { v: items.length }));
     // Pause/resume at the right of the title, as on the Sessions queue: paused messages wait after the running replies end.
-    const paused=Boolean(data.chatQueuePaused)&&tasks.length>0,head=[title];panel.classList.toggle('is-paused',paused);
+    const paused=Boolean(data.chatQueuePaused)&&items.some(item=>item.task||item.sending),head=[title];panel.classList.toggle('is-paused',paused);
     if(paused)head.push(create('span','message-queue-paused',t('Paused')));
     if(data.capabilities?.queuePause&&tasks.length){
       const toggle=create('button',`icon-button message-queue-pause${paused?' is-paused':''}`),label=t(paused?'Resume the queue':'Pause the queue: keep these messages after the current replies end');
@@ -249,6 +245,11 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
           :t('Waiting for results; the reply runs here when they are back');
         const title=create('strong','',`${i+1}. @${wait.roleName||roleName(wait.roleId)} · ${label}`);title.title=label;
         info.append(title);row.append(info);list.append(row);continue;
+      }
+      if(item.sending){
+        const sending=item.sending,row=create('div','message-queue-item is-sending'),info=create('div','message-queue-info');
+        const title=create('strong','',`${i+1}. ${sending.roles.map(name=>`@${name}`).join(' ')} · ${sending.text}`);title.title=sending.text;
+        info.append(title,create('span','',t(sending.status)));row.append(info);list.append(row);continue;
       }
       const task=item.task;
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
@@ -302,7 +303,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
 export function createRoomUI({ api, documentPreview, refreshState, openTask, stopRun, decideApproval, create, formatTime, setError, configureDevice, openSideAsk }) {
   const historyViewer=createHistoryViewer({api});
   const cliRecoveryUI=createCliRecoveryUI({api,refreshState,getData:()=>data,create});
-  const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued,getConversationId:()=>conversationId});
+  const messageQueue=createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate:()=>renderMessages(),editQueued,getConversationId:()=>conversationId,getSending:()=>queuedSends()});
   const feed = document.querySelector('#chat-feed');
   // Configuration, plans and messages share one scroll area so status cards do not permanently crowd out the body.
   const scroller = document.querySelector('#chat-scroll');
@@ -579,6 +580,72 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   const followSend = () => { for (const ms of [1000, 3000, 6000]) setTimeout(() => void refreshState({ quiet: true }).catch(() => {}), ms); };
   // A send confirmed by lookup (its response was lost) stays drawn until Home's copy reaches the history.
   const confirmedEchoes = new Map();
+  // A message whose every recipient waits sits in the queue, not the chat, and joins the chat when its reply starts.
+  // Sends predicted to wait (by id) are held from the chat until Home's tasks for them show where they are.
+  // Each prediction keeps the role names and when this page made it; drafts carry the names across a reload.
+  const waitingSends = new Map(), queuedMessageIds = new Set();
+  for (const d of Object.values(drafts)) if (d?.pending?.clientMessageId && d.waitingFor?.length) waitingSends.set(d.pending.clientMessageId, { names: d.waitingFor, at: Date.now() });
+  const activeRun = ['queued','starting','running','waiting_user','stopping','reconciling'];
+  const supervisorAlias = /^(?:manager|supervisor|\u4e3b\u7ba1|\u603b\u7ba1)$/i;
+  /** Before Home answers: the names of the roles this send reaches when every one of them would wait (the chat's queue is
+   * paused, or each is busy, already has queued work or sits on an offline device), else null. Recipients follow Home: the
+   * named roles (the manager's aliases included), else the quoted reply's sender, else the manager; unclear targets are
+   * drawn in the chat. */
+  function sendWillQueue(sent) {
+    if (sent.discussion) return null;
+    const roles = [...(data.roles || []), ...(data.supervisorRoles || [])].filter(r => r.projectId === projectId && !r.archivedAt);
+    const supervisorId = data.projects?.find(p => p.id === projectId)?.supervisorRoleId;
+    const names = [...new Set([...String(sent.text || '').matchAll(/(?:^|[\s,.!?;:(\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a\uff08])@([\p{L}\p{N}_-]+)/gu)].map(m => m[1]))];
+    let targets = names.map(name => roles.find(r => r.name === name) || (supervisorAlias.test(name) ? roles.find(r => r.id === supervisorId) : null));
+    if (!names.length) {
+      const quote = sent.replyToId && histories.get(scopeId)?.messages.find(m => m.id === sent.replyToId);
+      if (sent.replyToId && !quote) return null;
+      targets = quote ? (quote.sender === 'agent' ? [roles.find(r => quote.roleId ? r.id === quote.roleId : r.name === quote.senderName)] : []) : supervisorId ? [roles.find(r => r.id === supervisorId)] : [];
+    }
+    if (!targets.length || targets.some(role => !role)) return null;
+    const busy = new Set((data.runs || []).filter(r => r.projectId === projectId && activeRun.includes(r.status)).map(r => r.roleId));
+    const waiting = new Set((data.tasks || []).filter(task => task.origin === 'chat' && task.status === 'ready' && !task.currentRunId).map(task => task.roleId));
+    const online = new Set((data.workers || []).filter(w => w.online).map(w => w.id));
+    return data.chatQueuePaused || targets.every(role => busy.has(role.id) || waiting.has(role.id) || !online.has(role.nodeId)) ? [...new Set(targets.map(role => role.name))] : null;
+  }
+  /** Home's tasks for a message: by its task ids, or, for the copy still being sent, by their source id (a pushed state can
+   * bring them before the POST answers; Home creates them together). */
+  const tasksOf = m => m.taskIds?.length ? (data.tasks || []).filter(task => m.taskIds.includes(task.id)) : m.localSend ? (data.tasks || []).filter(task => task.origin === 'chat' && task.sourceMessageId === m.id) : [];
+  /** Still predicted to wait: Home's tasks are not known yet. The prediction ends once they are, when the send failed (a
+   * Not sent copy stays in the chat with its actions), or when Home's copy reached nobody or its tasks never show up. */
+  function predictedWait(m) {
+    const wait = waitingSends.get(m.id);
+    if (!wait) return false;
+    if (tasksOf(m).length || m.localSend === 'failed' || !m.localSend && (!m.taskIds?.length || Date.now() - wait.at > 30000)) { waitingSends.delete(m.id); return false; }
+    return true;
+  }
+  /** Held from the chat: every task that can still start waits in the queue, or the send is predicted to wait. A message
+   * whose tasks were all cancelled before starting (cancelled or taken back from the queue) never reached anyone and stays out. */
+  function inQueue(m) {
+    if (m.sender !== 'human') return false;
+    const tasks = tasksOf(m);
+    if (!tasks.length) return predictedWait(m);
+    // A cancelled recipient never starts, as Home counts it when placing the message (rooms.mjs placeAtStart).
+    const live = tasks.filter(task => task.status !== 'cancelled');
+    if (!live.length) return !tasks.some(task => task.currentRunId);
+    const held = (!m.taskIds?.length || tasks.length === m.taskIds.length) && live.every(task => messageQueue.hasTask(task.id));
+    if (held) queuedMessageIds.add(m.id);
+    return held;
+  }
+  /** A message that waited joins the chat at its first reply's start (Home records the same time), never above later messages. */
+  function startedAt(m) {
+    if (!queuedMessageIds.has(m.id)) return m;
+    const starts = (data.runs || []).filter(r => (m.taskIds || []).includes(r.taskId)).map(r => String(r.createdAt || '')).filter(Boolean).sort();
+    return starts[0] && starts[0] > String(m.orderAt || m.createdAt || '') ? { ...m, orderAt: starts[0] } : m;
+  }
+  /** Sends this chat holds in the queue whose tasks Home has not reported yet, with their send state. */
+  function queuedSends() {
+    const stored = histories.get(scopeId)?.messages || [], echo = pendingEcho(scopeId, stored);
+    return [...(echo ? [echo] : []), ...stored].filter(predictedWait)
+      .map(m => ({ id: m.id, text: m.text || '', roles: waitingSends.get(m.id).names, status: m.localSend && m.localSend !== 'stored' ? { sending: 'Sending…', checking: 'Checking…', offline: 'Waiting for network…' }[m.localSend] || 'Sending…' : 'Queued' }));
+  }
+  /** Redraw both places a send can show. */
+  const drawSend = ownerId => { if (ownerId === scopeId && projectId) { messageQueue.update(data, projectId); renderMessages(); } };
   /** The scope's pending send as a chat message, until Home's copy of the same id is in the history. */
   function pendingEcho(ownerId, messages) {
     const confirmed = confirmedEchoes.get(ownerId);
@@ -629,7 +696,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     } catch (error) {
       // 401/403/429 or an unreachable Home say nothing about the original POST: stay unknown and look again later.
       if (drafts[ownerId]?.pending?.clientMessageId === sent.clientMessageId) drafts[ownerId].sendState = lookupFailureState(error);
-    } finally { verifying.delete(ownerId); saveDrafts(); if (ownerId === scopeId) { composer(); renderMessages(); } }
+    } finally { verifying.delete(ownerId); saveDrafts(); if (ownerId === scopeId) composer(); drawSend(ownerId); }
   }
   const mentionInput=createMentionInput(input,()=>{
     const names=[...(data.roles||[]),...(data.supervisorRoles||[])].filter(r=>r.projectId===projectId&&!r.archivedAt).map(r=>r.name);
@@ -770,11 +837,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const kind=message.kind==='discussion'?'Question':message.kind==='handoff'
       ? ({consult:'Question',direct:'Instruction',transfer:'Transfer',note:'Notice'}[message.handoff?.kind]||'Instruction')
       : message.sender==='agent'?'Reply':'Message';
-    // A send still on its way says so; one Home stored but whose work waits in the queue says Queued.
+    // A send still on its way says so.
     if(message.localSend==='stored')return {kind,status:'Completed'};
     if(message.localSend)return {kind,status:{sending:'Sending…',checking:'Checking…',offline:'Waiting for network…',failed:'Not sent'}[message.localSend]||'Sending…',state:message.localSend==='failed'?'failed':'waiting'};
-    if(message.sender==='human'&&message.taskIds?.length&&message.taskIds.every(id=>messageQueue.hasTask(id)))return {kind,status:'Queued',state:'waiting'};
     if(outbound)return {kind,status:'Completed'};
+    if(midTurnNote(message))return {kind,status:'Sent'};
     const run=data.runs?.find(item=>item.id===message.runId);
     const task=run&&data.tasks?.find(item=>item.id===run.taskId);
     const progress=run&&taskProgress(task||{roleSnapshot:run.roleSnapshot},run);
@@ -940,23 +1007,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if(task.backgroundFollowup||run?.backgroundFollowup){const approvals=run?renderApprovalsInline(run):null;if(!recoveryButton)return approvals;const entry=create('div','chat-approvals');if(approvals)entry.append(approvals);entry.append(recoveryButton);return entry;}
     if (run && messages.some(m => m.id === `result-${run.id}` && m.runId === run.id)) return null;
     const role = task.roleSnapshot || {};
-    if (quietHandoff(run, data)) {
-      // The handoff cards already carry the work; keep only a compact waiting line, without replaying this turn's text.
-      const waiting = handoffWaitState(run, data);
-      if (!waiting) return null;
-      const row = create('article', 'chat-row agent is-live is-handoff-wait');
-      row.append(avatarFor(role, role.name));
-      const col = create('div', 'chat-col');
-      const label = waiting.names.length ? t('Waiting for {names} to reply', { names: waiting.names.map(name => `@${name}`).join(t(', ')) }) : t('Waiting for other roles to reply');
-      const line = create('div', 'chat-name handoff-wait-line', `@${role.name || t('Role')} · ${label}`);
-      line.translate = false;
-      const header=create('div','chat-message-header');header.append(create('div','chat-name',role.name||t('Role')));
-      appendModelLabel(header,run?.model||run?.roleSnapshot?.model||role.model);
-      const bubble=setChatCardState(create('div','chat-bubble'),'waiting'),footer=create('div','chat-card-footer'),actions=create('div','chat-card-actions');
-      line.className='chat-message-text';actions.append(iconAction('live','Log',()=>openTask(task.id,run.id)));footer.append(create('span','chat-card-kind',t('Waiting')),actions);bubble.append(line,footer);col.append(header,bubble);
-      row.append(col);
-      return row;
-    }
+    // A turn that only handed work off and waits shows nothing here: the handoff cards carry the work and the queue lists
+    // the wait, where its continuation will run.
+    if (quietHandoff(run, data)) return null;
     const row = create('article', 'chat-row agent is-live');
     row.append(avatarFor(role, role.name));
     const col = create('div', 'chat-col');
@@ -1158,7 +1211,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   function renderMessages() {
     cliRecoveryUI.refresh();
     const history = histories.get(scopeId), stored = history?.messages || [];
-    const echo = pendingEcho(scopeId, stored), messages = echo ? [...stored, echo] : stored;
+    const echo = pendingEcho(scopeId, stored), messages = (echo ? [...stored, echo] : stored).filter(m => !inQueue(m)).map(startedAt);
     const scrollTop = scroller.scrollTop;
     const atBottom = scroller.scrollHeight - scroller.clientHeight - scrollTop < 120;
     // 状态刷新会重建消息节点，按消息身份保留正文阅读位置，不抢回顶部。
@@ -1173,7 +1226,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       .filter(item=>!history?.hasMore||messages.length&&eventTime(item.at)>=eventTime(messages[0].createdAt))
       .sort((a,b)=>eventTime(a.at)-eventTime(b.at)||a.request.id.localeCompare(b.request.id));
     // One timeline, one key: trigger time. Messages carry the server's order; a running role's card sits where its run was
-    // triggered (the same place its reply will take). Queued messages stay in the timeline, marked Queued.
+    // triggered (the same place its reply will take). A message waiting in the queue joins the timeline when it starts.
     const entries=[],orderOf=m=>String(m.orderAt||m.createdAt||'');
     const liveTasks=new Map(),sourceOf=new Map();
     for(const m of messages)for(const id of m.taskIds||[]){sourceOf.set(id,m);const task=data.tasks?.find(t=>t.id===id);if(task)liveTasks.set(task.id,task);}
@@ -1423,8 +1476,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     }
     delete d.rejected; d.sendState = 'sending'; d.projectId ||= id; d.sentAt ||= new Date().toISOString();
     const sent = d.pending;
-    // The message appears in the chat now, under the id it is sent with; Home's copy replaces it when it arrives.
-    saveDrafts(); sendingProject = ownerId; composer(); if (scopeId === ownerId) renderMessages();
+    // Judged afresh on every attempt, a retry included; the draft keeps the names in case the page reloads.
+    const waitFor = sendWillQueue(sent); if (waitFor) { waitingSends.set(sent.clientMessageId, { names: waitFor, at: Date.now() }); d.waitingFor = waitFor; } else { waitingSends.delete(sent.clientMessageId); delete d.waitingFor; }
+    // The message appears now, under the id it is sent with: in the queue when it will wait, else in the chat.
+    saveDrafts(); sendingProject = ownerId; composer(); drawSend(ownerId);
     try {
       if(sent.discussion)await api(`/api/projects/${encodeURIComponent(id)}/discussions/${encodeURIComponent(sent.discussion.threadId)}/reply`,{method:'POST',json:{...sent.discussion,requestId:sent.clientMessageId,text:sent.text}});
       else { const stored = await api(`/api/projects/${encodeURIComponent(id)}/messages`, { method: 'POST', json: sent }); adoptSent(ownerId, stored); }
@@ -1438,7 +1493,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       if (uncertainSend(error)) d.sendState = 'checking';
       else { const { clientMessageId, ...payload } = sent; d.rejected = { clientMessageId, payload }; delete d.pending; delete d.sendState; delete d.sentAt; if (scopeId === ownerId) input.value = d.text || ''; }
       if (scopeId === ownerId) setError(error.message);
-    } finally { sendingProject = null; saveDrafts(); composer(); if (scopeId === ownerId) renderMessages(); if (drafts[ownerId]?.pending === sent && drafts[ownerId].sendState === 'checking') void verifyPending(ownerId, true); }
+    } finally { sendingProject = null; saveDrafts(); composer(); drawSend(ownerId); if (drafts[ownerId]?.pending === sent && drafts[ownerId].sendState === 'checking') void verifyPending(ownerId, true); }
     } finally { submitLocks.delete(ownerId); }
   });
 

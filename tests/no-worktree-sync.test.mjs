@@ -54,3 +54,25 @@ test('startup drops synchronized worktree entries from stored records and bumps 
   assert.equal(db.get('sourceSyncManifests', 'p:r').revision, 4);
   db.close();
 });
+
+test('pending commands from before the start that name excluded paths block their batch once; cancelled conflicts stay cancelled', () => {
+  const db = new Store(':memory:'), entry = { hash: 'a'.repeat(64), size: 1, executable: false };
+  db.put('sourceSyncBatches', { id: 'b1', projectId: 'p', status: 'applying', revision: 1, bindings: [] });
+  db.put('sourceSyncBatches', { id: 'b2', projectId: 'p', status: 'applying', revision: 1, bindings: [] });
+  db.put('sourceSyncCommands', { id: 'c1', projectId: 'p', nodeId: 'a', batchId: 'b1', action: 'apply', scopePolicy: { sharedDocs: true }, changes: [{ path: '.worktrees/task/b.txt', before: null, after: entry }] });
+  db.put('sourceSyncCommands', { id: 'c2', projectId: 'p', nodeId: 'a', batchId: 'b2', action: 'apply', scopePolicy: { sharedDocs: true }, changes: [{ path: 'notes.md', before: null, after: entry }] });
+  const sync = new SourceSync({ db });
+  let reads = 0; const list = db.listSourceSyncCommands.bind(db);
+  db.listSourceSyncCommands = options => { if (options?.pending && !options.projectId) reads++; return list(options); };
+  sync.schedule();
+  assert.equal(db.get('sourceSyncBatches', 'b1').status, 'blocked');
+  assert.equal(db.get('sourceSyncBatches', 'b1').reason, 'source_scope_changed');
+  assert.equal(db.get('sourceSyncBatches', 'b2').status, 'applying', 'a batch without excluded paths keeps going');
+  const first = reads; sync.schedule();
+  assert.equal(reads - first, first - 1, 'later ticks do not scan the pending commands again');
+  db.put('sourceSyncConflicts', { id: 'k1', projectId: 'p', repositoryId: 'r', path: 'notes.md', status: 'cancelled', generation: 1 });
+  db.put('sourceSyncBatches', { id: 'b3', projectId: 'p', kind: 'resolution', status: 'reading', revision: 1, conflictIds: ['k1'], conflictGeneration: 1, bindings: [] });
+  sync.blockPreparation(db.get('sourceSyncBatches', 'b3'), 'target_failed');
+  assert.equal(db.get('sourceSyncConflicts', 'k1').status, 'cancelled', 'a failed resolution does not reopen a cancelled conflict');
+  db.close();
+});
