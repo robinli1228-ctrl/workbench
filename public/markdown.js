@@ -215,8 +215,24 @@ function tableCell(tagName, value, alignment) {
   return cell;
 }
 
+const DOCUMENT_PATH=/^(?:\/(?!\/)|\.\.?\/|\.workbench\/docs\/)[^\s`<>"'，。；：！？、()\[\]]+\.(?:md|markdown|txt)$/i,AFTER_DOCUMENT=/[\s，。；：！？、()\[\]]/;
+/** Words (runs without a stop character) that end in a document extension: the only places a document path can end. */
+export const documentWords=text=>[...String(text).matchAll(/[^\s`<>"'，。；：！？、()\[\]]+/g)].filter(word=>/\.(?:md|markdown|txt)$/i.test(word[0])).map(word=>[word.index,word.index+word[0].length]);
+/**
+ * A document path starting at `cursor`, kept as plain text, or null. A path cannot contain a stop character, so it must end
+ * where its word ends; the words are found once per text, because matching the rest of the text from every "/" of a long
+ * base64 word made inline rendering quadratic.
+ */
+export function documentPathAt(text,cursor,words=documentWords(text)){
+  if(text[cursor]!=='/'&&text[cursor]!=='.')return null;
+  const word=words.find(([start,end])=>start<=cursor&&cursor<end);
+  if(!word||word[1]<text.length&&!AFTER_DOCUMENT.test(text[word[1]]))return null;
+  const path=text.slice(cursor,word[1]);
+  return DOCUMENT_PATH.test(path)?path:null;
+}
+
 function appendInline(parent, input) {
-  const text = String(input || '');
+  const text = String(input || ''), words = documentWords(text);
   let cursor = 0;
   while (cursor < text.length) {
     if (text[cursor] === '\n') {
@@ -229,8 +245,8 @@ function appendInline(parent, input) {
     if (code) {
       const node = element('code'); node.textContent = code[1]; parent.append(node); cursor += code[0].length; continue;
     }
-    const documentPath=text.slice(cursor).match(/^(?:\/(?!\/)|\.\.?\/|\.workbench\/docs\/)[^\s`<>"'，。；：！？、()\[\]]+\.(?:md|markdown|txt)(?=$|[\s，。；：！？、()\[\]])/i);
-    if(documentPath){parent.append(document.createTextNode(documentPath[0]));cursor+=documentPath[0].length;continue;}
+    const documentPath=documentPathAt(text,cursor,words);
+    if(documentPath){parent.append(document.createTextNode(documentPath));cursor+=documentPath.length;continue;}
     const strong = text.slice(cursor).match(/^(\*\*|__)(?=\S)([\s\S]*?\S)\1/);
     if (strong) {
       const node = element('strong'); appendInline(node, strong[2]); parent.append(node); cursor += strong[0].length; continue;
