@@ -262,11 +262,15 @@ export class MediaStreams {
         // Interrupted prefixes are useful too, but only after the same source-version check as a full copy.
         void ((entry.started&&(entry.complete||writer.partial&&!entry.overflow))?this.unchanged(t):Promise.resolve(false)).then(ok=>writer.finish(ok),()=>writer.finish(false)).finally(settle);}};
     this.pending.set(id,entry);
-    // The device may start sending as soon as it is asked, long before the first byte gets through a queued link.
-    this.watchRate(t.n,entry,true);
-    entry.timer=setTimeout(()=>this.fail(id,'media_timeout'),this.timings.arrivalMs);
     res.on('close',()=>{entry.closed=true;if(!entry.started)this.fail(id,null);});
     try{
+      // Drain the verified prefix before asking for the suffix: backpressure from a slow viewer must not leave a Worker
+      // upload waiting unread long enough to trip its link-stall guard. pipeline keeps this bounded and cancels on close.
+      if(prefix){res.writeHead(status,headers);await pipeline(this.cache.read(prefix.path,prefix.start,prefix.size-1),res,{end:false});}
+      if(entry.closed||res.destroyed){this.fail(id,null);return await done;}
+      // Only the missing suffix uses the device link and its arrival/rate measurements.
+      this.watchRate(t.n,entry,true);
+      entry.timer=setTimeout(()=>this.fail(id,'media_timeout'),this.timings.arrivalMs);
       await this.query({nodeId:t.n,projectId:t.pr},'media_stream',{...t.ns,id,secret,path:`/api/worker/media-streams/${id}`,root:t.r,file:t.p,version:{size:t.s,mtimeMs:t.m,ino:t.i,dev:t.d},start,end,
         ...(this.paced(t.n)?{rate:Math.round(this.rate(t.n).rate)}:{})},this.timings.arrivalMs);
     }catch(error){this.fail(id,codeOf(error));}
@@ -274,7 +278,7 @@ export class MediaStreams {
   }
   fail(id,code) {
     const entry=this.pending.get(id);if(!entry||entry.started)return;
-    if(code){this.record(entry.token,code,code==='media_timeout'?'arrival':'device',entry.start);if(!entry.closed&&!entry.res.headersSent)respond(entry.res,STATUS[code]||502,{error:code,code});}
+    if(code){this.record(entry.token,code,code==='media_timeout'?'arrival':'device',entry.start);if(!entry.closed){if(!entry.res.headersSent)respond(entry.res,STATUS[code]||502,{error:code,code});else entry.res.destroy();}}
     entry.settle({stop:true});
   }
 
@@ -287,7 +291,7 @@ export class MediaStreams {
     entry.started=true;clearTimeout(entry.timer);
     const out=entry.res;
     if(entry.closed||out.destroyed){refuse(req,res,410,{error:'Viewer closed'});entry.settle();return;}
-    out.writeHead(entry.status,entry.headers);
+    if(!out.headersSent)out.writeHead(entry.status,entry.headers);
     const rate=this.rate(entry.nodeId);rate.disturb();
     let count=0,idle;
     const touch=()=>{clearTimeout(idle);idle=setTimeout(()=>req.destroy(failure('media_idle')),this.timings.idleMs);};touch();
@@ -297,12 +301,7 @@ export class MediaStreams {
       entry.onBytes?.(count+(entry.prefix?entry.prefix.size-entry.prefix.start:0));
       Promise.resolve(entry.writer?.write(chunk)).then(()=>callback(null,chunk),callback);
     }});
-    const cache=this.cache;
-    const prepend=async function*(source){
-      if(entry.prefix)for await(const chunk of cache.read(entry.prefix.path,entry.prefix.start,entry.prefix.size-1)){touch();yield chunk;}
-      yield* source;
-    };
-    try{await pipeline(req,meter,prepend,out);entry.complete=count===entry.length;respond(res,entry.complete?200:400,{received:count});}
+    try{await pipeline(req,meter,out);entry.complete=count===entry.length;respond(res,entry.complete?200:400,{received:count});}
     catch(error){if(!entry.closed&&!out.writableFinished)this.record(entry.token,error?.code==='media_idle'?'media_idle':'media_interrupted','transfer',entry.start+count);out.destroy();if(!res.headersSent)respond(res,400,{received:count});}
     finally{clearTimeout(idle);entry.settle();}
   }
