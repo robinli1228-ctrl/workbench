@@ -766,7 +766,7 @@ async function query(m,emit=send) {
     }
     if(m.action==='device_read'){
       // Home names the project folder from its binding; the Worker checks it is a granted folder before reading beneath it.
-      const args={...m.path,projectRoot:await projectRoot(m.path?.root),readRoots,denyRoots:[data]};
+      const args={...m.path,projectRoot:await projectRoot(m.path?.root),readRoots,denyRoots:[await realpath(data).catch(()=>data)]};
       reply(m.path?.list?await deviceList(args):await deviceRead(args));return;
     }
     if(m.action==='project_file'||m.action==='project_files'){

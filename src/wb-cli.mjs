@@ -84,7 +84,9 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (cmd === 'device') {
       if (!['ls','read'].includes(sub) || rest.length !== 1) throw new Error(tr('wbCli.deviceUsage'));
-      return out(await agentRequest('/api/agent/device-read',{...JSON.parse(rest[0]),runId:process.env.WB_RUN_ID,action:sub}));
+      let input;try{input=JSON.parse(rest[0]);}catch{throw new Error(tr('wbCli.deviceUsage'));}
+      if(!input||typeof input!=='object'||Array.isArray(input))throw new Error(tr('wbCli.deviceUsage'));
+      return out(await agentRequest('/api/agent/device-read',{...input,runId:process.env.WB_RUN_ID,action:sub}));
     }
     if (cmd === 'timer') {
       if (sub === 'list' && !rest.length) return out(await agentRequest('/api/agent/timers',{runId:process.env.WB_RUN_ID,action:'list'}));

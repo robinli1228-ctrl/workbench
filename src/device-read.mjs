@@ -12,31 +12,38 @@ import {isAbsolute,join,relative,resolve,sep,parse} from 'node:path';
 export const DEVICE_READ_LIMITS=Object.freeze({bytes:64*1024,tailLines:1000,tailWindow:512*1024,entries:500,sniff:8192});
 
 // Credentials, keys, shell history, app databases and platform state stay unreadable even inside an allowed folder. Names
-// are compared case-folded and NFKC-normalized (macOS folders are case-insensitive). Ordinary sources and logs stay readable.
+// are compared case-folded and NFKC-normalized (macOS folders are case-insensitive). Ordinary sources and logs stay readable:
+// the word patterns (credential, secret, token, ...) do not apply to source files, which merely use those words in their names.
 const SECRET_NAMES=[
   /^\.(?:git|ssh|gnupg|aws|azure|kube|docker|m2|gradle|config|password-store|codex|claude|data|local|worktrees)$/,
   /^\.wb-(?:bridge|source-sync)-/,/^keychains$/,
-  /^\.(?:netrc|npmrc|pypirc|yarnrc(?:\.yml)?|pgpass|git-credentials|gitconfig|envrc|htpasswd|my\.cnf)$/,/^_netrc$/,
-  /^\.env(?:\..*)?$/,/history$/,/^kubeconfig$/,/^(?:worker-config|\.agent-workbench-project|auth(?:-profiles)?)\.json$/,
-  /^id_[a-z0-9]/,/^deploy[-_]?key/,/credential/,/serviceaccount/,/^\.?secrets?(?:[._-]|$)/,/^(?:api|access|refresh|worker|auth)?[-_]?tokens?(?:[._-]|$)/,
+  /^\.(?:netrc|npmrc|pypirc|yarnrc(?:\.yml)?|pgpass|git-credentials|gitconfig|envrc|htpasswd|my\.cnf|[a-z_]*history)$/,/^_netrc$/,
+  /^\.env(?:\..*)?$/,/^kubeconfig$/,/^(?:worker-config|\.agent-workbench-project|auth(?:-profiles)?)\.json$/,
+  /^id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?:[._-]|$)/,
   /\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg|tfstate|tfvars|sqlite\d?|db|keychain(?:-db)?)(?:[.-].*)?$/,
   /^(?:cookies|login data|web data|key\d\.db|logins\.json|cert\d\.db)$/,
 ];
+const SECRET_WORDS=[/^deploy[-_]?key/,/credential/,/serviceaccount/,/^\.?secrets?(?:[._-]|$)/,/^(?:api|access|refresh|worker|auth)?[-_]?tokens?(?:[._-]|$)/];
+const SOURCE_FILE=/\.(?:java|kt|kts|groovy|scala|js|mjs|cjs|ts|tsx|jsx|vue|svelte|py|go|rs|rb|php|cs|swift|m|mm|c|cc|cpp|h|hpp|sh|bash|zsh|sql|md|html|css|scss|less|proto|graphql|dart|lua|pl|r|ex|exs|erl|clj)$/;
 const PUBLIC_ENV=/^\.env\.(?:example|sample|template)$/;
 const fold=part=>part.normalize('NFKC').toLowerCase();
-export const secretName=name=>{const value=fold(name);return !PUBLIC_ENV.test(value)&&SECRET_NAMES.some(pattern=>pattern.test(value));};
+export const secretName=name=>{const value=fold(name);return !PUBLIC_ENV.test(value)&&(SECRET_NAMES.some(pattern=>pattern.test(value))||!SOURCE_FILE.test(value)&&SECRET_WORDS.some(pattern=>pattern.test(value)));};
 // Private handoffs of other roles stay out too (independent review isolation is not bypassed through raw folders).
 const secretPath=parts=>parts.some(secretName)||parts.some((part,i)=>fold(part)==='.workbench'&&fold(parts[i+1]||'')==='handoffs'&&fold(parts[i+2]||'')==='private');
+/** The largest prefix of at most `limit` bytes that does not end inside a UTF-8 character (continuation bytes are 10xxxxxx). */
+const wholeCharacters=(bytes,limit)=>{let end=Math.min(limit,bytes.length);while(end>0&&end<bytes.length&&(bytes[end]&0xc0)===0x80)end--;return end;};
+const characters=(bytes,limit)=>bytes.subarray(0,wholeCharacters(bytes,limit)).toString('utf8');
 const fail=code=>Object.assign(new Error(`device_read: ${code}`),{code});
 const within=(root,path)=>path===root||path.startsWith(root.endsWith(sep)?root:root+sep);
 
 /** A folder that is the filesystem root, the home folder or contains it would open everything; it is never readable. */
-function tooWide(path){const home=resolve(homedir());return path===parse(path).root||within(path,home);}
+let homeReal=null;
+async function tooWide(path){homeReal??=await realpath(homedir()).catch(()=>resolve(homedir()));return path===parse(path).root||within(path,homeReal);}
 
 /** WORKER_READ_ROOTS: extra readable folders, separated like PATH; missing and too wide ones are skipped. */
 export async function readRootsFrom(value,delimiter){
   const roots=[];
-  for(const path of String(value||'').split(delimiter).map(p=>p.trim()).filter(Boolean))try{const real=await realpath(path);if(!tooWide(real))roots.push(real);}catch{}
+  for(const path of String(value||'').split(delimiter).map(p=>p.trim()).filter(Boolean))try{const real=await realpath(path);if(!await tooWide(real))roots.push(real);}catch{}
   return roots;
 }
 
@@ -46,7 +53,7 @@ export async function readRootsFrom(value,delimiter){
  */
 async function locate({projectRoot,readRoots,denyRoots=[]},path){
   if(typeof path!=='string'||!path||path.length>4096||path.includes('\0'))throw fail('invalid_path');
-  const project=await realpath(projectRoot);if(tooWide(project))throw fail('outside_allowed_folders');
+  const project=await realpath(projectRoot);if(await tooWide(project))throw fail('outside_allowed_folders');
   const roots=[project,...readRoots],literal=isAbsolute(path)?resolve(path):resolve(project,path);
   const check=candidate=>{
     const root=roots.find(r=>within(r,candidate));if(!root||denyRoots.some(d=>within(d,candidate)))throw fail('outside_allowed_folders');
@@ -106,7 +113,7 @@ export async function deviceRead(options){
       for(let i=candidates.length-1;i>=0;i--){
         const size=Buffer.byteLength(candidates[i])+(picked.length?1:0);
         if(bytes+size>DEVICE_READ_LIMITS.bytes){
-          if(!picked.length){picked.unshift(Buffer.from(candidates[i]).subarray(0,DEVICE_READ_LIMITS.bytes).toString('utf8'));cut=true;}
+          if(!picked.length){picked.unshift(characters(Buffer.from(candidates[i]),DEVICE_READ_LIMITS.bytes));cut=true;}
           break;
         }
         picked.unshift(candidates[i]);bytes+=size;
@@ -116,9 +123,7 @@ export async function deviceRead(options){
     const from=offset??0,length=limit??DEVICE_READ_LIMITS.bytes;
     if(!Number.isSafeInteger(from)||from<0||!Number.isSafeInteger(length)||length<1||length>DEVICE_READ_LIMITS.bytes)throw fail('invalid_page');
     // Three bytes past the page show whether it would end inside a multi-byte character; it then stops before it.
-    const bytes=await read(from,Math.min(length+3,Math.max(0,info.size-from)));
-    let end=Math.min(length,bytes.length);while(end>0&&end<bytes.length&&(bytes[end]&0xc0)===0x80)end--;
-    const page=bytes.subarray(0,end);
+    const bytes=await read(from,Math.min(length+3,Math.max(0,info.size-from))),page=bytes.subarray(0,wholeCharacters(bytes,length));
     return {...common,mode:'range',offset:from,content:text(page),nextOffset:from+page.length<info.size?from+page.length:null};
   }finally{await handle.close();}
 }

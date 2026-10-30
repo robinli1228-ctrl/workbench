@@ -115,3 +115,16 @@ test('ls shows a link as a link without following it', async t => {
   const link = listing.items.find(i => i.name === 'escape.txt');
   assert.deepEqual([link.kind, link.size, link.modifiedAt], ['link', null, null]);
 });
+
+test('source files that merely use the words are readable; data files and keys with them are not', async t => {
+  const { project, readRoots } = await layout(t);
+  for (const name of ['CredentialService.java', 'token.js', 'secrets.ts', 'serviceaccount.go', 'id_card.jpg', 'ChatHistory.java']) await writeFile(join(project, name), 'x');
+  await mkdir(join(project, 'history')); await writeFile(join(project, 'history', 'notes.md'), 'n');
+  const code = async path => { try { await deviceRead({ projectRoot: project, readRoots, path }); return 'read'; } catch (e) { return e.code; } };
+  for (const name of ['CredentialService.java', 'token.js', 'secrets.ts', 'serviceaccount.go', 'id_card.jpg', 'ChatHistory.java', 'history/notes.md']) assert.equal(await code(name), 'read', name);
+  for (const name of ['credentials.json', 'token.txt', 'secrets.yml', 'id_rsa.pub', 'id_ed25519_sk', '.bash_history']) { await writeFile(join(project, name), 'x'); assert.equal(await code(name), 'secret_path', name); }
+  // A long line of multi-byte characters is cut between characters, never inside one.
+  await writeFile(join(project, 'logs', 'zh.log'), '日'.repeat(30000) + '\n');
+  const page = await deviceRead({ projectRoot: project, readRoots, path: 'logs/zh.log' });
+  assert.ok(!page.content.includes('�') && Buffer.byteLength(page.content) <= DEVICE_READ_LIMITS.bytes && page.lineCut);
+});
