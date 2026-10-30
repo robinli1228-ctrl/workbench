@@ -2,7 +2,7 @@ import {copyText,pendingAction,bindCopyFeedback,bindPendingAction} from './role-
 import {renderRetiredCommandWarning} from './retired-commands.js';
 import {sideButton} from './side-preview.js';
 import {renderSessionQueue} from './session-queue.js';
-import { t, dateLocale } from './i18n.js';
+import { t, dateLocale, getLanguage } from './i18n.js';
 import { trackLoading } from './load-bar.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, renderMessageMarkdown } from './markdown.js';
@@ -1207,9 +1207,25 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
 
   // Each chat entry keeps its DOM node while what it shows is unchanged (see renderMessages).
-  const drawnMarkup=new WeakMap(),drawnLiveText=new WeakMap();
+  const drawnMarkup=new WeakMap(),drawnLiveText=new WeakMap(),drawnSignature=new WeakMap();
+  // Cards of the last few chats left, by chat: switching back reuses the ones whose signature did not change.
+  const leftScopes=new Map();
+  /**
+   * Everything a message card is drawn from (see renderMessageRow): the message, its quoted source, run, task, report, role,
+   * reply direction, discussion state, recipients, footer state, the run's known file paths and the language. An equal
+   * signature draws an equal card, so the kept node is reused without drawing it again; a refresh that changed nothing for
+   * a message costs only this string.
+   */
+  function messageSignature(m,messages){
+    const run=m.runId?data.runs?.find(r=>r.id===m.runId)||null:null,task=run&&data.tasks?.find(item=>item.id===run.taskId)||null;
+    const replyDirection=dialogueReplyDirection(m,messages,data),source=m.replyToId?m.replySource||messages.find(q=>q.id===m.replyToId)||null:null;
+    let discussion=null;try{discussion=JSON.stringify(discussionDisplay(m,data));}catch{return null;}
+    return JSON.stringify([getLanguage(),scopeId,projectId,Boolean(openSideAsk),m,run,task,run&&(data.runReports?.find(r=>r.id===run.id)||null),
+      m.sender==='agent'?(data.roles||[]).find(r=>r.id===m.roleId)||null:null,source&&[source.id,source.senderName,source.text,source.attachments],
+      replyDirection,discussion,messageRecipients(m,replyDirection).map(r=>[r.id,r.name]),messageCardMeta(m),m.runId?filePathsFor(m.runId):null]);
+  }
   // A clicked card may change itself (a busy button, a cleared icon after a failed stop): it is drawn afresh next time.
-  feed.addEventListener('click',event=>{const node=event.target.closest?.('[data-entry-key]');if(node)drawnMarkup.delete(node);},true);
+  feed.addEventListener('click',event=>{const node=event.target.closest?.('[data-entry-key]');if(node){drawnMarkup.delete(node);drawnSignature.delete(node);}},true);
   function renderMessages() {
     cliRecoveryUI.refresh();
     const history = histories.get(scopeId), stored = history?.messages || [];
@@ -1238,14 +1254,18 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     messages.forEach((m,i)=>{
       const run=m.runId&&m.id===`result-${m.runId}`?data.runs?.find(r=>r.id===m.runId):null,task=run&&data.tasks?.find(t=>t.id===run.taskId);
       const source=run&&(sourceOf.get(run.taskId)||messages.find(item=>item.id===(task?.sourceMessageId||m.replyToId)));
-      entries.push({key:`m:${m.id}`,at:run?triggerAt(run,task,source)||orderOf(m):orderOf(m),rank:run?2:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,node:()=>renderMessageRow(m,messages)});
+      entries.push({key:`m:${m.id}`,at:run?triggerAt(run,task,source)||orderOf(m):orderOf(m),rank:run?2:0,seq:typeof m.orderSeq==='number'?m.orderSeq:i,signature:()=>messageSignature(m,messages),node:()=>renderMessageRow(m,messages)});
     });
     for(const item of notices)entries.push({key:`n:${item.request.id}`,at:String(item.request.createdAt||item.at||''),rank:1,seq:0,node:()=>renderResumeNotice(item.request,item.at)});
     for(const task of unlinkedLiveTasks(messages,data.tasks || [],data.runs || [],projectId))liveTasks.set(task.id,task);
     const reportedRunIds=new Set(messages.filter(m=>m.runId&&m.id===`result-${m.runId}`).map(m=>m.runId));
     // 与 Rooms.complete 的发布边界一致，私有讨论和显式发布不等待额外 result 卡。
     const waitsForResult=run=>{const report=data.runReports?.find(item=>item.id===run?.id)||run?.report;return run?.status==='succeeded'&&Boolean(run.roleId)&&!run.discussionDeliveryId&&!run.switchOperationId&&!run.backgroundFollowup&&(!run.explicitPublish||report?.verdict==='needs_input')&&!quietHandoff(run,data);};
-    const previous=new Map([...feed.children].filter(node=>node.dataset.entryKey&&node.dataset.entryScope===scopeId).map(node=>[node.dataset.entryKey,node]));
+    const shown=[...feed.children].filter(node=>node.dataset.entryKey&&node.dataset.entryScope===scopeId);
+    // Coming back to a chat, its cards from last time are the old nodes, so unchanged ones are reused rather than drawn again.
+    // Only message cards come back: a live card that was waiting for its reply is not revived from a chat left earlier.
+    const previous=shown.length?new Map(shown.map(node=>[node.dataset.entryKey,node])):new Map([...(leftScopes.get(scopeId)||[])].filter(([key])=>key.startsWith('m:')));
+    leftScopes.delete(scopeId);
     for(const task of liveTasks.values()){
       // The asking message by its task link, or by the task's source id (which is also the id a pending send is drawn under).
       const run=data.runs?.find(r=>r.id===task.currentRunId),source=sourceOf.get(task.id)||(task.sourceMessageId&&messages.find(m=>m.id===task.sourceMessageId));
@@ -1282,17 +1302,24 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     for(const entry of entries){
       const old=previous.get(entry.key);
       if(entry.missingRun&&old){next.push(old);continue;}
+      const signature=entry.signature?.()||null;
+      if(old&&signature&&drawnSignature.get(old)===signature&&old.dataset.entryAt===(entry.at||'')){next.push(old);continue;}
       // 只保留正文；状态外壳重新绘制，成功后不再留下 Stop 或运行计时。
       const node=entry.node(entry.hold&&old?drawnLiveText.get(old)||'':'');if(!node)continue;
       // Running timers tick on their own, so their seconds are left out of the comparison.
       node.dataset.entryKey=entry.key;node.dataset.entryScope=scopeId;node.dataset.entryAt=entry.at||'';const markup=node.outerHTML.replace(/(class="[^"]*elapsed-time[^"]*"[^>]*>)[^<]*/g,'$1');
-      if(old&&drawnMarkup.get(old)===markup){next.push(old);continue;}
-      drawnMarkup.set(node,markup);next.push(node);
+      if(old&&drawnMarkup.get(old)===markup){if(signature)drawnSignature.set(old,signature);next.push(old);continue;}
+      drawnMarkup.set(node,markup);if(signature)drawnSignature.set(node,signature);next.push(node);
     }
     // Drop what is gone first, then insert or move only what is out of place: a kept node is never taken out, so its
     // animations, playback and selection go on.
     let moved=false;
-    const keep=new Set(next);for(const node of [...feed.children])if(!keep.has(node)){node.remove();moved=true;}
+    const keep=new Set(next),left=new Map();
+    for(const node of [...feed.children])if(!keep.has(node)){
+      if(node.dataset.entryScope&&node.dataset.entryScope!==scopeId){const scope=left.get(node.dataset.entryScope)||new Map();scope.set(node.dataset.entryKey,node);left.set(node.dataset.entryScope,scope);}
+      node.remove();moved=true;
+    }
+    for(const [scope,nodes] of left){leftScopes.delete(scope);leftScopes.set(scope,nodes);while(leftScopes.size>4)leftScopes.delete(leftScopes.keys().next().value);}
     let cursor=feed.firstElementChild;
     for(const node of next){if(node===cursor){cursor=cursor.nextElementSibling;continue;}feed.insertBefore(node,cursor);moved=true;}
     while(cursor){const after=cursor.nextElementSibling;cursor.remove();cursor=after;moved=true;}
