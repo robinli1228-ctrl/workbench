@@ -1,3 +1,4 @@
+import {tr} from './i18n.mjs';
 import {metadataReadLookup} from './source-sync-batching.mjs';
 import {initializationPage} from './source-sync-audit.mjs';
 import {SourceSyncInitialization} from './source-sync-initialization.mjs';
@@ -37,7 +38,10 @@ function receiptEnvelope(commandId,result){
 
 /** The existing Home listener transports content; scoped transfer credentials never enter model input. */
 export class SourceSyncHome {
-  constructor({db,data,online,socket,change,rooms,query,now=Date.now}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change,now});this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;this.baselines=new SourceSyncInitialization(this);
+  constructor({db,data,online,socket,change,rooms,query,now=Date.now}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change,now});
+    // A failed cleanup is logged and retried at the next start; it must not keep Home from starting.
+    try{this.sync.dropExcludedEntries();}catch(error){console.error(tr('sourceSync.cleanupFailed'),error.message);}
+    this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;this.baselines=new SourceSyncInitialization(this);
     this.conflicts=new SourceSyncConflicts({db,rooms,sync:this.sync,reachability:role=>online(role.nodeId)&&db.get('workers',role.nodeId)?.capabilities?.sourceSyncTools===1&&!runtimeIssue(db.get('workers',role.nodeId),role.runtime,role.model)});
     this.agent=new SourceSyncAgent({db,sync:this.sync,conflicts:this.conflicts,storage:this.storage,query});
   }

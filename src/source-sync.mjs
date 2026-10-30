@@ -2,7 +2,7 @@ import {checkInventorySize,splitSourceItems} from './source-sync-batching.mjs';
 import {SourceSyncAudit} from './source-sync-audit.mjs';
 import {SourceSyncMetadata} from './source-sync-metadata-home.mjs';
 import {randomBytes} from 'node:crypto';
-import {SOURCE_SYNC_CAPTURE_POLICY,SOURCE_SYNC_LIMITS,validateSourceCapture,contentHash,manifestDigest,compareEntry,entryEqual,linkSourceMoves,syncError} from './source-sync-manifest.mjs';
+import {SOURCE_SYNC_CAPTURE_POLICY,SOURCE_SYNC_LIMITS,validateSourceCapture,contentHash,manifestDigest,compareEntry,entryEqual,linkSourceMoves,syncError,excludedSourcePath} from './source-sync-manifest.mjs';
 
 import {buildSourceBindings,sourceScopeBinding} from './source-sync-scopes.mjs';
 
@@ -15,6 +15,42 @@ export class SourceSync {
   constructor({db,online=()=>false,change=()=>{},now=Date.now}){Object.assign(this,{db,online,change});this.metadata=new SourceSyncMetadata(this);this.audit=new SourceSyncAudit({db,now});}
   supportsBatching(nodeIds){return nodeIds.length>0&&nodeIds.every(id=>this.db.get('workers',id)?.capabilities?.sourceSyncBatching===1);}
   config(projectId){return this.db.get('sourceSyncConfigs',projectId)||{id:projectId,projectId,enabled:false,revision:0,generation:0};}
+  /** Paths that became mandatory exclusions after they were synchronized (role worktrees under .worktrees, October 2026) leave
+   * the stored canonical, per-device and metadata records at startup. Left in place, every later batch would fence on
+   * source_scope_changed, a stored digest that no longer validates would wedge the batch, and an open conflict on such a path
+   * would throw on every assignment tick. Deletions are never sent. */
+  dropExcludedEntries(){
+    const policies=new Map(),policy=(projectId,repositoryId)=>policies.get(`${projectId}:${repositoryId}`)||{};
+    const strip=(record,scopePolicy)=>{const entries={},origins={};let dropped=0;
+      for(const [path,entry] of Object.entries(record.entries||{})){if(excludedSourcePath(path,scopePolicy)){dropped++;continue;}entries[path]=entry;if(record.origins&&Object.hasOwn(record.origins,path))origins[path]=record.origins[path];}
+      return dropped?{...record,entries,...(record.origins?{origins}:{})}:null;};
+    let changed=0;
+    this.db.transaction(()=>{
+      for(const command of this.db.listSourceSyncCommands({pending:true}))if(this.fenceExcludedCommand(command))changed++;
+      for(const manifest of this.db.list('sourceSyncManifests')){policies.set(manifest.id,manifest.scopePolicy||{});const next=strip(manifest,manifest.scopePolicy||{});if(!next)continue;
+        const digest=manifestDigest(next.entries,next.scopePolicy),updated={...next,digest,revision:next.revision+Number(digest!==next.digest)};
+        this.db.put('sourceSyncManifests',updated);this.db.put('sourceSyncVersions',{...updated,id:identity(updated.projectId,updated.repositoryId,updated.generation,updated.revision,updated.digest)});changed++;}
+      for(const ack of this.db.list('sourceSyncDevices')){const next=strip(ack,policy(ack.projectId,ack.repositoryId));if(next){this.db.put('sourceSyncDevices',next);changed++;}}
+      for(const baseline of this.db.list('sourceSyncMetadataBaselines'))if(excludedSourcePath(baseline.path,policy(baseline.projectId,baseline.repositoryId))){this.db.remove('sourceSyncMetadataBaselines',baseline.id);changed++;}
+      // Same cancellation as disabling sync: the conflict and its repair tasks that have not started.
+      const conflicts=this.db.list('sourceSyncConflicts').filter(c=>!['resolved','cancelled'].includes(c.status)&&excludedSourcePath(c.path,policy(c.projectId,c.repositoryId)));
+      if(conflicts.length){const tasks=this.db.list('tasks');
+        for(const conflict of conflicts){this.db.put('sourceSyncConflicts',{...conflict,status:'cancelled'});changed++;
+          for(const task of tasks.filter(t=>t.projectId===conflict.projectId&&[t.sourceConflictId,t.sourceConflictPeerId,t.sourceConflictAssignmentRequestId].includes(conflict.id)&&!t.currentRunId))this.db.put('tasks',{...task,status:'cancelled'});}}
+    });
+    return changed;
+  }
+  /** Preserve original commands for reconciliation; excluded operations may only be cancelled, not redispatched. */
+  commandHasExcludedPaths(command){return command.action!=='cleanup'&&[...command.changes||[],...command.paths||[]].some(item=>[item.path,item.move?.from,item.move?.to].filter(Boolean).some(path=>excludedSourcePath(path,command.scopePolicy)));}
+  /** Existing blocked/cancel flow waits for real receipts without falsely declaring started writes cancelled. */
+  fenceExcludedCommand(command){
+    if(command.result||command.action==='cleanup')return false;
+    const batch=this.db.get('sourceSyncBatches',command.batchId);
+    if(!batch||['blocked','cancelling','cancelled'].includes(batch.status))return false;
+    // Completed metadata reads still retain operations that could generate a later apply.
+    if(!this.commandHasExcludedPaths(command)&&!batch.metadataOperations?.some(op=>excludedSourcePath(op.path,batch.bindings.find(b=>b.repositoryId===op.repositoryId)?.scopePolicy)))return false;
+    this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason:'source_scope_changed',sourceInputsReady:false,revision:batch.revision+1});return true;
+  }
   /** A source is a workspace endpoint, not just a device; isolated outputs remain distinct from registered receivers. */
   side(projectId,repositoryId,nodeId,entry,origin={},unknown=false){
     const command=origin.commandId?this.db.get('sourceSyncCommands',origin.commandId)||origin:origin;
@@ -140,6 +176,8 @@ export class SourceSync {
   captures(batch,repositoryId){return this.db.listSourceSyncCommands({projectId:batch.projectId,batchId:batch.id,repositoryId,action:'capture'});}
   /** Returns persistent commands; connection code supplies resend timing and node authentication. */
   schedule(){
+    // Startup migration may have rolled back; fence again before dispatching any old operation.
+    for(const command of this.db.listSourceSyncCommands({pending:true}))this.fenceExcludedCommand(command);
     // Queued and in-progress batches come from the open-batch index; finished history is never read here.
     for(const batch of this.db.listSourceSyncBatches({status:'queued'})){
       if(this.db.listSourceSyncBatches({projectId:batch.projectId}).some(b=>b.id!==batch.id&&b.status!=='queued'))continue;
@@ -172,6 +210,7 @@ export class SourceSync {
   acceptReceipt(nodeId,receipt){return this.db.transaction(()=>{try{
     const command=this.db.get('sourceSyncCommands',receipt.commandId);
     if(!command||command.nodeId!==nodeId)throw syncError('receipt_owner_mismatch');
+    this.fenceExcludedCommand(command);
     const batch=this.db.get('sourceSyncBatches',command.batchId);if(!batch||batch.status==='cancelled'&&!(command.detection==='metadata'&&command.action==='cleanup'))return {discarded:true};
     if(command.result)return command.result;
     if(command.detection==='metadata'&&command.action==='cleanup'){
@@ -204,10 +243,11 @@ export class SourceSync {
     this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason,...details});this.audit.observe(this.db.get('sourceSyncBatches',batch.id));
     if(['resolution','evidence'].includes(batch.kind)){
       const conflict=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);
-      if(conflict?.generation===batch.conflictGeneration)this.db.put('sourceSyncConflicts',{...conflict,status:'needs_input',reason});
+      if(conflict?.generation===batch.conflictGeneration&&conflict.status!=='cancelled')this.db.put('sourceSyncConflicts',{...conflict,status:'needs_input',reason});
     }
   }
   prepare(batch){
+    if(['resolution','evidence'].includes(batch.kind)&&this.db.get('sourceSyncConflicts',batch.conflictIds[0])?.status==='cancelled'){this.blockPreparation(batch,'conflict_changed');return;}
     if(batch.detection==='metadata')return this.metadata.prepare(batch);
     // Count distinct changed content across scopes before advancing any baseline, not one repository at a time.
     if(batch.contentMode==='source-and-outputs'&&!batch.boundedTransfers){
@@ -289,7 +329,8 @@ export class SourceSync {
     let conflict=batch.kind==='resolution'?false:batch.conflictIds.length>0;
     const conflictIds=new Set(batch.conflictIds);
     for(const c of commands){const id=`${batch.projectId}:${c.repositoryId}:${c.nodeId}`,ack=this.db.get('sourceSyncDevices',id),entries={...ack.entries};
-      for(const f of c.result.files||[]){if(f.status==='conflict'){
+      // Preserve the original receipt without restoring excluded device or conflict entries.
+      for(const f of c.result.files||[]){if(excludedSourcePath(f.path,c.scopePolicy))continue;if(f.status==='conflict'){
         conflict=true;const change=c.changes.find(x=>x.path===f.path),origin=this.db.get('sourceSyncManifests',`${batch.projectId}:${c.repositoryId}`)?.origins?.[f.path]||{},record=this.recordConflict({projectId:batch.projectId,repositoryId:c.repositoryId,path:f.path,syncGeneration:batch.generation,base:change.before,
           sides:[this.side(batch.projectId,c.repositoryId,origin.nodeId||batch.sourceNodeId,change.after,origin),this.side(batch.projectId,c.repositoryId,c.nodeId,f.observed??null,c,f.observed===undefined)],evidencePending:true,batchId:batch.id});
         const key=record.id;
@@ -299,12 +340,12 @@ export class SourceSync {
     }
     const blocked=Boolean(failed||stale||batch.status==='blocked');
     this.db.put('sourceSyncBatches',{...batch,conflictIds:[...conflictIds],status:batch.status==='cancelling'?'cancelled':blocked?'blocked':conflict?'partial_conflict':'completed',...(blocked?{sourceInputsReady:false,reason:batch.reason||failed?.result.reason||(stale?'configuration_changed':'target_failed')}:{}),revision:batch.revision+1,updatedAt:stamp()});
-    if(batch.kind==='resolution'&&!conflict&&!blocked&&batch.status!=='cancelling'){const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);if(c?.generation===batch.conflictGeneration)this.db.put('sourceSyncConflicts',{...c,status:'resolved',resolvedAt:stamp()});}
-    if(batch.kind==='resolution'&&(blocked||batch.status==='cancelling')){const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);if(c?.generation===batch.conflictGeneration)this.db.put('sourceSyncConflicts',{...c,status:'needs_input',reason:'distribution_incomplete'});}
+    if(batch.kind==='resolution'&&!conflict&&!blocked&&batch.status!=='cancelling'){const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);if(c?.generation===batch.conflictGeneration&&c.status!=='cancelled')this.db.put('sourceSyncConflicts',{...c,status:'resolved',resolvedAt:stamp()});}
+    if(batch.kind==='resolution'&&(blocked||batch.status==='cancelling')){const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]);if(c?.generation===batch.conflictGeneration&&c.status!=='cancelled')this.db.put('sourceSyncConflicts',{...c,status:'needs_input',reason:'distribution_incomplete'});}
   }
   prepareResolution(batch){
     const c=this.db.get('sourceSyncConflicts',batch.conflictIds[0]),captures=this.captures(batch,batch.repositoryIds[0]),targets=captures.filter(v=>v.captureRole!=='source');
-    if(!c||c.generation!==batch.conflictGeneration){this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason:'conflict_changed'});return;}
+    if(!c||c.status==='cancelled'||c.generation!==batch.conflictGeneration){this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason:'conflict_changed'});return;}
     const sides=[];
     for(const side of c.sides){
       if(!side.root||!side.endpointId){this.blockPreparation(batch,'source_endpoint_missing');return;}
