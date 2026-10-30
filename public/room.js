@@ -116,6 +116,10 @@ export function extractLiveText(events) {
 export function fullRunReply(run, text, message) { return run?.result || text || message?.text || ''; }
 
 /** Match the room publisher: explicit business reports are never replaced by a compact handoff wait. */
+/** A note a role posted during its turn (wb note) is sent and done: only the turn's final reply (`result-<runId>`) follows
+ * its run, so a role shows one running state however many notes it posts. */
+export const midTurnNote = message => message?.sender === 'agent' && Boolean(message.runId) && message.id !== `result-${message.runId}`;
+
 export function quietHandoff(run,data={}) {
   const report=data.runReports?.find(report=>report.id===run?.id)||run?.report;
   return run?.status==='succeeded'&&Boolean(run.handoffWait?.requestId)&&!['passed','failed','blocked','needs_input'].includes(report?.verdict);
@@ -837,6 +841,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if(message.localSend==='stored')return {kind,status:'Completed'};
     if(message.localSend)return {kind,status:{sending:'Sending…',checking:'Checking…',offline:'Waiting for network…',failed:'Not sent'}[message.localSend]||'Sending…',state:message.localSend==='failed'?'failed':'waiting'};
     if(outbound)return {kind,status:'Completed'};
+    if(midTurnNote(message))return {kind,status:'Sent'};
     const run=data.runs?.find(item=>item.id===message.runId);
     const task=run&&data.tasks?.find(item=>item.id===run.taskId);
     const progress=run&&taskProgress(task||{roleSnapshot:run.roleSnapshot},run);
