@@ -151,7 +151,8 @@ export function createDocumentPreview({api}){
     const pattern=/(?:file:\/\/\/(?:[^\s`<>"',;!?，。；：！？、()[\]]+)|\/(?:Users|srv|workspace|home|opt|tmp|var|mnt|Volumes)\/[^`\n<>"',;!?，。；：！？、()[\]]+?|(?:\.\.?\/|\.workbench\/docs\/|docs\/|references\/)[^`\n<>"',;!?，。；：！？、()[\]]+?|[^\s`<>"',;!?，。；：！？、()[\]\\/]+)\.(?:md|markdown|txt)(?=$|[\s,.;:!?，。；：！？、()[\]<>])/gi;
     for(const text of nodes){
       const exact=text.parentElement.tagName==='CODE'&&normalizeDocumentAddress(text.textContent);
-      const hits=exact?[{index:0,0:text.textContent}]:[...text.textContent.matchAll(pattern)];if(!hits.length)continue;
+      // Every match ends in a document extension; text without one (a long base64 part) is skipped without scanning.
+      const hits=exact?[{index:0,0:text.textContent}]:/\.(?:md|markdown|txt)/i.test(text.textContent)?[...text.textContent.matchAll(pattern)]:[];if(!hits.length)continue;
       const fragment=document.createDocumentFragment();let cursor=0;
       for(const hit of hits){if(hit.index>0&&/[\w:/]/.test(text.textContent[hit.index-1]))continue;fragment.append(document.createTextNode(text.textContent.slice(cursor,hit.index)));const link=el('a');attach(link,hit[0],source);fragment.append(link);cursor=hit.index+hit[0].length;}
       if(cursor){fragment.append(document.createTextNode(text.textContent.slice(cursor)));(exact?text.parentElement:text).replaceWith(fragment);}

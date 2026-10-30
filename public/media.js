@@ -64,10 +64,22 @@ function describeQueued(context,path,{fresh=false,maxAge=DESCRIBED_MS}={}) {
   cache.set(key,entry);return entry.promise;
 }
 
-/** Paths in prose that name media or large binary files; URLs and parts of longer tokens are skipped. */
+// A path never spans the stop characters, so text is cut into words first and only a word that ends in a media extension is
+// matched. Unanchored over a long word without spaces but with many "/" (base64), PATTERN backtracks quadratically: a 7,400
+// character evidence part took about 60 ms, and a chat of such parts froze the page for seconds on every redraw.
+const WORD=new RegExp(`[^${STOP}]+`,'g'),MEDIA_END=new RegExp(`\\.(?:${EXT})$`,'i'),AFTER_PATH=/[\s，。；：！？、()\[\]]/;
+// No real file path is longer (macOS PATH_MAX); longer words are data, not paths.
+const MAX_PATH=1024;
+
+/** Paths in prose that name media or large binary files; URLs and parts of longer tokens are skipped. Linear in the text. */
 export function mediaPathMatches(text) {
   const value=String(text||''),found=[];
-  for(const match of value.matchAll(PATTERN)){if(match.index>0&&/[\w:/.]/.test(value[match.index-1]))continue;found.push({index:match.index,path:match[0]});}
+  for(const word of value.matchAll(WORD)){
+    const end=word.index+word[0].length;
+    if(word[0].length>MAX_PATH||!MEDIA_END.test(word[0])||end<value.length&&!AFTER_PATH.test(value[end]))continue;
+    // Within one word PATTERN finds exactly what it finds in the whole text: no part of it can cross a stop character.
+    for(const match of word[0].matchAll(PATTERN)){const index=word.index+match.index;if(index>0&&/[\w:/.]/.test(value[index-1]))continue;found.push({index,path:match[0]});}
+  }
   return found;
 }
 
