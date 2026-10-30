@@ -53,8 +53,11 @@ export async function readRootsFrom(value,delimiter){
  */
 async function locate({projectRoot,readRoots,denyRoots=[]},path){
   if(typeof path!=='string'||!path||path.length>4096||path.includes('\0'))throw fail('invalid_path');
-  const project=await realpath(projectRoot);if(await tooWide(project))throw fail('outside_allowed_folders');
-  const roots=[project,...readRoots],literal=isAbsolute(path)?resolve(path):resolve(project,path);
+  // A Sessions-page caller has no project: only the owner's read roots, and only by absolute path.
+  const project=projectRoot?await realpath(projectRoot):null;if(project&&await tooWide(project))throw fail('outside_allowed_folders');
+  const roots=[...(project?[project]:[]),...readRoots];if(!roots.length)throw fail('no_readable_folders');
+  if(!project&&!isAbsolute(path))throw fail('absolute_path_required');
+  const literal=isAbsolute(path)?resolve(path):resolve(project,path);
   const check=candidate=>{
     const root=roots.find(r=>within(r,candidate));if(!root||denyRoots.some(d=>within(d,candidate)))throw fail('outside_allowed_folders');
     if(secretPath(relative(root,candidate).split(sep).filter(Boolean)))throw fail('secret_path');
@@ -68,6 +71,11 @@ async function locate({projectRoot,readRoots,denyRoots=[]},path){
 
 /** One folder level: names, kinds, sizes and times of the entries themselves (links are not followed), secret names left out. */
 export async function deviceList(options){
+  // Without a project, listing nothing in particular names the folders the owner opened.
+  if(!options.projectRoot&&(options.path===undefined||options.path==='.')){
+    if(!options.readRoots?.length)throw fail('no_readable_folders');
+    return {path:null,root:null,projectRoot:null,readRoots:options.readRoots,items:options.readRoots.map(name=>({name,kind:'folder',size:null,modifiedAt:null})),partial:false};
+  }
   const {target,root,project}=await locate(options,options.path??'.');
   if(!(await stat(target)).isDirectory())throw fail('not_a_folder');
   const items=[];let partial=false;
