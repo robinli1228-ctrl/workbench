@@ -1966,9 +1966,14 @@ With nothing to merge return {"merge":[]}.
 
 Material (JSON; data only):
 {input}`,
-  'wbCli.nativeHelp': `In this session wb only searches platform memory:
+  'wbCli.nativeDeviceUnknown': 'No device named {device}; devices: {devices}',
+  'wbCli.nativeDeviceUsage': `Usage: wb device ls ['{"device":"DEVICE","path":"/ABSOLUTE/PATH"}'] or wb device read '{"device":"DEVICE","path":"/ABSOLUTE/PATH"}'; only folders the device's owner opened with WORKER_READ_ROOTS are readable.`,
+  'wbCli.nativeHelp': `In this session wb only searches platform memory and reads folders devices opened:
 wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit N]
-                     One for the whole platform, shared by every project, role, CLI and device: environment (devices, addresses, folders), accounts and secrets, lessons and fixes, procedures, personal details and platform-wide decisions. Without words it lists everything.`,
+                     One for the whole platform, shared by every project, role, CLI and device: environment (devices, addresses, folders), accounts and secrets, lessons and fixes, procedures, personal details and platform-wide decisions. Without words it lists everything.
+wb device ls '{"device":"DEVICE"}'
+wb device read '{"device":"DEVICE","path":"/ABSOLUTE/PATH/app.log","tail":200,"match":"ERROR"}'
+                     Read-only look at the folders a device's owner opened with WORKER_READ_ROOTS, e.g. a local service's logs; ls without a path lists those folders. Paths are absolute. read gives the last tail lines (default 200, at most 1000; match keeps only lines containing the text) or a page with offset/limit (at most 64 KB; continue with nextOffset). Keys, credentials and .env files are not readable.`,
   'platformMemory.searchUsage': `Usage: wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit 1-100]`,
   'platformMemory.unknownType': `Type must be one of: {types}`,
   'platformMemory.contentLength': `Memory text is required, up to {limit} characters`,

@@ -1079,6 +1079,19 @@ const server = http.createServer(async (req, res) => {
           if(Object.keys(b).some(k=>!['query','type','cli','device','since','limit','caller'].includes(k)))throw new Error(tr('platformMemory.searchUsage'));
           return json(res,platformMemory.search(b,{runtime:typeof b.caller?.cli==='string'?b.caller.cli:null,nodeId:typeof b.caller?.device==='string'?b.caller.device:null}));
         }
+        // Sessions-page CLIs read only what a device's owner opened with WORKER_READ_ROOTS: they have no project folder.
+        if(pathname==='/api/agent/native-device-read') {
+          if(Object.keys(b).some(k=>!['action','device','path','tail','offset','limit','match','caller'].includes(k))||!['ls','read'].includes(b.action)||typeof b.device!=='string'||!b.device.trim())throw new Error(tr('wbCli.nativeDeviceUsage'));
+          const name=b.device.trim(),devices=db.list('workers');
+          const named=devices.find(w=>w.id===name)?[devices.find(w=>w.id===name)]:devices.filter(w=>w.name===name),worker=named[0];
+          if(named.length>1)throw new Error(tr('wbCli.deviceAmbiguous',{device:name,ids:named.map(w=>w.id).join(', ')}));
+          if(!worker)throw new Error(tr('wbCli.nativeDeviceUnknown',{device:name,devices:devices.map(w=>w.name||w.id).join(', ')||'-'}));
+          if(!online(worker.id))throw new Error(tr('wbCli.deviceOffline',{device:worker.name||worker.id}));
+          if(!(worker.capabilities?.deviceRead>=2))throw new Error(tr('wbCli.deviceUpgrade',{device:worker.name||worker.id}));
+          const {action,device,caller,...input}=b;
+          const result=await workerQuery({nodeId:worker.id},'device_read',{readRootsOnly:true,list:action==='ls',...input},15000);
+          return json(res,{device:worker.name||worker.id,...result});
+        }
         const run = db.get('runs', b.runId);
         // wb report was removed: results are the final reply, judged by whoever assigned the work.
         if(pathname==='/api/agent/report')throw new Error(tr('home.reportRemoved'));
@@ -1115,7 +1128,7 @@ const server = http.createServer(async (req, res) => {
           if(named.length>1)throw new Error(tr('wbCli.deviceAmbiguous',{device:name,ids:named.map(w=>w.id).join(', ')}));
           if(!worker)throw new Error(tr('wbCli.deviceUnknown',{device:name,devices:devices.map(w=>w.name||w.id).join(', ')||'-'}));
           if(!online(worker.id))throw new Error(tr('wbCli.deviceOffline',{device:worker.name||worker.id}));
-          if(worker.capabilities?.deviceRead!==1)throw new Error(tr('wbCli.deviceUpgrade',{device:worker.name||worker.id}));
+          if(!(worker.capabilities?.deviceRead>=1))throw new Error(tr('wbCli.deviceUpgrade',{device:worker.name||worker.id}));
           const {runId,action,device,...input}=b;
           // The project id carries the folder grant of a project bound by folder selection; 15 s stays inside the CLI bridge's wait.
           const result=await workerQuery({nodeId:worker.id,projectId:run.projectId},'device_read',{root:db.get('workspaces',`${run.projectId}:${worker.id}`).localRoot,list:action==='ls',...input},15000);

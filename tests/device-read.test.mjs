@@ -128,3 +128,16 @@ test('source files that merely use the words are readable; data files and keys w
   const page = await deviceRead({ projectRoot: project, readRoots, path: 'logs/zh.log' });
   assert.ok(!page.content.includes('�') && Buffer.byteLength(page.content) <= DEVICE_READ_LIMITS.bytes && page.lineCut);
 });
+
+test('without a project (Sessions-page caller) only the owner-opened folders are readable, by absolute path', async t => {
+  const { project, logs, readRoots } = await layout(t);
+  const listing = await deviceList({ projectRoot: null, readRoots });
+  assert.deepEqual(listing.items.map(i => i.name), readRoots, 'ls with no path names the opened folders');
+  const inside = await deviceRead({ projectRoot: null, readRoots, path: join(logs, 'service.log') });
+  assert.equal(inside.content, 'started\nready');
+  const code = async (path, roots = readRoots) => { try { await deviceRead({ projectRoot: null, readRoots: roots, path }); return 'read'; } catch (e) { return e.code; } };
+  assert.equal(await code('logs/app.log'), 'absolute_path_required');
+  assert.equal(await code(join(project, 'logs', 'app.log')), 'outside_allowed_folders', 'the project folder is not opened to Sessions-page callers');
+  assert.equal(await code(join(logs, 'service.log'), []), 'no_readable_folders');
+  await assert.rejects(deviceList({ projectRoot: null, readRoots: [] }), e => e.code === 'no_readable_folders');
+});

@@ -4,7 +4,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { tr } from './i18n.mjs';
 
 // Paths a role's wb command may reach; Home re-checks each request against the run and its role.
-const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary', '/api/agent/memory/search', '/api/agent/device-read', '/api/agent/native-memory/search',
+const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary', '/api/agent/memory/search', '/api/agent/device-read', '/api/agent/native-memory/search','/api/agent/native-device-read',
   '/api/agent/discussions', '/api/agent/source-sync']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -146,10 +146,11 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend,
 
 /**
  * Sessions-page CLIs have no Run: each session gets its own request folder under the Worker's data (named in its env as
- * WB_BRIDGE), and the Worker relays only memory search, adding that session's CLI and this device. Files are removed a
+ * WB_BRIDGE), and the Worker relays only memory search and device reads, adding that session's CLI and this device. Files are removed a
  * minute after the answer is written.
  */
-export const NATIVE_BRIDGE_PATH='/api/agent/native-memory/search';
+export const NATIVE_BRIDGE_PATH='/api/agent/native-memory/search',NATIVE_DEVICE_PATH='/api/agent/native-device-read';
+const NATIVE_PATHS=new Set([NATIVE_BRIDGE_PATH,NATIVE_DEVICE_PATH]);
 export async function nativeBridgeFolder(root,runtime,sessionId) {
   const directory=join(root,createHash('sha256').update(`${runtime}/${sessionId}`).digest('hex').slice(0,24));
   await mkdir(directory,{recursive:true,mode:0o700});
@@ -167,7 +168,7 @@ export function startNativeBridges({root,home,token,device,canSend=()=>true,acti
         const path=join(directory,file),info=await lstat(path);
         if(!info.isFile()||info.size>65536)throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
         const input=JSON.parse(await readFile(path,'utf8')),session=JSON.parse(await readFile(join(directory,'session.json'),'utf8'));
-        if(input.pathname!==NATIVE_BRIDGE_PATH)throw new Error(tr('agentBridge.operationNotAgentTool'));
+        if(!NATIVE_PATHS.has(input.pathname))throw new Error(tr('agentBridge.operationNotAgentTool'));
         assertAgentSender(input.payload,input.pathname);
         if(!canSend())throw Object.assign(new Error(blockMessage('home_disconnected')),{code:'home_disconnected'});
         response={result:await homeRequest(home,token,input.pathname,{...input.payload,caller:{cli:session.runtime,device}})};

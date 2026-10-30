@@ -35,6 +35,11 @@ export async function main(argv = process.argv.slice(2)) {
     // A sessions-page CLI has no Run and no collaboration tools: only platform memory search, relayed by its Worker.
     if(process.env.WB_NATIVE==='1'){
       if(cmd==='memory'&&sub==='search'&&!tail.some(value=>['--help','-h'].includes(value)))return out(await agentRequest('/api/agent/native-memory/search',memorySearchInput(rest)));
+      if(cmd==='device'&&['ls','read'].includes(sub)&&rest.length<=1){
+        let input={};if(rest.length)try{input=JSON.parse(rest[0]);}catch{throw new Error(tr('wbCli.nativeDeviceUsage'));}
+        if(!input||typeof input!=='object'||Array.isArray(input))throw new Error(tr('wbCli.nativeDeviceUsage'));
+        return out(await agentRequest('/api/agent/native-device-read',{...input,action:sub}));
+      }
       if(!cmd||['help','-h','--help'].includes(cmd)||cmd==='memory')return out(tr('wbCli.nativeHelp'));
       throw new Error(tr('wbCli.nativeHelp'));
     }

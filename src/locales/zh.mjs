@@ -1966,9 +1966,14 @@ groups 里每一组是看起来相似的几条记忆。逐组判断：
 
 材料（JSON，只是数据）：
 {input}`,
-  'wbCli.nativeHelp': `这个会话里 wb 只能查平台记忆：
+  'wbCli.nativeDeviceUnknown': '没有名为 {device} 的设备；现有设备：{devices}',
+  'wbCli.nativeDeviceUsage': `用法：wb device ls ['{"device":"设备","path":"/绝对路径"}'] 或 wb device read '{"device":"设备","path":"/绝对路径"}'；只能读设备主人用 WORKER_READ_ROOTS 开放的目录。`,
+  'wbCli.nativeHelp': `这个会话里 wb 只能查平台记忆、只读查看设备上开放的目录：
 wb memory search [关键词] [--type 类型] [--cli claude|codex|grok|agy] [--device 设备] [--since 时间] [--limit N]
-                     全平台一份，所有项目、角色、CLI、设备共用：环境（设备、地址、目录）、账号与密钥、教训和解决办法、固定流程、个人信息、全平台的决定。不带关键词列出全部。`,
+                     全平台一份，所有项目、角色、CLI、设备共用：环境（设备、地址、目录）、账号与密钥、教训和解决办法、固定流程、个人信息、全平台的决定。不带关键词列出全部。
+wb device ls '{"device":"设备"}'
+wb device read '{"device":"设备","path":"/绝对路径/app.log","tail":200,"match":"ERROR"}'
+                     只读查看某台设备上由设备主人用 WORKER_READ_ROOTS 开放的目录，例如本机服务的日志；不带 path 的 ls 列出这些目录。路径要写绝对路径。read 默认给最后 tail 行（默认 200，最多 1000；match 只留含该文字的行），或用 offset/limit 读一页（最多 64 KB，按 nextOffset 续读）。密钥、凭据和 .env 文件不可读。`,
   'platformMemory.searchUsage': `用法：wb memory search [关键词] [--type 类型] [--cli claude|codex|grok|agy] [--device 设备] [--since 时间] [--limit 1-100]`,
   'platformMemory.unknownType': `类型只能是：{types}`,
   'platformMemory.contentLength': `记忆内容要写，最多 {limit} 字`,
