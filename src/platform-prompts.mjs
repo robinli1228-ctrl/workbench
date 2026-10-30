@@ -102,7 +102,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   '2ba6d1155fe768f3af3697bd85df654be7d379e3df9fdc30837135d3d4c8ad86',
   // Defaults before worktrees stopped syncing: no worktrees of your own, no branch switching in the shared folder.
   '530d9f029e6063a00fe46b1fe6cd24549601a846edc4090efe1881dcdedb6c2c',
-  'df7c8bc92852404aa2f1c5b0cf08d696650d4301d0f9823c13ec651f657cc413'
+  'df7c8bc92852404aa2f1c5b0cf08d696650d4301d0f9823c13ec651f657cc413',
+  // Defaults before the rule against carrying files or bulk data in the chat.
+  'd4dc68ab68a56e878db63df2103ee593080818875043e3e921b3e5b64e4ddcf5',
+  '2af981fb0fbafeb43a1def233f1fd7c98dac904c555ba5cb2559254703712a84'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */
