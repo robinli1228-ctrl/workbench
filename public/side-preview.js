@@ -1,6 +1,6 @@
 import {copyText} from './role-icons.js';
 import {t,dateLocale} from './i18n.js';
-import {renderMarkdown,normalizeDocumentAddress} from './markdown.js';
+import {renderMarkdown,normalizeDocumentAddress,wildcardPath} from './markdown.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {setActionIcon} from './role-icons.js';
 import {resolveToolFile} from './native-transcript.js';
@@ -154,7 +154,7 @@ export function createDocumentPreview({api}){
       // Every match ends in a document extension; text without one (a long base64 part) is skipped without scanning.
       const hits=exact?[{index:0,0:text.textContent}]:/\.(?:md|markdown|txt)/i.test(text.textContent)?[...text.textContent.matchAll(pattern)]:[];if(!hits.length)continue;
       const fragment=document.createDocumentFragment();let cursor=0;
-      for(const hit of hits){if(hit.index>0&&/[\w:/]/.test(text.textContent[hit.index-1]))continue;fragment.append(document.createTextNode(text.textContent.slice(cursor,hit.index)));const link=el('a');attach(link,hit[0],source);fragment.append(link);cursor=hit.index+hit[0].length;}
+      for(const hit of hits){if(hit.index>0&&/[\w:/]/.test(text.textContent[hit.index-1])||wildcardPath(hit[0]))continue;fragment.append(document.createTextNode(text.textContent.slice(cursor,hit.index)));const link=el('a');attach(link,hit[0],source);fragment.append(link);cursor=hit.index+hit[0].length;}
       if(cursor){fragment.append(document.createTextNode(text.textContent.slice(cursor)));(exact?text.parentElement:text).replaceWith(fragment);}
     }
     return root;
