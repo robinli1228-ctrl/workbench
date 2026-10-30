@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { nativeSessionId } from './terminal-resume.mjs';
 import { tr } from './i18n.mjs';
@@ -77,7 +78,8 @@ export class CliPrintSession {
     }
     if (this.runtime === 'claude') {
       // Claude 2.x: -p + stream-json requires --verbose, otherwise it exits with code 1 immediately.
-      const args = ['-p', ...(this.keepAlive?['--input-format','stream-json','--include-partial-messages']:[prompt]), '--model', this.model, '--output-format', 'stream-json', '--verbose', '--append-system-prompt', rules];
+      // A resident process echoes each stdin message when it starts on it (--replay-user-messages); see receive().
+      const args = ['-p', ...(this.keepAlive?['--input-format','stream-json','--include-partial-messages','--replay-user-messages']:[prompt]), '--model', this.model, '--output-format', 'stream-json', '--verbose', '--append-system-prompt', rules];
       // After a resume, the role rules most recently saved by the supervisor must still be used, not the prompt snapshot frozen at the first turn.
       args.push('--system-prompt-snapshot','off');
       if(this.resumeSessionId)args.push('--resume',this.resumeSessionId);
@@ -143,7 +145,11 @@ export class CliPrintSession {
     const message=this.runtime==='agy' ? {event:'user',message:{role:'user',content}}
       : {type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
     this.inputAttempted=true;
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error)this.emit('status',{inputDeliveryState:'accepted'});});
+    // A resident Claude takes this input only when it echoes its uuid; until then what it says answers something it queued
+    // first (after a restart, the notice of a background command the old process left), so delivery is confirmed on the echo.
+    const echo=this.keepAlive&&this.runtime==='claude';
+    if(echo){message.uuid=this.echoUuid=randomUUID();this.echoSession=message.session_id;}
+    this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error&&!echo)this.emit('status',{inputDeliveryState:'accepted'});});
   }
   receiveLine(line) {
     if (!line.trim()) return;
@@ -156,6 +162,14 @@ export class CliPrintSession {
       const sample=normalizeRuntimeQuota('claude',raw);if(sample)this.emit('quota',sample);
       return;
     }
+    // Until this turn's echo, a resident Claude is answering something it queued first: that output and its result are not
+    // this turn's, so they neither show in it nor end it (otherwise a reply to an old notice ends the turn as "no text" and the
+    // real answer that follows is lost). Replays of other messages are never output.
+    if(this.keepAlive&&this.runtime==='claude'&&raw?.type==='user'&&raw.isReplay){
+      if(this.echoUuid&&raw.uuid===this.echoUuid&&!raw.parent_tool_use_id&&(!this.echoSession||raw.session_id===this.echoSession)){this.echoUuid=null;this.emit('status',{inputDeliveryState:'accepted'});}
+      return;
+    }
+    if(this.echoUuid&&raw?.type!=='system')return;
     if(this.done||this.stopping)return;
     if (!raw || typeof raw !== 'object') return;
     const sessionId = nativeSessionId(raw, this.runtime);

@@ -85,3 +85,24 @@ test('a summary turn that starts within the grace period is waited for, not cut 
 test('idle warm processes are kept for 15 minutes by default', () => {
   assert.equal(new WarmSessions().idleMs, 15 * 60 * 1000);
 });
+
+test('a resident turn counts only output after its own echo: a reply to a notice queued first does not end it', () => {
+  const { session, events, statuses, finals } = residentSession();
+  const written = [];
+  session.proc = { stdin: { write: (line, done) => { written.push(JSON.parse(line)); done?.(); } } };
+  session.sendTurn('the user question');
+  const sent = written.at(-1), accepted = () => events.filter(e => e.type === 'status' && e.inputDeliveryState === 'accepted').length;
+  assert.ok(sent.uuid, 'the input carries its own uuid');
+  assert.equal(accepted(), 0, 'delivery is confirmed by the echo, not the write');
+  // After a restart Claude first answers the notice of a background command the old process left.
+  for (const m of [init, { type: 'user', isReplay: true, uuid: 'notice-1', session_id: SID, parent_tool_use_id: null, message: { role: 'user', content: '<task-notification>…' } },
+    reply('No response requested.'), result('No response requested.')]) session.receive(m);
+  assert.equal(session.done, false, 'the notice turn does not end this one');
+  assert.deepEqual(statuses(), []);
+  for (const m of [{ type: 'user', isReplay: true, uuid: sent.uuid, session_id: SID, parent_tool_use_id: null, message: { role: 'user', content: 'the user question' } },
+    reply('the real answer'), result('the real answer')]) session.receive(m);
+  assert.equal(accepted(), 1);
+  assert.equal(session.done, true);
+  assert.deepEqual(statuses(), ['succeeded']);
+  assert.deepEqual(finals(), ['the real answer']);
+});
