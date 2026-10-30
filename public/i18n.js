@@ -97,9 +97,15 @@ function englishOf(value) {
   }
   return value;
 }
+// The same labels, titles and tooltips come back on every redraw; their display form is remembered per language.
+const desiredMemo = new Map();
 function desired(base) {
   // Normalize display prose only; identifiers/raw views and editable values remain outside this walker.
-  return simplifiedCliOutput(language === 'zh' ? translateValue(base) : base);
+  const key = `${language}\u0000${base}`, known = desiredMemo.get(key);
+  if (known !== undefined) return known;
+  const value = simplifiedCliOutput(language === 'zh' ? translateValue(base) : base);
+  if (base.length <= 2000) { if (desiredMemo.size >= 5000) desiredMemo.clear(); desiredMemo.set(key, value); }
+  return value;
 }
 
 const textState = new WeakMap(); // Text -> { en, shown }
