@@ -1,17 +1,18 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {mkdir,stat,rename,unlink,readdir,utimes,readFile,writeFile} from 'node:fs/promises';
+import {mkdir,stat,rename,unlink,readdir,utimes,readFile,writeFile,copyFile} from 'node:fs/promises';
 import {createReadStream,createWriteStream} from 'node:fs';
 import {join,resolve} from 'node:path';
 
 /**
  * Home's copy of media bytes that came from a device. Media tickets pin one file version (size, mtime, inode, device),
- * so a copy is keyed by that version and never goes stale: a changed file is a new key. A copy is written only when every
- * byte of the file arrived, read with plain byte ranges, and dropped after 10 days without use or when the cache passes
+ * so a copy is keyed by that version: a changed file is a new key. Verified continuous prefixes retain requested bytes
+ * across ranges and interrupted downloads. Complete copies and prefixes are dropped after 10 days without use or when the cache passes
  * its size limit (least recently used first). With a copy, the bytes never cross the device link again, and the file
  * still opens while that device is offline.
  */
 export const MEDIA_CACHE_DEFAULTS=Object.freeze({limitBytes:2*1024**3,maxFileBytes:256*1024**2,maxAgeMs:10*86400000});
 const KEY=/^[a-f0-9]{64}$/,PART=/^[a-f0-9]{64}\.[a-f0-9-]{36}\.part$/,TOUCH_MS=3600000;
+const PREFIX=/^[a-f0-9]{64}\.prefix$/;
 const META=/^[a-f0-9]{64}\.meta$/;
 
 export class MediaCache {
@@ -79,12 +80,55 @@ export class MediaCache {
       }
     };
   }
+  /** Only a verified continuous prefix is reusable; holes and unverified temporary writes are never exposed. */
+  async prefix(t) {
+    if(!this.cacheable(t))return null;
+    const path=join(this.dir,`${this.key(t)}.prefix`);
+    try{const info=await stat(path);if(!info.isFile()||info.size<=0||info.size>=t.s)return null;this.touch(path);return {path,size:info.size};}catch{return null;}
+  }
+  /** Append to a private copy, publishing atomically only after the source version has been checked again. */
+  async append(t,start) {
+    if(!this.cacheable(t))return null;
+    const key=this.key(t);if(this.writing.has(key))return null;
+    this.writing.add(key);
+    const tmp=join(this.dir,`${key}.${randomUUID()}.part`),prefixPath=join(this.dir,`${key}.prefix`);
+    let stream;
+    try {
+      if(!await this.prepare())throw new Error('cache unavailable');
+      const prefix=await this.prefix(t);
+      if(start!==(prefix?.size||0)||await this.lookup(t))throw new Error('prefix changed');
+      if(start)await copyFile(prefix.path,tmp);
+      stream=createWriteStream(tmp,{flags:start?'a':'wx',mode:0o600});
+    } catch {await unlink(tmp).catch(()=>{});this.writing.delete(key);return null;}
+    let count=start,failed=false,done=false;stream.on('error',()=>{failed=true;});
+    return {
+      partial:true,
+      // Await disk writes in the relay: a slow cache must not create an unbounded memory queue.
+      write:chunk=>new Promise(resolveWrite=>{
+        if(failed||done)return resolveWrite();
+        if(count+chunk.length>t.s){failed=true;return resolveWrite();}
+        stream.write(chunk,error=>{if(error)failed=true;else count+=chunk.length;resolveWrite();});
+      }),
+      finish:async ok=>{
+        if(done)return false;done=true;
+        try {
+          if(!stream.closed)await new Promise(resolveClose=>{stream.once('close',resolveClose);stream.end();});
+          if(ok&&!failed&&count>start){
+            await rename(tmp,count===t.s?join(this.dir,key):prefixPath);
+            if(count===t.s){await unlink(prefixPath).catch(()=>{});await this.remember(t);}
+            this.scheduleTrim();return true;
+          }
+        } catch {} finally {this.writing.delete(key);}
+        await unlink(tmp).catch(()=>{});return false;
+      }
+    };
+  }
   scheduleTrim() {if(this.trimming)return;this.trimming=setTimeout(()=>{this.trimming=null;void this.sweep().catch(()=>{});},5000);this.trimming.unref?.();}
   async list() {
     await this.ready;const out=[];
     for(const name of await readdir(this.dir).catch(()=>[])){
-      if(!KEY.test(name)&&!PART.test(name))continue;
-      try{const info=await stat(join(this.dir,name));if(info.isFile())out.push({name,size:info.size,at:info.mtimeMs,part:PART.test(name)});}catch{}
+      if(!KEY.test(name)&&!PART.test(name)&&!PREFIX.test(name))continue;
+      try{const info=await stat(join(this.dir,name));if(info.isFile())out.push({name,size:info.size,at:info.mtimeMs,part:PART.test(name),prefix:PREFIX.test(name)});}catch{}
     }
     return out;
   }
@@ -92,10 +136,10 @@ export class MediaCache {
   /** Drop copies unused for 10 days, then the least recently used until under the limit; stale partial writes go too. */
   async sweep() {
     const now=this.clock(),files=await this.list();let deleted=0,freed=0;
-    const drop=async f=>{try{await unlink(join(this.dir,f.name));deleted++;freed+=f.size;this.touched.delete(join(this.dir,f.name));return true;}catch{return false;}};
-    for(const f of files.filter(f=>f.part&&now-f.at>86400000))await drop(f);
+    const drop=async f=>{if(this.writing.has(f.name.slice(0,64)))return false;try{await unlink(join(this.dir,f.name));deleted++;freed+=f.size;this.touched.delete(join(this.dir,f.name));return true;}catch{return false;}};
+    for(const f of files.filter(f=>f.part&&now-f.at>86400000&&!this.writing.has(f.name.slice(0,64))))await drop(f);
     const kept=[];
-    for(const f of files.filter(f=>!f.part)){if(now-f.at>=this.maxAgeMs)await drop(f);else kept.push(f);}
+    for(const f of files.filter(f=>!f.part)){if(now-f.at>=this.maxAgeMs&&await drop(f))continue;kept.push(f);}
     let total=kept.reduce((a,f)=>a+f.size,0);
     for(const f of kept.sort((a,b)=>a.at-b.at)){if(total<=this.limitBytes)break;if(await drop(f))total-=f.size;}
     // Sidecars follow their complete version; only maintenance scans them, never a normal description request.

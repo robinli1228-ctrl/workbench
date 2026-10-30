@@ -1,5 +1,6 @@
-import {randomUUID,randomBytes,createHmac,timingSafeEqual} from 'node:crypto';
+import {randomUUID,randomBytes,createHmac,timingSafeEqual,createHash} from 'node:crypto';
 import {pipeline} from 'node:stream/promises';
+import {Transform} from 'node:stream';
 import {resolve,relative,isAbsolute,basename} from 'node:path';
 import {folderAccessFor,nativeFolderAccess} from './folder-access.mjs';
 
@@ -143,11 +144,14 @@ export class MediaStreams {
     // A removed device's files are not served from the copy either.
     const known=Boolean(this.db.get('workers',t.n))&&!this.db.get('removedDevices',t.n);
     const cached=this.cache&&known?await this.cache.lookup(t):null;
-    if(cached&&!this.canReadCached(t))return respond(res,403,{error:'invalid_media_path',code:'invalid_media_path'});
+    const prefix=!cached&&this.cache&&known?await this.cache.prefix(t):null;
+    if((cached||prefix)&&!this.canReadCached(t))return respond(res,403,{error:'invalid_media_path',code:'invalid_media_path'});
     if(!this.db.get('workers',t.n)||this.db.get('removedDevices',t.n))return respond(res,503,{error:'source_offline',code:'source_offline'});
-    const reason=cached?null:this.usable(t.n);if(reason)return respond(res,STATUS[reason],{error:reason,code:reason});
     const size=t.s;let start=0,end=size-1,partial=false;
-    const range=req.headers.range;
+    const etag=`"${createHash('sha256').update(JSON.stringify([t.n,t.r,t.p,t.s,t.m,t.i,t.d])).digest('hex')}"`;
+    const modified=new Date(t.m).toUTCString(),ifRange=req.headers['if-range'];
+    // Only the exact strong ETag permits a resumed range. Filesystem dates have second precision and are not strong.
+    const range=!ifRange||ifRange===etag?req.headers.range:null;
     if(range&&size>0){
       const m=/^bytes=(\d*)-(\d*)$/.exec(String(range).trim());
       if(!m||!m[1]&&!m[2])return respond(res,416,{error:'Invalid range'},{'Content-Range':`bytes */${size}`});
@@ -156,20 +160,23 @@ export class MediaStreams {
       if(!download&&!m[2])end=Math.min(end,start+PREVIEW_CHUNK-1);
       partial=true;
     }
+    const covered=cached||(prefix&&end<prefix.size?prefix.path:null);
+    const reason=covered?null:this.usable(t.n);if(reason)return respond(res,STATUS[reason],{error:reason,code:reason});
     const inline=!download&&PLAYABLE.has(t.k),filename=encodeURIComponent(t.nm||'file');
-    const headers={'Content-Type':inline?t.t:'application/octet-stream','Accept-Ranges':'bytes','Cache-Control':MEDIA_CACHE_CONTROL,'X-Content-Type-Options':'nosniff',
+    const headers={'ETag':etag,'Last-Modified':modified,'Content-Type':inline?t.t:'application/octet-stream','Accept-Ranges':'bytes','Cache-Control':MEDIA_CACHE_CONTROL,'X-Content-Type-Options':'nosniff',
       // Browsers will not render a PDF inside a sandboxed document; every other response is sandboxed in case it is opened directly.
       ...(inline&&t.k==='pdf'?{}:{'Content-Security-Policy':"sandbox; default-src 'none'"}),'Content-Disposition':`${inline?'inline':'attachment'}; filename*=UTF-8''${filename}`,'Content-Length':String(size?end-start+1:0),
       ...(partial?{'Content-Range':`bytes ${start}-${end}/${size}`}:{})};
     const status=partial?206:200;
     if(req.method==='HEAD'||size===0){res.writeHead(status,headers);return res.end();}
-    if(cached){res.writeHead(status,headers);return pipeline(this.cache.read(cached,start,end),res).catch(()=>res.destroy());}
+    if(covered){res.writeHead(status,headers);return pipeline(this.cache.read(covered,start,end),res).catch(()=>res.destroy());}
     const tracked=this.progress.has(token)?{onBytes:count=>this.trackProgress(token,count)}:{};
-    // A whole-file read (pictures, downloads, sends, a short video's first chunk) is copied as it passes. Range reads are
-    // not turned into background downloads: a video thumbnail's first range would otherwise pull the whole file over the
-    // device link and hold one of its few relay slots.
-    const writer=this.cache&&start===0&&end===size-1?await this.cache.writer(t):null;
-    return this.relay(t,start,end,res,status,headers,{...tracked,writer});
+    // Retain only bytes the caller actually requests, never turn a thumbnail into a background whole-file download.
+    // A later read starts with the verified prefix and relays only its missing suffix in the same HTTP response.
+    const saved=prefix&&start<prefix.size?{...prefix,start}:null,remoteStart=saved?prefix.size:start;
+    const writer=this.cache?await this.cache.append(t,remoteStart):null;
+    if(res.destroyed){if(writer)await writer.finish(false);return;}
+    return this.relay(t,remoteStart,end,res,status,headers,{...tracked,writer,prefix:saved});
   }
 
   /** Whether the device still holds exactly this version; a copy is kept only then (a file rewritten mid-read is not). */
@@ -178,15 +185,16 @@ export class MediaStreams {
     catch{return false;}
   }
 
-  async relay(t,start,end,res,status,headers,{onBytes,writer=null}={}) {
+  async relay(t,start,end,res,status,headers,{onBytes,writer=null,prefix=null}={}) {
     let release;
     try{release=await this.slot(t.n);}catch(error){if(writer)void writer.finish(false);return respond(res,STATUS[error.code]||503,{error:error.code,code:error.code},{'Retry-After':'2'});}
+    if(res.destroyed){release();if(writer)await writer.finish(false);return;}
     const id=randomUUID(),secret=randomBytes(24).toString('hex'),length=end-start+1;
     let settle;const done=new Promise(resolveDone=>{settle=resolveDone;});
-    const entry={id,secret,nodeId:t.n,length,status,headers,res,started:false,closed:false,onBytes,writer,complete:false,settle:()=>{clearTimeout(entry.timer);this.pending.delete(id);release();
+    const entry={id,secret,nodeId:t.n,length,status,headers,res,started:false,closed:false,onBytes,writer,prefix,complete:false,overflow:false,settle:()=>{clearTimeout(entry.timer);this.pending.delete(id);release();
       if(!writer)return settle();
-      // Every byte arrived and the device still has this version: keep the copy; otherwise discard it.
-      void (entry.complete?this.unchanged(t):Promise.resolve(false)).then(ok=>writer.finish(ok),()=>writer.finish(false)).finally(settle);}};
+      // A bounded interrupted prefix is useful too, but only after the same source-version check as a full copy.
+      void ((entry.started&&(entry.complete||writer.partial&&!entry.overflow))?this.unchanged(t):Promise.resolve(false)).then(ok=>writer.finish(ok),()=>writer.finish(false)).finally(settle);}};
     this.pending.set(id,entry);
     entry.timer=setTimeout(()=>this.fail(id,'media_timeout'),ARRIVAL_MS);
     res.on('close',()=>{entry.closed=true;if(!entry.started)this.fail(id,null);});
@@ -205,15 +213,28 @@ export class MediaStreams {
   async receive(req,res,id) {
     const entry=this.pending.get(id);
     const authorized=entry&&typeof req.headers.authorization==='string'&&equal(Buffer.from(req.headers.authorization),Buffer.from(`Bearer ${entry.secret}`));
-    if(req.method!=='POST'||!authorized||entry.started){req.resume();return respond(res,entry?.started?409:401,{error:'Unknown media stream'});}
+    // Closing the transport also closes the SSH channel; draining a late upload would waste the slow link.
+    if(req.method!=='POST'||!authorized||entry.started){req.destroy();return;}
     entry.started=true;clearTimeout(entry.timer);
     const out=entry.res;
     if(entry.closed||out.destroyed){req.destroy();respond(res,410,{error:'Viewer closed'});entry.settle();return;}
     out.writeHead(entry.status,entry.headers);
     let count=0,idle;
     const touch=()=>{clearTimeout(idle);idle=setTimeout(()=>req.destroy(new Error('media_idle')),IDLE_MS);};touch();
-    req.on('data',chunk=>{count+=chunk.length;touch();entry.onBytes?.(count);entry.writer?.write(chunk);if(count>entry.length)req.destroy(new Error('media_overflow'));});
-    try{await pipeline(req,out);entry.complete=count===entry.length;respond(res,entry.complete?200:400,{received:count});}
+    const meter=new Transform({transform(chunk,encoding,callback){
+      count+=chunk.length;touch();
+      if(count>entry.length){entry.overflow=true;return callback(new Error('media_overflow'));}
+      entry.onBytes?.(count+(entry.prefix?entry.prefix.size-entry.prefix.start:0));
+      Promise.resolve(entry.writer?.write(chunk)).then(()=>callback(null,chunk),callback);
+    }});
+    const cache=this.cache;
+    const prepend=async function*(source){
+      if(entry.prefix)for await(const chunk of cache.read(entry.prefix.path,entry.prefix.start,entry.prefix.size-1)){touch();yield chunk;}
+      yield* source;
+    };
+    try{
+      await pipeline(req,meter,prepend,out);entry.complete=count===entry.length;respond(res,entry.complete?200:400,{received:count});
+    }
     catch{out.destroy();if(!res.headersSent)respond(res,400,{received:count});}
     finally{clearTimeout(idle);entry.settle();}
   }
