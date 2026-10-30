@@ -105,7 +105,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   'df7c8bc92852404aa2f1c5b0cf08d696650d4301d0f9823c13ec651f657cc413',
   // Defaults before the rule against carrying files or bulk data in the chat.
   'd4dc68ab68a56e878db63df2103ee593080818875043e3e921b3e5b64e4ddcf5',
-  '2af981fb0fbafeb43a1def233f1fd7c98dac904c555ba5cb2559254703712a84'
+  '2af981fb0fbafeb43a1def233f1fd7c98dac904c555ba5cb2559254703712a84',
+  // Defaults before roles were told to read other devices' files themselves with wb device.
+  '0600e6f1aa67dafd54c62c3bf4b48ffc11898a7ac644b589c9b62db8e63d8304',
+  'fbc455ad3100ed1885946d7e6f2986d49c1a924e2e89c1a077250406216835c3'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */
