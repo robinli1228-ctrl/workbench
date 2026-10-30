@@ -22,6 +22,11 @@ for (const [lang, heading, next, help] of [['zh', '工作目录：', '找人协�
     const synced = current.slice(0, current.indexOf(heading) + heading.length + 1) + SYNCED_WORKTREES[lang] + current.slice(current.indexOf(next) - 1);
     assert.equal(createHash('sha256').update(synced.trim()).digest('hex'), { zh: '530d9f029e6063a00fe46b1fe6cd24549601a846edc4090efe1881dcdedb6c2c', en: 'df7c8bc92852404aa2f1c5b0cf08d696650d4301d0f9823c13ec651f657cc413' }[lang], 'the rebuilt text is the default that said worktrees sync');
     assert.equal(normalizePlatformSettings({ platformPrompt: synced }).platformPrompt, current, 'a saved copy of the default that said worktrees sync follows the new one');
+    const rule = current.split('\n').find(line => lang === 'zh' ? line.startsWith('- 不要用聊天、wb note') : line.startsWith('- Never carry files, logs or bulk data'));
+    assert.ok(rule, 'files and bulk data never travel in the chat');
+    const beforeRule = current.replace(`${rule}\n`, '');
+    assert.equal(createHash('sha256').update(beforeRule.trim()).digest('hex'), { zh: 'd4dc68ab68a56e878db63df2103ee593080818875043e3e921b3e5b64e4ddcf5', en: '2af981fb0fbafeb43a1def233f1fd7c98dac904c555ba5cb2559254703712a84' }[lang], 'the text without the rule is the previous default');
+    assert.equal(normalizePlatformSettings({ platformPrompt: beforeRule }).platformPrompt, current, 'a saved copy of the previous default follows the new one');
     assert.equal(normalizePlatformSettings({ platformPrompt: 'my own words' }).platformPrompt, 'my own words');
     assert.match(tr('wbTools.helpSync'), help);
   }));
