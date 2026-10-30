@@ -57,6 +57,7 @@ import { collectCcusageReport } from './token-usage.mjs';
 import { scopedTerminalArgs, nativeEnvironment, findSessionHistory, projectTerminalLock, nativeTerminalProject, managedRunProcessState, releaseTerminalSession, checkTerminalSession, stopTerminalSession, resumeEnvironment, freshTerminalArgs } from './terminal-resume.mjs';
 import { receiveAttachments } from './attachments.mjs';
 import {statMedia,streamMedia,hashMedia,receiveMedia} from './media-files.mjs';
+import {MediaPace} from './media-pace.mjs';
 import {inspectWorkspaceGit} from './workspace-git.mjs';
 import { inspectExecutionRepositories, prepareExecutionWorkspace, executionConflict, verifyExecutionVersions,resolveExecutionRepositories,inspectExecutionInput,assertExecutionInputVersions,executionInputBaselines } from './execution-workspace.mjs';
 import { createRunInput, instructionDelivery,executionInstructionComponents,executionEnvironmentHint } from './run-input.mjs';
@@ -91,6 +92,14 @@ const turnStates = new TurnStates({ nodeId: identity.nodeId }), queueSlots = new
 const roots = await Promise.all((process.env.WORKER_ROOTS || base).split(delimiter).map(p => realpath(p)));
 // Extra folders the device owner lets roles on other devices read (wb device), e.g. logs kept outside the project.
 const readRoots = await readRootsFrom(process.env.WORKER_READ_ROOTS, delimiter);
+// Media uploads in progress, by relay ID, so Home can stop one it no longer waits for; all of them share one paced budget.
+const mediaUploads=new Map(),mediaPace=new MediaPace();
+/** Uploads end when a viewer closes or seeks (Home then drops the request): only other failures are worth a log line. */
+function logMediaFailure(error){
+  const cause=error?.cause,detail=[error?.code,error?.message,cause?.code,cause?.message].filter(Boolean).join(' · ');
+  if(error?.name==='AbortError'||/HTTP 4\d\d|other side closed|ECONNRESET|EPIPE|terminated/i.test(detail))return;
+  console.error('Media stream failed:',detail);
+}
 const folderAccess=new FolderAccess({db,roots,nodeId:identity.nodeId,local:resolveNodeKind(process.env.NODE_KIND,platform())==='local'});
 let defaultRoot = db.get('settings','workspace')?.localRoot || process.env.WORKSPACE_ROOT || roots[0];
 const homeUrl = process.env.HOME_URL || 'ws://127.0.0.1:4317/worker';
@@ -836,6 +845,9 @@ async function query(m,emit=send) {
       send({type:'reply',id:m.id,result:{files}});return;
     }
     // Large files stay where they are: stat, hash and ranged reads are served from allowed roots; bytes go over HTTP.
+    // Home stops an upload it gave up on (viewer closed, no arrival in time) and passes on what its link carries.
+    if(m.action==='media_stream_cancel'){const upload=mediaUploads.get(m.path?.id);upload?.abort();send({type:'reply',id:m.id,result:{stopped:true,known:Boolean(upload)}});return;}
+    if(m.action==='media_rate'){mediaPace.set(m.path?.rate);send({type:'reply',id:m.id,result:{rate:mediaPace.rate}});return;}
     if(['media_stat','media_stream','media_hash','media_receive'].includes(m.action)) {
       const input=m.path||{},homeHttp=homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,'');
       if(m.action==='media_receive'){
@@ -851,11 +863,12 @@ async function query(m,emit=send) {
       const info=await statMedia({root,path:input.file}),expected=input.version||{};
       if(info.size!==expected.size||info.mtimeMs!==expected.mtimeMs||info.ino!==expected.ino||info.dev!==expected.dev)throw new Error('file_changed');
       // Acknowledge first, then upload this range on its own request; a later failure simply ends that request.
+      // Only a Home that measures the link sends a rate; an older one gets the upload unpaced, as before.
+      if(input.rate)mediaPace.set(input.rate);
+      const upload=new AbortController();mediaUploads.set(input.id,upload);
       send({type:'reply',id:m.id,result:{accepted:true}});
-      void streamMedia({root,path:input.file,version:expected,start:input.start,end:input.end,url:homeHttp+input.path,secret:input.secret}).catch(error=>{
-        // Players cancel ranges while seeking and Home closes relays for closed viewers; only unexpected failures are logged.
-        if(!/HTTP 4\d\d|abort|ECONNRESET|socket|terminated|fetch failed/i.test(error.message))console.error('Media stream failed:',error.message);
-      });
+      void streamMedia({root,path:input.file,version:expected,start:input.start,end:input.end,url:homeHttp+input.path,secret:input.secret,signal:upload.signal,pace:input.rate?mediaPace:null})
+        .catch(error=>{if(!upload.signal.aborted)logMediaFailure(error);}).finally(()=>{if(mediaUploads.get(input.id)===upload)mediaUploads.delete(input.id);});
       return;
     }
     // Session sidebar facts: offline Git state of an allowed working folder, and the name of a Workbench-created session.
@@ -1227,7 +1240,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { deviceRead:2,concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,memoryOrganizer:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { deviceRead:2,concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,memoryOrganizer:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,mediaPace:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
