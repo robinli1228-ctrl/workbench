@@ -2,7 +2,7 @@ import {checkInventorySize,splitSourceItems} from './source-sync-batching.mjs';
 import {SourceSyncAudit} from './source-sync-audit.mjs';
 import {SourceSyncMetadata} from './source-sync-metadata-home.mjs';
 import {randomBytes} from 'node:crypto';
-import {SOURCE_SYNC_CAPTURE_POLICY,SOURCE_SYNC_LIMITS,validateSourceCapture,contentHash,manifestDigest,compareEntry,entryEqual,linkSourceMoves,syncError} from './source-sync-manifest.mjs';
+import {SOURCE_SYNC_CAPTURE_POLICY,SOURCE_SYNC_LIMITS,validateSourceCapture,contentHash,manifestDigest,compareEntry,entryEqual,linkSourceMoves,syncError,excludedSourcePath} from './source-sync-manifest.mjs';
 
 import {buildSourceBindings,sourceScopeBinding} from './source-sync-scopes.mjs';
 
@@ -15,6 +15,30 @@ export class SourceSync {
   constructor({db,online=()=>false,change=()=>{},now=Date.now}){Object.assign(this,{db,online,change});this.metadata=new SourceSyncMetadata(this);this.audit=new SourceSyncAudit({db,now});}
   supportsBatching(nodeIds){return nodeIds.length>0&&nodeIds.every(id=>this.db.get('workers',id)?.capabilities?.sourceSyncBatching===1);}
   config(projectId){return this.db.get('sourceSyncConfigs',projectId)||{id:projectId,projectId,enabled:false,revision:0,generation:0};}
+  /** Paths that became mandatory exclusions after they were synchronized (role worktrees under .worktrees, October 2026) leave
+   * the stored canonical, per-device and metadata records at startup. Left in place, every later batch would fence on
+   * source_scope_changed, a stored digest that no longer validates would wedge the batch, and an open conflict on such a path
+   * would throw on every assignment tick. Deletions are never sent. */
+  dropExcludedEntries(){
+    const policies=new Map(),policy=(projectId,repositoryId)=>policies.get(`${projectId}:${repositoryId}`)||{};
+    const strip=(record,scopePolicy)=>{const entries={},origins={};let dropped=0;
+      for(const [path,entry] of Object.entries(record.entries||{})){if(excludedSourcePath(path,scopePolicy)){dropped++;continue;}entries[path]=entry;if(record.origins&&Object.hasOwn(record.origins,path))origins[path]=record.origins[path];}
+      return dropped?{...record,entries,...(record.origins?{origins}:{})}:null;};
+    let changed=0;
+    this.db.transaction(()=>{
+      for(const manifest of this.db.list('sourceSyncManifests')){policies.set(manifest.id,manifest.scopePolicy||{});const next=strip(manifest,manifest.scopePolicy||{});if(!next)continue;
+        const digest=manifestDigest(next.entries,next.scopePolicy),updated={...next,digest,revision:next.revision+Number(digest!==next.digest)};
+        this.db.put('sourceSyncManifests',updated);this.db.put('sourceSyncVersions',{...updated,id:identity(updated.projectId,updated.repositoryId,updated.generation,updated.revision,updated.digest)});changed++;}
+      for(const ack of this.db.list('sourceSyncDevices')){const next=strip(ack,policy(ack.projectId,ack.repositoryId));if(next){this.db.put('sourceSyncDevices',next);changed++;}}
+      for(const baseline of this.db.list('sourceSyncMetadataBaselines'))if(excludedSourcePath(baseline.path,policy(baseline.projectId,baseline.repositoryId))){this.db.remove('sourceSyncMetadataBaselines',baseline.id);changed++;}
+      // Same cancellation as disabling sync: the conflict and its repair tasks that have not started.
+      const conflicts=this.db.list('sourceSyncConflicts').filter(c=>!['resolved','cancelled'].includes(c.status)&&excludedSourcePath(c.path,policy(c.projectId,c.repositoryId)));
+      if(conflicts.length){const tasks=this.db.list('tasks');
+        for(const conflict of conflicts){this.db.put('sourceSyncConflicts',{...conflict,status:'cancelled'});changed++;
+          for(const task of tasks.filter(t=>t.projectId===conflict.projectId&&[t.sourceConflictId,t.sourceConflictPeerId,t.sourceConflictAssignmentRequestId].includes(conflict.id)&&!t.currentRunId))this.db.put('tasks',{...task,status:'cancelled'});}}
+    });
+    return changed;
+  }
   /** A source is a workspace endpoint, not just a device; isolated outputs remain distinct from registered receivers. */
   side(projectId,repositoryId,nodeId,entry,origin={},unknown=false){
     const command=origin.commandId?this.db.get('sourceSyncCommands',origin.commandId)||origin:origin;
