@@ -186,7 +186,8 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     }});
   const view={hasTask:id=>displayedTaskIds.has(id),update(data,projectId){
     lastData=data;if(order.active())return;
-    if(currentProject!==projectId){panel.open=false;currentProject=projectId;optimistic=null;}
+    // Open on each project, as the Sessions queue: queued messages and waits are shown only here. A fold stays for this project.
+    if(currentProject!==projectId){panel.open=true;currentProject=projectId;optimistic=null;}
     const rank=new Map((optimistic||[]).map((id,index)=>[id,index]));
     const runs=new Map((data.runs||[]).map(run=>[run.id,run]));
     let tasks=(data.tasks||[]).filter(task=>{
