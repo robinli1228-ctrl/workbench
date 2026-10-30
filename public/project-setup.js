@@ -72,6 +72,7 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
   form.elements.name.addEventListener('change',()=>{if(!form.elements.folderName.value)form.elements.folderName.value=form.elements.name.value.toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64)||`project-${Date.now().toString(36)}`;});
   function render() {
     const data = getData(), p = getProject();
+    const workerName = id => (data.workers || []).find(w => w.id === id)?.name || id;
     choices();
     const proposals = (data.setupProposals || []).filter(r => r.projectId === p?.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const pendingCount = proposals.filter(proposal => proposal.status === 'pending').length;
