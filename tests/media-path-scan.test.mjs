@@ -61,3 +61,12 @@ test('a wildcard is never a document to open', async () => {
   for (const path of ['docs/*.md', 'notes/day-?.txt', '.workbench/docs/{a,b}.md', 'file:///srv/x/*.md']) assert.equal(normalizeDocumentAddress(path), null, path);
   assert.equal(normalizeDocumentAddress('docs/report.md'), 'docs/report.md');
 });
+
+test('wildcard paths and snake_case stay literal; ordinary bold and italic still render', async () => {
+  const { emphasisAt } = await import('../public/markdown.js');
+  const at = text => emphasisAt(text, text.search(/[*_]/));
+  for (const text of ['after-*.png 和 docs/*.md', 'src/*/a.js 和 lib/*/b.js', '*see docs/*.md', 'snake_case_name', '__init__.py']) assert.equal(at(text), null, text);
+  for (const [text, tag, inner] of [['**粗体**。', 'strong', '粗体'], ['这是**重点**内容', 'strong', '重点'], ['**API**.', 'strong', 'API'], ['**Done.** next', 'strong', 'Done.'],
+    ['*斜体*', 'em', '斜体'], ['_斜体_。', 'em', '斜体'], ['x *note* y', 'em', 'note'], ['**docs/*.md**', 'strong', 'docs/*.md'], ['word**bold**', 'strong', 'bold']])
+    assert.deepEqual([at(text)?.tag, at(text)?.inner], [tag, inner], text);
+});
