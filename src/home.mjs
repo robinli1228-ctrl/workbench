@@ -681,6 +681,8 @@ const server = http.createServer(async (req, res) => {
     // Media bytes: the Worker uploads with a per-relay secret, the browser reads with a signed ticket; neither uses the API token.
     const mediaUpload=pathname.match(/^\/api\/worker\/media-streams\/([a-f0-9-]{36})$/);
     if(mediaUpload)return mediaStreams.receive(req,res,mediaUpload[1]);
+    const mediaStatus=pathname.match(/^\/media\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\/status$/);
+    if(mediaStatus&&req.method==='GET')return mediaStreams.status(req,res,mediaStatus[1]);
     const mediaRead=pathname.match(/^\/media\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/);
     if(mediaRead)return mediaStreams.serve(req,res,mediaRead[1],{download:url.searchParams.get('download')==='1'});
       if (pathname === '/healthz') return json(res, { ok: true, version: '0.4.0', toolProtocol:2, build: await staticFingerprint(pageFileMap()) });
