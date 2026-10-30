@@ -1104,6 +1104,23 @@ const server = http.createServer(async (req, res) => {
           if(Object.keys(b).some(k=>!['runId','query','type','cli','device','since','limit'].includes(k)))throw new Error(tr('platformMemory.searchUsage'));
           return json(res,platformMemory.search(b,{projectId:run.projectId,runtime:run.roleSnapshot?.runtime||null,nodeId:run.nodeId||null}));
         }
+        if (pathname === '/api/agent/device-read') {
+          // Read-only look at a project device's files (wb device ls/read): its bound project folder and the folders its owner
+          // opened with WORKER_READ_ROOTS. The Worker re-checks the folder and every path; Home only picks the device.
+          if(Object.keys(b).some(k=>!['runId','action','device','path','tail','offset','limit','match'].includes(k))||!['ls','read'].includes(b.action)||typeof b.device!=='string'||!b.device.trim())throw new Error(tr('wbCli.deviceUsage'));
+          // An independent reviewer reads only what review isolation lets it see; raw folders could hold peers' private handoffs.
+          if(reviewView(db,{projectId:run.projectId,roleId:run.roleId}).reviewGuarded)throw new Error(tr('wbCli.deviceReviewGuarded'));
+          const name=b.device.trim(),devices=db.list('workers').filter(w=>db.get('workspaces',`${run.projectId}:${w.id}`)?.localRoot);
+          const named=devices.find(w=>w.id===name)?[devices.find(w=>w.id===name)]:devices.filter(w=>w.name===name),worker=named[0];
+          if(named.length>1)throw new Error(tr('wbCli.deviceAmbiguous',{device:name,ids:named.map(w=>w.id).join(', ')}));
+          if(!worker)throw new Error(tr('wbCli.deviceUnknown',{device:name,devices:devices.map(w=>w.name||w.id).join(', ')||'-'}));
+          if(!online(worker.id))throw new Error(tr('wbCli.deviceOffline',{device:worker.name||worker.id}));
+          if(worker.capabilities?.deviceRead!==1)throw new Error(tr('wbCli.deviceUpgrade',{device:worker.name||worker.id}));
+          const {runId,action,device,...input}=b;
+          // The project id carries the folder grant of a project bound by folder selection; 15 s stays inside the CLI bridge's wait.
+          const result=await workerQuery({nodeId:worker.id,projectId:run.projectId},'device_read',{root:db.get('workspaces',`${run.projectId}:${worker.id}`).localRoot,list:action==='ls',...input},15000);
+          return json(res,{device:worker.name||worker.id,...result});
+        }
         if (pathname === '/api/agent/conversation/summary') return json(res,new SessionTools(readView).chatSummary(run,b));
         if (pathname === '/api/agent/setup/catalog' && run.roleSnapshot?.platformAssistant) return json(res, assistant.catalog(run));
         if (pathname === '/api/agent/timers') {

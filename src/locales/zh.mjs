@@ -1268,7 +1268,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'runReports.businessVerdictRecordedEndTurn': '报告已保存。此回执已确认登记，无需再次提交或查询尚在运行的本轮是否已结束。若本次分工已完成，请给出最终回复并结束本轮，Home 随后记录运行结束；仍有未完成事项请如实说明。',
   // src/runtime-guidance.mjs
   'runtimeGuidance.whenGrokCallsWbUse': 'Grok 调用 wb 使用一条独立命令，不与其他 shell 命令拼接。',
-  'runtimeGuidance.collaborationToolsConfiguredCurrentSession': `协作工具已配置，用法见 wb help。当前会话 wb session current；最近群聊记录 wb history；搜索 wb history 关键词；消息或执行、调用结果原文 wb history read 编号；群聊整理 wb history summary；跨项目的平台记忆（环境、账号与密钥、教训、固定流程）wb memory search 关键词。长文按 nextOffset 与 version 继续读取，不假装已读全文。
+  'runtimeGuidance.collaborationToolsConfiguredCurrentSession': `协作工具已配置，用法见 wb help。当前会话 wb session current；最近群聊记录 wb history；搜索 wb history 关键词；消息或执行、调用结果原文 wb history read 编号；群聊整理 wb history summary；跨项目的平台记忆（环境、账号与密钥、教训、固定流程）wb memory search 关键词；其他项目设备上的文件和日志（只读）wb device ls / wb device read。长文按 nextOffset 与 version 继续读取，不假装已读全文。
 项目规则和决策见项目根目录的 AGENTS.md（各 CLI 原生加载）。不要通读所有历史，仅传短摘要和来源编号。
 咨询 wb call --role 角色 --kind consult --request-id 固定编号 --text 说明；同项目跨设备也直接投递。每次问一个明确问题，附必要背景、文件版本和期望答案；同一问题重试沿用编号。同一问题发给多名角色时，一次 wb call 重复 --role。确需等待答案时，wb wait 简短续接说明并结束本轮。不要轮询、sleep 或发送保活消息。
 收到咨询直接给结论和必要依据，不默认修改文件，不反向 call 提问者来交答案。解决后结束，不发送收到/谢谢式往返。群聊正文 @ 不触发派单。
@@ -1579,6 +1579,9 @@ wb history summary   当前群聊的摘要
 wb memory search [关键词] [--type 类型] [--cli claude|codex|grok|agy] [--device 设备] [--since 时间] [--limit N]
                      查平台记忆：全平台一份，所有项目、角色、CLI、设备共用，后台整理模型每天从各群聊里整理。记的是跨项目有用的事：环境（设备、地址、目录）、账号与密钥、教训和解决办法、固定流程、个人信息、全平台的决定等；不带关键词列出全部。本项目自己的决定和进度用 wb history search 查。
                      涉及环境、账号或以前踩过的坑时先查一下。想让平台记住的事，在回复或 wb note 里用“记住：”开头写出来。
+wb device ls '{"device":"设备","path":"logs"}'
+wb device read '{"device":"设备","path":"logs/app.log","tail":200,"match":"ERROR"}'
+                     只读查看项目设备上的文件，例如用户本机服务的日志：那台设备上的项目目录，以及设备主人用 WORKER_READ_ROOTS 开放的目录。相对路径从项目目录算起。read 默认给最后 tail 行（默认 200，最多 1000；match 只留含该文字的行），或用 offset/limit 读一页（最多 64 KB，按 nextOffset 续读）。密钥、凭据和 .env 文件不可读。
 wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      定时提醒：到点在群里叫醒指定角色。任何角色都可以给自己设；总管还可以给别人设。写操作带稳定 requestId；update/pause/resume/delete 还要 id 和 revision，update 要带完整的 name、description 和时间设置。不写 roleId 就是提醒自己。
@@ -1917,6 +1920,12 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wbTools.callField.return': '返回',
   'rooms.queueEditUnavailable': '只能取回所有接收方均未开始执行的用户消息；已启动或协作中的任务保持不变。',
   'home.reportRemoved': `wb report 已取消：结果直接写在最终回复里，由派活的人判断。`,
+  'wbCli.deviceUsage': `用法：wb device ls|read '{"device":"设备","path":"路径"}'；read 还可带 tail、match、offset、limit。详见 wb help。`,
+  'wbCli.deviceUnknown': '没有名为 {device} 的项目设备；本项目的设备：{devices}',
+  'wbCli.deviceReviewGuarded': '独立审核角色不能直接读取设备目录；请读取审核指定的共享材料',
+  'wbCli.deviceAmbiguous': '有多台设备叫 {device}，请改用设备 ID：{ids}',
+  'wbCli.deviceOffline': '设备 {device} 离线',
+  'wbCli.deviceUpgrade': '设备 {device} 的 Worker 需要升级后才能用 wb device 读取',
   'wbCli.discussPeersUsage': `用法：wb discuss peers ['{"view":"detail","includeArchived":true}']。提问和审核用 wb call。`,
   'wbCli.setupAssistantOnly': `wb setup 只给平台配置助手使用；查看团队用 wb discuss peers。`,
   'wbCli.historyReadUsage': `用法：wb history read 编号 [offset] [version]`,

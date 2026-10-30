@@ -1268,7 +1268,7 @@ Attachments: {p1} (the body does not include the attachments' full text)`,
   'runReports.businessVerdictRecordedEndTurn': 'Report saved. This acknowledgement confirms registration; do not resubmit or query whether your still-running turn has ended. If this assignment is complete, give its final reply and end the turn; Home records the run end afterwards. Keep any unfinished work explicit.',
   // src/runtime-guidance.mjs
   'runtimeGuidance.whenGrokCallsWbUse': ' When Grok calls wb, use one standalone command and do not chain it with other shell commands.',
-  'runtimeGuidance.collaborationToolsConfiguredCurrentSession': `Collaboration tools are configured; see wb help. Current session: wb session current; recent group-chat records: wb history; search: wb history TERMS; original text of a message or of a run or call result: wb history read ID; group chat digest: wb history summary; platform memory shared across projects (environment, accounts and secrets, lessons, procedures): wb memory search TERMS. Continue reading long text with nextOffset and version; do not pretend you read the whole text.
+  'runtimeGuidance.collaborationToolsConfiguredCurrentSession': `Collaboration tools are configured; see wb help. Current session: wb session current; recent group-chat records: wb history; search: wb history TERMS; original text of a message or of a run or call result: wb history read ID; group chat digest: wb history summary; platform memory shared across projects (environment, accounts and secrets, lessons, procedures): wb memory search TERMS; files and logs on another project device (read-only): wb device ls / wb device read. Continue reading long text with nextOffset and version; do not pretend you read the whole text.
 Project rules and decisions live in AGENTS.md at the project root (loaded natively by your CLI). Do not read all history end to end; pass only short summaries and source IDs.
 Consult with wb call --role ROLE --kind consult --request-id STABLE_ID --text DESCRIPTION; same-project cross-device calls are delivered directly. Ask one clear question at a time with the necessary background, file versions and the expected answer; retry the same question with the same ID. Send one question to several roles with one wb call and repeated --role flags. If you need the answers, wb wait with a short resume note and end the turn. Do not poll, sleep or send keep-alive messages.
 When consulted, give your conclusion and the necessary evidence directly; do not modify files by default, and do not call the asker back to hand over the answer. End once resolved, without acknowledgement/thank-you exchanges. An @ in group-chat text does not trigger dispatch.
@@ -1579,6 +1579,9 @@ wb history summary   Summary of the current group chat
 wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit N]
                      Search platform memory: one for the whole platform, shared by every project, role, CLI and device, and organized daily from all group chats by a background model. It holds what helps across projects: environment (devices, addresses, folders), accounts and secrets, lessons and fixes, procedures, personal details and platform-wide decisions; without words it lists everything. This project's own decisions and progress are in wb history search.
                      Check it when the environment, accounts or earlier pitfalls matter. To have something remembered, write it in your reply or a wb note starting with "Remember:".
+wb device ls '{"device":"DEVICE","path":"logs"}'
+wb device read '{"device":"DEVICE","path":"logs/app.log","tail":200,"match":"ERROR"}'
+                     Read-only look at files on a project device, e.g. a local service's logs on the user's Mac: the project folder there, plus folders its owner opened with WORKER_READ_ROOTS. Relative paths start at the project folder. read gives the last tail lines (default 200, at most 1000; match keeps only lines containing the text) or a page with offset/limit (at most 64 KB; continue with nextOffset). Keys, credentials and .env files are not readable.
 wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      Timed reminders: wake a role in the group chat at a set time. Any role may set them for itself; the supervisor may also set them for others. Writes need a stable requestId; update/pause/resume/delete also need id and revision, and update must resend the full name, description and schedule. Without roleId the reminder is for yourself.
@@ -1917,6 +1920,12 @@ You personally do only the simplest things: answer a question directly, check on
   'wbTools.callField.return': 'Return',
   'rooms.queueEditUnavailable': 'Only a human message whose recipients are all still queued can be returned for editing. Started or coordinated work is unchanged.',
   'home.reportRemoved': `wb report was removed: put the result in your final reply; whoever assigned the work judges it.`,
+  'wbCli.deviceUsage': `Usage: wb device ls|read '{"device":"DEVICE","path":"PATH"}'; read also takes tail, match, offset and limit. See wb help.`,
+  'wbCli.deviceUnknown': 'No project device named {device}; devices of this project: {devices}',
+  'wbCli.deviceReviewGuarded': 'Independent reviewers cannot read device folders directly; read the shared material named in the review',
+  'wbCli.deviceAmbiguous': 'Several devices are named {device}; use one of their ids: {ids}',
+  'wbCli.deviceOffline': 'Device {device} is offline',
+  'wbCli.deviceUpgrade': 'Device {device} needs a Worker upgrade before wb device can read it',
   'wbCli.discussPeersUsage': `Usage: wb discuss peers ['{"view":"detail","includeArchived":true}']. Ask questions and request reviews with wb call.`,
   'wbCli.setupAssistantOnly': `wb setup is for the platform setup assistant only; see the team with wb discuss peers.`,
   'wbCli.historyReadUsage': `Usage: wb history read ID [offset] [version]`,
