@@ -1,6 +1,9 @@
 import { t, getLanguage } from './i18n.js';
 import {renderModelUsageNotice} from './model-usage.js';
 import {renderPermissionScope,permissionScopeValue} from './permission-scope.js';
+/** Setup suggestions still awaiting a decision, running or needing attention. */
+export const OPEN_SETUP = new Set(['pending', 'running', 'blocked']);
+
 /** Keep the user's current selection; with no draft use platform defaults, and only then auto-select a sole option. */
 export function preferredSelectValue(values, current, preferred) {
   if (values.some(value => value.id === current)) return current;
@@ -74,7 +77,8 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     const data = getData(), p = getProject();
     const workerName = id => (data.workers || []).find(w => w.id === id)?.name || id;
     choices();
-    const proposals = (data.setupProposals || []).filter(r => r.projectId === p?.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    // Only suggestions that still need a decision or are in progress are shown; configured and rejected ones are history.
+    const proposals = (data.setupProposals || []).filter(r => r.projectId === p?.id && OPEN_SETUP.has(r.status)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const pendingCount = proposals.filter(proposal => proposal.status === 'pending').length;
     const title = pendingCount
       ? `${t('Pending confirmation')} (${pendingCount}) · ${t('Manager setup suggestions')}`
@@ -86,7 +90,7 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     if (proposals.length) cards.append(create('h3', '', title));
     for (const proposal of proposals) {
       const card = create('details', 'setup-card');
-      card.open = ['pending', 'running', 'blocked'].includes(proposal.status);
+      card.open = true;
       const state = { pending: 'Pending confirmation', running: 'Running', succeeded: 'Configured', blocked: 'Needs attention', rejected: 'Rejected' }[proposal.status];
       card.append(create('summary', '', `${state} · ${proposal.summary}`));
       for (const action of proposal.actions) {
