@@ -201,6 +201,7 @@ npm run worker   # Worker（在另一个终端中）
 | `HOME_URL` | `ws://127.0.0.1:4317/worker`；远程 Home 使用 `wss://xxxxx/worker` |
 | `WORKER_TOKEN` | 必须与 Home 的令牌一致（例如 `xxxxx`）。本机会从 Home 数据目录读取 |
 | `WORKER_ROOTS` | 允许的项目根目录，以操作系统的路径分隔符分隔（例如 `xxxxx`）。默认为项目目录 |
+| `WORKER_READ_ROOTS` | 可选，额外开放给其他设备角色用 `wb device ls/read` 只读查看的目录（如本机服务日志），分隔方式同 `PATH` |
 | `WORKER_DATA_DIR` | `.data/worker`；每个 Worker 一个目录，绝不可被两个进程共用 |
 | `WORKER_CONCURRENCY` | `2` |
 | `NODE_NAME` | 显示名称；默认为主机名 |

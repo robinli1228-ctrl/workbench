@@ -148,6 +148,7 @@ Use [`.env.example`](.env.example) as a reference. Workbench does not automatica
 | `WORKER_TOKEN` | Shared Worker registration credential; must match Home |
 | `HOME_URL` | Worker's WebSocket connection to Home |
 | `WORKER_ROOTS` | Project directories the Worker may use |
+| `WORKER_READ_ROOTS` | Optional extra folders (e.g. a local service's logs) that roles on other devices may read with `wb device ls/read`; read-only, separated like `PATH` |
 | `WORKER_DATA_DIR` | Private data directory for that Worker |
 | `WORKER_CONCURRENCY` | Device execution capacity; defaults to `2` |
 | `CODEX_BIN`, `CLAUDE_BIN`, `GROK_BIN`, `AGY_BIN` | Optional paths to CLI executables |

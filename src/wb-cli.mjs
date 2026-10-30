@@ -22,7 +22,7 @@ function sessionOptions(args) {
   return values;
 }
 
-const COMMANDS=['task','sync','discuss','capabilities','session','setup','history','memory','timer','note','wait','deliver','call'];
+const COMMANDS=['task','sync','discuss','capabilities','session','setup','history','memory','device','timer','note','wait','deliver','call'];
 
 export async function main(argv = process.argv.slice(2)) {
   const turnId=argv[0]==='--turn'?argv[1]:undefined;
@@ -64,7 +64,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (cmd === 'capabilities') return out({protocol:2,sourceSyncTools:sourceSync?1:0,sessionTools:1,timerTools:1,transfer:1,
       tools:[...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),'task list','task show','task create','task update','discuss peers','call','wait','note','timer',
-        'history','history search','history read','history summary','memory search','deliver','session current',...(process.env.WB_PLATFORM_ASSISTANT==='1'?['setup catalog','setup propose']:[])]});
+        'history','history search','history read','history summary','memory search','device ls','device read','deliver','session current',...(process.env.WB_PLATFORM_ASSISTANT==='1'?['setup catalog','setup propose']:[])]});
     if (cmd === 'session' && sub === 'current') return out(await agentRequest('/api/agent/sessions/current',{runId:process.env.WB_RUN_ID}));
     // Configuration cards belong to the platform assistant; project roles read the team with wb discuss peers.
     if (cmd === 'setup' && process.env.WB_PLATFORM_ASSISTANT === '1' && sub === 'catalog') return out(await setupCatalog());
@@ -81,6 +81,10 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'memory') {
       if (sub !== 'search') throw new Error(tr('platformMemory.searchUsage'));
       return out(await agentRequest('/api/agent/memory/search',{runId:process.env.WB_RUN_ID,...memorySearchInput(rest)}));
+    }
+    if (cmd === 'device') {
+      if (!['ls','read'].includes(sub) || rest.length !== 1) throw new Error(tr('wbCli.deviceUsage'));
+      return out(await agentRequest('/api/agent/device-read',{...JSON.parse(rest[0]),runId:process.env.WB_RUN_ID,action:sub}));
     }
     if (cmd === 'timer') {
       if (sub === 'list' && !rest.length) return out(await agentRequest('/api/agent/timers',{runId:process.env.WB_RUN_ID,action:'list'}));

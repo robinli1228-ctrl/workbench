@@ -17,6 +17,7 @@ import {validateCliCapacity,reservedTerminalSlots} from './device-capacity.mjs';
 import { readRunDocument } from './run-document.mjs';
 import {readRecordedArtifact} from './run-artifact-source.mjs';
 import {readProjectFile,listProjectFiles} from './project-file-read.mjs';
+import {deviceList,deviceRead,readRootsFrom} from './device-read.mjs';
 import {budgetReadReply} from './read-query-response.mjs';
 import {inspectReadSource,readSourceCurrent} from './cross-device-read-worker.mjs';
 import {executeReadQuery,normalizeFileRead,normalizeReadQuery,readError} from './node-query-recipes.mjs';
@@ -88,6 +89,8 @@ const identity = db.get('identity', 'node') || db.put('identity', { id: 'node', 
 // External session queue: turn facts per role session and short-lived reservations; nothing here writes to a CLI.
 const turnStates = new TurnStates({ nodeId: identity.nodeId }), queueSlots = new QueueSlots();
 const roots = await Promise.all((process.env.WORKER_ROOTS || base).split(delimiter).map(p => realpath(p)));
+// Extra folders the device owner lets roles on other devices read (wb device), e.g. logs kept outside the project.
+const readRoots = await readRootsFrom(process.env.WORKER_READ_ROOTS, delimiter);
 const folderAccess=new FolderAccess({db,roots,nodeId:identity.nodeId,local:resolveNodeKind(process.env.NODE_KIND,platform())==='local'});
 let defaultRoot = db.get('settings','workspace')?.localRoot || process.env.WORKSPACE_ROOT || roots[0];
 const homeUrl = process.env.HOME_URL || 'ws://127.0.0.1:4317/worker';
@@ -669,7 +672,7 @@ async function query(m,emit=send) {
     try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
   }
   const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write','native_session_branch','native_session_delete'].includes(m.action)&&!(m.action==='native_session_delete'&&m.path?.dryRun===true);
-  const guarded=['source_inspect','source_read','read_query','project_file','file','document','artifact_source','collaboration_documents'].includes(m.action);
+  const guarded=['source_inspect','source_read','read_query','project_file','file','document','artifact_source','collaboration_documents','device_read'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
     if(m.action==='native_takeover_state'){reply(nativeTurns.refresh(m.path));return;}
@@ -760,6 +763,11 @@ async function query(m,emit=send) {
       if(m.path?.nodeId!==identity.nodeId)throw Error(tr('cliRecovery.bindingChanged'));
       const result=m.action==='cli_session_check'?await cliRecovery.check(m.path):await cliRecovery.reclaim(m.path,m.path.fingerprint,true);
       send({type:'reply',id:m.id,result});return;
+    }
+    if(m.action==='device_read'){
+      // Home names the project folder from its binding; the Worker checks it is a granted folder before reading beneath it.
+      const args={...m.path,projectRoot:await projectRoot(m.path?.root),readRoots,denyRoots:[data]};
+      reply(m.path?.list?await deviceList(args):await deviceRead(args));return;
     }
     if(m.action==='project_file'||m.action==='project_files'){
       const root=await projectRoot(m.path?.root),args={...m.path,root};
@@ -1218,7 +1226,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,memoryOrganizer:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { deviceRead:1,concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,memoryOrganizer:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

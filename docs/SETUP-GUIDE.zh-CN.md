@@ -87,6 +87,7 @@ npm run worker     # Worker（另一个终端）
 | `HOME_URL` | `ws://127.0.0.1:4317/worker`；远程 Home 用 `wss://xxxxx/worker`，或经隧道的 `ws://127.0.0.1:<本地端口>/worker` |
 | `WORKER_TOKEN` | 必须与 Home 一致；与 Home 同机时可省略 |
 | `WORKER_ROOTS` | 允许放项目和会话目录的根目录列表，用系统路径分隔符分隔（Linux/macOS 为 `:`）。Worker 只会在这些根之下读写 |
+| `WORKER_READ_ROOTS` | 可选。额外开放的目录，分隔方式同 `WORKER_ROOTS`，其他设备上的角色可用 `wb device ls` / `wb device read` 只读查看，例如本机运行的服务日志。本设备上的项目目录默认就能这样读；密钥、凭据和 `.env` 文件始终不可读。 在 Worker 的启动环境里设置（服务单元或启动脚本）；从设置页经 SSH 部署的设备，重新部署会重写 `worker-config.json`，部署后需再加一次。`/`、用户主目录以及包含主目录的目录会被忽略。 |
 | `WORKSPACE_ROOT` | 新建原生会话的默认目录所在的根（默认取 `WORKER_ROOTS` 第一个）；不关联项目的会话落在 `<WORKSPACE_ROOT>/native-sessions` |
 | `WORKER_DATA_DIR` | `.data/worker`：SQLite、设备身份、发件箱、同步缓存。**每个 Worker 一个目录，绝不共用，绝不清空** |
 | `WORKER_CONCURRENCY` | 同时运行的 CLI 数，默认 `2` |
