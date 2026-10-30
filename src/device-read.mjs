@@ -105,11 +105,17 @@ export async function deviceRead(options){
     if(offset===undefined&&limit===undefined||tail!==undefined||match!==undefined){
       const lines=tail??200;if(!Number.isSafeInteger(lines)||lines<1||lines>DEVICE_READ_LIMITS.tailLines)throw fail('invalid_tail');
       const start=Math.max(0,info.size-DEVICE_READ_LIMITS.tailWindow);
-      const all=text(await read(start,info.size-start)).split('\n');
-      if(start>0)all.shift();if(all.at(-1)==='')all.pop();
+      const window=await read(start,info.size-start);let first=0;
+      // A bounded window can start inside a character; keep only complete UTF-8 characters.
+      while(first<window.length&&(window[first]&0xc0)===0x80)first++;
+      const all=text(window.subarray(first)).split('\n');
+      if(all.at(-1)==='')all.pop();
+      // Drop a partial first line only when later complete lines exist; a sole long line is still useful.
+      const windowLineCut=start>0&&all.length===1;
+      if(start>0&&all.length>1)all.shift();
       const needle=match?.toLowerCase(),candidates=(needle?all.filter(line=>line.toLowerCase().includes(needle)):all).slice(-lines);
       // From the end back while the page fits; a single line over the page is cut to it.
-      const picked=[];let bytes=0,cut=false;
+      const picked=[];let bytes=0,cut=windowLineCut&&candidates.length>0;
       for(let i=candidates.length-1;i>=0;i--){
         const size=Buffer.byteLength(candidates[i])+(picked.length?1:0);
         if(bytes+size>DEVICE_READ_LIMITS.bytes){
@@ -124,6 +130,8 @@ export async function deviceRead(options){
     if(!Number.isSafeInteger(from)||from<0||!Number.isSafeInteger(length)||length<1||length>DEVICE_READ_LIMITS.bytes)throw fail('invalid_page');
     // Three bytes past the page show whether it would end inside a multi-byte character; it then stops before it.
     const bytes=await read(from,Math.min(length+3,Math.max(0,info.size-from))),page=bytes.subarray(0,wholeCharacters(bytes,length));
+    // Reject split-character offsets or undersized pages instead of returning a cursor that cannot advance.
+    if(bytes.length&&(bytes[0]&0xc0)===0x80||!page.length&&from<info.size)throw fail('invalid_page');
     return {...common,mode:'range',offset:from,content:text(page),nextOffset:from+page.length<info.size?from+page.length:null};
   }finally{await handle.close();}
 }
