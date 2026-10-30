@@ -6,7 +6,7 @@ import { Rooms, handoffOnly } from '../src/rooms.mjs';
 import { RoleCalls } from '../src/role-calls.mjs';
 import { saveRunReport } from '../src/run-reports.mjs';
 import * as roomUI from '../public/room.js';
-const { handoffWaitState } = roomUI;
+import { queuedWaits } from '../src/coordination-wait.mjs';
 
 const P = 'p1';
 function env() {
@@ -77,19 +77,19 @@ test('explicit business reports survive a handoff wait without changing normal r
       const data = { requests: e.db.list('coordinationRequests'), roles: e.db.list('roles'), runReports: e.db.list('runReports') };
       assert.equal(roomUI.quietHandoff(run, data), false);
       assert.equal(roomUI.quietHandoff({ ...run, report: undefined }, data), false, 'the report table also prevents the quiet frontend branch');
-      assert.equal(handoffWaitState(run, data), null);
       e.db.close();
     }
   }
 });
 
-test('the room shows one waiting line naming the peers, and hides it after resume', () => {
+test('the chat shows no card for a waiting turn; the queue lists the wait naming the peers until it resumes', () => {
   for (const reason of ['results', 'timeout']) {
     const e = env();
     e.calls.wait(e.db.get('runs', 'r1'), 'resume');
     const run = e.finish();
-    const data = () => ({ requests: e.db.list('coordinationRequests'), roles: e.db.list('roles') });
-    assert.deepEqual(handoffWaitState(run, data()), { names: ['Executor'] });
+    assert.equal(roomUI.quietHandoff(run, { requests: e.db.list('coordinationRequests') }), true, 'the live card is suppressed');
+    const waits = () => queuedWaits(e.db).map(w => ({ roleName: w.roleName, waitingFor: w.waitingFor.map(d => d.roleName) }));
+    assert.deepEqual(waits(), [{ roleName: 'Reviewer', waitingFor: ['Executor'] }]);
     if (reason === 'results') e.db.put('coordinationRequests', { ...e.db.get('coordinationRequests', 'c1'), status: 'succeeded', result: 'Implementation completed' });
     const time = reason === 'timeout' ? Date.parse(e.db.get('coordinationRequests', e.parent.id).waitDeadlineAt) + 1 : Date.now();
     e.calls.resume(e.parent.id, time);
@@ -97,8 +97,7 @@ test('the room shows one waiting line naming the peers, and hides it after resum
     assert.equal(parent.status, 'waiting_call');
     assert.equal(parent.currentRunId, run.id);
     assert.equal(e.db.get('coordinationRequests', parent.continuationRequestId)?.wakeReason, reason);
-    assert.equal(handoffWaitState(run, data()), null);
-    assert.equal(handoffWaitState({ ...run, handoffWait: undefined }, data()), null);
+    assert.deepEqual(waits(), [], 'the continuation takes over from the wait');
     e.db.close();
   }
 });
