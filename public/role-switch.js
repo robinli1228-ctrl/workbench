@@ -71,10 +71,10 @@ export function createRoleSwitchUI({api,refreshState}) {
       if(create)void createOperation(a);else void poll();
     });
   }
-  async function begin({projectId,role,draft,host,expectedSupervisorRevision}) {
+  async function begin({projectId,role,draft,host,expectedSupervisorRevision,conversationId}) {
     const saved=sessionStorage.getItem(key(projectId,role.id));
     if(saved)return watch({...JSON.parse(saved),host});
-    return watch({projectId,roleId:role.id,host,create:true,input:{operationId:crypto.randomUUID(),leaseId:crypto.randomUUID(),expectedRoleRevision:role.revision||1,expectedSupervisorRevision,draft}});
+    return watch({projectId,roleId:role.id,host,create:true,input:{operationId:crypto.randomUUID(),leaseId:crypto.randomUUID(),expectedRoleRevision:role.revision||1,expectedSupervisorRevision,draft,...(conversationId?{conversationId}:{})}});
   }
   function resume({projectId,role,host,operation}) {const saved=sessionStorage.getItem(key(projectId,role.id));return saved?watch({...JSON.parse(saved),host}):operation&&!settled(operation)?watch({projectId,roleId:role.id,host,input:{operationId:operation.id}}):null;}
   dialog.addEventListener('cancel',event=>{event.preventDefault();void cancel();});cancelButton.addEventListener('click',cancel);

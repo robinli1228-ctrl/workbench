@@ -58,6 +58,10 @@ export function workspaceState(snapshot,requestedProjectId,requestedConversation
   delete state.nativeTurnExecutions;
   // The selected conversation's queue pause; Home drops the record once its queue empties.
   state.chatQueuePaused=(snapshot.chatQueuePauses||[]).some(p=>p.id===conversationId&&p.projectId===projectId);delete state.chatQueuePauses;
+  // Device occupancy over every chat and project, for actions the device decides as a whole (resuming a role's session in a
+  // terminal): the chat's own runs below are not enough once a role can be busy in another chat.
+  const live=new Set(['queued','starting','running','waiting_user','stopping','reconciling']);state.deviceRuns={};
+  for(const r of snapshot.runs){if(!live.has(r.status))continue;const d=state.deviceRuns[r.nodeId]||={active:0,project:0,reconciling:false};d.active++;if(r.projectId===projectId)d.project++;if(r.status==='reconciling')d.reconciling=true;}
   const runs=snapshot.runs.filter(belongs),runIds=new Set(runs.map(r=>r.id));
   // hasReply is Home's own progress evidence from a SQL summary; the page gets the computed stage instead.
   state.runs=cachedHistory?.runs||runs.map(r=>({...omit(r,[...PAGE_BODY_FIELDS.runs,'hasReply']),

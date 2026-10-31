@@ -5,7 +5,7 @@ import {RoleSessions} from './role-sessions.mjs';
 import {activeRoleSwitch, belongsToDrain, switchSettled} from './role-switch-policy.mjs';
 import {tr} from './i18n.mjs';
 import {projectTerminalLock} from './terminal-resume.mjs';
-import {conversationIdOf,groupConversationIdOfSession} from './group-conversations.mjs';
+import {conversationIdOf,groupConversationIdOfSession,resolveConversationId} from './group-conversations.mjs';
 
 const terminal = new Set(['succeeded','failed','interrupted']);
 const planTerminal = new Set(['succeeded','completed_with_issues','completed','cancelled','blocked']);
@@ -44,7 +44,13 @@ export class RoleSwitches {
   }
 
   /** Validate the whole draft with the ordinary form's pure validator, never a trial write. */
-  preview(projectId,roleId,draft) {
+  /**
+   * A role keeps a main session in each group chat it works in (plus isolated review and source sessions). A switch hands one
+   * chat's main session over: the chat it was started from, else the one used last. The role's sessions in other chats start
+   * fresh on the new CLI when next used (their binding no longer matches), with the chat's own context. Only two current main
+   * sessions in one chat need reconciling first.
+   */
+  preview(projectId,roleId,draft,conversationId=null) {
     const role=this.db.get('roles',roleId);
     if(!role||role.projectId!==projectId||role.archivedAt||role.platformAssistant)throw new Error('Role unavailable for CLI switch.');
     if(draft.nodeId!==role.nodeId)throw new Error(tr('roleSwitch.crossDevice',{
@@ -59,12 +65,14 @@ export class RoleSwitches {
       supervisorConfig=new Coordinator(this.db,{migrate:false}).validateSupervisor(projectId,role.nodeId,draft);
       candidate={...role,runtime:supervisorConfig.runtime,model:supervisorConfig.model,effort:supervisorConfig.effort,revision:(role.revision||1)+1};
     } else candidate=new Rooms(this.db).validateRole(projectId,{...draft,id:role.id,revision:role.revision||1});
-    const current=sessions(this.db,role);
+    const main=sessions(this.db,role).filter(s=>s.conversationId===groupConversationIdOfSession(s));
+    const chats=conversationId?[conversationId]:[...new Set(main.sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||''))).map(groupConversationIdOfSession))].slice(0,1);
+    const current=main.filter(s=>chats.includes(groupConversationIdOfSession(s)));
     const workspace=this.workspace(role);
     if(current.length>1)throw new Error('Multiple current sessions require reconciliation.');
     if(current[0]&&(current[0].nodeId!==role.nodeId||current[0].runtime!==role.runtime||current[0].workspaceRoot!==workspace.root))throw new Error('Original session binding is inconsistent; reconcile it before switching.');
     if(projectTerminalLock(this.db,projectId,role.nodeId))throw new Error('Project is under manual terminal control.');
-    return {role,candidate,supervisorConfig,workspace,sourceSessionId:current[0]?.id||null,sourceGeneration:current[0]?.generation||null};
+    return {role,candidate,supervisorConfig,workspace,conversationId:chats[0]||projectId,sourceSessionId:current[0]?.id||null,sourceGeneration:current[0]?.generation||null};
   }
 
   /** Idempotency, role ownership and original revisions are captured in one database transaction. */
@@ -78,11 +86,12 @@ export class RoleSwitches {
       if(input.expectedRoleRevision!==(role?.revision||1))throw new Error('Role configuration changed; reopen the editor.');
       const config=role?.systemSupervisor&&this.db.get('supervisorConfigs',`${projectId}:${role.nodeId}`);
       if(role?.systemSupervisor&&input.expectedSupervisorRevision!==(config?.revision||0))throw new Error('Supervisor configuration changed.');
-      const p=this.preview(projectId,roleId,input.draft);
+      if(input.conversationId!==undefined&&(typeof input.conversationId!=='string'||resolveConversationId(this.db,projectId,input.conversationId)!==input.conversationId))throw new Error(tr('conversations.recordMismatch'));
+      const p=this.preview(projectId,roleId,input.draft,input.conversationId||null);
       const tasks=this.db.list('tasks').filter(t=>t.projectId===projectId&&['ready','in_progress','awaiting_acceptance','waiting_discussion'].includes(t.status));
       const requests=this.db.list('coordinationRequests').filter(r=>r.projectId===projectId&&!['succeeded','failed','cancelled'].includes(r.status));
       const plans=this.db.list('executionPlans').filter(p=>p.projectId===projectId&&!planTerminal.has(p.status));
-      return this.db.put('roleSwitches',{id:input.operationId,projectId,conversationId:groupConversationIdOfSession(this.db.get('roleSessions',p.sourceSessionId))||projectId,roleId,nodeId:role.nodeId,fingerprint,status:'draining',leaseId:input.leaseId,leaseUntil:this.now()+120000,
+      return this.db.put('roleSwitches',{id:input.operationId,projectId,conversationId:groupConversationIdOfSession(this.db.get('roleSessions',p.sourceSessionId))||p.conversationId,roleId,nodeId:role.nodeId,fingerprint,status:'draining',leaseId:input.leaseId,leaseUntil:this.now()+120000,
         original:p.role,candidate:p.candidate,supervisorConfig:p.supervisorConfig,originalSupervisorConfig:config||null,
         workspace:p.workspace,workspaceHash:switchHash(p.workspace),sourceSessionId:p.sourceSessionId,sourceGeneration:p.sourceGeneration,
         drainTaskIds:tasks.map(t=>t.id),drainRequestIds:requests.map(r=>r.id),drainPlanIds:plans.map(p=>p.id),
@@ -130,7 +139,8 @@ export class RoleSwitches {
       }
       if(op.status==='draining') {
         if(this.draining(op))return {type:'wait',operation:op};
-        const current=sessions(this.db,op.original)[0];
+        // The main session of the chat this switch hands over, not another chat's session of the role.
+        const current=sessions(this.db,op.original).find(s=>s.conversationId===groupConversationIdOfSession(s)&&groupConversationIdOfSession(s)===conversationIdOf(op));
         const history=this.db.list('runs').some(r=>r.projectId===op.projectId&&r.roleId===op.roleId&&!r.switchOperationId&&!r.historyClearedAt)||this.db.list('roleSessions').some(s=>s.projectId===op.projectId&&s.roleId===op.roleId&&s.nativeSessionId&&!s.candidateFor&&!s.historyClearedAt);
         op=this.save(op,{status:'handoff',sourceSessionId:current?.id||null,sourceGeneration:current?.generation||null,noHistory:!history});
       }

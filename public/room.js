@@ -1754,7 +1754,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     try {
       const endpoint = `/api/projects/${encodeURIComponent(editingProjectId)}/roles`;
       if(editingRoleSnapshot?.runtime&&roleForm.elements.runtime.value!==editingRoleSnapshot.runtime) {
-        const op=await cliSwitch.begin({projectId:editingProjectId,role:editingRoleSnapshot,draft:body,host:roleForm});
+        const op=await cliSwitch.begin({projectId:editingProjectId,role:editingRoleSnapshot,draft:body,host:roleForm,conversationId:editingProjectId===projectId?conversationId||projectId:undefined});
         if(op.status==='committed'){roleDialog.close();await refreshState({quiet:true});}
         return;
       }

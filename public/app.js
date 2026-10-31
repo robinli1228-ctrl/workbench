@@ -591,6 +591,7 @@ async function refreshState({ quiet = false } = {}) {
       chatQueuePaused:data.chatQueuePaused===true,
       runs: Array.isArray(data.runs) ? data.runs : [],
       sidebarExecutions:Array.isArray(data.sidebarExecutions)?data.sidebarExecutions:[],
+      deviceRuns:data.deviceRuns&&typeof data.deviceRuns==='object'?data.deviceRuns:null,
       workers: Array.isArray(data.workers) ? data.workers : [],
       approvals: Array.isArray(data.approvals) ? data.approvals : [],
       settings: data.settings || {},
@@ -948,7 +949,8 @@ function renderRoles() {
   for (const role of roles) {
     const worker = app.data.workers.find(w => w.id === role.nodeId);
     const runtime = worker?.runtimes?.find(r => r.type === role.runtime);
-    const warm=worker?.online && worker.warmSessions?.some(s=>s.roleId===role.id && Date.parse(s.idleUntil)>Date.now());
+    // A warm process belongs to one role session (one chat); another chat's idle process does not let this chat continue warm.
+    const warm=worker?.online && worker.warmSessions?.some(s=>s.roleId===role.id && (app.data.roleSessions||[]).some(session=>session.id===s.id) && Date.parse(s.idleUntil)>Date.now());
     const activity = roleActivity(role, app.data.tasks || [], app.data.runs || [],{requests:app.data.requests||[],warm,worker:worker||null,check:roleRefresh.getCheck(role)});
     const configured = activity.tone !== 'setup';
     const isSupervisor=role.id===project.supervisorRoleId;
@@ -1137,7 +1139,7 @@ function openRoleTerminal(role) {
   const activeStatuses=new Set(['queued','starting','running','waiting_user','stopping','reconciling']);
   let returning=false,lastSignature='';
   const claimFor=mode=>{const r=app.data.runs.find(r=>r.id===mode),nodeId=r?.nodeId||role.nodeId;return (app.data.terminalSessions||[]).find(s=>s.projectId===role.projectId&&s.nodeId===nodeId);};
-  const signature=mode=>{const c=claimFor(mode),r=app.data.runs.find(r=>r.id===mode),nodeId=c?.nodeId||r?.nodeId||role.nodeId,w=app.data.workers.find(w=>w.id===nodeId);return JSON.stringify([c?.id,c?.status,c?.processState,c?.lastCheckedAt,c?.processError,w?.online,w?.capabilities?.terminalControl,w?.capacity,w?.organizerBusy,app.data.runs.filter(r=>r.nodeId===nodeId&&activeStatuses.has(r.status)).map(r=>[r.id,r.status]),(app.data.roleSwitches||[]).filter(s=>s.roleId===role.id).map(s=>[s.id,s.status])]);};
+  const signature=mode=>{const c=claimFor(mode),r=app.data.runs.find(r=>r.id===mode),nodeId=c?.nodeId||r?.nodeId||role.nodeId,w=app.data.workers.find(w=>w.id===nodeId);return JSON.stringify([app.data.deviceRuns?.[nodeId]||null,c?.id,c?.status,c?.processState,c?.lastCheckedAt,c?.processError,w?.online,w?.capabilities?.terminalControl,w?.capacity,w?.organizerBusy,app.data.runs.filter(r=>r.nodeId===nodeId&&activeStatuses.has(r.status)).map(r=>[r.id,r.status]),(app.data.roleSwitches||[]).filter(s=>s.roleId===role.id).map(s=>[s.id,s.status])]);};
   const currentMode=()=>latestTerminalRun(role,app.data.runs)?.id||'';
   const viewSignature=()=>JSON.stringify([signature(currentMode()),latestTerminalRun(role,app.data.runs)]);
   const render=()=>{
@@ -1174,8 +1176,10 @@ function openRoleTerminal(role) {
     terminalDialog.append(create('p','workspace-note','History is kept. Resuming reserves this project on that device until the CLI exits; managed wb tools are unavailable in the terminal.'));
     if(claim&&ownerRole&&ownerRole.id!==role.id)terminalDialog.append(create('p','workspace-note',t('This project device is under terminal control for {name}.',{name:ownerRole.name})));
     const currentSwitches=app.stateCache?.state?.roleSwitches||[],switching=currentSwitches.some(item=>item.projectId===role.projectId&&item.roleId===role.id&&!['committed','cancelled'].includes(item.status));
-    const busy=app.data.runs.some(item=>item.projectId===role.projectId&&item.nodeId===nodeId&&activeStatuses.has(item.status));
-    const occupied=app.data.runs.filter(item=>item.nodeId===nodeId&&activeStatuses.has(item.status)).length+(app.data.terminalSessions||[]).filter(item=>item.nodeId===nodeId&&['preparing','prepared','active','stopping'].includes(item.status)).length+(worker?.organizerBusy||0);
+    // The page holds only this chat's runs; the device's runs in every chat and project come with the state (deviceRuns).
+    const device=app.data.deviceRuns?.[nodeId];
+    const busy=device?device.project>0:app.data.runs.some(item=>item.projectId===role.projectId&&item.nodeId===nodeId&&activeStatuses.has(item.status));
+    const occupied=(device?device.active:app.data.runs.filter(item=>item.nodeId===nodeId&&activeStatuses.has(item.status)).length)+(app.data.terminalSessions||[]).filter(item=>item.nodeId===nodeId&&['preparing','prepared','active','stopping'].includes(item.status)).length+(worker?.organizerBusy||0);
     const gate=claim?'':!run?'No historical session is available to resume.':switching?'This role is switching CLI; wait for the handoff to finish.':!worker?.online?'Device offline or not connected':busy?'This project is still running on that device; view live replies in the web page first and resume after it finishes.':occupied>=(worker?.capacity||1)?'Device CLI limit reached; return an unused terminal to the platform or wait for running work.':'';
     const feedback=create('p','inline-error',claim?.error||gate);feedback.hidden=!(claim?.error||gate);feedback.setAttribute('role','status');terminalDialog.append(feedback);
     const actions=create('div','form-actions');terminalDialog.append(actions);
