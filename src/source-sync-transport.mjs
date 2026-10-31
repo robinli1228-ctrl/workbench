@@ -123,7 +123,8 @@ export class SourceSyncHome {
   }
   /** Persist each observation once and coalesce later saves; file notifications never invoke a model. */
   watchTick(){
-    const configs=this.db.list('sourceSyncConfigs').filter(c=>c.enabled&&c.scopeKind==='directory'&&c.mode==='continuous');
+    // A paused project is left out: its devices stop watching and no batch is made from their notices until it resumes.
+    const configs=this.db.list('sourceSyncConfigs').filter(c=>c.enabled&&!c.paused&&c.scopeKind==='directory'&&c.mode==='continuous');
     for(const worker of this.db.list('workers').filter(w=>w.capabilities?.sourceSyncDirectory===1)){
       const socket=this.socket(worker.id);if(!socket?.workerReady||socket.readyState!==1)continue;
       const supported=configs.filter(c=>(c.contentMode!=='source-and-outputs'||worker.capabilities.sourceSyncOutputs===1)&&(c.detection!=='metadata'||worker.capabilities.sourceSyncMetadataMode===1));
@@ -159,7 +160,7 @@ export class SourceSyncHome {
   watchMessage(nodeId,message){
     if(message.type==='source_sync_watch_ack'){const socket=this.socket(nodeId);if(socket)socket.sourceWatchAck=message.version;return;}
     const config=this.sync.config(message.projectId);
-    if(!config.enabled||config.scopeKind!=='directory'||config.mode!=='continuous'||config.generation!==message.generation||!config.nodeIds.includes(nodeId)||!config.repositoryIds.includes(message.repositoryId)){
+    if(!config.enabled||config.paused||config.scopeKind!=='directory'||config.mode!=='continuous'||config.generation!==message.generation||!config.nodeIds.includes(nodeId)||!config.repositoryIds.includes(message.repositoryId)){
       if(message.type==='source_sync_dirty')this.socket(nodeId)?.send(JSON.stringify({type:'source_sync_dirty_ack',noticeId:message.noticeId,disposition:'obsolete'}));return;
     }
     const id=`${nodeId}:${message.projectId}:${message.repositoryId}`;
@@ -310,6 +311,7 @@ export class SourceSyncHome {
     else if(req.method==='POST'&&/^initializations\/[a-f0-9]{64}\/resume$/.test(route))value=this.baselines.resume(projectId,route.split('/')[1],await body(req,100000));
     else if(req.method==='GET'&&route==='config')value=this.sync.config(projectId);
     else if(req.method==='PUT'&&route==='config')value=this.sync.configure(projectId,await body(req,100000));
+    else if(req.method==='POST'&&route==='pause')value=this.sync.pause(projectId,await body(req,100000));
     else if(req.method==='POST'&&route==='preview')value=this.sync.preview(projectId,await body(req,100000));
     else if(req.method==='POST'&&route==='batches')value=this.sync.request(projectId,await body(req,100000));
     else if(req.method==='POST'&&/^batches\/[a-f0-9]{64}\/cancel$/.test(route))value=this.sync.cancel(projectId,route.split('/')[1],(await body(req,100000)).revision);

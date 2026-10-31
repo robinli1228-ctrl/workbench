@@ -40,6 +40,7 @@ export class SourceSyncInitialization {
     const jobs=this.db.db.prepare("SELECT data FROM records INDEXED BY records_metadata_init WHERE kind='sourceSyncInitializations' AND json_extract(data,'$.status')='running' AND id>? ORDER BY id LIMIT 8").all(this.cursor||'').map(r=>JSON.parse(r.data));this.cursor=jobs.at(-1)?.id||'';
     for(let j of jobs){
       const c=this.sync.config(j.projectId);if(!c.enabled||c.generation!==j.generation){this.db.put('sourceSyncInitializations',{...j,status:'paused',reason:'configuration_changed'});continue;}
+      if(c.paused){this.db.put('sourceSyncInitializations',{...j,status:'paused',reason:'sync_paused'});continue;}
       if(j.batchId){const b=this.db.get('sourceSyncBatches',j.batchId);if(!terminal.has(b?.status))continue;
         if(!b.metadataCleanedAt){if(['blocked','cancelled'].includes(b.status))this.db.put('sourceSyncInitializations',{...j,status:'paused',reason:'recovery_required'});continue;}
         if(['blocked','cancelled'].includes(b.status)||b.pendingMetadata?.length){this.db.put('sourceSyncInitializations',{...j,status:'paused',reason:b.reason||'target_changed'});continue;}
