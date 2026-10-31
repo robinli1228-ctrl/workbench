@@ -45,7 +45,8 @@ export function cachedMediaAllowed(db,t) {
 
 export class MediaStreams {
   constructor({db,query,online,change=()=>{},secret=randomBytes(32),clock=()=>Date.now(),cache=null,canReadCached=()=>true,timings={}}) {
-    Object.assign(this,{db,query,online,change,secret,clock,cache,canReadCached,timings:{...MEDIA_TIMINGS,...timings}});
+    // Home can reject an offline device synchronously; rate timers and cancellation must receive a rejected promise.
+    Object.assign(this,{db,query:async(...args)=>query(...args),online,change,secret,clock,cache,canReadCached,timings:{...MEDIA_TIMINGS,...timings}});
     this.pending=new Map();this.slots=new Map();this.transfers=new Map();this.failures=new Map();this.rates=new Map();
   }
 
