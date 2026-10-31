@@ -120,7 +120,9 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
     if(!info.available){card.dataset.state=info.reason;meta.textContent=t(REASONS[info.reason]||'Unavailable');return;}
     card.dataset.state=info.copyOf?'copy':'ready';card.dataset.kind=info.kind;icon.textContent=ICON[info.kind]||ICON.file;markImageOpener(card,info.kind==='image');
     meta.textContent=[formatBytes(info.size),info.copyOf?t('Local copy'):''].filter(Boolean).join(' · ');
-    if(preview&&info.url&&(info.kind==='image'||info.kind==='video'))attachPreview(card,info,()=>describeQueued(context,resolvePath().path,{fresh:true}));
+    // Pictures show a thumbnail; a video's first frame is not fetched until it is opened (on a slow link every card would
+    // otherwise start a ranged read of its video).
+    if(preview&&info.url&&info.kind==='image')attachPreview(card,info,()=>describeQueued(context,resolvePath().path,{fresh:true}));
   };
   const describePath=async()=>{const ref=resolvePath();if(ref.reason)return {available:false,reason:ref.reason};const info=await describeQueued(context,ref.path);
     return bare&&!ref.matched&&info.reason==='media_missing'?{...info,reason:'file_unresolved'}:info;};
@@ -139,8 +141,9 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
 }
 
 /**
- * Thumbnail above the card's name: the image itself, or a video's first frame (metadata preload + a #t fragment, muted, no autoplay).
- * It streams through the same ticket URL as the viewer and only once the card is near the viewport; a failure falls back to the icon.
+ * Thumbnail above the card's name: the image itself (a video's first frame when one is passed: metadata preload + a #t
+ * fragment, muted, no autoplay). It streams through the same ticket URL as the viewer and only once the card is near the
+ * viewport; a failure falls back to the icon.
  */
 function attachPreview(card,info,renew=null) {
   if(card.querySelector('.media-card-preview'))return;
@@ -277,30 +280,36 @@ export async function openMediaViewer(path,context,{at=null,from=null}={}) {
 
 function renderStage(stage,overlay,status,info,summary,path,context,version) {
   const fail=async media=>{
-    overlay.hidden=true;
-    // Ask the relay what went wrong: an expired ticket is renewed once; otherwise report the actual reason.
-    let reason='format';
-    try{const response=await fetch(info.url,{headers:{Range:'bytes=0-0'}});reason=response.ok?'format':((await response.json().catch(()=>({}))).code||`HTTP ${response.status}`);}catch{reason='network';}
+    overlay.hidden=true;slow.stop();
+    // Home recorded why its relay failed; asking it reads no file bytes and does not reach the device (another read would wait
+    // behind the same slow link). An expired ticket is renewed once; with no failure on record the browser could not decode it.
+    let reason=media.error?.code===2?'network':'format';
+    try{const response=await fetch(`${info.url.split('?')[0]}/status`,{cache:'no-store'}),result=await response.json().catch(()=>({}));
+      reason=!response.ok?result.code||`HTTP ${response.status}`:result.device||result.failures?.at(-1)?.code||reason;}catch{reason='network';}
     if(version!==viewerVersion)return;
     if(['media_ticket_invalid','file_changed','source_offline'].includes(reason)&&!media.dataset.renewed){
       const fresh=await describeQueued(context,path,{fresh:true}).catch(()=>null);
       if(fresh?.available){media.dataset.renewed='1';info.url=fresh.url;media.src=fresh.url;overlay.hidden=false;return;}
     }
-    status.hidden=false;status.textContent=t({format:'This browser cannot play this format. Download it to open locally.',file_changed:'The file changed since this message; reopen it to see the current version.',source_offline:'Source device offline',media_busy:'The source device is busy; try again shortly.',worker_upgrade:'Device needs a Worker upgrade',network:'Network error while loading.'}[reason]||'Unable to load: {reason}',{reason});
+    status.hidden=false;status.textContent=t({format:'This browser cannot play this format. Download it to open locally.',file_changed:'The file changed since this message; reopen it to see the current version.',source_offline:'Source device offline',media_busy:'The source device is busy; try again shortly.',worker_upgrade:'Device needs a Worker upgrade',network:'Network error while loading.',
+      media_timeout:'The source device did not send the file in time; its link may be slow. Try again, or download it.',media_idle:'The transfer stopped partway; the link may be slow. Try again, or download it.',media_interrupted:'The transfer stopped partway; the link may be slow. Try again, or download it.'}[reason]||'Unable to load: {reason}',{reason});
   };
+  // A slow link: after a while of loading or buffering, point at the download button, which keeps going however slow it is.
+  const slow={timer:null,start(){if(this.timer)return;this.timer=setTimeout(()=>{if(version!==viewerVersion||overlay.hidden)return;overlay.textContent=`${overlay.textContent} ${t('The link is slow; you can download the file with the button above and open it when it is done.')}`;},10000);},
+    stop(){clearTimeout(this.timer);this.timer=null;}};
   if(info.kind==='video'||info.kind==='audio'){
     const media=el(info.kind);media.controls=true;media.preload='metadata';media.setAttribute('playsinline','');
     const buffered=()=>{if(!media.duration||!media.buffered.length)return;let end=0;for(let i=0;i<media.buffered.length;i++)end=Math.max(end,media.buffered.end(i));status.textContent=`${summary} · ${t('Buffered {percent}%',{percent:Math.min(100,Math.round(end/media.duration*100))})}`;};
-    media.addEventListener('loadstart',()=>{overlay.textContent=t('Loading… streaming from the source device');overlay.hidden=false;});
-    media.addEventListener('waiting',()=>{overlay.textContent=t('Buffering…');overlay.hidden=false;});
-    for(const ready of ['canplay','playing','seeked'])media.addEventListener(ready,()=>{overlay.hidden=true;});
+    media.addEventListener('loadstart',()=>{overlay.textContent=t('Loading… streaming from the source device');overlay.hidden=false;slow.start();});
+    media.addEventListener('waiting',()=>{overlay.textContent=t('Buffering…');overlay.hidden=false;slow.start();});
+    for(const ready of ['canplay','playing','seeked'])media.addEventListener(ready,()=>{overlay.hidden=true;slow.stop();});
     media.addEventListener('progress',buffered);media.addEventListener('loadedmetadata',buffered);
     media.addEventListener('error',()=>void fail(media));
     media.src=info.url;stage.prepend(media);return;
   }
   if(info.kind==='image'){
     const image=el('img','media-image');image.alt=info.name;image.decoding='async';
-    image.addEventListener('load',()=>{overlay.hidden=true;});image.addEventListener('error',()=>void fail(image));
+    image.addEventListener('load',()=>{overlay.hidden=true;slow.stop();});image.addEventListener('error',()=>void fail(image));slow.start();
     image.src=info.url;stage.prepend(image);return;
   }
   if(info.kind==='pdf'){

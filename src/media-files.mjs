@@ -1,5 +1,6 @@
 import {open,realpath,stat,mkdir,rename,unlink} from 'node:fs/promises';
 import {constants} from 'node:fs';
+import {Readable} from 'node:stream';
 import {resolve,relative,isAbsolute,basename,join,extname} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 
@@ -83,22 +84,34 @@ export async function statMedia({root,path}) {
 
 /**
  * Stream bytes [start,end] to Home's relay over plain HTTP (not the control WebSocket), so run events and heartbeats are
- * never queued behind video data. The version is checked before reading and again afterwards.
+ * never queued behind video data. The version is checked before reading and again afterwards. Bytes leave at the shared
+ * `pace` (Home's measure of the link), the upload stops when `signal` aborts (Home's cancel), and it gives up by itself when
+ * the link takes nothing for `stallMs`, so a cancel lost on a jammed link cannot leave it running.
  */
-export async function streamMedia({root,path,version,start,end,url,secret,fetchImpl=fetch,signal}) {
+export const MEDIA_STALL_MS=30000;
+export async function streamMedia({root,path,version,start,end,url,secret,fetchImpl=fetch,signal,pace=null,stallMs=MEDIA_STALL_MS}) {
   if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<0||end<start)throw mediaError('invalid_media_path','range');
   const opened=await openStable(root,path,version);
   if(end>=opened.version.size){await opened.handle.close();throw mediaError('file_changed');}
-  const length=end-start+1;
+  const length=end-start+1,stall=new AbortController(),stop=signal?AbortSignal.any([signal,stall.signal]):stall.signal;
+  let pulled=Date.now();
+  const watch=setInterval(()=>{if(Date.now()-pulled>stallMs)stall.abort(mediaError('media_stalled'));},Math.min(5000,stallMs));
   try {
-    const body=opened.handle.createReadStream({start,end,autoClose:false,highWaterMark:256*1024});
-    const response=await fetchImpl(url,{method:'POST',headers:{Authorization:`Bearer ${secret}`,'Content-Type':'application/octet-stream'},body,duplex:'half',signal});
+    // Small chunks keep the pacing smooth. Only waiting for the HTTP client to take the next chunk counts as a stall (waiting
+    // for the pace does not): that is the link not moving.
+    const file=opened.handle.createReadStream({start,end,autoClose:false,highWaterMark:16*1024});
+    const body=Readable.from((async function*(){for await(const chunk of file)for(let at=0;at<chunk.length;){
+      // Pieces of about an eighth of a second at the current rate, so a slow link sees a steady trickle, not bursts.
+      const piece=chunk.subarray(at,at+(pace?Math.max(1024,Math.min(chunk.length,Math.floor(pace.rate/8))):chunk.length));at+=piece.length;
+      if(pace)await pace.take(piece.length,stop);stop.throwIfAborted();pulled=Date.now();yield piece;pulled=Date.now();}})());
+    const response=await fetchImpl(url,{method:'POST',headers:{Authorization:`Bearer ${secret}`,'Content-Type':'application/octet-stream'},body,duplex:'half',signal:stop});
     const after=versionOf(await opened.handle.stat());
     if(!response.ok)throw mediaError('media_receive_failed',`HTTP ${response.status}`);
     await response.arrayBuffer().catch(()=>{});
     if(!sameVersion(after,opened.version))throw mediaError('file_changed');
     return {sent:length};
-  } finally {await opened.handle.close().catch(()=>{});}
+  } catch(error) {throw stall.signal.aborted&&!signal?.aborted?stall.signal.reason:error;}
+  finally {clearInterval(watch);await opened.handle.close().catch(()=>{});}
 }
 
 /** Streaming SHA-256 for transfers; the whole file is never held in memory. */
