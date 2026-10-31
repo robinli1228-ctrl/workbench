@@ -205,8 +205,10 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       .sort((a,b)=>Number(Boolean(b.steering))-Number(Boolean(a.steering))||(rank.size?(rank.get(a.id)??Infinity)-(rank.get(b.id)??Infinity):0)||queueKey(a)-queueKey(b));
     // A message about to start is not waiting: its role is idle, nothing for that role is ahead of it and Home gave no reason
     // to wait. It shows as the role's starting card instead of in the queue (for at most 30s, so a stuck one comes back here).
-    const busyRoles=new Set((data.runs||[]).filter(r=>r.projectId===projectId&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)).map(r=>r.roleId));
-    const firstForRole=new Map();for(const task of [...tasks].sort((a,b)=>queueKey(a)-queueKey(b)))if(!firstForRole.has(task.roleId))firstForRole.set(task.roleId,task.id);
+    // A role runs one turn at a time per group chat; its turn in another chat does not hold this chat's message back.
+    const chat=getConversationId()||projectId,inChat=record=>(record.conversationId||record.projectId)===chat;
+    const busyRoles=new Set((data.runs||[]).filter(r=>r.projectId===projectId&&inChat(r)&&['queued','starting','running','waiting_user','stopping','reconciling'].includes(r.status)).map(r=>r.roleId));
+    const firstForRole=new Map();for(const task of [...tasks].filter(inChat).sort((a,b)=>queueKey(a)-queueKey(b)))if(!firstForRole.has(task.roleId))firstForRole.set(task.roleId,task.id);
     const starting=task=>!task.steering&&!task.waitingReason&&!data.chatQueuePaused&&!busyRoles.has(task.roleId)
       &&firstForRole.get(task.roleId)===task.id&&Date.now()-Date.parse(task.createdAt)<30000;
     tasks=tasks.filter(task=>!starting(task));
@@ -605,8 +607,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       targets = quote ? (quote.sender === 'agent' ? [roles.find(r => quote.roleId ? r.id === quote.roleId : r.name === quote.senderName)] : []) : supervisorId ? [roles.find(r => r.id === supervisorId)] : [];
     }
     if (!targets.length || targets.some(role => !role)) return null;
-    const busy = new Set((data.runs || []).filter(r => r.projectId === projectId && activeRun.includes(r.status)).map(r => r.roleId));
-    const waiting = new Set((data.tasks || []).filter(task => task.origin === 'chat' && task.status === 'ready' && !task.currentRunId).map(task => task.roleId));
+    // A role queues per group chat: being busy in another chat does not hold this message.
+    const chat = sent.conversationId || projectId, inChat = record => record.projectId === projectId && (record.conversationId || record.projectId) === chat;
+    const busy = new Set((data.runs || []).filter(r => inChat(r) && activeRun.includes(r.status)).map(r => r.roleId));
+    const waiting = new Set((data.tasks || []).filter(task => inChat(task) && task.origin === 'chat' && task.status === 'ready' && !task.currentRunId).map(task => task.roleId));
     const online = new Set((data.workers || []).filter(w => w.online).map(w => w.id));
     return data.chatQueuePaused || targets.every(role => busy.has(role.id) || waiting.has(role.id) || !online.has(role.nodeId)) ? [...new Set(targets.map(role => role.name))] : null;
   }

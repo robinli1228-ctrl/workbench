@@ -519,7 +519,9 @@ export class Rooms {
         : task.execution && worker.capabilities.executionScheduling !== 1 ? tr('rooms.upgradeWorkerRunSupervisorSchedules')
         : task.requiresCoordination && worker?.capabilities?.coordinationVersion !== 1 ? tr('rooms.upgradeWorkerSupportCrossDevice')
         : runtimeIssue(worker, role.runtime, role.model) ? runtimeIssue(worker, role.runtime, role.model)
-        : active.some(r => r.roleId === role.id) ? tr('rooms.waitingForRoleFinishIts')
+        // One role keeps one session per group chat: turns in the same chat run in order, other chats' sessions run alongside
+        // (device capacity and the project work window below still apply).
+        : active.some(r => r.roleId === role.id && conversationIdOf(r) === conversationIdOf(task)) ? tr('rooms.waitingForRoleFinishIts')
         : executionConflict({...task,nodeId:role.nodeId},active,{concurrent:concurrentWritesAllowed(this.db.get('projects',task.projectId),worker)}) ? (task.execution?.exclusive ? tr('rooms.waitingForExclusiveOperationWindow') : tr('rooms.waitingForProjectWorkspaceExclusive'))
         : active.some(r => r.nodeId === role.nodeId && r.status === 'reconciling') ? tr('rooms.nodeHasRunsAwaitingReconciliation')
         : active.filter(r => r.nodeId === role.nodeId).length+reservedTerminalSlots(this.db,role.nodeId)+(worker.capabilities.cliCapacity!==1&&worker.capabilities.summaryBatches===1?0:worker.organizerBusy||0) >= (worker.capacity || 1) ? tr('rooms.waitingForNodeBecomeIdle')

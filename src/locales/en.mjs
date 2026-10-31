@@ -1809,6 +1809,7 @@ You personally do only the simplest things: answer a question directly, check on
   'turnInput.title.other': '[Platform addition]',
   'turnInput.envMissing': 'Repositories missing on this device: {keys}',
   'turnInput.envSharedDocs': 'Shared report directory: {path} (only reports that may be published; keep unpublished review material out of it)',
+  'concurrentWrites.ownOtherChat': 'your own other session, in group chat "{chat}" (same files: do not edit the same file at once)',
   'turnInput.envConcurrent': 'This project allows several roles to edit the same files at once: change only the files you own (use wb discuss peers when the split is unclear) and stage only your own files when committing; do not switch branches or run reset or clean; re-read a file before changing it so you do not overwrite what someone else just did. wb deliver needs the repository to be exactly at your commit with nothing uncommitted, so it fails while others are editing; deliver again once they have committed.',
   'turnInput.envConcurrentOthers': 'When this turn started, these roles were also working on this device: {names}; use wb discuss peers to see the ones that join later.',
   'turnInput.projectRules': 'Project rules ({path}):\n{text}',

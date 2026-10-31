@@ -108,8 +108,8 @@ export class RoleSessions {
       if((current?.id||null)!==expectedSessionId)throw new Error(tr('roleSessions.historySessionChanged'));
       const runs=this.db.list('runs').filter(r=>r.projectId===projectId && conversationIdOf(r)===conversationId && r.roleId===roleId);
       if(sessions.some(s=>s.activeRunId) || runs.some(r=>!['succeeded','failed','interrupted'].includes(r.status))
-        || this.db.list('tasks').some(t=>t.projectId===projectId && t.roleId===roleId && ['ready','in_progress'].includes(t.status))
-        || this.db.list('coordinationRequests').some(r=>r.projectId===projectId && r.targetRoleId===roleId && !['succeeded','failed','cancelled'].includes(r.status))
+        || this.db.list('tasks').some(t=>t.projectId===projectId && conversationIdOf(t)===conversationId && t.roleId===roleId && ['ready','in_progress'].includes(t.status))
+        || this.db.list('coordinationRequests').some(r=>r.projectId===projectId && conversationIdOf(r)===conversationId && r.targetRoleId===roleId && !['succeeded','failed','cancelled'].includes(r.status))
         || this.db.list('discussionDeliveries').some(d=>d.projectId===projectId && (d.recipientRoleId===roleId || ids.has(d.recipientSessionId)) && ['queued','dispatched','runtime_accepted','reconciling'].includes(d.status)))throw new Error(tr('roleSessions.historyBusy'));
       const runIds=new Set(runs.map(run=>run.id));
       if(this.db.list('terminalSessions').some(s=>terminalOwnsProject(this.db,s,projectId)&&(s.nodeId===role.nodeId||runIds.has(s.runId))))throw new Error(tr('roleSessions.historyTerminalBusy'));

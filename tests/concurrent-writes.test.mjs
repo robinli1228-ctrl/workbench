@@ -37,9 +37,10 @@ function env({ project = { allowConcurrentWrites: true }, worker = {}, capacity 
   for (const [id, name] of [['a', 'Builder'], ['b', 'Checker'], ['c', 'Writer']])
     db.put('roles', { id, projectId: P, name, nodeId: 'w1', runtime: 'claude', model: 'm', mode: 'workspace-write', enabled: true });
   const rooms = new Rooms(db); rooms.touch = () => {};
-  const ask = (roleId, n) => {
-    db.put('roomMessages', { id: `m${n}`, projectId: P, sender: 'human', text: `@${roleId} go`, taskIds: [`t${n}`] });
-    db.put('tasks', { id: `t${n}`, projectId: P, origin: 'chat', roleId, roleSnapshot: db.get('roles', roleId), prompt: 'go', sourceMessageId: `m${n}`, status: 'ready', contextPrepared: true, createdAt: new Date(2026, 9, 28, 0, 0, n).toISOString() });
+  const ask = (roleId, n, conversationId) => {
+    const chat = conversationId ? { conversationId } : {};
+    db.put('roomMessages', { id: `m${n}`, projectId: P, ...chat, sender: 'human', text: `@${roleId} go`, taskIds: [`t${n}`] });
+    db.put('tasks', { id: `t${n}`, projectId: P, ...chat, origin: 'chat', roleId, roleSnapshot: db.get('roles', roleId), prompt: 'go', sourceMessageId: `m${n}`, status: 'ready', contextPrepared: true, createdAt: new Date(2026, 9, 28, 0, 0, n).toISOString() });
     return `t${n}`;
   };
   const state = id => ({ run: db.list('runs').find(r => r.taskId === id), task: db.get('tasks', id) });
@@ -137,4 +138,47 @@ test('worker: a continuation and a delivery publish are not blocked by other rol
   assert.equal(workspaceTakenByLaterRun({ runId: 'later' }, { concurrentWrites: false }, 'src'), true);
   assert.equal(workspaceTakenByLaterRun({ runId: 'later' }, { concurrentWrites: true }, 'src'), false, 'a stamped source keeps its delivery');
   assert.equal(workspaceTakenByLaterRun({ runId: 'src' }, { concurrentWrites: false }, 'src'), false);
+});
+
+test('one role in two group chats: each chat session runs at once; in one chat its turns stay in order', () => {
+  const e = env({ worker: { groupConversations: 1 } });
+  e.db.put('groupConversations', { id: 'chat2', projectId: P, title: 'second', createdAt: new Date().toISOString() });
+  const here = e.ask('a', 1), there = e.ask('a', 2, 'chat2');
+  go(e);
+  assert.ok(e.state(here).run && e.state(there).run, 'the same role starts in both chats');
+  assert.notEqual(e.state(here).run.roleSessionId, e.state(there).run.roleSessionId, 'each on its own session');
+  const next = e.ask('a', 3, 'chat2');
+  go(e);
+  assert.equal(e.state(next).run, undefined, 'a second message in the same chat waits for that chat\'s turn');
+  assert.equal(e.state(next).task.waitingReason, tr('rooms.waitingForRoleFinishIts'));
+  const tight = env({ worker: { groupConversations: 1 }, capacity: 1 });
+  tight.db.put('groupConversations', { id: 'chat2', projectId: P, title: 'second', createdAt: new Date().toISOString() });
+  const one = tight.ask('a', 1), two = tight.ask('a', 2, 'chat2');
+  go(tight);
+  assert.ok(tight.state(one).run);assert.equal(tight.state(two).run, undefined, 'device capacity still applies');
+});
+
+test('the role\'s own session in another chat is named as such to a starting run, and steering or compaction there does not hold this chat', async () => {
+  const { concurrentPeers } = await import('../src/concurrent-writes.mjs');
+  const { steeringWaitReason } = await import('../src/role-steering.mjs');
+  const { roleIdle } = await import('../src/role-compaction.mjs');
+  const e = env({ worker: { groupConversations: 1 } });
+  e.db.put('groupConversations', { id: 'chat2', projectId: P, title: 'second', createdAt: new Date().toISOString() });
+  const there = e.ask('a', 1, 'chat2'), other = e.ask('b', 2);
+  go(e);
+  const peers = runWithLanguage('en', () => concurrentPeers(e.db, P, 'w1', { roleId: 'a', conversationId: P }));
+  assert.ok(peers.includes('Checker'), 'another role by name');
+  assert.ok(peers.some(name => /own other session.*second/.test(name)), `the twin is named: ${peers}`);
+  assert.ok(!peers.includes('Builder'), 'not as if another role of the same name');
+  // A steering message for the role in chat2 does not make the role wait here.
+  e.db.put('tasks', { ...e.db.get('tasks', there), steering: { waitForRunIds: [] } });
+  const here = e.ask('a', 3);
+  assert.equal(steeringWaitReason(e.db, e.db.get('tasks', here)), null);
+  assert.ok(steeringWaitReason(e.db, { ...e.db.get('tasks', here), id: 'x', conversationId: 'chat2' }), 'in chat2 itself it still waits');
+  // The role's run in chat2 does not keep its default-chat session from compacting.
+  const runThere = e.state(there).run;
+  assert.equal(roleIdle(e.db, { id: 'done', roleId: 'a', projectId: P, roleSessionId: 'other-session' }), false, 'a ready task for the role in this chat still holds it');
+  e.db.put('tasks', { ...e.db.get('tasks', here), status: 'cancelled' });
+  assert.equal(roleIdle(e.db, { id: 'done', roleId: 'a', projectId: P, roleSessionId: 'other-session' }), true, `idle here while it runs in chat2 (${runThere.status})`);
+  assert.equal(roleIdle(e.db, { id: 'done', roleId: 'a', projectId: P, conversationId: 'chat2', roleSessionId: 'other-session' }), false);
 });
