@@ -107,3 +107,20 @@ test('VACUUM returns freed pages to the file system, only when enough of the fil
   assert.equal(db.get('settings', 'data-maintenance').lastVacuumAt, new Date(NOW).toISOString());
   db.close();
 });
+
+test('the plan reads sync commands one at a time: 150 MB of them fit a 64 MB heap', async () => {
+  // A Worker held 1.2 GB of capture records and ran out of its heap at every start while planning.
+  const { spawnSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'wb-retention-heap-')), file = join(dir, 'worker.sqlite'), blobs = join(dir, 'blobs');
+  mkdirSync(blobs);
+  try {
+    const db = new Store(file), big = Object.fromEntries(Array.from({ length: 9000 }, (_, i) => [`src/f${i}.mjs`, { hash: hash(i), size: 10 }]));
+    db.transaction(() => { for (let i = 0; i < 150; i++) db.put('sourceSyncCommands', { id: `c${i}`, projectId: 'p1', command: { id: `c${i}`, action: 'capture' }, result: { status: 'completed', manifest: { entries: big } } }); });
+    db.db.close?.();
+    const script = `const {Store}=await import(${JSON.stringify(pathToFileURL(join(root, 'src', 'store.mjs')).href)});const {retentionPlan}=await import(${JSON.stringify(pathToFileURL(join(root, 'src', 'data-retention.mjs')).href)});
+      const plan=await retentionPlan(new Store(${JSON.stringify(file)}),{blobRoot:${JSON.stringify(blobs)}});console.log('kept',plan.records.length);`;
+    const run = spawnSync(process.execPath, ['--max-old-space-size=64', '--input-type=module', '-e', script], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr.split('\n').filter(line => /heap|Error/.test(line)).slice(0, 3).join('\n'));
+    assert.match(run.stdout, /kept 0/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

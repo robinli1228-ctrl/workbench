@@ -28,18 +28,26 @@ export function normalizeRetention(value={}){
 
 const age=(value,now)=>{const t=Date.parse(value||'');return Number.isFinite(t)?now-t:Infinity;};
 const sizes=db=>Object.fromEntries(db.db.prepare('SELECT kind,COUNT(*) AS n,SUM(LENGTH(data)) AS b FROM records GROUP BY kind').all().map(r=>[r.kind,{count:r.n,bytes:r.b||0}]));
-const rows=(db,kind)=>db.db.prepare('SELECT id,data,LENGTH(data) AS bytes FROM records WHERE kind=? ORDER BY rowid').all(kind);
+/**
+ * One row at a time. Sync command records carry whole file lists (a Worker held 1.2 GB of them, single rows up to 14 MB);
+ * reading them all at once, and keeping the text of the ones that stay, ran the Worker out of its 2 GB heap at every start.
+ */
+const rows=(db,kind,order='ASC')=>db.db.prepare(`SELECT id,data,LENGTH(data) AS bytes FROM records WHERE kind=? ORDER BY rowid ${order}`).iterate(kind);
+const field=(db,kind,paths)=>db.db.prepare(`SELECT ${['id','LENGTH(data) AS bytes',...paths.map((p,i)=>`json_extract(data,'$.${p}') AS f${i}`)].join(',')} FROM records WHERE kind=? ORDER BY rowid`).iterate(kind);
 
 /** Which records and blobs the policy lets go right now. Pure: nothing is deleted. */
 export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,now=Date.now()}={}){
  const p=normalizeRetention(policy),plan={records:[],blobs:[],bytes:0,blobBytes:0,kept:{}};
  const drop=(kind,id,bytes)=>{plan.records.push({kind,id,bytes});plan.bytes+=bytes;};
- const batches=new Map(rows(db,'sourceSyncBatches').map(r=>{const b=JSON.parse(r.data);return [b.id,b];}));
- const transportRows=rows(db,'sourceSyncTransport'),transports=new Map(transportRows.map(r=>[r.id,JSON.parse(r.data)])),transportBytes=new Map(transportRows.map(r=>[r.id,r.bytes]));
- const receipts=new Set(rows(db,'sourceSyncReceipts').map(r=>r.id));
+ // Only the fields a decision needs are read from the small kinds; command rows are parsed one by one and let go.
+ const batches=new Map();for(const r of field(db,'sourceSyncBatches',['status','updatedAt','createdAt']))batches.set(r.id,{status:r.f0,updatedAt:r.f1,createdAt:r.f2});
+ const transports=new Map();for(const r of field(db,'sourceSyncTransport',['ready','acknowledgedAt']))transports.set(r.id,{ready:r.f0===0?false:r.f0,acknowledgedAt:r.f1,bytes:r.bytes});
+ const receipts=new Set();for(const r of field(db,'sourceSyncReceipts',[]))receipts.add(r.id);
  // Downloads precede command persistence; captures publish their hashes only when finished.
  let blobsBusy=[...transports.values()].some(t=>t.ready===false);
- const keptCommandText=[];
+ // Blob hashes still named by a command that stays (not its text: kept rows can be large and many).
+ // A matched substring would keep its whole row alive (V8 slices strings), so each hash is copied out of the row's text.
+ const referenced=new Set(),remember=text=>{if(blobRoot)for(const h of text.match(HASH)||[])referenced.add(Buffer.from(h,'latin1').toString('latin1'));};
  for(const r of rows(db,'sourceSyncCommands')){
   const c=JSON.parse(r.data);let reclaim=false,at=null;
   if(c.command){
@@ -54,8 +62,8 @@ export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,
   }
   if(reclaim&&age(at,now)>=p.syncCommandDays*DAY){
    drop('sourceSyncCommands',c.id,r.bytes);
-   const t=transports.get(c.id);if(t)drop('sourceSyncTransport',c.id,transportBytes.get(c.id)||0);
-  }else keptCommandText.push(r.data);
+   const t=transports.get(c.id);if(t)drop('sourceSyncTransport',c.id,t.bytes||0);
+  }else remember(r.data);
  }
  // Home-side receipt-ack cache and Worker-side journals/cancellations belong to their command.
  const dropped=new Set(plan.records.filter(x=>x.kind==='sourceSyncCommands').map(x=>x.id));
@@ -70,11 +78,10 @@ export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,
  // A run still to start or running carries the manifest versions its inputs were frozen at.
  for(const r of rows(db,'runs')){const o=JSON.parse(r.data);if(['succeeded','failed','interrupted'].includes(o.status))continue;for(const input of o.sourceInputs||[])if(input?.manifestId)named.add(input.manifestId);}
  const perRepo=new Map();
- for(const r of rows(db,'sourceSyncVersions').reverse()){const o=JSON.parse(r.data),key=`${o.projectId}:${o.repositoryId}`,n=(perRepo.get(key)||0)+1;perRepo.set(key,n);if(n>p.manifestVersions&&!named.has(r.id))drop('sourceSyncVersions',r.id,r.bytes);}
+ for(const r of rows(db,'sourceSyncVersions','DESC')){const o=JSON.parse(r.data),key=`${o.projectId}:${o.repositoryId}`,n=(perRepo.get(key)||0)+1;perRepo.set(key,n);if(n>p.manifestVersions&&!named.has(r.id))drop('sourceSyncVersions',r.id,r.bytes);}
  // Blobs: content a remaining command still refers to stays; the rest goes once old enough.
  if(blobRoot&&!blobsBusy){
-  const referenced=new Set();for(const text of keptCommandText)for(const h of text.match(HASH)||[])referenced.add(h);
-  for(const r of rows(db,'sourceSyncReceipts'))for(const h of r.data.match(HASH)||[])referenced.add(h);
+  for(const r of rows(db,'sourceSyncReceipts'))remember(r.data);
   let names=[];try{names=await readdir(blobRoot);}catch(error){if(error.code!=='ENOENT')throw error;}
   for(const name of names){
    if(!/^[a-f0-9]{64}$/.test(name)||referenced.has(name))continue;
