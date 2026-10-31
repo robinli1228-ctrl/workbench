@@ -231,6 +231,20 @@ export function documentPathAt(text,cursor,words=documentWords(text)){
   return DOCUMENT_PATH.test(path)?path:null;
 }
 
+/**
+ * Bold or italic starting at `cursor`, or null. Shell wildcards stay literal: a marker right after "/" or right before an
+ * extension (after-*.png, docs/*.md) neither opens nor closes, so two such paths in a line do not italicize the text
+ * between them. "_" neither opens nor closes inside a word (snake_case_name, __init__.py).
+ */
+export function emphasisAt(text,cursor){
+  const before=cursor>0?text[cursor-1]:'';
+  if(before==='/'||text[cursor]==='_'&&/\w/.test(before))return null;
+  const rest=text.slice(cursor),strong=rest.match(/^(\*\*|__)(?=\S)(?!\.\w)([\s\S]*?\S)\1(?!\.\w|(?<=_)\w)/);
+  if(strong)return {tag:'strong',inner:strong[2],length:strong[0].length};
+  const em=rest.match(/^(\*|_)(?=\S)(?!\.\w)([^\n]*?\S)\1(?!\.\w|(?<=_)\w)/);
+  return em?{tag:'em',inner:em[2],length:em[0].length}:null;
+}
+
 function appendInline(parent, input) {
   const text = String(input || ''), words = documentWords(text);
   let cursor = 0;
@@ -247,13 +261,9 @@ function appendInline(parent, input) {
     }
     const documentPath=documentPathAt(text,cursor,words);
     if(documentPath){parent.append(document.createTextNode(documentPath));cursor+=documentPath.length;continue;}
-    const strong = text.slice(cursor).match(/^(\*\*|__)(?=\S)([\s\S]*?\S)\1/);
-    if (strong) {
-      const node = element('strong'); appendInline(node, strong[2]); parent.append(node); cursor += strong[0].length; continue;
-    }
-    const emphasis = text.slice(cursor).match(/^(\*|_)(?=\S)([^\n]*?\S)\1/);
+    const emphasis=emphasisAt(text,cursor);
     if (emphasis) {
-      const node = element('em'); appendInline(node, emphasis[2]); parent.append(node); cursor += emphasis[0].length; continue;
+      const node = element(emphasis.tag); appendInline(node, emphasis.inner); parent.append(node); cursor += emphasis.length; continue;
     }
     const link = text.slice(cursor).match(/^\[([^\]\n]+)]\(\s*(?:<([^>\n]+)>|([^\s)]+))\s*\)/);
     if (link) {
