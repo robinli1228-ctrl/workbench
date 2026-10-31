@@ -132,3 +132,14 @@ test('downloads have their own places, send the paced rate, and resume with If-R
     hold.abort();
   } finally {await h.close();}
 });
+
+test('a sync upload from the device is measured with media: its bytes count, and the link is sampled while it lasts', async () => {
+  const db=new Store(':memory:');db.put('workers',{id:'srv',name:'Server',capabilities:{mediaStream:1,mediaPace:1}});
+  const asked=[];const media=new MediaStreams({db,online:()=>true,query:async(target,action,input)=>{asked.push(action);return {};}});
+  const socket={bytesRead:1000},stop=media.watchUpload('srv',{socket});
+  socket.bytesRead+=40*1024;await new Promise(resolve=>setTimeout(resolve,1300));
+  assert.ok(asked.includes('media_rate'),'the link is sampled while the upload runs');
+  const state=media.rate('srv');assert.ok(state.uploads.size===1);
+  stop();assert.equal(state.uploads.size,0);assert.equal(state.timer,null,'sampling stops with the last upload');
+  stop();
+});

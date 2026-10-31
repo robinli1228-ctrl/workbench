@@ -52,7 +52,7 @@ function receiptEnvelope(commandId,result){
 
 /** The existing Home listener transports content; scoped transfer credentials never enter model input. */
 export class SourceSyncHome {
-  constructor({db,data,online,socket,change,rooms,query,now=Date.now}){Object.assign(this,{db,online,socket,change});this.sync=new SourceSync({db,online,change,now});
+  constructor({db,data,online,socket,change,rooms,query,now=Date.now,watchUpload=null}){Object.assign(this,{db,online,socket,change,watchUpload});this.sync=new SourceSync({db,online,change,now});
     // A failed cleanup is logged and retried at the next start; it must not keep Home from starting.
     try{this.sync.dropExcludedEntries();}catch(error){console.error(tr('sourceSync.cleanupFailed'),error.message);}
     this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;this.baselines=new SourceSyncInitialization(this);
@@ -234,6 +234,8 @@ export class SourceSyncHome {
     const m=pathname.match(/^\/api\/worker\/source-sync\/([a-f0-9]{64})\/(plan|capture|receipt|blobs)(?:\/([a-f0-9]{64}))?$/);if(!m)return false;
     const c=this.db.get('sourceSyncCommands',m[1]);
     if(!c||!matches(req.headers.authorization||'',`Bearer ${c.secret}`)){json(res,{error:'Unauthorized'},401);return true;}
+    // Uploads count toward the device link's measured rate (the one media is paced by) while they arrive.
+    if(req.method==='PUT'&&this.watchUpload){const stop=this.watchUpload(c.nodeId,req);res.once('close',stop);}
     const batch=this.db.get('sourceSyncBatches',c.batchId);
     const evidenceRequest=req.method==='PUT'&&['capture','receipt'].includes(m[2])||req.method==='GET'&&m[2]==='receipt';
     if(!this.db.get('projects',c.projectId)||!batch||batch.status==='cancelled'&&!evidenceRequest&&!(c.detection==='metadata'&&c.action==='cleanup'))throw syncError('batch_inactive');
@@ -246,7 +248,7 @@ export class SourceSyncHome {
     }
     if(m[2]==='plan'&&req.method==='GET'&&c.detection==='metadata'&&c.action!=='cleanup'&&batch.metadataCleanedAt)throw syncError('batch_inactive');
     // The header tells a Worker this Home rebuilds a directory capture from a delta against the command's baseline.
-    if(m[2]==='plan'&&req.method==='GET'){const {result,lastResult,secret,status,lastSentAt,ackedAt,receivedAt,...plan}=c;res.setHeader('X-Source-Sync-Delta','1');json(res,plan);return true;}
+    if(m[2]==='plan'&&req.method==='GET'){const {result,lastResult,secret,status,lastSentAt,ackedAt,receivedAt,...plan}=c;res.setHeader('X-Source-Sync-Delta','1');if(this.watchUpload)res.setHeader('X-Source-Sync-Pace','1');json(res,plan);return true;}
     if(m[2]==='receipt'&&req.method==='PUT'&&c.action!=='capture'){
       const result=await body(req);if(!Array.isArray(result.files)||result.files.length>10000)throw syncError('invalid_receipt');
       const fingerprint=contentHash(JSON.stringify(result)),old=this.db.get('sourceSyncUploadReceipts',c.id);
@@ -349,8 +351,8 @@ export class SourceSyncHome {
 
 /** Network replay carries metadata receipts, not full manifests or source bytes on the event outbox. */
 export class SourceSyncClient {
-  constructor({db,data,home,send,resolveBinding,activeRuns,takeoverState,paused,withFolderAccess=(message,command,fn)=>fn()}){
-    Object.assign(this,{db,home,send,paused,withFolderAccess});this.blobRoot=join(data,'source-sync-blobs');this.inFlight=new Set();this.sent=new Map();
+  constructor({db,data,home,send,resolveBinding,activeRuns,takeoverState,paused,withFolderAccess=(message,command,fn)=>fn(),pace=null}){
+    Object.assign(this,{db,home,send,paused,withFolderAccess,pace});this.blobRoot=join(data,'source-sync-blobs');this.inFlight=new Set();this.sent=new Map();
     // Resource hints never grant apply permission. Refresh at most once per second, not once per file.
     let loadAt=-Infinity,loaded=new Set();const terminals=new Map();
     const observationBusy=projectId=>{const at=Date.now();if(at-loadAt>=1000){loaded=new Set((activeRuns?.()||[]).filter(r=>!['succeeded','failed','interrupted'].includes(r.status)).map(r=>r.projectId));loadAt=at;terminals.clear();}
@@ -358,8 +360,26 @@ export class SourceSyncClient {
     this.worker=new SourceSyncWorker({db,blobRoot:this.blobRoot,resolveBinding,activeRuns,takeoverState,paused,observationBusy});
     this.watch=new SourceSyncWatch({db,send,resolveBinding,busy:observationBusy,blocked:projectId=>Boolean(db.get('sourceSyncReservations',projectId))});
   }
+  /**
+   * Uploads (file contents, manifests, receipts) go out in pieces: at the shared media pace when Home measures this link
+   * (it says so in the plan), and they are given up only when the link has taken nothing for a minute. A fixed one-minute
+   * limit failed every file over about 1.5 MB on a 25 KB/s link, and each retry sent the same bytes again.
+   */
   async request(message,path,method='GET',value){
-    const response=await fetch(`${this.home}/api/worker/source-sync/${message.commandId}/${path}`,{method,headers:{Authorization:`Bearer ${message.secret}`,...(value&&!Buffer.isBuffer(value)?{'Content-Type':'application/json'}:{})},body:value===undefined?undefined:Buffer.isBuffer(value)?value:JSON.stringify(value),signal:AbortSignal.timeout(60000)});
+    const bytes=value===undefined?null:Buffer.isBuffer(value)?value:Buffer.from(JSON.stringify(value)),stall=new AbortController();
+    let body=bytes,watch=null;
+    if(bytes&&(bytes.length>64*1024||message.paced&&this.pace)){
+      let pulled=Date.now();const pace=message.paced?this.pace:null;
+      const limit=this.stallMs??60000;watch=setInterval(()=>{if(Date.now()-pulled>limit)stall.abort(syncError('transfer_failed','upload stalled'));},Math.min(5000,limit/2));
+      body=Readable.from((async function*(){for(let at=0;at<bytes.length;){
+        const piece=bytes.subarray(at,at+(pace?Math.max(1024,Math.min(64*1024,Math.floor(pace.rate/8))):64*1024));at+=piece.length;
+        if(pace)await pace.take(piece.length,stall.signal);pulled=Date.now();yield piece;pulled=Date.now();}})());
+    }
+    let response;
+    try{response=await fetch(`${this.home}/api/worker/source-sync/${message.commandId}/${path}`,{method,headers:{Authorization:`Bearer ${message.secret}`,...(value&&!Buffer.isBuffer(value)?{'Content-Type':'application/json'}:{})},body,
+      ...(body&&body!==bytes?{duplex:'half',signal:stall.signal}:{signal:AbortSignal.timeout(60000)})});}
+    catch(error){throw stall.signal.aborted?stall.signal.reason:error;}
+    finally{clearInterval(watch);}
     if(!response.ok){const result=await response.json();throw Object.assign(syncError(result.code||'transfer_failed',result.error||''),result.limit?{limit:result.limit}:{});}return response;
   }
   async execute(message){
@@ -375,7 +395,7 @@ export class SourceSyncClient {
       // A retry with a saved result reads only the plan's headers (whether Home rebuilds deltas), not its body again.
       let delta=false,command=prior?.result&&prior.command?prior.command:null;
       const plan=command?await this.request(message,'plan').catch(()=>null):await this.request(message,'plan');
-      if(plan){delta=plan.headers.get('x-source-sync-delta')==='1';if(command)await plan.body?.cancel().catch(()=>{});else command=await plan.json();}
+      if(plan){delta=plan.headers.get('x-source-sync-delta')==='1';message={...message,paced:plan.headers.get('x-source-sync-pace')==='1'};if(command)await plan.body?.cancel().catch(()=>{});else command=await plan.json();}
       if(command.detection==='metadata'&&command.action==='cleanup'&&[...this.inFlight].some(id=>{if(id===command.id)return false;const batchId=this.db.get('sourceSyncTransport',id)?.batchId||this.db.get('sourceSyncCommands',id)?.command?.batchId;return !batchId||batchId===command.batchId;})){
         this.send({type:'source_sync_receipt',commandId:command.id,result:{status:'waiting_idle',reason:'transfer_in_flight'}});return;
       }

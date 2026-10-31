@@ -231,7 +231,7 @@ export class MediaStreams {
     state.at=this.clock();
     state.timer=setInterval(()=>{
       // A viewer that stops reading (paused, buffered ahead) holds the upload back: that window shows the viewer, not the link.
-      for(const upload of state.uploads)if(upload.res.writableNeedDrain)state.disturb();
+      for(const upload of state.uploads){upload.poll?.();if(upload.res.writableNeedDrain)state.disturb();}
       const now=this.clock();
       if(state.out){const changed=state.late(now-state.out);if(changed)this.sendRate(nodeId,state,changed);return;}
       // A quarter-second sample only while a fast link (or one not yet measured) ramps up; once a second otherwise.
@@ -243,6 +243,16 @@ export class MediaStreams {
         const changed=state.sample(trip,back-state.at);state.at=back;if(changed)this.sendRate(nodeId,state,changed);
       },()=>{state.out=null;});
     },MEDIA_RATE.windowMs/4);state.timer.unref?.();
+  }
+  /**
+   * Another upload from the device (a sync file or manifest) shares its link: its bytes, read from the connection's own
+   * counter each sample, count toward the measured rate while it lasts. Returns the call that ends it.
+   */
+  watchUpload(nodeId,req) {
+    const socket=req.socket,rate=this.rate(nodeId),entry={res:{writableNeedDrain:false},last:socket?.bytesRead||0,
+      poll:()=>{const now=socket?.bytesRead||0;if(now>entry.last)rate.add(now-entry.last);entry.last=now;}};
+    this.watchRate(nodeId,entry,true);let ended=false;
+    return ()=>{if(ended)return;ended=true;entry.poll();this.watchRate(nodeId,entry,false);};
   }
   /** A changed rate goes out at once (Home to device is not the slow direction); the next sample carries it again. */
   sendRate(nodeId,state,rate) {void this.query({nodeId},'media_rate',{rate:Math.round(rate)},this.timings.cancelMs).catch(()=>{});}

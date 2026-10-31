@@ -222,7 +222,7 @@ const roleSwitchWorker=new RoleSwitchWorker({db,warmSessions,activeSessions:sess
   if(!response.ok)throw new Error('Unable to retrieve CLI switch history.');return response.text();
 }});
 const inside = (root, path) => { const rel = relative(root, path); return !rel || (!rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && rel !== '..' && !isAbsolute(rel)); };
-const sourceSync=new SourceSyncClient({db,data,home:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),send,
+const sourceSync=new SourceSyncClient({db,data,pace:mediaPace,home:homeUrl.replace(/^ws/i,'http').replace(/\/worker\/?$/,''),send,
   withFolderAccess:(message,command,fn)=>folderAccess.run(message.folderAccess?{...message.folderAccess,scope:`project:${command.projectId}`}:null,fn),
   // Source sync keeps its wire reason code 'paused' for a Worker that is disconnected from Home or quitting.
   paused:()=>homeDisconnected||quitting,
