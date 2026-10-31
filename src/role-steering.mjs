@@ -9,7 +9,8 @@ export function steeringWaitReason(db,task) {
     if(task.steering.waitForRunIds.some(id=>!terminal.has(db.get('runs',id)?.status))) return tr('roleSteering.interruptingWaitingForOldRun');
     return null;
   }
-  if(db.roleSteeringTasks(task.projectId,task.roleId).some(t=>t.steering &&
+  // Steering holds the role only in its own group chat; its sessions in other chats go on.
+  if(db.roleSteeringTasks(task.projectId,task.roleId).some(t=>t.steering&&conversationIdOf(t)===conversationIdOf(task) &&
     (t.status==='ready' || (t.currentRunId && !terminal.has(db.get('runs',t.currentRunId)?.status))))) return tr('roleSteering.waitingForRoleContinueWith');
   return null;
 }
@@ -33,7 +34,7 @@ export class RoleSteering {
       if(task.origin!=='chat'||task.status!=='ready'||task.currentRunId||message?.sender!=='human'||!message.taskIds?.includes(task.id)||task.scheduledJobId||task.planId||task.continuationRunId)throw new Error(tr('roleSteering.onlyHumanMessagesHaveNot'));
       const role=this.db.get('roles',task.roleId);
       if(!role?.enabled||role.archivedAt)throw new Error(tr('roleSteering.roleDisabledArchived'));
-      if(this.db.list('tasks').some(t=>t.projectId===projectId&&t.roleId===task.roleId&&t.steering&&t.status==='ready'&&!t.currentRunId))throw new Error(tr('roleSteering.roleAlreadyHasSteeringMessage'));
+      if(this.db.list('tasks').some(t=>t.projectId===projectId&&conversationIdOf(t)===conversationId&&t.roleId===task.roleId&&t.steering&&t.status==='ready'&&!t.currentRunId))throw new Error(tr('roleSteering.roleAlreadyHasSteeringMessage'));
       const active=this.db.list('runs').filter(r=>r.projectId===projectId&&conversationIdOf(r)===conversationId&&r.roleId===task.roleId&&!terminal.has(r.status));
       if(input.roleSessionId&&active.some(r=>r.roleSessionId!==input.roleSessionId))throw new Error(tr('conversations.recordMismatch'));
       if(active.some(r=>r.nodeId!==task.roleSnapshot.nodeId||r.roleSnapshot?.runtime!==task.roleSnapshot.runtime))throw new Error(tr('roleSteering.roleDeviceCliHasChanged'));

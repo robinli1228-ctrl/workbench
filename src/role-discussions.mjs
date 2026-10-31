@@ -86,7 +86,7 @@ export class RoleDiscussions {
         roleSessionId:session.id,resumeNativeSessionId:session.nativeSessionId||null,resumeNativeSession:session.nativeSession||null,resumeWorkspace:session.workspace||null,
         discussionDeliveryId:delivery.id,discussionThreadId:thread.id,discussionMessageId:message.id,directionRevision:thread.directionRevision,turnPurpose:purpose,
         discussionProtocol:2,permissionProfile:discussionPolicy({turnPurpose:purpose}).profileId,projectScope:true,projectRoot:binding.localRoot,
-        ...(concurrentWritesAllowed(this.db.get('projects',thread.projectId),this.db.get('workers',nodeId))?{concurrentWrites:true,concurrentPeers:concurrentPeers(this.db,thread.projectId,nodeId)}:{}),
+        ...(concurrentWritesAllowed(this.db.get('projects',thread.projectId),this.db.get('workers',nodeId))?{concurrentWrites:true,concurrentPeers:concurrentPeers(this.db,thread.projectId,nodeId,{roleId:role.id,conversationId:conversationIdOf(thread)})}:{}),
         repositories:projectRepositories(this.db,thread.projectId,nodeId),model:role.model,mode:role.mode||'workspace-write',status:'queued',lastSeq:0,createdAt:now(),updatedAt:now(),
         discussionContext:{threadId:thread.id,questionId:thread.currentQuestionId,revision:thread.revision,message,attempt:delivery.attempts.length+1,
           actionRequestIds:purpose==='clarification'?{reply:`reply:${message.id}`}:{resolve:`resolve:${thread.currentQuestionId}`}}};
@@ -110,7 +110,7 @@ export class RoleDiscussions {
     const worker=this.db.get('workers',nodeId),active=this.db.list('runs').filter(r=>!terminal.has(r.status));
     this.assertReady(role);
     if(conversationIdOf(task)!==task.projectId&&worker?.capabilities?.groupConversations!==1)throw new Error(tr('conversations.workerUpgrade'));
-    if(active.some(r=>r.nodeId===nodeId&&r.status==='reconciling')||active.filter(r=>r.nodeId===nodeId).length>=(worker.capacity||1)||active.some(r=>r.roleId===role.id))throw new Error(tr('roleDiscussions.waitingForRoleFinishNode'));
+    if(active.some(r=>r.nodeId===nodeId&&r.status==='reconciling')||active.filter(r=>r.nodeId===nodeId).length>=(worker.capacity||1)||active.some(r=>r.roleId===role.id&&conversationIdOf(r)===conversationIdOf(task)))throw new Error(tr('roleDiscussions.waitingForRoleFinishNode'));
     if(projectTerminalLock(this.db,task.projectId,nodeId))throw new Error(tr('roleDiscussions.projectUnderManualTakeover'));
     if(executionConflict({projectId:task.projectId,nodeId},active,{concurrent:concurrentWritesAllowed(this.db.get('projects',task.projectId),worker)}))throw new Error(tr('roleDiscussions.waitingForExclusiveProjectOperation'));
   }

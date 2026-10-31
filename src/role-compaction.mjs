@@ -1,3 +1,4 @@
+import {conversationIdOf} from './group-conversations.mjs';
 /** A role's native context past this size is compacted once the work it was part of has ended: 400k tokens, or 60% of a
  * smaller context window, so models with short windows are covered too (WB_COMPACT_AT_TOKENS overrides the 400k). */
 export const COMPACT_AT_TOKENS=Number(process.env.WB_COMPACT_AT_TOKENS)>0?Number(process.env.WB_COMPACT_AT_TOKENS):400000;
@@ -14,13 +15,16 @@ function candidate(db,run,online) {
   const session=db.get('roleSessions',run.roleSessionId);
   return Boolean(session&&!session.historyClearedAt);
 }
-/** Nothing left for the role on the same matter: no other Run, queued message, discussion wait, or open call to it or from it. */
+/**
+ * Nothing left for the role on the same matter in this group chat: no other Run, queued message, discussion wait, or open call
+ * to it or from it. Its sessions in other chats are other processes and do not keep this one from compacting.
+ */
 export function roleIdle(db,run) {
-  const role=run.roleId;
-  if(db.activeRuns().some(r=>r.id!==run.id&&(r.roleId===role||r.roleSessionId===run.roleSessionId)))return false;
-  if(db.chatTasks(['ready','in_progress']).some(t=>t.roleId===role))return false;
-  if(db.tasksWaitingForDiscussion().some(t=>t.roleId===role))return false;
-  return !db.listProject('coordinationRequests',run.projectId).some(r=>!CLOSED.has(r.status)&&(r.targetRoleId===role||db.get('runs',r.sourceRunId||'')?.roleId===role));
+  const role=run.roleId,chat=conversationIdOf(run),here=record=>record.projectId===run.projectId&&conversationIdOf(record)===chat;
+  if(db.activeRuns().some(r=>r.id!==run.id&&(r.roleId===role&&here(r)||r.roleSessionId===run.roleSessionId)))return false;
+  if(db.chatTasks(['ready','in_progress']).some(t=>t.roleId===role&&here(t)))return false;
+  if(db.tasksWaitingForDiscussion().some(t=>t.roleId===role&&here(t)))return false;
+  return !db.listProject('coordinationRequests',run.projectId).some(r=>!CLOSED.has(r.status)&&here(r)&&(r.targetRoleId===role||db.get('runs',r.sourceRunId||'')?.roleId===role));
 }
 
 /** When a role's Run settles: a large, retained session is marked for compaction after the idle window (once per Run). */
