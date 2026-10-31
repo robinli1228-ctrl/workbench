@@ -144,6 +144,7 @@ export class SourceSync {
   }
   createBatch(projectId,input,kind,actor={kind:'human'}){return this.db.transaction(()=>{
     if(typeof input.requestId!=='string'||!/^[\w-]{1,100}$/.test(input.requestId))throw syncError('invalid_request_id');
+    if(kind!=='preview'&&this.config(projectId).paused)throw syncError('sync_paused');
     const config=this.config(projectId),options=kind==='preview'?input:config,bindings=this.bindings(projectId,input.repositoryIds,input.nodeIds,options);
     if(options.scopeKind==='directory'&&(!input.displayNodeId&&!config.displayNodeId||!(input.nodeIds||[]).includes(input.displayNodeId||config.displayNodeId)))throw syncError('display_node_required');
     if(options.scopeKind==='directory'&&this.db.get('workers',input.displayNodeId||config.displayNodeId)?.platform!=='darwin')throw syncError('display_mac_required');
@@ -380,6 +381,25 @@ export class SourceSync {
     const sourceInputsReady=targets.every(capture=>[...new Set([...Object.keys(entries),...Object.keys(capture.result.manifest.entries)])].every(path=>path===c.path||entryEqual(getEntry(entries,path),getEntry(capture.result.manifest.entries,path))));
     const next={...batch,status:'applying',sourceInputs,sourceInputsReady};this.db.put('sourceSyncBatches',next);this.finish(next);
   }
+  /**
+   * Pause or resume a project's sync without leaving it: bindings, scope, generation and the canonical files stay. Pausing
+   * stops every running or queued batch (their device commands are cancelled the usual way), stops the devices' folder
+   * watching and creates no batches until resumed; change notices are kept and sync after resuming, as after a device that
+   * was away. Not a configuration change: the revision the sync page edits against stays.
+   */
+  pause(projectId,{paused}){return this.db.transaction(()=>{
+    const old=this.config(projectId);if(typeof paused!=='boolean')throw syncError('invalid_scope');
+    if(!old.enabled)throw syncError('sync_disabled');
+    if(Boolean(old.paused)===paused)return old;
+    const config=this.db.put('sourceSyncConfigs',{...old,paused,pausedAt:paused?new Date().toISOString():null});
+    if(paused){
+      for(const b of this.db.listSourceSyncBatches({projectId})){if(b.kind==='preview'||['cancelling','cancelled'].includes(b.status))continue;
+        const pending=this.db.listSourceSyncCommands({projectId,batchId:b.id,pending:true}).length>0;
+        this.audit.observe(this.db.put('sourceSyncBatches',{...b,status:pending?'cancelling':'cancelled',reason:'sync_paused',revision:b.revision+1}));}
+      for(const n of this.db.listProject('sourceSyncWatchNotices',projectId))if(!n.handled&&n.batchId)this.db.put('sourceSyncWatchNotices',{...n,batchId:null,error:null,attempts:0});
+    }
+    this.change();return config;
+  });}
   cancel(projectId,id,revision){const b=this.db.get('sourceSyncBatches',id);if(b?.projectId!==projectId||b.revision!==revision)throw syncError('batch_changed');
     const pending=this.db.listSourceSyncCommands({projectId,batchId:id,pending:true}).length>0;
     const next=this.db.put('sourceSyncBatches',{...b,status:pending?'cancelling':'cancelled',revision:b.revision+1});this.audit.observe(next);this.change();return next;}

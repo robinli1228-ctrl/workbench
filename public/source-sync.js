@@ -31,13 +31,14 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
     const h=el('div','source-sync-heading');h.append(el('h3','',t('Project file sync')),setActionIcon(button('Configure project file sync',configure),'settings',t('Configure project file sync')));panel.append(h,el('p','workspace-note',t(state.config.enabled?'Enabled':'Disabled')),button('Sync records',auditRecords));
     panel.append(el('p','workspace-note',t('Saved code, documents and resources; Git delivery remains separate.')),el('p','workspace-note',t(state.config.contentMode==='source-and-outputs'?'Source and outputs':'Source only')));
     if(state.config.detection==='metadata')panel.append(el('p','workspace-note',t('Simple mode: metadata and completion receipts; equal time and size can miss content changes.')));
+    if(state.config.enabled&&state.config.paused)panel.append(el('p','workspace-note',t('File sync is paused: nothing is synchronized until it is resumed from Device Management.')));
     if(state.config.mode==='continuous')panel.append(el('p','workspace-note',t('Automatic two-way sync continues while this page is closed.')),el('p','workspace-note',`${t('Local display device')}: ${name(state.config.displayNodeId)}`));
     for(const watcher of state.watchers||[])if(watcher.generation===state.config.generation&&watcher.status!=='watching')panel.append(el('p','workspace-note',`${name(watcher.nodeId)} · ${status(watcher.status)}${watcher.error?' · '+issue(watcher.error,watcher.limit):''}`));
     if(state.config.enabled){
       const field=el('label','',t('Source device')),select=el('select');select.setAttribute('aria-label',t('Source device'));
       for(const id of state.config.nodeIds||[]){const w=device(id),o=el('option','',`${name(id)} · ${t(!w?.online?'Offline':w.capabilities?.sourceSync!==1?'Worker update required':'Online')}`);o.value=id;select.append(o);}
       if(!state.config.nodeIds.includes(selectedSource))selectedSource=state.config.nodeIds[0];select.value=selectedSource;select.addEventListener('change',()=>selectedSource=select.value);field.append(select);panel.append(field);
-      const sync=button('Sync now',b=>act(()=>api(endpoint()+'/batches',{requestId:crypto.randomUUID(),sourceNodeId:selectedSource,targetNodeIds:state.config.nodeIds.filter(id=>id!==selectedSource)}),b));sync.disabled=action||state.batches.some(b=>!terminal.has(b.status));panel.append(sync);
+      const sync=button('Sync now',b=>act(()=>api(endpoint()+'/batches',{requestId:crypto.randomUUID(),sourceNodeId:selectedSource,targetNodeIds:state.config.nodeIds.filter(id=>id!==selectedSource)}),b));sync.disabled=action||Boolean(state.config.paused)||state.batches.some(b=>!terminal.has(b.status));panel.append(sync);
     }
     if(state.config.enabled&&state.config.detection==='metadata'){
       panel.append(button('Establish sync baseline',initialize));

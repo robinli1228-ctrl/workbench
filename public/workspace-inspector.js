@@ -32,6 +32,28 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
     const project=getProject(),on=project?.allowConcurrentWrites===true,label=t(on?'Concurrent edits: on (click to turn off)':'Concurrent edits: off (click to turn on)');
     concurrent.hidden=!project;concurrent.setAttribute('aria-pressed',String(on));concurrent.title=label;concurrent.setAttribute('aria-label',label);
   }
+  // Pause or resume this project's file sync from Device Management: pausing stops every running sync and the devices'
+  // folder watching at once (a slow device link stops filling up); resuming picks up the changes made meanwhile.
+  const syncPause=document.querySelector('#toggle-sync-pause');let syncConfig=null,syncFor=null,syncAt=0;
+  const syncNote=el('p','workspace-note inspector-sync-paused',t('File sync paused; resume it with the button above.'));syncNote.hidden=true;document.querySelector('#inspector-device-list').before(syncNote);
+  const syncUrl=id=>`/api/projects/${encodeURIComponent(id)}/source-sync`;
+  function paintSync(){
+    const on=Boolean(getProject()&&syncConfig?.enabled),paused=Boolean(syncConfig?.paused);syncPause.hidden=!on;syncNote.hidden=!(on&&paused);if(!on)return;
+    syncPause.innerHTML=UI_ICON[paused?'play':'pause'];syncPause.querySelector('svg')?.setAttribute('aria-hidden','true');
+    const label=t(paused?'File sync paused (click to resume)':'Pause file sync (stops all running sync)');
+    syncPause.setAttribute('aria-pressed',String(paused));syncPause.title=label;syncPause.setAttribute('aria-label',label);
+  }
+  async function loadSync(force=false){
+    const id=getProject()?.id||null;if(id!==syncFor){syncFor=id;syncConfig=null;syncAt=0;paintSync();}
+    if(!id||!force&&Date.now()-syncAt<15000)return;syncAt=Date.now();
+    try{const config=await api(`${syncUrl(id)}/config`);if(syncFor===id){syncConfig=config;paintSync();}}catch{ /* Older Home or no access: no button. */ }
+  }
+  syncPause.addEventListener('click',async()=>{
+    const id=getProject()?.id;if(!id||syncPause.disabled||!syncConfig?.enabled)return;syncPause.disabled=true;
+    try{const config=await api(`${syncUrl(id)}/pause`,{method:'POST',json:{paused:!syncConfig.paused}});if(syncFor===id)syncConfig=config;}
+    catch(error){onError(error);}
+    finally{syncPause.disabled=false;paintSync();void loadSync(true);}
+  });
   concurrent.addEventListener('click',async()=>{
     const project=getProject();if(!project||concurrent.disabled)return;concurrent.disabled=true;
     try{if(await saveConcurrentWrites({api,getData,projectId:project.id,enabled:concurrent.getAttribute('aria-pressed')!=='true'})!==null)await refreshState({quiet:true});}
@@ -116,7 +138,7 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
   refresh.addEventListener('click',()=>void load(true));
   return {artifactRow,openSideAsk:message=>sideAsk.open(message),render(){
     sourceSync.render();sideAsk.syncScope();
-    syncConcurrent();
+    syncConcurrent();void loadSync();
     const next=getProject()?.id||null;
     if(next!==projectId){if(selected==='ask')select('roles');projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
     const devices=document.querySelector('#inspector-device-list');devices.replaceChildren();
