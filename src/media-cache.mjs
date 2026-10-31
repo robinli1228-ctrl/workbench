@@ -1,7 +1,8 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {mkdir,stat,rename,unlink,readdir,utimes,readFile,writeFile,copyFile} from 'node:fs/promises';
+import {mkdir,stat,rename,unlink,readdir,utimes,readFile,writeFile,copyFile,open} from 'node:fs/promises';
 import {createReadStream,createWriteStream} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {Readable} from 'node:stream';
+import {join,resolve,basename} from 'node:path';
 
 /**
  * Home's copy of media bytes that came from a device. Media tickets pin one file version (size, mtime, inode, device),
@@ -58,7 +59,17 @@ export class MediaCache {
     if(this.touched.size>4096)this.touched.delete(this.touched.keys().next().value);
     void utimes(path,new Date(now),new Date(now)).catch(()=>{});
   }
-  read(path,start,end) {return createReadStream(path,{start,end});}
+  /** A queued reader may outlive prefix promotion; open its same-version complete copy if the prefix was removed. */
+  read(path,start,end) {
+    if(!PREFIX.test(basename(path)))return createReadStream(path,{start,end});
+    return Readable.from((async function*(){
+      let handle;
+      try{handle=await open(path,'r');}
+      catch(error){if(error.code!=='ENOENT')throw error;handle=await open(path.slice(0,-'.prefix'.length),'r');}
+      try{yield* handle.createReadStream({start,end,autoClose:false});}
+      finally{await handle.close();}
+    })(),{objectMode:false});
+  }
   /** A writer for one full copy, or null when the file is too large or another copy of it is being written. */
   async writer(t) {
     if(!this.cacheable(t))return null;

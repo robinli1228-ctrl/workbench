@@ -241,7 +241,8 @@ export function emphasisAt(text,cursor){
   if(before==='/'||text[cursor]==='_'&&/\w/.test(before))return null;
   const rest=text.slice(cursor),strong=rest.match(/^(\*\*|__)(?=\S)(?!\.\w)([\s\S]*?\S)\1(?!\.\w|(?<=_)\w)/);
   if(strong)return {tag:'strong',inner:strong[2],length:strong[0].length};
-  const em=rest.match(/^(\*|_)(?=\S)(?!\.\w)([^\n]*?\S)\1(?!\.\w|(?<=_)\w)/);
+  // An invalid double marker is not a single opener: a filename must not consume a later italic span.
+  const em=rest.match(/^(\*|_)(?!\1)(?=\S)(?!\.\w)([^\n]*?\S)\1(?!\.\w|(?<=_)\w)/);
   return em?{tag:'em',inner:em[2],length:em[0].length}:null;
 }
 
