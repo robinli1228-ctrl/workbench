@@ -199,7 +199,7 @@ const change = () => { clearTimeout(changeTimer);changeTimer=null;for (const r o
 const outputChanged=()=>{if(!changeTimer){changeTimer=setTimeout(change,100);changeTimer.unref();}};
 const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify(payload)); };
 const online = id => sockets.get(id)?.readyState === 1&&!reconnectingNodes.has(id);
-const sourceSync=new SourceSyncHome({db,data,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery});
+const sourceSync=new SourceSyncHome({db,data,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery,watchUpload:(nodeId,req)=>mediaStreams.watchUpload(nodeId,req)});
 const projectFiles=new ProjectFiles({db,online,query:workerQuery});
 // The media ticket key survives restarts, so a file version keeps its link (and the browser its cached copy) across them.
 const mediaKeyFile=join(data,'media-ticket.key');

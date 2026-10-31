@@ -141,3 +141,44 @@ test('a real Worker client and Home: later captures upload only their changes, a
   const again = await capture();
   assert.ok(again.uploaded < 2048, `unchanged after edits: ${again.uploaded} bytes`);
 });
+
+test('sync uploads: paced when Home measures the link, and given up only when the link stops taking bytes', async t => {
+  const http = await import('node:http'), { SourceSyncClient } = await import('../src/source-sync-transport.mjs'), { MediaPace } = await import('../src/media-pace.mjs');
+  let mode = 'read', received = 0;const sockets = new Set();
+  const server = http.createServer(async (req, res) => {
+    if (mode === 'stuck') { req.socket.pause();return; }
+    for await (const chunk of req) received += chunk.length;
+    res.writeHead(200, { 'Content-Type': 'application/json' });res.end('{}');
+  });
+  server.on('connection', socket => sockets.add(socket));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { for (const socket of sockets) socket.destroy();server.close(); });
+  const pace = new MediaPace({ rate: 200 * 1024 }), dir = await mkdtemp(join(tmpdir(), 'wb-pace-'));t.after(() => rm(dir, { recursive: true, force: true }));
+  const client = new SourceSyncClient({ db: new Store(':memory:'), data: dir, home: `http://127.0.0.1:${server.address().port}`, send: () => {}, resolveBinding: async () => null, pace });
+  const blob = Buffer.alloc(300 * 1024, 1), message = { commandId: 'a'.repeat(64), secret: 's' };
+  let started = Date.now();await client.request({ ...message, paced: true }, `blobs/${'b'.repeat(64)}`, 'PUT', blob);
+  assert.ok(Date.now() - started >= 1000, `300 KB at 200 KB/s took ${Date.now() - started} ms`);assert.equal(received, blob.length);
+  started = Date.now();await client.request(message, `blobs/${'b'.repeat(64)}`, 'PUT', blob);
+  assert.ok(Date.now() - started < 1000, 'a Home that does not measure the link gets the upload unpaced');
+  // A link that takes nothing: the upload stops on its own (here after 400 ms; a minute in service).
+  mode = 'stuck';client.stallMs = 400;started = Date.now();
+  await assert.rejects(client.request(message, `blobs/${'b'.repeat(64)}`, 'PUT', Buffer.alloc(8 * 1024 * 1024)), /transfer_failed/);
+  assert.ok(Date.now() - started < 5000);
+});
+
+test('Home counts sync uploads toward the measured link and says so in the plan', async t => {
+  const data = await mkdtemp(join(tmpdir(), 'wb-pace-home-'));t.after(() => rm(data, { recursive: true, force: true }));
+  const db = new Store(':memory:'), watched = [];
+  db.put('projects', { id: 'p1', name: 'p' });db.put('sourceSyncBatches', { id: 'b1', projectId: 'p1', status: 'preparing', generation: 1 });
+  const command = { id: 'd'.repeat(64), secret: 's', projectId: 'p1', batchId: 'b1', nodeId: 'n1', action: 'capture', repositoryId: 'r', generation: 1, scopeKind: 'directory', scopePolicy: {}, baselineEntries: {} };
+  db.put('sourceSyncCommands', command);
+  const home = new SourceSyncHome({ db, data, online: () => true, socket: () => null, change: () => {}, rooms: null, query: async () => ({}), watchUpload: (nodeId, req) => { watched.push([nodeId, req.method]);return () => watched.push(['stopped']); } });
+  const plan = await put(home, command, 'plan');
+  assert.equal(plan.headers['x-source-sync-pace'], '1');
+  const res = { headers: {}, setHeader() {}, writeHead(status) { this.status = status; }, end() { this.close?.(); }, once(event, fn) { if (event === 'close') this.close = fn; } };
+  const req = Object.assign(Readable.from([Buffer.from('{}')]), { method: 'PUT', headers: { authorization: 'Bearer s' } });
+  await home.workerHttp(req, res, `/api/worker/source-sync/${command.id}/capture`).catch(() => {});
+  assert.deepEqual(watched.slice(0, 1), [['n1', 'PUT']]);
+  const plain = new SourceSyncHome({ db, data, online: () => true, socket: () => null, change: () => {}, rooms: null, query: async () => ({}) });
+  assert.equal((await put(plain, command, 'plan')).headers['x-source-sync-pace'], undefined, 'no pacing without a link measure');
+});
