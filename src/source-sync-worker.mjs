@@ -5,7 +5,7 @@ import {promisify} from 'node:util';
 import {open,writeFile,lstat,realpath,rename,link,unlink,chmod,mkdir} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,dirname,resolve} from 'node:path';
-import {contentHash,syncError,entryEqual,manifestDigest,SOURCE_SYNC_LIMITS} from './source-sync-manifest.mjs';
+import {contentHash,syncError,entryEqual,manifestDigest,sortedEntries,SOURCE_SYNC_LIMITS} from './source-sync-manifest.mjs';
 import {sourceFilePath,readSourceFile,readSourceBlob,captureSourceSnapshot,captureGitBase,captureDirectorySnapshot} from './source-sync-files.mjs';
 
 const exec=promisify(execFile),now=()=>new Date().toISOString();
@@ -145,7 +145,8 @@ export class SourceSyncWorker {
       else if(command.action==='capture'){
         const options={root:binding.root,repositoryId:command.repositoryId,generation:command.generation,blobRoot,detection:command.detection,preview:command.preview,expectedHead:command.baseCommit,scopePolicy:command.scopePolicy||{},baselineEntries:command.baselineEntries,boundedTransfers:command.boundedTransfers===true};
         if(command.scopeKind==='directory'){
-          const manifest=await captureDirectorySnapshot({...options,background:true,busy:()=>this.observationBusy(command.projectId)}),base={...manifest,entries:{},digest:command.detection==='metadata'?metadataDigest({},options.scopePolicy):manifestDigest({},options.scopePolicy),excluded:[]};result={status:'completed',base,manifest};
+          // Path order, so Home can rebuild this manifest from a delta byte for byte (see manifestDelta).
+          const manifest=await captureDirectorySnapshot({...options,background:true,busy:()=>this.observationBusy(command.projectId)});if(command.detection!=='metadata')manifest.entries=sortedEntries(manifest.entries);const base={...manifest,entries:{},digest:command.detection==='metadata'?metadataDigest({},options.scopePolicy):manifestDigest({},options.scopePolicy),excluded:[]};result={status:'completed',base,manifest};
         }else{const base=await captureGitBase(options),manifest=await captureSourceSnapshot({...options,base});result={status:'completed',base,manifest};}
       }else if(command.detection==='metadata'&&command.action==='read')result=await readMetadataFiles(command,binding.root,blobRoot);
       else if(command.detection==='metadata'&&command.action==='stage'){const original=this.db.get('sourceSyncCommands',command.readCommandId);if(original?.command?.batchId!==command.batchId||original.result?.status!=='completed')throw syncError('command_changed');const savedFiles=new Map(original.result.files.map(f=>[f.path,f]));const files=command.paths.map(p=>savedFiles.get(p.path));if(files.some(f=>!f))throw syncError('invalid_command');result={status:'completed',files};await confirmMetadataRead(command,binding.root,result);}

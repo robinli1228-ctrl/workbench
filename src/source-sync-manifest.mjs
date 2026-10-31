@@ -103,3 +103,34 @@ export function validateSourceCapture(snapshot,command={}) {
   if(manifestDigest(snapshot.entries,policy)!==snapshot.digest)throw syncError('invalid_manifest');
   return snapshot;
 }
+
+/** Entries in path order (as JS orders a plain object's keys built that way), so two sides that build them agree byte for byte. */
+export function sortedEntries(entries) {
+  const out=Object.create(null);for(const path of Object.keys(entries).sort())out[path]=entries[path];return out;
+}
+
+/**
+ * A directory capture as a change against the baseline Home sent with the command. Captures run often and usually find
+ * nothing new, yet each one carried every entry (2.3 MB for a 6,000-file folder) over the device link, which on a 25 KB/s
+ * link held everything behind it for a minute and a half. Directory captures are kept in path order (sortedEntries), so the
+ * delta is only the changed or new values (null entries always travel) and the removed paths that held a file; Home's
+ * deletion markers (null) the capture no longer has are dropped without being listed.
+ */
+export function manifestDelta(baseline,entries) {
+  if(!baseline||typeof baseline!=='object'||!entries||typeof entries!=='object')return null;
+  const changed=Object.create(null),removed=[];
+  for(const path of Object.keys(entries))if(entries[path]===null||!Object.hasOwn(baseline,path)||JSON.stringify(entries[path])!==JSON.stringify(baseline[path]))changed[path]=entries[path];
+  for(const path of Object.keys(baseline))if(baseline[path]!==null&&!Object.hasOwn(entries,path))removed.push(path);
+  return {changed,removed};
+}
+
+/** The entries a delta describes, in path order; a delta inconsistent with the baseline is refused. */
+export function applyManifestDelta(baseline,delta) {
+  const {changed,removed}=delta||{};
+  if(!baseline||typeof baseline!=='object'||!changed||typeof changed!=='object'||Array.isArray(changed)||!Array.isArray(removed))throw syncError('invalid_manifest','delta');
+  const gone=new Set(removed),merged=Object.create(null);
+  for(const path of removed)if(typeof path!=='string'||!Object.hasOwn(baseline,path)||baseline[path]===null||Object.hasOwn(changed,path))throw syncError('invalid_manifest','delta removes an unknown path');
+  for(const path of Object.keys(baseline))if(baseline[path]!==null&&!gone.has(path))merged[path]=baseline[path];
+  for(const path of Object.keys(changed))merged[path]=changed[path];
+  return sortedEntries(merged);
+}
