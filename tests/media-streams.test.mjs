@@ -24,23 +24,24 @@ function bigVideo(size=25*1024*1024) {
 }
 
 /** Home's relay and the Worker's file functions in one process, joined by a real loopback HTTP server. */
-async function harness({capable=true,cache=false}={}) {
+async function harness({capable=true,cache=false,uploadDelay=0}={}) {
   const root=await mkdtemp(join(tmpdir(),'wb-media-')),source=join(root,'server'),target=join(root,'mac');
   await mkdir(join(source,'out'),{recursive:true});await mkdir(target,{recursive:true});
   const db=new Store(':memory:'),onlineNodes=new Set(['srv','mac']);
   db.put('projects',{id:'p1',name:'media'});
   db.put('workers',{id:'srv',name:'Server',capabilities:{mediaStream:capable?1:0}});db.put('workers',{id:'mac',name:'Mac',capabilities:{mediaStream:1}});
   db.put('workspaces',{id:'p1:srv',projectId:'p1',nodeId:'srv',localRoot:source});db.put('workspaces',{id:'p1:mac',projectId:'p1',nodeId:'mac',localRoot:target});
-  let base='',statShift=0;
+  let base='',statShift=0;const ranges=[];
   const query=async({nodeId},action,input)=>{
     if(!onlineNodes.has(nodeId))throw new Error('offline');
     if(action==='media_stat'){const info=await statMedia({root:input.root,path:input.file});return statShift?{...info,mtimeMs:info.mtimeMs+statShift}:info;}
     if(action==='media_hash')return hashMedia({root:input.root,path:input.file,version:input.version});
     if(action==='media_receive')return receiveMedia({url:base+input.path,size:input.size,sha256:input.sha256,name:input.name,transferId:input.transferId,workspace:input.workspace});
     if(action==='media_stream'){
+      ranges.push([input.start,input.end]);
       const info=await statMedia({root:input.root,path:input.file}),v=input.version;
       if(info.size!==v.size||info.mtimeMs!==v.mtimeMs||info.ino!==v.ino||info.dev!==v.dev)throw new Error('file_changed');
-      setImmediate(()=>void streamMedia({root:input.root,path:input.file,version:v,start:input.start,end:input.end,url:base+input.path,secret:input.secret}).catch(()=>{}));
+      setImmediate(()=>void streamMedia({root:input.root,path:input.file,version:v,start:input.start,end:input.end,url:base+input.path,secret:input.secret,...(uploadDelay?{fetchImpl:(url,options)=>fetch(url,{...options,body:(async function*(){for await(const chunk of options.body){await new Promise(r=>setTimeout(r,uploadDelay));yield chunk;}})()})}:{})}).catch(()=>{}));
       return {accepted:true};
     }
     throw new Error('unknown action');
@@ -55,7 +56,7 @@ async function harness({capable=true,cache=false}={}) {
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));base=`http://127.0.0.1:${server.address().port}`;
   const run={id:'r1',projectId:'p1',nodeId:'srv',workspace:source,projectRoot:source};
-  return {root,source,target,db,media,mediaCache,onlineNodes,base,run,shiftStat:ms=>{statShift=ms;},close:async()=>{server.close();await rm(root,{recursive:true,force:true});}};
+  return {root,source,target,db,media,mediaCache,onlineNodes,base,run,ranges,shiftStat:ms=>{statShift=ms;},close:async()=>{server.close();await rm(root,{recursive:true,force:true});}};
 }
 
 test('media type comes from header bytes, not the file name', () => {
@@ -286,5 +287,130 @@ test('a bare file name missing from the folder is found in its outputs or artifa
     assert.equal(info.available,true);assert.equal(info.kind,'image');assert.equal(info.size,png.length);
     const response=await fetch(h.base+info.url);
     assert.equal(response.status,200);assert.ok(Buffer.from(await response.arrayBuffer()).equals(png));
+  } finally {await h.close();}
+});
+
+async function until(predicate) {
+  for(let i=0;i<200;i++){if(await predicate())return;await new Promise(r=>setTimeout(r,10));}
+  assert.fail('condition did not settle');
+}
+
+// Regression: preview ranges used to be discarded, so preview then download fetched the same bytes twice.
+test('preview then download reuses a verified prefix and fetches only missing bytes', async () => {
+  const h=await harness({cache:true});
+  try {
+    const bytes=bigVideo(14*1024*1024);await writeFile(join(h.source,'out','demo.mp4'),bytes);
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'out/demo.mp4'));
+    let response=await fetch(h.base+info.url,{headers:{Range:'bytes=0-'}});
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes.subarray(0,8*1024*1024));
+    await until(()=>h.mediaCache.writing.size===0);
+    response=await fetch(h.base+info.url,{headers:{Range:'bytes=0-999'}});
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes.subarray(0,1000));
+    response=await fetch(h.base+info.downloadUrl);
+    assert.equal(response.status,200);assert.equal(Number(response.headers.get('content-length')),bytes.length);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);
+    await until(()=>h.mediaCache.writing.size===0);
+    assert.deepEqual(h.ranges,[[0,8388607],[8388608,14680063]],'no repeated source bytes');
+    h.onlineNodes.delete('srv');
+    response=await fetch(h.base+info.downloadUrl);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes,'completed copy remains readable offline');
+  } finally {await h.close();}
+});
+
+test('ranged responses carry stable validators and honor If-Range', async () => {
+  const h=await harness();
+  try {
+    const bytes=bigVideo(64*1024);await writeFile(join(h.source,'out','demo.mp4'),bytes);
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'out/demo.mp4'));
+    let r=await fetch(h.base+info.url,{headers:{Range:'bytes=0-99'}});
+    const tag=r.headers.get('etag'),date=r.headers.get('last-modified');await r.arrayBuffer();
+    assert.match(tag||'',/^"[^"\r\n]+"$/);assert.ok(Number.isFinite(Date.parse(date)));
+    r=await fetch(h.base+info.url,{headers:{Range:'bytes=100-199','If-Range':tag}});
+    assert.equal(r.status,206);assert.equal(r.headers.get('etag'),tag);assert.equal((await r.arrayBuffer()).byteLength,100);
+    for(const value of ['"old-version"',`W/${tag}`,'invalid-date',date]){
+      r=await fetch(h.base+info.url,{headers:{Range:'bytes=100-199','If-Range':value}});
+      assert.equal(r.status,200);assert.deepEqual(Buffer.from(await r.arrayBuffer()),bytes);
+    }
+  } finally {await h.close();}
+});
+
+
+test('a viewer cancelled while waiting for a relay slot never starts an upload', async () => {
+  const h=await harness();
+  try {
+    await writeFile(join(h.source,'out','demo.mp4'),bigVideo(4096));
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'out/demo.mp4'));
+    const release=await Promise.all(Array.from({length:4},()=>h.media.slot('srv'))),out=sink();
+    const pending=h.media.relay(h.media.verify(info.ticket),0,4095,out,200,{});
+    out.destroy();release.forEach(f=>f());
+    await pending;
+    assert.deepEqual(h.ranges,[]);
+  } finally {await h.close();}
+});
+
+
+test('an interrupted download retains verified bytes and the retry resumes at the saved prefix', async () => {
+  const h=await harness({cache:true,uploadDelay:5});
+  try {
+    const bytes=bigVideo(14*1024*1024);await writeFile(join(h.source,'out','demo.mp4'),bytes);
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'out/demo.mp4')),ticket=h.media.verify(info.ticket),abort=new AbortController();
+    const first=await fetch(h.base+info.downloadUrl,{signal:abort.signal});
+    const reader=first.body.getReader();await reader.read();abort.abort();await reader.cancel().catch(()=>{});
+    await until(()=>h.mediaCache.writing.size===0);
+    const prefix=await h.mediaCache.prefix(ticket);
+    assert.ok(prefix&&prefix.size>0&&prefix.size<bytes.length);
+    assert.equal(await h.mediaCache.lookup(ticket),null,'partial bytes do not masquerade as a full offline copy');
+    const retry=await fetch(h.base+info.downloadUrl);
+    assert.deepEqual(Buffer.from(await retry.arrayBuffer()),bytes);
+    assert.deepEqual(h.ranges,[[0,14680063],[prefix.size,14680063]]);
+    await until(()=>h.mediaCache.writing.size===0);
+  } finally {await h.close();}
+});
+
+test('prefixes survive restart, obey cached-read authorization, and count toward eviction', async () => {
+  const h=await harness({cache:true});
+  try {
+    const bytes=bigVideo(4096);await writeFile(join(h.source,'out','demo.mp4'),bytes);
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'out/demo.mp4')),ticket=h.media.verify(info.ticket);
+    await (await fetch(h.base+info.url,{headers:{Range:'bytes=0-1023'}})).arrayBuffer();
+    await until(()=>h.mediaCache.writing.size===0);
+    const restarted=new MediaCache({dir:join(h.root,'home-cache'),limitBytes:512});h.media.cache=restarted;
+    h.onlineNodes.delete('srv');
+    let r=await fetch(h.base+info.url,{headers:{Range:'bytes=500-999'}});
+    assert.equal(r.status,206);assert.deepEqual(Buffer.from(await r.arrayBuffer()),bytes.subarray(500,1000));
+    assert.equal((await fetch(h.base+info.downloadUrl)).status,503,'missing suffix still requires the source');
+    h.media.canReadCached=()=>false;
+    assert.equal((await fetch(h.base+info.url,{headers:{Range:'bytes=0-99'}})).status,403);
+    assert.equal((await restarted.stats()).bytes,1024);
+    await restarted.sweep();assert.equal(await restarted.prefix(ticket),null);
+  } finally {await h.close();}
+});
+
+test('a range beyond the prefix leaves no hole, and changed sources cannot publish new cached bytes', async () => {
+  const h=await harness({cache:true});
+  try {
+    const bytes=bigVideo(4096);await writeFile(join(h.source,'out','demo.mp4'),bytes);
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'out/demo.mp4')),ticket=h.media.verify(info.ticket);
+    await (await fetch(h.base+info.url,{headers:{Range:'bytes=1000-1999'}})).arrayBuffer();
+    await until(()=>h.mediaCache.writing.size===0);assert.equal(await h.mediaCache.prefix(ticket),null);
+    h.shiftStat(1);
+    await (await fetch(h.base+info.url,{headers:{Range:'bytes=0-999'}})).arrayBuffer();
+    await until(()=>h.mediaCache.writing.size===0);assert.equal(await h.mediaCache.prefix(ticket),null);
+  } finally {await h.close();}
+});
+
+
+test('a failed extension preserves the previously verified prefix', async () => {
+  const h=await harness({cache:true});
+  try {
+    await writeFile(join(h.source,'out','demo.mp4'),bigVideo(4096));
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'out/demo.mp4')),ticket=h.media.verify(info.ticket);
+    await (await fetch(h.base+info.url,{headers:{Range:'bytes=0-999'}})).arrayBuffer();
+    await until(()=>h.mediaCache.writing.size===0);
+    h.shiftStat(1);
+    await (await fetch(h.base+info.url,{headers:{Range:'bytes=0-1999'}})).arrayBuffer();
+    await until(()=>h.mediaCache.writing.size===0);
+    assert.equal((await h.mediaCache.prefix(ticket)).size,1000);
+    assert.deepEqual(h.ranges,[[0,999],[1000,1999]]);
   } finally {await h.close();}
 });

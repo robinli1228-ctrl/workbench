@@ -78,7 +78,7 @@ Cross-device collaboration passes work and its inputs between roles. It does not
 
 ### Inspect the work and its outputs
 
-Open run details to inspect inputs, CLI output, tool calls, and results. View Markdown reports and file previews in a dialog or side panel. Long history and tool details load on demand.
+Open run details to inspect inputs, CLI output, tool calls, and results. Media reads retain verified continuous file prefixes on Home, so later playback or downloads reuse saved bytes and fetch the missing suffix; files beyond the cache limit still stream without a saved copy. View Markdown reports and file previews in a dialog or side panel. Long history and tool details load on demand.
 
 Bare filenames in replies use explicit file paths from the same turn's tool records when the match is unique. Group-chat history loads those records on a file click; ambiguous names remain unresolved. Completed session replies stay visible while native history catches up, then return to the history view without duplicating the final answer.
 

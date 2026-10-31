@@ -1,5 +1,6 @@
 import {randomUUID,randomBytes,createHmac,timingSafeEqual} from 'node:crypto';
 import {pipeline} from 'node:stream/promises';
+import {Transform} from 'node:stream';
 import {resolve,relative,isAbsolute,basename} from 'node:path';
 import {folderAccessFor,nativeFolderAccess} from './folder-access.mjs';
 import {MediaRate,MEDIA_RATE} from './media-pace.mjs';
@@ -152,9 +153,9 @@ export class MediaStreams {
     // A removed device's files are not served from the copy either.
     const known=Boolean(this.db.get('workers',t.n))&&!this.db.get('removedDevices',t.n);
     const cached=this.cache&&known?await this.cache.lookup(t):null;
-    if(cached&&!this.canReadCached(t))return respond(res,403,{error:'invalid_media_path',code:'invalid_media_path'});
+    const prefix=!cached&&this.cache&&known?await this.cache.prefix(t):null;
+    if((cached||prefix)&&!this.canReadCached(t))return respond(res,403,{error:'invalid_media_path',code:'invalid_media_path'});
     if(!this.db.get('workers',t.n)||this.db.get('removedDevices',t.n))return respond(res,503,{error:'source_offline',code:'source_offline'});
-    const reason=cached?null:this.usable(t.n);if(reason){this.record(token,reason,'device');return respond(res,STATUS[reason],{error:reason,code:reason});}
     // One ticket names one file version, so its validator never changes; a browser resumes an interrupted download with
     // Range + If-Range instead of starting over.
     const etag=`"${t.s}-${t.m}-${t.i}"`,size=t.s;let start=0,end=size-1,partial=false;
@@ -167,6 +168,8 @@ export class MediaStreams {
       if(!download&&!m[2])end=Math.min(end,start+PREVIEW_CHUNK-1);
       partial=true;
     }
+    const covered=cached||(prefix&&end<prefix.size?prefix.path:null);
+    const reason=covered?null:this.usable(t.n);if(reason){this.record(token,reason,'device');return respond(res,STATUS[reason],{error:reason,code:reason});}
     const inline=!download&&PLAYABLE.has(t.k),filename=encodeURIComponent(t.nm||'file');
     const headers={'Content-Type':inline?t.t:'application/octet-stream','Accept-Ranges':'bytes','Cache-Control':MEDIA_CACHE_CONTROL,'X-Content-Type-Options':'nosniff',ETag:etag,
       ...(Number.isFinite(t.m)?{'Last-Modified':new Date(t.m).toUTCString()}:{}),
@@ -175,13 +178,14 @@ export class MediaStreams {
       ...(partial?{'Content-Range':`bytes ${start}-${end}/${size}`}:{})};
     const status=partial?206:200;
     if(req.method==='HEAD'||size===0){res.writeHead(status,headers);return res.end();}
-    if(cached){res.writeHead(status,headers);return pipeline(this.cache.read(cached,start,end),res).catch(()=>res.destroy());}
+    if(covered){res.writeHead(status,headers);return pipeline(this.cache.read(covered,start,end),res).catch(()=>res.destroy());}
     const tracked=this.progress.has(token)?{onBytes:count=>this.trackProgress(token,count)}:{};
-    // A whole-file read (pictures, downloads, sends, a short video's first chunk) is copied as it passes. Range reads are
-    // not turned into background downloads: a video thumbnail's first range would otherwise pull the whole file over the
-    // device link and hold one of its few relay slots.
-    const writer=this.cache&&start===0&&end===size-1?await this.cache.writer(t):null;
-    return this.relay(t,start,end,res,status,headers,{...tracked,writer,token,kind:download?'download':'view'});
+    // Retain only requested bytes; a range must not start a background whole-file download.
+    // Reuse the verified prefix and relay only its missing suffix in the same response.
+    const saved=prefix&&start<prefix.size?{...prefix,start}:null,remoteStart=saved?prefix.size:start;
+    const writer=this.cache?await this.cache.append(t,remoteStart):null;
+    if(res.destroyed){if(writer)await writer.finish(false);return;}
+    return this.relay(t,remoteStart,end,res,status,headers,{...tracked,writer,prefix:saved,token,kind:download?'download':'view'});
   }
 
   /**
@@ -242,26 +246,31 @@ export class MediaStreams {
   /** A changed rate goes out at once (Home to device is not the slow direction); the next sample carries it again. */
   sendRate(nodeId,state,rate) {void this.query({nodeId},'media_rate',{rate:Math.round(rate)},this.timings.cancelMs).catch(()=>{});}
 
-  async relay(t,start,end,res,status,headers,{onBytes,writer=null,token=null,kind='view'}={}) {
+  async relay(t,start,end,res,status,headers,{onBytes,writer=null,prefix=null,token=null,kind='view'}={}) {
     let release;
     try{release=await this.slot(t.n,kind);}catch(error){this.record(token,error.code,'queue',start);if(writer)void writer.finish(false);return respond(res,STATUS[error.code]||503,{error:error.code,code:error.code},{'Retry-After':'2'});}
+    if(res.destroyed){release();if(writer)await writer.finish(false);return;}
     const id=randomUUID(),secret=randomBytes(24).toString('hex'),length=end-start+1;
     let settle;const done=new Promise(resolveDone=>{settle=resolveDone;});
-    const entry={id,secret,nodeId:t.n,token,start,length,status,headers,res,started:false,closed:false,onBytes,writer,complete:false,
+    const entry={id,secret,nodeId:t.n,token,start,length,status,headers,res,started:false,closed:false,onBytes,writer,prefix,complete:false,overflow:false,
       settle:({stop=false}={})=>{clearTimeout(entry.timer);if(this.pending.get(id)!==entry)return;this.pending.delete(id);this.watchRate(t.n,entry,false);
         // An upload that never arrived may still be on its way: keep its place until the device confirms it stopped.
         if(stop&&this.paced(t.n)){const grace=setTimeout(release,this.timings.stopGraceMs);grace.unref?.();
           void this.query({nodeId:t.n,projectId:t.pr},'media_stream_cancel',{id},this.timings.cancelMs).then(()=>{clearTimeout(grace);release();},()=>{});}
         else release();
         if(!writer)return settle();
-        // Every byte arrived and the device still has this version: keep the copy; otherwise discard it.
-        void (entry.complete?this.unchanged(t):Promise.resolve(false)).then(ok=>writer.finish(ok),()=>writer.finish(false)).finally(settle);}};
+        // Interrupted prefixes are useful too, but only after the same source-version check as a full copy.
+        void ((entry.started&&(entry.complete||writer.partial&&!entry.overflow))?this.unchanged(t):Promise.resolve(false)).then(ok=>writer.finish(ok),()=>writer.finish(false)).finally(settle);}};
     this.pending.set(id,entry);
-    // The device may start sending as soon as it is asked, long before the first byte gets through a queued link.
-    this.watchRate(t.n,entry,true);
-    entry.timer=setTimeout(()=>this.fail(id,'media_timeout'),this.timings.arrivalMs);
     res.on('close',()=>{entry.closed=true;if(!entry.started)this.fail(id,null);});
     try{
+      // Drain the verified prefix before asking for the suffix: backpressure from a slow viewer must not leave a Worker
+      // upload waiting unread long enough to trip its link-stall guard. pipeline keeps this bounded and cancels on close.
+      if(prefix){res.writeHead(status,headers);await pipeline(this.cache.read(prefix.path,prefix.start,prefix.size-1),res,{end:false});}
+      if(entry.closed||res.destroyed){this.fail(id,null);return await done;}
+      // Only the missing suffix uses the device link and its arrival/rate measurements.
+      this.watchRate(t.n,entry,true);
+      entry.timer=setTimeout(()=>this.fail(id,'media_timeout'),this.timings.arrivalMs);
       await this.query({nodeId:t.n,projectId:t.pr},'media_stream',{...t.ns,id,secret,path:`/api/worker/media-streams/${id}`,root:t.r,file:t.p,version:{size:t.s,mtimeMs:t.m,ino:t.i,dev:t.d},start,end,
         ...(this.paced(t.n)?{rate:Math.round(this.rate(t.n).rate)}:{})},this.timings.arrivalMs);
     }catch(error){this.fail(id,codeOf(error));}
@@ -269,7 +278,7 @@ export class MediaStreams {
   }
   fail(id,code) {
     const entry=this.pending.get(id);if(!entry||entry.started)return;
-    if(code){this.record(entry.token,code,code==='media_timeout'?'arrival':'device',entry.start);if(!entry.closed&&!entry.res.headersSent)respond(entry.res,STATUS[code]||502,{error:code,code});}
+    if(code){this.record(entry.token,code,code==='media_timeout'?'arrival':'device',entry.start);if(!entry.closed){if(!entry.res.headersSent)respond(entry.res,STATUS[code]||502,{error:code,code});else entry.res.destroy();}}
     entry.settle({stop:true});
   }
 
@@ -282,12 +291,17 @@ export class MediaStreams {
     entry.started=true;clearTimeout(entry.timer);
     const out=entry.res;
     if(entry.closed||out.destroyed){refuse(req,res,410,{error:'Viewer closed'});entry.settle();return;}
-    out.writeHead(entry.status,entry.headers);
+    if(!out.headersSent)out.writeHead(entry.status,entry.headers);
     const rate=this.rate(entry.nodeId);rate.disturb();
     let count=0,idle;
     const touch=()=>{clearTimeout(idle);idle=setTimeout(()=>req.destroy(failure('media_idle')),this.timings.idleMs);};touch();
-    req.on('data',chunk=>{count+=chunk.length;rate.add(chunk.length);touch();entry.onBytes?.(count);entry.writer?.write(chunk);if(count>entry.length)req.destroy(new Error('media_overflow'));});
-    try{await pipeline(req,out);entry.complete=count===entry.length;respond(res,entry.complete?200:400,{received:count});}
+    const meter=new Transform({transform(chunk,encoding,callback){
+      count+=chunk.length;rate.add(chunk.length);touch();
+      if(count>entry.length){entry.overflow=true;return callback(new Error('media_overflow'));}
+      entry.onBytes?.(count+(entry.prefix?entry.prefix.size-entry.prefix.start:0));
+      Promise.resolve(entry.writer?.write(chunk)).then(()=>callback(null,chunk),callback);
+    }});
+    try{await pipeline(req,meter,out);entry.complete=count===entry.length;respond(res,entry.complete?200:400,{received:count});}
     catch(error){if(!entry.closed&&!out.writableFinished)this.record(entry.token,error?.code==='media_idle'?'media_idle':'media_interrupted','transfer',entry.start+count);out.destroy();if(!res.headersSent)respond(res,400,{received:count});}
     finally{clearTimeout(idle);entry.settle();}
   }
