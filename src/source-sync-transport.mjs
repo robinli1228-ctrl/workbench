@@ -13,7 +13,7 @@ import {SourceSyncWorker} from './source-sync-worker.mjs';
 import {SourceSyncConflicts} from './source-sync-conflicts.mjs';
 import {SourceSyncAgent} from './source-sync-agent.mjs';
 import {runtimeIssue} from './runtime-probe.mjs';
-import {validateSourceCapture,syncError,syncLimitError,contentHash,entryEqual,SOURCE_SYNC_LIMITS} from './source-sync-manifest.mjs';
+import {validateSourceCapture,syncError,syncLimitError,contentHash,entryEqual,manifestDelta,applyManifestDelta,sortedEntries,SOURCE_SYNC_LIMITS} from './source-sync-manifest.mjs';
 import {sourceScopeBinding} from './source-sync-scopes.mjs';
 import {SourceSyncWatch} from './source-sync-watch.mjs';
 import {folderAccessFor} from './folder-access.mjs';
@@ -28,6 +28,20 @@ const retiring=batch=>['cancelling','blocked','cancelled'].includes(batch?.statu
 const retryDelay=attempt=>[5000,15000,30000,60000,300000][Math.min(Math.max(attempt-1,0),4)];
 // DOMException numeric codes describe transport failures, not permanent sync-policy failures.
 const transportFailure=error=>!error.code||typeof error.code!=='string'||['transfer_failed','ECONNRESET','ECONNREFUSED','ETIMEDOUT'].includes(error.code)||['AbortError','TimeoutError'].includes(error.name);
+
+/**
+ * A capture upload: only what changed against the command's baseline when Home said it rebuilds deltas (a directory
+ * scope, not the metadata mode, entries in path order), else the whole manifest as before. The entries key keeps its place
+ * as null. A delta that is not clearly smaller (a first capture is all additions) is not worth it.
+ */
+function captureBody(command,result,delta){
+  const entries=result.manifest?.entries,paths=entries?Object.keys(entries):[];
+  const ordered=paths.every((path,i)=>i===0||paths[i-1]<path)||JSON.stringify(paths)===JSON.stringify(Object.keys(sortedEntries(entries)));
+  const changes=delta&&ordered&&command.scopeKind==='directory'&&command.detection!=='metadata'&&command.baselineEntries?manifestDelta(command.baselineEntries,entries):null;
+  if(!changes||JSON.stringify(changes).length*2>JSON.stringify(entries).length)return {base:result.base,manifest:result.manifest};
+  const manifest={...result.manifest};manifest.entries=null;
+  return {base:result.base,manifest,delta:changes};
+}
 
 /** Every replay path uses the same compact reference; durable result bytes and their hash remain unchanged. */
 function receiptEnvelope(commandId,result){
@@ -231,7 +245,8 @@ export class SourceSyncHome {
       json(res,{receiptHash:result?contentHash(JSON.stringify(result)):null});return true;
     }
     if(m[2]==='plan'&&req.method==='GET'&&c.detection==='metadata'&&c.action!=='cleanup'&&batch.metadataCleanedAt)throw syncError('batch_inactive');
-    if(m[2]==='plan'&&req.method==='GET'){const {result,lastResult,secret,status,lastSentAt,ackedAt,receivedAt,...plan}=c;json(res,plan);return true;}
+    // The header tells a Worker this Home rebuilds a directory capture from a delta against the command's baseline.
+    if(m[2]==='plan'&&req.method==='GET'){const {result,lastResult,secret,status,lastSentAt,ackedAt,receivedAt,...plan}=c;res.setHeader('X-Source-Sync-Delta','1');json(res,plan);return true;}
     if(m[2]==='receipt'&&req.method==='PUT'&&c.action!=='capture'){
       const result=await body(req);if(!Array.isArray(result.files)||result.files.length>10000)throw syncError('invalid_receipt');
       const fingerprint=contentHash(JSON.stringify(result)),old=this.db.get('sourceSyncUploadReceipts',c.id);
@@ -241,7 +256,12 @@ export class SourceSyncHome {
       const missing=[];if(['read','stage'].includes(c.action)&&!c.result&&!retiring(batch))for(const f of result.files)if(f.entry&&!(c.action==='read'&&c.paths.find(p=>p.path===f.path)?.compare)&&!await this.storage.scoped(c.batchId).has(c.projectId,f.entry))missing.push(f.entry);json(res,{stored:true,missing});return true;
     }
     if(m[2]==='capture'&&req.method==='PUT'&&c.action==='capture'){
-      const bundle=await body(req);
+      let bundle=await body(req);
+      // A delta becomes the full manifest in the Worker's own key order, then is checked (digest included) like a full one.
+      if(bundle?.delta){
+        if(c.scopeKind!=='directory'||c.detection==='metadata'||!bundle.manifest||bundle.manifest.entries!==null)throw syncError('invalid_manifest','delta');
+        const manifest={...bundle.manifest};manifest.entries=applyManifestDelta(c.baselineEntries||{},bundle.delta);bundle={base:bundle.base,manifest};
+      }
       // Reject old captures before accepting any content uploads, not after their bytes have been staged.
       for(const s of [bundle.base,bundle.manifest])(c.detection==='metadata'?validateMetadataCapture:validateSourceCapture)(s,c);
       if(c.scopeKind!=='directory'&&(bundle.base.baseCommit!==bundle.manifest.baseCommit||c.baseCommit&&c.baseCommit!==bundle.base.baseCommit))throw syncError('git_baseline_mismatch');
@@ -352,7 +372,10 @@ export class SourceSyncClient {
         this.send(receiptEnvelope(message.commandId,settled.terminalResult));return;
       }
       const prior=this.db.get('sourceSyncCommands',message.commandId);
-      const command=prior?.result&&prior.command?prior.command:await (await this.request(message,'plan')).json();
+      // A retry with a saved result reads only the plan's headers (whether Home rebuilds deltas), not its body again.
+      let delta=false,command=prior?.result&&prior.command?prior.command:null;
+      const plan=command?await this.request(message,'plan').catch(()=>null):await this.request(message,'plan');
+      if(plan){delta=plan.headers.get('x-source-sync-delta')==='1';if(command)await plan.body?.cancel().catch(()=>{});else command=await plan.json();}
       if(command.detection==='metadata'&&command.action==='cleanup'&&[...this.inFlight].some(id=>{if(id===command.id)return false;const batchId=this.db.get('sourceSyncTransport',id)?.batchId||this.db.get('sourceSyncCommands',id)?.command?.batchId;return !batchId||batchId===command.batchId;})){
         this.send({type:'source_sync_receipt',commandId:command.id,result:{status:'waiting_idle',reason:'transfer_in_flight'}});return;
       }
@@ -375,7 +398,7 @@ export class SourceSyncClient {
       let alreadyUploaded=false;
       if(saved)try{const proof=await (await this.request(message,'receipt')).json();alreadyUploaded=proof.receiptHash===contentHash(JSON.stringify(result));}catch{ /* Old Homes can still accept the original upload path. */ }
       if(!alreadyUploaded&&result.status==='completed'&&command.action==='capture'){
-        const needed=await (await this.request(message,'capture','PUT',{base:result.base,manifest:result.manifest})).json();
+        const needed=await (await this.request(message,'capture','PUT',captureBody(command,result,delta))).json();
         for(const entry of needed.missing)await this.request(message,`blobs/${entry.hash}`,'PUT',await readSourceBlob(blobRoot,entry.hash));
       }
       if(!alreadyUploaded&&command.action!=='capture'&&Array.isArray(result.files)){const needed=await (await this.request(message,'receipt','PUT',result)).json();for(const entry of needed.missing||[])await this.request(message,`blobs/${entry.hash}`,'PUT',await readSourceBlob(blobRoot,entry.hash));
