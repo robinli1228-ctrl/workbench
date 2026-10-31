@@ -1108,7 +1108,14 @@ const server = http.createServer(async (req, res) => {
           // Only the team roster is left of the discussion tools; questions and reviews go through wb call.
           if(Object.keys(b).some(k=>!['runId','action','input'].includes(k)))throw new Error(tr('home.discussionRequestContainsUnauthorizedFields'));
           if(b.action!=='peers')throw new Error(tr('wbCli.discussPeersUsage'));
-          return json(res,new RoleDiscussions(conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run),{online:id=>online(id)}).peers(run,b.input||{}));
+          const peers=new RoleDiscussions(conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run),{online:id=>online(id)}).peers(run,b.input||{});
+          // Who else is working in this project's other group chats (same folder under concurrent edits, the caller's own role
+          // included): names, chat, device and status only, never their tasks or messages.
+          const chat=conversationIdOf(run);
+          peers.otherChats=db.list('runs').filter(r=>r.projectId===run.projectId&&conversationIdOf(r)!==chat&&!terminal.has(r.status)).map(r=>({roleId:r.roleId,
+            roleName:r.roleSnapshot?.name||db.get('roles',r.roleId)?.name||r.roleId,ownRole:r.roleId===run.roleId,
+            chat:db.get('groupConversations',conversationIdOf(r))?.title||db.get('projects',r.projectId)?.name||conversationIdOf(r),nodeId:r.nodeId,status:r.status,updatedAt:r.updatedAt||null}));
+          return json(res,peers);
         }
         // Independent-review isolation is applied to the data the read tools see, before search, pagination or summaries.
         const readView=conversationView(reviewView(db,{projectId:run.projectId,roleId:run.roleId}),run);
