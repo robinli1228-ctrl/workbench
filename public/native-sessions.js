@@ -1268,7 +1268,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    catch(error){op.message=t(error.message);}
    finally{op.editing=false;queuePending.delete(turn.id);if(k()===id){render();input.focus();}}}
   /** The CLI's question card above the composer: the question, its numbered options, a free-text reply, Skip and Send; several
-   * questions page through with "1/2" and are answered together. Built once per question, so typing survives the 1s refresh. */
+   * questions page through with "1/2" and are answered together. Built once per question, so typing survives the 1s refresh.
+   * Question and options are shown in simplified script like replies; the answer sends the CLI's own option label. */
   const ask=el('section','native-ask');ask.hidden=true;ask.setAttribute('aria-label',t('Question'));
   let askState=null,askBuilt='';
   const askIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L4 21l1.6-4.4A8.5 8.5 0 1 1 21 12Z"/><path d="M9.8 9.5a2.3 2.3 0 0 1 4.4.8c0 1.5-2.2 2-2.2 3.2"/><path d="M12 16.6h.01"/></svg>';
@@ -1284,12 +1285,12 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const head=el('div','native-ask-head'),title=el('span','native-ask-title');title.innerHTML=askIcon;title.append(el('span','',t('Question')));head.append(title);
    if(total>1)head.append(el('span','native-ask-pager',`${st.index+1}/${total}`));
    const close=iconButton('close','Skip all questions',()=>void sendAnswer(live,{questionId:q.id,skip:true}),'native-ask-close');head.append(close);
-   const text=el('p','native-ask-text',question.question);text.translate=false;
+   const text=el('p','native-ask-text',simplifiedCliOutput(question.question));text.translate=false;
    const list=el('div','native-ask-options');
    const answerOf=()=>{const typed=(st.typed[question.id]||'').trim();return [...(st.picked[question.id]||[]),...(typed?[typed]:[])];};
    const paint=()=>{for(const row of list.children)row.classList.toggle('is-picked',(st.picked[question.id]||[]).includes(row.dataset.label));send.disabled=!answerOf().length;};
-   question.options.forEach((option,i)=>{const row=el('button','native-ask-option');row.type='button';row.dataset.label=option.label;row.append(el('span','native-ask-key',String(i+1)),el('span','native-ask-label',option.label));
-    if(option.description)row.append(el('span','native-ask-desc',option.description));row.translate=false;
+   question.options.forEach((option,i)=>{const row=el('button','native-ask-option');row.type='button';row.dataset.label=option.label;row.append(el('span','native-ask-key',String(i+1)),el('span','native-ask-label',simplifiedCliOutput(option.label)));
+    if(option.description)row.append(el('span','native-ask-desc',simplifiedCliOutput(option.description)));row.translate=false;
     row.addEventListener('click',()=>{const now=new Set(question.multiSelect?st.picked[question.id]||[]:[]);if(now.has(option.label))now.delete(option.label);else now.add(option.label);st.picked[question.id]=[...now];paint();if(!question.multiSelect)other.value='';st.typed[question.id]='';});
     list.append(row);});
    const foot=el('div','native-ask-foot'),other=el('input','native-ask-other');other.type=question.secret?'password':'text';other.placeholder=t('Or write your own reply');other.value=st.typed[question.id]||'';other.setAttribute('aria-label',other.placeholder);
