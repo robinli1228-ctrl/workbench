@@ -247,6 +247,10 @@ export const UI_ICON = {
   spinner: `<svg viewBox="0 0 24 24" class="message-queue-spinner" width="18" height="18" ${STROKE} aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>`,
   check: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m5 12 4 4L19 6"/></svg>`,
   // A speech bubble with two lines: a side question beside the session.
+  // Finished chat card kinds (footer, bottom-left): a reply, a question to another role, a notice.
+  replied: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/><path d="m8.5 10 2.5 2.5 4.5-4.5"/></svg>`,
+  question: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><circle cx="12" cy="12" r="9.5"/><path d="M9.2 9.2a3 3 0 0 1 5.8 1c0 2-3 2.8-3 2.8M12 17h.01"/></svg>`,
+  notice: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><circle cx="12" cy="12" r="9.5"/><path d="M12 16.5v-5M12 7.5h.01"/></svg>`,
   sideAsk: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L4 21l1.6-4.4A8.5 8.5 0 1 1 21 12Z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></svg>`,
   // A window with its right pane and an arrow into it: open this on the right, beside the chat.
   sideOpen: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16M6.5 9.5 9 12l-2.5 2.5"/></svg>`,
