@@ -7,10 +7,26 @@ import {randomUUID,createHash} from 'node:crypto';
 import {join} from 'node:path';
 import {contentHash,validateEntry,SOURCE_SYNC_LIMITS,syncError,syncLimitError} from './source-sync-manifest.mjs';
 import {readSourceBlob} from './source-sync-files.mjs';
+import {collectSourceSyncBlobs} from './source-sync-gc.mjs';
 
 /** Immutable project-local blob storage; reserve quota before consuming a stream, never prune conflict evidence. */
 export class SourceSyncStorage {
-  constructor({root,db,namespace='',writes=new Map()}){Object.assign(this,{root,db,namespace,writes});}
+  constructor({root,db,namespace='',writes=new Map()}){Object.assign(this,{root,db,namespace,writes});this.collections=new Map();}
+  /** 复用同一项目正在进行的回收，避免维护和额度不足时重复清理。 */
+  collect(projectId,options){
+    if(this.namespace)throw syncError('invalid_command');
+    if(!this.collections.has(projectId))this.collections.set(projectId,collectSourceSyncBlobs(this,projectId,options).finally(()=>this.collections.delete(projectId)));
+    return this.collections.get(projectId);
+  }
+  /** 沿用 Home 维护周期，只清理内容缓存，不动项目文件和协议历史。 */
+  async sweep(){
+    const summary={blobsDeleted:0,blobBytes:0};
+    for(const {id} of this.db.db.prepare("SELECT id FROM records WHERE kind='sourceSyncBlobUsage'").all()){
+      const result=await this.collect(id);summary.blobsDeleted+=result.blobsDeleted;summary.blobBytes+=result.blobBytes;
+      if(result.deferred)summary.deferred=true;if(result.errors)summary.errors=(summary.errors||0)+result.errors;
+    }
+    return summary;
+  }
   scoped(namespace){if(!/^[a-f0-9]{64}$/.test(namespace))throw syncError('invalid_command');return new SourceSyncStorage({root:this.root,db:this.db,namespace,writes:this.writes});}
   key(projectId,hash){return `${projectId}:${this.namespace?this.namespace+':':''}${hash}`;}
   async cleanup(projectId){
@@ -53,6 +69,7 @@ export class SourceSyncStorage {
     let release;this.writes.set(key,new Promise(resolve=>{release=resolve;}));let temporary,reserved=false;
     try {
       if(await this.has(projectId,entry)){stream.resume();return {hash:entry.hash,reused:true};}
+      if(!this.namespace&&(this.db.get('sourceSyncBlobUsage',projectId)?.bytes||0)+entry.size>SOURCE_SYNC_LIMITS.projectBytes)await this.collect(projectId);
       this.db.transaction(()=>{const usage=this.db.get('sourceSyncBlobUsage',projectId)||{id:projectId,projectId,bytes:0};
         // A durable reservation also replaces a stale row after interrupted GC or upload; quota is charged once.
         const prior=this.db.get('sourceSyncBlobs',key);if(prior)usage.bytes=Math.max(0,usage.bytes-prior.size);

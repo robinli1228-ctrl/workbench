@@ -294,7 +294,7 @@ export class SourceSyncHome {
       const entry=allowed.find(e=>e.hash===m[3]);if(!entry)throw syncError('blob_not_in_command');
       const payloadPath=c.action==='apply'?c.changes?.find(x=>x.after?.hash===entry.hash)?.path:this.db.get('sourceSyncUploadReceipts',c.id)?.result.files?.find(x=>x.entry?.hash===entry.hash)?.path;
       if(req.method==='PUT'&&c.detection==='metadata'&&payloadPath){let bytes=0,counted=false;req.on('data',chunk=>bytes+=chunk.length);req.pause();const count=()=>{if(!counted){counted=true;this.sync.audit.transferred(c,payloadPath,bytes);}};req.once('end',count);req.once('close',count);}
-      if(req.method==='PUT'&&['capture','read','stage'].includes(c.action)){if(c.detection==='metadata'&&(c.result||retiring(batch)||['cleaning','completed','partial_conflict'].includes(batch.status))){req.resume();json(res,{stored:false,terminal:true});return true;}if(bundle?.manifest.metadataOnly)throw syncError('preview_metadata_only');json(res,await storage.receive(c.projectId,entry,req));return true;}
+      if(req.method==='PUT'&&['capture','read','stage'].includes(c.action)){if(c.result||retiring(batch)||['cleaning','completed','partial_conflict'].includes(batch.status)){req.resume();json(res,{stored:false,terminal:true});return true;}if(bundle?.manifest.metadataOnly)throw syncError('preview_metadata_only');json(res,await storage.receive(c.projectId,entry,req));return true;}
       if(req.method==='GET'&&c.action==='apply'){const bytes=await storage.read(c.projectId,entry.hash);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':bytes.length,'Cache-Control':'no-store'});res.end(bytes);this.sync.audit.transferred(c,payloadPath,bytes.length);return true;}
     }
     throw syncError('invalid_sync_action');
