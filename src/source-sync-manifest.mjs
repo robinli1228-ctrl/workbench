@@ -25,6 +25,8 @@ export function syncLimitError(code,kind,maximum,actual,path='') {
  * device: the platform's run-* folders, the retired project baselines and any worktree a role created by hand. */
 export function excludedSourcePath(path,policy={}) {
   const parts=String(path).split('/');
+  // Integration copies stay device-local, including project containers without Git metadata.
+  if(parts.includes('.local-integration'))return true;
   const shared=policy.sharedDocs===true&&parts[0]==='.workbench'&&parts[1]==='docs'&&parts.length>2;
   if(!shared&&policy.onlySharedDocs||(policy.excludeRoots||[]).some(root=>root?(path===root||path.startsWith(root+'/')):!shared))return true;
   if(includesSyncOutputs(policy))return parts.some(part=>/^(?:\.git|\.worktrees|\.data|node_modules|vendor|\.venv|venv|__pycache__|\.codex|\.claude|\.ssh|\.netrc|_netrc|\.npmrc|\.pypirc|\.agent-workbench-project\.json|worker-config\.json|auth(?:-profiles)?\.json|build|dist)$/i.test(part)
