@@ -246,6 +246,17 @@ export function openImageLightbox({name,size=null,at=null,url,from=null}){
   }).catch(error=>{if(v.version!==viewerVersion)return;v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:error.message});});
 }
 
+/** A video people sent (an attachment): played in the same viewer. `url` may be a promise of an object URL. */
+export function openVideoLightbox({name,size=null,at=null,url,from=null}){
+  const v=lightbox({name,size,at,from});
+  void Promise.resolve(url).then(src=>{
+    if(v.version!==viewerVersion)return;
+    const video=el('video');video.controls=true;video.autoplay=true;video.setAttribute('playsinline','');
+    video.addEventListener('loadeddata',()=>{v.overlay.hidden=true;});video.addEventListener('error',()=>{v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:name});});
+    video.src=src;v.stage.prepend(video);v.download.href=src;v.download.setAttribute('download',name);v.download.hidden=false;
+  }).catch(error=>{if(v.version!==viewerVersion)return;v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:error.message});});
+}
+
 /** A text attachment (pasted text, Markdown, plain text) in the same viewer: the text as written, download, copy the text, close. */
 export function openTextLightbox({name,size=null,at=null,url}){
   const v=lightbox({name,size,at});v.stage.classList.add('is-text');

@@ -6,7 +6,7 @@ import { t, dateLocale, getLanguage } from './i18n.js';
 import { trackLoading } from './load-bar.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, renderMessageMarkdown } from './markdown.js';
-import { linkMedia, openImageLightbox, markImageOpener, fileGlyph } from './media.js';
+import { linkMedia, openImageLightbox, openVideoLightbox, markImageOpener, fileGlyph } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {executionProgress} from './execution-progress.js';
 import {setChatCardState,highlightLatestChatCard} from './chat-card-state.js';
@@ -361,7 +361,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (!previewDialog.open) previewDialog.showModal();
   }
   function attachmentCard(item, removable = false, ownerId = scopeId) {
-    const card = create('div', `attachment-card${item.mime.startsWith('image/') ? '' : ' attachment-file-card'}${removable && item.pastedText ? ' attachment-text-card' : ''}`);
+    // A sent picture or video is only its preview: name, size and download live in the viewer it opens.
+    // Videos uploaded before Home recognised them are typed by their name.
+    const video = item.mime.startsWith('video/') || item.mime === 'application/octet-stream' && /\.(?:mp4|m4v|mov|webm)$/i.test(item.name), preview = !removable && (item.mime.startsWith('image/') || video);
+    const card = create('div', `attachment-card${preview ? ' is-preview' : item.mime.startsWith('image/') ? '' : ' attachment-file-card'}${removable && item.pastedText ? ' attachment-text-card' : ''}`);
     card.title = item.name;
     const open = button('', async () => {
       try {
@@ -369,6 +372,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
         // Pictures open in the same viewer as media named in replies: download, copy, close; name, size and the message time.
         if (item.mime.startsWith('image/')) {
           openImageLightbox({ name:item.name, size:item.size, at:open.closest('.chat-row')?.querySelector('time[datetime]')?.getAttribute('datetime')||null, url, from:open });
+        } else if (preview) {
+          openVideoLightbox({ name:item.name, size:item.size, at:open.closest('.chat-row')?.querySelector('time[datetime]')?.getAttribute('datetime')||null, url, from:open });
         } else if (/\.(md|markdown|txt)$/i.test(item.name)) {
           const response = await fetch(url);
           previewText(await response.text(), item.name, url);
@@ -387,10 +392,16 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (item.mime.startsWith('image/')) {
       const thumb = create('img'); thumb.alt = item.name; open.append(thumb); if (!removable) markImageOpener(open);
       void attachmentUrl(item).then(url=>{thumb.src=url;}).catch(()=>{thumb.alt='Preview failed to load; click to retry';});
+    } else if (preview) {
+      // The first frame stands for the video; the play mark says it is one.
+      const frame = create('video'); frame.muted = true; frame.preload = 'metadata'; frame.setAttribute('playsinline', ''); frame.setAttribute('aria-hidden', 'true');
+      frame.addEventListener('loadedmetadata', () => { frame.currentTime = Math.min(0.1, frame.duration || 0); }, { once:true });
+      open.append(frame, create('span', 'attachment-play')); open.setAttribute('aria-label', item.name); markImageOpener(open);
+      void attachmentUrl(item).then(url=>{frame.src=url;}).catch(()=>{});
     } else open.append(fileGlyph(item.name, 'attachment-file-icon'));
-    open.append(create('span','attachment-name',item.name),create('small','',item.size<1024?`${item.size} B`:`${(item.size/1024).toFixed(1)} KB`));
+    if (!preview) open.append(create('span','attachment-name',item.name),create('small','',item.size<1024?`${item.size} B`:`${(item.size/1024).toFixed(1)} KB`));
     card.append(open);
-    if (!removable) card.append(iconAction('transfer', 'Send to device', () => openAttachmentTransfer(item)));
+    if (!removable && !preview) card.append(iconAction('transfer', 'Send to device', () => openAttachmentTransfer(item)));
     if (removable) card.append(closeIcon(button('', () => {
       const d = drafts[ownerId]; if (d?.pending || sendingProject === ownerId) return;
       d.attachments = (d.attachments || []).filter(a=>a.id!==item.id); saveDrafts(); composer();
