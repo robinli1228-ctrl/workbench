@@ -923,6 +923,8 @@ export default {
   'Reply': '回复',
   'View quoted original': '查看引用原文',
   'Question': '提问',
+  'Started {start} · sent {sent}': '开始于 {start} · 发出于 {sent}',
+  'Took {time}': '用时 {time}',
   'Instruction': '指令',
   'Transfer': '转交',
   'Notice': '通知',

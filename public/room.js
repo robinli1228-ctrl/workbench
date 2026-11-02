@@ -18,7 +18,7 @@ import {createListOrder,orderedItems,readListOrder} from './list-order.js';
 import { renderPermissionScope, permissionScopeValue } from './permission-scope.js';
 import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
-import { elapsedEl } from './elapsed.js';
+import { elapsedEl, formatElapsed } from './elapsed.js';
 import {classifyStep,toolFilePaths} from './native-transcript.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
 import { pastesAsFile, pastedTextName } from './pasted-text.js';
@@ -837,7 +837,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     return display;
   }
 
-  /** A persisted outbound card is complete; only a receiver's own reply follows its run state. */
+  /**
+   * A persisted outbound card is complete; only a receiver's own reply follows its run state.
+   * A role's card is timed from the start of the run that wrote it: a reply to the run's end, a question or handoff sent
+   * during the run to its sending. The card header shows that start.
+   */
   function messageCardMeta(message) {
     const outbound=message.sender!=='agent'||['handoff','discussion'].includes(message.kind);
     const kind=message.kind==='discussion'?'Question':message.kind==='handoff'
@@ -846,18 +850,15 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     // A send still on its way says so.
     if(message.localSend==='stored')return {kind,status:'Completed'};
     if(message.localSend)return {kind,status:{sending:'Sending…',checking:'Checking…',offline:'Waiting for network…',failed:'Not sent'}[message.localSend]||'Sending…',state:message.localSend==='failed'?'failed':'waiting'};
-    if(outbound)return {kind,status:'Completed'};
-    if(midTurnNote(message))return {kind,status:'Sent'};
-    const run=data.runs?.find(item=>item.id===message.runId);
+    const run=message.sender==='agent'&&message.runId?data.runs?.find(item=>item.id===message.runId)||null:null;
+    // Only the run's own execution counts, never its queue time or a missing historical time.
+    const startedAt=run?.startedAt||null,elapsedMs=Date.parse(midTurnNote(message)?message.createdAt:run?.finishedAt)-Date.parse(startedAt);
+    const duration=Number.isFinite(elapsedMs)&&elapsedMs>=0?formatElapsed(elapsedMs):'',done=message.sender==='agent';
+    if(outbound)return {kind,status:'Completed',...(done?{duration,startedAt,done}:{})};
+    if(midTurnNote(message))return {kind,status:'Sent',duration,startedAt,done};
     const task=run&&data.tasks?.find(item=>item.id===run.taskId);
-    const progress=run&&taskProgress(task||{roleSnapshot:run.roleSnapshot},run);
-    // 只计算已完成的这次执行，不把排队时间或缺失的历史时间当作耗时。
-    const elapsedMs=Date.parse(run?.finishedAt)-Date.parse(run?.startedAt);let duration='';
-    if(progress?.state==='completed'&&Number.isFinite(elapsedMs)&&elapsedMs>=0){
-      const total=Math.floor(elapsedMs/1000),hours=Math.floor(total/3600),minutes=Math.floor(total%3600/60),seconds=total%60;
-      duration=`${hours?hours+'h':''}${hours||minutes?minutes+'m':''}${seconds}s`;
-    }
-    return {kind,status:progress?t(progress.label):'Completed',duration,state:progress?.state||'completed'};
+    const progress=run&&taskProgress(task||{roleSnapshot:run.roleSnapshot},run),completed=!progress||progress.state==='completed';
+    return {kind,status:progress?t(progress.label):'Completed',duration:completed&&run?duration:'',startedAt,done:completed,state:progress?.state||'completed'};
   }
 
   /** Copy the original message text without the rendered action buttons, time or quote summary. */
@@ -1114,8 +1115,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (agent) row.append(avatarFor(role, m.senderName));
     const col = create('div', 'chat-col');
     const header = create('div', 'chat-message-header');
-    const time = create('time', '', formatTime(m.createdAt));
-    if (m.createdAt) time.dateTime = m.createdAt;
+    // A role's card shows when its run started (the footer says how long it took); other cards their send time.
+    const cardMeta=messageCardMeta(m),shownAt=cardMeta.startedAt||m.createdAt;
+    const time = create('time', '', formatTime(shownAt));
+    if (shownAt) time.dateTime = shownAt;
+    if (cardMeta.startedAt) time.title = t('Started {start} · sent {sent}', { start: formatTime(cardMeta.startedAt), sent: formatTime(m.createdAt) });
     const sender=create('div', 'chat-name', agent ? m.senderName : 'Me');
     // Saved role names are identities, not UI dictionary keys.
     if(agent)sender.setAttribute('translate','no');
@@ -1179,8 +1183,15 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     actions.push(...discussionActions);
     // A send not yet stored offers only Copy: there is nothing to reply to, open or ask about until Home has it.
     if(m.localSend)actions.splice(0,actions.length,copyMessageButton(m.text));
-    const cardMeta=messageCardMeta(m),footer=create('div','chat-card-footer');setChatCardState(bubble,cardMeta.state);
-    footer.append(create('span','chat-card-kind',t('{kind} · {status}',{kind:t(cardMeta.kind),status:t(cardMeta.status)})+(cardMeta.duration?` · ${cardMeta.duration}`:'')));
+    const footer=create('div','chat-card-footer');setChatCardState(bubble,cardMeta.state);
+    const kindLabel=t('{kind} · {status}',{kind:t(cardMeta.kind),status:t(cardMeta.status)}),kindEl=create('span','chat-card-kind');
+    // A finished role card: the kind as a small icon, then how long its run took to it, like the running card's timer.
+    if(cardMeta.done){
+      const icon=create('span','chat-card-kind-icon');icon.innerHTML=UI_ICON[{Reply:'replied',Question:'question',Instruction:'send',Transfer:'transfer',Notice:'notice'}[cardMeta.kind]||'replied'];
+      icon.querySelector('svg')?.setAttribute('aria-hidden','true');icon.setAttribute('role','img');icon.setAttribute('aria-label',kindLabel);icon.title=kindLabel;kindEl.append(icon);
+      if(cardMeta.duration){const took=create('span','elapsed-time',cardMeta.duration);took.title=t('Took {time}',{time:cardMeta.duration});kindEl.append(took);}
+    }else kindEl.textContent=kindLabel+(cardMeta.duration?` · ${cardMeta.duration}`:'');
+    footer.append(kindEl);
     const actionBar=create('div','chat-card-actions');actionBar.append(...actions);footer.append(actionBar);bubble.append(footer);
     col.append(bubble);
     row.append(col);
