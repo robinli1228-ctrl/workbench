@@ -53,3 +53,23 @@ test('shared project files get the same single newest time and order', async () 
   assert.deepEqual(items[0].latest, { kind: 'reference', at: '2026-10-26T14:54:00.000Z', roleName: 'Supervisor', runtime: null });
   assert.equal(items[0].sourceKind, 'write', 'still read through its write record');
 });
+
+test('a check reuses last readings of files from finished runs and asks only about running work and unread files', async () => {
+  const e = env(), done = 'out/done.md', live = 'out/live.md', lost = 'out/lost.md';
+  e.run('old', 'Executor', 'codex', '2026-10-26T11:00:00.000Z'); e.write('old', done, '2026-10-26T11:00:00.000Z'); e.write('old', lost, '2026-10-26T11:00:00.000Z', 2);
+  e.db.put('runs', { ...e.db.get('runs', 'old'), status: 'interrupted' });
+  e.run('now', 'Builder', 'claude', '2026-10-26T12:00:00.000Z'); e.write('now', live, '2026-10-26T12:00:00.000Z');
+  e.db.put('runs', { ...e.db.get('runs', 'now'), status: 'running' });
+  e.db.put('workers', { id: 'w1', name: 'mac', capabilities: { recordedArtifacts: 1 } });
+  const asked = [];
+  const projectFiles = { reference: () => null, legacyReadable: () => false, config: () => ({}) };
+  const query = async (run, action, input) => { asked.push(input.path); return { path: `/xxxxx/proj/${input.path}`, size: asked.length, modifiedAt: '2026-10-26T13:00:00.000Z' }; };
+  const first = await recentProjectArtifacts(e.db, P, query, () => true, projectFiles);
+  assert.deepEqual(asked.sort(), [done, live, lost].sort(), 'without a kept list every file is read');
+  const kept = first.items.map(item => item.name === 'lost.md' ? { ...item, error: 'device offline' } : item);
+  asked.length = 0;
+  const second = await recentProjectArtifacts(e.db, P, query, () => true, projectFiles, { kept });
+  assert.deepEqual(asked.sort(), [live, lost].sort(), 'the finished run\'s read file is not asked about again');
+  const reused = second.items.find(item => item.name === 'done.md');
+  assert.equal(reused.size, first.items.find(item => item.name === 'done.md').size); assert.equal(reused.error, null);
+});

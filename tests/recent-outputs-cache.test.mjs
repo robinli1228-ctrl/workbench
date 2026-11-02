@@ -9,10 +9,10 @@ const P='p1';
 function env(){
   const db=new Store(':memory:');db.put('projects',{id:P,name:'demo'});
   let calls=0,release=()=>{},fail=null;
-  const compute=async()=>{calls++;const n=calls;await new Promise(resolve=>{release=resolve;});if(fail)throw new Error(fail);return {items:[{name:`v${n}.md`}],partial:false};};
+  const kept=[];const compute=async(projectId,options)=>{kept.push(options.kept);calls++;const n=calls;await new Promise(resolve=>{release=resolve;});if(fail)throw new Error(fail);return {items:[{name:`v${n}.md`}],partial:false};};
   let now=Date.parse('2026-11-01T10:00:00.000Z');
   const outputs=new RecentOutputs({db,compute,clock:()=>now,timings:{waitMs:200}});
-  return {db,outputs,calls:()=>calls,release:()=>release(),fail:m=>{fail=m;},tick:ms=>{now+=ms;}};
+  return {db,outputs,kept,calls:()=>calls,release:()=>release(),fail:m=>{fail=m;},tick:ms=>{now+=ms;}};
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
@@ -62,9 +62,11 @@ test('a refresh during a check checks once more after it; unreadable files and n
   assert.equal(e.calls(),3,'the running check, then one more for the refreshes made during it');
   assert.equal((await e.outputs.get(P)).refreshing,true);e.release();await flush();await flush();
   assert.equal((await e.outputs.get(P)).refreshing,false);
+  assert.deepEqual(e.kept.map(k=>k?.map(i=>i.name)??null),[null,null,null],'refreshes read every file again');
   // A message (a reply naming a file) changes the project's stamp.
   e.tick(61000);e.db.put('roomMessages',{id:'m1',projectId:P,text:'[a](a.md)',createdAt:'2026-11-01T10:03:00.000Z'});
   assert.equal((await e.outputs.get(P)).refreshing,true);e.release();await flush();await flush();
+  assert.deepEqual(e.kept.at(-1).map(i=>i.name),['v3.md'],'a background check passes the kept list on');
   // A list with a file that could not be read is checked again after a minute, without any change.
   e.db.put('recentOutputCaches',{...e.db.get('recentOutputCaches',P),result:{items:[{name:'x.md',error:'device offline'}]}});
   assert.equal((await e.outputs.get(P)).refreshing,false);

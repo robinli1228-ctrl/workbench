@@ -9,13 +9,15 @@ import {getLanguage} from './i18n.mjs';
  * Out of date: older than `freshMs` while a run or message of the project changed since the check or some file could not
  * be read (a device may be back), or older than `maxAgeMs` at all (a file may also change without a run). A failed check
  * is retried after `freshMs`. Nothing checks on a timer: only a page looking at the list starts a check.
+ * A check passes the kept list on (`compute(projectId,{kept})`): files of finished runs read last time are not asked
+ * about again. A refresh asks about every file (`kept` null).
  */
 export const RECENT_OUTPUTS=Object.freeze({freshMs:60000,maxAgeMs:5*60000,waitMs:60000});
 const KIND='recentOutputCaches';
 
 export class RecentOutputs {
   constructor({db,compute,clock=()=>Date.now(),timings={}}) {
-    Object.assign(this,{db,compute,clock,timings:{...RECENT_OUTPUTS,...timings},checks:new Map(),failures:new Map()});
+    Object.assign(this,{db,compute,clock,timings:{...RECENT_OUTPUTS,...timings},checks:new Map(),failures:new Map(),followUps:new Map()});
   }
   /** Changes to a project's runs and messages, read from indexes without parsing the records. */
   runStamp(projectId) {
@@ -33,19 +35,20 @@ export class RecentOutputs {
    * One check per project; a request during a check joins it, and `again` (a refresh) checks once more after it, since
    * the running check may have read a file before the change that prompted the refresh. Failures keep the previous list.
    */
-  check(projectId,{again=false}={}) {
+  check(projectId,{again=false,full=false}={}) {
     let running=this.checks.get(projectId);
-    if(running){if(again)(this.followUps||=new Set()).add(projectId);return running;}
-    const runStamp=this.runStamp(projectId),language=getLanguage();
+    if(running){if(again)this.followUps.set(projectId,full||this.followUps.get(projectId)||false);return running;}
+    const runStamp=this.runStamp(projectId),language=getLanguage(),previous=this.db.get(KIND,projectId);
+    const kept=!full&&previous?.language===language?previous.result.items:null;
     running=(async()=>{
       try {
-        const result=await this.compute(projectId);
+        const result=await this.compute(projectId,{kept});
         // A project deleted during the check leaves nothing behind.
         if(this.db.get('projects',projectId))this.db.put(KIND,{id:projectId,projectId,checkedAt:new Date(this.clock()).toISOString(),runStamp,language,result});
         this.failures.delete(projectId);
         return result;
       } catch(error) {this.failures.set(projectId,{message:error.message,at:this.clock()});throw error;}
-      finally {this.checks.delete(projectId);if(this.followUps?.delete(projectId))this.check(projectId);}
+      finally {this.checks.delete(projectId);if(this.followUps.has(projectId)){const full=this.followUps.get(projectId);this.followUps.delete(projectId);this.check(projectId,{full});}}
     })();
     running.catch(()=>{});
     this.checks.set(projectId,running);
@@ -58,7 +61,7 @@ export class RecentOutputs {
    */
   async get(projectId,{refresh=false,wait=false}={}) {
     let kept=this.db.get(KIND,projectId);
-    if(refresh||!kept||this.stale(projectId,kept))this.check(projectId,{again:refresh});
+    if(refresh||!kept||this.stale(projectId,kept))this.check(projectId,{again:refresh,full:refresh});
     const running=this.checks.get(projectId);
     if(running&&!kept){const result=await running;kept=this.db.get(KIND,projectId)||{result,checkedAt:new Date(this.clock()).toISOString()};}
     else if(running&&wait){let timer;await Promise.race([running.catch(()=>{}),new Promise(resolve=>{timer=setTimeout(resolve,this.timings.waitMs);})]);clearTimeout(timer);}

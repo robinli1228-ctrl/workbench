@@ -74,8 +74,14 @@ function latestEvidence(c,modifiedAt) {
     ||{kind:'reference',at:c.run.updatedAt||c.run.createdAt||null,roleName:role(c.run),runtime:null};
 }
 
-/** Query a bounded set of recent runs without walking the whole workspace; for the same device and path only the latest record is shown. */
-export async function recentProjectArtifacts(db,projectId,query,online,projectFiles=null) {
+const FINISHED=new Set(['succeeded','failed','interrupted','cancelled']);
+
+/**
+ * Query a bounded set of recent runs without walking the whole workspace; for the same device and path only the latest record is shown.
+ * `kept` (the previous list) spares the devices: a file whose reading run has finished and that was read last time keeps
+ * that reading; only files of running work and files not read before are asked about again.
+ */
+export async function recentProjectArtifacts(db,projectId,query,online,projectFiles=null,{kept=null}={}) {
   if(!db.get('projects',projectId))throw new Error(tr('runArtifacts.projectNotFound'));
   // Through the (kind, projectId) index; of each run's events only tool calls are parsed.
   const runs=db.listProject('runs',projectId).filter(r=>r.workspace).sort((a,b)=>String(b.updatedAt||b.createdAt).localeCompare(String(a.updatedAt||a.createdAt)));
@@ -95,23 +101,27 @@ export async function recentProjectArtifacts(db,projectId,query,online,projectFi
   }
   if(projectFiles){
     const selected=[...candidates.values()].slice(0,100),items=[],deviceErrors=new Map();
+    const read=new Map((kept||[]).filter(item=>!item.error).map(item=>[`${item.runId}\0${item.originPath}`,item]));
     for(let i=0;i<selected.length;i+=4)await Promise.all(selected.slice(i,i+4).map(async c=>{
       let local,error=null,readNode=c.run.nodeId;
       try{
-        if(c.ref&&!projectFiles.legacyReadable(c.run))readNode=projectFiles.config?.(projectId)?.displayNodeId||`shared:${projectId}`;
-        if(deviceErrors.has(readNode))throw deviceErrors.get(readNode);
-        if(!c.ref){
-          if(db.get('workers',c.run.nodeId)?.capabilities?.recordedArtifacts!==1)throw new Error(tr('runArtifacts.filePathNotAccessible'));
-          if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
-          const source=await query(c.run,'artifact_source',{path:c.path,homeRecordedPath:recordedArtifactPath(db,c.run,c.path,[c]),metadata:true},15000);
-          local={...source,nodeId:c.run.nodeId,shared:false,syncState:'source',relativePath:null};
+        const before=FINISHED.has(c.run.status)?read.get(`${c.run.id}\0${resolve(c.run.workspace,c.path)}`):null;
+        if(before)local=before;else{
+          if(c.ref&&!projectFiles.legacyReadable(c.run))readNode=projectFiles.config?.(projectId)?.displayNodeId||`shared:${projectId}`;
+          if(deviceErrors.has(readNode))throw deviceErrors.get(readNode);
+          if(!c.ref){
+            if(db.get('workers',c.run.nodeId)?.capabilities?.recordedArtifacts!==1)throw new Error(tr('runArtifacts.filePathNotAccessible'));
+            if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
+            const source=await query(c.run,'artifact_source',{path:c.path,homeRecordedPath:recordedArtifactPath(db,c.run,c.path,[c]),metadata:true},15000);
+            local={...source,nodeId:c.run.nodeId,shared:false,syncState:'source',relativePath:null};
+          }
+          if(c.ref&&projectFiles.legacyReadable(c.run)){
+            if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
+            const result=await query(c.run,'artifact_files',[c.path],5000),info=result?.files?.find(f=>f.path===c.path);
+            if(!info||info.error)throw new Error(info?.error||tr('runArtifacts.deviceReturnedNoFileInformation'));
+            local={...info,path:resolve(c.run.workspace,c.path),nodeId:c.run.nodeId,shared:false,syncState:'disabled',relativePath:null};
+          }else if(c.ref)local=await projectFiles.read(projectId,c.ref.scopeId,c.ref.path,{metadata:true});
         }
-        if(c.ref&&projectFiles.legacyReadable(c.run)){
-          if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
-          const result=await query(c.run,'artifact_files',[c.path],5000),info=result?.files?.find(f=>f.path===c.path);
-          if(!info||info.error)throw new Error(info?.error||tr('runArtifacts.deviceReturnedNoFileInformation'));
-          local={...info,path:resolve(c.run.workspace,c.path),nodeId:c.run.nodeId,shared:false,syncState:'disabled',relativePath:null};
-        }else if(c.ref)local=await projectFiles.read(projectId,c.ref.scopeId,c.ref.path,{metadata:true});
       }catch(e){error=e.message;if(/timed? out|timeout|offline|closed|disconnected|\u8d85\u65f6|\u79bb\u7ebf/i.test(error))deviceErrors.set(readNode,e);}
       items.push({...local,projectId,runId:c.run.id,originNodeId:c.run.nodeId,originPath:resolve(c.run.workspace,c.path),
         scopeId:c.ref?.scopeId||null,relativePath:local?.shared===false?null:c.ref?.path||null,path:local?.path||null,shared:local?.shared??Boolean(c.ref),
