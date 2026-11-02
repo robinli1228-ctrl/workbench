@@ -77,13 +77,15 @@ function latestEvidence(c,modifiedAt) {
 /** Query a bounded set of recent runs without walking the whole workspace; for the same device and path only the latest record is shown. */
 export async function recentProjectArtifacts(db,projectId,query,online,projectFiles=null) {
   if(!db.get('projects',projectId))throw new Error(tr('runArtifacts.projectNotFound'));
-  const runs=db.list('runs').filter(r=>r.projectId===projectId&&r.workspace).sort((a,b)=>String(b.updatedAt||b.createdAt).localeCompare(String(a.updatedAt||a.createdAt)));
-  const messages=db.list('roomMessages').filter(m=>m.projectId===projectId),candidates=new Map();
+  // Through the (kind, projectId) index; of each run's events only tool calls are parsed.
+  const runs=db.listProject('runs',projectId).filter(r=>r.workspace).sort((a,b)=>String(b.updatedAt||b.createdAt).localeCompare(String(a.updatedAt||a.createdAt)));
+  const messages=db.listProject('roomMessages',projectId),candidates=new Map();
+  const tools=db.db.prepare("SELECT data FROM events WHERE run_id=? AND json_extract(data,'$.type')='tool' ORDER BY seq");
   for(const run of runs.slice(0,40)) {
     const replies=messages.filter(m=>m.runId===run.id),registered=projectFiles?path=>projectFiles.reference(run,path):null;
     // References are independent evidence even when this same run also wrote the file; reading still uses the write record.
     const mentioned=new Set(artifactCandidates(run,[],replies,registered).map(file=>file.path));
-    for(const file of artifactCandidates(run,db.events(run.id),replies,registered)) {
+    for(const file of artifactCandidates(run,tools.all(run.id).map(r=>JSON.parse(r.data)),replies,registered)) {
     const ref=projectFiles?.reference(run,file.path),key=ref?`${ref.scopeId}:${ref.path}`:`${run.nodeId}:${resolve(run.workspace,file.path)}`,prior=candidates.get(key);
     // The write record (or the newest run) still decides how the file is read; the newest mention is kept beside it.
     const mention=mentioned.has(file.path)?{at:run.finishedAt||run.updatedAt||run.createdAt,run}:null;
