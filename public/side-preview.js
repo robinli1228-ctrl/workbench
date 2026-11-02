@@ -159,7 +159,7 @@ export function createDocumentPreview({api}){
     }
     return root;
   }
-  async function open(path,source){
+  async function open(path,source,{onError=()=>{}}={}){
     const ref=reference(path,source);if(!ref)return;const ticket=++version;
     if(!dialog){dialog=el('dialog','message-fullscreen document-preview-dialog');dialog.id='document-preview-dialog';dialog.addEventListener('close',()=>version++);document.body.append(dialog);}
     const heading=el('div','message-fullscreen-heading'),title=el('strong','',nameOf(ref.path));title.title=ref.path;title.translate=false;
@@ -171,7 +171,7 @@ export function createDocumentPreview({api}){
       const render=()=>/\.(?:md|markdown)$/i.test(ref.path)?decorate(renderMarkdown(simplifiedCliOutput(result.content)),context):el('pre','artifact-code',result.content);
       content.append(render());if(ref.readMode==='recorded')content.prepend(el('p','workspace-note',[t('Read-only source file'),t(ref.versionEvidence==='recorded_commit'?'Recorded commit':'Source workspace snapshot; execution-time version not recorded'),ref.sourceCommit?.slice(0,12),ref.sha256?`SHA256 ${ref.sha256.slice(0,12)}`:''].filter(Boolean).join(' · ')));if(result.syncState==='conflict'||result.syncState==='pending')content.prepend(el('p','workspace-note',t(result.syncState==='conflict'?'Conflict detected; showing actual local file.':'Showing local changes; synchronization pending.')));status.textContent=t('Full text loaded · {v} characters',{v:result.content.length.toLocaleString(dateLocale())});
       sideItem={title:nameOf(ref.path),subtitle:result.path||ref.path,copyText:result.content,render};side.hidden=!canOpenSide();copy.disabled=false;copy.onclick=()=>void copyText(copy,result.content).catch(()=>{});
-    }catch(error){if(ticket===version&&dialog.open)status.textContent=t('Unable to open document: {message}',{message:error.message});}
+    }catch(error){onError(error);if(ticket===version&&dialog.open)status.textContent=t('Unable to open document: {message}',{message:error.message});}
   }
   return {decorate,open,close:()=>dialog?.close()};
 }

@@ -35,6 +35,7 @@ import {createAgentCalls} from './agent-calls.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
 import {recentProjectArtifacts,recordedArtifactPath} from './run-artifacts.mjs';
+import {RecentOutputs} from './recent-outputs-cache.mjs';
 import {ProjectFiles} from './project-files.mjs';
 import {MediaStreams,MEDIA_CACHE_CONTROL,cachedMediaAllowed} from './media-streams.mjs';
 import {MediaCache} from './media-cache.mjs';
@@ -201,6 +202,7 @@ const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify
 const online = id => sockets.get(id)?.readyState === 1&&!reconnectingNodes.has(id);
 const sourceSync=new SourceSyncHome({db,data,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery,watchUpload:(nodeId,req)=>mediaStreams.watchUpload(nodeId,req)});
 const projectFiles=new ProjectFiles({db,online,query:workerQuery});
+const recentOutputs=new RecentOutputs({db,compute:(projectId,options)=>recentProjectArtifacts(db,projectId,workerQuery,online,projectFiles,options)});
 // The media ticket key survives restarts, so a file version keeps its link (and the browser its cached copy) across them.
 const mediaKeyFile=join(data,'media-ticket.key');
 let mediaSecret;try{mediaSecret=Buffer.from((await readFile(mediaKeyFile,'utf8')).trim(),'base64');}catch{}
@@ -1553,7 +1555,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/artifacts$/)) && req.method === 'GET') {
-        return json(res,await recentProjectArtifacts(db,m[1],workerQuery,online,projectFiles));
+        return json(res,await recentOutputs.get(m[1],{refresh:url.searchParams.get('refresh')==='1',wait:url.searchParams.get('wait')==='1'}));
       }
       if((m=pathname.match(/^\/api\/projects\/([^/]+)\/(local-files|local-file)$/))&&req.method==='GET'){
         return json(res,m[2]==='local-files'?await projectFiles.list(m[1]):await projectFiles.read(m[1],url.searchParams.get('scopeId'),url.searchParams.get('path'),{metadata:url.searchParams.get('metadata')==='1'}));

@@ -61,7 +61,7 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
     finally{concurrent.disabled=false;syncConcurrent();}
   });
   const sideAsk=createGroupSideAsk({api,getData,onError,getScope:()=>[getProject()?.id,getConversationId()],show(){select('ask');onSideAskOpen();}});
-  let selected='roles',projectId=null,generation=0,detailVersion=0,loadedAt=0,busy=false;
+  let selected='roles',projectId=null,generation=0,detailVersion=0,loadedAt=0,busy=false,again=false,outdated=false;
   document.querySelector('#close-artifact-detail').addEventListener('click',()=>dialog.close());
   // Sessions page (desktop): "Open on the right" pins the file text beside the chat; shown once the text has loaded.
   let sideItem=null;const side=sideButton('icon-button artifact-detail-side',t('Open on the right'),()=>sideItem,{before:()=>dialog.close()});side.hidden=true;
@@ -69,7 +69,7 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
   dialog.addEventListener('close',()=>{detailVersion++;});
   async function detail(file){
     const path=file.relativePath||file.path||file.originPath;
-    if(/\.(?:md|markdown|txt)$/i.test(path||'')){void documentPreview.open(path,file.shared?{kind:'project',projectId:file.projectId,scopeId:file.scopeId}:{kind:'run',runId:file.runId,readMode:file.readMode,sha256:file.sha256,sourceCommit:file.sourceCommit,versionEvidence:file.versionEvidence});return;}
+    if(/\.(?:md|markdown|txt)$/i.test(path||'')){void documentPreview.open(path,file.shared?{kind:'project',projectId:file.projectId,scopeId:file.scopeId}:{kind:'run',runId:file.runId,readMode:file.readMode,sha256:file.sha256,sourceCommit:file.sourceCommit,versionEvidence:file.versionEvidence},{onError:listOutdated});return;}
     const version=++detailVersion;
     document.querySelector('#artifact-detail-title').textContent=file.name;
     const worker=getData().workers.find(w=>w.id===file.nodeId);
@@ -87,7 +87,10 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
       sideItem={title:file.name,subtitle:file.path||'',copyText:result.content,render:()=>{const box=el('div','artifact-side-content');box.append(markdown?renderMarkdown(result.content):el('pre','artifact-code',result.content));return box;}};
       side.hidden=!canOpenSide();
       if(result.syncState==='conflict'||result.syncState==='pending')content.prepend(el('p','workspace-note',t(result.syncState==='conflict'?'Conflict detected; showing actual local file.':'Showing local changes; synchronization pending.')));
-    }catch(error){if(version===detailVersion&&dialog.open)content.textContent=t('Unable to preview online: {message}. File info is kept; view it in the workspace of the corresponding device.', { message: error.message });}
+    }catch(error){
+      listOutdated(error);
+      if(version===detailVersion&&dialog.open)content.textContent=t('Unable to preview online: {message}. File info is kept; view it in the workspace of the corresponding device.', { message: error.message });
+    }
   }
   /** One project-output row; the Sessions panel reuses it so both views open files through the same detail dialog. */
   function artifactRow(file){
@@ -109,21 +112,37 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
     button.append(type,body);button.addEventListener('click',()=>void detail(file));
     return button;
   }
+  /** Home answers from its kept list at once and checks the devices behind it; the page shows the kept list, then waits for the new one. */
+  function show(result){
+    list.replaceChildren();
+    const base=t(result.partial?'Showing partial outputs from recent runs · see the conversation log for earlier records':'Write records and reply references are shown separately; contents come from the bound Mac.');
+    const checked=result.checkedAt?t(result.refreshing?'Checked {time} · checking devices again…':result.checkError?'Checked {time} · the new check failed: {message}':'Checked {time}',{time:date(result.checkedAt),message:result.checkError}):'';
+    note.replaceChildren(base);if(checked)note.append(document.createElement('br'),checked);
+    // Files the page cannot read are folded into one line at the end instead of sitting between real outputs.
+    const readable=result.items.filter(file=>!file.error),unreadable=result.items.filter(file=>file.error);
+    for(const file of readable)list.append(artifactRow(file));
+    if(unreadable.length){const box=el('details','artifact-unreadable');box.append(el('summary','',t('{count} more files cannot be read',{count:unreadable.length})));for(const file of unreadable)box.append(artifactRow(file));list.append(box);}
+    if(!result.items.length)list.append(el('div','inspector-empty','No recognizable outputs yet. File write records and file links in replies will appear here.'));
+  }
+  // A card from a kept list whose file changed since: check the list again so the next open matches.
+  // Without the tab open the check waits for its next load; during a load it follows that one.
+  function listOutdated(error){if(/hash_changed|commit_changed/.test(error?.message||'')){outdated=true;void load(true);}}
   async function load(force=false){
+    force||=outdated;if(busy&&force)again=true;
     if(selected!=='artifacts'||!projectId||busy||(!force&&Date.now()-loadedAt<30000))return;
-    const version=generation,id=projectId;busy=true;refresh.disabled=true;note.textContent='Checking recent outputs and device files…';
+    outdated=false;
+    const version=generation,id=projectId,url=`/api/projects/${encodeURIComponent(id)}/artifacts`;busy=true;refresh.disabled=true;
+    if(!list.childElementCount)note.textContent='Checking recent outputs and device files…';
     try{
-      const result=await api(`/api/projects/${encodeURIComponent(id)}/artifacts`);
-      if(version!==generation)return;
-      list.replaceChildren();loadedAt=Date.now();
-      note.textContent=t(result.partial?'Showing partial outputs from recent runs · see the conversation log for earlier records':'Write records and reply references are shown separately; contents come from the bound Mac.');
-      // Files the page cannot read are folded into one line at the end instead of sitting between real outputs.
-      const readable=result.items.filter(file=>!file.error),unreadable=result.items.filter(file=>file.error);
-      for(const file of readable)list.append(artifactRow(file));
-      if(unreadable.length){const box=el('details','artifact-unreadable');box.append(el('summary','',t('{count} more files cannot be read',{count:unreadable.length})));for(const file of unreadable)box.append(artifactRow(file));list.append(box);}
-      if(!result.items.length)list.append(el('div','inspector-empty','No recognizable outputs yet. File write records and file links in replies will appear here.'));
+      let result=await api(force?`${url}?refresh=1`:url);
+      // A check behind the kept list: wait for it (Home answers after at most a minute), a few times at most.
+      for(let round=0;version===generation;round++){
+        show(result);loadedAt=Date.now();
+        if(!result.refreshing||round>=5)break;
+        result=await api(`${url}?wait=1`);
+      }
     }catch(error){if(version===generation){note.textContent=t('Read failed: {message}', { message: error.message });loadedAt=Date.now();}}
-    finally{if(version===generation){busy=false;refresh.disabled=false;}}
+    finally{if(version===generation){busy=false;refresh.disabled=false;if(again){again=false;void load(true);}}}
   }
   function select(name){
     selected=name;sideAsk.clear.hidden=name!=='ask';for(const [key,panel] of Object.entries(panels))panel.hidden=key!==name;
@@ -140,7 +159,7 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
     sourceSync.render();sideAsk.syncScope();
     syncConcurrent();void loadSync();
     const next=getProject()?.id||null;
-    if(next!==projectId){if(selected==='ask')select('roles');projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;busy=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
+    if(next!==projectId){if(selected==='ask')select('roles');projectId=next;generation++;detailVersion++;if(dialog.open)dialog.close();loadedAt=0;busy=false;again=outdated=false;refresh.disabled=false;list.replaceChildren();note.textContent=next?'':'Please select a project';}
     const devices=document.querySelector('#inspector-device-list');devices.replaceChildren();
     for(const worker of getData().workers||[]){
       const row=el('button','inspector-device-row'),local=workerKind(worker)==='local';row.type='button';

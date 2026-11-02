@@ -74,16 +74,24 @@ function latestEvidence(c,modifiedAt) {
     ||{kind:'reference',at:c.run.updatedAt||c.run.createdAt||null,roleName:role(c.run),runtime:null};
 }
 
-/** Query a bounded set of recent runs without walking the whole workspace; for the same device and path only the latest record is shown. */
-export async function recentProjectArtifacts(db,projectId,query,online,projectFiles=null) {
+const FINISHED=new Set(['succeeded','failed','interrupted','cancelled']);
+
+/**
+ * Query a bounded set of recent runs without walking the whole workspace; for the same device and path only the latest record is shown.
+ * `kept` (the previous list) spares the devices: a file whose reading run has finished and that was read last time keeps
+ * that reading; only files of running work and files not read before are asked about again.
+ */
+export async function recentProjectArtifacts(db,projectId,query,online,projectFiles=null,{kept=null}={}) {
   if(!db.get('projects',projectId))throw new Error(tr('runArtifacts.projectNotFound'));
-  const runs=db.list('runs').filter(r=>r.projectId===projectId&&r.workspace).sort((a,b)=>String(b.updatedAt||b.createdAt).localeCompare(String(a.updatedAt||a.createdAt)));
-  const messages=db.list('roomMessages').filter(m=>m.projectId===projectId),candidates=new Map();
+  // Through the (kind, projectId) index; of each run's events only tool calls are parsed.
+  const runs=db.listProject('runs',projectId).filter(r=>r.workspace).sort((a,b)=>String(b.updatedAt||b.createdAt).localeCompare(String(a.updatedAt||a.createdAt)));
+  const messages=db.listProject('roomMessages',projectId),candidates=new Map();
+  const tools=db.db.prepare("SELECT data FROM events WHERE run_id=? AND json_extract(data,'$.type')='tool' ORDER BY seq");
   for(const run of runs.slice(0,40)) {
     const replies=messages.filter(m=>m.runId===run.id),registered=projectFiles?path=>projectFiles.reference(run,path):null;
     // References are independent evidence even when this same run also wrote the file; reading still uses the write record.
     const mentioned=new Set(artifactCandidates(run,[],replies,registered).map(file=>file.path));
-    for(const file of artifactCandidates(run,db.events(run.id),replies,registered)) {
+    for(const file of artifactCandidates(run,tools.all(run.id).map(r=>JSON.parse(r.data)),replies,registered)) {
     const ref=projectFiles?.reference(run,file.path),key=ref?`${ref.scopeId}:${ref.path}`:`${run.nodeId}:${resolve(run.workspace,file.path)}`,prior=candidates.get(key);
     // The write record (or the newest run) still decides how the file is read; the newest mention is kept beside it.
     const mention=mentioned.has(file.path)?{at:run.finishedAt||run.updatedAt||run.createdAt,run}:null;
@@ -93,23 +101,27 @@ export async function recentProjectArtifacts(db,projectId,query,online,projectFi
   }
   if(projectFiles){
     const selected=[...candidates.values()].slice(0,100),items=[],deviceErrors=new Map();
+    const read=new Map((kept||[]).filter(item=>!item.error).map(item=>[`${item.runId}\0${item.originPath}`,item]));
     for(let i=0;i<selected.length;i+=4)await Promise.all(selected.slice(i,i+4).map(async c=>{
       let local,error=null,readNode=c.run.nodeId;
       try{
-        if(c.ref&&!projectFiles.legacyReadable(c.run))readNode=projectFiles.config?.(projectId)?.displayNodeId||`shared:${projectId}`;
-        if(deviceErrors.has(readNode))throw deviceErrors.get(readNode);
-        if(!c.ref){
-          if(db.get('workers',c.run.nodeId)?.capabilities?.recordedArtifacts!==1)throw new Error(tr('runArtifacts.filePathNotAccessible'));
-          if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
-          const source=await query(c.run,'artifact_source',{path:c.path,homeRecordedPath:recordedArtifactPath(db,c.run,c.path,[c]),metadata:true},15000);
-          local={...source,nodeId:c.run.nodeId,shared:false,syncState:'source',relativePath:null};
+        const before=FINISHED.has(c.run.status)?read.get(`${c.run.id}\0${resolve(c.run.workspace,c.path)}`):null;
+        if(before)local=before;else{
+          if(c.ref&&!projectFiles.legacyReadable(c.run))readNode=projectFiles.config?.(projectId)?.displayNodeId||`shared:${projectId}`;
+          if(deviceErrors.has(readNode))throw deviceErrors.get(readNode);
+          if(!c.ref){
+            if(db.get('workers',c.run.nodeId)?.capabilities?.recordedArtifacts!==1)throw new Error(tr('runArtifacts.filePathNotAccessible'));
+            if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
+            const source=await query(c.run,'artifact_source',{path:c.path,homeRecordedPath:recordedArtifactPath(db,c.run,c.path,[c]),metadata:true},15000);
+            local={...source,nodeId:c.run.nodeId,shared:false,syncState:'source',relativePath:null};
+          }
+          if(c.ref&&projectFiles.legacyReadable(c.run)){
+            if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
+            const result=await query(c.run,'artifact_files',[c.path],5000),info=result?.files?.find(f=>f.path===c.path);
+            if(!info||info.error)throw new Error(info?.error||tr('runArtifacts.deviceReturnedNoFileInformation'));
+            local={...info,path:resolve(c.run.workspace,c.path),nodeId:c.run.nodeId,shared:false,syncState:'disabled',relativePath:null};
+          }else if(c.ref)local=await projectFiles.read(projectId,c.ref.scopeId,c.ref.path,{metadata:true});
         }
-        if(c.ref&&projectFiles.legacyReadable(c.run)){
-          if(!online(c.run.nodeId))throw new Error(tr('runArtifacts.deviceOffline'));
-          const result=await query(c.run,'artifact_files',[c.path],5000),info=result?.files?.find(f=>f.path===c.path);
-          if(!info||info.error)throw new Error(info?.error||tr('runArtifacts.deviceReturnedNoFileInformation'));
-          local={...info,path:resolve(c.run.workspace,c.path),nodeId:c.run.nodeId,shared:false,syncState:'disabled',relativePath:null};
-        }else if(c.ref)local=await projectFiles.read(projectId,c.ref.scopeId,c.ref.path,{metadata:true});
       }catch(e){error=e.message;if(/timed? out|timeout|offline|closed|disconnected|\u8d85\u65f6|\u79bb\u7ebf/i.test(error))deviceErrors.set(readNode,e);}
       items.push({...local,projectId,runId:c.run.id,originNodeId:c.run.nodeId,originPath:resolve(c.run.workspace,c.path),
         scopeId:c.ref?.scopeId||null,relativePath:local?.shared===false?null:c.ref?.path||null,path:local?.path||null,shared:local?.shared??Boolean(c.ref),

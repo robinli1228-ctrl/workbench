@@ -604,6 +604,9 @@ body[data-navigation-mode="sessions"] #node-sidebar > :not(#native-session-sideb
 .chat-recipient { display: inline; padding: 1px 3px; font-size: inherit; font-weight: 650; white-space: nowrap; }
 .chat-card-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px -2px -2px; padding-top:8px; border-top:1px solid rgb(126 153 180 / 25%); }
 .chat-card-kind { min-width:0; color:#656c7d; font-size:11px; line-height:1.4; }
+.chat-card-kind:has(> .chat-card-kind-icon) { display:inline-flex; align-items:center; }
+.chat-card-kind-icon { display:inline-flex; flex:none; }
+.chat-card-kind-icon svg { width:14px; height:14px; }
 .chat-card-actions { display:flex; flex:none; align-items:center; justify-content:flex-end; gap:3px; }
 .chat-card-actions .chat-icon-btn { width:27px; height:27px; }
 .markdown-body { width: 100%; min-width: 0; max-width: 100%; white-space: normal; }
