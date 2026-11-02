@@ -203,6 +203,7 @@ export default Object.freeze({
   'cliPrintSession.modelThinkingNativeProgressEvent': '模型正在思考',
   'cliPrintSession.runtimeError': 'Runtime 错误',
   'cliPrintSession.runtimeReturnedErrorResultCheck': 'Runtime 返回错误结果，请查看 CLI 日志',
+  'cliPrintSession.agyHistoricalError': 'Agy 返回了历史错误；已核实本轮回复完成且没有新增错误：{message}',
   'cliPrintSession.toolCall': '工具调用',
   'cliPrintSession.working': '工作中',
   'cliPrintSession.working2': '工作中',

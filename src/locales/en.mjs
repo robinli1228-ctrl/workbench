@@ -203,6 +203,7 @@ Send failures, reproduction steps, expected/actual behavior, version and evidenc
   'cliPrintSession.modelThinkingNativeProgressEvent': 'Model is thinking',
   'cliPrintSession.runtimeError': 'Runtime error',
   'cliPrintSession.runtimeReturnedErrorResultCheck': 'Runtime returned an error result; check the CLI log',
+  'cliPrintSession.agyHistoricalError': 'Agy returned a historical error; the current reply completed and no new error was recorded: {message}',
   'cliPrintSession.toolCall': 'Tool call',
   'cliPrintSession.working': 'Working',
   'cliPrintSession.working2': 'Working',

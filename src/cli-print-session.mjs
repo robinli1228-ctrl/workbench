@@ -6,8 +6,52 @@ import { tr } from './i18n.mjs';
 import { executionText } from './input-language.mjs';
 import { ClaudeContextUsage } from './context-usage.mjs';
 import { normalizeRuntimeQuota } from './runtime-quota.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 const MAX_TOOL_OUTPUT = 12000;
+
+/** Read only the bound Agy history: an old CLI's terminal ERROR can name a prior turn. Missing evidence keeps the failure. */
+function agyErrorBoundary(session) {
+  const id=session.nativeSessionId||session.resumeSessionId;
+  if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id||''))return null;
+  let db;
+  try {
+    db=new DatabaseSync(join(session.env.HOME||homedir(),'.gemini','antigravity-cli','conversations',`${id}.db`),{readOnly:true});
+    const last=db.prepare('SELECT MAX(idx) AS idx FROM steps').get();
+    // Agy's persisted step type 17 is an error. Never load prose/tool history, and bound a diagnostic payload to 64 KiB.
+    const error=db.prepare('SELECT idx,CASE WHEN length(step_payload)<=65536 THEN step_payload END AS payload FROM steps WHERE step_type=17 ORDER BY idx DESC LIMIT 1').get();
+    return {id,last:last.idx,errorIndex:error?.idx,payload:error?.payload?Buffer.from(error.payload):null};
+  }catch{return null;}finally{db?.close();}
+}
+
+/** A fresh user step owns this turn. Only its last completed reply counts; a new error or another input invalidates it. */
+function agyStep(turn,m) {
+  if(!turn?.before||m.conversation_id!==turn.before.id||!Number.isSafeInteger(m.step_index)||m.step_index<=turn.before.last)return;
+  if(m.step_type==='user_input'){
+    if(turn.user!==undefined&&turn.user!==m.step_index)turn.invalid=true;
+    turn.user=m.step_index;
+  }
+  if(turn.user===undefined||m.step_index<=turn.user)return;
+  turn.last=Math.max(turn.last||0,m.step_index);
+  if(m.step_type==='error'||['ERROR','FAILED','CANCELLED','INTERRUPTED'].includes(m.state))turn.invalid=true;
+  if(m.step_type==='agent_response'){
+    if(turn.response?.index!==m.step_index)turn.response={index:m.step_index,text:'',done:false};
+    if(typeof m.text_delta==='string')turn.response.text+=m.text_delta;
+    if(m.state)turn.response.done=m.state==='DONE';
+  }
+}
+
+/** Text alone is insufficient: require a pre-input error, a matching completed reply and no later error in the native store. */
+function historicalAgyResult(session,m) {
+  const t=session.agyTurn,r=t?.response,error=extractText(m.error);
+  if(session.runtime!=='agy'||session.runtimeError||m.status!=='ERROR'||m.is_error||m.finished_reason!=='error'||t?.invalid||!r?.done
+    ||t.user===undefined||t.last!==r.index||m.conversation_id!==t.before.id||!r.text.trim()||r.text.trim()!==String(m.response||'').trim()
+    ||!error||error.length>4096||!t.before.payload?.includes(Buffer.from(error)))return false;
+  const after=agyErrorBoundary(session);
+  return Boolean(after&&after.last===r.index&&after.errorIndex===t.before.errorIndex&&after.errorIndex<t.user&&after.payload?.includes(Buffer.from(error)));
+}
 
 function extractText(content) {
   if (typeof content === 'string') return content;
@@ -105,6 +149,7 @@ export class CliPrintSession {
   async start(prompt) {
     this.inputAttempted=false;
     await this.beforeInput?.();
+    if(this.runtime==='agy')this.agyTurn={before:agyErrorBoundary(this)};
     if(this.proc && this.keepAlive) {
       this.onProcess?.(this.proc);
       this.emit('status',{status:'running',workspace:this.cwd,nativeSessionId:this.nativeSessionId});
@@ -186,6 +231,8 @@ export class CliPrintSession {
     // Child streams still expose tool activity, but only the owner can supply the turn's answer or completion.
     const ownerMessage=!raw.parent_tool_use_id&&!m.parent_tool_use_id;
     const type = m.type || m.event || m.sessionUpdate || '';
+    if(this.runtime==='agy'&&ownerMessage&&type==='step_update')agyStep(this.agyTurn,m);
+    const historicalError=ownerMessage&&type==='result'&&historicalAgyResult(this,m);
     if(this.runtime==='claude'&&ownerMessage&&type==='message_start')this.beginClaudeMessage(m.message?.id);
     const usage = m.usage || m.tokenUsage || raw.usage;
     if (usage && typeof usage === 'object') this.emit('usage', { ...usage, source: 'runtime' });
@@ -200,8 +247,8 @@ export class CliPrintSession {
     if (type === 'error' || m.error) {
       // Claude may put auth errors in assistant.message objects; handoff and UI need the actual text.
       const errText = extractText(m.error?.message) || extractText(m.message) || extractText(m.error) || tr('cliPrintSession.runtimeError');
-      this.runtimeError = this.runtimeError || errText;
-      this.emit('log', { text: errText });
+      if(historicalError)this.emit('log',{text:tr('cliPrintSession.agyHistoricalError',{message:errText})});
+      else {this.runtimeError = this.runtimeError || errText;this.emit('log', { text: errText });}
     }
     const delta = m.delta?.text || (m.delta?.type === 'text_delta' ? m.delta.text : '') || m.text_delta || (type === 'content_block_delta' ? extractText(m.delta) : '');
     if (ownerMessage&&delta) this.appendText(delta);
@@ -216,11 +263,11 @@ export class CliPrintSession {
     if (ownerMessage&&(type === 'result' || type === 'completion' || m.subtype === 'success')) {
       const text = typeof m.result === 'string' ? m.result : extractText(m.response || m.result || m.message || m.content);
       if (text?.trim()) this.finalText = text;
-      if (m.is_error || m.status==='ERROR') {
+      if ((m.is_error || m.status==='ERROR')&&!historicalError) {
         // result/response is partial body text, not the error reason; keep the real diagnostics received earlier.
         this.runtimeError = this.runtimeError || extractText(m.error) || tr('cliPrintSession.runtimeReturnedErrorResultCheck');
         this.emit('log', { text: this.runtimeError });
-      } else if(m.status==='SUCCESS' || m.subtype==='success') this.runtimeError='';
+      } else if(historicalError||m.status==='SUCCESS' || m.subtype==='success') this.runtimeError='';
       if(this.keepAlive) {
         // Background tasks still run in this process: this reply is only progress, so the Run stays active (slot held, never pooled as idle).
         if(!this.runtimeError&&this.backgroundTasks.size){this.awaitingBackground=true;this.flushText();this.bestAnswer='';this.bestAnswerId=null;this.finalText='';return;}
