@@ -6,6 +6,7 @@ import { giteeRepository } from './repository.mjs';
 import { gitCredentialEnv } from './hosting.mjs';
 import { tr } from './i18n.mjs';
 import { ensureAgentsFiles } from './agents-md.mjs';
+import {gitPrintsAnything} from './git-changes.mjs';
 
 const exec = promisify(execFile);
 const inside = (root, path) => { const rel = relative(root, path); return !rel || (!rel.startsWith('..') && !isAbsolute(rel)); };
@@ -52,5 +53,5 @@ export async function setupRepository(roots, input) {
   }
   const agentsMd = await ensureAgentsFiles(root);
   return { localRoot: root, git: { head: await git(root, ['rev-parse', 'HEAD']).catch(() => null),
-    branch: await git(root, ['symbolic-ref', '--short', 'HEAD']).catch(() => 'detached'), dirty: Boolean(await git(root, ['status', '--porcelain'])) }, agentsMd };
+    branch: await git(root, ['symbolic-ref', '--short', 'HEAD']).catch(() => 'detached'), dirty: await gitPrintsAnything(root, ['status', '--porcelain'], { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, timeout: 60000 }) }, agentsMd };
 }

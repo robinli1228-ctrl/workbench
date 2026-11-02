@@ -7,6 +7,7 @@ import { giteeRepository } from './repository.mjs';
 import { within } from './project-space.mjs';
 import { publishProjectBaseline, syncProjectBaseline } from './project-baseline.mjs';
 import { tr } from './i18n.mjs';
+import {gitPrintsAnything} from './git-changes.mjs';
 
 const exec = promisify(execFile);
 const git = async (cwd,args,repo) => {
@@ -52,7 +53,8 @@ export async function publishProjectDelivery(repositories, delivery) {
     const pushUrl=await git(cwd,['config','--get','remote.origin.pushurl'],repo).catch(()=>null);
     if(pushUrl && giteeRepository(pushUrl)?.webUrl !== giteeRepository(repo.repoUrl).webUrl)throw new Error(tr('projectDelivery.pushUrlDoesNotMatch'));
     if (await git(cwd,['rev-parse','HEAD'],repo) !== item.commit) throw new Error(tr('projectDelivery.repositoryCommitChangedAfterDelivery'));
-    const dirty = await git(cwd,['status','--porcelain','--','.',':(exclude).workbench/**',':(exclude).wb-bridge-*/**',':(exclude).agent-workbench-project.json'],repo);
+    const dirty = await gitPrintsAnything(cwd,['status','--porcelain','--','.',':(exclude).workbench/**',':(exclude).wb-bridge-*/**',':(exclude).agent-workbench-project.json'],{env:gitCredentialEnv(repo.repoUrl,repo.credential),timeout:60000})
+      .catch(()=>{throw new Error(tr('projectDelivery.gitOperationFailedForRepository', { key: repo.key }));});
     if (dirty) throw new Error(tr('projectDelivery.repositoryHasUncommittedChangesCommit'));
     if(delivery.purpose!=='review' && item.changed===false && repo.baselineRoot)await unchangedVersion(repo,item);
     else {

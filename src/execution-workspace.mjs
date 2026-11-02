@@ -4,6 +4,7 @@ import { mkdir, realpath, cp, access } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { within } from './project-space.mjs';
 import { tr } from './i18n.mjs';
+import {gitPrintsAnything} from './git-changes.mjs';
 
 const exec = promisify(execFile);
 const git = async (root,args) => (await exec('git',args,{cwd:root,timeout:30000,maxBuffer:1024*1024,env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}})).stdout.trim();
@@ -106,7 +107,7 @@ export async function inspectExecutionRepositories(repositories) {
     }
     if (await realpath(await git(root,['rev-parse','--show-toplevel'])) !== root) throw new Error(tr('executionWorkspace.notIndependentRepositoryRoot', { key: repository.key }));
     const commit=await git(root,['rev-parse','HEAD']);
-    const dirty=Boolean(await git(root,['status','--porcelain','--untracked-files=all','--','.',...internal]));
+    const dirty=await gitPrintsAnything(root,['status','--porcelain','--untracked-files=all','--','.',...internal],{env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}});
     result.push({id:repository.id,key:repository.key,commit,dirty});
   }
   return result;
