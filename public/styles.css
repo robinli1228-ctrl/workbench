@@ -4029,6 +4029,14 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .task-list-row { width: 100%; text-align: left; }
 .task-list-row > .artifact-row-body { flex: 1; }
 .task-list-row strong, .task-list-row small { overflow-wrap: anywhere; white-space: normal; }
+/* One card, no boxes inside it: hairlines under the heading and between tasks. */
+.conversation-task-card .task-card-heading { padding-bottom: 10px; border-bottom: 1px solid var(--card-hairline); }
+.conversation-task-card .task-list { display: grid; gap: 0; }
+.conversation-task-card > .workspace-note:empty { display: none; }
+.conversation-task-card .task-list-row { padding: 12px 0; border: 0; border-bottom: 1px solid var(--card-hairline); border-radius: 0; background: transparent; box-shadow: none; }
+.conversation-task-card .task-list-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+.conversation-task-card .task-list-row:hover, .conversation-task-card .task-list-row:focus-visible { background: transparent; }
+.conversation-task-card .task-list-row:hover strong { color: var(--accent, #4f5bce); }
 .task-list-meta, .task-list-identity { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .task-list-meta { justify-content: space-between; flex-wrap: wrap; margin-top: 4px; font-size: 12px; }
 .task-list-meta time { margin-left: auto; color: var(--text-muted, #748196); font-size: 11px; white-space: nowrap; }
