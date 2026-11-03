@@ -414,7 +414,7 @@ export default {
   'Live execution': '实时现场',
   'Live execution · {name}': '实时现场 · {name}',
   'Stall reminders': '停滞提醒',
-  'Enabled by default, after 10 quiet minutes. Completed final replies need no reminder; no new messages means no repeated wake-ups. Disabling does not stop work already started.': '默认开启，静默 10 分钟后检查。已有完成的最终回复不提醒；没有新消息不会重复唤醒；关闭不影响已开始的执行。',
+  'Enabled by default, after 15 quiet minutes. Completed final replies need no reminder; no new messages means no repeated wake-ups. Disabling does not stop work already started.': '默认开启，静默 15 分钟后检查。已有完成的最终回复不提醒；没有新消息不会重复唤醒；关闭不影响已开始的执行。',
   'Enable stall reminders': '启用停滞提醒',
   'Silence duration (minutes)': '无新消息时长（分钟）',
   'Save stall reminder settings': '保存停滞提醒设置',
