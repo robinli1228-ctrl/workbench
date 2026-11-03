@@ -110,8 +110,7 @@ export function linkMedia(root,context) {
     if(/[\u0000-\u001f\u007f]/.test(href)||href.length>MAX_PATH||wildcardPath(href))continue;
     // A link's target may hold spaces (macOS screenshots: "截屏2026-11-03 17.50.12.png"); free text cannot.
     if(MEDIA_END.test(href)){link.replaceWith(card(href));continue;}
-    // Any other local path (a folder, a file the page cannot show) opens on its device: a folder in Finder, a file revealed.
-    // Documents are left to the document preview.
+    // Any other local path (a folder, a log, a JSON file) opens in the page; documents are left to the document preview.
     if(context.openPath&&!/\.(?:md|markdown|txt)$/i.test(href)){
       link.removeAttribute('href');link.setAttribute('role','link');link.tabIndex=0;link.classList.add('local-path-link');link.title=href;
       const open=event=>{event.preventDefault();void context.openPath(href);};

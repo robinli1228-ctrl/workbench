@@ -1,11 +1,11 @@
-// A folder or file linked in a reply opens on the run's local Mac, only inside that run's project; file: links and
-// picture links with spaces (macOS screenshots) are read as the local paths they name.
+// A folder or file linked in a reply opens in the page, only inside that run's project; file: links and picture links
+// with spaces (macOS screenshots) are read as the local paths they name.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runOpenablePath} from '../src/folder-access.mjs';
 import {localFileAddress} from '../public/markdown.js';
 
-test('only paths inside the run workspace, project root or folder binding can be opened', () => {
+test('only paths inside the run workspace, project root or folder binding can be opened in the page', () => {
   const run={workspace:'/xxxxx/proj/.worktrees/run-1',projectRoot:'/xxxxx/proj'};
   assert.equal(runOpenablePath(run,'/xxxxx/proj','/xxxxx/proj/.workbench/tmp/T25/主管'),'/xxxxx/proj/.workbench/tmp/T25/主管');
   assert.equal(runOpenablePath(run,'/xxxxx/proj','out/截屏 2026-11-03 17.50.12.png'),'/xxxxx/proj/.worktrees/run-1/out/截屏 2026-11-03 17.50.12.png','relative to the workspace');

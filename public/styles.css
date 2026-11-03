@@ -1265,6 +1265,19 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .message-fullscreen[open] { display: flex; flex-direction: column; gap: 16px; overflow: hidden; }
 .message-fullscreen-heading { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .message-fullscreen-heading strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* A folder or file linked in a reply, opened in the page. */
+.local-browser-actions { display: inline-flex; gap: 4px; }
+.local-browser-path { margin: 0 0 10px; color: var(--text-muted, #656c7d); font-size: 12px; overflow-wrap: anywhere; }
+.local-browser-list { display: grid; }
+.local-browser-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 8px 4px; border: 0; border-bottom: 1px solid var(--card-hairline, #eef1f6); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.local-browser-row:hover { background: rgb(79 91 206 / 5%); }
+.local-browser-row small { color: var(--text-muted, #656c7d); font-size: 11px; white-space: nowrap; }
+.local-browser-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.local-browser-icon { display: inline-flex; width: 18px; height: 20px; }
+.local-browser-icon svg { width: 100%; height: 100%; }
+.local-browser-folder { color: #c9a227; }
+.local-browser-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.local-path-link { cursor: pointer; }
 .message-fullscreen-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .message-fullscreen-content { width: 100%; max-width: 1000px; margin: 0 auto; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
 

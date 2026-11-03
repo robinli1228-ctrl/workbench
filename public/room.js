@@ -19,6 +19,7 @@ import { renderPermissionScope, permissionScopeValue } from './permission-scope.
 import {renderModelUsageNotice} from './model-usage.js';
 import {createMentionInput} from './mention-input.js';
 import { elapsedEl, formatElapsed } from './elapsed.js';
+import {createLocalBrowser} from './local-browser.js';
 import {classifyStep,toolFilePaths} from './native-transcript.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
 import { pastesAsFile, pastedTextName } from './pasted-text.js';
@@ -913,9 +914,13 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     })().finally(()=>filePathsLoading.delete(runId));filePathsLoading.set(runId,request);return request;
   }
   const fileContext=runId=>({filePaths:()=>filePathsFor(runId),loadFilePaths:()=>loadFilePaths(runId)});
-  // A local folder or file link opens on the run's device (the local Mac): a folder in Finder, a file revealed there.
-  const openRunPath=(runId,path)=>api(`/api/runs/${encodeURIComponent(runId)}/open-path`,{method:'POST',json:{path}}).catch(error=>setError(error.message));
-  const mediaContext=runId=>runId?{key:`run:${runId}`,...fileContext(runId),describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`),openPath:path=>openRunPath(runId,path)}:null;
+  // A local folder or file link opens in the page, on whichever device the run used (see local-browser.js).
+  const localBrowser=createLocalBrowser({api});
+  const mediaContext=runId=>{
+    if(!runId)return null;
+    const context={key:`run:${runId}`,...fileContext(runId),describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`)};
+    return Object.assign(context,{openPath:path=>localBrowser.open(runId,path,context)});
+  };
   const renderLinkedMarkdown=(text,runId)=>documentPreview.decorate(linkMedia(renderMessageMarkdown(simplifiedCliOutput(text)),mediaContext(runId)),{kind:'run',runId,...fileContext(runId)});
   function replyPreview(text, markdown = true, runId = null, key = '') {
     const preview = create('div', 'chat-reply-preview');
