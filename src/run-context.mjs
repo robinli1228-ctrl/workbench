@@ -93,6 +93,20 @@ export function turnOrigin(db,task,request) {
   return {kind:'human'};
 }
 
+/**
+ * The task as the role sees it: the full snapshot the first time and after each change to its description; a task this
+ * role already read at this description revision is one line pointing at wb task show (it was 64% of collaboration text).
+ */
+function taskText(task,minimal) {
+  const {updated,known,...snapshot}=task;
+  if(known===true){
+    const steps=snapshot.plan?.steps?.length?` · ${(snapshot.plan.currentStep||0)+1}/${snapshot.plan.steps.length}`:'';
+    return tr('conversationTasks.unchanged',{number:snapshot.number,title:snapshot.title,status:snapshot.status,steps,revision:snapshot.revision});
+  }
+  const text=JSON.stringify(snapshot),note=updated?tr('conversationTasks.updated'):'';
+  return minimal?tr('conversationTasks.context',{updated:note,task:text}):[note,text].filter(Boolean).join('\n');
+}
+
 /** Only the task's owner, and only in a turn linked to it, is reminded to close the task when the work is done. */
 const ownerReminder=packet=>packet.conversationTask&&packet.roleId&&packet.conversationTask.ownerRoleId===packet.roleId&&!['done','cancelled'].includes(packet.conversationTask.status)?tr('conversationTasks.ownerReminder'):'';
 
@@ -105,7 +119,7 @@ export function renderRunInputParts(packet) {
   const reference=item=>`- ${JSON.stringify(item.author)} [${item.id}]:\n${item.text}${item.truncated?`\n  wb history read ${item.id}`:''}`;
   const home=[
     interrupted(packet)&&['steering',tr('runContext.userChangedDirectionTurnImmediate')],
-    packet.conversationTask&&['task',[packet.conversationTask.updated?tr('conversationTasks.updated'):'',JSON.stringify(packet.conversationTask),ownerReminder(packet)].filter(Boolean).join('\n')],
+    packet.conversationTask&&['task',[taskText(packet.conversationTask,false),ownerReminder(packet)].filter(Boolean).join('\n')],
     packet.followup&&['followup',tr('followup.context',{context:JSON.stringify(packet.followup)})],
     packet.discussionResolution&&['discussion',tr('runContext.questionOnOriginalTaskHas',{p1:JSON.stringify(packet.discussionResolution)})],
     packet.schedulingRoster?.length&&['roster',tr('runContext.rolesTurnMustCoverFixed',{p1:packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(', ')})],
@@ -119,7 +133,7 @@ export function renderRunInputParts(packet) {
 
 /** The source text is not rewritten by the summarizer; the background carries a coverage range and a fallback marker so it is not mistaken for a new instruction. */
 export function renderRunPrompt(packet,{minimal=false}={}) {
-  const taskContext=packet.conversationTask?[tr('conversationTasks.context',{updated:packet.conversationTask.updated?tr('conversationTasks.updated'):'',task:JSON.stringify(packet.conversationTask)}),ownerReminder(packet)].filter(Boolean).join('\n'):'';
+  const taskContext=packet.conversationTask?[taskText(packet.conversationTask,true),ownerReminder(packet)].filter(Boolean).join('\n'):'';
   if(minimal)return [packet.instruction,taskContext,
     packet.followup?tr('followup.context',{context:JSON.stringify(packet.followup)}):'',
     interrupted(packet)?tr('runContext.userChangedDirectionTurnImmediate'):'',

@@ -108,7 +108,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   '2af981fb0fbafeb43a1def233f1fd7c98dac904c555ba5cb2559254703712a84',
   // Defaults before roles were told to read other devices' files themselves with wb device.
   '0600e6f1aa67dafd54c62c3bf4b48ffc11898a7ac644b589c9b62db8e63d8304',
-  'fbc455ad3100ed1885946d7e6f2986d49c1a924e2e89c1a077250406216835c3'
+  'fbc455ad3100ed1885946d7e6f2986d49c1a924e2e89c1a077250406216835c3',
+  // Defaults before work materials left /tmp, task descriptions held only the current state, and reviews were sized to the change.
+  '3fdbf1bde2150d398e0c00f5b0d43275f6b2f5f12321c7873309526a6d752205',
+  'e7e2d387202ae8d70f8f0e466ba691e82034a202937f6c5ed518311ac483e8cb'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */

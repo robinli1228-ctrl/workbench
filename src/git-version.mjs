@@ -33,7 +33,8 @@ export async function inspectGitRepositoryVersion({ localRoot, repoUrl, credenti
   if (await realpath(await git(root, ['rev-parse','--show-toplevel'], repoUrl, credential)) !== root) throw new Error(tr('gitVersion.directoryNotIndependentGitRepository'));
   const branch = await git(root, ['symbolic-ref','--short','HEAD'], repoUrl, credential).catch(() => 'detached');
   const localCommit = await git(root, ['rev-parse','HEAD'], repoUrl, credential);
-  const dirty = await gitPrintsAnything(root, ['status','--porcelain','--untracked-files=all'], { env: gitCredentialEnv(repoUrl, credential), timeout: 10000 });
+  // Platform folders (.workbench: shared reports, work materials, attachments) are not the repository's uncommitted work.
+  const dirty = await gitPrintsAnything(root, ['status','--porcelain','--untracked-files=all','--','.',':(exclude).workbench',':(exclude).wb-bridge-*'], { env: gitCredentialEnv(repoUrl, credential), timeout: 10000 });
   if (branch === 'detached') return { branch, localCommit, remoteCommit:null, ahead:0, behind:0, status:'unknown', dirty, checkedAt:new Date().toISOString(), error:tr('gitVersion.repositoryInDetachedHeadState') };
   await git(root, ['check-ref-format','--branch',branch], repoUrl, credential);
   if(branch.startsWith('agentwb/')) {
