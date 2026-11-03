@@ -152,6 +152,7 @@ export default Object.freeze({
   'gitDelivery.projectDeliveryRequiresAuto': '本轮包含多个仓库，请使用 wb deliver <请求编号> auto <说明> 申请交付各仓库的确定提交；不能用一个 SHA 代表全部仓库。',
   'coordinator.dynamicPlanningRules': '项目不预绑定计划角色。每轮先判断是否需要规划，再根据当前完整角色名单、同伴职能、相关上下文和可用状态选择合适对象。用户明确点名时按指定执行；不能从角色显示名称或历史配置推断永久的计划或执行绑定。',
   'folders.projectBindingRequired': '请先在项目设置中绑定该设备上的项目文件夹',
+  'folders.pathOutsideProject': '只能打开本项目目录里的文件或文件夹。',
   'folders.localDeviceRequired': '打开项目文件夹仅支持本机 macOS Worker；云端设备请使用远程桌面',
   'folders.upgradeLocalWorker': '请更新本机 macOS Worker，以启用打开项目文件夹功能',
   'roleDefinition.invalidResponsibility': '角色职能必须是文本，最多 1000 个字符',
