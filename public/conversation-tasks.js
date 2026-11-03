@@ -131,7 +131,7 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
     const footer=el('div','task-edit-footer'),actions=el('div','task-edit-actions');
     const reason=field(footer,'Change reason','',{maxLength:1000});
     const save=el('button','primary',t('Save'));save.type='submit';actions.append(button('Cancel',()=>dialog.close()),save);footer.append(error,stale,actions);form.append(footer);
-    // Closing an open task marks it cancelled (kept in the history, out of "Only unfinished"); the change reason, if any, goes with it.
+    // Basic information offers closing an open task: it is marked cancelled (kept in the history, out of "Only unfinished"); the change reason, if any, goes with it.
     if(record&&!['done','cancelled'].includes(record.status)){
       const closeTask=button('Close task',async()=>{
         if(state.saving||editor!==state||version!==generation||!confirm(t('Close this task? It is marked cancelled and leaves the unfinished list.')))return;
@@ -141,7 +141,7 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
         catch(e){if(editor===state)error.textContent=e.message;}
         finally{state.saving=false;closeTask.disabled=save.disabled=false;}
       },'secondary task-close-button');
-      actions.prepend(closeTask);
+      const row=el('div','task-close-row');row.append(closeTask);summary.parentElement.after(row);
     }
     const history=sections.history;history.classList.add('task-change-history');
     for(const change of [...(record?.history||[])].reverse()){
