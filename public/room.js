@@ -913,7 +913,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     })().finally(()=>filePathsLoading.delete(runId));filePathsLoading.set(runId,request);return request;
   }
   const fileContext=runId=>({filePaths:()=>filePathsFor(runId),loadFilePaths:()=>loadFilePaths(runId)});
-  const mediaContext=runId=>runId?{key:`run:${runId}`,...fileContext(runId),describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`)}:null;
+  // A local folder or file link opens on the run's device (the local Mac): a folder in Finder, a file revealed there.
+  const openRunPath=(runId,path)=>api(`/api/runs/${encodeURIComponent(runId)}/open-path`,{method:'POST',json:{path}}).catch(error=>setError(error.message));
+  const mediaContext=runId=>runId?{key:`run:${runId}`,...fileContext(runId),describe:path=>api(`/api/runs/${encodeURIComponent(runId)}/media?path=${encodeURIComponent(path)}`),openPath:path=>openRunPath(runId,path)}:null;
   const renderLinkedMarkdown=(text,runId)=>documentPreview.decorate(linkMedia(renderMessageMarkdown(simplifiedCliOutput(text)),mediaContext(runId)),{kind:'run',runId,...fileContext(runId)});
   function replyPreview(text, markdown = true, runId = null, key = '') {
     const preview = create('div', 'chat-reply-preview');

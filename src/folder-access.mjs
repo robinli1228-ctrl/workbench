@@ -1,7 +1,7 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {realpath,stat,access,open} from 'node:fs/promises';
 import {constants} from 'node:fs';
-import {relative,isAbsolute,dirname,join,parse} from 'node:path';
+import {relative,isAbsolute,dirname,join,parse,resolve,sep} from 'node:path';
 import {homedir} from 'node:os';
 
 const inside=(root,path)=>{const part=relative(root,path);return !part||part!=='..'&&!part.startsWith('../')&&!part.startsWith('..\\')&&!isAbsolute(part);};
@@ -123,4 +123,14 @@ export class FolderPreparations {
    }catch(error){this.db.put('folderPreparations',{...intent,status:'pending_cleanup',cleanupError:error.message});}
   }
  }
+}
+
+/**
+ * A path named in a run's reply, as the absolute path to open on its device, or null when it is not inside that run's
+ * workspace, project root or the project's folder binding on that device (relative paths resolve from the workspace).
+ */
+export function runOpenablePath(run,bindingRoot,path){
+ if(!run?.workspace||typeof path!=='string'||!path||path.length>4096||/[\u0000-\u001f]/.test(path))return null;
+ const target=resolve(run.workspace,path);
+ return [run.workspace,run.projectRoot,bindingRoot].filter(Boolean).some(root=>{const rel=relative(resolve(root),target);return !rel||rel!=='..'&&!rel.startsWith(`..${sep}`)&&!isAbsolute(rel);})?target:null;
 }

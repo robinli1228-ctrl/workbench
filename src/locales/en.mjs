@@ -151,6 +151,8 @@ Send failures, reproduction steps, expected/actual behavior, version and evidenc
   'gitDelivery.projectDeliveryRequiresAuto': 'This Run contains multiple repositories. Use wb deliver <request-id> auto <summary> to request delivery of their exact commits; one SHA cannot identify all repositories.',
   'coordinator.dynamicPlanningRules': 'There is no pre-bound planner role. Decide whether this task needs planning, and select the appropriate collaborator from the current full roster using responsibilities, relevant context and availability. Respect an explicit user assignment; do not infer a permanent planning or execution binding from a display name or historical configuration.',
   'folders.projectBindingRequired': 'First bind this project folder on the selected device in Project Settings',
+  'folders.pathUnavailable': 'This path cannot be found; it may have been moved or deleted.',
+  'folders.pathOutsideProject': 'Only files and folders inside this project can be opened.',
   'folders.localDeviceRequired': 'Opening a project folder is supported on the local macOS Worker; use remote desktop for a cloud device',
   'folders.upgradeLocalWorker': 'Update the local macOS Worker to enable opening project folders',
   'roleDefinition.invalidResponsibility': 'Role responsibility must be text with at most 1000 characters',

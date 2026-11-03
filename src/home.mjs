@@ -52,7 +52,7 @@ import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
 import { folderName,assertProjectReady } from './project-space.mjs';
-import {folderAccessFor,nativeFolderAccess,FolderPreparations} from './folder-access.mjs';
+import {folderAccessFor,nativeFolderAccess,FolderPreparations,runOpenablePath} from './folder-access.mjs';
 import { CredentialStore, Hosting } from './hosting.mjs';
 import { ProjectAdmin } from './project-admin.mjs';
 import { DeviceAdmin } from './device-admin.mjs';
@@ -1339,6 +1339,16 @@ const server = http.createServer(async (req, res) => {
       if ((m = pathname.match(/^\/api\/workers\/([^/]+)\/directories$/)) && req.method === 'GET') {
         if (!db.get('workers', m[1])?.capabilities?.projectBrowser) throw new Error(tr('home.upgradeNodeUseDirectorySelection'));
         return json(res, await workerQuery({ nodeId: m[1] }, 'directories', { path: url.searchParams.get('path'), offset: Number(url.searchParams.get('offset') || 0) }));
+      }
+      // A folder or file linked in a reply opens on the run's local Mac, only inside that run's project or workspace.
+      if ((m = pathname.match(/^\/api\/runs\/([^/]+)\/open-path$/)) && req.method === 'POST') {
+        const run=db.get('runs',m[1]),input=await body(req),worker=run&&db.get('workers',run.nodeId);
+        if(!run?.workspace)throw new Error(tr('home.runNotFound2'));
+        const target=runOpenablePath(run,db.get('workspaces',`${run.projectId}:${run.nodeId}`)?.localRoot,input?.path);
+        if(!target)throw new Error(tr('folders.pathOutsideProject'));
+        if(!worker||resolveNodeKind(worker.nodeKind,worker.platform)!=='local')throw new Error(tr('folders.localDeviceRequired'));
+        if(worker.capabilities?.openPath!==1)throw new Error(tr('folders.upgradeLocalWorker'));
+        return json(res,await workerQuery({nodeId:worker.id,projectId:run.projectId},'open_path',{path:target},15000));
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/workspaces\/([^/]+)\/open$/)) && req.method === 'POST') {
         const project=db.get('projects',m[1]),worker=db.get('workers',m[2]),binding=db.get('workspaces',`${m[1]}:${m[2]}`);
