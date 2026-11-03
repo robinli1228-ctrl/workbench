@@ -138,10 +138,14 @@ export class ConversationTasks {
     if(!request?.conversationTaskId)return null;
     assertConversationRecord(run,request);
     const task=this.show(run,request.conversationTaskId);if(!this.visible(task,run))return null;
-    const id=digest([task.id,run.roleId]),previous=this.db.get('conversationTaskReads',id);
-    const value={id:task.id,number:task.number,title:task.title,description:task.description,plan:taskView(task).plan,status:task.status,ownerRoleId:task.ownerRoleId,revision:task.revision,
-      updated:Boolean(previous&&previous.descriptionRevision!==task.descriptionRevision)};
-    this.db.put('conversationTaskReads',{id,projectId:run.projectId,conversationId:conversationIdOf(run),roleId:run.roleId,conversationTaskId:task.id,descriptionRevision:task.descriptionRevision,runId:run.id});
+    const id=digest([task.id,run.roleId]),previous=this.db.get('conversationTaskReads',id),plan=taskView(task).plan,planKey=digest([plan??null]);
+    const changed=Boolean(previous&&(previous.descriptionRevision!==task.descriptionRevision||previous.planKey!==undefined&&previous.planKey!==planKey));
+    // One line only when this CLI already holds the same description and plan: it resumes the role session in which the
+    // previous linked run actually received its input. A failed start, a separate review session or a reset gets it all.
+    const known=Boolean(previous&&!changed&&previous.planKey===planKey&&run.resumeNativeSessionId&&run.roleSessionId&&previous.roleSessionId===run.roleSessionId
+      &&this.db.get('runs',previous.runId||'')?.inputDeliveryState==='accepted');
+    const value={id:task.id,number:task.number,title:task.title,description:task.description,plan,status:task.status,ownerRoleId:task.ownerRoleId,revision:task.revision,updated:changed,known};
+    this.db.put('conversationTaskReads',{id,projectId:run.projectId,conversationId:conversationIdOf(run),roleId:run.roleId,conversationTaskId:task.id,descriptionRevision:task.descriptionRevision,planKey,roleSessionId:run.roleSessionId||null,runId:run.id});
     return value;
   }
 }

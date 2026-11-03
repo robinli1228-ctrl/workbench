@@ -61,6 +61,7 @@ import {MediaPace} from './media-pace.mjs';
 import {inspectWorkspaceGit} from './workspace-git.mjs';
 import { inspectExecutionRepositories, prepareExecutionWorkspace, executionConflict, verifyExecutionVersions,resolveExecutionRepositories,inspectExecutionInput,assertExecutionInputVersions,executionInputBaselines } from './execution-workspace.mjs';
 import { createRunInput, instructionDelivery,executionInstructionComponents,executionEnvironmentHint } from './run-input.mjs';
+import {workMaterialsFolder} from './work-materials.mjs';
 import { inspectGitRepositoryVersion } from './git-version.mjs';
 import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseline.mjs';
 import { runOrganizer, runModelPrompt } from './conversation-organizer.mjs';
@@ -559,7 +560,11 @@ async function command(m) {
       const attachmentHint = inputFiles.length ? executionText('worker.userAttachmentsForTurnUntrusted', { p1: inputFiles.map(a => JSON.stringify({name:a.name,path:a.path,mime:a.mime})).join('\n') }) : '';
       const toolGuide=executionConfiguration?executionText('minimal.toolEntry',{wbCommand}):[executionText('worker.wbCommandPrefixForTurn', { wbCommand }),(m.run.sourceSyncTracking||m.run.sourceConflictId||m.run.sourceConflictPeerId||m.run.sourceConflictAssignmentRequestId)?executionText('sourceSync.toolGuide'):''].filter(Boolean).join('\n\n');
       const taskPrompt=[m.task.prompt,executionConfiguration?.dependencyEvents?.length?executionText('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):''].filter(Boolean).join('\n\n');
-      const environmentHint=executionEnvironmentHint({concurrentRoles:m.run.concurrentWrites===true&&!m.run.execution?.isolated&&m.task.mode!=='read-only'?(m.run.concurrentPeers||[]):null,cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,readOnly:m.task.mode==='read-only'||['audit','review'].includes(m.run.execution?.purpose),assigned:Boolean(m.run.deliveryId||source),sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
+      // Only runs that write the project folder get a work materials folder: read-only, audit, review, isolated and switch
+      // runs cannot write there (and independent reviewers must not see others' drafts).
+      const writesProject=m.task.mode!=='read-only'&&!['audit','review'].includes(m.run.execution?.purpose)&&!m.run.execution?.isolated&&!m.run.switchOperationId;
+      const materials=root&&writesProject?await workMaterialsFolder(root,m.run.contextPacket?.conversationTask?.number,m.run.roleSnapshot?.name):null;
+      const environmentHint=executionEnvironmentHint({materials,concurrentRoles:m.run.concurrentWrites===true&&!m.run.execution?.isolated&&m.task.mode!=='read-only'?(m.run.concurrentPeers||[]):null,cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,readOnly:m.task.mode==='read-only'||['audit','review'].includes(m.run.execution?.purpose),assigned:Boolean(m.run.deliveryId||source),sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
       // A Home that sends named parts gets the ordered layout: message and attachments first, then each titled addition.
       const parts=executionConfiguration&&m.task.inputParts?.message?m.task.inputParts:null;
       const turn=parts?{message:parts.message,home:Array.isArray(parts.home)?parts.home:[],attachments:inputFiles.map(a=>({name:a.name,path:a.path})),

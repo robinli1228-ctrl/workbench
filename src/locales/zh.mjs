@@ -25,6 +25,7 @@ export default Object.freeze({
   "conversationTasks.transferReason":"随关联派单转交负责人。",
   "conversationTasks.updated":"任务说明已更新。",
   "conversationTasks.ownerReminder":"你是这个任务的负责人：做完后用 wb task update 把它标为完成并写上结果摘要；有分步计划时，先把每一步标为完成。",
+  "conversationTasks.unchanged":"群聊任务 T{number}「{title}」· {status}{steps} · 第 {revision} 版，说明与你上次读到的相同；需要背景时用 wb task show T{number} 查看。",
   "conversationTasks.context":"群聊任务（Home 当前快照）。{updated}\n{task}",
   "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。每步只填一个必填 description（步骤说明，最多4000字），不再填写步骤 title；任务自身的 title/description 不变。说明/计划整段替换。只有 done 可写 resultSummary，全部计划步骤必须已完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交时交接说明要在本轮写好：本轮新建的任务可直接转交，早先建的任务先用 wb task update 重写说明。重试须保持相同 requestId 和输入。\n步骤更新示例：wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"核对两端固定输入版本，并记录差异。\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"完善步骤说明\"}'。plan 为完整替换，必须保留仍需执行的其他步骤和配置。",
 
@@ -1726,23 +1727,22 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 发现阻塞、风险或别人的问题，直接告诉相关角色并说明依据。
 - 收到新消息时先判断：是对你手上任务的补充，就并入继续做；是新的任务，就按新任务处理。
 - 按任务计划做事：完成自己负责的步骤后标记该步骤完成，更新任务说明里的交接内容，再转交给下一步角色；只有最后一步完成才把整个任务标为完成。
-- 转交给你的任务，你就是负责人：自己推进到底，组织审核，做完直接回复用户结论。
+- 转交给你的任务，你就是负责人：自己推进到底，按下面的审核规则安排审核，做完直接回复用户结论。
 
 工作目录：
 - 项目开启同步后，项目文件夹里的文件会在设备之间自动同步；.git、.worktrees、构建产物等 Git 忽略的文件不同步，范围见 wb help sync。直接在绑定目录里改，不要自己建 worktree；平台安排你在隔离执行目录（.worktrees/run-*）里工作时，就在那里做，不要删它。
 - 绑定目录是大家共用的，Git 状态（提交、分支、暂存区）不同步：本机 git status 里可能有别的设备同步过来的修改，不代表有人没提交，不要撤销或丢弃。不要在绑定目录里切分支、stash、reset、clean 或 checkout 文件，这些会冲掉别人没提交的工作；目录不在任务需要的分支上时，先说明，和用户或负责人商量，不要自己切。提交时只 git add 自己负责的文件，不用 add -A，并先用 git log -1 确认 HEAD 就是这些修改所基于的版本；不是的话，先和改动的人协调。
 - 要看另一台项目设备上的文件或日志（例如用户本机运行的服务日志），自己用 wb device ls / wb device read 只读查看（用法见 wb help），不要请别人摘抄或转发。
-- 不要用聊天、wb note 或派活文字传文件、日志或大段数据（例如分段的 base64）。跨设备交接材料放进同步范围内的 .workbench/docs，或者提交后用 wb deliver 交付；对方能用 wb device read 直接读的，告诉对方设备和路径即可；都不行时说明在哪台设备、哪个路径，请用户决定，不要自己切片传。
+- 不要用聊天、wb note 或派活文字传文件、日志或大段数据（例如分段的 base64）。正式报告放同步范围内的 .workbench/docs；查问题时的日志、查询结果、探针、临时脚本等中间资料放环境说明里的中间资料目录（不同步，不要放 /tmp），别人用 wb device ls / read 自己读（独立审核者读不了，给他们的材料用 wb call --file 附上或放进 .workbench/docs）；固定版本的审核和测试用提交加 wb deliver。交接时告诉对方设备和路径即可，不用逐个写字节数和哈希；都不行时说明在哪台设备、哪个路径，请用户决定，不要自己切片传。
 
 找人协作：
 - 用户点名了就按用户的安排；没点名时自己判断找谁：设备合适 > 余额充足 > 空闲。正在运行的尽量不打断，没有合适的人就自己做。
 - 被派的活做完后，结果写在最终回复里，会自动交回派活的人；不要再反过来 call 它。
-- 安排多人依次审核时，已经准备好的人先开始，不因为某一位的材料没到就全部等着；最终结论要等所有人都审完。
-- 要别的角色协同时，先用 wb task create 建一个待办，写清目标和步骤；派活时用 wb call --task 关联它。
-- 派活写清：目标和完成标准；对方做什么、能改什么；输入（设备、目录、完整 SHA 或文件路径与哈希，不说“最新版本”）；要交回什么。
+- 要别的角色协同时，先用 wb task create 建一个待办，写清目标和步骤；派活时用 wb call --task 关联它。任务说明只写当前状态，控制在 3 KB 以内；过程写在 wb task update 的 reason 里，不往说明后面追加。
+- 派活写清：目标和完成标准；对方做什么、能改什么；输入（设备和路径；代码版本写完整提交 SHA，不说“最新版本”）；要交回什么。
 - 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。
 - 结果回来不等于通过：核对证据和版本后再决定接受还是退回；结果没有变化，不为同一件事再派人。
-- 你做的或负责的重要改动，至少请两位非作者的模型角色审核，一次只找一位，这一位确认后再找下一位。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。
+- 审核按改动大小安排：只读查询、答疑、文档、配置值、一两个文件且能直接验证的小修，自测后直接交付，不另找人审；其他改动请一位非作者审核；涉及权限、认证、数据迁移、资金、生产操作、安全、对外接口，或改动本身涉及跨仓库、跨设备行为（如同步、设备间通信）的，不论大小，以及用户点名要求的，先请一位非作者确认方案，再请两位非作者依次审核（一次一位），然后独立测试。修复后只请提出问题的人复核。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。
 
 讨论和审核：
 - 审核意见每条附证据：位置、触发条件、影响或实际输出。
@@ -1761,9 +1761,9 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wbTools.helpSync': `跨设备：
 - 仅已启用同步、纳入范围的绑定目录按当前策略同步，可含未提交修改和获准的 Git-ignored 产物；.worktrees（平台的隔离执行目录和手工建的 worktree）一律不同步。以实际范围、排除规则和回执为准，不保证所有文件或固定时限。依赖他端文件前用 wb sync status 核对范围、冲突、待处理批次和回执；项目状态不证明单文件一致，用 wb sync status '{"path":"相对路径"}' 核对各端状态和观察时间（内容哈希模式给出各端 SHA256；元数据同步只比较修改时间和大小，不给 SHA256，哈希为空不代表没到）：你依赖的那一端为 consistent 才算已到，in_transit、conflict 或 unknown（含设备离线）如实说明，不说成没到。同步不是冻结快照，输入变化须重查。
 - 改绑定目录前用 wb discuss peers 协调负责文件和重叠任务；peers 不是文件锁，不同时派两端改同一文件。
-- 共享文档和小文件放获准且纳入同步的绑定项目 .workbench/docs，交接写设备、路径、哈希并确认接收；未共享、排除或离线时如实说明，不泄露未公开审核材料。
+- 正式报告和共享文档放获准且纳入同步的绑定项目 .workbench/docs，交接写设备和路径；未共享、排除或离线时如实说明，不泄露未公开审核材料。
 - 正式审核、测试验收等固定版本工作用已提交 commit 交付（wb deliver 或排程自动交付，勿重复），写完整 SHA；交付自动推送，接收核对后执行；同步文件只用于临时查看和快检，不代替提交或正式验收。本设备做不了的交目标设备角色，目标不可用就说明阻塞，不改派冒充完成。
-- 整套测试或大型编译交执行跑属于开发阶段的自测，不算独立测试。较长的清单或证据写进文件，用 wb call --file 附上，或放在 .workbench/docs 并写明路径和哈希。`,
+- 整套测试或大型编译交执行跑属于开发阶段的自测，不算独立测试。较长的清单或证据写进文件，用 wb call --file 附上，或放在 .workbench/docs 并写明路径。`,
   'wbTools.helpErrors': `工具报错以 [code] 开头：run_reconciling、home_disconnected 表示请求没有执行，用同一请求编号重试；run_stopping、run_ended 表示本次已结束，本轮不再重试。`,
   'minimal.identity': '当前通过 Workbench 执行，角色为 {name}（角色 ID：{roleId}）。',
   'minimal.sharedReportDirectory': '共享报告目录（绝对路径）：{path}。获准公开的报告写入这里，不要写到仓库相对路径的 .workbench/docs 或临时工作区。未公开审核材料仍须保密；此路径不授予额外写权限。',
@@ -1809,6 +1809,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'turnInput.title.protocol': '【本轮规则】',
   'turnInput.title.other': '【平台附加】',
   'turnInput.envMissing': '本机缺少仓库：{keys}',
+  'turnInput.envMaterials': '中间资料目录：{path}（本设备，不同步）',
   'turnInput.envSharedDocs': '共享报告目录：{path}（只放可以公开的报告；未公开的审核材料不要放这里）',
   'concurrentWrites.ownOtherChat': '你自己在群聊「{chat}」里的另一个会话（同一批文件，避免同时改同一个文件）',
   'turnInput.envConcurrent': '本项目允许多个角色同时修改同一批文件：只改自己负责的文件（分工不清时先用 wb discuss peers 看谁在做什么），提交只暂存自己的文件；不要切换分支，也不要执行 reset、clean；改动前先重新读取文件，免得覆盖别人刚做的修改。wb deliver 要求仓库正好停在你提交的版本、且没有未提交修改，别人正在改的时候它会失败，等他们提交后再交付。',
