@@ -52,7 +52,7 @@ import { runtimeReportFresh } from './runtime-state.mjs';
 import { ProjectSetup, validateLocalSupervisor, setupRules } from './project-setup.mjs';
 import { roleWorkspace } from './project-repositories.mjs';
 import { folderName,assertProjectReady } from './project-space.mjs';
-import {folderAccessFor,nativeFolderAccess,FolderPreparations} from './folder-access.mjs';
+import {folderAccessFor,nativeFolderAccess,FolderPreparations,runOpenablePath} from './folder-access.mjs';
 import { CredentialStore, Hosting } from './hosting.mjs';
 import { ProjectAdmin } from './project-admin.mjs';
 import { DeviceAdmin } from './device-admin.mjs';
@@ -530,6 +530,7 @@ function pageFileMap() {
   files['/native-agent-switch.js']='native-agent-switch.js';
   files['/native-transcript.js']='native-transcript.js';
   files['/media.js']='media.js';
+  files['/local-browser.js']='local-browser.js';
   files['/pasted-text.js']='pasted-text.js';
   files['/side-preview.js']='side-preview.js';
   files['/history-prompt.js']='history-prompt.js';
@@ -1339,6 +1340,23 @@ const server = http.createServer(async (req, res) => {
       if ((m = pathname.match(/^\/api\/workers\/([^/]+)\/directories$/)) && req.method === 'GET') {
         if (!db.get('workers', m[1])?.capabilities?.projectBrowser) throw new Error(tr('home.upgradeNodeUseDirectorySelection'));
         return json(res, await workerQuery({ nodeId: m[1] }, 'directories', { path: url.searchParams.get('path'), offset: Number(url.searchParams.get('offset') || 0) }));
+      }
+      // A folder or file linked in a reply opens in the page: a folder lists one level, a file shows its first text page.
+      // Only inside that run's workspace, project root or project folder on its device; the Worker's device read refuses
+      // secret names, private handoffs and binary content, and checks the folder grant.
+      if ((m = pathname.match(/^\/api\/runs\/([^/]+)\/local$/)) && req.method === 'GET') {
+        const run=db.get('runs',m[1]);if(!run?.workspace)throw new Error(tr('home.runNotFound2'));
+        const root=db.get('workspaces',`${run.projectId}:${run.nodeId}`)?.localRoot||run.projectRoot||run.workspace;
+        const target=runOpenablePath(run,root,url.searchParams.get('path'));
+        if(!target)throw new Error(tr('folders.pathOutsideProject'));
+        const worker=db.get('workers',run.nodeId);
+        if(!online(run.nodeId))throw new Error(tr('wbCli.deviceOffline',{device:worker?.name||run.nodeId}));
+        if(!(worker?.capabilities?.deviceRead>=1))throw new Error(tr('wbCli.deviceUpgrade',{device:worker?.name||run.nodeId}));
+        const read=(list,extra={})=>workerQuery({nodeId:run.nodeId,projectId:run.projectId},'device_read',{root,path:target,list,...extra},15000);
+        // The link does not say whether it names a folder or a file: try the folder first.
+        try { return json(res,{kind:'folder',...await read(true)}); }
+        catch(error) { if(!/not_a_folder/.test(error.message))throw error; }
+        return json(res,{kind:'file',...await read(false,{offset:0,limit:65536})});
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/workspaces\/([^/]+)\/open$/)) && req.method === 'POST') {
         const project=db.get('projects',m[1]),worker=db.get('workers',m[2]),binding=db.get('workspaces',`${m[1]}:${m[2]}`);

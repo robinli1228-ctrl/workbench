@@ -266,20 +266,21 @@ function appendInline(parent, input) {
     if (emphasis) {
       const node = element(emphasis.tag); appendInline(node, emphasis.inner); parent.append(node); cursor += emphasis.length; continue;
     }
-    const link = text.slice(cursor).match(/^\[([^\]\n]+)]\(\s*(?:<([^>\n]+)>|([^\s)]+))\s*\)/);
-    if (link) {
-      const target=normalizeDocumentAddress(link[2]||link[3])||(link[2]||link[3]);
+    // ![alt](path) is a link too (the chat turns a picture path into a preview card); the "!" is not shown.
+    const link = text.slice(cursor).match(/^!?\[([^\]\n]*)]\(\s*(?:<([^>\n]+)>|([^\s)]+))\s*\)/);
+    if (link && (link[0][0]==='!'||link[1])) {
+      const raw=link[2]||link[3],target=normalizeDocumentAddress(raw)||localFileAddress(raw)||raw;
       if (safeLink(target)) {
         const node = element('a'); node.setAttribute('href', target);
         if (/^https?:/i.test(target)) { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noopener noreferrer'); }
-        appendInline(node, link[1]); parent.append(node);
+        appendInline(node, link[1]||target.split('/').filter(Boolean).pop()||target); parent.append(node);
       } else {
         parent.append(document.createTextNode(link[0]));
       }
       cursor += link[0].length; continue;
     }
     let end = cursor + 1;
-    while (end < text.length && !/[\n\\`*_[\]/]/.test(text[end])) end += 1;
+    while (end < text.length && !/[\n\\`*_[\]/]/.test(text[end]) && !(text[end]==='!'&&text[end+1]==='[')) end += 1;
     parent.append(document.createTextNode(text.slice(cursor, end))); cursor = end;
   }
 }
@@ -287,6 +288,12 @@ function appendInline(parent, input) {
 function safeLink(href) {
   const value = String(href || '').trim();
   return /^(?:https?:\/\/|mailto:|#|\/|\.\.?\/)/i.test(value)||Boolean(normalizeDocumentAddress(value));
+}
+
+/** A local file: URL (no host, or localhost) as the path it names; anything else is not a local file address. */
+export function localFileAddress(value){
+  if(typeof value!=='string'||!/^file:/i.test(value.trim()))return null;
+  try{const url=new URL(value.trim());if(url.hostname&&url.hostname!=='localhost')return null;const path=decodeURIComponent(url.pathname);return /[\x00-\x1f\x7f]/.test(path)?null:path;}catch{return null;}
 }
 
 /** A shell wildcard such as after-*.png or docs/{a,b}.md names files to come or many files, never one file to open. */
