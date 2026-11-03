@@ -6,11 +6,14 @@ import { gitCredentialEnv } from './hosting.mjs';
 import { giteeRepository } from './repository.mjs';
 import { within } from './project-space.mjs';
 import { tr } from './i18n.mjs';
+import {gitPrintsAnything} from './git-changes.mjs';
 
 const exec = promisify(execFile);
 const git = async (root, args, repoUrl, credential) => (await exec('git', args, {
   cwd: root, env: gitCredentialEnv(repoUrl, credential), timeout: 60000, maxBuffer: 1024 * 1024
 })).stdout.trim();
+// Uncommitted or untracked content: only whether there is any, however much.
+const dirty = (root, args, repoUrl, credential) => gitPrintsAnything(root, args, { env: gitCredentialEnv(repoUrl, credential), timeout: 60000 });
 const identity = url => { try { return giteeRepository(url)?.webUrl || url; } catch { return url; } };
 const common = async (root, repoUrl, credential) => realpath(resolve(root, await git(root, ['rev-parse', '--git-common-dir'], repoUrl, credential)));
 
@@ -62,7 +65,7 @@ export async function prepareProjectBaseline({ projectId, projectRoot, sourceRoo
       throw new Error(tr('projectBaseline.remoteProjectCollaborationBranchNot'));
   }
   return { localRoot: target, sourceRoot: source, baseBranch: selected, baseCommit:baseCommit || null, baselineBranch: branch,
-    git: { head, branch, dirty: Boolean(await git(target, ['status', '--porcelain'], repoUrl, credential)) },published:publishBaseline };
+    git: { head, branch, dirty: await dirty(target, ['status', '--porcelain'], repoUrl, credential) },published:publishBaseline };
 }
 
 /** Advance the local project branch only when the baseline is clean and the target commit is a descendant, to avoid overwriting changes in the original directory. */
@@ -72,7 +75,7 @@ export async function advanceProjectBaseline({ localRoot, branch, commit, expect
   if (await git(root, ['branch', '--show-current'], repoUrl, credential) !== branch) throw new Error(tr('projectBaseline.currentDirectoryNotOnSpecified'));
   const current = await git(root, ['rev-parse', 'HEAD'], repoUrl, credential);
   if (expectedCommit && current !== expectedCommit) throw new Error(tr('projectBaseline.projectBaselineHasChangedVerify'));
-  if (await git(root, ['status', '--porcelain'], repoUrl, credential)) throw new Error(tr('projectBaseline.projectBaselineHasUncommittedContent'));
+  if (await dirty(root, ['status', '--porcelain'], repoUrl, credential)) throw new Error(tr('projectBaseline.projectBaselineHasUncommittedContent'));
   if (current !== commit) {
     try { await git(root, ['merge-base', '--is-ancestor', current, commit], repoUrl, credential); }
     catch { throw new Error(tr('projectBaseline.projectBaselineCannotFastForward')); }
@@ -87,10 +90,10 @@ export async function publishProjectBaseline({ localRoot, workingRoot, branch, c
   if (await common(baseline, repoUrl, credential) !== await common(working, repoUrl, credential)) throw new Error(tr('projectBaseline.runArtifactsDoNotBelong'));
   if (identity(await git(working, ['remote', 'get-url', 'origin'], repoUrl, credential)) !== identity(repoUrl)) throw new Error(tr('projectBaseline.projectRepositoryOriginDoesNot'));
   if (await git(working, ['rev-parse', 'HEAD'], repoUrl, credential) !== commit) throw new Error(tr('projectBaseline.runArtifactCommitHasChanged'));
-  if (await git(working, ['status', '--porcelain', '--', '.', ':(exclude).workbench/**', ':(exclude).wb-bridge-*/**'], repoUrl, credential)) throw new Error(tr('projectBaseline.runArtifactsHaveUncommittedContent'));
+  if (await dirty(working, ['status', '--porcelain', '--', '.', ':(exclude).workbench/**', ':(exclude).wb-bridge-*/**'], repoUrl, credential)) throw new Error(tr('projectBaseline.runArtifactsHaveUncommittedContent'));
   const current = await git(baseline, ['rev-parse', 'HEAD'], repoUrl, credential);
   if (await git(baseline, ['branch', '--show-current'], repoUrl, credential) !== branch) throw new Error(tr('projectBaseline.currentDirectoryNotOnSpecified2'));
-  if (await git(baseline, ['status', '--porcelain'], repoUrl, credential)) throw new Error(tr('projectBaseline.projectBaselineHasUncommittedContent2'));
+  if (await dirty(baseline, ['status', '--porcelain'], repoUrl, credential)) throw new Error(tr('projectBaseline.projectBaselineHasUncommittedContent2'));
   try { await git(baseline, ['merge-base', '--is-ancestor', current, commit], repoUrl, credential); }
   catch { throw new Error(tr('projectBaseline.runArtifactsCannotFastForward')); }
   await git(working, ['push', 'origin', `${commit}:refs/heads/${branch}`], repoUrl, credential);

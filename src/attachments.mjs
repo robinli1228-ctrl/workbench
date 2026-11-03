@@ -2,6 +2,7 @@ import { mkdir, open, rename, unlink, readFile, realpath } from 'node:fs/promise
 import { join, relative, isAbsolute } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { tr } from './i18n.mjs';
+import { sniffMedia } from './media-files.mjs';
 
 export const ATTACHMENT_LIMIT = 20 * 1024 * 1024;
 export const ATTACHMENT_COUNT = 6;
@@ -33,7 +34,9 @@ export class Attachments {
       const mime = magic.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')) ? 'image/png'
         : magic[0] === 255 && magic[1] === 216 && magic[2] === 255 ? 'image/jpeg'
         : /^GIF8[79]a/.test(magic.toString('ascii')) ? 'image/gif'
-        : magic.toString('ascii',0,4) === 'RIFF' && magic.toString('ascii',8,12) === 'WEBP' ? 'image/webp' : 'application/octet-stream';
+        : magic.toString('ascii',0,4) === 'RIFF' && magic.toString('ascii',8,12) === 'WEBP' ? 'image/webp'
+        // Videos (MP4, MOV, WebM) get their type so the chat can show a frame; they are still served as downloads.
+        : sniffMedia(magic, name).kind === 'video' ? sniffMedia(magic, name).mime : 'application/octet-stream';
       return this.db.put('attachments', { id, projectId, name: name || 'attachment', mime, size, sha256: hash.digest('hex'), createdAt: new Date().toISOString() });
     } catch (e) { await handle.close().catch(()=>{}); await unlink(renamed ? destination : temp).catch(()=>{}); throw e; }
   }
