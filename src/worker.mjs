@@ -562,7 +562,7 @@ async function command(m) {
       const taskPrompt=[m.task.prompt,executionConfiguration?.dependencyEvents?.length?executionText('minimal.dependencyEvent',{events:JSON.stringify(executionConfiguration.dependencyEvents)}):''].filter(Boolean).join('\n\n');
       // Only runs that write the project folder get a work materials folder: read-only, audit, review, isolated and switch
       // runs cannot write there (and independent reviewers must not see others' drafts).
-      const writesProject=m.task.mode!=='read-only'&&!['audit','review'].includes(m.run.execution?.purpose)&&!m.run.execution?.isolated&&!m.run.switchOperationId;
+      const writesProject=!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!['audit','review'].includes(m.run.execution?.purpose)&&!m.run.execution?.isolated&&!m.run.switchOperationId;
       const materials=root&&writesProject?await workMaterialsFolder(root,m.run.contextPacket?.conversationTask?.number,m.run.roleSnapshot?.name):null;
       const environmentHint=executionEnvironmentHint({materials,concurrentRoles:m.run.concurrentWrites===true&&!m.run.execution?.isolated&&m.task.mode!=='read-only'?(m.run.concurrentPeers||[]):null,cwd:folder,projectRoot:root,boundary,repositories:executionRepositories,inputRepositoryVersions,readOnly:m.task.mode==='read-only'||['audit','review'].includes(m.run.execution?.purpose),assigned:Boolean(m.run.deliveryId||source),sharedDocs:!m.run.execution?.isolated&&!m.run.reviewGuarded&&m.task.mode!=='read-only'&&!m.run.switchOperationId?join(root,'.workbench','docs'):null});
       // A Home that sends named parts gets the ordered layout: message and attachments first, then each titled addition.
