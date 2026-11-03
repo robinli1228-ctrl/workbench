@@ -12,13 +12,13 @@ import {collectSourceSyncBlobs} from './source-sync-gc.mjs';
 /** Immutable project-local blob storage; reserve quota before consuming a stream, never prune conflict evidence. */
 export class SourceSyncStorage {
   constructor({root,db,namespace='',writes=new Map()}){Object.assign(this,{root,db,namespace,writes});this.collections=new Map();}
-  /** 复用同一项目正在进行的回收，避免维护和额度不足时重复清理。 */
+  /** Share ongoing collection for a project so maintenance and quota pressure cannot double-clean it. */
   collect(projectId,options){
     if(this.namespace)throw syncError('invalid_command');
     if(!this.collections.has(projectId))this.collections.set(projectId,collectSourceSyncBlobs(this,projectId,options).finally(()=>this.collections.delete(projectId)));
     return this.collections.get(projectId);
   }
-  /** 沿用 Home 维护周期，只清理内容缓存，不动项目文件和协议历史。 */
+  /** Reuse Home maintenance; reclaim content cache without touching project files or protocol history. */
   async sweep(){
     const summary={blobsDeleted:0,blobBytes:0};
     for(const {id} of this.db.db.prepare("SELECT id FROM records WHERE kind='sourceSyncBlobUsage'").all()){
