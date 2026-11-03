@@ -126,6 +126,9 @@ export default {
 
   "Task list":"任务列表",
   "Only unfinished":"只显示未完成",
+  "Close task":"关闭任务",
+  "Close this task? It is marked cancelled and leaves the unfinished list.":"确定关闭这个任务？任务会标记为已取消，不再出现在未完成列表里。",
+  "Closed by the user":"用户关闭任务",
   "Basic information@@task":"基础信息",
   "Task steps":"任务步骤",
   "Task details":"任务详情",
