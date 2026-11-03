@@ -63,7 +63,7 @@ export default Object.freeze({
   'followup.waitingSilence': '等待达到更新后的静默时长。',
   'followup.bindingChanged': '已核验的 CLI／设备绑定与当前角色不一致，请先核对角色切换状态。',
   'followup.context': `平台触发与当前任务事实（不构成用户新增授权）：{context}。以下消息摘录仅作背景，可通过 wb history read 查看原文和关联请求的结果。`,
-  'followup.event': '【Workbench 停滞提醒】本群已静默约 {minutes} 分钟，当前没有运行或排队的工作。平台事实（有界近期记录，不代表结论）：{facts}。用 wb history 和 wb history read 编号查看原文，再按原有授权推进。本次为后台任务，需要公开说话时才用 wb note。静默不代表用户同意，确认和审批仍用已有入口。',
+  'followup.event': '【Workbench 停滞提醒】本群已静默约 {minutes} 分钟，当前没有运行或排队的工作。平台事实（有界近期记录，不代表结论）：{facts}。先处理异常：失败、中断、互相等待或卡住的工作，用 wb history 和 wb history read 编号查看原文，按原有授权推进。处理完再逐个看 tasks 里的未完成任务：实际已经做完的，核对证据后把剩余步骤和任务标为完成并写结果摘要；还要继续的，交给负责人或重新派人；做不下去的说明卡在哪里。本次为后台任务，需要公开说话时才用 wb note。静默不代表用户同意，确认和审批仍用已有入口。',
   'followup.invalidConfig': '停滞提醒开关须为布尔值，静默时间须为 1 至 10080 的整数分钟。',
   'roleTemplates.planner': '计划',
   'roleTemplates.plannerResponsibility': '制定和维护开发计划，解答方案问题。',

@@ -24,6 +24,8 @@ export function followupFor(db,record) {
 /** Peers keep their normal delivery behavior; only the originating supervisor's follow-up turns are private. */
 export function privateFollowup(db,record){const context=followupFor(db,record);return Boolean(context&&(record.roleId||record.targetRoleId)===context.roleId);}
 
+export const DEFAULT_SILENCE_MINUTES=15;
+
 /** Settings and a single persistent silence cursor; execution remains owned by the normal Home scheduler. */
 export class ProactiveFollowup {
   constructor(db,rooms=null,{clock=()=>new Date()}={}){this.db=db;this.rooms=rooms;this.clock=clock;this.nextTick=0;this.cursors={};}
@@ -32,7 +34,10 @@ export class ProactiveFollowup {
     conversationId=resolveConversationId(this.db,projectId,conversationId);
     if(!this.db.get('projects',projectId))throw Error(tr('home.projectNotFound3'));
     const id=conversationId===projectId?projectId:`${projectId}:${conversationId}`;
-    return this.db.get('proactiveFollowups',id)||{id,projectId,conversationId,enabled:true,silenceMinutes:10,revision:0,anchorMessageId:null,dueAt:null,requestId:null,waitingReason:null};
+    const saved=this.db.get('proactiveFollowups',id);
+    // The default went from 10 to 15 minutes; a chat that never saved its own setting (revision 0) follows the new default.
+    if(saved)return saved.revision===0&&saved.silenceMinutes===10?{...saved,silenceMinutes:DEFAULT_SILENCE_MINUTES}:saved;
+    return {id,projectId,conversationId,enabled:true,silenceMinutes:DEFAULT_SILENCE_MINUTES,revision:0,anchorMessageId:null,dueAt:null,requestId:null,waitingReason:null};
   }
   /** Presentation follows the original request's latest continuation; no second status machine is persisted. */
   view(projectId,conversationId){
@@ -179,6 +184,22 @@ export class ProactiveFollowup {
     return true;
   }
   /** Bounded factual context, refreshed at admission; no inference from model text or cross-chat content. */
+  /**
+   * The chat's unfinished tasks for the second half of a reminder (after the exceptions): owner, step, last update and
+   * whether any linked call is still open, so work that is actually done or stuck shows up. Bounded to 12, oldest first.
+   */
+  openTasks(state,requests){
+    const linked=new Set(requests.filter(r=>r.conversationTaskId&&!callTerminal.has(r.status)).map(r=>r.conversationTaskId));
+    // Only the fields shown, through the (projectId, conversationId, status) index; descriptions and histories stay unparsed.
+    const rows=this.db.db.prepare(`SELECT id,json_extract(data,'$.number') AS number,json_extract(data,'$.title') AS title,json_extract(data,'$.ownerRoleId') AS ownerRoleId,
+      json_extract(data,'$.status') AS status,json_extract(data,'$.plan') AS plan,json_extract(data,'$.updatedAt') AS updatedAt FROM records WHERE kind='conversationTasks'
+      AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.conversationId')=? AND json_extract(data,'$.status') IN ('todo','in_progress')
+      ORDER BY json_extract(data,'$.updatedAt') LIMIT 12`).all(state.projectId,conversationIdOf(state));
+    return rows.map(row=>({...row,plan:row.plan?JSON.parse(row.plan):null}))
+      .map(t=>({task:`T${t.number}`,title:String(t.title||'').slice(0,80),owner:String(this.db.get('roles',t.ownerRoleId||'')?.name||t.ownerRoleId||'').slice(0,80),
+        status:t.status,step:t.plan?.steps?.length?`${(t.plan.currentStep||0)+1}/${t.plan.steps.length}`:null,
+        stepsDone:t.plan?.steps?.length?t.plan.steps.filter(s=>s.status==='done').length:null,updatedAt:t.updatedAt,openCalls:linked.has(t.id)}));
+  }
   reminder(state){
     const requests=this.requests(state),byId=new Map(requests.map(r=>[r.id,r])),describe=r=>{
       const seen=new Set();while(r.continuationRequestId&&byId.has(r.continuationRequestId)&&!seen.has(r.id)){seen.add(r.id);r=byId.get(r.continuationRequestId);}
@@ -189,7 +210,7 @@ export class ProactiveFollowup {
     const open=requests.filter(r=>!callTerminal.has(r.status)),transfers=requests.filter(r=>r.transferredFrom);
     const lastFailure=this.db.db.prepare("SELECT id,json_extract(data,'$.roleId') AS roleId,json_extract(data,'$.status') AS status,json_extract(data,'$.finishedAt') AS finishedAt FROM records WHERE kind='runs' AND json_extract(data,'$.projectId')=? AND COALESCE(NULLIF(json_extract(data,'$.conversationId'),''),json_extract(data,'$.projectId'))=? AND json_extract(data,'$.status') IN ('failed','interrupted') ORDER BY COALESCE(json_extract(data,'$.finishedAt'),json_extract(data,'$.createdAt')) DESC,rowid DESC LIMIT 1").get(state.projectId,conversationIdOf(state))||null;
     const activity=new ConversationTasks(this.db).activity(state);
-    const facts={openTasks:activity.open,taskCount:activity.total,unfinishedCount:open.length,unfinished:open.slice(-12).map(describe),lastFailure,transferCount:transfers.length,transfers:transfers.slice(-12).map(r=>({...describe(r),transferredFrom:r.transferredFrom}))};
+    const facts={openTasks:activity.open,taskCount:activity.total,tasks:this.openTasks(state,requests),unfinishedCount:open.length,unfinished:open.slice(-12).map(describe),lastFailure,transferCount:transfers.length,transfers:transfers.slice(-12).map(r=>({...describe(r),transferredFrom:r.transferredFrom}))};
     return tr('followup.event',{minutes:state.silenceMinutes,facts:JSON.stringify(facts)});
   }
   /** Register once per anchor; the normal scheduler still owns the actual CLI execution. */
