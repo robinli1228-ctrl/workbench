@@ -68,7 +68,7 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
     form.noValidate=true;
     const tabs=el('div','task-detail-tabs'),panels=el('div','task-tab-panels');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label',t('Task details'));
     const sections={},tabButtons={},tabLabels={basic:'Basic information@@task',steps:'Task steps',history:'Change history'};
-    function showTab(key,{focus=false}={}){for(const name of Object.keys(sections)){const selected=name===key;sections[name].hidden=!selected;tabButtons[name].setAttribute('aria-selected',String(selected));tabButtons[name].tabIndex=selected?0:-1;}footer.hidden=key==='history';if(focus)tabButtons[key].focus();panels.scrollTop=0;}
+    function showTab(key,{focus=false}={}){for(const name of Object.keys(sections)){const selected=name===key;sections[name].hidden=!selected;tabButtons[name].setAttribute('aria-selected',String(selected));tabButtons[name].tabIndex=selected?0:-1;}footer.hidden=key==='history';if(state.closeTask)state.closeTask.hidden=key!=='basic';if(focus)tabButtons[key].focus();panels.scrollTop=0;}
     for(const [key,label]of Object.entries(tabLabels)){
       const tab=raw(button(label,()=>showTab(key),'task-detail-tab')),panel=el('section','task-tab-panel');
       tab.id=`task-tab-${state.requestId}-${key}`;panel.id=`task-panel-${state.requestId}-${key}`;tab.setAttribute('role','tab');tab.setAttribute('aria-controls',panel.id);panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',tab.id);
@@ -131,7 +131,7 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
     const footer=el('div','task-edit-footer'),actions=el('div','task-edit-actions');
     const reason=field(footer,'Change reason','',{maxLength:1000});
     const save=el('button','primary',t('Save'));save.type='submit';actions.append(button('Cancel',()=>dialog.close()),save);footer.append(error,stale,actions);form.append(footer);
-    // Basic information offers closing an open task: it is marked cancelled (kept in the history, out of "Only unfinished"); the change reason, if any, goes with it.
+    // Closing an open task (from Basic information): it is marked cancelled (kept in the history, out of "Only unfinished"); the change reason, if any, goes with it.
     if(record&&!['done','cancelled'].includes(record.status)){
       const closeTask=button('Close task',async()=>{
         if(state.saving||editor!==state||version!==generation||!confirm(t('Close this task? It is marked cancelled and leaves the unfinished list.')))return;
@@ -141,7 +141,8 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
         catch(e){if(editor===state)error.textContent=e.message;}
         finally{state.saving=false;closeTask.disabled=save.disabled=false;}
       },'secondary task-close-button');
-      const row=el('div','task-close-row');row.append(closeTask);summary.parentElement.after(row);
+      // In the footer row beside Cancel and Save, shown with Basic information only.
+      actions.prepend(closeTask);state.closeTask=closeTask;
     }
     const history=sections.history;history.classList.add('task-change-history');
     for(const change of [...(record?.history||[])].reverse()){

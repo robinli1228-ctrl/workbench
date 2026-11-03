@@ -4038,12 +4038,14 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .task-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .task-card-heading h3 { margin: 0; }
 .task-closed-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin: 0; white-space: nowrap; }
-.task-closed-toggle input { width: auto; }
+.task-closed-toggle input { width: 14px; height: 14px; min-height: 0; margin: 0; }
 .task-list-row { width: 100%; text-align: left; }
 .task-list-row > .artifact-row-body { flex: 1; }
 .task-list-row strong, .task-list-row small { overflow-wrap: anywhere; white-space: normal; }
 /* One card, no boxes inside it: hairlines under the heading and between tasks. */
-.conversation-task-card .task-card-heading { padding-bottom: 10px; border-bottom: 1px solid var(--card-hairline); }
+/* A slim title bar: the card's top padding, the 18 px row and a hairline. */
+.conversation-task-card { padding-top: 4px; }
+.conversation-task-card .task-card-heading { min-height: 18px; padding-bottom: 2px; border-bottom: 1px solid var(--card-hairline); }
 .conversation-task-card .task-list { display: grid; gap: 0; }
 .conversation-task-card > .workspace-note:empty { display: none; }
 .conversation-task-card .task-list-row { padding: 12px 0; border: 0; border-bottom: 1px solid var(--card-hairline); border-radius: 0; background: transparent; box-shadow: none; }
@@ -4111,9 +4113,8 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .task-edit-footer { flex: none; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
 .task-edit-footer[hidden] { display: none; }
 .task-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.task-close-row { display: flex; margin: 4px 0 14px; }
-#conversation-task-detail .task-close-row button.task-close-button { color: var(--danger); }
-#conversation-task-detail .task-close-row button.task-close-button:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+#conversation-task-detail .task-edit-actions button.task-close-button { margin-right: auto; color: var(--danger); }
+#conversation-task-detail .task-edit-actions button.task-close-button:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 .task-edit-footer .task-form-error:empty, .task-edit-footer .workspace-note:empty { display: none; }
 .task-updated-at { color: var(--muted); font-size: 12px; margin: 0; }
 .task-form-error { color: var(--danger, #b42318); overflow-wrap: anywhere; }
