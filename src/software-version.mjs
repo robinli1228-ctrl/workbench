@@ -4,6 +4,7 @@ import {fileURLToPath} from 'node:url';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createHash} from 'node:crypto';
+import {gitPrintsAnything} from './git-changes.mjs';
 
 const exec=promisify(execFile);
 const paths=['src','public','bin','modules/remote-access','package.json','package-lock.json'];
@@ -39,7 +40,7 @@ export async function readSoftwareVersion(root) {
     await lstat(join(root,'.git'));
     if(await realpath(await git(root,['rev-parse','--show-toplevel']))!==await realpath(root))return value;
     const commit=await git(root,['rev-parse','HEAD']);if(!sha.test(commit))return value;
-    return {...value,commit,dirty:!!await git(root,['status','--porcelain','--untracked-files=all','--',...paths]),source:'git'};
+    return {...value,commit,dirty:await gitPrintsAnything(root,['status','--porcelain','--untracked-files=all','--',...paths],{env:{...process.env,GIT_OPTIONAL_LOCKS:'0'},timeout:5000}),source:'git'};
   } catch {}
   try {
     const raw=await readFile(join(root,'software-build.json'));if(raw.length>1024*1024)return value;

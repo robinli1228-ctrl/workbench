@@ -4,6 +4,7 @@ import { mkdir, realpath, stat } from 'node:fs/promises';
 import { join, relative, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { tr } from './i18n.mjs';
+import {gitPrintsAnything} from './git-changes.mjs';
 
 const exec = promisify(execFile);
 const env = () => ({ ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=8' });
@@ -50,7 +51,7 @@ export async function publishDelivery({ root, workspace, runId, repoUrl, commit,
   const paths = await expectedFolder(root, runId);
   if (await realpath(workspace) !== (projectScope ? paths.root : paths.folder)) throw new Error(tr('gitDelivery.deliveryDirectoryDoesNotBelong'));
   if (await git(workspace, ['rev-parse', 'HEAD']) !== commit) throw new Error(tr('gitDelivery.deliveryCommitNotCurrentRun'));
-  if (await git(workspace, ['status', '--porcelain'])) throw new Error(tr('gitDelivery.workspaceHasUncommittedContentDefine'));
+  if (await gitPrintsAnything(workspace, ['status', '--porcelain'], { env: env(), timeout: 60000 })) throw new Error(tr('gitDelivery.workspaceHasUncommittedContentDefine'));
   await checkRemote(paths.root, repoUrl); await checkRemote(paths.root, repoUrl, true);
   const before = await git(paths.root, ['ls-remote', 'origin', ref]);
   if (before && before.split(/\s+/)[0] !== commit) throw new Error(tr('gitDelivery.deliveryBranchAlreadyPointsAnother'));
