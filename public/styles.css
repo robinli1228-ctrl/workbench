@@ -4098,6 +4098,8 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .task-edit-footer { flex: none; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
 .task-edit-footer[hidden] { display: none; }
 .task-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+#conversation-task-detail .task-edit-actions button.task-close-button { margin-right: auto; color: var(--danger); }
+#conversation-task-detail .task-edit-actions button.task-close-button:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 .task-edit-footer .task-form-error:empty, .task-edit-footer .workspace-note:empty { display: none; }
 .task-updated-at { color: var(--muted); font-size: 12px; margin: 0; }
 .task-form-error { color: var(--danger, #b42318); overflow-wrap: anywhere; }
