@@ -44,9 +44,9 @@ export function cachedMediaAllowed(db,t) {
 }
 
 export class MediaStreams {
-  constructor({db,query,online,change=()=>{},secret=randomBytes(32),clock=()=>Date.now(),cache=null,canReadCached=()=>true,timings={}}) {
+  constructor({db,query,online,change=()=>{},onStall=()=>{},secret=randomBytes(32),clock=()=>Date.now(),cache=null,canReadCached=()=>true,timings={}}) {
     // Home can reject an offline device synchronously; rate timers and cancellation must receive a rejected promise.
-    Object.assign(this,{db,query:async(...args)=>query(...args),online,change,secret,clock,cache,canReadCached,timings:{...MEDIA_TIMINGS,...timings}});
+    Object.assign(this,{db,query:async(...args)=>query(...args),online,change,onStall,secret,clock,cache,canReadCached,timings:{...MEDIA_TIMINGS,...timings}});
     this.pending=new Map();this.slots=new Map();this.transfers=new Map();this.failures=new Map();this.rates=new Map();
   }
 
@@ -201,8 +201,12 @@ export class MediaStreams {
     return respond(res,200,{device:known?cached?null:this.usable(t.n):'source_offline',failures});
   }
   /** Failures are kept briefly per ticket (bounded), for status(). */
-  record(token,code,stage,start=null) {
+  record(token,code,stage,start=null,readerBlocked=false) {
     if(!token||!code)return;
+    if(!readerBlocked&&(code==='media_timeout'||code==='media_idle')){
+      const nodeId=this.verify(token)?.n;
+      if(nodeId)try{Promise.resolve(this.onStall(nodeId,code)).catch(()=>{});}catch{}
+    }
     const since=this.clock()-this.timings.failureMs,list=(this.failures.get(token)||[]).filter(f=>f.at>=since);
     list.push({code,stage,at:this.clock(),...(start==null?{}:{start})});this.failures.delete(token);this.failures.set(token,list.slice(-10));
     while(this.failures.size>300)this.failures.delete(this.failures.keys().next().value);
@@ -223,10 +227,17 @@ export class MediaStreams {
     let state=this.rates.get(nodeId);if(state)return state;
     state=Object.assign(new MediaRate(),{uploads:new Set(),timer:null,at:0,sent:0,out:null});this.rates.set(nodeId,state);return state;
   }
+  /** Reuse active-transfer samples: slow traffic must persist; viewer backpressure and idle periods reset the window. */
+  observeSlowRate(nodeId,state,ms) {
+    const rate=ms>0?state.bytes/ms*1000:0;
+    if(!state.clean||rate<=0||rate>=200000){state.slowSince=null;return;}
+    const now=this.clock();state.slowSince??=now;
+    if(now-state.slowSince>=20000){state.slowSince=null;try{Promise.resolve(this.onStall(nodeId,'media_slow')).catch(()=>{});}catch{}}
+  }
   watchRate(nodeId,entry,on) {
     const state=this.rate(nodeId);state.disturb();
     if(on)state.uploads.add(entry);else state.uploads.delete(entry);
-    if(!state.uploads.size){if(state.timer){clearInterval(state.timer);state.timer=null;}state.idle();return;}
+    if(!state.uploads.size){if(state.timer){clearInterval(state.timer);state.timer=null;}state.slowSince=null;state.idle();return;}
     if(state.timer||!this.paced(nodeId))return;
     state.at=this.clock();
     state.timer=setInterval(()=>{
@@ -240,6 +251,7 @@ export class MediaStreams {
       state.out=state.sent=now;state.lateCut=false;
       void this.query({nodeId},'media_rate',{rate:Math.round(state.rate)},this.timings.cancelMs).then(()=>{
         const back=this.clock(),trip=back-state.out;state.out=null;
+        this.observeSlowRate(nodeId,state,back-state.at);
         const changed=state.sample(trip,back-state.at);state.at=back;if(changed)this.sendRate(nodeId,state,changed);
       },()=>{state.out=null;});
     },MEDIA_RATE.windowMs/4);state.timer.unref?.();
@@ -305,7 +317,7 @@ export class MediaStreams {
     if(!out.headersSent)out.writeHead(entry.status,entry.headers);
     const rate=this.rate(entry.nodeId);rate.disturb();
     let count=0,idle;
-    const touch=()=>{clearTimeout(idle);idle=setTimeout(()=>req.destroy(failure('media_idle')),this.timings.idleMs);};touch();
+    const touch=()=>{clearTimeout(idle);idle=setTimeout(()=>{const error=failure('media_idle');error.readerBlocked=out.writableNeedDrain;req.destroy(error);},this.timings.idleMs);};touch();
     const meter=new Transform({transform(chunk,encoding,callback){
       count+=chunk.length;rate.add(chunk.length);touch();
       if(count>entry.length){entry.overflow=true;return callback(new Error('media_overflow'));}
@@ -313,7 +325,7 @@ export class MediaStreams {
       Promise.resolve(entry.writer?.write(chunk)).then(()=>callback(null,chunk),callback);
     }});
     try{await pipeline(req,meter,out);entry.complete=count===entry.length;respond(res,entry.complete?200:400,{received:count});}
-    catch(error){if(!entry.closed&&!out.writableFinished)this.record(entry.token,error?.code==='media_idle'?'media_idle':'media_interrupted','transfer',entry.start+count);out.destroy();if(!res.headersSent)respond(res,400,{received:count});}
+    catch(error){if(!entry.closed&&!out.writableFinished)this.record(entry.token,error?.code==='media_idle'?'media_idle':'media_interrupted','transfer',entry.start+count,error?.readerBlocked===true);out.destroy();if(!res.headersSent)respond(res,400,{received:count});}
     finally{clearTimeout(idle);entry.settle();}
   }
 

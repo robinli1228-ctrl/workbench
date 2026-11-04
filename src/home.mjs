@@ -1,4 +1,5 @@
 import {createHomeNativeTurns} from './native-turns-home.mjs';
+import {DeviceTransportHome} from './device-transport-home.mjs';
 import {mergeReportedRuntimes,expireRuntimeQuota} from './runtime-quota.mjs';
 import {noteRoleCompaction,dueRoleCompactions,recordRoleCompaction} from './role-compaction.mjs';
 import {createRemoteAccessSettings} from './remote-access-settings.mjs';
@@ -188,6 +189,7 @@ async function nativeSessionRemote({nodeId,runtime,sessionId}){
 }
 const viewers = new Set();
 const queries = new Map();
+let deviceTransport=null;
 const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
 rooms.nativeRecoveryReason=(task,checked)=>cliRecovery.scheduleReason(task,checked);
 const workspaceFeed = new WorkspaceStateFeed();
@@ -210,7 +212,7 @@ if(mediaSecret?.length!==32){mediaSecret=randomBytes(32);await writeFile(mediaKe
 await chmod(mediaKeyFile,0o600);
 // Media bytes that came from a device are kept on Home by file version for 10 days (2 GB at most).
 const mediaCache=new MediaCache({dir:join(data,'media-cache')});
-const mediaStreams=new MediaStreams({db,online,secret:mediaSecret,cache:mediaCache,canReadCached:t=>cachedMediaAllowed(db,t),query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),change:()=>change()});
+const mediaStreams=new MediaStreams({db,online,secret:mediaSecret,cache:mediaCache,canReadCached:t=>cachedMediaAllowed(db,t),query:(target,action,payload,timeout)=>workerQuery(target,action,payload,timeout),onStall:(nodeId,reason)=>deviceTransport?.stalled(nodeId,reason),change:()=>change()});
 const setup = new ProjectSetup(db, rooms, workerQuery, online, change);
 const credentials = new CredentialStore(join(data, 'credentials'));
 const hosting = new Hosting(db, credentials);
@@ -232,6 +234,9 @@ const devicesAdmin = new DeviceAdmin({ db, credentials, base, data, workerToken,
       ||db.list('roleSwitches').some(s=>s.nodeId===id&&!s.steps?.released))throw new Error(tr('deviceAdmin.reconnectBusy'));
   }
 } });
+// Settings opt in only Home-owned reverse SSH routes; an unconfigured device keeps its original direct connection.
+deviceTransport=new DeviceTransportHome({db,admin:devicesAdmin,credentials,change:()=>change()});
+devicesAdmin.transport={options:id=>deviceTransport.options(id),started:(id,route)=>deviceTransport.started(id,route)};
 void devicesAdmin.startTunnels();
 process.once('exit', () => devicesAdmin.stopTunnels());
 setup.projectsAdmin = projectsAdmin;
@@ -531,6 +536,7 @@ function pageFileMap() {
   files['/native-transcript.js']='native-transcript.js';
   files['/media.js']='media.js';
   files['/local-browser.js']='local-browser.js';
+  files['/device-transport.js']='device-transport.js';
   files['/pasted-text.js']='pasted-text.js';
   files['/side-preview.js']='side-preview.js';
   files['/history-prompt.js']='history-prompt.js';
@@ -570,7 +576,7 @@ function workerQuery(run, action, path, timeout = 10000) {
   }
   const id = randomUUID();
   return new Promise((resolveQuery, reject) => {
-    const timer = setTimeout(() => { queries.delete(id); reject(new Error(tr('home.nodeQueryTimedOut'))); }, timeout);
+    const timer = setTimeout(() => { queries.delete(id); reject(new Error(tr('home.nodeQueryTimedOut')));void deviceTransport?.stalled(run.nodeId,'node_query_timeout'); }, timeout);
     queries.set(id, { nodeId: run.nodeId,readProtocol:['source_inspect','source_read','read_query'].includes(action),resolve: value => { clearTimeout(timer); resolveQuery(value); }, reject: e => { clearTimeout(timer); reject(e); } });
     const projectId=['source_read','source_inspect','read_query'].includes(action)?path?.source?.projectId||run.projectId:run.projectId||path?.projectId;
     const folderAccess=projectId&&['native_agents_md','native_agents_md_write'].includes(action)?folderAccessFor(db,run.nodeId,`project:${projectId}`):(action.startsWith('native_')||action.startsWith('media_')&&path?.runtime)?nativeFolderAccess(db,run.nodeId,path?.runtime,path?.sessionId,path?.entryId)||folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:path?.managedProjectIds?.length===1?`project:${path.managedProjectIds[0]}`:null):folderAccessFor(db,run.nodeId,projectId?`project:${projectId}`:null);
@@ -1049,6 +1055,14 @@ const server = http.createServer(async (req, res) => {
       const reconnectAction = pathname.match(/^\/api\/devices\/([^/]+)\/reconnect$/);
       if(reconnectAction&&req.method==='GET')return json(res,devicesAdmin.reconnectStatus(reconnectAction[1]));
       if(reconnectAction&&req.method==='POST')return json(res,await devicesAdmin.reconnect(reconnectAction[1]));
+      const transportStatus=pathname.match(/^\/api\/devices\/([^/]+)\/transport(?:\/(test|direct))?$/);
+      if(transportStatus){
+        const id=transportStatus[1],action=transportStatus[2];
+        if(req.method==='GET'&&!action)return json(res,deviceTransport.view(id));
+        if(req.method==='PUT'&&!action)return json(res,deviceTransport.save(id,await body(req)));
+        if(req.method==='POST'&&action==='test')return json(res,deviceTransport.test(id),202);
+        if(req.method==='POST'&&action==='direct')return json(res,await deviceTransport.direct(id));
+      }
       if (deviceAction && req.method === 'POST') {
         const result = await (deviceAction[2] === 'check' ? devicesAdmin.check(deviceAction[1]) : devicesAdmin.provision(deviceAction[1]));
         return json(res, result);
@@ -1733,7 +1747,7 @@ wss.on('connection', ws => {
       }
       if (m.type === 'ready') { ws.workerReady = true; void reconcileTerminals(nodeId); dispatch(nodeId); scheduleChat(); collectUsage(nodeId); nativeTurns.switches.resume(nodeId); }
       if (m.type === 'queue_reservation') { if(queuePump.onReservation(nodeId,m)){change();dispatch(nodeId);} return; }
-      if (m.type === 'heartbeat') {ws.lastHeartbeatAt=Date.now();db.put('workers', { ...db.get('workers', nodeId), lastSeen: new Date().toISOString() });}
+      if (m.type === 'heartbeat') {ws.lastHeartbeatAt=Date.now();db.put('workers', { ...db.get('workers', nodeId), lastSeen: new Date().toISOString() });void deviceTransport?.retry(nodeId);}
       if(m.type==='launch_deferred') {
         const c=db.get('commands',m.id);
         if(c?.nodeId===nodeId&&c.type==='launch'&&c.runId===m.runId&&!c.acked)db.put('commands',{...c,capacityDeferred:true});

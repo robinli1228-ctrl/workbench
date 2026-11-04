@@ -16,6 +16,8 @@ The supervisor chooses its own implementation methods and pursues missing capabi
 
 Explicit native-session sends and steers query `native_takeover_state` through the existing Worker channel. The response binds the lease, runtime and session to PID-identity verification and the Runner’s active-turn/resident state. Home applies it only if the captured takeover, lease and active turns have not changed while awaiting the response. Verified exit releases ownership; a retained process can reopen a falsely retiring takeover and settle absent old active turns. Closing, paused, unknown and unmatched states never authorize a duplicate launch. Preparation failures before resident attachment preserve the existing idle process report. This adds no polling or automatic retry of failed input.
 
+Home's device settings optionally configure loopback SOCKS backup routes (`device-transport*.mjs`, `public/device-transport.js`). Direct SSH remains the startup default. Actual query/media stalls trigger bounded 512 KiB upload/download comparisons against the device, deduplicated and cooled down; manual tests are also available in settings. An alternate must pass a repeated comparison before the existing Home and Worker idle fences permit route selection and reconnection. Busy work defers the switch until a later heartbeat. Only Home-owned reverse tunnels change; ordinary proxy selectors and desktop tunnels are untouched. No periodic throughput tests or additional scheduling timers are added.
+
 ## Runtime structure
 
 ### Optional independent remote access

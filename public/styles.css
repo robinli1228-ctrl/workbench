@@ -4313,3 +4313,12 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 }
 #update-ready { position: fixed; left: 50%; top: calc(72px + env(safe-area-inset-top)); z-index: 1001; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; transform: translateX(-50%); border-radius: 999px; color: #fff; background: #2b2f3a; box-shadow: 0 6px 20px rgb(16 24 40 / 25%); font-size: 13px; }
 #update-ready button { min-height: 30px; padding: 4px 12px; border: 0; border-radius: 999px; color: #2b2f3a; background: #fff; font-weight: 600; }
+.device-transport-dialog{width:min(760px,94vw);max-height:90dvh;overflow:auto}
+.device-transport-form{display:grid;gap:14px}
+.transport-route-list{display:grid;gap:10px}
+.transport-route-row{display:grid;grid-template-columns:minmax(0,1fr) 160px auto;gap:10px;align-items:end}
+.transport-route-row label{display:grid;gap:6px;min-width:0}
+.transport-route-row input{width:100%;min-width:0}
+.transport-test-results:empty{display:none}
+.transport-test-result{margin:8px 0;font-size:13px}
+@media(max-width:600px){.transport-route-row{grid-template-columns:minmax(0,1fr) 110px auto}.device-transport-form .dialog-actions{flex-wrap:wrap}}
