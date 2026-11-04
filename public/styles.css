@@ -3097,7 +3097,7 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 /* session settings gear in the top bar (sessions mode only); the connection note yields its place */
 .native-session-gear { display: none; }
 body[data-navigation-mode="sessions"] .native-session-gear { display: grid; place-items: center; }
-.native-settings-dialog { display: grid; gap: 18px; min-width: min(520px, 92vw); }
+.native-settings-dialog { display: grid; gap: 18px; min-width: min(520px, 100%); }
 .native-settings-section h3 { margin: 0 0 8px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .native-settings-section .native-rename-form { display: flex; gap: 8px; }
 .native-settings-section .native-rename-form input { flex: 1; min-width: 0; }
