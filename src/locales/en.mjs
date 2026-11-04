@@ -1,6 +1,10 @@
 // English message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "transport.testingBusy": "Wait for the current speed test or reconnect to finish.",
+  "transport.settingsChanged": "Transport settings changed. Reopen this dialog before saving.",
+  "transport.invalidSettings": "Use distinct backup names and local SOCKS ports.",
+  "transport.activeBackup": "Return to direct before changing or removing the active backup.",
   "sourceSync.metadataTwoDevices": "Simple mode requires a directory scope with exactly two upgraded devices.",
   "sourceSync.metadataBaseline": "Pending sync baseline; existing files are not overwritten.",
   "sourceSync.invalidMetadata": "Invalid file metadata receipt.",

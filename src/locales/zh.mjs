@@ -1,6 +1,10 @@
 // Simplified Chinese message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "transport.testingBusy": "请等待当前测速或重连完成。",
+  "transport.settingsChanged": "传输线路设置已变化，请重新打开后再保存。",
+  "transport.invalidSettings": "请使用不同的备用节点名称和本机 SOCKS 端口。",
+  "transport.activeBackup": "请先恢复直连，再修改或删除当前正在使用的备用节点。",
   "sourceSync.metadataTwoDevices": "简单模式需要目录范围和恰好两台已升级的设备。",
   "sourceSync.metadataBaseline": "待建立同步基线；不会覆盖已有文件。",
   "sourceSync.invalidMetadata": "文件元数据回执无效。",
