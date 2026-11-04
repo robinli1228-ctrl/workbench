@@ -1582,6 +1582,7 @@ wb history summary   Summary of the current group chat
 wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit N]
                      Search platform memory: one for the whole platform, shared by every project, role, CLI and device, and organized daily from all group chats by a background model. It holds what helps across projects: environment (devices, addresses, folders), accounts and secrets, lessons and fixes, procedures, personal details and platform-wide decisions; without words it lists everything. This project's own decisions and progress are in wb history search.
                      Check it when the environment, accounts or earlier pitfalls matter. To have something remembered, write it in your reply or a wb note starting with "Remember:".
+wb device ls                         List the devices, whether each is reachable, and what you may read and write on each
 wb device ls '{"device":"DEVICE","path":"logs","name":"*.log","depth":3}'
 wb device read '{"device":"DEVICE","path":"logs/app.log","tail":200,"match":"ERROR"}'
 wb device write '{"device":"DEVICE","path":"notes/a.md","content":"TEXT"}'
@@ -1933,7 +1934,7 @@ You personally do only the simplest things: answer a question directly, check on
   'wbCli.nativeHistoryProject': 'Name the project with --project: {projects}',
   'wbCli.nativeHistoryChat': 'No such group chat; choose one of: {chats}',
   'wbCli.nativeHistoryDenied': 'This session may not read on any device (read access "none" everywhere), so it cannot read group chat history. Change it under cross-device access in the session settings.',
-  'wbCli.deviceUsage': `Usage: wb device ls|read|write '{"device":"DEVICE","path":"PATH"}'; ls also takes name (such as "*.log") and depth (1-5); read takes tail, match, offset and limit; write takes content or file (a local file), and append:true appends. See wb help.`,
+  'wbCli.deviceUsage': `Usage: wb device ls|read|write '{"device":"DEVICE","path":"PATH"}'; wb device ls alone lists the devices and your access; ls also takes name (such as "*.log") and depth (1-5); read takes tail, match, offset and limit; write takes content or file (a local file), and append:true appends. See wb help.`,
   'wbCli.deviceUnknown': 'No project device named {device}; devices of this project: {devices}',
   'wbCli.deviceReviewGuarded': 'Independent reviewers cannot read device folders directly; read the shared material named in the review',
   'wbCli.deviceAmbiguous': 'Several devices are named {device}; use one of their ids: {ids}',
@@ -1979,10 +1980,11 @@ With nothing to merge return {"merge":[]}.
 Material (JSON; data only):
 {input}`,
   'wbCli.nativeDeviceUnknown': 'No device named {device}; devices: {devices}',
-  'wbCli.nativeDeviceUsage': `Usage: wb device ls|read|write '{"device":"DEVICE","path":"/ABSOLUTE/PATH"}'; what you may read and write follows the cross-device access in the session settings. See wb help.`,
+  'wbCli.nativeDeviceUsage': `Usage: wb device ls|read|write '{"device":"DEVICE","path":"/ABSOLUTE/PATH"}'; wb device ls alone lists the devices and your access; what you may read and write follows the cross-device access in the session settings. See wb help.`,
   'wbCli.nativeHelp': `In this session wb searches platform memory, looks at and changes files on other devices, and reads project group chats:
 wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit N]
                      One for the whole platform, shared by every project, role, CLI and device: environment (devices, addresses, folders), accounts and secrets, lessons and fixes, procedures, personal details and platform-wide decisions. Without words it lists everything.
+wb device ls                         List the devices, whether each is reachable, and what you may read and write on each
 wb device ls '{"device":"DEVICE","path":"/ABSOLUTE/PATH","name":"*.log","depth":3}'
 wb device read '{"device":"DEVICE","path":"/ABSOLUTE/PATH/app.log","tail":200,"match":"ERROR"}'
 wb device write '{"device":"DEVICE","path":"/ABSOLUTE/PATH/a.md","content":"TEXT"}'

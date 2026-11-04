@@ -44,3 +44,15 @@ export function deviceScope(db,level,{projectId=null,nodeId,folder=null}={}){
   const roots=[...new Set([...own,...every])];
   return roots.length?{all:false,roots,base:own[0]||null}:null;
 }
+
+/**
+ * `wb device ls` without a device: every device with whether it is reachable and the levels that actually apply to the
+ * caller there (a level that gives no folder on that device, such as project without a project folder, shows as none).
+ */
+export function deviceAccessList(db,owner,{projectId=null,folder=null,online=()=>false}={}){
+  return db.list('workers').map(worker=>{
+    const levels=deviceAccessFor(owner,worker.id),at=typeof folder==='function'?folder(worker.id):folder;
+    const effective=level=>deviceScope(db,level,{projectId,nodeId:worker.id,folder:at})?level:'none';
+    return {device:worker.name||worker.id,id:worker.id,online:online(worker.id)&&worker.capabilities?.deviceRead>=3,read:effective(levels.read),write:effective(levels.write)};
+  });
+}

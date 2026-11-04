@@ -36,7 +36,7 @@ import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
 import {recentProjectArtifacts,recordedArtifactPath} from './run-artifacts.mjs';
 import {RecentOutputs} from './recent-outputs-cache.mjs';
-import {deviceAccessFor,deviceScope,normalizeDeviceAccess} from './device-access.mjs';
+import {deviceAccessFor,deviceAccessList,deviceScope,normalizeDeviceAccess} from './device-access.mjs';
 import {ProjectFiles} from './project-files.mjs';
 import {MediaStreams,MEDIA_CACHE_CONTROL,cachedMediaAllowed} from './media-streams.mjs';
 import {MediaCache} from './media-cache.mjs';
@@ -217,6 +217,8 @@ async function deviceSlot(nodeId,work){
 const writeParts=text=>{const parts=[];let part='',bytes=0;for(const ch of text){const size=Buffer.byteLength(ch);if(bytes+size>48*1024){parts.push(part);part='';bytes=0;}part+=ch;bytes+=size;}parts.push(part);return parts;};
 async function deviceOperation(b,{owner,projectId=null,folder=null,usage,keys}){
   const allowed=[...keys,'action','device','path','tail','offset','limit','match','depth','name','content','append'];
+  // ls without a device lists the devices and what this caller may do on each, so a model never has to guess names.
+  if(b.action==='ls'&&(b.device===undefined||b.device==='')&&Object.keys(b).every(k=>[...keys,'action','device'].includes(k)))return {devices:deviceAccessList(db,owner,{projectId,folder,online})};
   if(Object.keys(b).some(k=>!allowed.includes(k))||!['ls','read','write'].includes(b.action)||typeof b.device!=='string'||!b.device.trim())throw new Error(usage);
   const name=b.device.trim(),devices=db.list('workers');
   const named=devices.find(w=>w.id===name)?[devices.find(w=>w.id===name)]:devices.filter(w=>w.name===name),worker=named[0];

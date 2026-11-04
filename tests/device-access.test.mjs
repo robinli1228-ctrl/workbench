@@ -7,7 +7,7 @@ import {mkdtemp,mkdir,writeFile,readFile,readdir,symlink,rm,realpath} from 'node
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Store} from '../src/store.mjs';
-import {deviceAccessFor,deviceScope,normalizeDeviceAccess,DEFAULT_DEVICE_ACCESS} from '../src/device-access.mjs';
+import {deviceAccessFor,deviceAccessList,deviceScope,normalizeDeviceAccess,DEFAULT_DEVICE_ACCESS} from '../src/device-access.mjs';
 import {deviceWrite,deviceList,deviceRead} from '../src/device-read.mjs';
 
 test('levels per device: defaults, cleanup of stored values, and the scope each level gives', () => {
@@ -89,4 +89,22 @@ test('writes never reach the owner read-only folders, need an absolute path with
   assert.deepEqual((await readdir(project)).filter(name=>name.startsWith('.wb-write-')||name==='gone.txt'||name==='lost.txt'),[]);
   // Folders Home denies (its own data, the install) stay closed even on the whole device.
   assert.equal(await code(deviceRead({scope:{all:true,roots:[],base:project,deny:[outside]},path:join(outside,'r.txt')})),'outside_allowed_folders');
+});
+
+test('ls without a device lists every device with what the caller may actually do there', () => {
+  const db=new Store(':memory:');
+  db.put('workers',{id:'mac',name:'Mac',capabilities:{deviceRead:3}});
+  db.put('workers',{id:'srv',name:'Server',capabilities:{deviceRead:3}});
+  db.put('workers',{id:'old',name:'Old',capabilities:{deviceRead:2}});
+  db.put('workspaces',{id:'p1:mac',projectId:'p1',nodeId:'mac',localRoot:'/xxxxx/p1'});
+  const online=id=>id!=='srv';
+  // A role of p1: the project folder exists only on the Mac, so "write project folder" means nothing on the server.
+  assert.deepEqual(deviceAccessList(db,{deviceAccess:{mac:{write:'all'}}},{projectId:'p1',online}),[
+    {device:'Mac',id:'mac',online:true,read:'all',write:'all'},
+    {device:'Server',id:'srv',online:false,read:'all',write:'none'},
+    {device:'Old',id:'old',online:false,read:'all',write:'none'},
+  ],'offline and not-yet-upgraded devices are not reachable');
+  // A session writes its own folder on its own device.
+  const session=deviceAccessList(db,{},{folder:id=>id==='srv'?'/xxxxx/session':null,online});
+  assert.deepEqual(session.map(d=>[d.id,d.write]),[['mac','none'],['srv','project'],['old','none']]);
 });
