@@ -4320,3 +4320,10 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .device-access-pick select { width: auto; min-width: 116px; }
 .native-device-access .device-access-rows { display: grid; gap: 4px; margin: 6px 0; }
 .native-device-access .device-access-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--card-hairline, #eef1f6); }
+.native-device-access .device-access-row strong { font-size: 14px; font-weight: 500; }
+/* Narrow screens: the device name on its own line, read and write side by side under it. */
+@media (max-width: 560px) {
+  .native-device-access .device-access-row .settings-row-main { flex-basis: 100%; }
+  .native-device-access .device-access-pick { flex: 1 1 0; min-width: 0; }
+  .native-device-access .device-access-pick select { flex: 1; min-width: 0; }
+}
