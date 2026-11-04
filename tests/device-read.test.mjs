@@ -33,7 +33,10 @@ test('tail, match and pages read text inside the allowed folders', async t => {
   const tail = await deviceRead({ projectRoot: project, readRoots, path: 'logs/app.log', tail: 3 });
   assert.equal(tail.content, 'INFO line 1497\nINFO line 1498\nINFO line 1499');
   const errors = await deviceRead({ projectRoot: project, readRoots, path: 'logs/app.log', tail: 2, match: 'error' });
-  assert.equal(errors.content, 'ERROR line 1480\nERROR line 1490');
+  // Each hit starts with the byte offset of its line, which reads the line again with offset.
+  assert.deepEqual(errors.content.split('\n').map(line => line.replace(/^\d+: /, '')), ['ERROR line 1480', 'ERROR line 1490']);
+  const at = Number(errors.content.split('\n')[1].split(':')[0]);
+  assert.match((await deviceRead({ projectRoot: project, readRoots, path: 'logs/app.log', offset: at, limit: 15 })).content, /^ERROR line 1490/);
   const dflt = await deviceRead({ projectRoot: project, readRoots, path: 'logs/app.log' });
   assert.equal(dflt.lines, 200, 'the default is the last 200 lines');
   await assert.rejects(deviceRead({ projectRoot: project, readRoots, path: 'logs/app.log', tail: DEVICE_READ_LIMITS.tailLines + 1 }), e => e.code === 'invalid_tail');
@@ -75,7 +78,7 @@ test('ls lists one folder level without secret names', async t => {
   await assert.rejects(deviceList({ projectRoot: project, readRoots, path: 'logs/app.log' }), e => e.code === 'not_a_folder');
 });
 
-test('review fixes: wider secret names, sniffed binaries, private handoffs, Worker data and too wide roots', async t => {
+test('review fixes: wider secret names, sniffed binaries, readable handoffs and worktrees, Worker data and too wide roots', async t => {
   const { project, readRoots } = await layout(t);
   for (const name of ['.git-credentials', '.gitconfig', 'id_rsa_github', '.zsh_history', 'app.sqlite', 'deploy_key', 'serviceAccountKey.json', 'my-credentials.txt', '.ENV', 'ＩＤ_RSA'])
     await writeFile(join(project, name), 'x');
@@ -86,10 +89,13 @@ test('review fixes: wider secret names, sniffed binaries, private handoffs, Work
   // A NUL in the first 8 KiB marks the whole file binary, so 1-byte pages cannot spell out its text.
   await writeFile(join(project, 'mixed.dat'), Buffer.concat([Buffer.from([0]), Buffer.from('user=admin pass=hunter')]));
   assert.equal(await code('mixed.dat', { offset: 5, limit: 1 }), 'binary_file');
-  // Other roles' private handoffs and the Worker's own data folder stay out.
+  // Only credentials and keys stay out: private handoffs and worktrees (services run from there) are readable now;
+  // the Worker's own data folder still is not.
   await mkdir(join(project, '.workbench', 'handoffs', 'private', 'r2'), { recursive: true });
   await writeFile(join(project, '.workbench', 'handoffs', 'private', 'r2', 'LATEST.md'), 'private');
-  assert.equal(await code('.workbench/handoffs/private/r2/LATEST.md'), 'secret_path');
+  assert.equal(await code('.workbench/handoffs/private/r2/LATEST.md'), 'read');
+  await mkdir(join(project, '.worktrees', 'run-1', 'logs'), { recursive: true });await writeFile(join(project, '.worktrees', 'run-1', 'logs', 'app.log'), 'ok');
+  assert.equal(await code('.worktrees/run-1/logs/app.log'), 'read');
   await mkdir(join(project, 'state'));await writeFile(join(project, 'state', 'w.txt'), 'w');
   assert.equal(await code('state/w.txt', {}, { denyRoots: [await realpath(join(project, 'state'))] }), 'outside_allowed_folders');
   // A refused path reads the same whether or not it exists.
@@ -98,15 +104,15 @@ test('review fixes: wider secret names, sniffed binaries, private handoffs, Work
   assert.deepEqual(await readRootsFrom(['/', join(project, '..', '..', '..')].join(delimiter), delimiter).then(r => r.filter(p => p === '/')), [], 'the filesystem root is never a read root');
 });
 
-test('a single over-long log line is cut to the page; match selects tail mode', async t => {
+test('a single over-long log line is cut to the page; match searches the whole file', async t => {
   const { project, readRoots } = await layout(t);
   await writeFile(join(project, 'logs', 'json.log'), 'x'.repeat(200 * 1024) + '\n');
   const page = await deviceRead({ projectRoot: project, readRoots, path: 'logs/json.log' });
   assert.equal(Buffer.byteLength(page.content), DEVICE_READ_LIMITS.bytes);
   assert.equal(page.lineCut, true);
   const matched = await deviceRead({ projectRoot: project, readRoots, path: 'logs/app.log', match: 'line 1499', offset: 0, limit: 10 });
-  assert.equal(matched.mode, 'tail');
-  assert.equal(matched.content, 'INFO line 1499');
+  assert.equal(matched.mode, 'match');
+  assert.match(matched.content, /^\d+: INFO line 1499$/);
 });
 
 test('ls shows a link as a link without following it', async t => {

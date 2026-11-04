@@ -4,7 +4,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { tr } from './i18n.mjs';
 
 // Paths a role's wb command may reach; Home re-checks each request against the run and its role.
-const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary', '/api/agent/memory/search', '/api/agent/device-read', '/api/agent/native-memory/search','/api/agent/native-device-read',
+const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary', '/api/agent/memory/search', '/api/agent/device-read', '/api/agent/device-write', '/api/agent/native-memory/search','/api/agent/native-device-read', '/api/agent/native-device-write', '/api/agent/native-history',
   '/api/agent/discussions', '/api/agent/source-sync']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -67,7 +67,7 @@ async function agentRequestOnce(pathname,payload) {
   const id = randomUUID(), temporary = join(directory, `${id}.tmp`), requestFile = join(directory, `${id}.request`);
   await writeFile(temporary, JSON.stringify({ pathname, payload }), { flag: 'wx', mode: 0o600 });
   await rename(temporary, requestFile);
-  const deadline = Date.now() + 25000;
+  const deadline = Date.now() + waitFor(pathname) + 5000;
   while (Date.now() < deadline) {
     try {
       const response = JSON.parse(await readFile(join(directory, `${id}.response`), 'utf8'));
@@ -79,11 +79,13 @@ async function agentRequestOnce(pathname,payload) {
   throw Object.assign(new Error(tr('agentBridge.workerCommunicationTimedOutOutcome')),{outcomeUnknown:true});
 }
 
+// A device write of up to 1 MB goes to the device in parts over a possibly slow link; it may take minutes, not seconds.
+const waitFor = pathname => /\/(?:native-)?device-write$/.test(pathname) ? 300000 : /\/(?:native-)?device-read$/.test(pathname) ? 60000 : 20000;
 /** Only allowlisted Agent endpoints pass through the bridge, never arbitrary URLs or shell. */
 export async function homeRequest(home, token, pathname, payload) {
   if (!home || !allowed.has(pathname)) throw new Error(tr('agentBridge.invalidHomeToolPath'));
   try {
-  const response = await fetch(new URL(pathname, home), { method: 'POST', signal: AbortSignal.timeout(20000),
+  const response = await fetch(new URL(pathname, home), { method: 'POST', signal: AbortSignal.timeout(waitFor(pathname)),
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token || ''}` }, body: JSON.stringify(payload) });
   const data = await response.json();
   if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`),{status:response.status,code:data.code,outcomeUnknown:response.status>=500});
@@ -117,13 +119,14 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend,
           let response;
           try {
             const path = join(directory, file), info = await lstat(path);
-            if (!info.isFile() || info.size > 65536) throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
+            if (!info.isFile() || info.size > REQUEST_FILE_BYTES) throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
             const input = JSON.parse(await readFile(path, 'utf8'));
             assertAgentSender(input.payload,input.pathname);
             const block=blockReason?blockReason(input.pathname,input.payload):canSend(input.pathname,input.payload)?null:'run_ended';
             if (block) throw Object.assign(new Error(blockMessage(block)),{code:block});
             if(input.payload?.runId&&input.payload.runId!==runId)throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));
-            if(input.pathname===NATIVE_BRIDGE_PATH)throw new Error(tr('agentBridge.operationNotAgentTool'));
+            // A role's run bridge never serves the Sessions-page endpoints (they trust the session named by the Worker).
+            if(NATIVE_PATHS.has(input.pathname))throw new Error(tr('agentBridge.operationNotAgentTool'));
             response = { result: await homeRequest(home, token, input.pathname, { ...input.payload, runId }) };
           } catch (error) { response = { error: error.message,status:error.status,code:error.code,outcomeUnknown:error.outcomeUnknown }; }
           await publishResponse(directory, file, response);
@@ -150,7 +153,9 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend,
  * minute after the answer is written.
  */
 export const NATIVE_BRIDGE_PATH='/api/agent/native-memory/search',NATIVE_DEVICE_PATH='/api/agent/native-device-read';
-const NATIVE_PATHS=new Set([NATIVE_BRIDGE_PATH,NATIVE_DEVICE_PATH]);
+const NATIVE_PATHS=new Set([NATIVE_BRIDGE_PATH,NATIVE_DEVICE_PATH,'/api/agent/native-device-write','/api/agent/native-history']);
+// A request file holds at most a 1 MB write (as JSON, escaped) plus its fields.
+const REQUEST_FILE_BYTES=3*1024*1024;
 export async function nativeBridgeFolder(root,runtime,sessionId) {
   const directory=join(root,createHash('sha256').update(`${runtime}/${sessionId}`).digest('hex').slice(0,24));
   await mkdir(directory,{recursive:true,mode:0o700});
@@ -166,12 +171,12 @@ export function startNativeBridges({root,home,token,device,canSend=()=>true,acti
       let response;
       try {
         const path=join(directory,file),info=await lstat(path);
-        if(!info.isFile()||info.size>65536)throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
+        if(!info.isFile()||info.size>REQUEST_FILE_BYTES)throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
         const input=JSON.parse(await readFile(path,'utf8')),session=JSON.parse(await readFile(join(directory,'session.json'),'utf8'));
         if(!NATIVE_PATHS.has(input.pathname))throw new Error(tr('agentBridge.operationNotAgentTool'));
         assertAgentSender(input.payload,input.pathname);
         if(!canSend())throw Object.assign(new Error(blockMessage('home_disconnected')),{code:'home_disconnected'});
-        response={result:await homeRequest(home,token,input.pathname,{...input.payload,caller:{cli:session.runtime,device}})};
+        response={result:await homeRequest(home,token,input.pathname,{...input.payload,caller:{cli:session.runtime,device,sessionId:session.sessionId}})};
       } catch(error) { response={error:error.message,status:error.status,code:error.code}; }
       await publishResponse(directory,file,response);
     } finally {

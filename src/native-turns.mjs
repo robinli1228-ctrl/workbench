@@ -33,9 +33,14 @@ const CONTROLS=new Set(['compact','model','effort']);
  * front of the first prompt this page sends (the page hides system-reminder blocks), never again until the text changes.
  * A nudge, not a rule: the page shows the model's questions as cards, so prefer asking to guessing.
  */
-export const PAGE_INSTRUCTIONS='This session is now also driven from a Workbench page, which shows AskUserQuestion / request_user_input as a card with options and a free-text field. When a requirement is unclear or a choice belongs to the user, prefer asking with that tool over guessing or listing the options as plain text. Keep questions short, with a few options and the recommended one marked. Workbench also keeps one platform memory shared by every project, device and CLI (environment, accounts and secrets, lessons, procedures); search it in the shell with `wb memory search WORDS` when the environment, accounts or earlier pitfalls matter. To read files on another device that its owner opened for reading (for example a local service\'s logs), use `wb device ls \'{"device":"NAME"}\'` to see those folders and `wb device read \'{"device":"NAME","path":"/ABSOLUTE/PATH","tail":200}\'` to read, rather than asking for copies.';
+// The tools part goes to every page-driven CLI; the question-card part only to the CLIs whose question tool the page shows.
+const PAGE_TOOLS='Workbench also keeps one platform memory shared by every project, device and CLI (environment, accounts and secrets, lessons, procedures); search it in the shell with `wb memory search WORDS` when the environment, accounts or earlier pitfalls matter. To look at or change files on another device (for example a local service\'s logs), use `wb device ls`, `wb device read` and `wb device write` (see `wb help`; how far it reaches is set in the session settings), rather than asking for copies; to read a project\'s group chat, use `wb history --project NAME`.';
+export const PAGE_INSTRUCTIONS='This session is now also driven from a Workbench page, which shows AskUserQuestion / request_user_input as a card with options and a free-text field. When a requirement is unclear or a choice belongs to the user, prefer asking with that tool over guessing or listing the options as plain text. Keep questions short, with a few options and the recommended one marked. '+PAGE_TOOLS;
 export const PAGE_INSTRUCTIONS_VERSION=createHash('sha256').update(PAGE_INSTRUCTIONS).digest('hex').slice(0,16);
-const PAGE_INSTRUCTION_RUNTIMES=new Set(['claude','codex']);
+const TOOL_INSTRUCTIONS='This session is now also driven from a Workbench page. '+PAGE_TOOLS;
+const PAGE_INSTRUCTION_SETS={claude:PAGE_INSTRUCTIONS,codex:PAGE_INSTRUCTIONS,grok:TOOL_INSTRUCTIONS,agy:TOOL_INSTRUCTIONS};
+/** The page instructions a runtime gets, with their version (a hash of the text), or null. */
+export const pageInstructionsFor=runtime=>{const text=PAGE_INSTRUCTION_SETS[runtime];return text?{version:text===PAGE_INSTRUCTIONS?PAGE_INSTRUCTIONS_VERSION:createHash('sha256').update(text).digest('hex').slice(0,16),text}:null;};
 /** The prompt a CLI receives: the page instructions block (when this turn carries it), then the person's words. */
 export const withPageInstructions=(prompt,instructions)=>instructions?.text?`<system-reminder>\nWorkbench page instructions, version ${instructions.version}:\n${instructions.text}\n</system-reminder>\n\n${prompt}`:prompt;
 const EFFORTS=new Set(['none','minimal','low','medium','high','xhigh','max','ultra','auto','default']);
@@ -239,10 +244,10 @@ export class NativeTurnsHome{
   this.db.put('nativeTakeovers',{id:key,nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
   const settings=this.settings(nodeId,runtime,sessionId);
   // The first page turn of a session (or the first after the instructions changed) carries them; a control turn never does.
-  const delivered=this.db.get('nativePageInstructions',key)?.version===PAGE_INSTRUCTIONS_VERSION;
+  const pageInstructions=pageInstructionsFor(runtime),delivered=this.db.get('nativePageInstructions',key)?.version===pageInstructions?.version;
   // An older Worker would drop them unseen; it gets none, and nothing is marked delivered.
   const capable=this.db.get('workers',nodeId)?.capabilities?.nativePageInstructions===1;
-  const instructions=capable&&!delivered&&!turn.control&&PAGE_INSTRUCTION_RUNTIMES.has(runtime)?{version:PAGE_INSTRUCTIONS_VERSION,text:PAGE_INSTRUCTIONS}:null;
+  const instructions=capable&&!delivered&&!turn.control&&pageInstructions?pageInstructions:null;
   if(instructions)this.db.put('nativeTurns',{...started,instructionsVersion:instructions.version});
   this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:turn.prompt,...(instructions?{instructions}:{}),...(handoff?{handoff}:{}),attachments:turn.attachments||[],...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(turn.control?{control:turn.control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
   this.change();return started;
@@ -367,7 +372,7 @@ export class NativeTurnsHome{
   const next=applyNativeTurnEvent(turn,m.event);if(next!==turn)this.db.put('nativeTurns',next);
   if(next.handoffId&&next.inputDeliveryState==='accepted')this.db.put('nativeHandoffDeliveries',{id:`${nodeId}/${next.handoffId}/${turn.sessionId}`,nodeId,runtime:turn.runtime,sessionId:turn.sessionId,handoffId:next.handoffId,deliveredAt:now()});
   // Only explicit input acceptance proves delivery: interruption can also happen before any input is sent.
-  if(next.instructionsVersion===PAGE_INSTRUCTIONS_VERSION&&next.inputDeliveryState==='accepted'&&turn.inputDeliveryState!=='accepted'){const key=sessionKey(nodeId,turn.runtime,turn.sessionId);this.db.put('nativePageInstructions',{id:key,nodeId,runtime:turn.runtime,sessionId:turn.sessionId,version:next.instructionsVersion,deliveredAt:now()});}
+  if(next.instructionsVersion&&next.instructionsVersion===pageInstructionsFor(turn.runtime)?.version&&next.inputDeliveryState==='accepted'&&turn.inputDeliveryState!=='accepted'){const key=sessionKey(nodeId,turn.runtime,turn.sessionId);this.db.put('nativePageInstructions',{id:key,nodeId,runtime:turn.runtime,sessionId:turn.sessionId,version:next.instructionsVersion,deliveredAt:now()});}
   if(next.status!==turn.status){if(!ACTIVE.has(next.status)&&next.status!=='stopping'){
    const key=sessionKey(nodeId,turn.runtime,turn.sessionId),current=this.db.get('nativeTakeovers',key);
    if(this.leases&&m.event.resident===false&&current?.status==='open'&&this.process(nodeId,turn.runtime,turn.sessionId)){

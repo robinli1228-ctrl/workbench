@@ -119,7 +119,9 @@ export class NativeAgentSwitches{
    const segment={id:randomUUID(),...target,createdAt:stamp(),switchId:op.id,contextId:result.contextId||op.id,contextHash:result.contextHash};
    this.db.transaction(()=>{
     this.db.put('nativeConversations',{...c,revision:c.revision+1,currentSegmentId:segment.id,segments:[...c.segments,segment],pendingSwitchId:null});
-    this.db.put('nativeCatalogEntries',{id:target.entryId,nodeId:op.nodeId,...target,workspace:c.workspace,title:c.title,origin:'dialog',status:'ready',hasHistory:true,previewAvailable:true,createdAt:segment.createdAt});
+    // The session's cross-device access goes with it to the new CLI.
+    const sourceAccess=this.db.list('nativeCatalogEntries').find(e=>e.nodeId===op.nodeId&&e.runtime===op.source.runtime&&(e.id===op.source.entryId||e.sessionId===op.source.sessionId))?.deviceAccess;
+    this.db.put('nativeCatalogEntries',{id:target.entryId,nodeId:op.nodeId,...target,workspace:c.workspace,title:c.title,origin:'dialog',status:'ready',hasHistory:true,previewAvailable:true,createdAt:segment.createdAt,...(sourceAccess?{deviceAccess:sourceAccess}:{})});
     if(result.folderGrant){const scope=`native:${target.entryId}`,grant=result.folderGrant;if(grant.nodeId!==op.nodeId||grant.root!==c.workspace||grant.scope!==scope)throw Error('Target folder grant changed');this.db.put('folderGrants',{id:`${op.nodeId}:${scope}`,nodeId:op.nodeId,scope,status:'active',grant});}
     // The conversation keeps pushing with the Git account it was bound to; model and effort belong to the old CLI.
     const from=this.db.get('nativeSessionSettings',nativeSettingsKey(op.nodeId,op.source.runtime,op.source.sessionId)),key=nativeSettingsKey(op.nodeId,target.runtime,target.sessionId);

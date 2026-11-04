@@ -345,7 +345,7 @@ test('a sessions-page CLI searches memory through its own bridge folder; nothing
     let stdout = '', stderr = '';child.stdout.on('data', chunk => { stdout += chunk; });child.stderr.on('data', chunk => { stderr += chunk; });child.on('close', status => resolve({ status, stdout, stderr })); });
   const found = await cli(['memory', 'search', 'Worker', '--type', 'environment']);
   assert.equal(found.status, 0, found.stderr);assert.equal(JSON.parse(found.stdout).items[0].id, 'm1');
-  assert.deepEqual(seen.map(item => [item.path, item.auth, item.body.query, item.body.type, item.body.caller]), [['/api/agent/native-memory/search', 'Bearer worker-token', 'Worker', 'environment', { cli: 'claude', device: 'n-srv' }]]);
+  assert.deepEqual(seen.map(item => [item.path, item.auth, item.body.query, item.body.type, item.body.caller]), [['/api/agent/native-memory/search', 'Bearer worker-token', 'Worker', 'environment', { cli: 'claude', device: 'n-srv', sessionId: '11111111-2222-3333-4444-555555555555' }]]);
   assert.notEqual((await cli(['note', 'hi'])).status, 0, 'other wb commands are not available here');
   assert.match((await cli(['help'])).stdout, /memory search/);
 });

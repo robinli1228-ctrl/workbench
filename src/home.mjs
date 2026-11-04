@@ -37,6 +37,7 @@ import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
 import {recentProjectArtifacts,recordedArtifactPath} from './run-artifacts.mjs';
 import {RecentOutputs} from './recent-outputs-cache.mjs';
+import {deviceAccessFor,deviceAccessList,deviceScope,normalizeDeviceAccess} from './device-access.mjs';
 import {ProjectFiles} from './project-files.mjs';
 import {MediaStreams,MEDIA_CACHE_CONTROL,cachedMediaAllowed} from './media-streams.mjs';
 import {MediaCache} from './media-cache.mjs';
@@ -204,6 +205,50 @@ const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify
 const online = id => sockets.get(id)?.readyState === 1&&!reconnectingNodes.has(id);
 const sourceSync=new SourceSyncHome({db,data,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery,watchUpload:(nodeId,req)=>mediaStreams.watchUpload(nodeId,req)});
 const projectFiles=new ProjectFiles({db,online,query:workerQuery});
+// wb device ls / read / write for roles and Sessions-page CLIs: the device's level in the project or session settings
+// decides the scope the Worker gets; at most two requests per device at a time, and a write goes in 48 KB parts, so a
+// slow link keeps carrying the chat's own messages between them.
+const deviceSlots=new Map();
+async function deviceSlot(nodeId,work){
+  const slot=deviceSlots.get(nodeId)||{busy:0,waiting:[]};deviceSlots.set(nodeId,slot);
+  // A finished request hands its place straight to the next waiter, so no newcomer slips in between.
+  if(slot.busy>=2)await new Promise(resolve=>slot.waiting.push(resolve));else slot.busy++;
+  try{return await work();}
+  finally{const next=slot.waiting.shift();if(next)next();else{slot.busy--;if(!slot.busy)deviceSlots.delete(nodeId);}}
+}
+const writeParts=text=>{const parts=[];let part='',bytes=0;for(const ch of text){const size=Buffer.byteLength(ch);if(bytes+size>48*1024){parts.push(part);part='';bytes=0;}part+=ch;bytes+=size;}parts.push(part);return parts;};
+async function deviceOperation(b,{owner,projectId=null,folder=null,usage,keys}){
+  const allowed=[...keys,'action','device','path','tail','offset','limit','match','depth','name','content','append'];
+  // ls without a device lists the devices and what this caller may do on each, so a model never has to guess names.
+  if(b.action==='ls'&&(b.device===undefined||b.device==='')&&Object.keys(b).every(k=>[...keys,'action','device'].includes(k)))return {devices:deviceAccessList(db,owner,{projectId,folder,online})};
+  if(Object.keys(b).some(k=>!allowed.includes(k))||!['ls','read','write'].includes(b.action)||typeof b.device!=='string'||!b.device.trim())throw new Error(usage);
+  const name=b.device.trim(),devices=db.list('workers');
+  const named=devices.find(w=>w.id===name)?[devices.find(w=>w.id===name)]:devices.filter(w=>w.name===name),worker=named[0];
+  if(named.length>1)throw new Error(tr('wbCli.deviceAmbiguous',{device:name,ids:named.map(w=>w.id).join(', ')}));
+  if(!worker)throw new Error(tr('wbCli.deviceUnknown',{device:name,devices:devices.map(w=>w.name||w.id).join(', ')||'-'}));
+  const label=worker.name||worker.id;
+  if(!online(worker.id))throw new Error(tr('wbCli.deviceOffline',{device:label}));
+  if(!(worker.capabilities?.deviceRead>=3))throw new Error(tr('wbCli.deviceUpgrade',{device:label}));
+  const write=b.action==='write',level=deviceAccessFor(owner,worker.id)[write?'write':'read'];
+  const scope=deviceScope(db,level,{projectId,nodeId:worker.id,folder:typeof folder==='function'?folder(worker.id):folder});
+  if(!scope)throw new Error(tr(write?'wbCli.deviceWriteDenied':'wbCli.deviceReadDenied',{device:label}));
+  // Home's own data stays out on the machine Home runs on (a local Worker shares it).
+  if(resolveNodeKind(worker.nodeKind,worker.platform)==='local')scope.deny=[data];
+  const input=Object.fromEntries(Object.entries(b).filter(([k])=>!['action','device',...keys].includes(k)));
+  const target={nodeId:worker.id,...(projectId?{projectId}:{})};
+  return deviceSlot(worker.id,async()=>{
+    if(!write)return {device:label,level,...await workerQuery(target,'device_read',{...input,scope,list:b.action==='ls'},15000)};
+    if(typeof b.content!=='string'||Buffer.byteLength(b.content)>1024*1024)throw new Error(tr('wbCli.deviceWriteTooLarge'));
+    const parts=writeParts(b.content),uploadId=randomUUID();let result=null;
+    try{for(let i=0;i<parts.length;i++)result=await workerQuery(target,'device_write',{scope,path:b.path,content:parts[i],append:b.append===true,uploadId:parts.length>1?uploadId:null,part:i,last:i===parts.length-1},30000);}
+    catch(error){
+      // A write in parts that did not finish leaves no temporary file behind (an append keeps what already arrived).
+      if(parts.length>1&&b.append!==true)await workerQuery(target,'device_write',{scope,path:b.path,content:'',uploadId,abort:true},15000).catch(()=>{});
+      throw error;
+    }
+    return {device:label,level,...result};
+  });
+}
 const recentOutputs=new RecentOutputs({db,compute:(projectId,options)=>recentProjectArtifacts(db,projectId,workerQuery,online,projectFiles,options)});
 // The media ticket key survives restarts, so a file version keeps its link (and the browser its cached copy) across them.
 const mediaKeyFile=join(data,'media-ticket.key');
@@ -495,9 +540,12 @@ async function projectAgentsMd(projectId) {
   }
   return null;
 }
-async function body(req) {
-  let raw = '';
-  for await (const chunk of req) { raw += chunk; if (raw.length > 128000) throw new Error(tr('home.requestTooLarge')); }
+async function body(req, limit = 128000) {
+  // Bytes are joined before decoding: a character split across two network chunks would otherwise turn into garbage.
+  const chunks = []; let bytes = 0;
+  for await (const chunk of req) { bytes += chunk.length; if (bytes > limit * 4) throw new Error(tr('home.requestTooLarge')); chunks.push(chunk); }
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (raw.length > limit) throw new Error(tr('home.requestTooLarge'));
   return raw ? JSON.parse(raw) : {};
 }
 /** The page files Home serves, by URL path; also the set the service-worker fingerprint covers. */
@@ -537,6 +585,7 @@ function pageFileMap() {
   files['/media.js']='media.js';
   files['/local-browser.js']='local-browser.js';
   files['/device-transport.js']='device-transport.js';
+  files['/device-access.js']='device-access.js';
   files['/pasted-text.js']='pasted-text.js';
   files['/side-preview.js']='side-preview.js';
   files['/history-prompt.js']='history-prompt.js';
@@ -639,7 +688,7 @@ function reconcileTerminals(nodeId) {
   return Promise.all([...projects].filter(terminalScopeExists).map(id=>refreshProjectTerminals(id,{automatic:true}))).then(()=>folderPreparations.cleanup(nodeId)).catch(error=>console.error('Terminal reconciliation failed:',error.message));
 }
 const nativeCatalogRecords=(nodeId,runtime)=>db.list('nativeCatalogEntries').filter(entry=>entry.nodeId===nodeId&&entry.runtime===runtime);
-const nativeCatalogItem=entry=>({id:entry.id,entryId:entry.id,nodeId:entry.nodeId,runtime:entry.runtime,sessionId:entry.sessionId||null,title:entry.title,createdAt:entry.createdAt,modifiedAt:entry.modifiedAt||entry.createdAt,historyRevision:entry.historyRevision||null,workspace:entry.workspace||null,origin:'dialog',status:entry.status||'awaiting_native_id',hasHistory:entry.hasHistory===true,previewAvailable:entry.previewAvailable===true,canReopen:entry.status==='draft',canResume:entry.hasHistory===true&&!['active','prepared'].includes(entry.status),exactLastScan:entry.exactLastScan||null});
+const nativeCatalogItem=entry=>({deviceAccess:normalizeDeviceAccess(entry.deviceAccess),id:entry.id,entryId:entry.id,nodeId:entry.nodeId,runtime:entry.runtime,sessionId:entry.sessionId||null,title:entry.title,createdAt:entry.createdAt,modifiedAt:entry.modifiedAt||entry.createdAt,historyRevision:entry.historyRevision||null,workspace:entry.workspace||null,origin:'dialog',status:entry.status||'awaiting_native_id',hasHistory:entry.hasHistory===true,previewAvailable:entry.previewAvailable===true,canReopen:entry.status==='draft',canResume:entry.hasHistory===true&&!['active','prepared'].includes(entry.status),exactLastScan:entry.exactLastScan||null});
 function managedNativeSessions(nodeId,runtime){
   const items=new Map();for(const session of db.list('roleSessions')){
     if(session.nodeId!==nodeId||session.runtime!==runtime||session.historyClearedAt||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/.test(session.nativeSessionId||''))continue;
@@ -861,8 +910,23 @@ const server = http.createServer(async (req, res) => {
         const result=await workerQuery({nodeId},'native_session_branch',{runtime,sessionId,record,branchEntryId,newSessionId:runtime==='claude'?randomUUID():null,title},15*60000);
         if(result?.entryId!==branchEntryId||!result.sessionId||!result.workspace)throw Error('The device did not confirm the branch');
         const now=new Date().toISOString();
-        db.put('nativeCatalogEntries',{id:branchEntryId,nodeId,runtime,sessionId:result.sessionId,title:result.title,workspace:result.workspace,origin:'dialog',status:'ready',hasHistory:true,previewAvailable:true,folderCreated:true,branchOf:{sessionId},createdAt:now,modifiedAt:now});
+        db.put('nativeCatalogEntries',{id:branchEntryId,nodeId,runtime,sessionId:result.sessionId,title:result.title,workspace:result.workspace,origin:'dialog',status:'ready',hasHistory:true,previewAvailable:true,folderCreated:true,branchOf:{sessionId},createdAt:now,modifiedAt:now,...((entry||record)?.deviceAccess?{deviceAccess:(entry||record).deviceAccess}:{})});
         change();return json(res,result,201);
+      }
+      // Cross-device access of one session or of a project's roles: a read and a write level per device (device-access.mjs).
+      const nativeAccess=pathname.match(/^\/api\/native-sessions\/([^/]+)\/device-access$/);
+      if(nativeAccess&&req.method==='POST'){
+        const nodeId=decodeURIComponent(nativeAccess[1]),b=await body(req),entry=db.get('nativeCatalogEntries',typeof b.entryId==='string'?b.entryId:'');
+        if(!entry||entry.nodeId!==nodeId)throw Error('Only sessions created in Workbench have cross-device settings');
+        const updated=db.put('nativeCatalogEntries',{...entry,deviceAccess:normalizeDeviceAccess(b.deviceAccess)});
+        change();return json(res,nativeCatalogItem(updated));
+      }
+      const projectAccess=pathname.match(/^\/api\/projects\/([^/]+)\/device-access$/);
+      if(projectAccess&&req.method==='POST'){
+        const project=db.get('projects',projectAccess[1]),b=await body(req);
+        if(!project||project.systemConfig)throw Error(tr('home.projectNotFound'));
+        const updated=db.put('projects',{...project,deviceAccess:normalizeDeviceAccess(b.deviceAccess)});
+        change();return json(res,{id:updated.id,deviceAccess:updated.deviceAccess});
       }
       const nativeTitle=pathname.match(/^\/api\/native-sessions\/([^/]+)\/title$/);
       if(nativeTitle&&req.method==='POST'){
@@ -951,8 +1015,10 @@ const server = http.createServer(async (req, res) => {
             return json(res,{...result,items:(result.items||[]).map(item=>({...item,roleBinding:bindings.get(item.sessionId||item.id)||null})),revision,hasMore:offset+50<managed.length,nextOffset:offset+50});
           }
           if(!sessionId&&['created','all'].includes(scope))cacheNativeCatalog(result.items,nodeId,runtime);
-          if(!sessionId&&scope==='created'){const merged=new Map(nativeCatalogRecords(nodeId,runtime).map(entry=>[entry.id,nativeCatalogItem(entry)]));for(const item of result.items||[])merged.set(item.entryId||item.id,item);return json(res,{...result,items:nativeTurns.switches.decorateCatalog(nodeId,[...merged.values()])});}
-          if(!sessionId&&result.items)result.items=nativeTurns.switches.decorateCatalog(nodeId,result.items);
+          // Cross-device access lives only in Home's copy of an entry; the Worker's list does not carry it.
+          const withAccess=item=>({...item,deviceAccess:normalizeDeviceAccess(db.get('nativeCatalogEntries',item.entryId||item.id||'')?.deviceAccess)});
+          if(!sessionId&&scope==='created'){const merged=new Map(nativeCatalogRecords(nodeId,runtime).map(entry=>[entry.id,nativeCatalogItem(entry)]));for(const item of result.items||[])merged.set(item.entryId||item.id,withAccess(item));return json(res,{...result,items:nativeTurns.switches.decorateCatalog(nodeId,[...merged.values()])});}
+          if(!sessionId&&result.items)result.items=nativeTurns.switches.decorateCatalog(nodeId,result.items.map(withAccess));
           return json(res,result);
         }
         if(!online(nodeId))throw Error('Device is offline');
@@ -1091,25 +1157,35 @@ const server = http.createServer(async (req, res) => {
         db.put('workers',{...db.get('workers',worker.id),name:config.name,workspaceRoot:config.workspaceRoot}); change(); return json(res,config);
       }
       if (pathname.startsWith('/api/agent/') && req.method === 'POST') {
-        const b = await body(req);
+        const b = await body(req,/^\/api\/agent\/(?:native-)?device-write$/.test(pathname)?3*1024*1024:undefined);
         assertAgentSender(b,pathname);
         // Sessions-page CLIs search platform memory without a Run; their Worker adds which CLI and device is asking.
         if(pathname==='/api/agent/native-memory/search') {
           if(Object.keys(b).some(k=>!['query','type','cli','device','since','limit','caller'].includes(k)))throw new Error(tr('platformMemory.searchUsage'));
           return json(res,platformMemory.search(b,{runtime:typeof b.caller?.cli==='string'?b.caller.cli:null,nodeId:typeof b.caller?.device==='string'?b.caller.device:null}));
         }
-        // Sessions-page CLIs read only what a device's owner opened with WORKER_READ_ROOTS: they have no project folder.
-        if(pathname==='/api/agent/native-device-read') {
-          if(Object.keys(b).some(k=>!['action','device','path','tail','offset','limit','match','caller'].includes(k))||!['ls','read'].includes(b.action)||typeof b.device!=='string'||!b.device.trim())throw new Error(tr('wbCli.nativeDeviceUsage'));
-          const name=b.device.trim(),devices=db.list('workers');
-          const named=devices.find(w=>w.id===name)?[devices.find(w=>w.id===name)]:devices.filter(w=>w.name===name),worker=named[0];
-          if(named.length>1)throw new Error(tr('wbCli.deviceAmbiguous',{device:name,ids:named.map(w=>w.id).join(', ')}));
-          if(!worker)throw new Error(tr('wbCli.nativeDeviceUnknown',{device:name,devices:devices.map(w=>w.name||w.id).join(', ')||'-'}));
-          if(!online(worker.id))throw new Error(tr('wbCli.deviceOffline',{device:worker.name||worker.id}));
-          if(!(worker.capabilities?.deviceRead>=2))throw new Error(tr('wbCli.deviceUpgrade',{device:worker.name||worker.id}));
-          const {action,device,caller,...input}=b;
-          const result=await workerQuery({nodeId:worker.id},'device_read',{readRootsOnly:true,list:action==='ls',...input},15000);
-          return json(res,{device:worker.name||worker.id,...result});
+        // A Sessions-page CLI reads a project's group chat (wb history --project NAME [--chat TITLE]) unless its settings deny
+        // reading on every device. Read only: it cannot post, call roles or change tasks.
+        if(pathname==='/api/agent/native-history') {
+          const caller=b.caller||{},entry=db.list('nativeCatalogEntries').find(e=>e.nodeId===caller.device&&e.runtime===caller.cli&&e.sessionId===caller.sessionId)||null;
+          if(db.list('workers').every(w=>deviceAccessFor(entry,w.id).read==='none'))throw new Error(tr('wbCli.nativeHistoryDenied'));
+          const projects=db.list('projects').filter(p=>!p.systemConfig),wanted=typeof b.project==='string'?b.project.trim():'';
+          const project=wanted?projects.find(p=>p.id===wanted||p.name===wanted):projects.length===1?projects[0]:null;
+          if(!project)throw new Error(tr('wbCli.nativeHistoryProject',{projects:projects.map(p=>p.name).join(', ')||'-'}));
+          const chat=typeof b.chat==='string'&&b.chat.trim()?db.listProject('groupConversations',project.id).find(c=>c.id===b.chat.trim()||c.title===b.chat.trim()):null;
+          if(typeof b.chat==='string'&&b.chat.trim()&&!chat)throw new Error(tr('wbCli.nativeHistoryChat',{chats:db.listProject('groupConversations',project.id).map(c=>c.title).join(', ')||'-'}));
+          const {action,project:_project,chat:_chat,caller:_caller,...input}=b,conversationId=chat?.id;
+          if(action==='read')return json(res,{project:project.name,...new History(db).read(project.id,{kind:'auto',id:input.id,offset:input.offset,conversationId})});
+          if(action!=='search')throw new Error(tr('wbCli.nativeHistoryUsage'));
+          return json(res,{project:project.name,...new History(db).search(project.id,{...input,conversationId})});
+        }
+        // Sessions-page CLIs read and write other devices as far as the session's settings allow; their own folder counts as
+        // the project folder on their own device. The Worker that relays the request names the session.
+        if(pathname==='/api/agent/native-device-read'||pathname==='/api/agent/native-device-write') {
+          const caller=b.caller||{},entry=db.list('nativeCatalogEntries').find(e=>e.nodeId===caller.device&&e.runtime===caller.cli&&e.sessionId===caller.sessionId)||null;
+          // A Worker too old to name the session cannot have its settings applied: it gets nothing beyond WORKER_READ_ROOTS.
+          if(typeof caller.sessionId!=='string'||!caller.sessionId)throw new Error(tr('wbCli.deviceUpgrade',{device:caller.device||'-'}));
+          return json(res,await deviceOperation(b,{owner:entry,folder:nodeId=>entry?.nodeId===nodeId?entry.workspace||null:null,usage:tr('wbCli.nativeDeviceUsage'),keys:['caller']}));
         }
         const run = db.get('runs', b.runId);
         // wb report was removed: results are the final reply, judged by whoever assigned the work.
@@ -1143,22 +1219,9 @@ const server = http.createServer(async (req, res) => {
           if(Object.keys(b).some(k=>!['runId','query','type','cli','device','since','limit'].includes(k)))throw new Error(tr('platformMemory.searchUsage'));
           return json(res,platformMemory.search(b,{projectId:run.projectId,runtime:run.roleSnapshot?.runtime||null,nodeId:run.nodeId||null}));
         }
-        if (pathname === '/api/agent/device-read') {
-          // Read-only look at a project device's files (wb device ls/read): its bound project folder and the folders its owner
-          // opened with WORKER_READ_ROOTS. The Worker re-checks the folder and every path; Home only picks the device.
-          if(Object.keys(b).some(k=>!['runId','action','device','path','tail','offset','limit','match'].includes(k))||!['ls','read'].includes(b.action)||typeof b.device!=='string'||!b.device.trim())throw new Error(tr('wbCli.deviceUsage'));
-          // An independent reviewer reads only what review isolation lets it see; raw folders could hold peers' private handoffs.
-          if(reviewView(db,{projectId:run.projectId,roleId:run.roleId}).reviewGuarded)throw new Error(tr('wbCli.deviceReviewGuarded'));
-          const name=b.device.trim(),devices=db.list('workers').filter(w=>db.get('workspaces',`${run.projectId}:${w.id}`)?.localRoot);
-          const named=devices.find(w=>w.id===name)?[devices.find(w=>w.id===name)]:devices.filter(w=>w.name===name),worker=named[0];
-          if(named.length>1)throw new Error(tr('wbCli.deviceAmbiguous',{device:name,ids:named.map(w=>w.id).join(', ')}));
-          if(!worker)throw new Error(tr('wbCli.deviceUnknown',{device:name,devices:devices.map(w=>w.name||w.id).join(', ')||'-'}));
-          if(!online(worker.id))throw new Error(tr('wbCli.deviceOffline',{device:worker.name||worker.id}));
-          if(!(worker.capabilities?.deviceRead>=1))throw new Error(tr('wbCli.deviceUpgrade',{device:worker.name||worker.id}));
-          const {runId,action,device,...input}=b;
-          // The project id carries the folder grant of a project bound by folder selection; 15 s stays inside the CLI bridge's wait.
-          const result=await workerQuery({nodeId:worker.id,projectId:run.projectId},'device_read',{root:db.get('workspaces',`${run.projectId}:${worker.id}`).localRoot,list:action==='ls',...input},15000);
-          return json(res,{device:worker.name||worker.id,...result});
+        if (pathname === '/api/agent/device-read' || pathname === '/api/agent/device-write') {
+          // A role reads and writes another device's files as far as the project's settings allow on that device.
+          return json(res,await deviceOperation(b,{owner:db.get('projects',run.projectId),projectId:run.projectId,usage:tr('wbCli.deviceUsage'),keys:['runId']}));
         }
         if (pathname === '/api/agent/conversation/summary') return json(res,new SessionTools(readView).chatSummary(run,b));
         if (pathname === '/api/agent/setup/catalog' && run.roleSnapshot?.platformAssistant) return json(res, assistant.catalog(run));
