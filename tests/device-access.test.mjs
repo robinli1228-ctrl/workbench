@@ -108,3 +108,26 @@ test('ls without a device lists every device with what the caller may actually d
   const session=deviceAccessList(db,{},{folder:id=>id==='srv'?'/xxxxx/session':null,online});
   assert.deepEqual(session.map(d=>[d.id,d.write]),[['mac','none'],['srv','project'],['old','none']]);
 });
+
+test('match finds lines anywhere in a large log with their byte offsets; a deep ls does not walk .git or node_modules', async t => {
+  const {project,scope}=await layout(t);
+  // An early error far before the last 512 KiB, a multi-byte line before a later one, and plenty of noise in between.
+  const noise='INFO 一切正常 '.repeat(8)+'\n',early='ERROR 早期故障 A\n';
+  const text=early+noise.repeat(20000)+'ERROR late B\n'+noise.repeat(10);
+  await writeFile(join(project,'big.log'),text);
+  const found=await deviceRead({scope,path:'big.log',match:'error'});
+  assert.equal(found.mode,'match');assert.equal(found.matches,2);
+  const lines=found.content.split('\n');
+  assert.deepEqual(lines.map(line=>line.replace(/^\d+: /,'')),['ERROR 早期故障 A','ERROR late B']);
+  const lateAt=Number(lines[1].split(':')[0]);
+  assert.equal(lateAt,Buffer.byteLength(early+noise.repeat(20000)),'the offset is in bytes, multi-byte text included');
+  assert.equal((await deviceRead({scope,path:'big.log',offset:lateAt,limit:12})).content,'ERROR late B');
+  assert.equal((await deviceRead({scope,path:'big.log',match:'error',tail:1})).content.replace(/^\d+: /,''),'ERROR late B','the last tail hits');
+  // Deep ls: dependency and version-control folders are listed but not walked.
+  for(const folder of ['.git/objects','node_modules/pkg','src/logs'])await mkdir(join(project,folder),{recursive:true});
+  await writeFile(join(project,'node_modules','pkg','x.log'),'x');await writeFile(join(project,'src','logs','y.log'),'y');
+  const deep=await deviceList({scope,path:'.',name:'*.log',depth:4});
+  assert.deepEqual(deep.items.map(item=>item.name),['big.log','src/logs/y.log']);
+  assert.deepEqual(deep.skipped,['node_modules'],'.git is not even listed: it can hold credentials');
+  assert.deepEqual((await deviceList({scope,path:'node_modules',name:'*.log',depth:3})).items.map(item=>item.name),['pkg/x.log'],'pointed inside, it is walked');
+});

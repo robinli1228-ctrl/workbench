@@ -45,6 +45,15 @@ export async function main(argv = process.argv.slice(2)) {
     }
     return {...input,action:sub};
   };
+  // ls answers as one line per entry (or device) instead of indented JSON: about a third of the text for the model to read.
+  const deviceText=result=>{
+    if(sub!=='ls'||!result||typeof result!=='object')return result;
+    if(Array.isArray(result.devices))return result.devices.map(d=>[d.device,d.online?'online':'offline',`read=${d.read}`,`write=${d.write}`,...(d.id!==d.device?[`id=${d.id}`]:[])].join('\t')).join('\n');
+    if(!Array.isArray(result.items))return result;
+    const entry=item=>item.kind==='folder'?`${item.name}/`:item.kind==='link'?`${item.name}@`:[item.name,item.size??'',(item.modifiedAt||'').slice(0,16).replace('T',' ')].join('\t');
+    return [`${result.device}:${result.path??''} (read=${result.level}, ${result.items.length})`,...result.items.map(entry),
+      ...(result.partial?[tr('wbCli.deviceListPartial')]:[]),...(result.skipped?.length?[tr('wbCli.deviceListSkipped',{names:result.skipped.join(', ')})]:[])].join('\n');
+  };
   const tail = [sub, ...rest].filter(v => v !== undefined);
   try {
     // Discovery must work even when a retained process inherited a deleted turn context.
@@ -52,7 +61,7 @@ export async function main(argv = process.argv.slice(2)) {
     // A sessions-page CLI has no Run and no collaboration tools: only platform memory search, relayed by its Worker.
     if(process.env.WB_NATIVE==='1'){
       if(cmd==='memory'&&sub==='search'&&!tail.some(value=>['--help','-h'].includes(value)))return out(await agentRequest('/api/agent/native-memory/search',memorySearchInput(rest)));
-      if(cmd==='device'){const input=await deviceInput('wbCli.nativeDeviceUsage');return out(await agentRequest(sub==='write'?'/api/agent/native-device-write':'/api/agent/native-device-read',input));}
+      if(cmd==='device'){const input=await deviceInput('wbCli.nativeDeviceUsage');return out(deviceText(await agentRequest(sub==='write'?'/api/agent/native-device-write':'/api/agent/native-device-read',input)));}
       // The group chats this session may read: wb history [--project NAME] [WORDS], wb history read ID --project NAME.
       if(cmd==='history'){
         if(tail.some(value=>['--help','-h'].includes(value)))return out(tr('wbCli.nativeHistoryUsage'));
@@ -110,7 +119,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (cmd === 'device') {
       const input=await deviceInput('wbCli.deviceUsage');
-      return out(await agentRequest(sub==='write'?'/api/agent/device-write':'/api/agent/device-read',{...input,runId:process.env.WB_RUN_ID}));
+      return out(deviceText(await agentRequest(sub==='write'?'/api/agent/device-write':'/api/agent/device-read',{...input,runId:process.env.WB_RUN_ID})));
     }
     if (cmd === 'timer') {
       if (sub === 'list' && !rest.length) return out(await agentRequest('/api/agent/timers',{runId:process.env.WB_RUN_ID,action:'list'}));

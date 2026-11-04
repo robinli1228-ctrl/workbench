@@ -1586,7 +1586,7 @@ wb device ls                         列出所有设备、是否可用，以及�
 wb device ls '{"device":"设备","path":"logs","name":"*.log","depth":3}'
 wb device read '{"device":"设备","path":"logs/app.log","tail":200,"match":"ERROR"}'
 wb device write '{"device":"设备","path":"notes/a.md","content":"文本"}'
-                     查看和修改其他设备上的文件，范围按项目设置里的跨设备权限（默认：查看整台设备，写入项目目录）。相对路径从项目目录算起。ls 可按 name 过滤并向下 depth 层（最多 5，结果最多 500 项）；read 默认给最后 tail 行（默认 200，最多 1000；match 只留含该文字的行），或用 offset/limit 读一页（最多 64 KB，按 nextOffset 续读）；write 用 content 或 file（本机文本文件）写入，最多 1 MB，append:true 追加，目录不存在会自动创建。密钥、凭据和 .env 文件不可读写。
+                     查看和修改其他设备上的文件，范围按项目设置里的跨设备权限（默认：查看整台设备，写入项目目录）。相对路径从项目目录算起。ls 可按 name 过滤并向下 depth 层（最多 5，结果最多 500 项，不进 .git、node_modules 等目录，要看就把 path 指进去）；read 默认给最后 tail 行（默认 200，最多 1000）；带 match 时在整个文件里找含该文字的行，给最后 tail 条，行首数字是该行的字节位置，可用 offset 读它前后，或用 offset/limit 读一页（最多 64 KB，按 nextOffset 续读）；write 用 content 或 file（本机文本文件）写入，最多 1 MB，append:true 追加，目录不存在会自动创建。密钥、凭据和 .env 文件不可读写。
 wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      定时提醒：到点在群里叫醒指定角色。任何角色都可以给自己设；总管还可以给别人设。写操作带稳定 requestId；update/pause/resume/delete 还要 id 和 revision，update 要带完整的 name、description 和时间设置。不写 roleId 就是提醒自己。
@@ -1934,6 +1934,8 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wbCli.nativeHistoryProject': '请用 --project 指定项目：{projects}',
   'wbCli.nativeHistoryChat': '没有这个群聊，可选：{chats}',
   'wbCli.nativeHistoryDenied': '这个会话在所有设备上的查看权限都是“不可”，不能读群聊记录。可在会话设置的跨设备权限里修改。',
+  'wbCli.deviceListPartial': '（结果不全：超过 500 项或遍历上限，请缩小 path、name 或 depth）',
+  'wbCli.deviceListSkipped': '（没进入这些目录：{names}；要看就把 path 指进去）',
   'wbCli.deviceUsage': `用法：wb device ls|read|write '{"device":"设备","path":"路径"}'；wb device ls 不带参数时列出设备和你的权限；ls 可带 name（如 "*.log"）、depth（1-5）；read 可带 tail、match、offset、limit；write 带 content 或 file（本机文件），append:true 为追加。详见 wb help。`,
   'wbCli.deviceUnknown': '没有名为 {device} 的项目设备；本项目的设备：{devices}',
   'wbCli.deviceReviewGuarded': '独立审核角色不能直接读取设备目录；请读取审核指定的共享材料',
@@ -1988,7 +1990,7 @@ wb device ls                         列出所有设备、是否可用，以及�
 wb device ls '{"device":"设备","path":"/绝对路径","name":"*.log","depth":3}'
 wb device read '{"device":"设备","path":"/绝对路径/app.log","tail":200,"match":"ERROR"}'
 wb device write '{"device":"设备","path":"/绝对路径/a.md","content":"文本"}'
-                     范围按会话设置里的跨设备权限（默认：查看整台设备，写入会话所在目录）。路径写绝对路径。ls 可按 name 过滤并向下 depth 层；read 默认给最后 tail 行（默认 200，最多 1000；match 只留含该文字的行），或用 offset/limit 读一页（最多 64 KB）；write 用 content 或 file（本机文本文件），最多 1 MB，append:true 追加。密钥、凭据和 .env 文件不可读写。
+                     范围按会话设置里的跨设备权限（默认：查看整台设备，写入会话所在目录）。路径写绝对路径。ls 可按 name 过滤并向下 depth 层（不进 .git、node_modules 等目录）；read 默认给最后 tail 行（默认 200，最多 1000）；带 match 时在整个文件里找含该文字的行，给最后 tail 条，行首数字是该行的字节位置，可用 offset 读它前后，或用 offset/limit 读一页（最多 64 KB）；write 用 content 或 file（本机文本文件），最多 1 MB，append:true 追加。密钥、凭据和 .env 文件不可读写。
 wb history [--project 项目] [--chat 群聊] [关键词]   wb history read 编号 [--project 项目]
                      只读查看项目群聊的消息和每轮结论；只有一个项目时可省略 --project。`,
   'platformMemory.searchUsage': `用法：wb memory search [关键词] [--type 类型] [--cli claude|codex|grok|agy] [--device 设备] [--since 时间] [--limit 1-100]`,
