@@ -1175,7 +1175,7 @@ const server = http.createServer(async (req, res) => {
           const chat=typeof b.chat==='string'&&b.chat.trim()?db.listProject('groupConversations',project.id).find(c=>c.id===b.chat.trim()||c.title===b.chat.trim()):null;
           if(typeof b.chat==='string'&&b.chat.trim()&&!chat)throw new Error(tr('wbCli.nativeHistoryChat',{chats:db.listProject('groupConversations',project.id).map(c=>c.title).join(', ')||'-'}));
           const {action,project:_project,chat:_chat,caller:_caller,...input}=b,conversationId=chat?.id;
-          if(action==='read')return json(res,{project:project.name,...new History(db).read(project.id,{kind:'auto',id:input.id,offset:input.offset,conversationId})});
+          if(action==='read')return json(res,{project:project.name,...new History(db).read(project.id,{kind:'auto',id:input.id,offset:input.offset,version:input.version,conversationId})});
           if(action!=='search')throw new Error(tr('wbCli.nativeHistoryUsage'));
           return json(res,{project:project.name,...new History(db).search(project.id,{...input,conversationId})});
         }

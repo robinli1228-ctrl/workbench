@@ -27,6 +27,7 @@ const SECRET_NAMES=[
   /^id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?:[._-]|$)/,
   /\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg|tfstate|tfvars|sqlite\d?|db|keychain(?:-db)?)(?:[.-].*)?$/,
   /^(?:cookies|login data|web data|key\d\.db|logins\.json|cert\d\.db)$/,
+  /^(?:credentials?|secrets?)(?:[._-].*)?\.(?:md|txt|json|ya?ml|toml)$/,
 ];
 const SECRET_WORDS=[/^deploy[-_]?key/,/credential/,/serviceaccount/,/^\.?secrets?(?:[._-]|$)/,/^(?:api|access|refresh|worker|auth)?[-_]?tokens?(?:[._-]|$)/];
 const SOURCE_FILE=/\.(?:java|kt|kts|groovy|scala|js|mjs|cjs|ts|tsx|jsx|vue|svelte|py|go|rs|rb|php|cs|swift|m|mm|c|cc|cpp|h|hpp|sh|bash|zsh|sql|md|html|css|scss|less|proto|graphql|dart|lua|pl|r|ex|exs|erl|clj)$/;
@@ -34,7 +35,8 @@ const PUBLIC_ENV=/^\.env\.(?:example|sample|template)$/;
 const fold=part=>part.normalize('NFKC').toLowerCase();
 export const secretName=name=>{const value=fold(name);return !PUBLIC_ENV.test(value)&&(SECRET_NAMES.some(pattern=>pattern.test(value))||!SOURCE_FILE.test(value)&&SECRET_WORDS.some(pattern=>pattern.test(value)));};
 // Only credentials and keys are kept out; worktrees, CLI histories and handoffs are as readable as the scope allows.
-const secretPath=parts=>parts.some(secretName);
+const secretPath=parts=>parts.some(secretName)||parts.some((part,i)=>
+  fold(part)==='.claude'&&/^settings(?:\.local)?\.json$/.test(fold(parts[i+1]||''))||fold(part)==='.codex'&&fold(parts[i+1]||'')==='config.toml');
 /** The largest prefix of at most `limit` bytes that does not end inside a UTF-8 character (continuation bytes are 10xxxxxx). */
 const wholeCharacters=(bytes,limit)=>{let end=Math.min(limit,bytes.length);while(end>0&&end<bytes.length&&(bytes[end]&0xc0)===0x80)end--;return end;};
 const characters=(bytes,limit)=>bytes.subarray(0,wholeCharacters(bytes,limit)).toString('utf8');
@@ -70,7 +72,7 @@ async function locate(options,path){
   if(!roots.some(r=>within(r,literal)))throw fail('outside_allowed_folders');
   const literalRoot=roots.find(r=>within(r,literal));if(secretPath(relative(literalRoot,literal).split(sep).filter(Boolean)))throw fail('secret_path');
   let target;try{target=await realpath(literal);}catch(e){throw fail(e.code==='ENOENT'||e.code==='ENOTDIR'?'not_found':'unreadable');}
-  return {target,root:check(target),project,check};
+  return {target,root:check(target),project,check,denyRoots};
 }
 
 /**
@@ -104,18 +106,21 @@ export async function deviceList(options){
       return {path:null,root:null,projectRoot:null,readRoots:roots,items:roots.map(name=>({name,kind:'folder',size:null,modifiedAt:null})),partial:false};
     }
   }
-  const {target,root,project}=await locate(options,options.path??'.');
+  const {target,root,project,check,denyRoots}=await locate(options,options.path??'.');
   if(!(await stat(target)).isDirectory())throw fail('not_a_folder');
   // A name pattern (* and ?) with a depth looks several levels down in one request instead of one ls per folder.
   const wanted=name?new RegExp(`^${name.replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*').replace(/\?/g,'.')}$`,'i'):null;
   // The walk itself is bounded too (entries looked at and time), not only the matches: a pattern over a whole device stops.
   const items=[],skipped=new Set();let partial=false,visited=0;const until=Date.now()+DEVICE_READ_LIMITS.walkMs;
   const walk=async(folder,prefix,level)=>{
+    // A directory swapped for a link during the walk cannot escape the checked scope or enter a denied folder.
+    const current=await realpath(folder).catch(()=>null);if(current!==folder)return;
+    try{check(current);}catch{return;}
     const dir=await opendir(folder).catch(()=>null);if(!dir)return;
     const folders=[];
     try{for await(const item of dir){
       if(++visited>DEVICE_READ_LIMITS.walk||Date.now()>until){partial=true;break;}
-      if(secretName(item.name)||(options.denyRoots||[]).some(d=>within(d,join(folder,item.name))))continue;
+      if(secretPath(relative(root,join(folder,item.name)).split(sep).filter(Boolean))||denyRoots.some(d=>within(d,join(folder,item.name))))continue;
       const kind=item.isDirectory()?'folder':item.isFile()?'file':item.isSymbolicLink()?'link':'other';
       if(kind==='folder'&&level<depth){if(NOT_WALKED.has(item.name))skipped.add(item.name);else folders.push(item.name);}
       if(wanted&&!wanted.test(item.name))continue;

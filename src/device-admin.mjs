@@ -47,6 +47,8 @@ export class DeviceAdmin {
       command: 'ssh',
       args: [
         ...transportOptions,
+        // Match the probes: an existing SSH master must not bypass the selected route.
+        '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
         '-NT', '-p', String(device.port), '-i', credential.keyPath,
         '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new',
         '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=30',

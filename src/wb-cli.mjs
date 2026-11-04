@@ -67,7 +67,7 @@ export async function main(argv = process.argv.slice(2)) {
         if(tail.some(value=>['--help','-h'].includes(value)))return out(tr('wbCli.nativeHistoryUsage'));
         const args=[...tail],option=key=>{const at=args.indexOf(key);if(at<0)return undefined;const value=args.splice(at,2)[1];if(!value)throw new Error(tr('wbCli.nativeHistoryUsage'));return value;};
         const project=option('--project'),chat=option('--chat');
-        if(args[0]==='read'){if(!args[1]||args.length>3||args[2]!==undefined&&!/^\d+$/.test(args[2]))throw new Error(tr('wbCli.nativeHistoryUsage'));return out(await agentRequest('/api/agent/native-history',{action:'read',project,chat,id:args[1],offset:args[2]===undefined?0:Number(args[2])}));}
+        if(args[0]==='read'){if(!args[1]||args.length>4||args[2]!==undefined&&!/^\d+$/.test(args[2]))throw new Error(tr('wbCli.nativeHistoryUsage'));return out(await agentRequest('/api/agent/native-history',{action:'read',project,chat,id:args[1],offset:args[2]===undefined?0:Number(args[2]),version:args[3]}));}
         return out(await agentRequest('/api/agent/native-history',{action:'search',project,chat,...historySearchInput(args[0]==='search'?args.slice(1):args)}));
       }
       if(!cmd||['help','-h','--help'].includes(cmd)||cmd==='memory')return out(tr('wbCli.nativeHelp'));

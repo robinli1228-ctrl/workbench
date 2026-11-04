@@ -164,19 +164,20 @@ export async function nativeBridgeFolder(root,runtime,sessionId) {
 }
 export function startNativeBridges({root,home,token,device,canSend=()=>true,activeFor=12*3600e3}) {
   // Only folders of sessions the page drove recently are scanned; no CLI survives a Worker restart, so old folders go.
+  // Keep permission identity in Worker memory; the CLI may edit session.json, which is only a discovery hint.
   const active=new Map(),consumed=new Set();let scanning=false;
   const ready=rm(root,{recursive:true,force:true}).catch(()=>{});
-  async function answer(directory,file) {
+  async function answer(directory,file,binding) {
     try {
       let response;
       try {
         const path=join(directory,file),info=await lstat(path);
         if(!info.isFile()||info.size>REQUEST_FILE_BYTES)throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
-        const input=JSON.parse(await readFile(path,'utf8')),session=JSON.parse(await readFile(join(directory,'session.json'),'utf8'));
+        const input=JSON.parse(await readFile(path,'utf8'));
         if(!NATIVE_PATHS.has(input.pathname))throw new Error(tr('agentBridge.operationNotAgentTool'));
         assertAgentSender(input.payload,input.pathname);
         if(!canSend())throw Object.assign(new Error(blockMessage('home_disconnected')),{code:'home_disconnected'});
-        response={result:await homeRequest(home,token,input.pathname,{...input.payload,caller:{cli:session.runtime,device,sessionId:session.sessionId}})};
+        response={result:await homeRequest(home,token,input.pathname,{...input.payload,caller:{cli:binding.runtime,device,sessionId:binding.sessionId}})};
       } catch(error) { response={error:error.message,status:error.status,code:error.code}; }
       await publishResponse(directory,file,response);
     } finally {
@@ -187,15 +188,15 @@ export function startNativeBridges({root,home,token,device,canSend=()=>true,acti
     if(scanning)return;scanning=true;
     try {
       const now=Date.now();
-      for(const [directory,usedAt] of active) {
-        if(now-usedAt>activeFor){active.delete(directory);void rm(directory,{recursive:true,force:true}).catch(()=>{});continue;}
+      for(const [directory,binding] of active) {
+        if(now-binding.usedAt>activeFor){active.delete(directory);void rm(directory,{recursive:true,force:true}).catch(()=>{});continue;}
         for(const file of await readdir(directory).catch(()=>[])) {
           const key=join(directory,file);
           // Stray files of a crashed wb or an answered request are aged out.
           if(/\.tmp$/.test(file)||/\.response$/.test(file)){const info=await lstat(key).catch(()=>null);if(info&&now-info.mtimeMs>120000)await unlink(key).catch(()=>{});continue;}
           if(!/^[a-f0-9-]{36}\.request$/.test(file)||consumed.has(key))continue;
           consumed.add(key);
-          void answer(directory,file).catch(error=>console.error('Native bridge:',error.message));
+          void answer(directory,file,binding).catch(error=>console.error('Native bridge:',error.message));
         }
       }
     } finally { scanning=false; }
@@ -203,7 +204,7 @@ export function startNativeBridges({root,home,token,device,canSend=()=>true,acti
   const timer=setInterval(()=>{if(active.size)void scan();},200);timer.unref();
   return {
     /** A page turn is about to start in this session: create (or keep) its folder and scan it from now on. */
-    async open(runtime,sessionId){await ready;const directory=await nativeBridgeFolder(root,runtime,sessionId);active.set(directory,Date.now());return directory;},
+    async open(runtime,sessionId){await ready;const directory=await nativeBridgeFolder(root,runtime,sessionId);active.set(directory,{usedAt:Date.now(),runtime,sessionId});return directory;},
     stop(){clearInterval(timer);}
   };
 }

@@ -1934,7 +1934,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wbCli.deviceReadDenied': '{device} 不允许查看：这台设备的查看权限是“不可”。可在项目设置或会话设置的跨设备权限里修改。',
   'wbCli.deviceWriteDenied': '{device} 不允许写入：这台设备的写入权限是“不可”，或者设成了“项目目录”而这台设备上没有项目目录。可在项目设置或会话设置的跨设备权限里修改。',
   'wbCli.deviceWriteTooLarge': '写入内容须是文本，且不超过 1 MB；更大的文件请提交后用 wb deliver，或作为附件传送。',
-  'wbCli.nativeHistoryUsage': `用法：wb history [--project 项目] [--chat 群聊] [关键词]，或 wb history read 编号 [--project 项目]`,
+  'wbCli.nativeHistoryUsage': `用法：wb history [--project 项目] [--chat 群聊] [关键词]，或 wb history read 编号 [偏移 版本] [--project 项目]`,
   'wbCli.nativeHistoryProject': '请用 --project 指定项目：{projects}',
   'wbCli.nativeHistoryChat': '没有这个群聊，可选：{chats}',
   'wbCli.nativeHistoryDenied': '这个会话在所有设备上的查看权限都是“不可”，不能读群聊记录。可在会话设置的跨设备权限里修改。',

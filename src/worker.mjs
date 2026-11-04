@@ -781,7 +781,7 @@ async function query(m,emit=send) {
     if(m.action==='device_read'||m.action==='device_write'){
       // Home sends the scope its project or session settings allow here (folders or the whole device). An older Home names
       // only the project folder, checked as a granted folder; a Sessions-page CLI then reads only WORKER_READ_ROOTS.
-      const scope=m.path?.scope&&typeof m.path.scope==='object'?{all:m.path.scope.all===true,roots:Array.isArray(m.path.scope.roots)?m.path.scope.roots.filter(r=>typeof r==='string'&&isAbsolute(r)):[],base:typeof m.path.scope.base==='string'?m.path.scope.base:null}:null;
+      const scope=m.path?.scope&&typeof m.path.scope==='object'?{all:m.path.scope.all===true,roots:Array.isArray(m.path.scope.roots)?m.path.scope.roots.filter(r=>typeof r==='string'&&isAbsolute(r)):[],base:typeof m.path.scope.base==='string'?m.path.scope.base:null,deny:Array.isArray(m.path.scope.deny)?m.path.scope.deny.filter(r=>typeof r==='string'&&isAbsolute(r)):[]}:null;
       const args={...m.path,scope,projectRoot:scope||m.path?.readRootsOnly?null:await projectRoot(m.path?.root),readRoots,denyRoots:[await realpath(data).catch(()=>data),await realpath(base).catch(()=>base)]};
       if(m.action==='device_write'){reply(await deviceWrite(args));return;}
       reply(m.path?.list?await deviceList(args):await deviceRead(args));return;

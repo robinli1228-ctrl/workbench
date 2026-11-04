@@ -1934,7 +1934,7 @@ You personally do only the simplest things: answer a question directly, check on
   'wbCli.deviceReadDenied': 'Reading {device} is not allowed: its read access is "none". Change it under cross-device access in the project or session settings.',
   'wbCli.deviceWriteDenied': 'Writing {device} is not allowed: its write access is "none", or "project folder" with no project folder on that device. Change it under cross-device access in the project or session settings.',
   'wbCli.deviceWriteTooLarge': 'Write text of at most 1 MB; deliver larger files with a commit and wb deliver, or send them as an attachment.',
-  'wbCli.nativeHistoryUsage': `Usage: wb history [--project PROJECT] [--chat CHAT] [WORDS], or wb history read ID [--project PROJECT]`,
+  'wbCli.nativeHistoryUsage': `Usage: wb history [--project PROJECT] [--chat CHAT] [WORDS], or wb history read ID [OFFSET VERSION] [--project PROJECT]`,
   'wbCli.nativeHistoryProject': 'Name the project with --project: {projects}',
   'wbCli.nativeHistoryChat': 'No such group chat; choose one of: {chats}',
   'wbCli.nativeHistoryDenied': 'This session may not read on any device (read access "none" everywhere), so it cannot read group chat history. Change it under cross-device access in the session settings.',
