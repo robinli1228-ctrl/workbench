@@ -13,6 +13,30 @@ const PREVIOUS_BULK_RULE = {
   en: '- Never carry files, logs or bulk data (such as base64 in parts) in the chat, wb note or call text. Hand material to another device through the sync-scoped .workbench/docs, or commit it and deliver with wb deliver; when the material is outside the sync scope, say which device and path it is on and let the user decide instead of slicing it yourself.'
 };
 
+// The rules as they read before wb device could write and independent reviewers could read other devices: [old, new].
+const DEVICE_EDITS = {
+  "zh": [
+    [
+      "- 要看另一台项目设备上的文件或日志（例如用户本机运行的服务日志），自己用 wb device ls / wb device read 只读查看（用法见 wb help），不要请别人摘抄或转发。",
+      "- 要看另一台项目设备上的文件或日志（例如用户本机运行的服务日志），或改那台设备上的文件，自己用 wb device ls / read / write（用法见 wb help），不要请别人摘抄或转发。"
+    ],
+    [
+      "别人用 wb device ls / read 自己读（独立审核者读不了，给他们的材料用 wb call --file 附上或放进 .workbench/docs）；",
+      "别人用 wb device ls / read 自己读；"
+    ]
+  ],
+  "en": [
+    [
+      "- To see files or logs on another project device (e.g. the logs of a service the user runs locally), read them yourself, read-only, with wb device ls / wb device read (see wb help); do not ask someone to copy or forward them.",
+      "- To see files or logs on another project device (e.g. the logs of a service the user runs locally), or to change files there, use wb device ls / read / write yourself (see wb help); do not ask someone to copy or forward them."
+    ],
+    [
+      "where others read them with wb device ls / read (independent reviewers cannot: give them material with wb call --file or in .workbench/docs);",
+      "where others read them with wb device ls / read;"
+    ]
+  ]
+};
+
 // The rules as they read before work materials left /tmp, task descriptions held only the current state and reviews were
 // sized to the change: [old, new] pairs, undone to rebuild that default.
 const LEAN_EDITS = {
@@ -78,7 +102,11 @@ const SYNCED_WORKTREES = {
 for (const [lang, heading, next, help] of [['zh', '工作目录：', '找人协作：', /\.worktrees（平台的隔离执行目录和手工建的 worktree）一律不同步/], ['en', 'Working folder:', 'Working with others:', /\.worktrees \(the platform's isolated run folders and any worktree made by hand\) never syncs/]]) {
   test(`${lang}: working-folder rules, upgrade from the previous default, and wb help sync`, () => runWithLanguage(lang, () => {
     const current = defaultPlatformPrompt();
-    const base = LEAN_EDITS[lang].reduce((text, [old, now]) => { assert.ok(text.includes(now), now.slice(0, 40)); return text.replace(now, old); }, current);
+    const undo = edits => (text => edits.reduce((rebuilt, [old, now]) => { assert.ok(rebuilt.includes(now), now.slice(0, 40)); return rebuilt.replace(now, old); }, text));
+    const beforeWrite = undo(DEVICE_EDITS[lang])(current);
+    assert.equal(createHash('sha256').update(beforeWrite.trim()).digest('hex'), { zh: '7b38305fa620f1b58819b221f78a09e766b22cdbed359e6bd0a30a8e3f19e46e', en: 'd522244b3d4914fb6a1f298de9c9acd08cf6d500e6529f68a5d517230a075486' }[lang], 'the rebuilt text is the default before wb device write');
+    assert.equal(normalizePlatformSettings({ platformPrompt: beforeWrite }).platformPrompt, current, 'a saved copy of that default follows the new one');
+    const base = undo(LEAN_EDITS[lang])(beforeWrite);
     assert.equal(createHash('sha256').update(base.trim()).digest('hex'), { zh: '3fdbf1bde2150d398e0c00f5b0d43275f6b2f5f12321c7873309526a6d752205', en: 'e7e2d387202ae8d70f8f0e466ba691e82034a202937f6c5ed518311ac483e8cb' }[lang], 'the rebuilt text is the previous default');
     assert.equal(normalizePlatformSettings({ platformPrompt: base }).platformPrompt, current, 'a saved copy of the previous default follows the new one');
     assert.ok(current.includes(`${heading}\n`) && current.indexOf(heading) < current.indexOf(next));

@@ -1,6 +1,7 @@
 import { t, dateLocale, getLanguage } from './i18n.js';
 import { setActionIcon, UI_ICON } from './role-icons.js';
 import {configurationInformationUI} from './configuration-information.js';
+import {deviceTransportUI} from './device-transport.js';
 
 /** Connected Workers and server registrations share one card; registrations that are not connected keep their edit entry. */
 export function deviceEntries(workers = [], devices = []) {
@@ -16,6 +17,7 @@ export function platformAdminUI({api,getData,refreshState,create}) {
   const $=s=>document.querySelector(s), account=$('#hosting-account-form'), accountDialog=$('#hosting-account-dialog'), device=$('#device-enroll-form');
   let signature='';
   const information=configurationInformationUI({api,getData,create});
+  const transport=deviceTransportUI({api});
   const text=(target,value)=>{const el=typeof target==='string'?$(target):target;el.textContent=value;el.hidden=false;};
   async function action(button,feedback,fn){button.disabled=true;text(feedback,'Processing…');try{const result=await fn();text(feedback,result?.note||'Done; please check the status.');await refreshState({quiet:true});return result;}catch(e){text(feedback,e.message);}finally{button.disabled=false;}}
   /** Each hosting platform shows its own overview; tokens are entered only in the explicit edit dialog. */
@@ -89,6 +91,7 @@ export function platformAdminUI({api,getData,refreshState,create}) {
   /** The edit form is hosted by the device dialog; list refreshes do not overwrite what is being typed. */
   function deviceDetails({worker,device:registered}) {
     const detail=create('div','device-detail');
+    if(registered){const routes=create('button','secondary compact','Transport routes');routes.type='button';routes.addEventListener('click',()=>void transport.open(registered.id,worker?.name||registered.name));detail.append(routes);}
     const feedback=create('p','form-feedback');feedback.hidden=true;feedback.setAttribute('role','status');
     if(worker){
       detail.append(create('h4','','Device Name and Workspace'));

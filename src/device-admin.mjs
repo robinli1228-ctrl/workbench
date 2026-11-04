@@ -23,7 +23,7 @@ function localPortOpen(port) {
 
 /** Fixed commands run over SSH; the password is passed through the askpass environment and never enters arguments or public records. */
 export class DeviceAdmin {
-  constructor({ db, credentials, base, data, workerToken, change, homePort, online = () => false, spawnProcess = spawn, tunnelRestartMs = 5000, hostPlatform = process.platform, probePort = localPortOpen, probeExistingTunnel = probeExistingDesktopTunnel, reconnect = null }) {
+  constructor({ db, credentials, base, data, workerToken, change, homePort, online = () => false, spawnProcess = spawn, tunnelRestartMs = 5000, hostPlatform = process.platform, probePort = localPortOpen, probeExistingTunnel = probeExistingDesktopTunnel, reconnect = null, transport = null }) {
     Object.assign(this, { db, credentials, base, data, workerToken, change, online, spawnProcess, tunnelRestartMs, hostPlatform, probePort, probeExistingTunnel });
     this.homePort = Number(homePort || process.env.PORT || 4317);
     this.running = new Set();
@@ -33,10 +33,11 @@ export class DeviceAdmin {
     this.stoppingTunnels = false;
     this.reconnectContext = reconnect;
     this.reconnections = new Map();
+    this.transport = transport;
   }
 
   /** A loopback Home address means the Worker relies on reverse SSH forwarding; other directly reachable addresses are not taken over. */
-  tunnelSpec(device, credential) {
+  tunnelSpec(device, credential, transportOptions = []) {
     let url;
     try { url = new URL(device?.homeUrl); } catch { return null; }
     if (!['127.0.0.1', 'localhost'].includes(url.hostname) || !credential?.keyPath) return null;
@@ -45,6 +46,9 @@ export class DeviceAdmin {
     return {
       command: 'ssh',
       args: [
+        ...transportOptions,
+        // Match the probes: an existing SSH master must not bypass the selected route.
+        '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
         '-NT', '-p', String(device.port), '-i', credential.keyPath,
         '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new',
         '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=30',
@@ -59,15 +63,19 @@ export class DeviceAdmin {
     if (this.stoppingTunnels || this.tunnels.has(id)) return false;
     const device = this.db.get('devices', id);
     if (!device) return false;
-    const spec = this.tunnelSpec(device, await this.credentials.get(id));
-    if (!spec || this.stoppingTunnels || !this.db.get('devices',id)) return false;
+    const route = await this.transport?.options(id);
+    const spec = this.tunnelSpec(device, await this.credentials.get(id), route?.args || []);
+    if (!spec || this.stoppingTunnels || this.tunnels.has(id) || !this.db.get('devices',id)) return false;
     const timer = this.tunnelTimers.get(id);
     if (timer) { clearTimeout(timer); this.tunnelTimers.delete(id); }
     const child = this.spawnProcess(spec.command, spec.args, { env: process.env, stdio: 'ignore' });
     this.tunnels.set(id, child);
+    this.transport?.started(id,route?.route || 'DIRECT');
     const restart = () => {
       if (this.tunnels.get(id) !== child) return;
       this.tunnels.delete(id);
+      // A backup's own exit rebuilds through direct SSH, even if its local SOCKS listener still accepts connections.
+      if ((route?.route || 'DIRECT') !== 'DIRECT') this.transport?.failed?.(id, route.route);
       if (this.stoppingTunnels) return;
       const next = setTimeout(() => {
         this.tunnelTimers.delete(id);
@@ -149,7 +157,7 @@ export class DeviceAdmin {
   }
 
   /** Human recovery owns only Home's reverse tunnel. Admission stays fenced until a new Worker heartbeat or a bounded failure. */
-  async reconnect(id) {
+  async reconnect(id, {before = null, rollback = null} = {}) {
     const d=this.db.get('devices',id),context=this.reconnectContext;
     if(!d)throw new Error(tr('deviceAdmin.deviceNotFound'));
     if(!context||this.stoppingTunnels)throw new Error(tr('deviceAdmin.reconnectUnsupported'));
@@ -157,6 +165,7 @@ export class DeviceAdmin {
     const fingerprint=JSON.stringify([d.nodeId,d.host,d.port,d.user,d.homeUrl]);
     const update=(phase,error)=>{const value={phase,updatedAt:new Date().toISOString(),...(error?{error}:{})};this.reconnections.set(id,value);this.change();return value;};
     const unchanged=()=>{const v=this.db.get('devices',id);if(!v||fingerprint!==JSON.stringify([v.nodeId,v.host,v.port,v.user,v.homeUrl])||this.stoppingTunnels)throw new Error(tr('deviceAdmin.reconnectChanged'));};
+    const originalTunnel=this.tunnels.get(id);let prepared=false;
     this.running.add(id);context.hold(d.nodeId,true);update('checking');
     try {
       context.assertIdle(d.nodeId);
@@ -165,6 +174,8 @@ export class DeviceAdmin {
       const result=await this.ssh(d,`console.log(JSON.stringify(await (${remoteReconnectProbe.toString()})(${JSON.stringify(d.nodeId)})));`,15000);
       if(result?.idle!==true||result.nodeId!==d.nodeId)throw new Error(tr('deviceAdmin.reconnectUnverified'));
       unchanged();context.assertIdle(d.nodeId);
+      // A route may change only after both idle proofs, while admission is fenced. Busy devices keep their live route.
+      if(before){prepared=true;await before();unchanged();context.assertIdle(d.nodeId);}
       const previous=context.connection(d.nodeId),started=Date.now(),child=this.tunnels.get(id);
       update('reconnecting');
       const scheduled=this.tunnelTimers.get(id);if(scheduled)clearTimeout(scheduled);this.tunnelTimers.delete(id);
@@ -186,7 +197,17 @@ export class DeviceAdmin {
         await new Promise(resolve=>setTimeout(resolve,context.pollMs??250));
       }
       throw new Error(tr('deviceAdmin.reconnectHeartbeatTimeout'));
-    } catch(error) {update('failed',error.message);throw error;}
+    } catch(error) {
+      if(prepared&&rollback){
+        try {
+          await rollback();
+          const replacement=this.tunnels.get(id);
+          if(replacement&&replacement!==originalTunnel){this.tunnels.delete(id);try{replacement.kill('SIGTERM');}catch{}}
+          if(!this.stoppingTunnels&&!this.tunnels.has(id))await this.ensureTunnel(id);
+        } catch {update('failed','transport_rollback_failed');throw new Error('transport_rollback_failed');}
+      }
+      update('failed',error.message);throw error;
+    }
     finally {this.running.delete(id);context.hold(d.nodeId,false);this.change();}
   }
 

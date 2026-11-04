@@ -3097,7 +3097,7 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 /* session settings gear in the top bar (sessions mode only); the connection note yields its place */
 .native-session-gear { display: none; }
 body[data-navigation-mode="sessions"] .native-session-gear { display: grid; place-items: center; }
-.native-settings-dialog { display: grid; gap: 18px; min-width: min(520px, 92vw); }
+.native-settings-dialog { display: grid; gap: 18px; min-width: min(520px, 100%); }
 .native-settings-section h3 { margin: 0 0 8px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .native-settings-section .native-rename-form { display: flex; gap: 8px; }
 .native-settings-section .native-rename-form input { flex: 1; min-width: 0; }
@@ -4038,12 +4038,14 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .task-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .task-card-heading h3 { margin: 0; }
 .task-closed-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin: 0; white-space: nowrap; }
-.task-closed-toggle input { width: auto; }
+.task-closed-toggle input { width: 14px; height: 14px; min-height: 0; margin: 0; }
 .task-list-row { width: 100%; text-align: left; }
 .task-list-row > .artifact-row-body { flex: 1; }
 .task-list-row strong, .task-list-row small { overflow-wrap: anywhere; white-space: normal; }
 /* One card, no boxes inside it: hairlines under the heading and between tasks. */
-.conversation-task-card .task-card-heading { padding-bottom: 10px; border-bottom: 1px solid var(--card-hairline); }
+/* A slim title bar: the card's top padding, the 18 px row and a hairline. */
+.conversation-task-card { padding-top: 4px; }
+.conversation-task-card .task-card-heading { min-height: 18px; padding-bottom: 2px; border-bottom: 1px solid var(--card-hairline); }
 .conversation-task-card .task-list { display: grid; gap: 0; }
 .conversation-task-card > .workspace-note:empty { display: none; }
 .conversation-task-card .task-list-row { padding: 12px 0; border: 0; border-bottom: 1px solid var(--card-hairline); border-radius: 0; background: transparent; box-shadow: none; }
@@ -4111,9 +4113,8 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .task-edit-footer { flex: none; border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
 .task-edit-footer[hidden] { display: none; }
 .task-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.task-close-row { display: flex; margin: 4px 0 14px; }
-#conversation-task-detail .task-close-row button.task-close-button { color: var(--danger); }
-#conversation-task-detail .task-close-row button.task-close-button:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+#conversation-task-detail .task-edit-actions button.task-close-button { margin-right: auto; color: var(--danger); }
+#conversation-task-detail .task-edit-actions button.task-close-button:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 .task-edit-footer .task-form-error:empty, .task-edit-footer .workspace-note:empty { display: none; }
 .task-updated-at { color: var(--muted); font-size: 12px; margin: 0; }
 .task-form-error { color: var(--danger, #b42318); overflow-wrap: anywhere; }
@@ -4313,3 +4314,26 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 }
 #update-ready { position: fixed; left: 50%; top: calc(72px + env(safe-area-inset-top)); z-index: 1001; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; transform: translateX(-50%); border-radius: 999px; color: #fff; background: #2b2f3a; box-shadow: 0 6px 20px rgb(16 24 40 / 25%); font-size: 13px; }
 #update-ready button { min-height: 30px; padding: 4px 12px; border: 0; border-radius: 999px; color: #2b2f3a; background: #fff; font-weight: 600; }
+.device-transport-dialog{width:min(760px,94vw);max-height:90dvh;overflow:auto}
+.device-transport-form{display:grid;gap:14px}
+.transport-route-list{display:grid;gap:10px}
+.transport-route-row{display:grid;grid-template-columns:minmax(0,1fr) 160px auto;gap:10px;align-items:end}
+.transport-route-row label{display:grid;gap:6px;min-width:0}
+.transport-route-row input{width:100%;min-width:0}
+.transport-test-results:empty{display:none}
+.transport-test-result{margin:8px 0;font-size:13px}
+@media(max-width:600px){.transport-route-row{grid-template-columns:minmax(0,1fr) 110px auto}.device-transport-form .dialog-actions{flex-wrap:wrap}}
+/* Cross-device access (project and session settings): a device and its read and write levels on one row. */
+.device-access-row { flex-wrap: wrap; }
+.device-access-row .settings-row-main { flex: 1 1 140px; min-width: 0; }
+.device-access-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted, #656c7d); }
+.device-access-pick select { width: auto; min-width: 116px; }
+.native-device-access .device-access-rows { display: grid; gap: 4px; margin: 6px 0; }
+.native-device-access .device-access-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--card-hairline, #eef1f6); }
+.native-device-access .device-access-row strong { font-size: 14px; font-weight: 500; }
+/* Narrow screens: the device name on its own line, read and write side by side under it. */
+@media (max-width: 560px) {
+  .native-device-access .device-access-row .settings-row-main { flex-basis: 100%; }
+  .native-device-access .device-access-pick { flex: 1 1 0; min-width: 0; }
+  .native-device-access .device-access-pick select { flex: 1; min-width: 0; }
+}

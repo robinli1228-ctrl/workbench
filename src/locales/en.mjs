@@ -1,6 +1,10 @@
 // English message catalog. Keys are shared with the other locale; {name} marks a parameter.
 // Parity between locales is enforced by tests/i18n.test.mjs.
 export default Object.freeze({
+  "transport.testingBusy": "Wait for the current speed test or reconnect to finish.",
+  "transport.settingsChanged": "Transport settings changed. Reopen this dialog before saving.",
+  "transport.invalidSettings": "Use distinct backup names and local SOCKS ports.",
+  "transport.activeBackup": "Return to direct before changing or removing the active backup.",
   "sourceSync.metadataTwoDevices": "Simple mode requires a directory scope with exactly two upgraded devices.",
   "sourceSync.metadataBaseline": "Pending sync baseline; existing files are not overwritten.",
   "sourceSync.invalidMetadata": "Invalid file metadata receipt.",
@@ -1582,9 +1586,11 @@ wb history summary   Summary of the current group chat
 wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit N]
                      Search platform memory: one for the whole platform, shared by every project, role, CLI and device, and organized daily from all group chats by a background model. It holds what helps across projects: environment (devices, addresses, folders), accounts and secrets, lessons and fixes, procedures, personal details and platform-wide decisions; without words it lists everything. This project's own decisions and progress are in wb history search.
                      Check it when the environment, accounts or earlier pitfalls matter. To have something remembered, write it in your reply or a wb note starting with "Remember:".
-wb device ls '{"device":"DEVICE","path":"logs"}'
+wb device ls                         List the devices, whether each is reachable, and what you may read and write on each
+wb device ls '{"device":"DEVICE","path":"logs","name":"*.log","depth":3}'
 wb device read '{"device":"DEVICE","path":"logs/app.log","tail":200,"match":"ERROR"}'
-                     Read-only look at files on a project device, e.g. a local service's logs on the user's Mac: the project folder there, plus folders its owner opened with WORKER_READ_ROOTS. Relative paths start at the project folder. read gives the last tail lines (default 200, at most 1000; match keeps only lines containing the text) or a page with offset/limit (at most 64 KB; continue with nextOffset). Keys, credentials and .env files are not readable.
+wb device write '{"device":"DEVICE","path":"notes/a.md","content":"TEXT"}'
+                     Look at and change files on other devices, as far as the cross-device access in the project settings allows (default: read the whole device, write the project folder). Relative paths start at the project folder. ls filters by name and goes depth levels down (at most 5, at most 500 entries; .git, node_modules and the like are not entered, point path inside to see them); read gives the last tail lines (default 200, at most 1000); with match it finds the lines containing the text anywhere in the file and gives the last tail of them, each starting with its byte offset so offset can read around it or a page with offset/limit (at most 64 KB; continue with nextOffset); write takes content or file (a local text file), at most 1 MB, append:true appends, and missing folders are created. Keys, credentials and .env files are neither read nor written.
 wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      Timed reminders: wake a role in the group chat at a set time. Any role may set them for itself; the supervisor may also set them for others. Writes need a stable requestId; update/pause/resume/delete also need id and revision, and update must resend the full name, description and schedule. Without roleId the reminder is for yourself.
@@ -1733,8 +1739,8 @@ Drive the work:
 Working folder:
 - Once sync is on for the project, the files in the project folder sync between devices automatically; .git, .worktrees, build outputs and other Git-ignored files do not (scope: wb help sync). Work in the bound folder directly and do not create worktrees of your own; when the platform places you in an isolated run folder (.worktrees/run-*), work there and do not delete it.
 - The bound folder is shared, and Git state (commits, branches, the index) does not sync: this device's git status may include changes synced from another device; that does not mean someone left work uncommitted, so do not revert or discard them. Never switch branches, stash, reset, clean or check out files in the bound folder; these wipe out other people's uncommitted work. If the folder is not on the branch the task needs, say so and settle it with the user or the owner instead of switching yourself. When committing, git add only the files you own, never add -A, and first check with git log -1 that HEAD is the commit those changes were based on; if it is not, coordinate with whoever made them first.
-- To see files or logs on another project device (e.g. the logs of a service the user runs locally), read them yourself, read-only, with wb device ls / wb device read (see wb help); do not ask someone to copy or forward them.
-- Never carry files, logs or bulk data (such as base64 in parts) in the chat, wb note or call text. Formal reports go in the sync-scoped .workbench/docs; logs, query results, probes, scratch scripts and other work materials go in the work materials folder named in the environment notes (not synced; never /tmp), where others read them with wb device ls / read (independent reviewers cannot: give them material with wb call --file or in .workbench/docs); fixed-version review and testing use a commit and wb deliver. When handing over, give the device and path; do not list sizes and hashes file by file. Otherwise say which device and path it is on and let the user decide instead of slicing it yourself.
+- To see files or logs on another project device (e.g. the logs of a service the user runs locally), or to change files there, use wb device ls / read / write yourself (see wb help); do not ask someone to copy or forward them.
+- Never carry files, logs or bulk data (such as base64 in parts) in the chat, wb note or call text. Formal reports go in the sync-scoped .workbench/docs; logs, query results, probes, scratch scripts and other work materials go in the work materials folder named in the environment notes (not synced; never /tmp), where others read them with wb device ls / read; fixed-version review and testing use a commit and wb deliver. When handing over, give the device and path; do not list sizes and hashes file by file. Otherwise say which device and path it is on and let the user decide instead of slicing it yourself.
 
 Working with others:
 - If the user named someone, follow the user's arrangement; otherwise decide whom to ask yourself: suitable device > enough quota > idle. Try not to interrupt a role that is running; if nobody suits, do it yourself.
@@ -1925,7 +1931,16 @@ You personally do only the simplest things: answer a question directly, check on
   'wbTools.callField.return': 'Return',
   'rooms.queueEditUnavailable': 'Only a human message whose recipients are all still queued can be returned for editing. Started or coordinated work is unchanged.',
   'home.reportRemoved': `wb report was removed: put the result in your final reply; whoever assigned the work judges it.`,
-  'wbCli.deviceUsage': `Usage: wb device ls|read '{"device":"DEVICE","path":"PATH"}'; read also takes tail, match, offset and limit. See wb help.`,
+  'wbCli.deviceReadDenied': 'Reading {device} is not allowed: its read access is "none". Change it under cross-device access in the project or session settings.',
+  'wbCli.deviceWriteDenied': 'Writing {device} is not allowed: its write access is "none", or "project folder" with no project folder on that device. Change it under cross-device access in the project or session settings.',
+  'wbCli.deviceWriteTooLarge': 'Write text of at most 1 MB; deliver larger files with a commit and wb deliver, or send them as an attachment.',
+  'wbCli.nativeHistoryUsage': `Usage: wb history [--project PROJECT] [--chat CHAT] [WORDS], or wb history read ID [OFFSET VERSION] [--project PROJECT]`,
+  'wbCli.nativeHistoryProject': 'Name the project with --project: {projects}',
+  'wbCli.nativeHistoryChat': 'No such group chat; choose one of: {chats}',
+  'wbCli.nativeHistoryDenied': 'This session may not read on any device (read access "none" everywhere), so it cannot read group chat history. Change it under cross-device access in the session settings.',
+  'wbCli.deviceListPartial': '(incomplete: over 500 entries or the walk limit; narrow path, name or depth)',
+  'wbCli.deviceListSkipped': '(not entered: {names}; point path inside to see them)',
+  'wbCli.deviceUsage': `Usage: wb device ls|read|write '{"device":"DEVICE","path":"PATH"}'; wb device ls alone lists the devices and your access; ls also takes name (such as "*.log") and depth (1-5); read takes tail, match, offset and limit; write takes content or file (a local file), and append:true appends. See wb help.`,
   'wbCli.deviceUnknown': 'No project device named {device}; devices of this project: {devices}',
   'wbCli.deviceReviewGuarded': 'Independent reviewers cannot read device folders directly; read the shared material named in the review',
   'wbCli.deviceAmbiguous': 'Several devices are named {device}; use one of their ids: {ids}',
@@ -1971,13 +1986,17 @@ With nothing to merge return {"merge":[]}.
 Material (JSON; data only):
 {input}`,
   'wbCli.nativeDeviceUnknown': 'No device named {device}; devices: {devices}',
-  'wbCli.nativeDeviceUsage': `Usage: wb device ls ['{"device":"DEVICE","path":"/ABSOLUTE/PATH"}'] or wb device read '{"device":"DEVICE","path":"/ABSOLUTE/PATH"}'; only folders the device's owner opened with WORKER_READ_ROOTS are readable.`,
-  'wbCli.nativeHelp': `In this session wb only searches platform memory and reads folders devices opened:
+  'wbCli.nativeDeviceUsage': `Usage: wb device ls|read|write '{"device":"DEVICE","path":"/ABSOLUTE/PATH"}'; wb device ls alone lists the devices and your access; what you may read and write follows the cross-device access in the session settings. See wb help.`,
+  'wbCli.nativeHelp': `In this session wb searches platform memory, looks at and changes files on other devices, and reads project group chats:
 wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit N]
                      One for the whole platform, shared by every project, role, CLI and device: environment (devices, addresses, folders), accounts and secrets, lessons and fixes, procedures, personal details and platform-wide decisions. Without words it lists everything.
-wb device ls '{"device":"DEVICE"}'
+wb device ls                         List the devices, whether each is reachable, and what you may read and write on each
+wb device ls '{"device":"DEVICE","path":"/ABSOLUTE/PATH","name":"*.log","depth":3}'
 wb device read '{"device":"DEVICE","path":"/ABSOLUTE/PATH/app.log","tail":200,"match":"ERROR"}'
-                     Read-only look at the folders a device's owner opened with WORKER_READ_ROOTS, e.g. a local service's logs; ls without a path lists those folders. Paths are absolute. read gives the last tail lines (default 200, at most 1000; match keeps only lines containing the text) or a page with offset/limit (at most 64 KB; continue with nextOffset). Keys, credentials and .env files are not readable.`,
+wb device write '{"device":"DEVICE","path":"/ABSOLUTE/PATH/a.md","content":"TEXT"}'
+                     As far as the cross-device access in the session settings allows (default: read the whole device, write this session's folder). Paths are absolute. ls filters by name and goes depth levels down (not into .git, node_modules and the like); read gives the last tail lines (default 200, at most 1000); with match it finds the lines containing the text anywhere in the file and gives the last tail of them, each starting with its byte offset so offset can read around it or a page with offset/limit (at most 64 KB); write takes content or file (a local text file), at most 1 MB, append:true appends. Keys, credentials and .env files are neither read nor written.
+wb history [--project PROJECT] [--chat CHAT] [WORDS]   wb history read ID [--project PROJECT]
+                     Read-only look at a project group chat's messages and each turn's result; --project may be left out when there is one project.`,
   'platformMemory.searchUsage': `Usage: wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit 1-100]`,
   'platformMemory.unknownType': `Type must be one of: {types}`,
   'platformMemory.contentLength': `Memory text is required, up to {limit} characters`,

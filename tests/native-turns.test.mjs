@@ -154,9 +154,17 @@ test('page instructions go once per session and version, like group-chat role in
   const third = send(3);
   assert.equal(sent.at(-1).instructions, undefined, 'delivered: never again for this version');
   end(third.id, 'succeeded');
-  // Grok has no question tool; an older Worker would drop them, so it gets none and nothing is recorded.
-  turns.create('n1', worker, { runtime: 'grok', sessionId: SID, clientTurnId: 'client-000004', text: 'hi' });
+  const grok = turns.create('n1', worker, { runtime: 'grok', sessionId: SID, clientTurnId: 'client-000004', text: 'hi' });
+  // Grok and Agy have no question card on the page: they get only the tools part (platform memory, wb device, wb history).
+  const tools = sent.at(-1).instructions;
+  assert.match(tools.text, /wb device write/);assert.doesNotMatch(tools.text, /AskUserQuestion/);assert.notEqual(tools.version, PAGE_INSTRUCTIONS_VERSION);
+  // Their own version is recorded once accepted, so the next Grok turn carries nothing.
+  turns.receive('n1', { type: 'native_turn_event', id: grok.id, event: { kind: 'status', inputDeliveryState: 'accepted' } });
+  end(grok.id, 'succeeded');
+  assert.equal(db.get('nativePageInstructions', `n1/grok/${SID}`).version, tools.version);
+  turns.create('n1', worker, { runtime: 'grok', sessionId: SID, clientTurnId: 'client-000006', text: 'again' });
   assert.equal(sent.at(-1).instructions, undefined);
+  // An older Worker would drop them, so it gets none and nothing is recorded.
   db.put('workers', { id: 'n1', capabilities: { nativeTurns: 3 } });
   turns.create('n1', db.get('workers', 'n1'), { runtime: 'codex', sessionId: SID, clientTurnId: 'client-000005', text: 'hi' });
   assert.equal(sent.at(-1).instructions, undefined);
