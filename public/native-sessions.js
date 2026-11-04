@@ -21,6 +21,7 @@ import {stripAnsi} from './run-log-data.js';
 import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSummary} from './history-prompt.js';
 import {cachedHistory,saveHistory,forgetHistory,compactHistoryPage} from './history-cache.js';
 import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices,resolveToolFile,toolFilePaths,historyContainsReply} from './native-transcript.js';
+import {deviceAccessRows} from './device-access.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -827,7 +828,17 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    .then(state=>{deleteState=state;deleteButton.disabled=!state?.ok;deleteNote.textContent=state?.ok?(state.missing?t('The folder is already gone; delete removes the session from this list.'):`${t('Deletes this folder and removes the session from this list:')} ${state.path}`):t(state?.reason||'This folder cannot be deleted here');})
    .catch(error=>{deleteNote.className='global-error';deleteNote.textContent=t(error.message);});
   else deleteNote.textContent=t('Upgrade this Worker to branch or delete sessions');
-  body.append(nameCard,repo,agents,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
+  // wb device from this session: a read and a write level per device (only sessions created in Workbench keep settings).
+  const access=el('section','native-settings-section native-device-access');access.append(el('h3','',t('Cross-device access')));
+  const accessNote=el('p','native-side-hint',t(value.entryId?'What this session may read and write on each device with wb device.':'Only sessions created in Workbench have cross-device settings.'));
+  const accessRows=el('div','device-access-rows');
+  accessRows.append(...deviceAccessRows({workers:getData().workers||[],value:value.deviceAccess,create:el,disabled:!value.entryId,save:async next=>{
+   accessNote.className='native-side-hint';accessNote.textContent=t('Saving…');
+   try{const saved=await api(`${endpoint(value.nodeId)}/device-access`,{method:'POST',json:{entryId:value.entryId,deviceAccess:next}});value.deviceAccess=saved.deviceAccess;accessNote.textContent=t('Saved');}
+   catch(error){accessNote.className='global-error';accessNote.textContent=t(error.message);}
+  }}));
+  access.append(accessRows,accessNote);
+  body.append(nameCard,access,repo,agents,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
  }
  /** A branch says where it came from at the top of its transcript, with a way back to the original (a Codex branch shows
   * only its own turns; the conversation before the fork lives in the original). */

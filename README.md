@@ -148,7 +148,7 @@ Use [`.env.example`](.env.example) as a reference. Workbench does not automatica
 | `WORKER_TOKEN` | Shared Worker registration credential; must match Home |
 | `HOME_URL` | Worker's WebSocket connection to Home |
 | `WORKER_ROOTS` | Project directories the Worker may use |
-| `WORKER_READ_ROOTS` | Optional extra folders (e.g. a local service's logs) that roles on other devices, and Sessions-page CLIs on any device, may read with `wb device ls/read`; read-only, separated like `PATH` |
+| `WORKER_READ_ROOTS` | Optional extra folders that stay readable with `wb device ls/read` in addition to what the cross-device access in project and session settings allows; separated like `PATH`. Usually not needed any more: the settings' "whole device" level reads everything |
 | `WORKER_DATA_DIR` | Private data directory for that Worker |
 | `WORKER_CONCURRENCY` | Device execution capacity; defaults to `2` |
 | `CODEX_BIN`, `CLAUDE_BIN`, `GROK_BIN`, `AGY_BIN` | Optional paths to CLI executables |

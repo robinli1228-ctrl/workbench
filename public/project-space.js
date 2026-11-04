@@ -1,5 +1,6 @@
 import { t, getLanguage } from './i18n.js';
 import { deviceIconEl, setActionIcon, UI_ICON } from './role-icons.js';
+import {deviceAccessRows} from './device-access.js';
 
 /** The account a repository URL will use, the same order Home applies: the account owning it, the default, the only one. */
 export function matchHostingAccount(url, accounts = [], preferred = '') {
@@ -21,11 +22,13 @@ export function hostingAccountAmbiguous(url, accounts = [], preferred = '') {
  */
 export function projectSpaceUI({ api, getData, getProject, refreshState, create, openFolder }) {
   const folderRows = document.querySelector('#project-folder-rows'), folderFeedback = document.querySelector('#project-folder-feedback');
+  const accessRows = document.querySelector('#project-device-access-rows'), accessFeedback = document.querySelector('#project-device-access-feedback');
   const repoRows = document.querySelector('#project-repository-rows'), feedback = document.querySelector('#project-space-feedback');
   const dialog = document.querySelector('#project-repository-dialog'), form = document.querySelector('#project-repository-form');
   const dialogFeedback = document.querySelector('#project-repository-feedback'), nodes = document.querySelector('#repository-node-options');
   const submit = form.querySelector('[data-repository-submit]'), accountNote = form.querySelector('[data-repository-account]');
   let signature = '', projectId = '', editing = null, keyTouched = false, submitting = false;
+  let accessSaving = Promise.resolve();
   const busy = new Set();
   setActionIcon(document.querySelector('#add-project-repository'), 'plus', t('Add repository'));
   const show = (node, text) => { node.textContent = t(text || ''); node.hidden = !text; };
@@ -88,15 +91,24 @@ export function projectSpaceUI({ api, getData, getProject, refreshState, create,
 
   function render() {
     const p = getProject(), data = getData(); if (!p) return;
-    if (projectId !== p.id) { show(feedback, ''); show(folderFeedback, ''); if (dialog.open) dialog.close(); }
+    if (projectId !== p.id) { show(feedback, ''); show(folderFeedback, ''); show(accessFeedback, ''); if (dialog.open) dialog.close(); }
     projectId = p.id;
     document.querySelector('#project-folder-name').value = p.folderName || t('Keep existing folder');
     const bindings = (data.workspaces || []).filter(w => w.projectId === p.id), repos = (data.repositories || []).filter(r => r.projectId === p.id);
-    const next = JSON.stringify([p.id, p.folderName, bindings, repos, data.repositoryWorkspaces, (data.workers || []).map(w => [w.id, w.name, w.online, w.workspaceRoot, w.nodeKind, w.platform]), data.repositoryOperations, [...busy], getLanguage()]);
+    const next = JSON.stringify([p.id, p.folderName, p.deviceAccess || null, bindings, repos, data.repositoryWorkspaces, (data.workers || []).map(w => [w.id, w.name, w.online, w.workspaceRoot, w.nodeKind, w.platform]), data.repositoryOperations, [...busy], getLanguage()]);
     if (next === signature) return; signature = next;
     const workers = data.workers || [], workerName = id => workers.find(w => w.id === id)?.name || id;
     folderRows.replaceChildren(...workers.map(w => folderRow(p, w, bindings.find(b => b.nodeId === w.id))));
     if (!workers.length) folderRows.append(create('div', 'settings-list-empty', t('No devices registered yet')));
+    // wb device for this project's roles: a read and a write level per device; saved as a whole on every change.
+    const id = p.id;
+    // The change shows at once and saves in order; a later change waits for the earlier save instead of being dropped.
+    accessRows.replaceChildren(...deviceAccessRows({ workers, value: p.deviceAccess, create, save: value => {
+      p.deviceAccess = value; show(accessFeedback, 'Saving…');
+      accessSaving = accessSaving.then(() => api(`/api/projects/${encodeURIComponent(id)}/device-access`, { method: 'POST', json: { deviceAccess: value } }))
+        .then(() => show(accessFeedback, 'Saved'), error => show(accessFeedback, error.message)).then(() => refreshState({ quiet: true }).catch(() => {}));
+    } }));
+    if (!workers.length) accessRows.append(create('div', 'settings-list-empty', t('No devices registered yet')));
     repoRows.replaceChildren(...repos.map(repo => repositoryRow(repo, data, workerName)));
     if (!repos.length) { const empty = create('div', 'settings-list-empty'); empty.innerHTML = UI_ICON.git; empty.append(create('span', '', t('No repository yet; plain-file projects use the project folder directly'))); repoRows.append(empty); }
     for (const op of (data.repositoryOperations || []).filter(o => o.projectId === p.id && o.status !== 'ready'))

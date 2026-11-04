@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
 import { loadTurnContext } from './turn-context.mjs';
 import { agentRequest } from './agent-bridge.mjs';
 import { setupCatalog, setupPropose } from './setup-tools.mjs';
@@ -28,6 +29,22 @@ export async function main(argv = process.argv.slice(2)) {
   const turnId=argv[0]==='--turn'?argv[1]:undefined;
   if(argv[0]==='--turn')argv=argv.slice(2);
   const [cmd, sub, ...rest] = argv;
+  // wb device ls|read|write '{JSON}': write takes "content", or "file" (a local text file of at most 1 MB) read here.
+  const deviceInput=async usage=>{
+    if(!['ls','read','write'].includes(sub)||rest.length>1||sub!=='ls'&&rest.length!==1)throw new Error(tr(usage));
+    let input={};if(rest.length)try{input=JSON.parse(rest[0]);}catch{throw new Error(tr(usage));}
+    if(!input||typeof input!=='object'||Array.isArray(input))throw new Error(tr(usage));
+    if(sub==='write'&&input.file!==undefined){
+      if(typeof input.file!=='string'||input.content!==undefined)throw new Error(tr(usage));
+      const {file,...rest}=input,path=resolve(file);
+      if((await stat(path)).size>1024*1024)throw new Error(tr('wbCli.deviceWriteTooLarge'));
+      // Text only: a binary file would arrive as replacement characters.
+      let content;try{content=new TextDecoder('utf-8',{fatal:true}).decode(await readFile(path));}catch{throw new Error(tr('wbCli.deviceWriteTooLarge'));}
+      if(content.includes('\0'))throw new Error(tr('wbCli.deviceWriteTooLarge'));
+      input={...rest,content};
+    }
+    return {...input,action:sub};
+  };
   const tail = [sub, ...rest].filter(v => v !== undefined);
   try {
     // Discovery must work even when a retained process inherited a deleted turn context.
@@ -35,10 +52,14 @@ export async function main(argv = process.argv.slice(2)) {
     // A sessions-page CLI has no Run and no collaboration tools: only platform memory search, relayed by its Worker.
     if(process.env.WB_NATIVE==='1'){
       if(cmd==='memory'&&sub==='search'&&!tail.some(value=>['--help','-h'].includes(value)))return out(await agentRequest('/api/agent/native-memory/search',memorySearchInput(rest)));
-      if(cmd==='device'&&['ls','read'].includes(sub)&&rest.length<=1){
-        let input={};if(rest.length)try{input=JSON.parse(rest[0]);}catch{throw new Error(tr('wbCli.nativeDeviceUsage'));}
-        if(!input||typeof input!=='object'||Array.isArray(input))throw new Error(tr('wbCli.nativeDeviceUsage'));
-        return out(await agentRequest('/api/agent/native-device-read',{...input,action:sub}));
+      if(cmd==='device'){const input=await deviceInput('wbCli.nativeDeviceUsage');return out(await agentRequest(sub==='write'?'/api/agent/native-device-write':'/api/agent/native-device-read',input));}
+      // The group chats this session may read: wb history [--project NAME] [WORDS], wb history read ID --project NAME.
+      if(cmd==='history'){
+        if(tail.some(value=>['--help','-h'].includes(value)))return out(tr('wbCli.nativeHistoryUsage'));
+        const args=[...tail],option=key=>{const at=args.indexOf(key);if(at<0)return undefined;const value=args.splice(at,2)[1];if(!value)throw new Error(tr('wbCli.nativeHistoryUsage'));return value;};
+        const project=option('--project'),chat=option('--chat');
+        if(args[0]==='read'){if(!args[1]||args.length>3||args[2]!==undefined&&!/^\d+$/.test(args[2]))throw new Error(tr('wbCli.nativeHistoryUsage'));return out(await agentRequest('/api/agent/native-history',{action:'read',project,chat,id:args[1],offset:args[2]===undefined?0:Number(args[2])}));}
+        return out(await agentRequest('/api/agent/native-history',{action:'search',project,chat,...historySearchInput(args[0]==='search'?args.slice(1):args)}));
       }
       if(!cmd||['help','-h','--help'].includes(cmd)||cmd==='memory')return out(tr('wbCli.nativeHelp'));
       throw new Error(tr('wbCli.nativeHelp'));
@@ -88,10 +109,8 @@ export async function main(argv = process.argv.slice(2)) {
       return out(await agentRequest('/api/agent/memory/search',{runId:process.env.WB_RUN_ID,...memorySearchInput(rest)}));
     }
     if (cmd === 'device') {
-      if (!['ls','read'].includes(sub) || rest.length !== 1) throw new Error(tr('wbCli.deviceUsage'));
-      let input;try{input=JSON.parse(rest[0]);}catch{throw new Error(tr('wbCli.deviceUsage'));}
-      if(!input||typeof input!=='object'||Array.isArray(input))throw new Error(tr('wbCli.deviceUsage'));
-      return out(await agentRequest('/api/agent/device-read',{...input,runId:process.env.WB_RUN_ID,action:sub}));
+      const input=await deviceInput('wbCli.deviceUsage');
+      return out(await agentRequest(sub==='write'?'/api/agent/device-write':'/api/agent/device-read',{...input,runId:process.env.WB_RUN_ID}));
     }
     if (cmd === 'timer') {
       if (sub === 'list' && !rest.length) return out(await agentRequest('/api/agent/timers',{runId:process.env.WB_RUN_ID,action:'list'}));

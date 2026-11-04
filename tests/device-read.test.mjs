@@ -75,7 +75,7 @@ test('ls lists one folder level without secret names', async t => {
   await assert.rejects(deviceList({ projectRoot: project, readRoots, path: 'logs/app.log' }), e => e.code === 'not_a_folder');
 });
 
-test('review fixes: wider secret names, sniffed binaries, private handoffs, Worker data and too wide roots', async t => {
+test('review fixes: wider secret names, sniffed binaries, readable handoffs and worktrees, Worker data and too wide roots', async t => {
   const { project, readRoots } = await layout(t);
   for (const name of ['.git-credentials', '.gitconfig', 'id_rsa_github', '.zsh_history', 'app.sqlite', 'deploy_key', 'serviceAccountKey.json', 'my-credentials.txt', '.ENV', 'ＩＤ_RSA'])
     await writeFile(join(project, name), 'x');
@@ -86,10 +86,13 @@ test('review fixes: wider secret names, sniffed binaries, private handoffs, Work
   // A NUL in the first 8 KiB marks the whole file binary, so 1-byte pages cannot spell out its text.
   await writeFile(join(project, 'mixed.dat'), Buffer.concat([Buffer.from([0]), Buffer.from('user=admin pass=hunter')]));
   assert.equal(await code('mixed.dat', { offset: 5, limit: 1 }), 'binary_file');
-  // Other roles' private handoffs and the Worker's own data folder stay out.
+  // Only credentials and keys stay out: private handoffs and worktrees (services run from there) are readable now;
+  // the Worker's own data folder still is not.
   await mkdir(join(project, '.workbench', 'handoffs', 'private', 'r2'), { recursive: true });
   await writeFile(join(project, '.workbench', 'handoffs', 'private', 'r2', 'LATEST.md'), 'private');
-  assert.equal(await code('.workbench/handoffs/private/r2/LATEST.md'), 'secret_path');
+  assert.equal(await code('.workbench/handoffs/private/r2/LATEST.md'), 'read');
+  await mkdir(join(project, '.worktrees', 'run-1', 'logs'), { recursive: true });await writeFile(join(project, '.worktrees', 'run-1', 'logs', 'app.log'), 'ok');
+  assert.equal(await code('.worktrees/run-1/logs/app.log'), 'read');
   await mkdir(join(project, 'state'));await writeFile(join(project, 'state', 'w.txt'), 'w');
   assert.equal(await code('state/w.txt', {}, { denyRoots: [await realpath(join(project, 'state'))] }), 'outside_allowed_folders');
   // A refused path reads the same whether or not it exists.
