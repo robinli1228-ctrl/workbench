@@ -1,5 +1,6 @@
 const REASONS = new Set(['node_query_timeout', 'media_timeout', 'media_idle', 'media_slow']);
 const COOLDOWN = 10 * 60_000;
+const PENDING_TTL = COOLDOWN;
 const RETRY_DELAY = 60_000;
 const MIN_RATE = 200_000;
 
@@ -173,6 +174,12 @@ export class DeviceTransport {
     if (!state) return { status: 'disabled' };
     if (!state.enabled) return this.view(state.device.deviceId);
     if (state.flight) return state.flight;
+    if (state.pending && state.lastProbeAt !== null && this.clock() - state.lastProbeAt >= PENDING_TTL) {
+      state.pending = null;
+      state.status = 'expired';
+      state.error = null;
+      return this.notify(state);
+    }
     if (!state.pending || (state.lastRetryAt !== null && this.clock() - state.lastRetryAt < RETRY_DELAY)) {
       return this.view(state.device.deviceId);
     }
@@ -240,7 +247,7 @@ export class DeviceTransport {
         state.error = 'transport_rollback_failed';
         return;
       }
-      if (error?.code === 'transport_busy') {
+      if (error?.code === 'transport_busy' || !selected) {
         state.status = 'pending';
         state.error = null;
       } else {

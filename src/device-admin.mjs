@@ -72,6 +72,8 @@ export class DeviceAdmin {
     const restart = () => {
       if (this.tunnels.get(id) !== child) return;
       this.tunnels.delete(id);
+      // A backup's own exit rebuilds through direct SSH, even if its local SOCKS listener still accepts connections.
+      if ((route?.route || 'DIRECT') !== 'DIRECT') this.transport?.failed?.(id, route.route);
       if (this.stoppingTunnels) return;
       const next = setTimeout(() => {
         this.tunnelTimers.delete(id);

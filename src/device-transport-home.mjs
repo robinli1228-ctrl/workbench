@@ -7,7 +7,7 @@ const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status
 /** Home owns settings, probes and its own SSH route. Backup endpoints are loopback SOCKS listeners, never global selectors. */
 export class DeviceTransportHome {
   constructor({db,admin,credentials,change,probe=probeTransport,portOpen=localTransportPort}) {
-    Object.assign(this,{db,admin,credentials,change,probe,portOpen});this.controllers=new Map();this.routes=new Map();this.tests=new Map();
+    Object.assign(this,{db,admin,credentials,change,probe,portOpen});this.controllers=new Map();this.routes=new Map();this.tests=new Map();this.fallbacks=new Map();
   }
   settings(id){return this.db.get('deviceTransportSettings',id)||{id,revision:0,enabled:false,candidates:[]};}
   device(id){const device=this.db.get('devices',id);if(!device)fail(tr('deviceAdmin.deviceNotFound'),404);return device;}
@@ -19,11 +19,15 @@ export class DeviceTransportHome {
     const controller=new DeviceTransport({config,enabled:settings.enabled,
       probe:async(_,candidate)=>{const key=await this.credentials.get(id);return this.probe(this.device(id),key?.keyPath,candidate.probePort);},
       select:async(_,name)=>{this.routes.set(id,name);},
-      reconnect:async(_,hooks)=>{try{return await this.admin.reconnect(id,hooks);}catch(error){if([tr('deviceAdmin.reconnectBusy'),tr('deviceAdmin.reconnectUnverified')].includes(error.message))error.code='transport_busy';throw error;}},
+      reconnect:async(_,hooks)=>{
+        // Automatic deferral must not publish a failed human reconnect; the formal reconnect still repeats both idle checks.
+        try{if(typeof this.admin.reconnectContext?.assertIdle!=='function')return {busy:true};this.admin.reconnectContext.assertIdle(this.device(id).nodeId);}catch{return {busy:true};}
+        try{return await this.admin.reconnect(id,hooks);}catch(error){if([tr('deviceAdmin.reconnectBusy'),tr('deviceAdmin.reconnectUnverified')].includes(error.message))error.code='transport_busy';throw error;}
+      },
       change:()=>this.change(),persist:view=>this.db.put('deviceTransports',{id,...view})});
     this.controllers.set(id,controller);return controller;
   }
-  view(id){const settings=this.settings(id);return {...this.controller(id).view(id),busy:this.busy(id),revision:settings.revision,candidates:settings.candidates,defaultNode:'DIRECT',test:this.tests.get(id)||{status:'idle',results:[]}};}
+  view(id){const settings=this.settings(id);return {...this.controller(id).view(id),busy:this.busy(id),revision:settings.revision,candidates:settings.candidates,defaultNode:'DIRECT',fallback:this.fallbacks.get(id)||null,test:this.tests.get(id)||{status:'idle',results:[]}};}
   busy(id){return this.controller(id).busy(id)||this.admin.running?.has(id)||this.tests.get(id)?.status==='running';}
   save(id,input) {
     this.device(id);if(this.busy(id))fail(tr('transport.testingBusy'),409);
@@ -47,8 +51,15 @@ export class DeviceTransportHome {
   /** Record creation of an actual tunnel, including direct fallback after the local proxy has stopped. */
   started(id,route='DIRECT') {
     this.routes.set(id,route);const controller=this.controller(id),view=controller.view(id);
+    // Preserve an idle pending decision on a same-route restart, but invalidate an in-flight switch that fell back.
+    if(view.current===route&&!(view.busy&&view.pending&&view.pending!==route))return;
     // An automatic target remains pending until the reconnect heartbeat proves it; other creations record the actual route.
     if(!view.busy||view.pending!==route)controller.applied(id,route);
+  }
+  /** Only a spontaneously lost owned backup tunnel requests direct rebuilding; existing work is never stopped here. */
+  failed(id,route) {
+    if(this.routes.get(id)!==route)return;
+    this.routes.set(id,'DIRECT');this.fallbacks.set(id,{route,at:new Date().toISOString()});this.change();
   }
   stalled(nodeId,reason){const device=this.db.list('devices').find(d=>d.nodeId===nodeId);if(!device||this.admin.running?.has(device.id)||this.tests.get(device.id)?.status==='running')return;return this.controller(device.id).stalled(nodeId,reason);}
   retry(nodeId){const device=this.db.list('devices').find(d=>d.nodeId===nodeId);if(device&&!this.admin.running?.has(device.id)&&this.tests.get(device.id)?.status!=='running')return this.controller(device.id).retryPending(nodeId);}

@@ -236,7 +236,7 @@ const devicesAdmin = new DeviceAdmin({ db, credentials, base, data, workerToken,
 } });
 // Settings opt in only Home-owned reverse SSH routes; an unconfigured device keeps its original direct connection.
 deviceTransport=new DeviceTransportHome({db,admin:devicesAdmin,credentials,change:()=>change()});
-devicesAdmin.transport={options:id=>deviceTransport.options(id),started:(id,route)=>deviceTransport.started(id,route)};
+devicesAdmin.transport={options:id=>deviceTransport.options(id),started:(id,route)=>deviceTransport.started(id,route),failed:(id,route)=>deviceTransport.failed(id,route)};
 void devicesAdmin.startTunnels();
 process.once('exit', () => devicesAdmin.stopTunnels());
 setup.projectsAdmin = projectsAdmin;

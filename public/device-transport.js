@@ -33,6 +33,8 @@ export function deviceTransportUI({api}) {
     function status(next) {
       state=next;const route=next.current==='DIRECT'?t('Direct'):next.current;
       current.textContent=t('Current route: {name}',{name:route})+(next.pending?' · '+t('Waiting for idle: {name}',{name:next.pending}):'');
+      if(next.fallback)current.textContent+=' · '+t('Last fallback: {name} disconnected; rebuilding directly.',{name:next.fallback.route});
+      if(next.status==='expired')current.textContent+=' · '+t('The pending route expired. A new stall will trigger fresh tests.');
       results.replaceChildren();
       for(const result of next.test?.results||[]){const line=el('p','transport-test-result');line.translate=false;line.textContent=(result.name==='DIRECT'?t('Direct'):result.name)+' · '+(result.complete?t('Upload {up} · Download {down}',{up:speed(result.uploadBps),down:speed(result.downloadBps)}):t('Test failed or timed out'));results.append(line);}
       const running=next.test?.status==='running';test.disabled=dirty||busy||running||next.busy;save.disabled=busy||running||next.busy;direct.disabled=busy||running||next.busy||next.current==='DIRECT';

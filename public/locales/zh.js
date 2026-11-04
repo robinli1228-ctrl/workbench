@@ -2202,4 +2202,6 @@ export default {
   "Speed test completed.": "测速完成。",
   "Transport settings saved.": "传输线路设置已保存。",
   "Direct": "直连",
+  "Last fallback: {name} disconnected; rebuilding directly.": "最近回落：{name} 已断开，按直连重建。",
+  "The pending route expired. A new stall will trigger fresh tests.": "待切换决定已过期，下次卡顿时重新测速。",
 };
