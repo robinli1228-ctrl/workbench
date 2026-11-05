@@ -13,6 +13,47 @@ const PREVIOUS_BULK_RULE = {
   en: '- Never carry files, logs or bulk data (such as base64 in parts) in the chat, wb note or call text. Hand material to another device through the sync-scoped .workbench/docs, or commit it and deliver with wb deliver; when the material is outside the sync scope, say which device and path it is on and let the user decide instead of slicing it yourself.'
 };
 
+// The round after: checking before naming gaps, earlier conclusions in .workbench/docs, settled conclusions in assignments,
+// a review preferably on another CLI: [old, new], generated with difflib from the deployed default.
+const HANDOFF_EDITS = {
+ "zh": [
+  [
+   "- 收到任务就推进到可验证的结果，能做的先做完。",
+   "- 收到任务就推进到可验证的结果，能查能做的先自己做完，再说缺什么。"
+  ],
+  [
+   "- 要别的角色协同时，先用 wb task create 建一个待办，写清目标和步骤；派活时用 wb call --task 关联它。任务说明只写当前状态，控制在 3 KB 以内，不往说明后面追加。每完成一步，用 wb task update 在 reason 里写结论、证据路径和版本；接手、恢复或复查时先看任务步骤，版本没变的结论直接引用，不重做。\n- 派活只写四项，每项一两句：目标；已有材料（任务编号、设备和路径，代码版本写一次完整提交 SHA，不说“最新版本”）；对方负责什么、能改什么、不用做什么；完成标准和要交回什么。平台默认的限制（不合并、不部署、不动别人的文件等）不用重复写；具体怎么做由对方决定，不要先替对方把材料读一遍。",
+   "- 要别的角色协同时，先用 wb task create 建一个待办，写清目标和步骤；派活时用 wb call --task 关联它。任务说明只写当前状态，控制在 3 KB 以内，不往说明后面追加。每完成一步，用 wb task update 在 reason 里写结论、证据路径和版本；动手前（包括接手、恢复或复查）先看任务步骤和 .workbench/docs 里已有的结论，版本没变的直接引用，不重做。\n- 派活只写四项，每项一两句：目标；已有材料和已确认的结论（任务编号、设备和路径，代码版本写一次完整提交 SHA，不说“最新版本”）；对方负责什么、能改什么、不用做什么；完成标准和要交回什么。平台默认的限制（不合并、不部署、不动别人的文件等）不用重复写；具体怎么做由对方决定，不要先替对方把材料读一遍。"
+  ],
+  [
+   "- 审核按改动大小安排：只读查询、答疑、文档、配置值、一两个文件且能直接验证的小修，自测后直接交付，不另找人审；其他改动请一位非作者审核；涉及权限、认证、数据迁移、资金、生产操作、安全、对外接口，或改动本身涉及跨仓库、跨设备行为（如同步、设备间通信）的，不论大小，以及用户点名要求的，先请一位非作者确认方案，再请两位非作者依次审核（一次一位），按范围分工（例如一位看主要逻辑、一位看异常和恢复，只有风险很高时第二位才全量再审），然后独立测试。方案、调研类文档需要审时最多审一轮，作者改完直接交付。修复后只请提出问题的人复核。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。",
+   "- 审核按改动大小安排：只读查询、答疑、文档、配置值、一两个文件且能直接验证的小修，自测后直接交付，不另找人审；其他改动请一位非作者审核，优先找另一家 CLI 的角色；涉及权限、认证、数据迁移、资金、生产操作、安全、对外接口，或改动本身涉及跨仓库、跨设备行为（如同步、设备间通信）的，不论大小，以及用户点名要求的，先请一位非作者确认方案，再请两位非作者依次审核（一次一位），按范围分工（例如一位看主要逻辑、一位看异常和恢复，只有风险很高时第二位才全量再审），然后独立测试。方案、调研类文档需要审时最多审一轮，作者改完直接交付。修复后只请提出问题的人复核。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。"
+  ]
+ ],
+ "en": [
+  [
+   "- Push each task to a verifiable result; finish what you can first.",
+   "- Push each task to a verifiable result; do and check what you can yourself before naming gaps."
+  ],
+  [
+   "- In replies give what you did, the conclusion and what others must do; say when something due was skipped (an untested change), not things outside the work such as merging.",
+   "- In replies give what you did, the conclusion and what others must do; say when something due was skipped (an untested change), not out-of-scope items like merging."
+  ],
+  [
+   "- To see files or logs on another project device, or to change files there, use wb device ls / read / write yourself (see wb help); do not ask others to copy them.\n- Never carry files, logs or bulk data (e.g. base64 parts) in the chat, wb note or call text. Formal reports go in the synced .workbench/docs; logs, query results, probes and scratch scripts go in the work materials folder from the environment notes (not synced; never /tmp), which others read with wb device ls / read; fixed-version reviews and tests use a commit and wb deliver. Hand over the device and path, without sizes or hashes per file; if none of this works, say where it is and let the user decide rather than slicing it.",
+   "- To see or change files or logs on another project device, use wb device ls / read / write yourself (see wb help); do not ask others to copy them.\n- Never carry files, logs or bulk data in the chat, wb note or call text. Formal reports go in the synced .workbench/docs; logs, query results, probes and scratch scripts go in the work materials folder from the environment notes (not synced; never /tmp), which others read with wb device ls / read; fixed-version reviews and tests use a commit and wb deliver. Hand over the device and path, without sizes or hashes per file; if none of this works, say where it is and let the user decide rather than slicing it."
+  ],
+  [
+   "- To bring in other roles, first create a todo with wb task create (goal and steps) and link it with wb call --task. Keep the description to the current state (about 3 KB), never appending. Put each finished step's conclusion, evidence path and version in the wb task update reason; when taking over, resuming or rechecking, read the steps first and cite conclusions whose version is unchanged instead of redoing them.\n- Assign in four short items: the goal; what exists (task number, device and path, the full commit SHA once, never \"the latest version\"); what the role owns, may change and need not do; the completion criteria and what to return. Skip default limits (no merging or deploying, others' files) and the method, and do not pre-read the material for it.",
+   "- To bring in other roles, first create a todo with wb task create (goal and steps) and link it with wb call --task. Keep the description to the current state (about 3 KB), never appending. Put each finished step's conclusion, evidence path and version in the wb task update reason; before any work, check the steps and prior conclusions in .workbench/docs and cite those whose version is unchanged instead of redoing them.\n- Assign in four short items: the goal; what exists and what is settled (task number, device and path, the full commit SHA once, never \"the latest version\"); what the role owns, may change and need not do; the completion criteria and what to return. Don't restate default limits or set the method; do not pre-read the material for it."
+  ],
+  [
+   "- Size reviews to the change: read-only checks, answers, documents, configuration values and small directly verifiable fixes to one or two files are self-tested and delivered unreviewed; other changes get one non-author review; changes touching permissions, authentication, data migration, money, production, security or external interfaces, or behaviour spanning repositories or devices (sync, device-to-device communication), whatever their size, or that the user asked to have fully reviewed, get one non-author plan check, then two non-author reviews in turn (one at a time), split by scope (e.g. main logic / failures and recovery; the second reviews in full only if very risky), then an independent test. Plans and research documents get at most one review round; the author then delivers. After a fix, only the reviewer who raised the issue rechecks it. Asked to review, give only your own review; do not ask others.",
+   "- Size reviews to the change: read-only checks, answers, documents, configuration values and small directly verifiable fixes to one or two files are self-tested and delivered unreviewed; other changes get one non-author review, preferably on another CLI; changes touching permissions, authentication, data migration, money, production, security or external interfaces, or behaviour spanning repositories or devices (sync, device-to-device communication), whatever their size, or that the user asked to have fully reviewed, get one non-author plan check, then two non-author reviews in turn (one at a time), split by scope (e.g. main logic / failures and recovery; a second full review only if very risky), then an independent test. Plans and research documents get at most one review round; the author then delivers. After a fix, only the reviewer who raised the issue rechecks it. Asked to review, give only your own review; do not ask others."
+  ]
+ ]
+};
+
 // This round: four-item assignments, step conclusions in task updates, reviews split by scope, the must-fix rule, asking with
 // the question tool and closing a task in one step: [old, new], generated with difflib from the deployed default.
 const STREAMLINE_EDITS = {
@@ -164,7 +205,10 @@ for (const [lang, heading, next, help] of [['zh', '工作目录：', '找人协�
   test(`${lang}: working-folder rules, upgrade from the previous default, and wb help sync`, () => runWithLanguage(lang, () => {
     const current = defaultPlatformPrompt();
     const undo = edits => (text => edits.reduce((rebuilt, [old, now]) => { assert.ok(rebuilt.includes(now), now.slice(0, 40)); return rebuilt.replace(now, old); }, text));
-    const beforeStreamline = undo(STREAMLINE_EDITS[lang])(current);
+    const beforeHandoff = undo(HANDOFF_EDITS[lang])(current);
+    assert.equal(createHash('sha256').update(beforeHandoff.trim()).digest('hex'), { zh: '2d58d56c3db65da8e9641da0a082b1290c0993a8c400c7fffd2f5d6eb3ca46a7', en: 'd015a181387f797f3b9161d7835947c7ef3f74c141e5f9858815d1ea321b1200' }[lang]);
+    assert.equal(normalizePlatformSettings({ platformPrompt: beforeHandoff }).platformPrompt, current, 'a saved copy of that default follows the new one');
+    const beforeStreamline = undo(STREAMLINE_EDITS[lang])(beforeHandoff);
     assert.equal(createHash('sha256').update(beforeStreamline.trim()).digest('hex'), { zh: '6a752da68f4413a6c3877e384f86c58f1d5bc131e75f0b1db5524201dbde8ff6', en: '7da5c4d2225ca0c004c615eb18dd4ebec09409681da48ee13a9f5179c06488af' }[lang]);
     assert.equal(normalizePlatformSettings({ platformPrompt: beforeStreamline }).platformPrompt, current, 'a saved copy of that default follows the new one');
     const beforeWrite = undo(DEVICE_EDITS[lang])(beforeStreamline);

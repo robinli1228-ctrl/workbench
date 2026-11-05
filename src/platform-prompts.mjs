@@ -120,7 +120,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   'd522244b3d4914fb6a1f298de9c9acd08cf6d500e6529f68a5d517230a075486',
   // Defaults before four-item assignments, step conclusions in task updates, reviews split by scope and the must-fix rule.
   '6a752da68f4413a6c3877e384f86c58f1d5bc131e75f0b1db5524201dbde8ff6',
-  '7da5c4d2225ca0c004c615eb18dd4ebec09409681da48ee13a9f5179c06488af'
+  '7da5c4d2225ca0c004c615eb18dd4ebec09409681da48ee13a9f5179c06488af',
+  // Defaults before gaps named only after checking, earlier conclusions in .workbench/docs and settled conclusions in assignments.
+  '2d58d56c3db65da8e9641da0a082b1290c0993a8c400c7fffd2f5d6eb3ca46a7',
+  'd015a181387f797f3b9161d7835947c7ef3f74c141e5f9858815d1ea321b1200'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */

@@ -757,7 +757,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
 
   function composer() {
     if (!projectId) return;
-    input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, new messages go to the manager; replies target the sender, and @ several roles dispatches to each' : 'Type a message; @role to start work';
+    input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, a message right after a role reply (within 10 minutes) goes to that role, otherwise to the manager; @ several roles dispatches to each' : 'Type a message; @role to start work';
     const d = draft(), busy = sendingProject === scopeId, state = sendState(d);
     input.disabled = busy || !!d.pending || !!d.queueEdit;
     send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length) || sendLocked(state) || verifying.has(scopeId);
@@ -1340,7 +1340,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const skeleton=!history&&[...pendingReads].some(key=>key.startsWith(`${scopeId}:`));
     if (!messages.length) entries.push({key:'empty',node:()=>skeleton?chatSkeleton():create('div', 'chat-empty', history
       ? data.projects?.find(p=>p.id===projectId)?.supervisorRoleId
-        ? 'This is the project chat. New messages without @ go to the manager; replies target their sender; multiple @ mentions dispatch to each role; @everyone only sends a notification and does not start an Agent.'
+        ? 'This is the project chat. A message without @ goes to the role whose reply it follows (within 10 minutes), otherwise to the manager; a quoted reply goes to its sender; multiple @ mentions dispatch to each role; @everyone only sends a notification and does not start an Agent.'
         : 'This is the project chat. Without @ it is only logged; @someone dispatches to them; @everyone only sends a notification and does not start an Agent.'
       : 'Loading chat…')});
     entries.push({key:'queue',node:()=>renderSessionQueue(data.sessionQueues?.[projectId],{create,api,refreshState,projectId,roleName:id=>(data.roles||[]).find(r=>r.id===id)?.name||id})});

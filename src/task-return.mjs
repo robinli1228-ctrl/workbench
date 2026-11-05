@@ -39,9 +39,27 @@ export function noteTaskReturn(db,{run,request}) {
   db.put(KIND,{id:`task-return:${run.id}`,projectId:request.projectId,runId:run.id,requestId:request.id,conversationTaskId:task.id,createdAt:now()});
 }
 
+/**
+ * A return still waiting for its turn when the task has meanwhile been closed (the owner was busy and closed it in another
+ * turn) is withdrawn, as the stall reminder withdraws its own turns that have not started (ProactiveFollowup.cancelPending).
+ */
+function withdrawStale(db) {
+  let changed=false;
+  for(const task of db.chatTasks(['ready'])) {
+    if(task.currentRunId||!task.requestId)continue;
+    const request=db.get('coordinationRequests',task.requestId);
+    if(!request?.taskReturn||request.currentRunId||request.status!=='queued')continue;
+    const chatTask=db.get('conversationTasks',request.conversationTaskId||'');
+    if(chatTask&&!['done','cancelled'].includes(chatTask.status))continue;
+    db.transaction(()=>{db.put('tasks',{...task,status:'cancelled',waitingReason:null});db.put('coordinationRequests',{...request,status:'cancelled',cancelReason:'task_closed',updatedAt:now()});});
+    changed=true;
+  }
+  return changed;
+}
+
 /** post(item,text) creates the owner's turn linked to the task and returns its message. */
 export function wakeTaskReturns(db,post) {
-  let changed=false;
+  let changed=withdrawStale(db);
   for(const pending of db.list(KIND)) {
     const drop=()=>{db.remove(KIND,pending.id);changed=true;};
     const request=db.get('coordinationRequests',pending.requestId),task=db.get('conversationTasks',pending.conversationTaskId),run=db.get('runs',pending.runId);

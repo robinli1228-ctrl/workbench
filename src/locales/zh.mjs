@@ -31,7 +31,7 @@ export default Object.freeze({
   "taskReturn.wake":"【任务交回】任务 {task}「{title}」还没关闭。{role} 做完了这一轮，没有再交给别人，结论（原文 wb history read {runId}）：\n{result}\n请接着处理：做完了就关闭任务；还有下一步就派出去；需要用户决定时，用提问工具问用户（没有就在回复里问）。",
   "taskReturn.redacted":"（独立审核的结论暂不公开）",
   "taskReturn.noReply":"（没有文字回复）",
-  "conversationTasks.ownerReminder":"你是这个任务的负责人：做完后用 wb task update 把它标为完成并写上结果摘要，没做完的步骤会一并标为完成；需要用户决定时，用提问工具问（没有就在回复里问）。",
+  "conversationTasks.ownerReminder":"你是这个任务的负责人：做完后先对照任务最初的要求逐条核对（来自用户的以用户原话为准），再用 wb task update 把它标为完成，结果摘要写满足了哪些要求、怎么验证的；没做完的步骤会一并标为完成；需要用户决定时，用提问工具问（没有就在回复里问）。",
   "conversationTasks.unchanged":"群聊任务 T{number}「{title}」· {status}{steps} · 第 {revision} 版，说明与你上次读到的相同；需要背景时用 wb task show T{number} 查看。",
   "conversationTasks.context":"群聊任务（Home 当前快照）。{updated}\n{task}",
   "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。每步只填一个必填 description（步骤说明，最多4000字），不再填写步骤 title；任务自身的 title/description 不变。说明/计划整段替换。只有 done 可写 resultSummary；标为 done 时，所有计划步骤同时标为完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交时交接说明要在本轮写好：本轮新建的任务可直接转交，早先建的任务先用 wb task update 重写说明。重试须保持相同 requestId 和输入。\n步骤更新示例：wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"核对两端固定输入版本，并记录差异。\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"完善步骤说明\"}'。plan 为完整替换，必须保留仍需执行的其他步骤和配置。",
@@ -597,9 +597,6 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'home.targetRoleArchivedCannotBe': `目标角色已归档，不能派发；请用 wb discuss peers 核对当前团队`,
   'home.currentExecutionHasNoRole': '当前执行没有角色调用身份',
   'home.forNewCrossDeviceWork': '跨设备新增工作请返回主管评估，不在当前阶段旁路派单',
-  'home.crossDeviceCallsRequireProject': '跨设备调用需要先配置项目主管',
-  'home.crossDeviceRequestFromTarget': `来自 @{name} 的跨设备请求。目标角色 @{name2}，请评估后交给该角色执行并回传结果。
-{text}`,
   'home.deliveredDirectlyTargetRoleWhen': '已直接投递目标角色。需要结果时 wb wait 摘要并结束本轮；平台收齐回答后续接原会话。',
   'home.endTurnNowExecutionSlot': '请现在结束本轮；Worker 确认回合完成后释放执行名额，支持的 CLI 会短时保留。',
   'home.unknownCollaborationEndpoint': '未知协同接口',
@@ -1582,7 +1579,7 @@ wb call --role 角色 --kind consult|direct|transfer --request-id 稳定编号 -
                      transfer：整件转交。对方成为负责人，自己推进、找人审核，做完直接回复用户；结果不再交回你，你这一轮可以直接结束。
                      重复 --role 可把同一段说明发给几个角色，各自处理。可选 --goal、--scope、--input、--return 写成带标签的几行放在说明前面；--file 路径 附上项目里一个 UTF-8 文件的设备、路径和 SHA256（不贴正文，对方用 wb device read 读）。说明最多 12000 字。重试用同一个编号和内容。
                      --kind handoff --delivery-id 编号：配合 wb deliver 的跨设备提交派活。
-wb wait "续接摘要"   登记你在等哪些派出的结果，然后结束本轮；结果都回来、超时（默认 30 分钟）或对方 10 分钟仍无法开始时，平台叫醒你。也可 wb wait '{"summary":"...","requestIds":["编号"],"timeoutSeconds":1800}'
+wb wait "续接摘要"   登记你在等哪些派出的结果，然后结束本轮；结果都回来、超时（默认 30 分钟，从最后一个开始执行时算起，排在对方其他工作后面的时间不算）或对方 10 分钟仍无法开始时，平台叫醒你。摘要写完整的句子：在等谁、等什么、回来后做什么。也可 wb wait '{"summary":"...","requestIds":["编号"],"timeoutSeconds":1800}'
                      列出的几个请求要全部返回才叫醒你；想先处理先回来的，就只等那一个（requestIds 只写它的编号），处理完再等下一个。
 wb note 文字         在群里留一句话，不派活
 wb history [关键词] [--role 角色] [--file 路径] [--since 时间] [--until 时间] [--limit N] [--cursor C]
@@ -1738,7 +1735,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 问的时候，CLI 有提问工具（AskUserQuestion / request_user_input）就用它，这一轮会停下等用户回答。
 
 主动推进：
-- 收到任务就推进到可验证的结果，能做的先做完。
+- 收到任务就推进到可验证的结果，能查能做的先自己做完，再说缺什么。
 - 每个 @ 你的消息都要实质回复，或说明做不了及原因；不要只回“收到”，没有意见就说“通过，无意见”。
 - 发现阻塞、风险或别人的问题，直接告诉相关角色并说明依据。
 - 回复写做了什么、结论和需要对方做的事。该做而没做的（例如该测没测）写明；合并、部署这类本来就不在这次范围里的，不用逐条声明没做。
@@ -1755,11 +1752,11 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 找人协作：
 - 用户点名了就按用户的安排；没点名时自己判断找谁：设备合适 > 余额充足 > 空闲。正在运行的尽量不打断，没有合适的人就自己做。
 - 被派的活做完后，结果写在最终回复里，会自动交回派活的人；不要再反过来 call 它。
-- 要别的角色协同时，先用 wb task create 建一个待办，写清目标和步骤；派活时用 wb call --task 关联它。任务说明只写当前状态，控制在 3 KB 以内，不往说明后面追加。每完成一步，用 wb task update 在 reason 里写结论、证据路径和版本；接手、恢复或复查时先看任务步骤，版本没变的结论直接引用，不重做。
-- 派活只写四项，每项一两句：目标；已有材料（任务编号、设备和路径，代码版本写一次完整提交 SHA，不说“最新版本”）；对方负责什么、能改什么、不用做什么；完成标准和要交回什么。平台默认的限制（不合并、不部署、不动别人的文件等）不用重复写；具体怎么做由对方决定，不要先替对方把材料读一遍。
+- 要别的角色协同时，先用 wb task create 建一个待办，写清目标和步骤；派活时用 wb call --task 关联它。任务说明只写当前状态，控制在 3 KB 以内，不往说明后面追加。每完成一步，用 wb task update 在 reason 里写结论、证据路径和版本；动手前（包括接手、恢复或复查）先看任务步骤和 .workbench/docs 里已有的结论，版本没变的直接引用，不重做。
+- 派活只写四项，每项一两句：目标；已有材料和已确认的结论（任务编号、设备和路径，代码版本写一次完整提交 SHA，不说“最新版本”）；对方负责什么、能改什么、不用做什么；完成标准和要交回什么。平台默认的限制（不合并、不部署、不动别人的文件等）不用重复写；具体怎么做由对方决定，不要先替对方把材料读一遍。
 - 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。
 - 结果回来不等于通过：核对关键结论的证据（必改要能对上触发路径）再决定接受还是退回；派活时写明的版本不用重算 SHA。结果没有变化，不为同一件事再派人。
-- 审核按改动大小安排：只读查询、答疑、文档、配置值、一两个文件且能直接验证的小修，自测后直接交付，不另找人审；其他改动请一位非作者审核；涉及权限、认证、数据迁移、资金、生产操作、安全、对外接口，或改动本身涉及跨仓库、跨设备行为（如同步、设备间通信）的，不论大小，以及用户点名要求的，先请一位非作者确认方案，再请两位非作者依次审核（一次一位），按范围分工（例如一位看主要逻辑、一位看异常和恢复，只有风险很高时第二位才全量再审），然后独立测试。方案、调研类文档需要审时最多审一轮，作者改完直接交付。修复后只请提出问题的人复核。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。
+- 审核按改动大小安排：只读查询、答疑、文档、配置值、一两个文件且能直接验证的小修，自测后直接交付，不另找人审；其他改动请一位非作者审核，优先找另一家 CLI 的角色；涉及权限、认证、数据迁移、资金、生产操作、安全、对外接口，或改动本身涉及跨仓库、跨设备行为（如同步、设备间通信）的，不论大小，以及用户点名要求的，先请一位非作者确认方案，再请两位非作者依次审核（一次一位），按范围分工（例如一位看主要逻辑、一位看异常和恢复，只有风险很高时第二位才全量再审），然后独立测试。方案、调研类文档需要审时最多审一轮，作者改完直接交付。修复后只请提出问题的人复核。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。
 
 讨论和审核：
 - 审核意见每条附证据：位置、触发条件、影响或实际输出。

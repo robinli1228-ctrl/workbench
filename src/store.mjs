@@ -164,9 +164,9 @@ export class Store {
   unresolvedRecoveries() {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_unresolved_recoveries WHERE kind='cliRecoveries' AND ${unresolvedRecovery} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
   }
-  /** Organizer idle checks need an insertion-ordered cursor, not every conversation's message bodies. */
-  latestConversationMessageId(projectId,conversationId) {
-    return this.db.prepare("SELECT id FROM records WHERE kind='roomMessages' AND json_extract(data,'$.projectId')=? AND CASE WHEN COALESCE(json_extract(data,'$.conversationId'),0) IN (0,'') THEN json_extract(data,'$.projectId') ELSE json_extract(data,'$.conversationId') END=? AND COALESCE(json_extract(data,'$.kind'),'')!='summary' ORDER BY rowid DESC LIMIT 1").get(projectId,conversationId)?.id||null;
+  /** Organizer idle checks need an insertion-ordered cursor, not every conversation's message bodies; visibleOnly skips platform-internal messages. */
+  latestConversationMessageId(projectId,conversationId,{visibleOnly=false}={}) {
+    return this.db.prepare(`SELECT id FROM records WHERE kind='roomMessages' AND json_extract(data,'$.projectId')=? AND CASE WHEN COALESCE(json_extract(data,'$.conversationId'),0) IN (0,'') THEN json_extract(data,'$.projectId') ELSE json_extract(data,'$.conversationId') END=? AND COALESCE(json_extract(data,'$.kind'),'')!='summary'${visibleOnly?" AND COALESCE(json_extract(data,'$.visibility'),'')!='internal'":''} ORDER BY rowid DESC LIMIT 1`).get(projectId,conversationId)?.id||null;
   }
   metadataBaselines(projectId,repositoryId,generation) {
     return this.db.prepare("SELECT data FROM records WHERE kind='sourceSyncMetadataBaselines' AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.repositoryId')=?"+(generation===undefined?"":" AND json_extract(data,'$.generation')=?")).all(projectId,repositoryId,...(generation===undefined?[]:[generation])).map(r=>JSON.parse(r.data));
