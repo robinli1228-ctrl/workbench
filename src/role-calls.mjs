@@ -14,6 +14,7 @@ import {conversationIdOf,resolveConversationId,assertConversationRecord} from '.
 import {registerResultReceipt,registerCallOutcome} from './result-receipts.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
+const DELIVERY_WAIT_MS = 24 * 3600000;
 /** A task may change owner this many times in a row before the next owner must finish it or hand it to the supervisor. */
 const MAX_TRANSFERS = 8;
 
@@ -302,6 +303,14 @@ export class RoleCalls {
     for(const request of this.db.schedulableRequests().filter(r=>r.status==='waiting_call'&&r.waitDeadlineAt)) {
       const before=JSON.stringify(this.db.get('coordinationRequests',request.id));this.resume(request.id,time);
       changed=before!==JSON.stringify(this.db.get('coordinationRequests',request.id))||changed;
+    }
+    // A handoff whose delivery never became ready would wait forever: it reappears in every stall reminder and keeps its
+    // target from ever looking idle. A day after it was sent, with nothing run for it, it is cancelled and says why.
+    for(const request of this.db.schedulableRequests().filter(r=>r.status==='waiting_delivery'&&!r.currentRunId&&!r.taskId&&time-Date.parse(r.createdAt)>DELIVERY_WAIT_MS)) {
+      if(this.db.list('coordinationRequests').some(c=>c.parentRequestId===request.id&&!callTerminal.has(c.status)))continue;
+      this.cancel(request.id);
+      this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',request.id),cancelReason:'delivery_expired',result:tr('roleCalls.deliveryExpired')});
+      changed=true;
     }
     return changed;
   }
