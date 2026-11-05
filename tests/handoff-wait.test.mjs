@@ -91,6 +91,9 @@ test('the chat shows no card for a waiting turn; the queue lists the wait naming
     const waits = () => queuedWaits(e.db).map(w => ({ roleName: w.roleName, waitingFor: w.waitingFor.map(d => d.roleName) }));
     assert.deepEqual(waits(), [{ roleName: 'Reviewer', waitingFor: ['Executor'] }]);
     if (reason === 'results') e.db.put('coordinationRequests', { ...e.db.get('coordinationRequests', 'c1'), status: 'succeeded', result: 'Implementation completed' });
+    // A timeout counts only once the awaited call is running: time queued behind the receiver's other work is not waiting.
+    else { e.db.put('runs', { id: 'c1-run', projectId: e.parent.projectId, roleId: 'executor', status: 'running', createdAt: e.db.get('coordinationRequests', e.parent.id).waitStartedAt, lastSeq: 0 });
+      e.db.put('coordinationRequests', { ...e.db.get('coordinationRequests', 'c1'), status: 'running', currentRunId: 'c1-run' }); }
     const time = reason === 'timeout' ? Date.parse(e.db.get('coordinationRequests', e.parent.id).waitDeadlineAt) + 1 : Date.now();
     e.calls.resume(e.parent.id, time);
     const parent = e.db.get('coordinationRequests', e.parent.id);

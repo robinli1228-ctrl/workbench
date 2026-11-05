@@ -50,14 +50,9 @@ export function createAgentCalls({db,calls,rooms},run,input) {
     if(linked&&!taskList.visible(linked,run))throw new Error(tr('conversationTasks.notFound'));
     const recipients=[],requests=targets.map(target=>{
       if(target.archivedAt)throw new Error(tr('home.targetRoleArchivedCannotBe'));
-      let role=target,summary=input.text;
-      // Keep existing cross-device ownership routing; consultation and transfer always use the recipient's own workspace.
-      if(!['consult','transfer'].includes(kind)&&!run.roleSnapshot.systemSupervisor&&role.nodeId!==run.nodeId){
-        if(run.planId)throw new Error(tr('home.forNewCrossDeviceWork'));
-        role=db.get('roles',db.get('projects',run.projectId)?.supervisorRoleId);
-        if(!role?.enabled)throw new Error(tr('home.crossDeviceCallsRequireProject'));
-        summary=tr('home.crossDeviceRequestFromTarget',{name:run.roleSnapshot.name,name2:target.name,text:input.text});
-      }
+      const role=target,summary=input.text;
+      // Work goes straight to the role on its own device, in its own workspace; only a plan stage may not add cross-device work.
+      if(!['consult','transfer'].includes(kind)&&!run.roleSnapshot.systemSupervisor&&role.nodeId!==run.nodeId&&run.planId)throw new Error(tr('home.forNewCrossDeviceWork'));
       const requestId=targets.length===1?id:`multi:${createHash('sha256').update(JSON.stringify([id,target.id])).digest('hex')}`;
       const request=transfer
         ?calls.create({id:requestId,projectId:run.projectId,targetRoleId:role.id,sourceRunId:run.id,originNodeId:run.nodeId,

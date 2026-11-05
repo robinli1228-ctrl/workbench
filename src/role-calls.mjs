@@ -52,6 +52,20 @@ export function blockedDependency(db,request,time=Date.now()) {
   return {kind:task.blockedKind,since:task.blockedSince,reason:task.waitingReason||task.blockedKind};
 }
 
+/**
+ * When a wait times out. Time a call spends queued behind its receiver's other work is not waiting time: while one is not
+ * started there is no timeout (a receiver that cannot start at all wakes the waiter through blockedDependency), and the
+ * wait's length counts from the last one to start. Waits recorded without a start time keep their saved deadline.
+ */
+function waitDeadline(db,parent,children) {
+  const saved=Date.parse(parent.waitDeadlineAt),length=saved-Date.parse(parent.waitStartedAt||'');
+  const open=children.filter(c=>!callTerminal.has(c.status));
+  if(open.some(c=>['queued','waiting_delivery'].includes(c.status)))return Infinity;
+  if(!Number.isFinite(length))return saved;
+  const started=Math.max(0,...open.map(c=>Date.parse(db.get('runs',c.currentRunId||'')?.createdAt||'')||0));
+  return Math.max(saved,started+length);
+}
+
 function clippedResult(text, limit) {
   text = String(text || tr('roleCalls.noTextResultWasProvided'));
   if (text.length <= limit) return text;
@@ -381,7 +395,7 @@ export class RoleCalls {
     if (this.db.get('runs', parent.currentRunId)?.status !== 'succeeded') return;
     const children = this.dependencies(parent);
     if (!children.length) return;
-    const ready=children.every(r=>callTerminal.has(r.status)),expired=parent.waitDeadlineAt&&Date.parse(parent.waitDeadlineAt)<=time;
+    const ready=children.every(r=>callTerminal.has(r.status)),expired=parent.waitDeadlineAt&&waitDeadline(this.db,parent,children)<=time;
     // A dependency that cannot start (device offline, CLI unusable) wakes the waiter once per blocked episode, like an
     // early timeout: the requests stay active and nothing is cancelled or redispatched.
     const blocked=!ready&&!expired?children.filter(c=>!callTerminal.has(c.status)).map(c=>({request:c,block:blockedDependency(this.db,c,time)})).filter(x=>x.block):[];

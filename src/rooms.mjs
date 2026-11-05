@@ -95,6 +95,8 @@ function collectiveRoleScopeZh(sentence) {
 }
 
 /** In a new project, a message with no @ goes to the fixed supervisor; an explicit @ dispatches to that role; @everyone and legacy project discussions are only stored. */
+const IMPLICIT_REPLY_MS=10*60000;
+
 export class Rooms {
   constructor(db) { this.db = db; }
 
@@ -118,6 +120,14 @@ export class Rooms {
         ...(source.kind==='proactive_followup'?{visibility:'internal',proactiveFollowup:source.context}:['call_outcome','task_return'].includes(source.kind)?{visibility:'internal'}:{} )});
       this.touch(projectId,conversationId);return message;
     });
+  }
+
+  /** The chat's latest visible message, when it is a role's reply from the last 10 minutes and that role can take work now. */
+  implicitReply(projectId,conversationId) {
+    const last=this.db.get('roomMessages',this.db.latestConversationMessageId(projectId,conversationId,{visibleOnly:true})||'');
+    if(last?.sender!=='agent'||!last.runId||last.kind==='handoff'||Date.now()-Date.parse(last.createdAt)>IMPLICIT_REPLY_MS)return null;
+    const role=this.db.get('roles',last.roleId||this.db.get('runs',last.runId)?.roleId||'');
+    return role?.projectId===projectId&&role.enabled&&!role.archivedAt&&isRoleConfigured(role)?last.id:null;
   }
 
   touch(projectId,conversationId=projectId) {
@@ -214,6 +224,8 @@ export class Rooms {
       const prior = this.db.get('roomMessages', clientMessageId);
       if (prior) { if (prior.fingerprint !== fingerprint) throw new Error(tr('rooms.messageIdConflictsWithDifferent')); return prior; }
       if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound2'));
+      // Without @ or a quote, a message sent right after a role's reply (within 10 minutes) answers that reply, as a quote would.
+      if(!replyToId&&!targetRoleId&&!scheduledJobId&&!mentionNames(text).length)replyToId=this.implicitReply(projectId,conversationId);
       const quote = replyToId ? this.db.get('roomMessages', replyToId) : null;
       if (replyToId && quote?.projectId !== projectId) throw new Error(tr('rooms.quotedMessageDoesNotBelong'));
       if(quote)assertConversationRecord({projectId,conversationId},quote);
