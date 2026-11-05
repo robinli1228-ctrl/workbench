@@ -78,8 +78,8 @@ function roleRules(roleName, roleInstructions) {
 
 /** print/stream CLI adapter: tools are auto-approved, with no native per-item approval. */
 export class CliPrintSession {
-  constructor({ cwd, model, mode, emit, roleInstructions = '', roleName = '', effort = null, runtime, env = process.env, resumeSessionId = null, keepAlive = false, inheritInstructions = false, maintenance = false, minimalInstructions=false, instructionMessage='',configurationUpdate='',beforeInput,onProcess,questions=false }) {
-    this.questions=questions;this.question=null;this.initialized=false;
+  constructor({ cwd, model, mode, emit, roleInstructions = '', roleName = '', effort = null, runtime, env = process.env, resumeSessionId = null, keepAlive = false, inheritInstructions = false, maintenance = false, minimalInstructions=false, instructionMessage='',configurationUpdate='',beforeInput,onProcess,askUser=false }) {
+    this.askUser=askUser;this.question=null;this.initialized=false;
     this.beforeInput=beforeInput;this.onProcess=onProcess;this.inputAttempted=false;
     this.minimalInstructions=minimalInstructions;this.instructionMessage=instructionMessage;
     this.configurationUpdate=configurationUpdate;
@@ -355,7 +355,7 @@ export class CliPrintSession {
   flushText() { clearTimeout(this.textTimer); this.textTimer = null; if (this.textBuffer) { this.emit('text', { text: this.textBuffer,...(this.runtime==='claude'&&this.messageId?{messageId:this.messageId}:{}) }); this.textBuffer = ''; } }
   approve() { throw new Error(tr('cliPrintSession.runtimeAutoApprovesInPrint')); }
   /** Only a resident Claude whose caller can answer (a takeover, or a group-chat role when Home asks for it) hosts questions. */
-  get questionsSupported(){return Boolean(this.questions)&&this.keepAlive&&this.runtime==='claude';}
+  get questionsSupported(){return Boolean(this.askUser)&&this.keepAlive&&this.runtime==='claude';}
   /** The SDK handshake precedes the first message of a session that hosts permission prompts. */
   initializeQuestions(){if(this.questionsSupported&&!this.initialized){this.initialized=true;this.write({type:'control_request',request_id:`init-${Date.now()}`,request:{subtype:'initialize'}});}}
   receiveControl(message){
@@ -367,6 +367,8 @@ export class CliPrintSession {
     const {request_id:requestId,request={}}=message,reply=response=>this.write({type:'control_response',response:{subtype:'success',request_id:requestId,response}});
     if(request.subtype!=='can_use_tool')return this.write({type:'control_response',response:{subtype:'error',request_id:requestId,error:'Unsupported control request'}});
     if(request.tool_name!=='AskUserQuestion'||!Array.isArray(request.input?.questions)||!request.input.questions.length)return reply({behavior:'allow',updatedInput:request.input});
+    // Only the running turn can wait for an answer, one question at a time; otherwise Claude would wait on a question nobody sees.
+    if(this.done||this.stopping||this.question)return reply({behavior:'deny',message:this.question?'Another question is already waiting for the user; ask one at a time.':'No turn is waiting for an answer now; continue without asking.'});
     const id=requestId,questions=request.input.questions.map((q,i)=>({id:`q${i+1}`,header:String(q.header||'').slice(0,40),question:String(q.question||'').slice(0,2000),multiSelect:q.multiSelect===true,allowOther:true,
       options:(Array.isArray(q.options)?q.options:[]).slice(0,8).map(o=>({label:String(o?.label||'').slice(0,200),description:String(o?.description||'').slice(0,600)}))}));
     this.question={id,requestId,input:request.input,questions};

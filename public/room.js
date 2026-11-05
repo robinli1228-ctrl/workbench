@@ -318,9 +318,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   const sendLabel=label=>{send.title=t(label);send.setAttribute('aria-label',t(label));};
   const quoteBar = document.querySelector('#chat-quote');
   // A role's question to the user (AskUserQuestion / request_user_input) waits above the composer; its turn waits with it.
-  const askCard=createAskCard({t,shouldFocus:()=>!input.matches(':focus'),onSend:async(entry,body)=>{
-    try{await api(`/api/approvals/${encodeURIComponent(entry.key)}`,{method:'POST',json:{...(body.skip?{skip:true}:{answers:body.answers}),commandId:crypto.randomUUID()}});await refreshState({quiet:true});}
-    catch(error){setError(error.message);}}});
+  // It takes focus only when nothing else has it: a question arriving must not pull the cursor out of a dialog or the composer.
+  const askCard=createAskCard({t,shouldFocus:()=>!document.activeElement||document.activeElement===document.body,onSend:async(entry,body)=>{
+    try{await api(`/api/approvals/${encodeURIComponent(entry.key)}`,{method:'POST',json:{...(body.skip?{skip:true}:{answers:body.answers}),commandId:crypto.randomUUID()}});await refreshState({quiet:true});return true;}
+    catch(error){setError(error.message);return false;}}});
   form.before(askCard.node);
   /** The oldest waiting question of this chat; the others follow once it is answered. */
   function renderQuestions(){

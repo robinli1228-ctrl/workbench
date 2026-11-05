@@ -60,8 +60,9 @@ async function gitMetadataRoots(roots) {
 
 /** A managed role may briefly reuse the App Server, rebinding instructions and events every turn; stdio exposes no control port. */
 export class CodexSession {
-  constructor({ cwd, writableRoots = [], attachments = [], model, mode, emit, roleInstructions = '', roleName = '', effort = 'low', autoApprove = true, env = process.env, resumeSessionId = null, keepAlive = false, maintenance = false,minimalInstructions=false,configurationUpdate='',beforeInput,onProcess,permissionScope=null,toolRoots=[],questions=false }) {
-    this.questionsSupported=Boolean(questions);
+  constructor({ cwd, writableRoots = [], attachments = [], model, mode, emit, roleInstructions = '', roleName = '', effort = 'low', autoApprove = true, env = process.env, resumeSessionId = null, keepAlive = false, maintenance = false,minimalInstructions=false,configurationUpdate='',beforeInput,onProcess,permissionScope=null,toolRoots=[],askUser=false }) {
+    // askUser, not questions: reuse() copies its options onto the session, and this.questions holds the waiting ones.
+    this.questionsSupported=Boolean(askUser);
     this.beforeInput=beforeInput;this.onProcess=onProcess;this.inputAttempted=false;
     this.minimalInstructions=minimalInstructions;
     this.configurationUpdate=configurationUpdate;

@@ -85,3 +85,29 @@ test('a wake for results of one task belongs to that task', () => {
   assert.equal(next.kind, 'continuation');
   assert.equal(next.conversationTaskId, 'ct:1');
 });
+
+test('a caller that waited gets the result in its own wake: nothing goes back to the owner meanwhile', () => {
+  const { db, call, end, wake, posted } = env();
+  db.put('runs', { id: 'run-p', projectId: P, roleId: 'owner', status: 'succeeded', createdAt: at });
+  call('parent', { targetRoleId: 'owner', taskId: 'tp', status: 'waiting_call', currentRunId: 'run-p', waitRequestIds: ['child'], resumeSummary: 'continue' });
+  call('child', { conversationTaskId: 'ct:1', parentRequestId: 'parent' });
+  end('run-c', 'child');
+  assert.ok(db.get('coordinationRequests', 'parent').continuationRequestId, 'the wake exists at once');
+  wake();
+  assert.deepEqual(posted, []);
+  assert.equal(db.list('taskReturns').length, 0);
+});
+
+test('closing a task leaves a wake that only carried its results, and the caller\'s other work, running', () => {
+  const { db, call } = env(), calls = new RoleCalls(db);
+  db.put('conversationTasks', { id: 'ct:2', projectId: P, conversationId: P, number: 4, title: 'Other', status: 'in_progress', ownerRoleId: 'owner' });
+  db.put('runs', { id: 'run-p', projectId: P, roleId: 'owner', status: 'succeeded', createdAt: at });
+  call('parent', { targetRoleId: 'owner', taskId: 'tp', status: 'waiting_call', currentRunId: 'run-p', waitRequestIds: ['child'], resumeSummary: 'continue' });
+  call('child', { conversationTaskId: 'ct:1', parentRequestId: 'parent', status: 'succeeded', result: 'ok' });
+  call('ops', { conversationTaskId: 'ct:2', parentRequestId: 'parent', status: 'queued' });
+  calls.resume('parent');
+  const wakeId = db.get('coordinationRequests', 'parent').continuationRequestId;
+  assert.equal(db.get('coordinationRequests', wakeId).conversationTaskId, 'ct:1');
+  assert.deepEqual(calls.cancelForTask(P, 'ct:1'), []);
+  for (const id of ['parent', wakeId, 'ops']) assert.notEqual(db.get('coordinationRequests', id).status, 'cancelled', id);
+});

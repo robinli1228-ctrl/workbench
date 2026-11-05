@@ -1281,7 +1281,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    finally{op.editing=false;queuePending.delete(turn.id);if(k()===id){render();input.focus();}}}
   /** The CLI's question card above the composer (public/ask-card.js). */
   const askCard=createAskCard({t,shouldFocus:()=>!input.matches(':focus'),onSend:async(entry,body)=>{
-   try{await api(`${turnsUrl()}/${encodeURIComponent(entry.key)}/answer`,{method:'POST',json:body});await refresh();}catch(error){operation().message=t(error.message);render();}}});
+   try{await api(`${turnsUrl()}/${encodeURIComponent(entry.key)}/answer`,{method:'POST',json:body});await refresh();return true;}catch(error){operation().message=t(error.message);render();return false;}}});
   const ask=askCard.node;
   function renderAsk(){const live=activeTurn(),q=live?.question&&!live.question.answered?live.question:null;askCard.render(q&&current?{key:live.id,question:q}:null);}
   function renderQueue(){

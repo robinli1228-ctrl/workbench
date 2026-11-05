@@ -162,7 +162,7 @@ export class RoleCalls {
         collaborationSessionId: sourceRequest?.collaborationSessionId || null,
         collaborationCycleId: sourceRequest?.collaborationCycleId || null,
         continuationBatchId: continued?.continuationBatchId || null,
-        ...(continued?.conversationTaskId?{conversationTaskId:continued.conversationTaskId}:{}),
+        ...(continued?.conversationTaskId?{conversationTaskId:continued.conversationTaskId,...(continued.taskLinkedByWake?{taskLinkedByWake:true}:{})}:{}),
         ...(continued?.callMessageId?{callMessageId:continued.callMessageId}:{}),
         // Publication is independent of charging: necessary continuations retain the original private boundary, including legacy requests.
         explicitPublish:Boolean(sourceRequest?.explicitPublish||sourceRequest?.automaticPropagation||sourceRequest?.continuationBatchId||sourceTask?.explicitPublish||sourceTask?.automaticPropagation||sourceTask?.collaborationBatchId),
@@ -410,7 +410,7 @@ export class RoleCalls {
         summary: `${header}${packCoordinationResults(children, Math.max(0, 12000 - header.length))}`.slice(0, 12000) });
       // Quote metadata only: inputs, task origin and scheduling stay intact. The result message may be published after this transaction.
       // A wake for results of work on one chat task belongs to that task, so the owner sees it and may close it.
-      const linkedTasks=new Set(children.map(c=>c.conversationTaskId).filter(Boolean)),taskLink=!next.conversationTaskId&&linkedTasks.size===1?{conversationTaskId:[...linkedTasks][0]}:{};
+      const linkedTasks=new Set(children.map(c=>c.conversationTaskId).filter(Boolean)),taskLink=!next.conversationTaskId&&linkedTasks.size===1?{conversationTaskId:[...linkedTasks][0],taskLinkedByWake:true}:{};
       if(!Object.hasOwn(next,'continuationFeedback'))this.db.put('coordinationRequests',{...next,...taskLink,continuationFeedback:reason==='results'?continuationFeedback(children,triggerRequestId):null});
       this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), continuationRequestId: next.id, updatedAt: new Date().toISOString() });
       // Mark the episode as reported only once the wake exists, so a failed wake can be retried.
@@ -501,7 +501,9 @@ export class RoleCalls {
   cancelForTask(projectId,conversationTaskId) {
     return this.db.transaction(()=>{
       const runs=new Set(),reason=tr('roleCalls.taskClosed');
-      for(const request of this.db.listProject('coordinationRequests',projectId).filter(r=>r.conversationTaskId===conversationTaskId&&!callTerminal.has(r.status))) {
+      // A caller's wake that only carries this task's results is the caller's own work: cancelling it would end the caller's
+      // whole chain, other tasks included.
+      for(const request of this.db.listProject('coordinationRequests',projectId).filter(r=>r.conversationTaskId===conversationTaskId&&!r.taskLinkedByWake&&!callTerminal.has(r.status))) {
         if(callTerminal.has(this.db.get('coordinationRequests',request.id)?.status))continue;
         for(const id of this.cancel(request.id,{reason}))runs.add(id);
         this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',request.id),cancelReason:'task_closed',result:reason});

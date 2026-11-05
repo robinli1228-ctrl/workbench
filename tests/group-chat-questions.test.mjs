@@ -9,7 +9,7 @@ import { warmSessionFingerprint } from '../src/warm-sessions.mjs';
 
 const claude = (questions, extra = {}) => {
   const events = [], writes = [];
-  const session = new CliPrintSession({ cwd: '/tmp', model: 'm', runtime: 'claude', keepAlive: true, questions, emit: (type, payload) => events.push({ type, ...payload }), ...extra });
+  const session = new CliPrintSession({ cwd: '/tmp', model: 'm', runtime: 'claude', keepAlive: true, askUser: questions, emit: (type, payload) => events.push({ type, ...payload }), ...extra });
   session.proc = { stdin: { write: line => writes.push(JSON.parse(line)), end() {} }, kill() {}, exitCode: null };
   return { session, events, writes };
 };
@@ -50,7 +50,7 @@ test('stopping a turn that waits for an answer denies the question', async () =>
 });
 
 test('a group-chat Codex opts into request_user_input only when asked to', () => {
-  const codex = questions => new CodexSession({ cwd: '/tmp', model: 'm', emit() {}, questions });
+  const codex = questions => new CodexSession({ cwd: '/tmp', model: 'm', emit() {}, askUser: questions });
   assert.deepEqual(codex(true).launchArgs().slice(0, 2), ['-c', 'features.default_mode_request_user_input=true']);
   assert.ok(!codex(false).launchArgs().includes('-c'));
 });
@@ -73,4 +73,30 @@ test('Home keeps the question beside the run until it is answered, skipped or th
   event('question', { id: 'r1:perm-2', questionId: 'perm-2', runId: 'r1', kind: 'question', status: 'pending', questions: [{ id: 'q1', question: 'Again?', options: [] }] });
   event('status', { status: 'succeeded' });
   assert.equal(db.get('approvals', 'r1:perm-2').status, 'expired', 'a turn that ended takes no answer');
+});
+
+test('a reused Codex process keeps its waiting questions: the next turn can still ask, end and be stopped', () => {
+  const events = [];
+  const session = new CodexSession({ cwd: '/tmp', model: 'm', emit() {}, askUser: true, keepAlive: true });
+  session.done = true;session.proc = { killed: false, exitCode: null, signalCode: null, stdin: { write() {} } };
+  session.reuse({ cwd: '/tmp', model: 'm', emit: (type, payload) => events.push({ type, ...payload }), askUser: true, keepAlive: true });
+  assert.ok(session.questions instanceof Map, 'the reuse options do not replace the waiting questions');
+  session.write = () => true;
+  session.receive({ id: 7, method: 'item/tool/requestUserInput', params: { itemId: 'c1', questions: [{ id: 'go', question: 'Release?', options: [{ label: 'Yes' }] }] } });
+  assert.ok(events.some(e => e.type === 'question' && e.id === 'c1'));
+  assert.doesNotThrow(() => session.finish('succeeded'));
+  assert.ok(events.some(e => e.type === 'status' && e.status === 'succeeded'));
+});
+
+test('Claude may not leave a question nobody can answer: none between turns, one at a time', () => {
+  const { session, events, writes } = claude(true);
+  session.receive(ask);
+  session.receive({ ...ask, request_id: 'perm-second' });
+  assert.equal(writes.at(-1).response.request_id, 'perm-second');assert.equal(writes.at(-1).response.response.behavior, 'deny');
+  assert.equal(events.filter(e => e.type === 'question').length, 1);
+  session.answerQuestion({ id: 'perm-ask', skip: true });
+  session.done = true;
+  session.receive({ ...ask, request_id: 'perm-idle' });
+  assert.equal(writes.at(-1).response.response.behavior, 'deny', 'a question after the turn ended is refused at once');
+  assert.equal(events.filter(e => e.type === 'question').length, 1);
 });

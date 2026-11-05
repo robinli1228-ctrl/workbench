@@ -26,7 +26,7 @@ export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,mod
 
 /** Codex App Server: thread/resume once per process, then turn/start on the loaded thread (images as localImage items). */
 export class NativeCodexSession extends CodexSession {
-  constructor(options){super({...options,effort:options.effort??null,questions:true});this.hold=false;this.control=options.control||null;}
+  constructor(options){super({...options,effort:options.effort??null,askUser:true});this.hold=false;this.control=options.control||null;}
   async openThread() {
     if(this.threadId)return {id:this.threadId};
     // With a memory bridge the shell gets `wb` and the bridge folder becomes writable; the workspace stays the only other writable root.

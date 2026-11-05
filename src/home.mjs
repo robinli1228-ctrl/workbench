@@ -296,18 +296,20 @@ function nativeTaskList(projects,{project,chat,status}) {
   if(status!==undefined&&!['todo','in_progress','done','cancelled','all'].includes(status))throw new Error(tr('wbCli.nativeHistoryUsage'));
   const chosen=project?projects.filter(p=>p.id===project||p.name===project):projects;
   if(!chosen.length)throw new Error(tr('wbCli.nativeHistoryProject',{projects:projects.map(p=>p.name).join(', ')||'-'}));
-  const name=id=>id?db.get('roles',id)?.name||id:null,tasks=[];
+  const name=id=>id?db.get('roles',id)?.name||id:null,tasks=[];let chatFound=!chat;
   for(const p of chosen){
     const chats=new Map(db.listProject('groupConversations',p.id).map(c=>[c.id,c.title]));
     for(const t of db.listProject('conversationTasks',p.id)){
       if(status==='all'?false:status?t.status!==status:['done','cancelled'].includes(t.status))continue;
-      const title=chats.get(t.conversationId)||null;if(chat&&t.conversationId!==chat&&title!==chat)continue;
+      const title=chats.get(t.conversationId)||null;if(chat&&t.conversationId!==chat&&title!==chat)continue;chatFound=true;
       const steps=t.plan?.steps||[];
       tasks.push({project:p.name,...(title?{chat:title}:{}),task:`T${t.number}`,title:t.title,status:t.status,owner:name(t.ownerRoleId),
         ...(steps.length?{step:`${Math.min(t.plan.currentStep+1,steps.length)}/${steps.length}`,stepsDone:steps.filter(s=>s.status==='done').length}:{}),updatedAt:t.updatedAt});
     }
   }
-  return {count:tasks.length,tasks:tasks.sort((a,b)=>String(a.updatedAt).localeCompare(String(b.updatedAt)))};
+  if(!chatFound&&!chosen.some(p=>db.listProject('groupConversations',p.id).some(c=>c.id===chat||c.title===chat)))throw new Error(tr('wbCli.nativeHistoryChat',{chats:chosen.flatMap(p=>db.listProject('groupConversations',p.id).map(c=>c.title)).join(', ')||'-'}));
+  // The most recently changed 200; count says how many there are.
+  return {count:tasks.length,tasks:tasks.sort((a,b)=>String(a.updatedAt).localeCompare(String(b.updatedAt))).slice(-200)};
 }
 
 /** The user's answer to a role's question (labels or typed text per question id, or skip) goes to the Run's Worker once. */

@@ -8,14 +8,16 @@ const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className
  * A CLI's question card (AskUserQuestion / request_user_input): the question, its numbered options, a free-text reply, Skip
  * and Send; several questions page through with "1/2" and are answered together. Built once per question, so typing
  * survives refreshes. Question and options show in simplified script like replies; the answer sends the CLI's own label.
- * render(entry) takes {key, title, question:{id, questions}} or null; onSend(entry, {questionId, answers} | {questionId, skip}).
+ * render(entry) takes {key, title, question:{id, questions}} or null; onSend(entry, {questionId, answers} | {questionId, skip}) resolves false when it failed.
  */
 export function createAskCard({t,onSend,shouldFocus=()=>true}) {
   const root=el('section','native-ask');root.hidden=true;root.setAttribute('aria-label',t('Question'));
   let state=null,built='',keys=null;
   // One listener for the card's whole life; it acts on the question drawn last.
   root.addEventListener('keydown',e=>keys?.(e));
-  const send=(entry,body)=>{state=null;built='';keys=null;root.hidden=true;root.replaceChildren();void onSend(entry,body);};
+  // A failed send (onSend resolves false) brings the card back with what was picked and typed.
+  const send=async(entry,body)=>{const kept=state;root.hidden=true;const sent=await onSend(entry,body);
+    if(sent===false&&kept&&(!state||state===kept)){state=kept;built='';render(entry);}else if(state===kept){state=null;built='';keys=null;root.replaceChildren();}};
   function render(entry) {
     const q=entry?.question;
     if(!q){root.hidden=true;if(built){root.replaceChildren();built='';keys=null;}state=null;return;}
