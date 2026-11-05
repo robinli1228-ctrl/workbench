@@ -70,7 +70,6 @@ import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i
 import { executionText, traditionalInput, sentText } from './input-language.mjs';
 import {SourceSyncClient} from './source-sync-transport.mjs';
 import {syncError} from './source-sync-manifest.mjs';
-import {SourceProvenanceTracker} from './source-sync-provenance.mjs';
 import {prepareSourceInputs,sourceOverlayUnchanged} from './source-sync-input.mjs';
 import {captureSourceCandidate,captureDirectoryCandidate} from './source-sync-candidate.mjs';
 import {readSourceBlob} from './source-sync-files.mjs';
@@ -333,7 +332,7 @@ async function command(m) {
     // Send an ordered transition for this recovery retry; later guards may report a fresh wait, failure or cancellation.
     if(deferred?.cliRecoveryWait)emit(c.runId,'status',{status:'starting',cliRecoveryWait:false,cliRecovery:null,error:null});
     send({ type: 'command_ack', id: c.id });
-    let bridge, ending=false,provenance;
+    let bridge, ending=false;
     const reservation = { preparing: true, stopRequested: false };
     sessions.set(c.runId,reservation);
     try {
@@ -473,15 +472,7 @@ async function command(m) {
         await checkNativeDriver(m);
       }
       db.put('runtimeEnvironments',{id:c.runId,env:resumeEnvironment(wbEnv)});
-      if(m.run.sourceSyncTracking){
-        const watched=db.get('sourceSyncWatchConfig','main')?.scopes.filter(s=>s.projectId===m.run.projectId)||[];
-        const tracking=watched.length?watched.map(s=>({id:s.repositoryId,localRoot:s.root,scopeKind:s.scopeKind,scopePolicy:s.scopePolicy})):executionRepositories;
-        provenance=new SourceProvenanceTracker({db,run:{...m.run,workspace:folder},repositories:tracking,blobRoot:sourceSync.blobRoot,
-          publish:proof=>emit(c.runId,'source_provenance',proof)});
-        const preparationScan=await provenance.start();
-        emit(c.runId,'status',{preparationScan});
-        emit(c.runId,'log',{text:tr('sourceSync.preparationScan',{scopes:preparationScan.scopes,files:preparationScan.files,seconds:(preparationScan.elapsedMs/1000).toFixed(2),unavailable:preparationScan.unavailableScopes})});
-      }
+      // File authorship without captured write evidence remains unknown; never block CLI input on a full-tree snapshot.
       emit(c.runId, 'status', { nativeSession: native });
       // The turn purpose goes into the dynamic input, so switching between Q&A and business stages does not needlessly recycle the warm process.
       const executionConfiguration=m.run.minimalInstructions===1?await currentExecutionConfiguration(c.runId):null;
@@ -536,7 +527,7 @@ async function command(m) {
             finalStatus=p;endRun();
           };
           void (retained?complete():afterProcessExit(session.proc,complete));
-        } else {const event=emit(c.runId,type,p);if(type==='tool')provenance?.observe(event);}
+        } else {emit(c.runId,type,p);}
       } };
       session=keepAlive?await warmSessions.take(m.run.roleSessionId,fingerprint):null;
       reservation.session=session;
@@ -577,12 +568,11 @@ async function command(m) {
         components:Object.fromEntries(Object.entries(components).map(([name,text])=>[name,{text,version:instructions.components?.[name]?.version||null}]))};
       if(instructions.inheritedFrom)input.instructionsInheritedFrom=instructions.inheritedFrom;
       await checkNativeDriver(m);
-      if(db.get('runs',c.runId)?.stopRequested||session.stopping||homeDisconnected||quitting||ws?.readyState!==1){session.shutdown();await afterProcessExit(session.proc,()=>{});await provenance?.finish();sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.interruptedByStopDisconnectBefore2')});return;}
+      if(db.get('runs',c.runId)?.stopRequested||session.stopping||homeDisconnected||quitting||ws?.readyState!==1){session.shutdown();await afterProcessExit(session.proc,()=>{});sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.interruptedByStopDisconnectBefore2')});return;}
       emit(c.runId, 'input', input);
       const result = session.start(input.prompt);
       await result;
       await ended;
-      await provenance?.finish();
       await bridge.stop(); bridge = null;
       const rec = {...db.get('runs', c.runId),...finalStatus};
       try {
@@ -612,7 +602,6 @@ async function command(m) {
       emit(c.runId,'status',{...finalStatus,runtimeRetained:warmSessions.owns(session.proc?.pid),processSettled:!warmSessions.owns(session.proc?.pid),...(m.run.discussionProtocol===2?{discussionCleanup:{turnEnded:true,toolsClosed:true,effectsKnown:false}}:{})});
     } catch (e) {
       ending=true;
-      await provenance?.finish();
       const entry = sessions.get(c.runId),s=entry?.preparing?entry.session:entry;
       if(entry?.stopRequested||db.get('runs',c.runId)?.stopRequested){s?.shutdown();await afterProcessExit(s?.proc,()=>{});await bridge?.stop();bridge=null;sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.taskHadNotStartedWas')});return;}
       if(e.code==='CLI_RECOVERY_WAIT'){
