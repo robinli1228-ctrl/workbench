@@ -308,7 +308,8 @@ export class RoleCalls {
     // target from ever looking idle. A day after it was sent, with nothing run for it, it is cancelled and says why.
     for(const request of this.db.schedulableRequests().filter(r=>r.status==='waiting_delivery'&&!r.currentRunId&&!r.taskId&&time-Date.parse(r.createdAt)>DELIVERY_WAIT_MS)) {
       if(this.db.list('coordinationRequests').some(c=>c.parentRequestId===request.id&&!callTerminal.has(c.status)))continue;
-      this.cancel(request.id);
+      // The caller learns why, not just that it was cancelled.
+      this.cancel(request.id,{reason:tr('roleCalls.deliveryExpired')});
       this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',request.id),cancelReason:'delivery_expired',result:tr('roleCalls.deliveryExpired')});
       changed=true;
     }
@@ -486,7 +487,7 @@ export class RoleCalls {
   }
 
   /** Cancelling the chain first blocks new dispatches, then returns the truly active runs so Home can send stop commands. */
-  cancel(requestId,{preserveRunningChildren=false}={}) {
+  cancel(requestId,{preserveRunningChildren=false,reason=null}={}) {
     return this.db.transaction(()=>{
     let root = this.db.get('coordinationRequests', requestId);
     if (!root) throw new Error(tr('roleCalls.callNotFound'));
@@ -544,7 +545,7 @@ export class RoleCalls {
       // Tell a caller whose own chain goes on that its call was cancelled; a cancelled chain needs no notice to itself.
       for(const id of cancelledNow) {
         const r=this.db.get('coordinationRequests',id),parent=r?.parentRequestId?currentContinuation(this.db,r.parentRequestId):null;
-        if(parent&&!ids.has(r.parentRequestId)&&!callTerminal.has(parent.status))registerCallOutcome(this.db,r,{outcome:'cancelled',reason:tr('resultReceipts.cancelledReason')});
+        if(parent&&!ids.has(r.parentRequestId)&&!callTerminal.has(parent.status))registerCallOutcome(this.db,r,{outcome:'cancelled',reason:reason||tr('resultReceipts.cancelledReason')});
       }
     });
     return [...new Set(runs)];

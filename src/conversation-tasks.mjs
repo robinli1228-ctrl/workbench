@@ -138,8 +138,8 @@ export class ConversationTasks {
     if(!request?.conversationTaskId)return null;
     assertConversationRecord(run,request);
     const task=this.show(run,request.conversationTaskId);if(!this.visible(task,run))return null;
-    // Only what the steps say counts as a change; a step being marked done is shown in the one line (x/y) instead of resending it all.
-    const id=digest([task.id,run.roleId]),previous=this.db.get('conversationTaskReads',id),plan=taskView(task).plan,planKey=digest([plan?.steps?.map(step=>[step.description,step.roleId||null])??null]);
+    // Everything a step says counts as a change except its status; a step marked done shows in the one line (x/y) instead.
+    const id=digest([task.id,run.roleId]),previous=this.db.get('conversationTaskReads',id),plan=taskView(task).plan,planKey=digest([plan?.steps?.map(({status,...step})=>step)??null]);
     const changed=Boolean(previous&&(previous.descriptionRevision!==task.descriptionRevision||previous.planKey!==undefined&&previous.planKey!==planKey));
     // One line only when this CLI already holds the same description and plan: it resumes the role session in which the
     // previous linked run actually received its input. A failed start, a separate review session or a reset gets it all.

@@ -214,6 +214,10 @@ test('an empty instruction part is announced only to revoke text the previous tu
   const revoked = runWithLanguage('zh', () => instructionDelivery({ runtime: 'claude', run, prior: hadSupervisor, instructions: 'x', components }).configurationUpdate);
   assert.deepEqual(blocks(revoked), ['supervisor']);
   assert.match(String(revoked), /已撤销/);
+  // That revocation was not confirmed (the turn failed): the next turn revokes again instead of dropping it.
+  const failed = { ...unconfirmed, instructionComponents: { ...versions, supervisor: { ...versions.supervisor, revoking: true } } };
+  const again = runWithLanguage('zh', () => instructionDelivery({ runtime: 'claude', run, prior: failed, instructions: 'x', components }).configurationUpdate);
+  assert.deepEqual(blocks(again).sort(), ['identity', 'platform', 'supervisor']);
 });
 
 test('a stall reminder that started the supervisor\'s turn does not travel with the work it hands on', async () => {

@@ -84,7 +84,8 @@ export function sameNativeSession(run,prior) {
     && prior.nativeSession?.id===run.resumeNativeSessionId);
 }
 
-const hadText=(prior,name)=>prior?.instructionComponents?.[name]?.empty===false;
+// The previous turn had text for it, or carried its revocation without confirmation (so it is revoked again).
+const hadText=(prior,name,confirmed=true)=>prior?.instructionComponents?.[name]?.empty===false||!confirmed&&prior?.instructionComponents?.[name]?.revoking===true;
 
 /** Same-session configuration changes need explicit replacement events as well as current native instruction parameters. */
 export function instructionDelivery({runtime,run,prior,instructions,roleName,processReused=false,components}) {
@@ -99,7 +100,8 @@ export function instructionDelivery({runtime,run,prior,instructions,roleName,pro
       const confirmed=(inherited||acknowledged)&&prior.configurationEventProtocol===1;
       // An empty component is announced only to revoke text the previous turn had; a role that never had it (a non-supervisor's
       // supervisor part) gets nothing.
-      const changed=run.resumeNativeSessionId?Object.keys(components).filter(name=>(!confirmed||prior.instructionComponents?.[name]?.version!==versions[name].version)&&(components[name]!==''||hadText(prior,name))):[];
+      const changed=run.resumeNativeSessionId?Object.keys(components).filter(name=>(!confirmed||prior.instructionComponents?.[name]?.version!==versions[name].version)&&(components[name]!==''||hadText(prior,name,confirmed))):[];
+      for(const name of changed)if(components[name]==='')versions[name].revoking=true;
       const configurationUpdate=changed.map(name=>components[name]!==''?tr('minimal.replaceInstructions',{name,version:versions[name].version,text:components[name]}):tr('minimal.revokeInstructions',{name,version:versions[name].version})).join('\n\n');
       const reused=runtime==='claude'&&processReused&&inherited&&prior.instructionFingerprint===fingerprint;
       return {fingerprint,components:versions,inheritedFrom:reused?prior.id:null,instructions:reused?'':instructions,configurationUpdate,configurationEventProtocol:1};

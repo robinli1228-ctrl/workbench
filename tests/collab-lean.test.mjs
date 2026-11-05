@@ -60,9 +60,15 @@ test('a role gets the full task unless its resumed session already received this
   const marked=e.tasks.show(e.scope,e.task.id);
   e.tasks.update(e.scope,e.task.id,{revision:marked.revision,plan:{steps:marked.plan.steps.map((step,i)=>i===1?{...step,status:'done'}:step),currentStep:2}},{user:true});
   assert.ok(line(e.runFor('helper')),'a step marked done is not a new plan: one line');
+  // A step's settings are part of the plan: a changed review sends it all again, with the ids a plan update must keep.
+  const reviewed=e.tasks.show(e.scope,e.task.id);
+  e.tasks.update(e.scope,e.task.id,{revision:reviewed.revision,plan:{steps:reviewed.plan.steps.map((step,i)=>i===0?{...step,review:{roleIds:['owner'],count:1,sequential:true}}:step),currentStep:reviewed.plan.currentStep}},{user:true});
+  const settings=e.runFor('helper');
+  assert.ok(full(settings),'review settings changed: full text again');
+  assert.match(prompt(settings),/"review":\{"roleIds":\["owner"\],"count":1,"sequential":true\}/,'the settings travel with their ids');
   const later=e.tasks.show(e.scope,e.task.id);
   e.tasks.update(e.scope,e.task.id,{revision:later.revision,status:'in_progress'},{user:true});
-  assert.match(prompt(e.runFor('helper')),/T1「修复预填」· in_progress · 3\/3 · 第 5 版/,'a status change alone keeps the one line, with the new state');
+  assert.match(prompt(e.runFor('helper')),/T1「修复预填」· in_progress · 3\/3 · 第 6 版/,'a status change alone keeps the one line, with the new state');
   // A packet saved before this change (no read flags) still carries the full snapshot.
   const {known,...old}=first;assert.match(prompt(old),/方案 v3/);
 }));

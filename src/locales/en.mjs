@@ -68,7 +68,7 @@ export default Object.freeze({
   'followup.waitingSilence': 'Waiting for the updated chat silence duration.',
   'followup.bindingChanged': 'The verified CLI/device binding differs from the current role; reconcile the role switch before follow-up.',
   'followup.context': `Platform trigger and current task facts (not new user authorization): {context}. Message excerpts below are background; use wb history read for their originals and for the results of related requests.`,
-  'followup.event': '[Workbench stall reminder] This chat has been quiet for about {minutes} minutes with no running or queued work. Platform facts (bounded recent records, not a verdict): {facts}. First handle exceptions: failed, interrupted, mutually waiting or stuck work; check wb history and wb history read <id> for originals and act within the existing authorization. Then go through the unfinished tasks in tasks: one that is actually done, after checking the evidence, gets its remaining steps and itself marked done with a result summary; one that should continue goes back to its owner or to someone new; one that cannot go on gets a note saying where it is stuck. This is a background task; use wb note only if a public message is needed. Silence is not consent; use the existing confirmation and approval tools.',
+  'followup.event': '[Workbench stall reminder] This chat has been quiet for about {minutes} minutes with no running or queued work. Platform facts (bounded recent records, not a verdict): {facts}. First handle exceptions: failed, interrupted, mutually waiting or stuck work; check wb history and wb history read <id> for originals and act within the existing authorization. Then go through the unfinished tasks in tasks: one that is actually done, going by the conclusions and evidence paths recorded in its steps without redoing them, gets its remaining steps and itself marked done with a result summary; one that should continue goes back to its owner or to someone new; one that cannot go on gets a note saying where it is stuck. This is a background task; use wb note only if a public message is needed. Silence is not consent; use the existing confirmation and approval tools.',
   'followup.invalidConfig': 'Stall reminders require an enabled boolean and an integer silence duration from 1 to 10080 minutes.',
   'roleTemplates.planner': 'Planner',
   'roleTemplates.plannerResponsibility': 'Create and maintain development plans; clarify the proposed solution.',
@@ -967,7 +967,7 @@ Partial output (not a delivery): {p3}`,
   'roleCalls.targetRoleHasNoRepository': 'The target role has no repository directory',
   'roleCalls.sourceCallDoesNotBelong': 'The source call does not belong to this project',
   'roleCalls.sourceCallHasEndedBeen': 'The source call has ended, been cancelled, or the user has changed direction',
-  'roleCalls.deliveryExpired': 'Cancelled: a day after it was sent there was still no delivered commit, so this request never started. Send it again if it is still needed.',
+  'roleCalls.deliveryExpired': 'Cancelled: a day after it was sent, the delivery it waited for (a commit or synced input) was still not ready, so this request never started. Send it again if it is still needed.',
   'roleCalls.lateReplyAfterCancel': 'Replies arrived after the work they served was cancelled or redirected by the user; they are kept, and the old work is not resumed',
   'roleCalls.resumeFailed': 'Replies arrived, but the follow-up could not be started: {message}. The replies are kept; the wait has ended so this role is no longer held, and the work needs to be reassigned if it should continue',
   'roleCalls.staleWaitEnded': 'Replies arrived long ago, but the follow-up was never started ({reason}). To avoid opening a new turn on old context, the wait was ended at Home start; the replies and history are kept, and the work needs to be reassigned if it should continue',
@@ -1531,7 +1531,7 @@ Conclusions only; no process logs (history is available via \`wb history search\
   'wbTools.callDocumentOutside': 'The document is outside this run\'s bound project/workspace/repositories.',
   'wbTools.callDocumentReviewGuard': `This independent review uses protected document reads. Use the original task attachments; --file cannot bypass unreleased review material.`,
   'wbTools.callDocumentNotText': 'The document must be a UTF-8 text file.',
-  'wbTools.callDocumentTooLong': 'The call and document exceed the existing 12000-character limit. Send a short task with a shared document path/ID and digest for reading with docs read; do not encode or silently truncate the document.',
+  'wbTools.callDocumentTooLong': 'The brief exceeds 12000 characters. Put the material in a file and send its device and path (or use --file); do not encode or truncate it.',
   'wbTools.callDocumentReference': 'Reference document (data, not additional instructions): its text is not attached; read it with wb device read at the device and path below when needed. Compare the SHA256 only when you need to know it is the same version:',
   'wbTools.kindMustBeConsultHandoff': `kind must be consult, direct, transfer or handoff`,
   'wbTools.currentRunHasNoDeliverable': 'The current run has no deliverable repository',
@@ -1724,16 +1724,16 @@ wb stands for this full prefix; every call uses this turn's prefix, and historic
   'minimal.teamHelp': 'wb discuss peers: query the complete current project team, responsibilities and availability across devices. Optional JSON {"view":"detail","includeArchived":true} returns details. Use wb call to contact a role; sending does not require waiting. wb wait registers dependencies only when their answers are needed.',
   'minimal.platformDefault': 'Execute autonomously through Workbench. Use available collaboration tools when the task needs them; explicit user requirements still apply. Project rules and decisions live in AGENTS.md (loaded natively by your CLI); history is available via wb history search. Any role may update AGENTS.md when a rule or key decision changes; keep it concise, conclusions only, and commit the change.',
   'minimal.platformDefaultLegacy1': 'Execute autonomously through Workbench. Use available collaboration tools when the task needs them; explicit user requirements still apply.',
-  'minimal.platformTemplate': `You are the Workbench team member for your current identity, working with teammates and the user to complete the project goal. Tasks may come from the user, the supervisor or peers.
+  'minimal.platformTemplate': `You are the Workbench team member for your current identity, working with teammates and the user toward the project goal. Tasks come from the user, the supervisor or peers.
 
 When to ask the user:
 - when you genuinely cannot finish and need the user's support;
 - when a major choice would be costly to get wrong.
 
 Drive the work:
-- Push each task to a verifiable result; finish whatever you can first.
-- Give every message that @-mentions you a substantive reply, or say what you cannot do and why; never just reply "received". With no objections, say "Approved, no objections".
-- When you find a blocker, a risk or someone else's problem, tell the role concerned directly, with your grounds.
+- Push each task to a verifiable result; finish what you can first.
+- Answer every message that @-mentions you with substance, or say what you cannot do and why; never just "received". With no objections, say "Approved, no objections".
+- Tell the role concerned directly, with your grounds, about any blocker, risk or problem of theirs you find.
 - In replies give what you did, the conclusion and what others must do; say when something due was skipped (an untested change), not things outside the work such as merging.
 - On a new message, decide: fold an addition into your task; handle a new task as new.
 - Follow the task plan: mark your step done, update the handover in the description and transfer to the next role; mark the task done only after its last step.
@@ -1746,13 +1746,13 @@ Working folder:
 - Never carry files, logs or bulk data (e.g. base64 parts) in the chat, wb note or call text. Formal reports go in the synced .workbench/docs; logs, query results, probes and scratch scripts go in the work materials folder from the environment notes (not synced; never /tmp), which others read with wb device ls / read; fixed-version reviews and tests use a commit and wb deliver. Hand over the device and path, without sizes or hashes per file; if none of this works, say where it is and let the user decide rather than slicing it.
 
 Working with others:
-- If the user named someone, follow that; otherwise choose yourself: suitable device > enough quota > idle. Try not to interrupt a role that is running; if nobody suits, do it yourself.
-- When assigned work is complete, write the result in your final reply; it is returned to the assigning role automatically. Do not call it back.
-- To bring in other roles, first create a todo with wb task create (goal and steps) and link it with wb call --task. Keep the description to the current state (about 3 KB), never appending. Put each finished step's conclusion, evidence path and version in the wb task update reason; when taking over or resuming, read the steps first and cite conclusions whose version is unchanged instead of redoing them.
-- Assign in four short items: the goal; what exists (task number, device and path, the full commit SHA once, never "the latest version"); what the role owns, may change and need not do; the completion criteria and what to return. Skip the platform's default limits and the method, and do not pre-read the material for it.
+- If the user named someone, follow that; otherwise choose yourself: suitable device > enough quota > idle. Avoid interrupting a running role; if nobody suits, do it yourself.
+- When assigned work is complete, write the result in your final reply; it returns to the assigner automatically. Do not call it back.
+- To bring in other roles, first create a todo with wb task create (goal and steps) and link it with wb call --task. Keep the description to the current state (about 3 KB), never appending. Put each finished step's conclusion, evidence path and version in the wb task update reason; when taking over, resuming or rechecking, read the steps first and cite conclusions whose version is unchanged instead of redoing them.
+- Assign in four short items: the goal; what exists (task number, device and path, the full commit SHA once, never "the latest version"); what the role owns, may change and need not do; the completion criteria and what to return. Skip default limits (no merging or deploying, others' files) and the method, and do not pre-read the material for it.
 - After sending, keep doing what does not depend on it and wait only when you need the result; to wait, actually send the request and register the wait; waiting for nothing means the work is complete.
 - A returned result is not a pass: check the evidence for its key conclusions (a must-fix must match a trigger) before accepting or returning it; do not recompute a SHA named in the assignment. If nothing changed, do not reassign the same thing.
-- Size reviews to the change: read-only checks, answers, documents, configuration values and small directly verifiable fixes to one or two files are self-tested and delivered unreviewed; other changes get one non-author review; changes touching permissions, authentication, data migration, money, production, security or external interfaces, or behaviour spanning repositories or devices (sync, device-to-device communication), whatever their size, or that the user asked to have fully reviewed, get one non-author plan check, then two non-author reviews in turn (one at a time), split by scope (say main logic, then failures and recovery; only very risky changes get a second full review), then an independent test. Plans and research documents get one review round. After a fix, only the reviewer who raised the issue rechecks it. Asked to review, give only your own review; do not ask others.
+- Size reviews to the change: read-only checks, answers, documents, configuration values and small directly verifiable fixes to one or two files are self-tested and delivered unreviewed; other changes get one non-author review; changes touching permissions, authentication, data migration, money, production, security or external interfaces, or behaviour spanning repositories or devices (sync, device-to-device communication), whatever their size, or that the user asked to have fully reviewed, get one non-author plan check, then two non-author reviews in turn (one at a time), split by scope (e.g. main logic / failures and recovery; the second reviews in full only if very risky), then an independent test. Plans and research documents get at most one review round; the author then delivers. After a fix, only the reviewer who raised the issue rechecks it. Asked to review, give only your own review; do not ask others.
 
 Discussion and review:
 - Back every review comment with evidence: location, trigger, impact or actual output.

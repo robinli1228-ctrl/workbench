@@ -105,7 +105,9 @@ function taskBrief(task) {
   const steps=task.plan?.steps||[],at=steps.length?` · ${(task.plan.currentStep||0)+1}/${steps.length}`:'';
   return [tr('conversationTasks.brief',{number:task.number,title:task.title,status:task.status,steps:at,owner:task.owner||'-',revision:task.revision}),
     task.description||'',
-    ...steps.map((step,i)=>`${i+1}. [${step.status||'todo'}] ${step.description}${task.stepRoles?.[i]?` (${task.stepRoles[i]})`:''}`)].filter(Boolean).join('\n');
+    // A plan update replaces every step, so each step's settings (role, collaborators, review, handoff) travel with their ids.
+    ...steps.map((step,i)=>{const {description,status,...settings}=step;
+      return `${i+1}. [${status||'todo'}] ${description}${task.stepRoles?.[i]?` (${task.stepRoles[i]})`:''}${Object.keys(settings).length?` ${JSON.stringify(settings)}`:''}`;})].filter(Boolean).join('\n');
 }
 
 /**

@@ -107,6 +107,6 @@ test('a handoff whose delivery never came is cancelled a day after it was sent, 
   assert.equal(calls.expireWaits(sent + 23 * 3600000), false, 'not before a day');
   assert.equal(calls.expireWaits(sent + 24 * 3600000 + 1), true);
   const old = db.get('coordinationRequests', 'old');
-  assert.equal(old.status, 'cancelled');assert.equal(old.cancelReason, 'delivery_expired');assert.match(old.result, /delivered commit|交付/);
+  assert.equal(old.status, 'cancelled');assert.equal(old.cancelReason, 'delivery_expired');assert.match(old.result, /delivery it waited for|交付/);
   assert.equal(db.get('coordinationRequests', 'fresh').status, 'waiting_delivery');
 });
