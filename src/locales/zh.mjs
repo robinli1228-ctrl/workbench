@@ -15,7 +15,6 @@ export default Object.freeze({
   "conversationTasks.plan":"计划无效：最多 50 步，currentStep 从 0 开始且必须有效。",
   "conversationTasks.status":"任务状态无效。",
   "conversationTasks.summary":"只有标记任务完成时才能填写 resultSummary。",
-  "conversationTasks.unfinished":"标记任务完成前必须完成全部计划步骤并定位到最后一步。",
   "conversationTasks.notFound":"本群聊中没有此任务。",
   "conversationTasks.requestId":"创建任务需要稳定的 requestId（字母、数字、冒号、下划线或连字符，最多 200 字符）。",
   "conversationTasks.retry":"该任务 requestId 已被其他输入或身份使用。",
@@ -29,10 +28,13 @@ export default Object.freeze({
   "conversationTasks.transferReason":"随关联派单转交负责人。",
   "conversationTasks.brief":"T{number}「{title}」· {status}{steps} · 负责人 {owner} · 第 {revision} 版",
   "conversationTasks.updated":"任务说明已更新。",
-  "conversationTasks.ownerReminder":"你是这个任务的负责人：做完后用 wb task update 把它标为完成并写上结果摘要；有分步计划时，先把每一步标为完成。",
+  "taskReturn.wake":"【任务交回】任务 {task}「{title}」还没关闭。{role} 做完了这一轮，没有再交给别人，结论（原文 wb history read {runId}）：\n{result}\n请接着处理：做完了就关闭任务；还有下一步就派出去；需要用户决定时，用提问工具问用户。",
+  "taskReturn.redacted":"（独立审核的结论暂不公开）",
+  "taskReturn.noReply":"（没有文字回复）",
+  "conversationTasks.ownerReminder":"你是这个任务的负责人：做完后用 wb task update 把它标为完成并写上结果摘要，没做完的步骤会一并标为完成；需要用户决定时，用提问工具问。",
   "conversationTasks.unchanged":"群聊任务 T{number}「{title}」· {status}{steps} · 第 {revision} 版，说明与你上次读到的相同；需要背景时用 wb task show T{number} 查看。",
   "conversationTasks.context":"群聊任务（Home 当前快照）。{updated}\n{task}",
-  "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。每步只填一个必填 description（步骤说明，最多4000字），不再填写步骤 title；任务自身的 title/description 不变。说明/计划整段替换。只有 done 可写 resultSummary，全部计划步骤必须已完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交时交接说明要在本轮写好：本轮新建的任务可直接转交，早先建的任务先用 wb task update 重写说明。重试须保持相同 requestId 和输入。\n步骤更新示例：wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"核对两端固定输入版本，并记录差异。\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"完善步骤说明\"}'。plan 为完整替换，必须保留仍需执行的其他步骤和配置。",
+  "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。每步只填一个必填 description（步骤说明，最多4000字），不再填写步骤 title；任务自身的 title/description 不变。说明/计划整段替换。只有 done 可写 resultSummary；标为 done 时，所有计划步骤同时标为完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交时交接说明要在本轮写好：本轮新建的任务可直接转交，早先建的任务先用 wb task update 重写说明。重试须保持相同 requestId 和输入。\n步骤更新示例：wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"核对两端固定输入版本，并记录差异。\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"完善步骤说明\"}'。plan 为完整替换，必须保留仍需执行的其他步骤和配置。",
 
   'deviceAdmin.reconnectUnsupported':'手动重连需要 Home 管理的反向 SSH 隧道、已保存的 SSH 密钥及可核验的 Linux Worker。',
   'deviceAdmin.reconnectBusy':'该设备有待处理或运行中的任务、常驻 CLI，或正在执行其他连接操作。未停止任何任务，请空闲后重试。',
@@ -557,6 +559,8 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'home.nonLoopbackListeningRequiresApi': '非回环监听必须设置 API_TOKEN，并通过 HTTPS 反向代理访问',
   'home.supervisorStageDeliveryContinueWith': '主管阶段交付：接收固定提交后继续后续阶段，不合并主分支。',
   'home.approvalCommandParameterConflict': '审批命令参数冲突',
+  'home.questionNoLongerWaiting': '这个问题已经不再等待回答。',
+  'home.invalidQuestionAnswer': '至少回答一个问题（选一项或自己写），或者选择跳过。',
   'home.approvalNoLongerValid': '审批已失效',
   'home.invalidApprovalResult': '无效审批结果',
   'home.nodeOfflineApprovalCannotBe': '节点离线，审批暂不可执行',
@@ -1638,6 +1642,7 @@ wb help sync | wb help review | wb help errors
   'worker.referencedExecutionDoesNotBelong': '引用执行不属于本项目或未成功完成',
   'worker.nativeSessionWorkingDirectoryDiffers': '原生会话工作目录与本轮工作目录不一致，请显式开启新会话',
   'worker.interruptedByStopDisconnectBefore': '启动前已停止或断开连接',
+  'worker.questionNoLongerWaiting': '这个问题已经不再等待回答：这一轮已经结束或被停止。',
   'worker.homeNotConnected': '本设备未连接主控或正在退出，请在重新连接后重试',
   'worker.runtimeNotSupportedYet': '尚未接入 Runtime {runtimeType}',
   'worker.executionInterruptedByStopDisconnect': '附件准备后执行已停止或断线',
@@ -1730,6 +1735,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 什么时候问用户：
 - 确实无法完成、需要用户支持时；
 - 有重大选择，选错了影响很大时。
+问的时候，CLI 有提问工具（AskUserQuestion / request_user_input）就用它，这一轮会停下等用户回答。
 
 主动推进：
 - 收到任务就推进到可验证的结果，能做的先做完。
@@ -1737,7 +1743,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 发现阻塞、风险或别人的问题，直接告诉相关角色并说明依据。
 - 回复写做了什么、结论和需要对方做的事。该做而没做的（例如该测没测）写明；合并、部署这类本来就不在这次范围里的，不用逐条声明没做。
 - 收到新消息时先判断：是对你手上任务的补充，就并入继续做；是新的任务，就按新任务处理。
-- 按任务计划做事：完成自己负责的步骤后标记该步骤完成，更新任务说明里的交接内容，再转交给下一步角色；只有最后一步完成才把整个任务标为完成。
+- 按任务计划做事：完成自己负责的步骤后标记该步骤完成，更新任务说明里的交接内容，再转交给下一步角色；整个任务做完再把它标为完成。
 - 转交给你的任务，你就是负责人：自己推进到底，按下面的审核规则安排审核，做完直接回复用户结论。
 
 工作目录：
@@ -1940,7 +1946,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'wbCli.deviceReadDenied': '{device} 不允许查看：这台设备的查看权限是“不可”。可在项目设置或会话设置的跨设备权限里修改。',
   'wbCli.deviceWriteDenied': '{device} 不允许写入：这台设备的写入权限是“不可”，或者设成了“项目目录”而这台设备上没有项目目录。可在项目设置或会话设置的跨设备权限里修改。',
   'wbCli.deviceWriteTooLarge': '写入内容须是文本，且不超过 1 MB；更大的文件请提交后用 wb deliver，或作为附件传送。',
-  'wbCli.nativeHistoryUsage': `用法：wb history [--project 项目] [--chat 群聊] [关键词]，或 wb history read 编号 [偏移 版本] [--project 项目]`,
+  'wbCli.nativeHistoryUsage': `用法：wb history [--project 项目] [--chat 群聊] [关键词]，wb history read 编号 [偏移 版本] [--project 项目]，或 wb history --tasks [--project 项目] [--chat 群聊] [--status todo|in_progress|done|cancelled|all]`,
   'wbCli.nativeHistoryProject': '请用 --project 指定项目：{projects}',
   'wbCli.nativeHistoryChat': '没有这个群聊，可选：{chats}',
   'wbCli.nativeHistoryDenied': '这个会话在所有设备上的查看权限都是“不可”，不能读群聊记录。可在会话设置的跨设备权限里修改。',
@@ -2002,7 +2008,9 @@ wb device read '{"device":"设备","path":"/绝对路径/app.log","tail":200,"ma
 wb device write '{"device":"设备","path":"/绝对路径/a.md","content":"文本"}'
                      范围按会话设置里的跨设备权限（默认：查看整台设备，写入会话所在目录）。路径写绝对路径。ls 可按 name 过滤并向下 depth 层（不进 .git、node_modules 等目录）；read 默认给最后 tail 行（默认 200，最多 1000），或用 offset/limit 读一页（最多 64 KB）；带 match 时在整个文件里找含该文字的行，给最后 tail 条，行首数字是该行的字节位置，可用 offset 读它前后；write 用 content 或 file（本机文本文件），最多 1 MB，append:true 追加。密钥、凭据和 .env 文件不可读写。
 wb history [--project 项目] [--chat 群聊] [关键词]   wb history read 编号 [--project 项目]
-                     只读查看项目群聊的消息和每轮结论；只有一个项目时可省略 --project。`,
+                     只读查看项目群聊的消息和每轮结论；只有一个项目时可省略 --project。
+wb history --tasks [--project 项目] [--chat 群聊] [--status todo|in_progress|done|cancelled|all]
+                     列出所有项目（或指定项目）的群聊任务，默认只列未完成的：群聊、编号、标题、状态、负责人和步骤。`,
   'platformMemory.searchUsage': `用法：wb memory search [关键词] [--type 类型] [--cli claude|codex|grok|agy] [--device 设备] [--since 时间] [--limit 1-100]`,
   'platformMemory.unknownType': `类型只能是：{types}`,
   'platformMemory.contentLength': `记忆内容要写，最多 {limit} 字`,

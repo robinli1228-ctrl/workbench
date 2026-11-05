@@ -26,9 +26,7 @@ export function nativeTurnArgs(runtime,{cwd,sessionId,prompt,keepAlive=false,mod
 
 /** Codex App Server: thread/resume once per process, then turn/start on the loaded thread (images as localImage items). */
 export class NativeCodexSession extends CodexSession {
-  constructor(options){super({...options,effort:options.effort??null});this.hold=false;this.control=options.control||null;this.questionsSupported=true;}
-  /** request_user_input is off in Codex's default mode unless the client opts in; the page answers it, so a takeover does. */
-  launchArgs(){return this.questionsSupported?['-c','features.default_mode_request_user_input=true',...super.launchArgs()]:super.launchArgs();}
+  constructor(options){super({...options,effort:options.effort??null,questions:true});this.hold=false;this.control=options.control||null;}
   async openThread() {
     if(this.threadId)return {id:this.threadId};
     // With a memory bridge the shell gets `wb` and the bridge folder becomes writable; the workspace stays the only other writable root.
@@ -58,7 +56,7 @@ export class NativeCodexSession extends CodexSession {
 
 /** Claude/Agy resident stream-json input, Grok one process per turn. Claude gets images as base64 content blocks. */
 export class NativeCliSession extends CliPrintSession {
-  constructor(options){super(options);this.inputImages=options.inputImages||[];this.controlTurn=options.control||null;this.closing=false;this.question=null;this.initialized=false;this.awaitingEcho=false;}
+  constructor(options){super(options);this.inputImages=options.inputImages||[];this.controlTurn=options.control||null;this.closing=false;this.awaitingEcho=false;}
   args(prompt){return nativeTurnArgs(this.runtime,{cwd:this.cwd,sessionId:this.resumeSessionId,prompt,keepAlive:this.keepAlive,model:this.model,effort:this.effort});}
   get questionsSupported(){return this.keepAlive&&this.runtime==='claude';}
   /** A turn's control kind must not land on the instance as `control`, which would hide the permission host below. */
@@ -72,8 +70,7 @@ export class NativeCliSession extends CliPrintSession {
         if(this.withdrawing&&message.response?.request_id===this.withdrawing&&!(message.response.subtype==='success'&&message.response.response?.cancelled===true)){this.withdrawing=null;this.interrupt();}
         return;
       }
-      if(message.type==='control_request')return this.control(message);
-      if(message.type==='control_cancel_request'){if(this.question?.requestId===message.request_id){const {id}=this.question;this.question=null;this.emit('question_resolved',{id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});}return;}
+      if(['control_request','control_cancel_request'].includes(message.type))return this.receiveControl(message);
     }
     if(this.keepAlive&&this.runtime==='claude'&&message&&typeof message==='object'){
       // The live background-task list is kept between turns too, so a later turn knows what is still running.
@@ -150,29 +147,8 @@ export class NativeCliSession extends CliPrintSession {
     if(!status||['pending','running'].includes(status))return;
     tasks.delete(id);this.emit('task',{id,status:['completed','failed'].includes(status)?status:'stopped',durationMs:now-known.at});
   }
-  /** Claude's stdio permission host: AskUserQuestion becomes a question for the page; every other prompt is allowed as the bypass mode would. */
-  control(message){
-    const {request_id:requestId,request={}}=message,reply=response=>this.write({type:'control_response',response:{subtype:'success',request_id:requestId,response}});
-    if(request.subtype!=='can_use_tool')return this.write({type:'control_response',response:{subtype:'error',request_id:requestId,error:'Unsupported control request'}});
-    if(request.tool_name!=='AskUserQuestion'||!Array.isArray(request.input?.questions)||!request.input.questions.length)return reply({behavior:'allow',updatedInput:request.input});
-    const id=requestId,questions=request.input.questions.map((q,i)=>({id:`q${i+1}`,header:String(q.header||'').slice(0,40),question:String(q.question||'').slice(0,2000),multiSelect:q.multiSelect===true,allowOther:true,
-      options:(Array.isArray(q.options)?q.options:[]).slice(0,8).map(o=>({label:String(o?.label||'').slice(0,200),description:String(o?.description||'').slice(0,600)}))}));
-    this.question={id,requestId,input:request.input,questions};
-    this.emit('question',{id,questions});this.emit('status',{status:'waiting_user'});
-  }
-  write(message){try{this.proc?.stdin?.write(`${JSON.stringify(message)}\n`);}catch{}}
-  /** Answers go back as the tool's updatedInput ("question" -> "label, label" or the typed text); skip denies with a reason so the turn carries on. */
-  answerQuestion({id,answers={},skip=false}={}){
-    const q=this.question;if(!q||(id&&q.id!==id))throw new Error('This question is no longer waiting for an answer');
-    this.question=null;
-    if(skip)this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'The user skipped these questions. Continue without the answers, using your best judgement.'}}});
-    else{const map={};q.questions.forEach((question,i)=>{const given=[].concat(answers[question.id]??answers[String(i)]??[]).map(String).filter(Boolean);if(given.length)map[q.input.questions[i].question]=given.join(', ');});
-      this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'allow',updatedInput:{...q.input,answers:map}}}});}
-    this.emit('question_resolved',{id:q.id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});
-  }
   sendTurn(prompt) {
-    // The SDK handshake precedes the first message of a session that hosts permission prompts.
-    if(this.questionsSupported&&!this.initialized){this.initialized=true;this.write({type:'control_request',request_id:`init-${Date.now()}`,request:{subtype:'initialize'}});}
+    this.initializeQuestions();
     const content=this.runtime==='claude'&&this.inputImages?.length?[{type:'text',text:prompt},...this.inputImages.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
     const message=this.runtime==='agy'?{event:'user',message:{role:'user',content}}:{type:'user',session_id:this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null};
     this.inputAttempted=true;
@@ -195,7 +171,7 @@ export class NativeCliSession extends CliPrintSession {
   async stop() {
     if(this.done)return;
     this.stopping=true;
-    if(this.question){const q=this.question;this.question=null;this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'Interrupted by the user.'}}});this.emit('question_resolved',{id:q.id});}
+    this.dropQuestion();
     if(this.keepAlive&&this.runtime==='claude'&&this.proc?.stdin?.writable){
       // Not yet started, the input still waits in Claude's queue: withdraw only it, so it does not run unseen after the stop and
       // the turn Claude is running for something else (a task notice) goes on. Its 'cancelled' receipt ends the stop.

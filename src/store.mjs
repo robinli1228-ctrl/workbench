@@ -511,6 +511,9 @@ export class Store {
       }
       if (e.type === 'approval' && !terminal.has(next.status)) this.put('approvals', e.payload);
       if (e.type === 'approval_resolved') { const a = this.get('approvals', e.payload.id); if (a) this.put('approvals', { ...a, status: e.payload.status }); }
+      // A question to the user shares the approval record: pending until answered, skipped or the turn ends.
+      if (e.type === 'question' && !terminal.has(next.status)) this.put('approvals', { ...e.payload, createdAt: e.createdAt });
+      if (e.type === 'question_resolved') { const a = this.get('approvals', e.payload.id); if (a && ['pending', 'responding'].includes(a.status)) this.put('approvals', { ...a, status: e.payload.status || 'answered', resolvedAt: e.createdAt }); }
       return next;
     });
   }

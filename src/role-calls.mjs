@@ -12,6 +12,7 @@ import {SessionQueue} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 import {registerResultReceipt,registerCallOutcome} from './result-receipts.mjs';
+import {noteTaskReturn} from './task-return.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
 const DELIVERY_WAIT_MS = 24 * 3600000;
@@ -339,6 +340,7 @@ export class RoleCalls {
     // Register the settled call before resuming its owner, so the safe continuation includes this result. Replaying a call
     // that had already settled (Home restart, upgrade) only refreshes an existing receipt and never backfills history.
     if(callTerminal.has(r.status))registerResultReceipt(this.db,{run,request:r,refreshOnly:settledBefore});
+    if(!settledBefore&&callTerminal.has(r.status))noteTaskReturn(this.db,{run,request:r});
     this.settleResult(r,{triggerRequestId:!settledBefore&&callTerminal.has(r.status)?r.id:null});
   }
 
@@ -407,7 +409,9 @@ export class RoleCalls {
         wakeReason:reason,waitRequestIds:reason!=='results'?children.filter(c=>!callTerminal.has(c.status)).map(c=>c.id):[],
         summary: `${header}${packCoordinationResults(children, Math.max(0, 12000 - header.length))}`.slice(0, 12000) });
       // Quote metadata only: inputs, task origin and scheduling stay intact. The result message may be published after this transaction.
-      if(!Object.hasOwn(next,'continuationFeedback'))this.db.put('coordinationRequests',{...next,continuationFeedback:reason==='results'?continuationFeedback(children,triggerRequestId):null});
+      // A wake for results of work on one chat task belongs to that task, so the owner sees it and may close it.
+      const linkedTasks=new Set(children.map(c=>c.conversationTaskId).filter(Boolean)),taskLink=!next.conversationTaskId&&linkedTasks.size===1?{conversationTaskId:[...linkedTasks][0]}:{};
+      if(!Object.hasOwn(next,'continuationFeedback'))this.db.put('coordinationRequests',{...next,...taskLink,continuationFeedback:reason==='results'?continuationFeedback(children,triggerRequestId):null});
       this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), continuationRequestId: next.id, updatedAt: new Date().toISOString() });
       // Mark the episode as reported only once the wake exists, so a failed wake can be retried.
       for(const {request,block} of blocked){const id=request.resultRequestId||request.id;this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',id),blockedWake:{kind:block.kind,since:block.since,notifiedAt:new Date(time).toISOString()}});}

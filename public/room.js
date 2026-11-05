@@ -8,6 +8,7 @@ import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons
 import { renderMarkdown, renderMessageMarkdown } from './markdown.js';
 import { linkMedia, openImageLightbox, openVideoLightbox, markImageOpener, fileGlyph } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
+import {createAskCard} from './ask-card.js';
 import {executionProgress} from './execution-progress.js';
 import {setChatCardState,highlightLatestChatCard} from './chat-card-state.js';
 import { createHistoryViewer } from './history-view.js';
@@ -316,6 +317,19 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   // Send is an icon inside the field; its state reads through the tooltip and accessible name.
   const sendLabel=label=>{send.title=t(label);send.setAttribute('aria-label',t(label));};
   const quoteBar = document.querySelector('#chat-quote');
+  // A role's question to the user (AskUserQuestion / request_user_input) waits above the composer; its turn waits with it.
+  const askCard=createAskCard({t,shouldFocus:()=>!input.matches(':focus'),onSend:async(entry,body)=>{
+    try{await api(`/api/approvals/${encodeURIComponent(entry.key)}`,{method:'POST',json:{...(body.skip?{skip:true}:{answers:body.answers}),commandId:crypto.randomUUID()}});await refreshState({quiet:true});}
+    catch(error){setError(error.message);}}});
+  form.before(askCard.node);
+  /** The oldest waiting question of this chat; the others follow once it is answered. */
+  function renderQuestions(){
+    const chatOf=run=>run.conversationId||data.tasks?.find(task=>task.id===run.taskId)?.conversationId||run.projectId;
+    const waiting=(data.approvals||[]).filter(a=>a.kind==='question'&&a.status==='pending'&&Array.isArray(a.questions)&&a.questions.length).map(a=>({a,run:data.runs?.find(r=>r.id===a.runId)}))
+      .filter(({run})=>run&&run.projectId===projectId&&chatOf(run)===(conversationId||projectId)&&run.status==='waiting_user').sort((x,y)=>String(x.a.createdAt||'').localeCompare(String(y.a.createdAt||'')));
+    const first=waiting[0];
+    askCard.render(first?{key:first.a.id,title:t('Question from {role}',{role:first.run.roleSnapshot?.name||t('Role')})+(waiting.length>1?` · ${t('{v} waiting',{v:waiting.length})}`:''),question:{id:first.a.questionId||first.a.id,questions:first.a.questions}}:null);
+  }
   const roleDialog = document.querySelector('#role-dialog');
   const roleForm = document.querySelector('#role-form');
   const roleCommandWarnings={};
@@ -1005,7 +1019,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
 
   function renderApprovalsInline(run) {
-    const list = (data.approvals || []).filter(a => a.runId === run.id && ['pending', 'waiting'].includes(a.status));
+    const list = (data.approvals || []).filter(a => a.kind !== 'question' && a.runId === run.id && ['pending', 'waiting'].includes(a.status));
     if (!list.length) return null;
     const wrap = create('div', 'chat-approvals');
     for (const approval of list) {
@@ -1379,7 +1393,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       if (projectId) input.value = draft().pending && !draft().pending.discussion ? '' : draft().text || '';
     }
     if (!projectId) return;
-    messageQueue.update(data,projectId);composer(); renderMessages();
+    messageQueue.update(data,projectId);composer(); renderMessages(); renderQuestions();
     if (draft().pending && sendState(draft()) !== 'failed') void verifyPending(scopeId);
     for (const run of (data.runs || []).filter(r => r.projectId === projectId && ['starting', 'running', 'waiting_user', 'stopping'].includes(r.status))) {
       void pullLive(run.id);

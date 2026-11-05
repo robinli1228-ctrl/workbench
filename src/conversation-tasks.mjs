@@ -67,7 +67,9 @@ export class ConversationTasks {
     if(!Array.isArray(value.messageIds)||value.messageIds.length>100||new Set(value.messageIds).size!==value.messageIds.length)fail('invalid');
     for(const id of value.messageIds)assertConversationRecord(scope,this.db.get('roomMessages',id));
     if(Object.hasOwn(input,'resultSummary')){if(value.status!=='done')fail('summary');text(input.resultSummary,8000,true);}
-    if(value.status==='done'&&value.plan?.steps.length&&(value.plan.currentStep!==value.plan.steps.length-1||value.plan.steps.some(s=>s.status!=='done')))fail('unfinished');
+    // Marking a task done finishes its plan in the same update; the history records which steps it closed.
+    if(value.status==='done'&&value.plan?.steps.length&&(value.plan.currentStep!==value.plan.steps.length-1||value.plan.steps.some(s=>s.status!=='done')))
+      value.plan={steps:value.plan.steps.map(step=>({...step,status:'done'})),currentStep:value.plan.steps.length-1};
     if(value.status!=='done')value.resultSummary=null;
     return value;
   }

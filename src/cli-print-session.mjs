@@ -78,7 +78,8 @@ function roleRules(roleName, roleInstructions) {
 
 /** print/stream CLI adapter: tools are auto-approved, with no native per-item approval. */
 export class CliPrintSession {
-  constructor({ cwd, model, mode, emit, roleInstructions = '', roleName = '', effort = null, runtime, env = process.env, resumeSessionId = null, keepAlive = false, inheritInstructions = false, maintenance = false, minimalInstructions=false, instructionMessage='',configurationUpdate='',beforeInput,onProcess }) {
+  constructor({ cwd, model, mode, emit, roleInstructions = '', roleName = '', effort = null, runtime, env = process.env, resumeSessionId = null, keepAlive = false, inheritInstructions = false, maintenance = false, minimalInstructions=false, instructionMessage='',configurationUpdate='',beforeInput,onProcess,questions=false }) {
+    this.questions=questions;this.question=null;this.initialized=false;
     this.beforeInput=beforeInput;this.onProcess=onProcess;this.inputAttempted=false;
     this.minimalInstructions=minimalInstructions;this.instructionMessage=instructionMessage;
     this.configurationUpdate=configurationUpdate;
@@ -128,7 +129,9 @@ export class CliPrintSession {
       args.push('--system-prompt-snapshot','off');
       if(this.resumeSessionId)args.push('--resume',this.resumeSessionId);
       if (this.effort) args.push('--effort', this.effort);
-      args.push('--dangerously-skip-permissions');
+      // With a permission host every tool is still allowed by the bypass mode, but AskUserQuestion (which exists only with a
+      // host) reaches the page as a question card.
+      args.push(...(this.questionsSupported?['--permission-mode','bypassPermissions','--permission-prompt-tool','stdio']:['--dangerously-skip-permissions']));
       return args;
     }
     const args = ['--always-approve', '--no-plan', '--cwd', this.cwd, '-m', this.model, '--output-format', 'streaming-messages-json', '--include-partial-messages', '--rules', rules];
@@ -185,6 +188,7 @@ export class CliPrintSession {
   }
   /** Agy uses event:user and Claude uses type:user; the rules are attached to Agy only on the first turn or when the rules change. */
   sendTurn(prompt) {
+    this.initializeQuestions();
     if(this.configurationUpdate&&this.runtime==='claude')prompt=[this.configurationUpdate,prompt].join('\n\n');
     const content=this.runtime==='agy'?this.minimalInstructions?[this.instructionMessage,prompt].filter(Boolean).join('\n\n'):!this.inheritInstructions?`${roleRules(this.roleName,this.roleInstructions)}\n\n${prompt}`:prompt:prompt;
     const message=this.runtime==='agy' ? {event:'user',message:{role:'user',content}}
@@ -202,6 +206,7 @@ export class CliPrintSession {
     this.receive(m);
   }
   receive(raw) {
+    if(this.questionsSupported&&['control_request','control_cancel_request','control_response'].includes(raw?.type))return this.receiveControl(raw);
     if(this.runtime==='claude'&&raw?.type==='rate_limit_event') {
       if(raw.session_id!==(this.nativeSessionId||this.resumeSessionId))return;
       const sample=normalizeRuntimeQuota('claude',raw);if(sample)this.emit('quota',sample);
@@ -349,9 +354,40 @@ export class CliPrintSession {
   }
   flushText() { clearTimeout(this.textTimer); this.textTimer = null; if (this.textBuffer) { this.emit('text', { text: this.textBuffer,...(this.runtime==='claude'&&this.messageId?{messageId:this.messageId}:{}) }); this.textBuffer = ''; } }
   approve() { throw new Error(tr('cliPrintSession.runtimeAutoApprovesInPrint')); }
+  /** Only a resident Claude whose caller can answer (a takeover, or a group-chat role when Home asks for it) hosts questions. */
+  get questionsSupported(){return Boolean(this.questions)&&this.keepAlive&&this.runtime==='claude';}
+  /** The SDK handshake precedes the first message of a session that hosts permission prompts. */
+  initializeQuestions(){if(this.questionsSupported&&!this.initialized){this.initialized=true;this.write({type:'control_request',request_id:`init-${Date.now()}`,request:{subtype:'initialize'}});}}
+  receiveControl(message){
+    if(message.type==='control_request')return this.control(message);
+    if(message.type==='control_cancel_request'&&this.question?.requestId===message.request_id){const {id}=this.question;this.question=null;this.emit('question_resolved',{id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});}
+  }
+  /** Claude's stdio permission host: AskUserQuestion becomes a question for the page; every other prompt is allowed as the bypass mode would. */
+  control(message){
+    const {request_id:requestId,request={}}=message,reply=response=>this.write({type:'control_response',response:{subtype:'success',request_id:requestId,response}});
+    if(request.subtype!=='can_use_tool')return this.write({type:'control_response',response:{subtype:'error',request_id:requestId,error:'Unsupported control request'}});
+    if(request.tool_name!=='AskUserQuestion'||!Array.isArray(request.input?.questions)||!request.input.questions.length)return reply({behavior:'allow',updatedInput:request.input});
+    const id=requestId,questions=request.input.questions.map((q,i)=>({id:`q${i+1}`,header:String(q.header||'').slice(0,40),question:String(q.question||'').slice(0,2000),multiSelect:q.multiSelect===true,allowOther:true,
+      options:(Array.isArray(q.options)?q.options:[]).slice(0,8).map(o=>({label:String(o?.label||'').slice(0,200),description:String(o?.description||'').slice(0,600)}))}));
+    this.question={id,requestId,input:request.input,questions};
+    this.emit('question',{id,questions});this.emit('status',{status:'waiting_user'});
+  }
+  write(message){try{this.proc?.stdin?.write(`${JSON.stringify(message)}\n`);}catch{}}
+  /** Answers go back as the tool's updatedInput ("question" -> "label, label" or the typed text); skip denies with a reason so the turn carries on. */
+  answerQuestion({id,answers={},skip=false}={}){
+    const q=this.question;if(!q||(id&&q.id!==id))throw new Error('This question is no longer waiting for an answer');
+    this.question=null;
+    if(skip)this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'The user skipped these questions. Continue without the answers, using your best judgement.'}}});
+    else{const map={};q.questions.forEach((question,i)=>{const given=[].concat(answers[question.id]??answers[String(i)]??[]).map(String).filter(Boolean);if(given.length)map[q.input.questions[i].question]=given.join(', ');});
+      this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'allow',updatedInput:{...q.input,answers:map}}}});}
+    this.emit('question_resolved',{id:q.id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});
+  }
+  /** A stop answers a waiting question with a denial, so Claude is not left holding it. */
+  dropQuestion(){if(!this.question)return;const q=this.question;this.question=null;this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'Interrupted by the user.'}}});this.emit('question_resolved',{id:q.id,status:'expired'});}
   async stop() {
     if (this.done) return;
     this.stopping = true;
+    this.dropQuestion();
     this.shutdown();
   }
   finish(status, error) {

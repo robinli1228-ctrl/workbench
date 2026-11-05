@@ -60,7 +60,7 @@ These are example assignments, not fixed vendor roles. Any supported CLI can tak
 
 Keep requirements, assignments, discussion, and final results together. Use direct mentions, manager coordination, role consultations, or whole-task transfers to decide who works next.
 
-Each group has its own task list with descriptions, steps, owners, status, and change history. Task records describe the work; execution queues and run records show what is actually running or waiting. A successful process exit does not by itself mean the task passed review.
+Each group has its own task list with descriptions, steps, owners, status, and change history. Task records describe the work; execution queues and run records show what is actually running or waiting. A successful process exit does not by itself mean the task passed review. When the last turn on a task ends without closing it or handing it on, the task goes back to its owner once to close it or decide the next step. A Claude or Codex role that needs your decision asks with its question card above the chat composer and waits for your answer in the same turn.
 
 ### Continue native conversations
 

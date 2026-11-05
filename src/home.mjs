@@ -64,6 +64,7 @@ import { Attachments, AttachmentTransfers } from './attachments.mjs';
 import { ExecutionPlans, schedulingRules } from './execution-plans.mjs';
 import { History } from './history.mjs';
 import { archiveHistoricalReceipts, wakeCallOutcomes } from './result-receipts.mjs';
+import { wakeTaskReturns } from './task-return.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
@@ -290,6 +291,51 @@ const tokenUsage = new TokenUsage(db,workerQuery,online,change);
 const usageRetry=createTokenUsageBackgroundCollector({collect:nodeId=>tokenUsage.collect(nodeId),online,getState:nodeId=>db.get('tokenUsageStates',nodeId)});
 const collectUsage = nodeId => { if(db.get('workers',nodeId)?.capabilities?.tokenUsage===1) void usageRetry.run(nodeId); };
 
+/** wb history --tasks for a Sessions-page CLI: the chat tasks of every project (or one), unfinished ones by default. */
+function nativeTaskList(projects,{project,chat,status}) {
+  if(status!==undefined&&!['todo','in_progress','done','cancelled','all'].includes(status))throw new Error(tr('wbCli.nativeHistoryUsage'));
+  const chosen=project?projects.filter(p=>p.id===project||p.name===project):projects;
+  if(!chosen.length)throw new Error(tr('wbCli.nativeHistoryProject',{projects:projects.map(p=>p.name).join(', ')||'-'}));
+  const name=id=>id?db.get('roles',id)?.name||id:null,tasks=[];
+  for(const p of chosen){
+    const chats=new Map(db.listProject('groupConversations',p.id).map(c=>[c.id,c.title]));
+    for(const t of db.listProject('conversationTasks',p.id)){
+      if(status==='all'?false:status?t.status!==status:['done','cancelled'].includes(t.status))continue;
+      const title=chats.get(t.conversationId)||null;if(chat&&t.conversationId!==chat&&title!==chat)continue;
+      const steps=t.plan?.steps||[];
+      tasks.push({project:p.name,...(title?{chat:title}:{}),task:`T${t.number}`,title:t.title,status:t.status,owner:name(t.ownerRoleId),
+        ...(steps.length?{step:`${Math.min(t.plan.currentStep+1,steps.length)}/${steps.length}`,stepsDone:steps.filter(s=>s.status==='done').length}:{}),updatedAt:t.updatedAt});
+    }
+  }
+  return {count:tasks.length,tasks:tasks.sort((a,b)=>String(a.updatedAt).localeCompare(String(b.updatedAt)))};
+}
+
+/** The user's answer to a role's question (labels or typed text per question id, or skip) goes to the Run's Worker once. */
+function answerRunQuestion(id, { answers, skip = false, commandId } = {}) {
+  const q = db.get('approvals', id), repeated = db.get('commands', commandId || '');
+  if (repeated) {
+    if (repeated.type !== 'question_answer' || repeated.approvalId !== id) throw new Error(tr('home.approvalCommandParameterConflict'));
+    return q;
+  }
+  if (!q || q.status !== 'pending') throw new Error(tr('home.questionNoLongerWaiting'));
+  if (!commandId || typeof skip !== 'boolean' || (!skip && (!answers || typeof answers !== 'object' || Array.isArray(answers)))) throw new Error(tr('home.invalidQuestionAnswer'));
+  const known = new Set((q.questions || []).map(item => item.id)), clean = {};
+  if (!skip) for (const [key, value] of Object.entries(answers)) {
+    const list = [].concat(value).map(v => typeof v === 'string' ? v.trim().slice(0, 4000) : '').filter(Boolean);
+    if (!known.has(key)) throw new Error(tr('home.invalidQuestionAnswer'));
+    if (list.length) clean[key] = list.slice(0, 8);
+  }
+  if (!skip && !Object.keys(clean).length) throw new Error(tr('home.invalidQuestionAnswer'));
+  const r = db.get('runs', q.runId);
+  if (!r || !online(r.nodeId)) throw new Error(tr('home.nodeOfflineApprovalCannotBe'));
+  if (terminal.has(r.status) || r.status === 'stopping') throw new Error(tr('home.executionHasEndedStopping'));
+  db.transaction(() => {
+    db.put('commands', { id: commandId, type: 'question_answer', nodeId: r.nodeId, runId: r.id, approvalId: q.id, answers: clean, skip, acked: false });
+    db.put('approvals', { ...q, status: 'responding', answers: clean, skipped: skip });
+  });
+  dispatch(r.nodeId); change(); return db.get('approvals', q.id);
+}
+
 /** Validates a browser approval reply before it becomes an approval command for the Run's Worker. */
 function respondApproval(approvalId, decision, commandId) {
   const a = db.get('approvals', approvalId), repeated = db.get('commands', commandId || '');
@@ -297,7 +343,7 @@ function respondApproval(approvalId, decision, commandId) {
     if (repeated.type !== 'approval' || repeated.approvalId !== approvalId || repeated.decision !== decision) throw new Error(tr('home.approvalCommandParameterConflict'));
     return a;
   }
-  if (!a || a.status !== 'pending' || !Number.isFinite(Date.parse(a.expiresAt)) || Date.parse(a.expiresAt) < Date.now()) throw new Error(tr('home.approvalNoLongerValid'));
+  if (!a || a.kind === 'question' || a.status !== 'pending' || !Number.isFinite(Date.parse(a.expiresAt)) || Date.parse(a.expiresAt) < Date.now()) throw new Error(tr('home.approvalNoLongerValid'));
   if (!['accept', 'decline'].includes(decision) || !commandId) throw new Error(tr('home.invalidApprovalResult'));
   const r = db.get('runs', a.runId);
   if (!r || !online(r.nodeId)) throw new Error(tr('home.nodeOfflineApprovalCannotBe'));
@@ -419,7 +465,7 @@ async function dispatch(nodeId) {
     send(sockets.get(nodeId), { type: 'command', command: wireCommand, run, task, request,
       gitCredentials,folderAccess:folderAccessFor(db,nodeId,`project:${run.projectId}`),
       delivery: (c.deliveryId || run.deliveryId) ? db.get('deliveries', c.deliveryId || run.deliveryId) : null,
-      project: { ...project, root: run.projectRoot ?? project.root }, platformPrompt, language });
+      project: { ...project, root: run.projectRoot ?? project.root }, platformPrompt, language, questions: true });
   }
   } finally {dispatching.delete(nodeId);}
 }
@@ -505,6 +551,9 @@ function scheduleChatTurn() {
   }
   try {if(wakeCallOutcomes(db,(receipt,text)=>rooms.postSystemTask(receipt.projectId,{id:`outcome-${receipt.id.replace(/^rr:/,'')}`,conversationId:receipt.conversationId,
     roleId:receipt.ownerRoleId,text,source:{kind:'call_outcome',receiptId:receipt.id}})))change();}catch(error){console.error('Call outcome wake:',error.message);}
+  try {if(wakeTaskReturns(db,(item,text)=>{const message=rooms.postSystemTask(item.projectId,{id:item.id,conversationId:item.conversationId,roleId:item.ownerRoleId,text,
+    source:{kind:'task_return',conversationTaskId:item.conversationTaskId,runId:item.runId}}),request=calls.adoptTask(message.taskIds[0]);
+    db.put('coordinationRequests',{...request,conversationTaskId:item.conversationTaskId,taskReturn:true});return message;}))change();}catch(error){console.error('Task return:',error.message);}
   try {if(proactiveFollowup.tick())change();}catch(error){console.error('Proactive follow-up:',error.message);}
   try {if(dueRoleCompactions(db,{online:id=>online(id)&&sockets.get(id).workerReady,send:(nodeId,payload)=>send(sockets.get(nodeId),payload)}))change();}catch(error){console.error('Role compaction:',error.message);}
   for(const task of db.chatTasks(['ready']))prepareChatContext(task);
@@ -580,6 +629,7 @@ function pageFileMap() {
   files['/native-side-ask.js']='native-side-ask.js';
   files['/group-side-ask.js']='group-side-ask.js';
   files['/native-sessions.js']='native-sessions.js';
+  files['/ask-card.js']='ask-card.js';
   files['/native-agent-switch.js']='native-agent-switch.js';
   files['/native-transcript.js']='native-transcript.js';
   files['/media.js']='media.js';
@@ -1178,6 +1228,7 @@ const server = http.createServer(async (req, res) => {
           const caller=b.caller||{},entry=db.list('nativeCatalogEntries').find(e=>e.nodeId===caller.device&&e.runtime===caller.cli&&e.sessionId===caller.sessionId)||null;
           if(db.list('workers').every(w=>deviceAccessFor(entry,w.id).read==='none'))throw new Error(tr('wbCli.nativeHistoryDenied'));
           const projects=db.list('projects').filter(p=>!p.systemConfig),wanted=typeof b.project==='string'?b.project.trim():'';
+          if(b.action==='tasks')return json(res,nativeTaskList(projects,{project:wanted,chat:typeof b.chat==='string'?b.chat.trim():'',status:b.status}));
           const project=wanted?projects.find(p=>p.id===wanted||p.name===wanted):projects.length===1?projects[0]:null;
           if(!project)throw new Error(tr('wbCli.nativeHistoryProject',{projects:projects.map(p=>p.name).join(', ')||'-'}));
           const chat=typeof b.chat==='string'&&b.chat.trim()?db.listProject('groupConversations',project.id).find(c=>c.id===b.chat.trim()||c.title===b.chat.trim()):null;
@@ -1692,7 +1743,7 @@ const server = http.createServer(async (req, res) => {
       }
       if ((m = pathname.match(/^\/api\/approvals\/([^/]+)$/)) && req.method === 'POST') {
         const b = await body(req);
-        return json(res, respondApproval(m[1], b.decision, b.commandId));
+        return json(res, db.get('approvals', m[1])?.kind === 'question' ? answerRunQuestion(m[1], b) : respondApproval(m[1], b.decision, b.commandId));
       }
       if (pathname === '/api/language' && req.method === 'GET') return json(res, { language: getLanguage() });
       if (pathname === '/api/language' && req.method === 'PUT') {

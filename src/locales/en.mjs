@@ -15,7 +15,6 @@ export default Object.freeze({
   "conversationTasks.plan":"Invalid plan: use up to 50 steps and a valid zero-based currentStep.",
   "conversationTasks.status":"Invalid task status.",
   "conversationTasks.summary":"resultSummary is only allowed when marking the task done.",
-  "conversationTasks.unfinished":"Complete every plan step and select the final step before marking the task done.",
   "conversationTasks.notFound":"Task not found in this conversation.",
   "conversationTasks.requestId":"Task creation requires a stable requestId (letters, digits, colon, underscore or hyphen; at most 200 characters).",
   "conversationTasks.retry":"This task requestId was already used with different input or actor.",
@@ -29,10 +28,13 @@ export default Object.freeze({
   "conversationTasks.transferReason":"Ownership transferred with the linked call.",
   "conversationTasks.brief":"T{number} \"{title}\" · {status}{steps} · owner {owner} · revision {revision}",
   "conversationTasks.updated":"Task description has been updated.",
-  "conversationTasks.ownerReminder":"You own this task: when the work is done, mark it done with wb task update and write the result summary; with a step plan, mark every step done first.",
+  "taskReturn.wake":"[Task returned] Task {task} \"{title}\" is still open. {role} finished a turn on it without handing it on; its conclusion (full text: wb history read {runId}):\n{result}\nCarry on: close the task if the work is done, hand out the next step if there is one, or ask the user with the question tool when they must decide.",
+  "taskReturn.redacted":"(an independent review's conclusion, not yet released)",
+  "taskReturn.noReply":"(no text reply)",
+  "conversationTasks.ownerReminder":"You own this task: when the work is done, mark it done with wb task update and write the result summary; steps not yet done are marked done with it. When the user must decide, ask with the question tool.",
   "conversationTasks.unchanged":"Conversation task T{number} \"{title}\" · {status}{steps} · revision {revision}; the description is the same as when you last read it. For background: wb task show T{number}.",
   "conversationTasks.context":"Conversation task (current Home snapshot). {updated}\n{task}",
-  "conversationTasks.help":"Conversation tasks (Home-only, current chat):\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"Task\",\"description\":\"Full brief\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"Full replacement\",\"reason\":\"handover\"}'\nCreate accepts optional ownerRoleId, status and plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep} (zero-based). Each step has one required description (up to 4000 characters), no separate step title; the task-level title/description are unchanged. Replace description/plan as a whole. Only done permits resultSummary; all plan steps must be done. Owner changes require a rewritten description and the owner, supervisor or user.\nwb call accepts --task T3: ordinary calls only link; --kind transfer changes the owner and sets in_progress. The handover description must be written in this run: a task created in this run can be transferred at once; for an older task, rewrite the description with wb task update first. Retries must keep the same requestId and input.\nStep update example: wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"Check both fixed inputs and record differences.\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"Clarify the step\"}'. The plan is a full replacement: retain all other needed steps and their settings.",
+  "conversationTasks.help":"Conversation tasks (Home-only, current chat):\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"Task\",\"description\":\"Full brief\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"Full replacement\",\"reason\":\"handover\"}'\nCreate accepts optional ownerRoleId, status and plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep} (zero-based). Each step has one required description (up to 4000 characters), no separate step title; the task-level title/description are unchanged. Replace description/plan as a whole. Only done permits resultSummary; marking done also marks every plan step done. Owner changes require a rewritten description and the owner, supervisor or user.\nwb call accepts --task T3: ordinary calls only link; --kind transfer changes the owner and sets in_progress. The handover description must be written in this run: a task created in this run can be transferred at once; for an older task, rewrite the description with wb task update first. Retries must keep the same requestId and input.\nStep update example: wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"Check both fixed inputs and record differences.\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"Clarify the step\"}'. The plan is a full replacement: retain all other needed steps and their settings.",
 
   'deviceAdmin.reconnectUnsupported':'Manual reconnection requires a Home-managed reverse SSH tunnel, a saved SSH key and a verifiable Linux Worker.',
   'deviceAdmin.reconnectBusy':'This device has pending or active work, a retained CLI, or another connection operation. Nothing was stopped; try again when it is idle.',
@@ -557,6 +559,8 @@ Execution purpose: {purpose}. {p4}{p5}`,
   'home.nonLoopbackListeningRequiresApi': 'Non-loopback listening requires API_TOKEN to be set and access through an HTTPS reverse proxy',
   'home.supervisorStageDeliveryContinueWith': 'Manager stage delivery: continue with later stages after receiving the fixed commit; do not merge into the main branch.',
   'home.approvalCommandParameterConflict': 'Approval command parameter conflict',
+  'home.questionNoLongerWaiting': 'This question is no longer waiting for an answer.',
+  'home.invalidQuestionAnswer': 'Pick or write an answer to at least one question, or skip.',
   'home.approvalNoLongerValid': 'The approval is no longer valid',
   'home.invalidApprovalResult': 'Invalid approval result',
   'home.nodeOfflineApprovalCannotBe': 'Node is offline; the approval cannot be executed right now',
@@ -1638,6 +1642,7 @@ A retained process puts --turn RUN_ID before the current-turn tool entry. Each t
   'worker.referencedExecutionDoesNotBelong': 'The referenced execution does not belong to this project or did not complete successfully',
   'worker.nativeSessionWorkingDirectoryDiffers': 'The native session working directory differs from this turn\'s working directory; explicitly start a new session',
   'worker.interruptedByStopDisconnectBefore': 'Interrupted by stop or disconnect before launch',
+  'worker.questionNoLongerWaiting': 'This question is no longer waiting for an answer: the turn has ended or was stopped.',
   'worker.homeNotConnected': 'This device is not connected to Home or is shutting down; try again after it reconnects',
   'worker.runtimeNotSupportedYet': 'Runtime {runtimeType} is not supported yet',
   'worker.executionInterruptedByStopDisconnect': 'Execution interrupted by stop or disconnect after attachment preparation',
@@ -1730,25 +1735,26 @@ wb stands for this full prefix; every call uses this turn's prefix, and historic
 When to ask the user:
 - when you genuinely cannot finish and need the user's support;
 - when a major choice would be costly to get wrong.
+Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.
 
 Drive the work:
 - Push each task to a verifiable result; finish what you can first.
 - Answer every message that @-mentions you with substance, or say what you cannot do and why; never just "received". With no objections, say "Approved, no objections".
-- Tell the role concerned directly, with your grounds, about any blocker, risk or problem of theirs you find.
+- Tell the role concerned, with grounds, about any blocker, risk or problem you find.
 - In replies give what you did, the conclusion and what others must do; say when something due was skipped (an untested change), not things outside the work such as merging.
 - On a new message, decide: fold an addition into your task; handle a new task as new.
-- Follow the task plan: mark your step done, update the handover in the description and transfer to the next role; mark the task done only after its last step.
+- Follow the task plan: mark your step done, update the handover in the description and transfer to the next role; mark the task done once the work is finished.
 - A task transferred to you is yours: drive it to the end, arrange reviews under the rule below, and reply to the user with the conclusion.
 
 Working folder:
 - With sync on, project folder files sync between devices; .git, .worktrees, build outputs and other Git-ignored files do not (wb help sync). Work in the bound folder directly and do not create worktrees of your own; if the platform puts you in a run folder (.worktrees/run-*), work there and keep it.
 - The bound folder is shared and Git state (commits, branches, index) does not sync: git status may show changes synced from another device, which are not abandoned work; never revert or discard them. Never switch branches, stash, reset, clean or check out files there; that wipes others' uncommitted work. If the folder is on the wrong branch, settle it with the user or the owner. Commit only files you own (never add -A), after checking with git log -1 that HEAD is the base of those changes; otherwise coordinate with whoever made them.
-- To see files or logs on another project device (e.g. a local service's logs), or to change files there, use wb device ls / read / write yourself (see wb help); do not ask others to copy them.
+- To see files or logs on another project device, or to change files there, use wb device ls / read / write yourself (see wb help); do not ask others to copy them.
 - Never carry files, logs or bulk data (e.g. base64 parts) in the chat, wb note or call text. Formal reports go in the synced .workbench/docs; logs, query results, probes and scratch scripts go in the work materials folder from the environment notes (not synced; never /tmp), which others read with wb device ls / read; fixed-version reviews and tests use a commit and wb deliver. Hand over the device and path, without sizes or hashes per file; if none of this works, say where it is and let the user decide rather than slicing it.
 
 Working with others:
 - If the user named someone, follow that; otherwise choose yourself: suitable device > enough quota > idle. Avoid interrupting a running role; if nobody suits, do it yourself.
-- When assigned work is complete, write the result in your final reply; it returns to the assigner automatically. Do not call it back.
+- When assigned work is done, write the result in your final reply; it returns to the assigner automatically. Do not call it back.
 - To bring in other roles, first create a todo with wb task create (goal and steps) and link it with wb call --task. Keep the description to the current state (about 3 KB), never appending. Put each finished step's conclusion, evidence path and version in the wb task update reason; when taking over, resuming or rechecking, read the steps first and cite conclusions whose version is unchanged instead of redoing them.
 - Assign in four short items: the goal; what exists (task number, device and path, the full commit SHA once, never "the latest version"); what the role owns, may change and need not do; the completion criteria and what to return. Skip default limits (no merging or deploying, others' files) and the method, and do not pre-read the material for it.
 - After sending, keep doing what does not depend on it and wait only when you need the result; to wait, actually send the request and register the wait; waiting for nothing means the work is complete.
@@ -1761,7 +1767,7 @@ Discussion and review:
 - Combining reviews, check every must-fix against the code yourself; agreement is not evidence, and do not upgrade an item because another reviewer did.
 - Others can be wrong too: check each point, fix what is right and give evidence against what is not; stop when both agree. Do not accept a wrong view to end it nor cling to yours; after three to five rounds of dispute, the supervisor decides.
 
-Collaborate with wb commands; see wb help for commands and parameters.`,
+Collaborate with wb commands; see wb help.`,
   'minimal.supervisorDefault': 'Understand the goal and choose an effective execution approach. Complete work directly or collaborate as the task needs.',
   'minimal.supervisorTemplate': `You are the project supervisor and own the goal through final completion: assign, follow up, accept and decide without waiting for step-by-step direction.
 You personally do only the simplest things: answer a question directly, check one fact, or a small one- or two-step operation that changes no code. Anything that needs reading several files, writing or changing code, running tests or comparing options goes to other roles.
@@ -1940,7 +1946,7 @@ You personally do only the simplest things: answer a question directly, check on
   'wbCli.deviceReadDenied': 'Reading {device} is not allowed: its read access is "none". Change it under cross-device access in the project or session settings.',
   'wbCli.deviceWriteDenied': 'Writing {device} is not allowed: its write access is "none", or "project folder" with no project folder on that device. Change it under cross-device access in the project or session settings.',
   'wbCli.deviceWriteTooLarge': 'Write text of at most 1 MB; deliver larger files with a commit and wb deliver, or send them as an attachment.',
-  'wbCli.nativeHistoryUsage': `Usage: wb history [--project PROJECT] [--chat CHAT] [WORDS], or wb history read ID [OFFSET VERSION] [--project PROJECT]`,
+  'wbCli.nativeHistoryUsage': `Usage: wb history [--project PROJECT] [--chat CHAT] [WORDS], wb history read ID [OFFSET VERSION] [--project PROJECT], or wb history --tasks [--project PROJECT] [--chat CHAT] [--status todo|in_progress|done|cancelled|all]`,
   'wbCli.nativeHistoryProject': 'Name the project with --project: {projects}',
   'wbCli.nativeHistoryChat': 'No such group chat; choose one of: {chats}',
   'wbCli.nativeHistoryDenied': 'This session may not read on any device (read access "none" everywhere), so it cannot read group chat history. Change it under cross-device access in the session settings.',
@@ -2002,7 +2008,9 @@ wb device read '{"device":"DEVICE","path":"/ABSOLUTE/PATH/app.log","tail":200,"m
 wb device write '{"device":"DEVICE","path":"/ABSOLUTE/PATH/a.md","content":"TEXT"}'
                      As far as the cross-device access in the session settings allows (default: read the whole device, write this session's folder). Paths are absolute. ls filters by name and goes depth levels down (not into .git, node_modules and the like); read gives the last tail lines (default 200, at most 1000), or a page with offset/limit (at most 64 KB); with match it finds the lines containing the text anywhere in the file and gives the last tail of them, each starting with its byte offset, which offset can then read around; write takes content or file (a local text file), at most 1 MB, append:true appends. Keys, credentials and .env files are neither read nor written.
 wb history [--project PROJECT] [--chat CHAT] [WORDS]   wb history read ID [--project PROJECT]
-                     Read-only look at a project group chat's messages and each turn's result; --project may be left out when there is one project.`,
+                     Read-only look at a project group chat's messages and each turn's result; --project may be left out when there is one project.
+wb history --tasks [--project PROJECT] [--chat CHAT] [--status todo|in_progress|done|cancelled|all]
+                     The chat tasks of every project (or the one named), unfinished ones by default: chat, number, title, status, owner and step.`,
   'platformMemory.searchUsage': `Usage: wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit 1-100]`,
   'platformMemory.unknownType': `Type must be one of: {types}`,
   'platformMemory.contentLength': `Memory text is required, up to {limit} characters`,
