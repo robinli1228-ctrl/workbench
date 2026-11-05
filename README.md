@@ -74,6 +74,8 @@ Run planning or interactive work on your computer and assign another role to a s
 
 Bind the corresponding project folders on participating devices. Use fixed-commit Git deliveries when a reviewer or collaborator needs an exact code version. Optional source synchronization exchanges saved files within explicitly configured scopes, with visible status and conflict records. Synchronization is enabled per project scope; it does not commit, merge, or deploy code. When all participating Workers support bounded transfers, both manual and automatic synchronization split large changes into ordered parts instead of rejecting the project for having more than 10,000 files. File-size, storage, exclusion, and conflict protections still apply. Home automatically reclaims unused synchronization content during maintenance and before a storage-limit refusal, while preserving active transfers, retained versions and conflict evidence.
 
+Managed tasks start without a full-project file-attribution scan. Automatic synchronization retains its conflict checks; an unavailable project directory is reported and retried independently of other projects.
+
 Cross-device collaboration passes work and its inputs between roles. It does not migrate a vendor's native session to another device.
 
 ### Inspect the work and its outputs

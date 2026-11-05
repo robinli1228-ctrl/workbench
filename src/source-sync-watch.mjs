@@ -24,7 +24,8 @@ export class SourceSyncWatch {
   cadence(id){return this.intervals[this.degraded.get(id)===false?'watching':'degraded'];}
   async configure(config){
     if(!config||typeof config.version!=='string'||!Array.isArray(config.scopes)||config.scopes.length>480)throw syncError('invalid_watch_config');
-    for(const scope of config.scopes){if(scope.scopeKind!=='directory')throw syncError('invalid_watch_config');await this.resolveBinding(scope);}
+    // Resolve each binding in tick(): a missing directory blocks only its own scope and uses the existing retry path.
+    for(const scope of config.scopes){if(scope.scopeKind!=='directory')throw syncError('invalid_watch_config');}
     const previous=this.db.get('sourceSyncWatchConfig','main')?.scopes||[];
     for(const scope of previous)if(!config.scopes.some(s=>key(s)===key(scope)&&JSON.stringify(s)===JSON.stringify(scope))){const id=key(scope);this.invalidate(id);for(const w of this.watches.get(id)?.values()||[])w.close();this.watches.delete(id);this.hints.delete(id);this.checked.delete(id);this.retryAt.delete(id);this.failures.delete(id);this.degraded.delete(id);}
     this.db.put('sourceSyncWatchConfig',{...config,id:'main'});
