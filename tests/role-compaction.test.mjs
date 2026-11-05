@@ -99,14 +99,30 @@ test('a call still waiting for its delivery does not hold the role; an open call
   assert.equal(dropped.blockedBy, 'call:open-call-1234', 'and why it was dropped');
 });
 
+test('a role found idle after the hour is still compacted: nothing newer ran, so the large context is still there', () => {
+  const { db, run, sent, tick } = env(), t0 = Date.now();
+  noteRoleCompaction(db, run, { now: t0 });
+  tick(t0 + COMPACT_IDLE_MS + 2 * 3600000);
+  assert.deepEqual(sent.map(m => m.type), ['compact_role_session']);
+  assert.equal(db.get('roleSessions', 's1').compaction.status, 'requested');
+});
+
 test('a handoff whose delivery never came is cancelled a day after it was sent, saying why', () => {
   const db = new Store(':memory:'), calls = new RoleCalls(db), sent = Date.parse('2026-11-03T03:00:00Z');
   db.put('projects', { id: P, name: 'Chat', root: '/tmp/chat' });
   db.put('coordinationRequests', { id: 'old', projectId: P, conversationId: P, kind: 'handoff', targetRoleId: 'a', status: 'waiting_delivery', createdAt: new Date(sent).toISOString(), updatedAt: new Date(sent).toISOString() });
   db.put('coordinationRequests', { id: 'fresh', projectId: P, conversationId: P, kind: 'handoff', targetRoleId: 'a', status: 'waiting_delivery', createdAt: new Date(sent + 23 * 3600000).toISOString() });
+  // Waits that can still end stay: a delivery not yet ready, a sync batch, review isolation. A blocked delivery cannot.
+  const at = new Date(sent).toISOString();
+  db.put('deliveries', { id: 'd-ready', projectId: P, status: 'ready' });db.put('deliveries', { id: 'd-blocked', projectId: P, status: 'blocked' });
+  db.put('coordinationRequests', { id: 'ready', projectId: P, conversationId: P, kind: 'handoff', targetRoleId: 'a', status: 'waiting_delivery', deliveryId: 'd-ready', createdAt: at });
+  db.put('coordinationRequests', { id: 'blocked', projectId: P, conversationId: P, kind: 'handoff', targetRoleId: 'a', status: 'waiting_delivery', deliveryId: 'd-blocked', createdAt: at });
+  db.put('coordinationRequests', { id: 'sync', projectId: P, conversationId: P, kind: 'handoff', targetRoleId: 'a', status: 'waiting_delivery', sourceSyncBatchId: 'b1', createdAt: at });
+  db.put('coordinationRequests', { id: 'isolated', projectId: P, conversationId: P, kind: 'handoff', targetRoleId: 'a', status: 'waiting_delivery', deliveryId: 'd-ready', waitingReason: 'review_isolation', createdAt: at });
   assert.equal(calls.expireWaits(sent + 23 * 3600000), false, 'not before a day');
   assert.equal(calls.expireWaits(sent + 24 * 3600000 + 1), true);
   const old = db.get('coordinationRequests', 'old');
   assert.equal(old.status, 'cancelled');assert.equal(old.cancelReason, 'delivery_expired');assert.match(old.result, /delivery it waited for|交付/);
-  assert.equal(db.get('coordinationRequests', 'fresh').status, 'waiting_delivery');
+  assert.equal(db.get('coordinationRequests', 'blocked').status, 'cancelled');
+  for (const id of ['fresh', 'ready', 'sync', 'isolated']) assert.equal(db.get('coordinationRequests', id).status, 'waiting_delivery', id);
 });

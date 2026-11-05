@@ -304,9 +304,13 @@ export class RoleCalls {
       const before=JSON.stringify(this.db.get('coordinationRequests',request.id));this.resume(request.id,time);
       changed=before!==JSON.stringify(this.db.get('coordinationRequests',request.id))||changed;
     }
-    // A handoff whose delivery never became ready would wait forever: it reappears in every stall reminder and keeps its
-    // target from ever looking idle. A day after it was sent, with nothing run for it, it is cancelled and says why.
+    // A handoff whose delivery can no longer become ready (missing, blocked or cancelled) would wait forever: it reappears in
+    // every stall reminder and keeps its target from ever looking idle. A day after it was sent, with nothing run for it, it
+    // is cancelled and says why. Waits that can still end (a sync batch, review isolation) are left alone.
     for(const request of this.db.schedulableRequests().filter(r=>r.status==='waiting_delivery'&&!r.currentRunId&&!r.taskId&&time-Date.parse(r.createdAt)>DELIVERY_WAIT_MS)) {
+      if(request.sourceSyncBatchId||request.waitingReason==='review_isolation')continue;
+      const delivery=request.deliveryId?this.db.get('deliveries',request.deliveryId):null;
+      if(delivery&&!['blocked','cancelled'].includes(delivery.status))continue;
       if(this.db.list('coordinationRequests').some(c=>c.parentRequestId===request.id&&!callTerminal.has(c.status)))continue;
       // The caller learns why, not just that it was cancelled.
       this.cancel(request.id,{reason:tr('roleCalls.deliveryExpired')});

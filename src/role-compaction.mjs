@@ -63,9 +63,10 @@ export function dueRoleCompactions(db,{online=()=>true,send,now=Date.now()}) {
     // The reason it is not done yet stays on the session, so a dropped compaction says what held it.
     const blocked=candidate(db,run,online)?roleBusyReason(db,run):unavailable(db,run,online)||'unavailable';
     if(blocked!==(c.blockedBy||null)){db.put('roleSessions',{...session,compaction:{...c,blockedBy:blocked}});changed=true;}
-    // Work on the same matter or an offline device are waited out (for an hour); a process that is gone cannot be compacted.
-    const current=db.get('roleSessions',session.id),passing=blocked===null||blocked.startsWith('call:')||['run','queued','discussion','offline'].includes(blocked);
-    if(now-Date.parse(c.dueAt)>PENDING_MAX_MS||!passing){
+    // Work on the same matter or an offline device are waited out for an hour; a process that is gone cannot be compacted.
+    // A role found idle is compacted even after the hour: nothing newer ran, so the large context is still there.
+    const current=db.get('roleSessions',session.id),passing=blocked!==null&&(blocked.startsWith('call:')||['run','queued','discussion','offline'].includes(blocked));
+    if(blocked!==null&&(now-Date.parse(c.dueAt)>PENDING_MAX_MS||!passing)){
       db.put('roleSessions',{...current,compaction:{...current.compaction,status:'expired',finishedAt:new Date(now).toISOString()}});changed=true;
     }
     else if(!blocked){

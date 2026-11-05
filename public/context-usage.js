@@ -10,9 +10,12 @@ export function contextForRole(role,data) {
   runs.sort((a,b)=>Date.parse(b.contextUsage.observedAt||b.createdAt)-Date.parse(a.contextUsage.observedAt||a.createdAt)||Date.parse(b.createdAt)-Date.parse(a.createdAt));
   const latest=runs[0],sample=(latest?.model||latest?.roleSnapshot?.model)===role.model?latest.contextUsage:{},used=valid(sample.usedTokens)?sample.usedTokens:null,limit=valid(sample.limitTokens)&&sample.limitTokens>0?sample.limitTokens:null;
   // A compaction finished after the last request is the newer size of this context.
-  const c=session?.compaction,after=c?.status==='compacted'&&valid(c.usedTokensAfter)&&Date.parse(c.finishedAt)>Date.parse(sample.observedAt||0)?c.usedTokensAfter:null;
+  const c=session?.compaction,newer=c?.finishedAt&&(!sample.observedAt||Date.parse(c.finishedAt)>Date.parse(sample.observedAt));
+  const after=c?.status==='compacted'&&valid(c.usedTokensAfter)&&newer&&sample.observedAt?c.usedTokensAfter:null;
+  // A finished compaction older than the latest measurement is history; the ring shows what that measurement says.
+  const compaction=c&&(['pending','requested'].includes(c.status)||newer)?c:null;
   const current=after!==null?{...sample,usedTokens:after,state:'compacted',observedAt:c.finishedAt}:{...sample,usedTokens:used};
-  return {...current,limitTokens:limit,percent:current.usedTokens!==null&&limit!==null?current.usedTokens/limit*100:null,compaction:c||null};
+  return {...current,limitTokens:limit,percent:current.usedTokens!==null&&limit!==null?current.usedTokens/limit*100:null,compaction};
 }
 
 const BLOCKED={run:'another turn of this role is running',queued:'messages are queued for it',discussion:'a discussion is waiting for it',
