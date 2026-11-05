@@ -54,13 +54,15 @@ export function blockedDependency(db,request,time=Date.now()) {
 
 /**
  * When a wait times out. Time a call spends queued behind its receiver's other work is not waiting time: while one is not
- * started there is no timeout (a receiver that cannot start at all wakes the waiter through blockedDependency), and the
- * wait's length counts from the last one to start. Waits recorded without a start time keep their saved deadline.
+ * started the timeout moves out by up to QUEUE_GRACE_MS (a receiver that cannot start at all wakes the waiter earlier through
+ * blockedDependency; anything else that keeps it queued still ends the wait then), and once all have started the wait's
+ * length counts from the last one to start. Waits recorded without a start time keep their saved deadline.
  */
+const QUEUE_GRACE_MS=2*3600000;
 function waitDeadline(db,parent,children) {
   const saved=Date.parse(parent.waitDeadlineAt),length=saved-Date.parse(parent.waitStartedAt||'');
   const open=children.filter(c=>!callTerminal.has(c.status));
-  if(open.some(c=>['queued','waiting_delivery'].includes(c.status)))return Infinity;
+  if(open.some(c=>['queued','waiting_delivery'].includes(c.status)))return saved+QUEUE_GRACE_MS;
   if(!Number.isFinite(length))return saved;
   const started=Math.max(0,...open.map(c=>Date.parse(db.get('runs',c.currentRunId||'')?.createdAt||'')||0));
   return Math.max(saved,started+length);

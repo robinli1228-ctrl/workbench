@@ -31,7 +31,7 @@ export default Object.freeze({
   "taskReturn.wake":"【任务交回】任务 {task}「{title}」还没关闭。{role} 做完了这一轮，没有再交给别人，结论（原文 wb history read {runId}）：\n{result}\n请接着处理：做完了就关闭任务；还有下一步就派出去；需要用户决定时，用提问工具问用户（没有就在回复里问）。",
   "taskReturn.redacted":"（独立审核的结论暂不公开）",
   "taskReturn.noReply":"（没有文字回复）",
-  "conversationTasks.ownerReminder":"你是这个任务的负责人：做完后先对照用户最初的要求逐条核对，再用 wb task update 把它标为完成，结果摘要写满足了哪些要求、怎么验证的；没做完的步骤会一并标为完成；需要用户决定时，用提问工具问（没有就在回复里问）。",
+  "conversationTasks.ownerReminder":"你是这个任务的负责人：做完后先对照任务最初的要求逐条核对（来自用户的以用户原话为准），再用 wb task update 把它标为完成，结果摘要写满足了哪些要求、怎么验证的；没做完的步骤会一并标为完成；需要用户决定时，用提问工具问（没有就在回复里问）。",
   "conversationTasks.unchanged":"群聊任务 T{number}「{title}」· {status}{steps} · 第 {revision} 版，说明与你上次读到的相同；需要背景时用 wb task show T{number} 查看。",
   "conversationTasks.context":"群聊任务（Home 当前快照）。{updated}\n{task}",
   "conversationTasks.help":"群聊任务（仅 Home 保存，限当前群聊）：\n  wb task list [--status todo|in_progress|done|cancelled|all]\n  wb task show T3\n  wb task create '{\"requestId\":\"stable-id\",\"title\":\"任务\",\"description\":\"完整说明\"}'\n  wb task update T3 '{\"revision\":1,\"description\":\"整段新说明\",\"reason\":\"交接\"}'\n创建可选 ownerRoleId、status 和 plan {steps:[{description,roleId,collaborators,review:{roleIds,count,sequential},handoffRoleId,status}],currentStep}（从 0 开始）。每步只填一个必填 description（步骤说明，最多4000字），不再填写步骤 title；任务自身的 title/description 不变。说明/计划整段替换。只有 done 可写 resultSummary；标为 done 时，所有计划步骤同时标为完成。修改负责人需重写说明，且仅负责人、总管或用户可操作。\nwb call 支持 --task T3：普通派活仅关联；--kind transfer 修改负责人并置为 in_progress。转交时交接说明要在本轮写好：本轮新建的任务可直接转交，早先建的任务先用 wb task update 重写说明。重试须保持相同 requestId 和输入。\n步骤更新示例：wb task update T3 '{\"revision\":2,\"plan\":{\"steps\":[{\"description\":\"核对两端固定输入版本，并记录差异。\",\"status\":\"in_progress\"}],\"currentStep\":0},\"reason\":\"完善步骤说明\"}'。plan 为完整替换，必须保留仍需执行的其他步骤和配置。",

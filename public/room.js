@@ -757,7 +757,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
 
   function composer() {
     if (!projectId) return;
-    input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, a message goes to the role that just replied (within 10 minutes), otherwise to the manager; @ several roles dispatches to each' : 'Type a message; @role to start work';
+    input.placeholder = data.projects?.find(p => p.id === projectId)?.supervisorRoleId ? 'Without @, a message right after a role reply (within 10 minutes) goes to that role, otherwise to the manager; @ several roles dispatches to each' : 'Type a message; @role to start work';
     const d = draft(), busy = sendingProject === scopeId, state = sendState(d);
     input.disabled = busy || !!d.pending || !!d.queueEdit;
     send.disabled = !!sendingProject || Boolean(uploadCounts.get(scopeId)) || Boolean(d.textFiles?.length) || sendLocked(state) || verifying.has(scopeId);

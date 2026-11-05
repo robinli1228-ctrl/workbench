@@ -59,7 +59,8 @@ export function createAgentCalls({db,calls,rooms},run,input) {
           sourceMessageId:run.sourceMessageId,kind:'direct',transferredFrom:parent.id,summary,sourceSyncBatchId:input.sourceSyncBatchId,attachments:run.attachments||[]})
         :calls.create({id:requestId,projectId:run.projectId,targetRoleId:role.id,parentRequestId:parent.id,sourceRunId:run.id,originNodeId:run.nodeId,
           sourceMessageId:run.sourceMessageId,kind,summary,deliveryId:input.deliveryId,sourceSyncBatchId:input.sourceSyncBatchId,attachments:run.attachments||[],
-          ...(kind==='consult'?{}:{planId:run.planId,planVersion:run.planVersion,stepId:run.stepId,execution:run.execution})});
+          // The caller's execution pins its own device's versions; a role on another device works from its own workspace.
+          ...(kind==='consult'||role.nodeId!==run.nodeId&&!run.roleSnapshot.systemSupervisor?{}:{planId:run.planId,planVersion:run.planVersion,stepId:run.stepId,execution:run.execution})});
       if(linked&&transfer)taskList.transfer(run,linked.id,role.id);
       recipients.push({id:role.id,name:role.name});
       return db.put('coordinationRequests',{...request,...(linked?{conversationTaskId:linked.id}:{}),callMessageId:messageId});

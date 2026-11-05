@@ -29,6 +29,9 @@ test('direct work for a role on another device goes to that role, not through th
   const request = db.get('coordinationRequests', sent.requestId);
   assert.equal(request.targetRoleId, 'far');
   assert.equal(request.summary, 'run the Java tests', 'the brief arrives as written');
+  db.put('runs', { ...db.get('runs', 'r1'), execution: { baselines: [{ commit: 'abc' }] } });
+  const pinned = createAgentCalls({ db, calls, rooms }, db.get('runs', 'r1'), { requestId: 'x0', role: 'Remote', kind: 'direct', text: 'check it' });
+  assert.equal(db.get('coordinationRequests', pinned.requestId).execution, null, 'the caller\'s own device versions do not travel to another device');
   db.put('runs', { ...db.get('runs', 'r1'), planId: 'plan-1' });
   assert.throws(() => createAgentCalls({ db, calls, rooms }, db.get('runs', 'r1'), { requestId: 'x2', role: 'Remote', kind: 'direct', text: 'more' }), /./, 'a plan stage still may not add cross-device work');
 });
@@ -41,6 +44,10 @@ test('a wait does not time out while a call is queued; its length counts from th
   db.put('coordinationRequests', { id: 'child', projectId: P, conversationId: P, kind: 'direct', targetRoleId: 'far', parentRequestId: 'parent', status: 'queued', createdAt: at });
   calls.resume('parent', t0 + 50 * min);
   assert.equal(db.get('coordinationRequests', 'parent').continuationRequestId, undefined, 'queued behind other work: no timeout');
+  const capped = env(), cap = capped.calls;
+  for (const [k, v] of [['runs', db.get('runs', 'run-p')], ['coordinationRequests', db.get('coordinationRequests', 'parent')], ['coordinationRequests', db.get('coordinationRequests', 'child')]]) capped.db.put(k, v);
+  cap.resume('parent', t0 + 151 * min);
+  assert.equal(capped.db.get('coordinationRequests', 'parent').waitEvent?.reason, 'timeout', 'still queued two hours past the deadline: the wait ends');
   db.put('runs', { id: 'run-c', projectId: P, roleId: 'far', status: 'running', createdAt: new Date(t0 + 45 * min).toISOString() });
   db.put('coordinationRequests', { ...db.get('coordinationRequests', 'child'), status: 'running', currentRunId: 'run-c' });
   calls.resume('parent', t0 + 70 * min);
@@ -61,19 +68,30 @@ test('a return still queued when its task was closed meanwhile is withdrawn; one
   assert.equal(db.get('tasks', 'tr2').status, 'ready');assert.equal(db.get('coordinationRequests', 'ret2').status, 'queued');
 });
 
-test('a message without @ right after a role\'s reply answers that reply; otherwise it goes to the supervisor', () => {
+test('a message without @ right after a role\'s reply answers that reply; otherwise the default intake decides', () => {
   const { db, rooms } = env();
-  db.put('runs', { id: 'r-far', projectId: P, roleId: 'far', roleSnapshot: db.get('roles', 'far'), nodeId: 'w2', status: 'succeeded', workspace: '/xxxxx', lastSeq: 0 });
-  const reply = (id, minutesAgo, extra = {}) => db.put('roomMessages', { id, projectId: P, conversationId: P, sender: 'agent', roleId: 'far', runId: 'r-far', text: 'done', taskIds: [], createdAt: new Date(Date.now() - minutesAgo * 60000).toISOString(), ...extra });
-  reply('result-a', 3);
-  const followUp = rooms.post(P, { clientMessageId: 'u1', text: 'also check the totals' });
-  assert.equal(followUp.replyToId, 'result-a');
-  assert.equal(db.get('tasks', followUp.taskIds[0]).roleId, 'far');
-  reply('result-b', 3);db.put('roomMessages', { id: 'internal', projectId: P, conversationId: P, sender: 'system', kind: 'task_return', visibility: 'internal', text: 'x', taskIds: [], createdAt: new Date().toISOString() });
-  assert.equal(rooms.post(P, { clientMessageId: 'u2', text: 'and the dates' }).replyToId, 'result-b', 'an internal platform message does not count');
-  reply('result-old', 11);
-  const late = rooms.post(P, { clientMessageId: 'u3', text: 'new topic' });
-  assert.equal(late.replyToId ?? null, null);assert.equal(db.get('tasks', late.taskIds[0]).roleId, 'sup', 'after 10 minutes it is a new message');
-  reply('result-c', 1);
-  assert.equal(db.get('tasks', rooms.post(P, { clientMessageId: 'u4', text: '@Builder take this' }).taskIds[0]).roleId, 'b', 'an @ still decides');
+  let n = 0;
+  const reply = (minutesAgo, { role = 'far', status = 'succeeded', id } = {}) => {
+    const runId = `run-${++n}`;
+    db.put('runs', { id: runId, projectId: P, roleId: role, roleSnapshot: db.get('roles', role), nodeId: db.get('roles', role).nodeId, status, workspace: '/xxxxx', lastSeq: 0 });
+    return db.put('roomMessages', { id: id || `result-${runId}`, projectId: P, conversationId: P, sender: 'agent', roleId: role, runId, text: 'done', taskIds: [], createdAt: new Date(Date.now() - minutesAgo * 60000).toISOString() }).id;
+  };
+  const send = text => { const m = rooms.post(P, { clientMessageId: `u${++n}`, text }); return { replyToId: m.replyToId ?? null, roleId: m.taskIds?.[0] ? db.get('tasks', m.taskIds[0])?.roleId ?? null : null }; };
+  let id = reply(3);
+  assert.deepEqual(send('also check the totals'), { replyToId: id, roleId: 'far' });
+  id = reply(3);db.put('roomMessages', { id: 'internal', projectId: P, conversationId: P, sender: 'system', kind: 'task_return', visibility: 'internal', text: 'x', taskIds: [], createdAt: new Date().toISOString() });
+  assert.deepEqual(send('and the dates'), { replyToId: id, roleId: 'far' }, 'an internal platform message does not count');
+  reply(11);
+  assert.deepEqual(send('new topic'), { replyToId: null, roleId: 'sup' }, 'after 10 minutes it is a new message');
+  reply(1, { status: 'failed' });
+  assert.deepEqual(send('give this to someone else'), { replyToId: null, roleId: 'sup' }, 'a failed turn does not keep the follow-up');
+  reply(1, { id: 'note-1' });
+  assert.deepEqual(send('ok'), { replyToId: null, roleId: 'sup' }, 'a note or other message is not a final reply');
+  reply(1, { role: 'sup' });
+  assert.deepEqual(send('have all roles review this'), { replyToId: null, roleId: 'sup' }, 'the supervisor gets it through the default intake');
+  reply(1);
+  assert.equal(send('@Builder take this').roleId, 'b', 'an @ still decides');
+  reply(1);
+  db.put('projects', { ...db.get('projects', P), supervisorRoleId: null });
+  assert.deepEqual(send('just a thought'), { replyToId: null, roleId: null }, 'without a supervisor an unaddressed message stays discussion');
 });

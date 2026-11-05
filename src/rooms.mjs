@@ -94,9 +94,9 @@ function collectiveRoleScopeZh(sentence) {
   return match[1]?'reviewers':'all';
 }
 
-/** In a new project, a message with no @ goes to the fixed supervisor; an explicit @ dispatches to that role; @everyone and legacy project discussions are only stored. */
 const IMPLICIT_REPLY_MS=10*60000;
 
+/** In a new project, a message with no @ goes to the fixed supervisor; an explicit @ dispatches to that role; @everyone and legacy project discussions are only stored. */
 export class Rooms {
   constructor(db) { this.db = db; }
 
@@ -122,12 +122,19 @@ export class Rooms {
     });
   }
 
-  /** The chat's latest visible message, when it is a role's reply from the last 10 minutes and that role can take work now. */
+  /**
+   * The chat's latest visible message, when it is a role's final reply of a succeeded turn from the last 10 minutes and that
+   * role can take work now. Otherwise (and when the reply is the supervisor's) the default intake decides, as before; a
+   * project without a supervisor keeps unaddressed messages as discussion.
+   */
   implicitReply(projectId,conversationId) {
+    const project=this.db.get('projects',projectId);
+    if(!project?.supervisorRoleId)return null;
     const last=this.db.get('roomMessages',this.db.latestConversationMessageId(projectId,conversationId,{visibleOnly:true})||'');
-    if(last?.sender!=='agent'||!last.runId||last.kind==='handoff'||Date.now()-Date.parse(last.createdAt)>IMPLICIT_REPLY_MS)return null;
-    const role=this.db.get('roles',last.roleId||this.db.get('runs',last.runId)?.roleId||'');
-    return role?.projectId===projectId&&role.enabled&&!role.archivedAt&&isRoleConfigured(role)?last.id:null;
+    if(last?.sender!=='agent'||!last.runId||last.id!==`result-${last.runId}`||Date.now()-Date.parse(last.createdAt)>IMPLICIT_REPLY_MS)return null;
+    const run=this.db.get('runs',last.runId),role=this.db.get('roles',run?.roleId||'');
+    if(run?.status!=='succeeded'||!role||role.id===project.supervisorRoleId||role.projectId!==projectId||!role.enabled||role.archivedAt||!isRoleConfigured(role))return null;
+    return roleWorkspace(this.db,projectId,role.nodeId,role.repositoryId)&&!cliUnavailable(this.db.get('workers',role.nodeId),role.runtime,role.model)?last.id:null;
   }
 
   touch(projectId,conversationId=projectId) {
