@@ -72,7 +72,7 @@ When Home is unavailable, no new sync or conflict task is scheduled. Workers kee
 
 The existing Recent Outputs view is not an ownership ledger: it uses limited tool records and an mtime match and misses shell/external edits. Do not use its displayed CLI, a Git author, file mtime or the most recent active role as proof of ownership.
 
-Record content-bound provenance for managed changes: project/repository/path, before/after hashes (including deletion), original node/workspace, role/Task/Run/session IDs, completed write evidence and how attribution was established. Capture execution-boundary manifests and normalize successful adapter write events. Preserve provenance through synchronization instead of attributing incoming bytes to the receiving Worker.
+Record content-bound provenance for managed changes: project/repository/path, before/after hashes (including deletion), original node/workspace, role/Task/Run/session IDs, completed write evidence and how attribution was established. Managed runs no longer capture full execution-boundary manifests or generate per-tool provenance proofs. Retain existing proofs; new changes without independent content-bound evidence remain unknown. Preserve provenance through synchronization instead of attributing incoming bytes to the receiving Worker.
 
 Only a unique completed managed write with matching captured content and no contradictory/overlapping evidence is attributable for automatic routing. Before/after Run differences without trustworthy write evidence are candidates, not proof; shell edits, external editors, historical changes and concurrent ambiguous writers may remain `unknown`. Hashes or provenance claimed in model prose do not establish an author.
 

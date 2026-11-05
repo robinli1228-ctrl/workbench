@@ -1841,7 +1841,7 @@ function renderDeliveries(run) {
 
 function renderApprovals(run) {
   const section = create('section', 'subsection');
-  const approvals = app.data.approvals.filter((approval) => approval.runId === run.id && ['pending', 'waiting'].includes(approval.status));
+  const approvals = app.data.approvals.filter((approval) => approval.kind !== 'question' && approval.runId === run.id && ['pending', 'waiting'].includes(approval.status));
   if (!approvals.length) return section;
   const heading = create('div', 'subsection-heading');
   heading.append(create('h3', '', 'Pending Approvals'), create('span', 'subsection-note', t('{v}@@approvals', { v: approvals.length })));

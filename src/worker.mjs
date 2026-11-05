@@ -70,7 +70,6 @@ import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i
 import { executionText, traditionalInput, sentText } from './input-language.mjs';
 import {SourceSyncClient} from './source-sync-transport.mjs';
 import {syncError} from './source-sync-manifest.mjs';
-import {SourceProvenanceTracker} from './source-sync-provenance.mjs';
 import {prepareSourceInputs,sourceOverlayUnchanged} from './source-sync-input.mjs';
 import {captureSourceCandidate,captureDirectoryCandidate} from './source-sync-candidate.mjs';
 import {readSourceBlob} from './source-sync-files.mjs';
@@ -252,6 +251,8 @@ function emit(runId, type, payload) {
   const seq = (r.seq || 0) + 1;
   if (type === 'approval') payload = { ...payload, rpcId: payload.id, id: `${runId}:${payload.id}`, runId, status: 'pending' };
   if (type === 'approval_resolved') payload = { ...payload, id: `${runId}:${payload.id}` };
+  if (type === 'question') payload = { ...payload, questionId: payload.id, id: `${runId}:${payload.id}`, runId, kind: 'question', status: 'pending' };
+  if (type === 'question_resolved') payload = { ...payload, id: `${runId}:${payload.id}` };
   if(type==='status'&&payload.nativeSession?.id&&r.processIdentity)payload={...payload,processIdentity:{...r.processIdentity,nativeSessionId:payload.nativeSession.id,runtime:payload.nativeSession.runtime}};
   const next = { ...r, seq, ...(type === 'status' ? payload : {}) };
   const event = { id: randomUUID(), runId, seq, type, payload, createdAt: new Date().toISOString() };
@@ -295,7 +296,7 @@ async function workspace(project, run) {
 async function command(m) {
   const c = m.command;
   if (!c?.id || !m.run?.id) throw new Error(tr('worker.commandFieldsIncomplete'));
-  const signature = JSON.stringify({ type: c.type, runId: c.runId, decision: c.decision, approvalId: c.approvalId, task: c.type === 'launch' ? m.task : null, projectRoot: c.type === 'launch' ? m.run.projectRoot : undefined,
+  const signature = JSON.stringify({ type: c.type, runId: c.runId, decision: c.decision, approvalId: c.approvalId, ...(c.type==='question_answer'?{answers:c.answers,skip:c.skip}:{}), task: c.type === 'launch' ? m.task : null, projectRoot: c.type === 'launch' ? m.run.projectRoot : undefined,
     roleSnapshot: c.type === 'launch' ? m.run.roleSnapshot : undefined, sourceRunId: c.type === 'launch' ? m.run.sourceRunId : undefined,
     roleSessionId:c.type==='launch'?m.run.roleSessionId:undefined,resumeNativeSessionId:c.type==='launch'?m.run.resumeNativeSessionId:undefined,
     switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash,
@@ -333,7 +334,7 @@ async function command(m) {
     // Send an ordered transition for this recovery retry; later guards may report a fresh wait, failure or cancellation.
     if(deferred?.cliRecoveryWait)emit(c.runId,'status',{status:'starting',cliRecoveryWait:false,cliRecovery:null,error:null});
     send({ type: 'command_ack', id: c.id });
-    let bridge, ending=false,provenance;
+    let bridge, ending=false;
     const reservation = { preparing: true, stopRequested: false };
     sessions.set(c.runId,reservation);
     try {
@@ -473,15 +474,7 @@ async function command(m) {
         await checkNativeDriver(m);
       }
       db.put('runtimeEnvironments',{id:c.runId,env:resumeEnvironment(wbEnv)});
-      if(m.run.sourceSyncTracking){
-        const watched=db.get('sourceSyncWatchConfig','main')?.scopes.filter(s=>s.projectId===m.run.projectId)||[];
-        const tracking=watched.length?watched.map(s=>({id:s.repositoryId,localRoot:s.root,scopeKind:s.scopeKind,scopePolicy:s.scopePolicy})):executionRepositories;
-        provenance=new SourceProvenanceTracker({db,run:{...m.run,workspace:folder},repositories:tracking,blobRoot:sourceSync.blobRoot,
-          publish:proof=>emit(c.runId,'source_provenance',proof)});
-        const preparationScan=await provenance.start();
-        emit(c.runId,'status',{preparationScan});
-        emit(c.runId,'log',{text:tr('sourceSync.preparationScan',{scopes:preparationScan.scopes,files:preparationScan.files,seconds:(preparationScan.elapsedMs/1000).toFixed(2),unavailable:preparationScan.unavailableScopes})});
-      }
+      // File authorship without captured write evidence remains unknown; never block CLI input on a full-tree snapshot.
       emit(c.runId, 'status', { nativeSession: native });
       // The turn purpose goes into the dynamic input, so switching between Q&A and business stages does not needlessly recycle the warm process.
       const executionConfiguration=m.run.minimalInstructions===1?await currentExecutionConfiguration(c.runId):null;
@@ -496,9 +489,11 @@ async function command(m) {
       }
       const roleInstructions = components?Object.values(components).filter(Boolean).join('\n\n'):traditionalInput(executionText('worker.projectDescriptionRepositoriesForRun', { p1: runWithLanguage('en',()=>composeAgentInstructions(m.platformPrompt,m.run.roleSnapshot?.instructions??'')), p2: String(m.project.description||'').slice(0,4000), p3: executionRepositories.filter(r=>r.localRoot).map(r=>`${r.key}: ${r.localRoot}`).join('\n'), p4: runtimeGuidance(runtimeType), p5: m.task.runtimeInstructions||'' }));
       let instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,components});
-      const fingerprint=warmSessionFingerprint({folder,runtimeType,model:m.task.model,effort,roleName:m.run.roleSnapshot?.name,roleInstructions,env:{...resumeEnvironment(wbEnv),WB_REQUIRE_TURN:wbEnv.WB_REQUIRE_TURN},permissionScope});
+      // Questions to the user only when Home can show and answer them; a process started either way is not reused the other.
+      const questions=keepAlive&&m.questions===true&&!m.run.switchOperationId;
+      const fingerprint=warmSessionFingerprint({folder,runtimeType,model:m.task.model,effort,roleName:m.run.roleSnapshot?.name,roleInstructions,env:{...resumeEnvironment(wbEnv),WB_REQUIRE_TURN:wbEnv.WB_REQUIRE_TURN},permissionScope,...(questions?{questions}:{})});
       let session;
-      const options={ cwd: folder, writableRoots:repositoryRoots, attachments: inputFiles, model: m.task.model, mode: m.task.mode, effort, runtime: runtimeType, autoApprove: m.run.roleSnapshot?.autoApprove !== false,permissionScope,toolRoots:[base],keepAlive,maintenance:Boolean(m.run.switchOperationId),
+      const options={ cwd: folder, writableRoots:repositoryRoots, attachments: inputFiles, model: m.task.model, mode: m.task.mode, effort, runtime: runtimeType, autoApprove: m.run.roleSnapshot?.autoApprove !== false,permissionScope,toolRoots:[base],keepAlive,askUser:questions,maintenance:Boolean(m.run.switchOperationId),
         onProcess:proc=>{if(proc?.pid)emit(c.runId,'status',{pid:proc.pid,processIdentity:driverIdentity({...db.get('runs',c.runId),runtime:runtimeType},proc.pid)});},
         beforeInput:async()=>{
           if(m.run.collaborationBatch){const q={...m.run.collaborationBatch,roleId:m.run.roleId};try{await queueSlots.deliver(q.key,q.reservation,queueState(q,c.runId),()=>true);}catch(error){error.queueRetryable=true;throw error;}}
@@ -536,7 +531,7 @@ async function command(m) {
             finalStatus=p;endRun();
           };
           void (retained?complete():afterProcessExit(session.proc,complete));
-        } else {const event=emit(c.runId,type,p);if(type==='tool')provenance?.observe(event);}
+        } else {emit(c.runId,type,p);}
       } };
       session=keepAlive?await warmSessions.take(m.run.roleSessionId,fingerprint):null;
       reservation.session=session;
@@ -577,12 +572,11 @@ async function command(m) {
         components:Object.fromEntries(Object.entries(components).map(([name,text])=>[name,{text,version:instructions.components?.[name]?.version||null}]))};
       if(instructions.inheritedFrom)input.instructionsInheritedFrom=instructions.inheritedFrom;
       await checkNativeDriver(m);
-      if(db.get('runs',c.runId)?.stopRequested||session.stopping||homeDisconnected||quitting||ws?.readyState!==1){session.shutdown();await afterProcessExit(session.proc,()=>{});await provenance?.finish();sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.interruptedByStopDisconnectBefore2')});return;}
+      if(db.get('runs',c.runId)?.stopRequested||session.stopping||homeDisconnected||quitting||ws?.readyState!==1){session.shutdown();await afterProcessExit(session.proc,()=>{});sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.interruptedByStopDisconnectBefore2')});return;}
       emit(c.runId, 'input', input);
       const result = session.start(input.prompt);
       await result;
       await ended;
-      await provenance?.finish();
       await bridge.stop(); bridge = null;
       const rec = {...db.get('runs', c.runId),...finalStatus};
       try {
@@ -612,7 +606,6 @@ async function command(m) {
       emit(c.runId,'status',{...finalStatus,runtimeRetained:warmSessions.owns(session.proc?.pid),processSettled:!warmSessions.owns(session.proc?.pid),...(m.run.discussionProtocol===2?{discussionCleanup:{turnEnded:true,toolsClosed:true,effectsKnown:false}}:{})});
     } catch (e) {
       ending=true;
-      await provenance?.finish();
       const entry = sessions.get(c.runId),s=entry?.preparing?entry.session:entry;
       if(entry?.stopRequested||db.get('runs',c.runId)?.stopRequested){s?.shutdown();await afterProcessExit(s?.proc,()=>{});await bridge?.stop();bridge=null;sessions.delete(c.runId);emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.taskHadNotStartedWas')});return;}
       if(e.code==='CLI_RECOVERY_WAIT'){
@@ -670,6 +663,14 @@ async function command(m) {
       if (!(s instanceof CodexSession) || s.stopping) throw new Error(tr('worker.sessionCannotAcceptApprovals'));
       s.approve(c.approvalId.slice(c.runId.length + 1), c.decision);
     } catch (e) { emit(c.runId, 'approval_resolved', { id: c.approvalId.slice(c.runId.length + 1), status: 'expired' }); emit(c.runId, 'log', { text: e.message }); }
+  }
+  if (c.type === 'question_answer') {
+    const id = c.approvalId.slice(c.runId.length + 1);
+    try {
+      const s = sessions.get(c.runId);
+      if (!s?.questionsSupported || s.stopping || s.done) throw new Error(tr('worker.questionNoLongerWaiting'));
+      s.answerQuestion({ id, answers: c.answers || {}, skip: c.skip === true });
+    } catch (e) { emit(c.runId, 'question_resolved', { id, status: 'expired' }); emit(c.runId, 'log', { text: e.message }); }
   }
   send({ type: 'command_ack', id: c.id });
 }

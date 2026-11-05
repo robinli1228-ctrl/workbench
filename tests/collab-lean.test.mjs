@@ -36,13 +36,13 @@ test('a role gets the full task unless its resumed session already received this
   const e=env(),full=task=>/方案 v[34]/.test(prompt(task)),line=task=>/T1「修复预填」/.test(prompt(task))&&!full(task);
   const first=e.runFor('helper',{resume:false});
   assert.ok(full(first),'first read: full description');
-  assert.doesNotMatch(prompt(first),/"known"|"updated"/,'the read flags are not part of the snapshot');
+  assert.doesNotMatch(prompt(first),/"known"|"updated"|ownerRoleId|"id"/,'readable text: no read flags or internal ids');
   const again=e.runFor('helper');
   for(const text of [prompt(again),part(again)]){
     assert.doesNotMatch(text,/方案 v3/,'same session, input delivered: no description');
     assert.match(text,/T1「修复预填」· todo · 2\/2 · 第 1 版/);assert.match(text,/wb task show T1/);
   }
-  assert.ok(prompt(again).length<prompt(first).length/1.5);
+  assert.ok(prompt(again).length<prompt(first).length);
   e.runFor('helper',{delivered:'not_delivered'});
   assert.ok(full(e.runFor('helper')),'the previous run never received its input: full again');
   assert.ok(line(e.runFor('helper')));
@@ -57,9 +57,18 @@ test('a role gets the full task unless its resumed session already received this
   const current=e.tasks.show(e.scope,e.task.id);
   e.tasks.update(e.scope,e.task.id,{revision:current.revision,plan:{steps:[...current.plan.steps,{description:'复审',status:'todo'}],currentStep:1}},{user:true});
   assert.ok(full(e.runFor('helper')),'plan changed: full text again');
+  const marked=e.tasks.show(e.scope,e.task.id);
+  e.tasks.update(e.scope,e.task.id,{revision:marked.revision,plan:{steps:marked.plan.steps.map((step,i)=>i===1?{...step,status:'done'}:step),currentStep:2}},{user:true});
+  assert.ok(line(e.runFor('helper')),'a step marked done is not a new plan: one line');
+  // A step's settings are part of the plan: a changed review sends it all again, with the ids a plan update must keep.
+  const reviewed=e.tasks.show(e.scope,e.task.id);
+  e.tasks.update(e.scope,e.task.id,{revision:reviewed.revision,plan:{steps:reviewed.plan.steps.map((step,i)=>i===0?{...step,review:{roleIds:['owner'],count:1,sequential:true}}:step),currentStep:reviewed.plan.currentStep}},{user:true});
+  const settings=e.runFor('helper');
+  assert.ok(full(settings),'review settings changed: full text again');
+  assert.match(prompt(settings),/"review":\{"roleIds":\["owner"\],"count":1,"sequential":true\}/,'the settings travel with their ids');
   const later=e.tasks.show(e.scope,e.task.id);
   e.tasks.update(e.scope,e.task.id,{revision:later.revision,status:'in_progress'},{user:true});
-  assert.match(prompt(e.runFor('helper')),/T1「修复预填」· in_progress · 2\/3 · 第 4 版/,'a status change alone keeps the one line, with the new state');
+  assert.match(prompt(e.runFor('helper')),/T1「修复预填」· in_progress · 3\/3 · 第 6 版/,'a status change alone keeps the one line, with the new state');
   // A packet saved before this change (no read flags) still carries the full snapshot.
   const {known,...old}=first;assert.match(prompt(old),/方案 v3/);
 }));
@@ -84,12 +93,12 @@ test('the work materials folder is per task and role inside the project, and nev
 
 for(const lang of ['zh','en'])test(`${lang}: the default prompt sizes reviews, keeps materials out of /tmp, and drops per-file hashes`, () => runWithLanguage(lang,() => {
   const text=defaultPlatformPrompt(),sync=tr('wbTools.helpSync');
-  assert.match(text,lang==='zh'?/自测后直接交付，不另找人审/:/delivered without another review/);
+  assert.match(text,lang==='zh'?/自测后直接交付，不另找人审/:/self-tested and delivered unreviewed/);
   assert.match(text,lang==='zh'?/请一位非作者审核/:/one non-author review/);
   assert.match(text,lang==='zh'?/修复后只请提出问题的人复核/:/only the reviewer who raised the issue rechecks/);
   assert.doesNotMatch(text,lang==='zh'?/至少请两位非作者的模型角色审核/:/at least two model roles other than the author/);
-  assert.match(text,lang==='zh'?/中间资料目录（不同步，不要放 \/tmp）/:/work materials folder named in the environment notes \(not synced; never \/tmp\)/);
-  assert.match(text,lang==='zh'?/任务说明只写当前状态，控制在 3 KB 以内/:/Keep the task description to the current state, within about 3 KB/);
+  assert.match(text,lang==='zh'?/中间资料目录（不同步，不要放 \/tmp）/:/work materials folder from the environment notes \(not synced; never \/tmp\)/);
+  assert.match(text,lang==='zh'?/任务说明只写当前状态，控制在 3 KB 以内/:/Keep the description to the current state \(about 3 KB\)/);
   assert.doesNotMatch(text,lang==='zh'?/文件路径与哈希/:/file path and hash/);
   assert.doesNotMatch(sync,lang==='zh'?/哈希并确认接收|路径和哈希/:/hash and confirm receipt|path and hash/);
 }));

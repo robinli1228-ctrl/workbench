@@ -1,30 +1,44 @@
 import {conversationIdOf} from './group-conversations.mjs';
-/** A role's native context past this size is compacted once the work it was part of has ended: 400k tokens, or 60% of a
- * smaller context window, so models with short windows are covered too (WB_COMPACT_AT_TOKENS overrides the 400k). */
+/** A role's native context past half of its model's window is compacted once the work it was part of has ended. Only
+ * when the CLI does not report a window does a fixed size apply (WB_COMPACT_AT_TOKENS, default 400k). */
+export const COMPACT_SHARE=0.5;
 export const COMPACT_AT_TOKENS=Number(process.env.WB_COMPACT_AT_TOKENS)>0?Number(process.env.WB_COMPACT_AT_TOKENS):400000;
 /** The role must stay idle this long first, so a quick follow-up on the same matter neither waits for a compaction nor loses context. */
 export const COMPACT_IDLE_MS=Number(process.env.WB_COMPACT_IDLE_MS)>=0&&process.env.WB_COMPACT_IDLE_MS!==undefined?Number(process.env.WB_COMPACT_IDLE_MS):180000;
 const PENDING_MAX_MS=3600000,CLOSED=new Set(['succeeded','failed','cancelled']);
-const threshold=usage=>Number(usage?.limitTokens)>0?Math.min(COMPACT_AT_TOKENS,Math.floor(usage.limitTokens*0.6)):COMPACT_AT_TOKENS;
+export const compactThreshold=usage=>Number(usage?.limitTokens)>0?Math.floor(usage.limitTokens*COMPACT_SHARE):COMPACT_AT_TOKENS;
 
 /** A finished Run whose session is large, retained on a device that can compact, and not cleared. */
 function candidate(db,run,online) {
   if(!run?.roleSessionId||run.status!=='succeeded'||run.runtimeRetained!==true||run.switchOperationId)return false;
-  if(!(Number(run.contextUsage?.usedTokens)>=threshold(run.contextUsage)))return false;
+  if(!(Number(run.contextUsage?.usedTokens)>=compactThreshold(run.contextUsage)))return false;
   if(db.get('workers',run.nodeId)?.capabilities?.roleCompaction!==1||!online(run.nodeId))return false;
   const session=db.get('roleSessions',run.roleSessionId);
   return Boolean(session&&!session.historyClearedAt);
 }
 /**
- * Nothing left for the role on the same matter in this group chat: no other Run, queued message, discussion wait, or open call
- * to it or from it. Its sessions in other chats are other processes and do not keep this one from compacting.
+ * What still keeps the role on the same matter in this group chat, or null when nothing does: another Run, a queued message,
+ * a discussion wait, or an open call to it or from it. A call still waiting for its delivery has not reached the role and
+ * may wait indefinitely, so it does not count. Its sessions in other chats are other processes and do not keep this one
+ * from compacting.
  */
-export function roleIdle(db,run) {
+export function roleBusyReason(db,run) {
   const role=run.roleId,chat=conversationIdOf(run),here=record=>record.projectId===run.projectId&&conversationIdOf(record)===chat;
-  if(db.activeRuns().some(r=>r.id!==run.id&&(r.roleId===role&&here(r)||r.roleSessionId===run.roleSessionId)))return false;
-  if(db.chatTasks(['ready','in_progress']).some(t=>t.roleId===role&&here(t)))return false;
-  if(db.tasksWaitingForDiscussion().some(t=>t.roleId===role&&here(t)))return false;
-  return !db.listProject('coordinationRequests',run.projectId).some(r=>!CLOSED.has(r.status)&&here(r)&&(r.targetRoleId===role||db.get('runs',r.sourceRunId||'')?.roleId===role));
+  if(db.activeRuns().some(r=>r.id!==run.id&&(r.roleId===role&&here(r)||r.roleSessionId===run.roleSessionId)))return 'run';
+  if(db.chatTasks(['ready','in_progress']).some(t=>t.roleId===role&&here(t)))return 'queued';
+  if(db.tasksWaitingForDiscussion().some(t=>t.roleId===role&&here(t)))return 'discussion';
+  const call=db.listProject('coordinationRequests',run.projectId).find(r=>!CLOSED.has(r.status)&&r.status!=='waiting_delivery'&&here(r)
+    &&(r.targetRoleId===role||db.get('runs',r.sourceRunId||'')?.roleId===role));
+  return call?`call:${call.id}`:null;
+}
+export const roleIdle=(db,run)=>roleBusyReason(db,run)===null;
+
+/** Why a candidate cannot be compacted right now (shown with the role's context), or null. */
+function unavailable(db,run,online) {
+  if(run.runtimeRetained!==true)return 'not_retained';
+  if(db.get('workers',run.nodeId)?.capabilities?.roleCompaction!==1)return 'unsupported';
+  if(!online(run.nodeId))return 'offline';
+  return db.get('roleSessions',run.roleSessionId)?.historyClearedAt?'cleared':null;
 }
 
 /** When a role's Run settles: a large, retained session is marked for compaction after the idle window (once per Run). */
@@ -45,10 +59,18 @@ export function dueRoleCompactions(db,{online=()=>true,send,now=Date.now()}) {
     const run=db.get('runs',c.afterRunId),later=id=>Boolean(id&&id!==c.afterRunId&&Date.parse(db.get('runs',id)?.createdAt||0)>Date.parse(run?.createdAt||0));
     const newer=later(session.activeRunId)||later(session.lastRunId);
     const close=status=>{db.put('roleSessions',{...session,compaction:{...c,status,finishedAt:new Date(now).toISOString()}});changed=true;};
-    if(!run||newer)close('superseded');
-    else if(now-Date.parse(c.dueAt)>PENDING_MAX_MS||!candidate(db,run,online)&&online(run.nodeId))close('expired');
-    else if(candidate(db,run,online)&&roleIdle(db,run)){
-      db.put('roleSessions',{...session,compaction:{...c,status:'requested',requestedAt:new Date(now).toISOString()}});changed=true;
+    if(!run||newer){close('superseded');continue;}
+    // The reason it is not done yet stays on the session, so a dropped compaction says what held it.
+    const blocked=candidate(db,run,online)?roleBusyReason(db,run):unavailable(db,run,online)||'unavailable';
+    if(blocked!==(c.blockedBy||null)){db.put('roleSessions',{...session,compaction:{...c,blockedBy:blocked}});changed=true;}
+    // Work on the same matter or an offline device are waited out for an hour; a process that is gone cannot be compacted.
+    // A role found idle is compacted even after the hour: nothing newer ran, so the large context is still there.
+    const current=db.get('roleSessions',session.id),passing=blocked!==null&&(blocked.startsWith('call:')||['run','queued','discussion','offline'].includes(blocked));
+    if(blocked!==null&&(now-Date.parse(c.dueAt)>PENDING_MAX_MS||!passing)){
+      db.put('roleSessions',{...current,compaction:{...current.compaction,status:'expired',finishedAt:new Date(now).toISOString()}});changed=true;
+    }
+    else if(!blocked){
+      db.put('roleSessions',{...current,compaction:{...current.compaction,status:'requested',requestedAt:new Date(now).toISOString()}});changed=true;
       send(run.nodeId,{type:'compact_role_session',roleSessionId:session.id,afterRunId:run.id});
     }
   }

@@ -60,7 +60,9 @@ async function gitMetadataRoots(roots) {
 
 /** A managed role may briefly reuse the App Server, rebinding instructions and events every turn; stdio exposes no control port. */
 export class CodexSession {
-  constructor({ cwd, writableRoots = [], attachments = [], model, mode, emit, roleInstructions = '', roleName = '', effort = 'low', autoApprove = true, env = process.env, resumeSessionId = null, keepAlive = false, maintenance = false,minimalInstructions=false,configurationUpdate='',beforeInput,onProcess,permissionScope=null,toolRoots=[] }) {
+  constructor({ cwd, writableRoots = [], attachments = [], model, mode, emit, roleInstructions = '', roleName = '', effort = 'low', autoApprove = true, env = process.env, resumeSessionId = null, keepAlive = false, maintenance = false,minimalInstructions=false,configurationUpdate='',beforeInput,onProcess,permissionScope=null,toolRoots=[],askUser=false }) {
+    // askUser, not questions: reuse() copies its options onto the session, and this.questions holds the waiting ones.
+    this.questionsSupported=Boolean(askUser);
     this.beforeInput=beforeInput;this.onProcess=onProcess;this.inputAttempted=false;
     this.minimalInstructions=minimalInstructions;
     this.configurationUpdate=configurationUpdate;
@@ -139,9 +141,9 @@ export class CodexSession {
     this.emit('status',{configurationEventState:'delivered'});
   }
   /** All turns reuse the ordinary launch arguments; permissions and external tools are not switched by discussion purpose. */
+  /** request_user_input is off in Codex's default mode unless the client opts in; it does when a page can answer. */
   launchArgs() {
-    const args=['app-server','--listen','stdio://','--disable','multi_agent'];
-    return args;
+    return [...(this.questionsSupported?['-c','features.default_mode_request_user_input=true']:[]),'app-server','--listen','stdio://','--disable','multi_agent'];
   }
   /** Each turn loads history by exact ID and updates that turn's tool environment and role rules. */
   async openThread() {
@@ -193,7 +195,7 @@ export class CodexSession {
       m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result); return;
     }
     if (m.id !== undefined && m.method) {
-      // request_user_input: the model's questions wait for the page (a takeover opts in); elsewhere the request is rejected as before.
+      // request_user_input: the model's questions wait for the page (a takeover or a group-chat role opts in); elsewhere the request is rejected as before.
       if (m.method === 'item/tool/requestUserInput' && this.questionsSupported && Array.isArray(m.params?.questions) && m.params.questions.length) {
         const id = String(m.params.itemId || m.id);
         const questions = m.params.questions.slice(0, 8).map((q, i) => ({ id: String(q.id || `q${i + 1}`), header: String(q.header || '').slice(0, 40), question: String(q.question || '').slice(0, 2000), multiSelect: false, allowOther: q.isOther !== false, secret: q.isSecret === true,
