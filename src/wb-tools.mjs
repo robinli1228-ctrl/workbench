@@ -123,9 +123,10 @@ export async function callRole({ role, roles, kind = 'consult', requestId, text,
   if(role!==undefined&&roles!==undefined||roles!==undefined&&(!Array.isArray(roles)||!roles.length||roles.some(r=>typeof r!=='string'||!r.trim())))throw new Error(tr('wbTools.invalidCallTargets'));
   if (!['consult', 'handoff','direct','transfer'].includes(kind)) throw new Error(tr('wbTools.kindMustBeConsultHandoff'));
   if(file!==undefined) {
+    // Only where the document is travels with the call: the receiver reads it with wb device read when it needs it, instead
+    // of the whole text being pasted into the brief and read a second time. The digest tells it whether it has the same version.
     const document=await callDocument(file);
-    // Quoted JSON remains reference data through language conversion and preserves the exact Unicode text and digest.
-    text=`${text}\n\n${tr('wbTools.callDocumentReference')}\n${JSON.stringify(document)}`;
+    text=`${text}\n\n${tr('wbTools.callDocumentReference')}\n${JSON.stringify({device:context().nodeId,path:document.absolutePath,bytes:document.bytes,sha256:document.sha256})}`;
   }
   if(text.length>12000)throw new Error(tr('wbTools.callDocumentTooLong'));
   const result=await homeFetch('/api/agent/calls', { runId: context().runId, ...(roles===undefined?{role}:{roles}), kind,
@@ -159,7 +160,7 @@ export async function callDocument(file,ctx=context()) {
   let text;
   try{text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);}catch{throw new Error(tr('wbTools.callDocumentNotText'));}
   if(text.includes('\0'))throw new Error(tr('wbTools.callDocumentNotText'));
-  return {path:relative(owner,target),bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),text};
+  return {path:relative(owner,target),absolutePath:target,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),text};
 }
 
 export async function conversationTask(action,input={}) {

@@ -197,3 +197,34 @@ test('the retired-command notice is sent in the same script as the rest, and syn
   assert.match(role, /已取消的命令（wb report、wb schedule 等）不要再用，結果以最終回覆爲準。$/, 'the notice starts with prose, so conversion does not skip it as a command line');
   assert.match(tr('wbTools.helpSync'), /元数据同步只比较修改时间和大小，不给 SHA256，哈希为空不代表没到/);
 }));
+
+test('an empty instruction part is announced only to revoke text the previous turn had', async () => {
+  const { instructionDelivery } = await import('../src/run-input.mjs');
+  const run = { resumeNativeSessionId: 'n1', roleSessionId: 's1', projectId: 'p', nodeId: 'w' };
+  const components = { identity: 'I am Claude', platform: 'rules', role: '', supervisor: '' };
+  const versions = await import('node:crypto').then(({ createHash }) => Object.fromEntries(Object.entries(components).map(([k, v]) => [k, { version: createHash('sha256').update(v).digest('hex'), empty: v === '' }])));
+  // A prior turn that is not confirmed resends what has text; a role that never had a supervisor part gets no "revoked" block.
+  const unconfirmed = { status: 'failed', projectId: 'p', nodeId: 'w', roleSessionId: 's1', nativeSession: { id: 'n1' }, instructionComponents: versions };
+  const sent = runWithLanguage('zh', () => instructionDelivery({ runtime: 'claude', run, prior: unconfirmed, instructions: 'x', components }).configurationUpdate);
+  const blocks = text => (String(text).match(/Workbench \w+ 指令/g) || []).map(block => block.split(' ')[1]);
+  assert.deepEqual(blocks(sent), ['identity', 'platform']);
+  assert.doesNotMatch(String(sent), /已撤销/);
+  // The previous turn had supervisor text: now empty, it is revoked once.
+  const hadSupervisor = { ...unconfirmed, status: 'succeeded', configurationState: 'applied', configurationEventProtocol: 1, instructionComponents: { ...versions, supervisor: { version: 'old', empty: false } } };
+  const revoked = runWithLanguage('zh', () => instructionDelivery({ runtime: 'claude', run, prior: hadSupervisor, instructions: 'x', components }).configurationUpdate);
+  assert.deepEqual(blocks(revoked), ['supervisor']);
+  assert.match(String(revoked), /已撤销/);
+  // That revocation was not confirmed (the turn failed): the next turn revokes again instead of dropping it.
+  const failed = { ...unconfirmed, instructionComponents: { ...versions, supervisor: { ...versions.supervisor, revoking: true } } };
+  const again = runWithLanguage('zh', () => instructionDelivery({ runtime: 'claude', run, prior: failed, instructions: 'x', components }).configurationUpdate);
+  assert.deepEqual(blocks(again).sort(), ['identity', 'platform', 'supervisor']);
+});
+
+test('a stall reminder that started the supervisor\'s turn does not travel with the work it hands on', async () => {
+  const { turnReferences } = await import('../src/run-context.mjs');
+  const reminder = { id: 'followup:1', kind: 'proactive_followup', text: '[stall reminder] look at every task' };
+  assert.deepEqual(turnReferences({ task: { prompt: 'review PR 309' }, source: reminder }), [], 'the role handed the work gets only the brief');
+  const user = { id: 'm1', kind: 'message', text: 'please review PR 309' };
+  assert.deepEqual(turnReferences({ task: { prompt: 'review PR 309' }, source: user }), [user], 'a user message that started it still travels');
+  assert.deepEqual(turnReferences({ task: { prompt: user.text }, source: user }), [], 'not twice when it is the turn itself');
+});

@@ -21,8 +21,10 @@ test('the supervisor template names the transfer command, and the previous defau
   const current = defaultSupervisorPrompt();
   assert.match(current, /先用 wb task create 建任务.*再用 wb call --kind transfer --task T编号 交给它/);
   // The previous default differed only in this line.
-  const line = current.split('\n').find(l => l.startsWith('- 派任务：'));
-  const old = current.replace(line, '- 派任务：任务整件转交给一个角色，由它负责到底：自主推进、自己找人沟通和审核，做完直接回复用户结论；你不再跟进，除非收到停滞提醒。流程长的任务，先列好分步计划一起交给它。把一个目标拆给几个角色时，结果回到你汇总后再回复用户。');
+  // Before the 2026-11-05 edits (no restating, only the stuck task), then the line as it read before the transfer command.
+  const previous = [["- 派任务：任务整件转交给一个角色，由它负责到底：先用 wb task create 建任务（负责人不填，默认是你；流程长的写好分步计划），再用 wb call --kind transfer --task T编号 交给它。它自主推进、自己找人沟通和审核，做完直接回复用户结论；你不再跟进，除非收到停滞提醒。把一个目标拆给几个角色时，用 direct 派出，结果回到你汇总后再回复用户。\n- 解决卡点：收到停滞提醒，或发现有人卡住、反复失败、互相等待时，由你亲自全面查清：看任务状态、群聊记录、运行详情和各角色的实际进展，找出卡在哪里，不把暂时没有输出当成卡死。能直接解决的自己处理（重新派人、补充信息、拆小任务、解除互相等待）；要改代码的派给其他角色；需要用户决定的，说清卡在哪一步、要用户做什么。", "- 派任务：任务整件转交给一个角色，由它负责到底：先用 wb task create 建任务（负责人不填，默认是你；流程长的写好分步计划），再用 wb call --kind transfer --task T编号 交给它。它自主推进、自己找人沟通和审核，做完直接回复用户结论；你不再跟进，也不复述它的结论，除非收到停滞提醒。恢复中断的任务也用 transfer，不要求对方再回你一份。把一个目标拆给几个角色时，用 direct 派出，结果回到你汇总后再回复用户。\n- 解决卡点：收到停滞提醒时按提醒处理；发现有人卡住、反复失败或互相等待时，只查卡住的那件：看它的任务状态和运行详情，找出卡在哪里，不把暂时没有输出当成卡死，也不把其他正常的任务重查一遍。能直接解决的自己处理（重新派人、补充信息、拆小任务、解除互相等待）；要改代码的派给其他角色；需要用户决定的，说清卡在哪一步、要用户做什么。"]].reduce((text, [old, now]) => text.replace(now, old), current);
+  const line = previous.split('\n').find(l => l.startsWith('- 派任务：'));
+  const old = previous.replace(line, '- 派任务：任务整件转交给一个角色，由它负责到底：自主推进、自己找人沟通和审核，做完直接回复用户结论；你不再跟进，除非收到停滞提醒。流程长的任务，先列好分步计划一起交给它。把一个目标拆给几个角色时，结果回到你汇总后再回复用户。');
   assert.notEqual(old, current);
   assert.equal(normalizePlatformSettings({ supervisorPrompt: old }).supervisorPrompt, current, 'a saved copy of the old default follows the new one');
   assert.equal(normalizePlatformSettings({ supervisorPrompt: 'my own words' }).supervisorPrompt, 'my own words');

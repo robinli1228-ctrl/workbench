@@ -38,5 +38,5 @@ test('the reminder lists unfinished tasks of this chat, oldest first, with owner
   const facts=JSON.parse(text.slice(text.indexOf('{"openTasks"'),text.indexOf('}。先处理异常')+1));
   assert.deepEqual(facts.tasks.map(x=>[x.task,x.title,x.owner,x.status,x.step,x.stepsDone,x.openCalls]),
     [['T1','T24-fix','Agy','in_progress','3/3',2,false],['T2','T25-fix','执行','todo',null,null,true]],'done tasks and other chats are left out');
-  assert.match(text,/先处理异常/);assert.match(text,/实际已经做完的，核对证据后把剩余步骤和任务标为完成并写结果摘要/);
+  assert.match(text,/先处理异常/);assert.match(text,/实际已经做完的，以任务步骤里记录的结论和证据路径为准，不重做，把剩余步骤和任务标为完成并写结果摘要/);
 }));

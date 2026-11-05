@@ -67,7 +67,9 @@ export class ConversationTasks {
     if(!Array.isArray(value.messageIds)||value.messageIds.length>100||new Set(value.messageIds).size!==value.messageIds.length)fail('invalid');
     for(const id of value.messageIds)assertConversationRecord(scope,this.db.get('roomMessages',id));
     if(Object.hasOwn(input,'resultSummary')){if(value.status!=='done')fail('summary');text(input.resultSummary,8000,true);}
-    if(value.status==='done'&&value.plan?.steps.length&&(value.plan.currentStep!==value.plan.steps.length-1||value.plan.steps.some(s=>s.status!=='done')))fail('unfinished');
+    // Marking a task done finishes its plan in the same update; the history records which steps it closed.
+    if(value.status==='done'&&value.plan?.steps.length&&(value.plan.currentStep!==value.plan.steps.length-1||value.plan.steps.some(s=>s.status!=='done')))
+      value.plan={steps:value.plan.steps.map(step=>({...step,status:'done'})),currentStep:value.plan.steps.length-1};
     if(value.status!=='done')value.resultSummary=null;
     return value;
   }
@@ -138,13 +140,16 @@ export class ConversationTasks {
     if(!request?.conversationTaskId)return null;
     assertConversationRecord(run,request);
     const task=this.show(run,request.conversationTaskId);if(!this.visible(task,run))return null;
-    const id=digest([task.id,run.roleId]),previous=this.db.get('conversationTaskReads',id),plan=taskView(task).plan,planKey=digest([plan??null]);
+    // Everything a step says counts as a change except its status; a step marked done shows in the one line (x/y) instead.
+    const id=digest([task.id,run.roleId]),previous=this.db.get('conversationTaskReads',id),plan=taskView(task).plan,planKey=digest([plan?.steps?.map(({status,...step})=>step)??null]);
     const changed=Boolean(previous&&(previous.descriptionRevision!==task.descriptionRevision||previous.planKey!==undefined&&previous.planKey!==planKey));
     // One line only when this CLI already holds the same description and plan: it resumes the role session in which the
     // previous linked run actually received its input. A failed start, a separate review session or a reset gets it all.
     const known=Boolean(previous&&!changed&&previous.planKey===planKey&&run.resumeNativeSessionId&&run.roleSessionId&&previous.roleSessionId===run.roleSessionId
       &&this.db.get('runs',previous.runId||'')?.inputDeliveryState==='accepted');
-    const value={id:task.id,number:task.number,title:task.title,description:task.description,plan,status:task.status,ownerRoleId:task.ownerRoleId,revision:task.revision,updated:changed,known};
+    const name=roleId=>roleId?this.db.get('roles',roleId)?.name||null:null;
+    const value={id:task.id,number:task.number,title:task.title,description:task.description,plan,status:task.status,ownerRoleId:task.ownerRoleId,
+      owner:name(task.ownerRoleId),stepRoles:plan?.steps?.map(step=>name(step.roleId))||[],revision:task.revision,updated:changed,known};
     this.db.put('conversationTaskReads',{id,projectId:run.projectId,conversationId:conversationIdOf(run),roleId:run.roleId,conversationTaskId:task.id,descriptionRevision:task.descriptionRevision,planKey,roleSessionId:run.roleSessionId||null,runId:run.id});
     return value;
   }

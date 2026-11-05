@@ -30,9 +30,9 @@ When documents conflict, the actual code is the source of truth for what exists,
 ## Current platform decisions
 
 - Distinguish deployed software, bound project baseline and the Run's actual input version. A resumed native session keeps its directory; never silently replace its code with a newer binding or claim directory synchronization updates old worktrees.
-- Code work must name and check its input version. Fixed-version admission blocks a mismatch before model input; authorized writing-stage continuations may keep their verified outputs. Do not add background polling to implement this check.
+- Code work names its input version once (a full commit SHA in the assignment). Fixed-version admission checks it and blocks a mismatch before model input, so roles do not recompute hashes; authorized writing-stage continuations may keep their verified outputs. Do not add background polling to implement this check.
 - Independent review is read-only. Outstanding mandatory corrections are `failed`, unavailable evidence is `blocked`, and user choices are `needs_input`; `passed` permits only nonblocking suggestions. Preserve original reports and runtime failures.
-- Re-review a numbered change/disposition list and its exact version, reading affected context when needed. Keep material references scoped and versioned; do not expose unreleased independent opinions.
+- After a fix, the reviewer who raised an issue rechecks only that issue, reading affected context when needed; plans and research documents get one review round. Do not expose unreleased independent opinions.
 - Role responsibilities and execution instructions are distinct. Five presets ship: planning, execution, review and testing provide responsibilities only; cross-device includes execution instructions. Templates can be edited and restored, not deleted. Template edits affect future role creation, not existing roles. Do not overwrite custom or explicitly empty components, and do not assume old worktrees reload a newer AGENTS.md.
 - Keep the current send-only Traditional Chinese prose conversion; preserving all user prose verbatim was explicitly deferred. Stored originals, exact quoted strings, code and paths remain unchanged.
 

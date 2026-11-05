@@ -251,6 +251,8 @@ function emit(runId, type, payload) {
   const seq = (r.seq || 0) + 1;
   if (type === 'approval') payload = { ...payload, rpcId: payload.id, id: `${runId}:${payload.id}`, runId, status: 'pending' };
   if (type === 'approval_resolved') payload = { ...payload, id: `${runId}:${payload.id}` };
+  if (type === 'question') payload = { ...payload, questionId: payload.id, id: `${runId}:${payload.id}`, runId, kind: 'question', status: 'pending' };
+  if (type === 'question_resolved') payload = { ...payload, id: `${runId}:${payload.id}` };
   if(type==='status'&&payload.nativeSession?.id&&r.processIdentity)payload={...payload,processIdentity:{...r.processIdentity,nativeSessionId:payload.nativeSession.id,runtime:payload.nativeSession.runtime}};
   const next = { ...r, seq, ...(type === 'status' ? payload : {}) };
   const event = { id: randomUUID(), runId, seq, type, payload, createdAt: new Date().toISOString() };
@@ -294,7 +296,7 @@ async function workspace(project, run) {
 async function command(m) {
   const c = m.command;
   if (!c?.id || !m.run?.id) throw new Error(tr('worker.commandFieldsIncomplete'));
-  const signature = JSON.stringify({ type: c.type, runId: c.runId, decision: c.decision, approvalId: c.approvalId, task: c.type === 'launch' ? m.task : null, projectRoot: c.type === 'launch' ? m.run.projectRoot : undefined,
+  const signature = JSON.stringify({ type: c.type, runId: c.runId, decision: c.decision, approvalId: c.approvalId, ...(c.type==='question_answer'?{answers:c.answers,skip:c.skip}:{}), task: c.type === 'launch' ? m.task : null, projectRoot: c.type === 'launch' ? m.run.projectRoot : undefined,
     roleSnapshot: c.type === 'launch' ? m.run.roleSnapshot : undefined, sourceRunId: c.type === 'launch' ? m.run.sourceRunId : undefined,
     roleSessionId:c.type==='launch'?m.run.roleSessionId:undefined,resumeNativeSessionId:c.type==='launch'?m.run.resumeNativeSessionId:undefined,
     switchOperationId:m.run.switchOperationId,switchPhase:m.run.switchPhase,switchHandoffHash:m.run.switchHandoffHash,
@@ -487,9 +489,11 @@ async function command(m) {
       }
       const roleInstructions = components?Object.values(components).filter(Boolean).join('\n\n'):traditionalInput(executionText('worker.projectDescriptionRepositoriesForRun', { p1: runWithLanguage('en',()=>composeAgentInstructions(m.platformPrompt,m.run.roleSnapshot?.instructions??'')), p2: String(m.project.description||'').slice(0,4000), p3: executionRepositories.filter(r=>r.localRoot).map(r=>`${r.key}: ${r.localRoot}`).join('\n'), p4: runtimeGuidance(runtimeType), p5: m.task.runtimeInstructions||'' }));
       let instructions=instructionDelivery({runtime:runtimeType,run:m.run,prior:priorInput,instructions:roleInstructions,roleName:m.run.roleSnapshot?.name,components});
-      const fingerprint=warmSessionFingerprint({folder,runtimeType,model:m.task.model,effort,roleName:m.run.roleSnapshot?.name,roleInstructions,env:{...resumeEnvironment(wbEnv),WB_REQUIRE_TURN:wbEnv.WB_REQUIRE_TURN},permissionScope});
+      // Questions to the user only when Home can show and answer them; a process started either way is not reused the other.
+      const questions=keepAlive&&m.questions===true&&!m.run.switchOperationId;
+      const fingerprint=warmSessionFingerprint({folder,runtimeType,model:m.task.model,effort,roleName:m.run.roleSnapshot?.name,roleInstructions,env:{...resumeEnvironment(wbEnv),WB_REQUIRE_TURN:wbEnv.WB_REQUIRE_TURN},permissionScope,...(questions?{questions}:{})});
       let session;
-      const options={ cwd: folder, writableRoots:repositoryRoots, attachments: inputFiles, model: m.task.model, mode: m.task.mode, effort, runtime: runtimeType, autoApprove: m.run.roleSnapshot?.autoApprove !== false,permissionScope,toolRoots:[base],keepAlive,maintenance:Boolean(m.run.switchOperationId),
+      const options={ cwd: folder, writableRoots:repositoryRoots, attachments: inputFiles, model: m.task.model, mode: m.task.mode, effort, runtime: runtimeType, autoApprove: m.run.roleSnapshot?.autoApprove !== false,permissionScope,toolRoots:[base],keepAlive,askUser:questions,maintenance:Boolean(m.run.switchOperationId),
         onProcess:proc=>{if(proc?.pid)emit(c.runId,'status',{pid:proc.pid,processIdentity:driverIdentity({...db.get('runs',c.runId),runtime:runtimeType},proc.pid)});},
         beforeInput:async()=>{
           if(m.run.collaborationBatch){const q={...m.run.collaborationBatch,roleId:m.run.roleId};try{await queueSlots.deliver(q.key,q.reservation,queueState(q,c.runId),()=>true);}catch(error){error.queueRetryable=true;throw error;}}
@@ -659,6 +663,14 @@ async function command(m) {
       if (!(s instanceof CodexSession) || s.stopping) throw new Error(tr('worker.sessionCannotAcceptApprovals'));
       s.approve(c.approvalId.slice(c.runId.length + 1), c.decision);
     } catch (e) { emit(c.runId, 'approval_resolved', { id: c.approvalId.slice(c.runId.length + 1), status: 'expired' }); emit(c.runId, 'log', { text: e.message }); }
+  }
+  if (c.type === 'question_answer') {
+    const id = c.approvalId.slice(c.runId.length + 1);
+    try {
+      const s = sessions.get(c.runId);
+      if (!s?.questionsSupported || s.stopping || s.done) throw new Error(tr('worker.questionNoLongerWaiting'));
+      s.answerQuestion({ id, answers: c.answers || {}, skip: c.skip === true });
+    } catch (e) { emit(c.runId, 'question_resolved', { id, status: 'expired' }); emit(c.runId, 'log', { text: e.message }); }
   }
   send({ type: 'command_ack', id: c.id });
 }

@@ -29,6 +29,9 @@ export function executionRules(run,{minimal=false}={}) {
 const DEFAULT_FIELD_LIMIT = 128;
 // Match only exact previous EN/ZH defaults; custom edits must survive prompt upgrades.
 const LEGACY_SUPERVISOR_DEFAULTS = new Set([
+  // Defaults before the supervisor stopped restating transferred results and looked only at the stuck task.
+  'f45e603445b90eb261b7d0b82b0f8d00edeea162285fceb5a4744eacd17dcb62',
+  '6a1038fd750312a737e28c869094567b422381e825cdc1b996f84c74853c1724',
   // Defaults before the supervisor was told how to transfer: create the task, then wb call --kind transfer --task.
   'd10ca3af465f888e22f597a777c3e438071346d02630f0aca7ead8a231d0eac5',
   '36a69ad10ccc1274b1d3d82a0437e44d0bedb91e80ba543ebe66a1b47bc3f6ba',
@@ -114,7 +117,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   'e7e2d387202ae8d70f8f0e466ba691e82034a202937f6c5ed518311ac483e8cb',
   // Defaults before wb device could write and independent reviewers could read other devices.
   '7b38305fa620f1b58819b221f78a09e766b22cdbed359e6bd0a30a8e3f19e46e',
-  'd522244b3d4914fb6a1f298de9c9acd08cf6d500e6529f68a5d517230a075486'
+  'd522244b3d4914fb6a1f298de9c9acd08cf6d500e6529f68a5d517230a075486',
+  // Defaults before four-item assignments, step conclusions in task updates, reviews split by scope and the must-fix rule.
+  '6a752da68f4413a6c3877e384f86c58f1d5bc131e75f0b1db5524201dbde8ff6',
+  '7da5c4d2225ca0c004c615eb18dd4ebec09409681da48ee13a9f5179c06488af'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */

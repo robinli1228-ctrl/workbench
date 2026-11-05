@@ -12,8 +12,10 @@ import {SessionQueue} from './session-queue.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 import {registerResultReceipt,registerCallOutcome} from './result-receipts.mjs';
+import {noteTaskReturn} from './task-return.mjs';
 
 export const callTerminal = new Set(['succeeded', 'failed', 'cancelled']);
+const DELIVERY_WAIT_MS = 24 * 3600000;
 /** A task may change owner this many times in a row before the next owner must finish it or hand it to the supervisor. */
 const MAX_TRANSFERS = 8;
 
@@ -160,7 +162,7 @@ export class RoleCalls {
         collaborationSessionId: sourceRequest?.collaborationSessionId || null,
         collaborationCycleId: sourceRequest?.collaborationCycleId || null,
         continuationBatchId: continued?.continuationBatchId || null,
-        ...(continued?.conversationTaskId?{conversationTaskId:continued.conversationTaskId}:{}),
+        ...(continued?.conversationTaskId?{conversationTaskId:continued.conversationTaskId,...(continued.taskLinkedByWake?{taskLinkedByWake:true}:{})}:{}),
         ...(continued?.callMessageId?{callMessageId:continued.callMessageId}:{}),
         // Publication is independent of charging: necessary continuations retain the original private boundary, including legacy requests.
         explicitPublish:Boolean(sourceRequest?.explicitPublish||sourceRequest?.automaticPropagation||sourceRequest?.continuationBatchId||sourceTask?.explicitPublish||sourceTask?.automaticPropagation||sourceTask?.collaborationBatchId),
@@ -303,6 +305,19 @@ export class RoleCalls {
       const before=JSON.stringify(this.db.get('coordinationRequests',request.id));this.resume(request.id,time);
       changed=before!==JSON.stringify(this.db.get('coordinationRequests',request.id))||changed;
     }
+    // A handoff whose delivery can no longer become ready (missing, blocked or cancelled) would wait forever: it reappears in
+    // every stall reminder and keeps its target from ever looking idle. A day after it was sent, with nothing run for it, it
+    // is cancelled and says why. Waits that can still end (a sync batch, review isolation) are left alone.
+    for(const request of this.db.schedulableRequests().filter(r=>r.status==='waiting_delivery'&&!r.currentRunId&&!r.taskId&&time-Date.parse(r.createdAt)>DELIVERY_WAIT_MS)) {
+      if(request.sourceSyncBatchId||request.waitingReason==='review_isolation')continue;
+      const delivery=request.deliveryId?this.db.get('deliveries',request.deliveryId):null;
+      if(delivery&&!['blocked','cancelled'].includes(delivery.status))continue;
+      if(this.db.list('coordinationRequests').some(c=>c.parentRequestId===request.id&&!callTerminal.has(c.status)))continue;
+      // The caller learns why, not just that it was cancelled.
+      this.cancel(request.id,{reason:tr('roleCalls.deliveryExpired')});
+      this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',request.id),cancelReason:'delivery_expired',result:tr('roleCalls.deliveryExpired')});
+      changed=true;
+    }
     return changed;
   }
 
@@ -325,6 +340,7 @@ export class RoleCalls {
     // Register the settled call before resuming its owner, so the safe continuation includes this result. Replaying a call
     // that had already settled (Home restart, upgrade) only refreshes an existing receipt and never backfills history.
     if(callTerminal.has(r.status))registerResultReceipt(this.db,{run,request:r,refreshOnly:settledBefore});
+    if(!settledBefore&&callTerminal.has(r.status))noteTaskReturn(this.db,{run,request:r});
     this.settleResult(r,{triggerRequestId:!settledBefore&&callTerminal.has(r.status)?r.id:null});
   }
 
@@ -393,7 +409,9 @@ export class RoleCalls {
         wakeReason:reason,waitRequestIds:reason!=='results'?children.filter(c=>!callTerminal.has(c.status)).map(c=>c.id):[],
         summary: `${header}${packCoordinationResults(children, Math.max(0, 12000 - header.length))}`.slice(0, 12000) });
       // Quote metadata only: inputs, task origin and scheduling stay intact. The result message may be published after this transaction.
-      if(!Object.hasOwn(next,'continuationFeedback'))this.db.put('coordinationRequests',{...next,continuationFeedback:reason==='results'?continuationFeedback(children,triggerRequestId):null});
+      // A wake for results of work on one chat task belongs to that task, so the owner sees it and may close it.
+      const linkedTasks=new Set(children.map(c=>c.conversationTaskId).filter(Boolean)),taskLink=!next.conversationTaskId&&linkedTasks.size===1?{conversationTaskId:[...linkedTasks][0],taskLinkedByWake:true}:{};
+      if(!Object.hasOwn(next,'continuationFeedback'))this.db.put('coordinationRequests',{...next,...taskLink,continuationFeedback:reason==='results'?continuationFeedback(children,triggerRequestId):null});
       this.db.put('coordinationRequests', { ...this.db.get('coordinationRequests',parent.id), continuationRequestId: next.id, updatedAt: new Date().toISOString() });
       // Mark the episode as reported only once the wake exists, so a failed wake can be retried.
       for(const {request,block} of blocked){const id=request.resultRequestId||request.id;this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',id),blockedWake:{kind:block.kind,since:block.since,notifiedAt:new Date(time).toISOString()}});}
@@ -476,8 +494,26 @@ export class RoleCalls {
     });
   }
 
+  /**
+   * The user closed a group-chat task: every unfinished call linked to it is cancelled with the reason, and the runs still
+   * working on it are returned so Home stops them. A role changing a task's status does not come here.
+   */
+  cancelForTask(projectId,conversationTaskId) {
+    return this.db.transaction(()=>{
+      const runs=new Set(),reason=tr('roleCalls.taskClosed');
+      // A caller's wake that only carries this task's results is the caller's own work: cancelling it would end the caller's
+      // whole chain, other tasks included.
+      for(const request of this.db.listProject('coordinationRequests',projectId).filter(r=>r.conversationTaskId===conversationTaskId&&!r.taskLinkedByWake&&!callTerminal.has(r.status))) {
+        if(callTerminal.has(this.db.get('coordinationRequests',request.id)?.status))continue;
+        for(const id of this.cancel(request.id,{reason}))runs.add(id);
+        this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',request.id),cancelReason:'task_closed',result:reason});
+      }
+      return [...runs];
+    });
+  }
+
   /** Cancelling the chain first blocks new dispatches, then returns the truly active runs so Home can send stop commands. */
-  cancel(requestId,{preserveRunningChildren=false}={}) {
+  cancel(requestId,{preserveRunningChildren=false,reason=null}={}) {
     return this.db.transaction(()=>{
     let root = this.db.get('coordinationRequests', requestId);
     if (!root) throw new Error(tr('roleCalls.callNotFound'));
@@ -535,7 +571,7 @@ export class RoleCalls {
       // Tell a caller whose own chain goes on that its call was cancelled; a cancelled chain needs no notice to itself.
       for(const id of cancelledNow) {
         const r=this.db.get('coordinationRequests',id),parent=r?.parentRequestId?currentContinuation(this.db,r.parentRequestId):null;
-        if(parent&&!ids.has(r.parentRequestId)&&!callTerminal.has(parent.status))registerCallOutcome(this.db,r,{outcome:'cancelled',reason:tr('resultReceipts.cancelledReason')});
+        if(parent&&!ids.has(r.parentRequestId)&&!callTerminal.has(parent.status))registerCallOutcome(this.db,r,{outcome:'cancelled',reason:reason||tr('resultReceipts.cancelledReason')});
       }
     });
     return [...new Set(runs)];
