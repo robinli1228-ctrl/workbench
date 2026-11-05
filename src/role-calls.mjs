@@ -490,6 +490,22 @@ export class RoleCalls {
     });
   }
 
+  /**
+   * The user closed a group-chat task: every unfinished call linked to it is cancelled with the reason, and the runs still
+   * working on it are returned so Home stops them. A role changing a task's status does not come here.
+   */
+  cancelForTask(projectId,conversationTaskId) {
+    return this.db.transaction(()=>{
+      const runs=new Set(),reason=tr('roleCalls.taskClosed');
+      for(const request of this.db.listProject('coordinationRequests',projectId).filter(r=>r.conversationTaskId===conversationTaskId&&!callTerminal.has(r.status))) {
+        if(callTerminal.has(this.db.get('coordinationRequests',request.id)?.status))continue;
+        for(const id of this.cancel(request.id,{reason}))runs.add(id);
+        this.db.put('coordinationRequests',{...this.db.get('coordinationRequests',request.id),cancelReason:'task_closed',result:reason});
+      }
+      return [...runs];
+    });
+  }
+
   /** Cancelling the chain first blocks new dispatches, then returns the truly active runs so Home can send stop commands. */
   cancel(requestId,{preserveRunningChildren=false,reason=null}={}) {
     return this.db.transaction(()=>{

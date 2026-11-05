@@ -127,7 +127,7 @@ export default {
   "Task list":"任务列表",
   "Only unfinished":"只显示未完成",
   "Close task":"关闭任务",
-  "Close this task? It is marked cancelled and leaves the unfinished list.":"确定关闭这个任务？任务会标记为已取消，不再出现在未完成列表里。",
+  "Close this task? It is marked cancelled and leaves the unfinished list; requests still linked to it are cancelled and roles working on it are stopped.":"确定关闭这个任务？任务会标记为已取消，不再出现在未完成列表里；挂在它下面的请求会取消，正在做这个任务的角色会被停下。",
   "Closed by the user":"用户关闭任务",
   "Basic information@@task":"基础信息",
   "Task steps":"任务步骤",

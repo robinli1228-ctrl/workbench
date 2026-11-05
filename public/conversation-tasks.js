@@ -134,7 +134,7 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
     // Closing an open task (from Basic information): it is marked cancelled (kept in the history, out of "Only unfinished"); the change reason, if any, goes with it.
     if(record&&!['done','cancelled'].includes(record.status)){
       const closeTask=button('Close task',async()=>{
-        if(state.saving||editor!==state||version!==generation||!confirm(t('Close this task? It is marked cancelled and leaves the unfinished list.')))return;
+        if(state.saving||editor!==state||version!==generation||!confirm(t('Close this task? It is marked cancelled and leaves the unfinished list; requests still linked to it are cancelled and roles working on it are stopped.')))return;
         state.saving=true;closeTask.disabled=save.disabled=true;error.textContent='';
         try{await api(url(target),{method:'PUT',json:{...taskPatch(record,{status:'cancelled'}),id:record.id,reason:reason.value||t('Closed by the user'),conversationId:target.conversationId}});
           if(editor!==state||version!==generation)return;dialog.close();await refresh();}

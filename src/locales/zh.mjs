@@ -967,6 +967,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'roleCalls.targetRoleHasNoRepository': '目标角色缺少仓库目录',
   'roleCalls.sourceCallDoesNotBelong': '来源调用不属于此项目',
   'roleCalls.sourceCallHasEndedBeen': '来源调用已结束、已取消或用户已调整方向',
+  'roleCalls.taskClosed': '已取消：用户关闭了这个任务。',
   'roleCalls.deliveryExpired': '已取消：它等待的交付已失败或不存在，发出一天后仍没有开始。需要时重新交付并再派一次。',
   'roleCalls.lateReplyAfterCancel': '回复到达时，它所服务的工作已被用户取消或调整方向；回复已保留，旧工作不会恢复',
   'roleCalls.resumeFailed': '回复已到，但后续处理无法开始：{message}。回复已保留；等待已结束，不再占用该角色，如需继续请重新派工',

@@ -774,7 +774,15 @@ const server = http.createServer(async (req, res) => {
         const api=new ConversationTasks(db),projectId=conversationTasksRoute[1];
         if(req.method==='GET'){const scope={projectId,conversationId:url.searchParams.get('conversationId')??undefined};return json(res,url.searchParams.has('id')?api.show(scope,url.searchParams.get('id')):api.list(scope,{status:url.searchParams.get('status')??undefined}));}
         const {conversationId,id,...input}=await body(req),scope={projectId,conversationId};
-        const result=req.method==='POST'?api.create(scope,input,{user:true}):api.update(scope,id,input,{user:true});change();return json(res,result,req.method==='POST'?201:200);
+        // Closing a task from the page also ends the work still linked to it: waiting calls are cancelled, running roles stopped.
+        const before=req.method==='PUT'?api.show(scope,id):null,stops=[];
+        const result=db.transaction(()=>{
+          const saved=req.method==='POST'?api.create(scope,input,{user:true}):api.update(scope,id,input,{user:true});
+          if(before&&before.status!=='cancelled'&&saved.status==='cancelled')stops.push(...calls.cancelForTask(projectId,saved.id));
+          return saved;
+        });
+        for(const runId of stops){const run=db.requestStop(runId,`task-closed:${runId}`);dispatch(run.nodeId);}
+        change();return json(res,result,req.method==='POST'?201:200);
       }
       const conversationsRoute=pathname.match(/^\/api\/projects\/([^/]+)\/conversations$/);
       const copyPreviewRoute=pathname.match(/^\/api\/projects\/([^/]+)\/team-copy\/preview$/);

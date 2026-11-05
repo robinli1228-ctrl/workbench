@@ -126,3 +126,24 @@ test('a handoff whose delivery never came is cancelled a day after it was sent, 
   assert.equal(db.get('coordinationRequests', 'blocked').status, 'cancelled');
   for (const id of ['fresh', 'ready', 'sync', 'isolated']) assert.equal(db.get('coordinationRequests', id).status, 'waiting_delivery', id);
 });
+
+test('the user closing a task cancels the calls still linked to it and returns the runs to stop', () => {
+  const db = new Store(':memory:'), calls = new RoleCalls(db), at = '2026-11-05T03:00:00Z';
+  db.put('projects', { id: P, name: 'Chat', root: '/tmp/chat' });
+  const call = (id, extra) => db.put('coordinationRequests', { id, projectId: P, conversationId: P, kind: 'direct', targetRoleId: 'a', createdAt: at, ...extra });
+  db.put('runs', { id: 'run-1', projectId: P, roleId: 'a', status: 'running', createdAt: at });
+  call('running', { conversationTaskId: 'ct:1', status: 'running', currentRunId: 'run-1' });
+  call('queued', { conversationTaskId: 'ct:1', status: 'queued' });
+  call('handoff', { conversationTaskId: 'ct:1', kind: 'handoff', status: 'waiting_delivery' });
+  call('done', { conversationTaskId: 'ct:1', status: 'succeeded' });
+  call('other', { conversationTaskId: 'ct:2', status: 'queued' });
+  const stop = calls.cancelForTask(P, 'ct:1');
+  assert.deepEqual(stop, ['run-1'], 'the running role is stopped');
+  for (const id of ['running', 'queued', 'handoff']) {
+    const r = db.get('coordinationRequests', id);
+    assert.equal(r.status, 'cancelled', id);assert.equal(r.cancelReason, 'task_closed');assert.match(r.result, /closed this task|关闭/);
+  }
+  assert.equal(db.get('coordinationRequests', 'done').status, 'succeeded', 'finished work keeps its result');
+  assert.equal(db.get('coordinationRequests', 'other').status, 'queued', 'another task is untouched');
+  assert.deepEqual(calls.cancelForTask(P, 'ct:1'), [], 'closing again changes nothing');
+});
