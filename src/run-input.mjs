@@ -84,6 +84,8 @@ export function sameNativeSession(run,prior) {
     && prior.nativeSession?.id===run.resumeNativeSessionId);
 }
 
+const hadText=(prior,name)=>prior?.instructionComponents?.[name]?.empty===false;
+
 /** Same-session configuration changes need explicit replacement events as well as current native instruction parameters. */
 export function instructionDelivery({runtime,run,prior,instructions,roleName,processReused=false,components}) {
   const fingerprint=createHash('sha256').update(JSON.stringify([roleName||'',instructions])).digest('hex');
@@ -95,14 +97,16 @@ export function instructionDelivery({runtime,run,prior,instructions,roleName,pro
       const acknowledged=runtime==='codex'&&prior?.configurationEventState==='delivered'&&run.resumeNativeSessionId&&run.roleSessionId
         &&prior.projectId===run.projectId&&prior.nodeId===run.nodeId&&prior.roleSessionId===run.roleSessionId&&prior.nativeSession?.id===run.resumeNativeSessionId;
       const confirmed=(inherited||acknowledged)&&prior.configurationEventProtocol===1;
-      const changed=run.resumeNativeSessionId?Object.keys(components).filter(name=>!confirmed||prior.instructionComponents?.[name]?.version!==versions[name].version):[];
+      // An empty component is announced only to revoke text the previous turn had; a role that never had it (a non-supervisor's
+      // supervisor part) gets nothing.
+      const changed=run.resumeNativeSessionId?Object.keys(components).filter(name=>(!confirmed||prior.instructionComponents?.[name]?.version!==versions[name].version)&&(components[name]!==''||hadText(prior,name))):[];
       const configurationUpdate=changed.map(name=>components[name]!==''?tr('minimal.replaceInstructions',{name,version:versions[name].version,text:components[name]}):tr('minimal.revokeInstructions',{name,version:versions[name].version})).join('\n\n');
       const reused=runtime==='claude'&&processReused&&inherited&&prior.instructionFingerprint===fingerprint;
       return {fingerprint,components:versions,inheritedFrom:reused?prior.id:null,instructions:reused?'':instructions,configurationUpdate,configurationEventProtocol:1};
     }
     if(runtime==='agy') {
       const changed=Object.keys(components).filter(name=>!inherited||prior.instructionComponents?.[name]?.version!==versions[name].version);
-      const message=changed.filter(name=>components[name]!==''||Boolean(run.resumeNativeSessionId)&&(name==='role'||name==='platform'||name==='supervisor'))
+      const message=changed.filter(name=>components[name]!==''||Boolean(run.resumeNativeSessionId)&&hadText(prior,name))
         .map(name=>components[name]!==''?tr('minimal.replaceInstructions',{name,version:versions[name].version,text:components[name]}):tr('minimal.revokeInstructions',{name,version:versions[name].version})).join('\n\n');
       return {fingerprint,components:versions,inheritedFrom:!changed.length?prior.id:null,instructions:message};
     }

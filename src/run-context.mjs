@@ -93,6 +93,21 @@ export function turnOrigin(db,task,request) {
   return {kind:'human'};
 }
 
+/** Messages shown with a turn as background: a quoted message and the message that started it. A stall reminder is the
+ * supervisor's own prompt, so work the supervisor hands on does not carry it to other roles. */
+export function turnReferences({task,source,quote}) {
+  const own=source&&source.kind!=='proactive_followup'&&source.text!==task.prompt&&source.id!==quote?.id;
+  return [...(quote?[quote]:[]),...(own?[source]:[])];
+}
+
+/** The task as readable text: number, title, state and owner, then the description and the steps with who does each. */
+function taskBrief(task) {
+  const steps=task.plan?.steps||[],at=steps.length?` · ${(task.plan.currentStep||0)+1}/${steps.length}`:'';
+  return [tr('conversationTasks.brief',{number:task.number,title:task.title,status:task.status,steps:at,owner:task.owner||'-',revision:task.revision}),
+    task.description||'',
+    ...steps.map((step,i)=>`${i+1}. [${step.status||'todo'}] ${step.description}${task.stepRoles?.[i]?` (${task.stepRoles[i]})`:''}`)].filter(Boolean).join('\n');
+}
+
 /**
  * The task as the role sees it: the full snapshot the first time and after each change to its description; a task this
  * role already read at this description revision is one line pointing at wb task show (it was 64% of collaboration text).
@@ -103,7 +118,7 @@ function taskText(task,minimal) {
     const steps=snapshot.plan?.steps?.length?` · ${(snapshot.plan.currentStep||0)+1}/${snapshot.plan.steps.length}`:'';
     return tr('conversationTasks.unchanged',{number:snapshot.number,title:snapshot.title,status:snapshot.status,steps,revision:snapshot.revision});
   }
-  const text=JSON.stringify(snapshot),note=updated?tr('conversationTasks.updated'):'';
+  const text=taskBrief(snapshot),note=updated?tr('conversationTasks.updated'):'';
   return minimal?tr('conversationTasks.context',{updated:note,task:text}):[note,text].filter(Boolean).join('\n');
 }
 

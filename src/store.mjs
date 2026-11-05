@@ -9,7 +9,7 @@ import { projectRepositories,assertProjectReady } from './project-space.mjs';
 import { projectTerminalLock, terminalOwnsProject } from './terminal-resume.mjs';
 import { RoleSessions,taskConversationId } from './role-sessions.mjs';
 import {ConversationTasks} from './conversation-tasks.mjs';
-import { buildRunContext,turnOrigin } from './run-context.mjs';
+import { buildRunContext, turnOrigin, turnReferences } from './run-context.mjs';
 import { steeringWaitReason } from './role-steering.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import { tr } from './i18n.mjs';
@@ -426,7 +426,7 @@ export class Store {
           environment:{cwd:binding.localRoot,repositories:repositories.map(repository=>({key:repository.key,localRoot:repository.localRoot})),attachments:(task.attachments||[]).map(item=>({id:item.id,name:item.name}))},
           conversation:context,organizer:this.get('summaryQueues',`${task.projectId}:${task.conversationId||task.projectId}`),
           messages,deliveries:task.deliveryId?[this.get('deliveries',task.deliveryId)].filter(Boolean):[],
-          references:[...(quote?[quote]:[]),...(source&&source.text!==task.prompt&&source.id!==quote?.id?[source]:[])]});
+          references:turnReferences({task,source,quote})});
         run.contextPacket.origin=turnOrigin(this,task,request);
         run.contextVersion=run.contextPacket.context.version;
         run.promptRevision=task.roleSnapshot?.revision||null;
