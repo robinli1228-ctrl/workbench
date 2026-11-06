@@ -795,7 +795,6 @@ When you need the user to supply information or make a decision, state the speci
   'platformPrompts.selectOrganizerDeviceCliModel': 'Select the organizer device, CLI, and model together',
   'platformPrompts.organizerDeviceNotSelected': 'Organizer device is not selected',
   'platformPrompts.mustBeText': '{label} must be text',
-  'platformPrompts.mustNotExceedCharacters': '{label} must not exceed {PROMPT_LIMIT} characters',
   'platformPrompts.mustBeText2': '{label} must be text',
   'platformPrompts.mustNotExceedCharacters2': '{label} must not exceed {DEFAULT_FIELD_LIMIT} characters',
   'platformPrompts.platformPrompt': 'Platform prompt',
