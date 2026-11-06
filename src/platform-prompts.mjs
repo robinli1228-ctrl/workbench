@@ -123,7 +123,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   '7da5c4d2225ca0c004c615eb18dd4ebec09409681da48ee13a9f5179c06488af',
   // Defaults before gaps named only after checking, earlier conclusions in .workbench/docs and settled conclusions in assignments.
   '2d58d56c3db65da8e9641da0a082b1290c0993a8c400c7fffd2f5d6eb3ca46a7',
-  'd015a181387f797f3b9161d7835947c7ef3f74c141e5f9858815d1ea321b1200'
+  'd015a181387f797f3b9161d7835947c7ef3f74c141e5f9858815d1ea321b1200',
+  // Defaults before report names were kept off the instruction files CLIs load (CLAUDE.md, AGENTS.md, GEMINI.md).
+  '840fe074a89dd2542b022a7337389f6419f90a63ab8588e9635c2da99647c330',
+  '371634dcbb64e3ba26e4efa97ce713f5157c8e96238095cc5d59e370c3070be4'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */
