@@ -94,7 +94,7 @@ function collectiveRoleScopeZh(sentence) {
   return match[1]?'reviewers':'all';
 }
 
-const IMPLICIT_REPLY_MS=10*60000;
+const IMPLICIT_REPLY_MS=30*60000;
 
 /** In a new project, a message with no @ goes to the fixed supervisor; an explicit @ dispatches to that role; @everyone and legacy project discussions are only stored. */
 export class Rooms {
@@ -123,17 +123,17 @@ export class Rooms {
   }
 
   /**
-   * The chat's latest visible message, when it is a role's final reply of a succeeded turn from the last 10 minutes and that
-   * role can take work now. Otherwise (and when the reply is the supervisor's) the default intake decides, as before; a
-   * project without a supervisor keeps unaddressed messages as discussion.
+   * The chat's latest final reply of a role, when it is from the last 30 minutes and that role can take work now: an
+   * unaddressed message goes to whoever replied last. Otherwise (and when that is the supervisor) the default intake
+   * decides, as before; a project without a supervisor keeps unaddressed messages as discussion.
    */
   implicitReply(projectId,conversationId) {
     const project=this.db.get('projects',projectId);
     if(!project?.supervisorRoleId)return null;
-    const last=this.db.get('roomMessages',this.db.latestConversationMessageId(projectId,conversationId,{visibleOnly:true})||'');
-    if(last?.sender!=='agent'||!last.runId||last.id!==`result-${last.runId}`||Date.now()-Date.parse(last.createdAt)>IMPLICIT_REPLY_MS)return null;
+    const last=this.db.get('roomMessages',this.db.latestConversationMessageId(projectId,conversationId,{visibleOnly:true,finalReply:true})||'');
+    if(!last?.runId||last.id!==`result-${last.runId}`||Date.now()-Date.parse(last.createdAt)>IMPLICIT_REPLY_MS)return null;
     const run=this.db.get('runs',last.runId),role=this.db.get('roles',run?.roleId||'');
-    if(run?.status!=='succeeded'||!role||role.id===project.supervisorRoleId||role.projectId!==projectId||!role.enabled||role.archivedAt||!isRoleConfigured(role))return null;
+    if(!run||!role||role.id===project.supervisorRoleId||role.projectId!==projectId||!role.enabled||role.archivedAt||!isRoleConfigured(role))return null;
     return roleWorkspace(this.db,projectId,role.nodeId,role.repositoryId)&&!cliUnavailable(this.db.get('workers',role.nodeId),role.runtime,role.model)?last.id:null;
   }
 
@@ -231,7 +231,7 @@ export class Rooms {
       const prior = this.db.get('roomMessages', clientMessageId);
       if (prior) { if (prior.fingerprint !== fingerprint) throw new Error(tr('rooms.messageIdConflictsWithDifferent')); return prior; }
       if (!this.db.get('projects', projectId)) throw new Error(tr('rooms.projectNotFound2'));
-      // Without @ or a quote, a message sent right after a role's reply (within 10 minutes) answers that reply, as a quote would.
+      // Without @ or a quote, a message answers the role that replied last (within 30 minutes), as a quote of that reply would.
       if(!replyToId&&!targetRoleId&&!scheduledJobId&&!mentionNames(text).length)replyToId=this.implicitReply(projectId,conversationId);
       const quote = replyToId ? this.db.get('roomMessages', replyToId) : null;
       if (replyToId && quote?.projectId !== projectId) throw new Error(tr('rooms.quotedMessageDoesNotBelong'));
