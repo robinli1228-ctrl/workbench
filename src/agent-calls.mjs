@@ -3,6 +3,54 @@ import {createHash} from 'node:crypto';
 import {isSupervisorName} from './default-roles.mjs';
 import {tr} from './i18n.mjs';
 import {conversationIdOf,agentConversationInput} from './group-conversations.mjs';
+import {mentionNames} from './rooms.mjs';
+
+/**
+ * Roles of the project @-mentioned in a role's text that would not have it otherwise: not the writer, the role that called it
+ * (the answer goes back there anyway), roles sent the same call, or roles this run already has open calls to. A name may run
+ * straight into the next word (Chinese text right after it); the longest role name it starts with counts. Words that are no role are left alone.
+ */
+export function mentionedRoles(db,run,text) {
+  const roles=db.list('roles').filter(r=>r.projectId===run.projectId&&!r.archivedAt).sort((a,b)=>b.name.length-a.name.length);
+  const request=db.get('coordinationRequests',run.requestId||''),skip=new Set([run.roleId]),requests=db.listProject('coordinationRequests',run.projectId);
+  if(request?.parentRequestId)skip.add(db.get('coordinationRequests',request.parentRequestId)?.targetRoleId);
+  for(const r of requests)if(request?.callMessageId&&r.callMessageId===request.callMessageId||r.sourceRunId===run.id&&!['succeeded','failed','cancelled'].includes(r.status))skip.add(r.targetRoleId);
+  const resolve=name=>roles.find(r=>r.name===name)||(isSupervisorName(name)?roles.find(r=>r.systemSupervisor&&!r.platformAssistant):null)||roles.find(r=>name.startsWith(r.name));
+  return [...new Map(mentionNames(String(text||'')).map(resolve).filter(role=>role&&!skip.has(role.id)).map(role=>[role.id,role])).values()];
+}
+
+/**
+ * An @ notifies, but never costs the work it rides on. A consult or direct call goes out as asked; the roles its brief
+ * mentions get a copy as a call of their own (`<id>-cc`), and if that copy cannot be sent the sender is told why.
+ */
+export function callWithMentions(ctx,run,input) {
+  const result=createAgentCalls(ctx,run,input),kind=input.kind||'consult';
+  if(!['consult','direct'].includes(kind)||typeof input.text!=='string')return result;
+  const extra=mentionedRoles(ctx.db,run,input.text).filter(role=>!result.requests.some(r=>r.targetRoleId===role.id));
+  if(!extra.length)return result;
+  const names=extra.map(role=>`@${role.name}`).join(' '),hint=text=>({...result,hint:[result.hint,text].filter(Boolean).join(' ')});
+  const {role,roles,...rest}=input;
+  try{const copy=createAgentCalls(ctx,run,{...rest,requestId:`${input.requestId}-cc`,roles:extra.map(r=>r.id)});return {...hint(tr('agentCalls.mentionHint',{names})),mentionRequestIds:copy.requestIds};}
+  catch(error){return hint(tr('agentCalls.mentionFailed',{names,reason:error.message}));}
+}
+
+/**
+ * A note that @-mentions roles reaches them as a consultation, so each answers and the answer comes back to the writer.
+ * Only a role turn with its own call does this; when the consultation cannot be sent the note is posted as before.
+ */
+export function noteWithMentions(ctx,run,text) {
+  const eligible=typeof text==='string'&&text.trim().length<=8000&&run.requestId&&!run.discussionDeliveryId&&!run.collaborationBatchId&&!run.continuationBatchId;
+  if(eligible)try{
+    const requestId=`${run.id}:note-${createHash('sha256').update(text).digest('hex').slice(0,16)}`,prior=ctx.db.get('roomMessages',`call:${requestId}`);
+    // A retried note returns its first notification; the roles it reached now count as busy with this turn's call.
+    const extra=prior?.callFingerprint?(prior.requestIds||[prior.requestId]).map(id=>ctx.db.get('roles',ctx.db.get('coordinationRequests',id)?.targetRoleId||'')).filter(Boolean):mentionedRoles(ctx.db,run,text);
+    if(extra.length){
+      const sent=createAgentCalls(ctx,run,{requestId,roles:extra.map(r=>r.id),kind:'consult',text});
+      return {...sent,hint:tr('agentCalls.noteSentAsCall',{names:extra.map(role=>`@${role.name}`).join(' ')})};
+    }
+  }catch{/* posted as a plain note below */}
+  return ctx.rooms.agentNote(run,text);
+}
 
 /** One shared instruction is published atomically; each recipient retains its own queue, request and reply lifecycle. */
 export function createAgentCalls({db,calls,rooms},run,input) {
@@ -22,6 +70,7 @@ export function createAgentCalls({db,calls,rooms},run,input) {
       if(!role)throw new Error(tr('home.targetRoleNotFoundUse'));
       return [role.id,role];
     })).values()];
+    // Roles @-mentioned in a consultation or delegation are sent the same brief; a transfer or delivery keeps its one recipient.
     if(transfer&&targets.length!==1)throw new Error(tr('wbTools.invalidCallTargets'));
     if(transfer&&targets[0].id===run.roleId)throw new Error(tr('roleCalls.transferToSelf'));
     if(transfer&&input.deliveryId)throw new Error(tr('roleCalls.transferNoDelivery'));

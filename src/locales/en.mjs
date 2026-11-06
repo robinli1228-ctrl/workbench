@@ -1577,11 +1577,11 @@ wb discuss peers     The team: each role's responsibility, device, whether it is
 wb call --role ROLE --kind consult|direct|transfer --request-id STABLE_ID --text BRIEF
                      consult: ask a question or request a review; direct: assign a subtask. Both results come back to you; use wb wait when you need them.
                      transfer: hand the task over whole. The other role becomes its owner, drives it, organises reviews and replies to the user when done; the result does not come back to you, so you may end this turn.
-                     Repeat --role to send the same brief to several roles, each handling it separately. Optional --goal, --scope, --input and --return become labelled lines ahead of the brief; --file PATH attaches the device, path and SHA256 of one UTF-8 project file (not its text; the receiver reads it with wb device read). Briefs are at most 12000 characters. Retry with the same ID and content.
+                     Repeat --role to send the same brief to several roles, each handling it separately; roles @-mentioned in a consult or direct brief get it too. Optional --goal, --scope, --input and --return become labelled lines ahead of the brief; --file PATH attaches the device, path and SHA256 of one UTF-8 project file (not its text; the receiver reads it with wb device read). Briefs are at most 12000 characters. Retry with the same ID and content.
                      --kind handoff --delivery-id ID: assign work on a commit delivered across devices with wb deliver.
 wb wait "RESUME SUMMARY"  Register which of your calls you are waiting for, then end the turn; the platform wakes you when all results are back, on timeout (30 minutes by default, counted from when the last of them starts; time queued behind the receiver's other work does not count), or when one still cannot start after 10 minutes. Write the summary in full sentences: whom you wait for, for what, and what you do when it is back. Or wb wait '{"summary":"...","requestIds":["ID"],"timeoutSeconds":1800}'
                      You are woken only when every listed request is back; to handle whichever returns first, wait on that one alone (only its ID in requestIds), then wait for the next.
-wb note TEXT         Leave a line in the group chat without assigning work
+wb note TEXT         Leave a line in the group chat. Roles you @ in it are notified and answer (as a consult; the answer comes back to you). @ a role only when it must act; just name it otherwise
 wb history [TERMS] [--role ROLE] [--file PATH] [--since TIME] [--until TIME] [--limit N] [--cursor C]
                      Without terms, list the latest group-chat records; with terms, search. TIME: 30m, 2h, 3d, today, 2026-10-20
 wb history read ID [offset] [version]
@@ -1790,6 +1790,9 @@ You personally do only the simplest things: answer a question directly, check on
   'executionWorkspace.inputVersionMismatch': 'Repository {key} does not match the required input version: expected {expected}, actual {actual}. The retained directory and history were preserved; deliver the required version into an appropriate execution workspace.',
   'minimal.workerProtocolMismatch': 'This queued turn uses the newer instruction contract. Upgrade the Worker before resuming; its saved input has not been downgraded.',
   'minimal.toolEntry': 'Current-turn WB tool entry: {wbCommand}. Discover available operations with its help command as needed.',
+  'agentCalls.mentionHint': '{names}, mentioned in the brief, got a copy and will answer separately; do not send it again.',
+  'agentCalls.mentionFailed': '{names}, mentioned in the brief, could not be sent a copy: {reason}. The call itself went out; assign them separately if they must act.',
+  'agentCalls.noteSentAsCall': '{names}, mentioned in the note, got it as a consultation; the answer comes back to you. Use wb wait if you need it.',
   'agentCalls.taskHint': 'This work has no task yet: create one with wb task create, stating the goal and steps, and link later calls to it with --task.',
   'agentCalls.transferHint': 'You still own this task. This direct call has already been sent; do not dispatch it again. For a future whole-task handover, update the handover description first, then use --kind transfer so the recipient replies to the user without another summary from you. Keep direct when you need the result back to combine.',
   'turnInput.fromUser': '[User message]',
