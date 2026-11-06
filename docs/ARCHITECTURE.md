@@ -350,6 +350,8 @@ Old call ancestors are marked with `steeringTaskId`, which prevents a late resul
 
 Role editing is managed by `public/room.js`. The form keeps only the role's own configuration, while project directory validation still affects whether it can be saved.
 
+Saving a new model or reasoning effort on the same device and CLI (for a work role or the supervisor; `applyToQueuedWork` in `role-switch-policy.mjs`) also updates that role's chat tasks and calls that have not started (their snapshot, model and execution binding), so queued work does not run on the replaced model. A turn already running is not interrupted and finishes on the model it started with; the next turn resumes the same native session with the new model, because the warm-process fingerprint includes model and effort.
+
 ### Long-lived project baseline branch
 
 - A project first gets a stable directory. New repository preparation binds the checkout directly inside it. An explicit migration of legacy baseline bindings must include every bound device, pause that repository’s sync and verify each source checkout contains its old baseline commit. Failed or unavailable snapshots keep the old bindings. Device RPC preparation completes first; one final SQLite transaction rechecks active Runs, synchronization and old binding identities, then commits all bindings together. It does not remove old worktrees or carry their uncommitted changes into another directory.

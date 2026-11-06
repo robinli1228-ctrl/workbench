@@ -1,7 +1,7 @@
 import { tr } from './i18n.mjs';
 import {registerCallOutcome,BLOCKED_NOTICE_MS} from './result-receipts.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
-import {assertBindingEditAllowed, activeRoleSwitch,roleSwitchWaitReason,effectiveExecutionRole} from './role-switch-policy.mjs';
+import {assertBindingEditAllowed, applyToQueuedWork, activeRoleSwitch,roleSwitchWaitReason,effectiveExecutionRole} from './role-switch-policy.mjs';
 import {sourceInputWaitReason} from './source-sync-input.mjs';
 import { normalizeResponsibility } from './role-definition.mjs';
 import { randomUUID } from 'node:crypto';
@@ -144,8 +144,9 @@ export class Rooms {
 
   /** Instruction settings are stored on the role record and copied at dispatch time; they never overwrite Markdown files in the user's repository. */
   saveRole(projectId, input) {
-    assertBindingEditAllowed(this.db, input.id && this.db.get('roles', input.id), input);
-    return this.db.put('roles', this.validateRole(projectId, input));
+    const old = input.id && this.db.get('roles', input.id);
+    assertBindingEditAllowed(this.db, old, input);
+    return this.db.transaction(() => applyToQueuedWork(this.db, old, this.db.put('roles', this.validateRole(projectId, input))));
   }
 
   /** Validate a draft without temporarily saving it as the live execution binding. */
