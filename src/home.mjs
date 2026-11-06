@@ -32,7 +32,7 @@ import { renderBatch } from './session-queue-worker.mjs';
 import { listRoleTemplates, saveRoleTemplate, restoreRoleTemplate } from './role-templates.mjs';
 import { Coordinator } from './coordinator.mjs';
 import { RoleCalls } from './role-calls.mjs';
-import {createAgentCalls,mentionedRoles} from './agent-calls.mjs';
+import {callWithMentions,noteWithMentions} from './agent-calls.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {supportsDiscussion} from './discussion-policy.mjs';
 import {recentProjectArtifacts,recordedArtifactPath} from './run-artifacts.mjs';
@@ -1294,12 +1294,7 @@ const server = http.createServer(async (req, res) => {
         }
         if (pathname === '/api/agent/setup/propose' && run.roleSnapshot?.platformAssistant) return json(res, assistant.propose(run,b));
         if (pathname === '/api/agent/note') {
-          // A note that @-mentions roles notifies them: it is sent as a consultation, so each answers and the answer comes back.
-          const mentioned=typeof b.text==='string'?mentionedRoles(db,run,b.text):[];
-          const r = mentioned.length
-            ? createAgentCalls({db,calls,rooms},run,{requestId:`${run.id}:note-${createHash('sha256').update(b.text).digest('hex').slice(0,16)}`,roles:mentioned.map(role=>role.id),kind:'consult',text:b.text})
-            : rooms.agentNote(run, b.text);
-          change(); return json(res, r, 201);
+          const r = noteWithMentions({db,calls,rooms},run,b.text); change(); return json(res, r, 201);
         }
         if(pathname==='/api/agent/conversation-tasks'){
           if(Object.keys(b).some(k=>!['runId','action','input'].includes(k)))throw new Error(tr('conversationTasks.invalid'));
@@ -1308,7 +1303,7 @@ const server = http.createServer(async (req, res) => {
           return json(res,result);
         }
         if (pathname === '/api/agent/calls') {
-          const result=createAgentCalls({db,calls,rooms},run,b);
+          const result=callWithMentions({db,calls,rooms},run,b);
           scheduleChat(); change(); return json(res,result,201);
         }
         if (pathname === '/api/agent/wait') {
