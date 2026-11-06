@@ -11,6 +11,22 @@ export function assertBindingEditAllowed(db, role, draft = role) {
   if (role.runtime && role.runtime !== draft.runtime) throw new Error('Changing CLI requires a verified handoff and switch.');
 }
 
+/** A new model or effort on the same device and CLI also applies to the role's work that has not started; a running turn finishes as it began. */
+export function applyToQueuedWork(db, old, role) {
+  if (!old || old.nodeId !== role.nodeId || old.runtime !== role.runtime || (old.model === role.model && (old.effort || null) === (role.effort || null))) return role;
+  const same = r => r && r.id === role.id && r.nodeId === role.nodeId && r.runtime === role.runtime;
+  const bound = record => record.executionBinding?.role ? { executionBinding: { ...record.executionBinding, role } } : {};
+  for (const task of db.chatTasks(['ready'])) {
+    if (task.roleId !== role.id || task.currentRunId || task.switchOperationId || !same(task.executionBinding?.role || task.roleSnapshot)) continue;
+    db.put('tasks', { ...task, roleSnapshot: role, model: role.model, ...bound(task) });
+  }
+  for (const request of db.listProject('coordinationRequests', role.projectId)) {
+    if (request.targetRoleId !== role.id || request.currentRunId || !['queued', 'waiting_delivery'].includes(request.status) || !same(request.executionBinding?.role || request.targetSnapshot)) continue;
+    db.put('coordinationRequests', { ...request, targetSnapshot: role, ...bound(request) });
+  }
+  return role;
+}
+
 /** A held request keeps its historical snapshot; only a later execution uses the committed binding. */
 export function effectiveExecutionRole(db, task) {
   return task.executionBinding?.role || task.roleSnapshot;

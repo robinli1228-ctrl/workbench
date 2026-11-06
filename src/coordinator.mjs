@@ -1,6 +1,6 @@
 import { runtimeIssue } from './runtime-probe.mjs';
 import { tr } from './i18n.mjs';
-import {assertBindingEditAllowed} from './role-switch-policy.mjs';
+import {assertBindingEditAllowed,applyToQueuedWork} from './role-switch-policy.mjs';
 import { resolveRolePermissionScope, withPermissionScope } from './role-permissions.mjs';
 
 /** The system supervisor configuration is independent of worker roles; no option may silently replace the user's runtime configuration. */
@@ -22,7 +22,7 @@ export class Coordinator {
     const config = this.validateSupervisor(projectId, nodeId, input);
     if (project.supervisorRoleId) {
       const role = this.db.get('roles', project.supervisorRoleId);
-      this.db.put('roles', withPermissionScope({...role,nodeId,runtime:config.runtime,model:config.model,effort:config.effort,revision:(role.revision||1)+1},config.permissionScope));
+      applyToQueuedWork(this.db, role, this.db.put('roles', withPermissionScope({...role,nodeId,runtime:config.runtime,model:config.model,effort:config.effort,revision:(role.revision||1)+1},config.permissionScope)));
       this.db.put('projects', {...project,supervisorNodeId:nodeId});
     }
     return this.db.put('supervisorConfigs',config);
