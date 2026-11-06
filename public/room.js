@@ -1142,10 +1142,13 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const discussion=discussionDisplay(m,data);
     // What the question buttons send (revisions, question, run) is part of the drawing, so a kept node never sends stale values.
     const discussionKey=discussion?JSON.stringify([discussion.thread?.id,discussion.thread?.revision,discussion.thread?.directionRevision,discussion.questionId,discussion.stopRunId,discussion.canReply,discussion.canResume,discussion.canStop]):'';
-    const row = create('article', `chat-row ${agent ? 'agent' : 'human'}${handoff || replyDirection ? ' is-handoff' : ''}`);
+    // A scheduled reminder is stored as a human-side message but is the platform speaking, not the user.
+    const reminder=!agent&&Boolean(m.scheduledJobId);
+    const row = create('article', `chat-row ${agent ? 'agent' : 'human'}${reminder ? ' is-reminder' : ''}${handoff || replyDirection ? ' is-handoff' : ''}`);
     row.dataset.messageId=m.id;if(discussionKey)row.dataset.discussion=discussionKey;
     const role = agent ? (data.roles || []).find(r => r.id === m.roleId) || (data.runs || []).find(r => r.id === m.runId)?.roleSnapshot : null;
     if (agent) row.append(avatarFor(role, m.senderName));
+    else if (reminder) { const icon = create('span', 'chat-avatar chat-avatar-reminder'); icon.innerHTML = UI_ICON.history; row.append(icon); }
     const col = create('div', 'chat-col');
     const header = create('div', 'chat-message-header');
     // A role's card shows when its run started (the footer says how long it took); other cards their send time.
@@ -1153,7 +1156,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const time = create('time', '', formatTime(shownAt));
     if (shownAt) time.dateTime = shownAt;
     if (cardMeta.startedAt) time.title = t('Started {start} · sent {sent}', { start: formatTime(cardMeta.startedAt), sent: formatTime(m.createdAt) });
-    const sender=create('div', 'chat-name', agent ? m.senderName : 'Me');
+    const sender=create('div', 'chat-name', agent ? m.senderName : reminder ? 'Scheduled reminder' : 'Me');
     // Saved role names are identities, not UI dictionary keys.
     if(agent)sender.setAttribute('translate','no');
     if(agent)sender.title=m.senderName||'';

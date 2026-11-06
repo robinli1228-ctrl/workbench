@@ -953,6 +953,7 @@ export default {
   'Reply': '回复',
   'View quoted original': '查看引用原文',
   'Question': '提问',
+  'Scheduled reminder': '定时提醒',
   'Question from {role}': '{role} 的提问',
   '{v} waiting': '{v} 个待回答',
   'Skip all questions': '跳过全部问题',
