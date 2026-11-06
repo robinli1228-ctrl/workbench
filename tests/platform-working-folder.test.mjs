@@ -13,6 +13,38 @@ const PREVIOUS_BULK_RULE = {
   en: '- Never carry files, logs or bulk data (such as base64 in parts) in the chat, wb note or call text. Hand material to another device through the sync-scoped .workbench/docs, or commit it and deliver with wb deliver; when the material is outside the sync scope, say which device and path it is on and let the user decide instead of slicing it yourself.'
 };
 
+// Report names kept off the instruction files CLIs load: [old, new], generated with difflib from the deployed default.
+const RESERVED_NAME_EDITS = {
+ "zh": [
+  [
+   "- 不要用聊天、wb note 或派活文字传文件、日志或大段数据（例如分段的 base64）。正式报告放同步范围内的 .workbench/docs；查问题时的日志、查询结果、探针、临时脚本等中间资料放环境说明里的中间资料目录（不同步，不要放 /tmp），别人用 wb device ls / read 自己读；固定版本的审核和测试用提交加 wb deliver。交接时告诉对方设备和路径即可，不用逐个写字节数和哈希；都不行时说明在哪台设备、哪个路径，请用户决定，不要自己切片传。",
+   "- 不要用聊天、wb note 或派活文字传文件、日志或大段数据（例如分段的 base64）。正式报告放同步范围内的 .workbench/docs，文件名按内容起，不要用 CLAUDE.md、AGENTS.md、GEMINI.md 这类 CLI 会当成指令自动加载的名字（复制这类文件也要改名）；查问题时的日志、查询结果、探针、临时脚本等中间资料放环境说明里的中间资料目录（不同步，不要放 /tmp），别人用 wb device ls / read 自己读；固定版本的审核和测试用提交加 wb deliver。交接时告诉对方设备和路径即可，不用逐个写字节数和哈希；都不行时说明在哪台设备、哪个路径，请用户决定，不要自己切片传。"
+  ]
+ ],
+ "en": [
+  [
+   "- Tell the role concerned, with grounds, about any blocker, risk or problem you find.",
+   "- Tell the role concerned, with grounds, of any blocker, risk or problem."
+  ],
+  [
+   "- Never carry files, logs or bulk data in the chat, wb note or call text. Formal reports go in the synced .workbench/docs; logs, query results, probes and scratch scripts go in the work materials folder from the environment notes (not synced; never /tmp), which others read with wb device ls / read; fixed-version reviews and tests use a commit and wb deliver. Hand over the device and path, without sizes or hashes per file; if none of this works, say where it is and let the user decide rather than slicing it.",
+   "- Never carry files, logs or bulk data in the chat, wb note or call text. Formal reports go in the synced .workbench/docs, named by content, never CLAUDE.md, AGENTS.md or GEMINI.md, which CLIs load as instructions (rename copies); logs, query results, probes and scratch scripts go in the work materials folder from the environment notes (not synced; never /tmp), read by others with wb device; fixed-version reviews and tests use a commit and wb deliver. Hand over the device and path, without sizes or hashes; if none of this works, say where it is and let the user decide."
+  ],
+  [
+   "- To bring in other roles, first create a todo with wb task create (goal and steps) and link it with wb call --task. Keep the description to the current state (about 3 KB), never appending. Put each finished step's conclusion, evidence path and version in the wb task update reason; before any work, check the steps and prior conclusions in .workbench/docs and cite those whose version is unchanged instead of redoing them.",
+   "- To bring in other roles, first create a todo with wb task create (goal and steps) and link it with wb call --task. Keep the description to the current state (about 3 KB). Put each finished step's conclusion, evidence path and version in the wb task update reason; before any work, check the steps and prior conclusions in .workbench/docs and cite those whose version is unchanged instead of redoing them."
+  ],
+  [
+   "- After sending, keep doing what does not depend on it and wait only when you need the result; to wait, actually send the request and register the wait; waiting for nothing means the work is complete.",
+   "- After sending, keep doing what does not depend on it; wait only when you need the result, after actually sending the request; waiting for nothing means the work is complete."
+  ],
+  [
+   "- Others can be wrong too: check each point, fix what is right and give evidence against what is not; stop when both agree. Do not accept a wrong view to end it nor cling to yours; after three to five rounds of dispute, the supervisor decides.",
+   "- Others can be wrong too: check each point, fix what is right and give evidence against what is not; stop when both agree. Do not accept a wrong view to end it nor cling to yours; after a few rounds of dispute, the supervisor decides."
+  ]
+ ]
+};
+
 // The round after: checking before naming gaps, earlier conclusions in .workbench/docs, settled conclusions in assignments,
 // a review preferably on another CLI: [old, new], generated with difflib from the deployed default.
 const HANDOFF_EDITS = {
@@ -205,7 +237,10 @@ for (const [lang, heading, next, help] of [['zh', '工作目录：', '找人协�
   test(`${lang}: working-folder rules, upgrade from the previous default, and wb help sync`, () => runWithLanguage(lang, () => {
     const current = defaultPlatformPrompt();
     const undo = edits => (text => edits.reduce((rebuilt, [old, now]) => { assert.ok(rebuilt.includes(now), now.slice(0, 40)); return rebuilt.replace(now, old); }, text));
-    const beforeHandoff = undo(HANDOFF_EDITS[lang])(current);
+    const beforeReserved = undo(RESERVED_NAME_EDITS[lang])(current);
+    assert.equal(createHash('sha256').update(beforeReserved.trim()).digest('hex'), { zh: '840fe074a89dd2542b022a7337389f6419f90a63ab8588e9635c2da99647c330', en: '371634dcbb64e3ba26e4efa97ce713f5157c8e96238095cc5d59e370c3070be4' }[lang]);
+    assert.equal(normalizePlatformSettings({ platformPrompt: beforeReserved }).platformPrompt, current, 'a saved copy of that default follows the new one');
+    const beforeHandoff = undo(HANDOFF_EDITS[lang])(beforeReserved);
     assert.equal(createHash('sha256').update(beforeHandoff.trim()).digest('hex'), { zh: '2d58d56c3db65da8e9641da0a082b1290c0993a8c400c7fffd2f5d6eb3ca46a7', en: 'd015a181387f797f3b9161d7835947c7ef3f74c141e5f9858815d1ea321b1200' }[lang]);
     assert.equal(normalizePlatformSettings({ platformPrompt: beforeHandoff }).platformPrompt, current, 'a saved copy of that default follows the new one');
     const beforeStreamline = undo(STREAMLINE_EDITS[lang])(beforeHandoff);
