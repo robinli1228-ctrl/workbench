@@ -2360,6 +2360,12 @@ body .project-sidebar .sidebar-heading { gap: 8px; margin-bottom: 12px; padding-
   border-color: rgb(79 91 206 / 16%); border-radius: 9px; color: #262c5c;
   background: linear-gradient(180deg, #f1f2ff 0%, #e9ebfd 100%); box-shadow: 0 1px 2px rgb(79 91 206 / 8%);
 }
+/* A scheduled reminder is the platform speaking, not the user: it sits on the left in a neutral card. */
+.chat-row.human.is-reminder { flex-direction: row; }
+.chat-row.human.is-reminder .chat-col { justify-items: start; }
+.chat-row.human.is-reminder .chat-bubble { border-color: var(--card-hairline); border-radius: 9px; color: var(--text-strong); background: #fff; box-shadow: 0 1px 2px rgb(16 24 40 / 4%); }
+.chat-avatar-reminder { display: grid; place-items: center; color: var(--text-muted); }
+.chat-avatar-reminder svg { width: 20px; height: 20px; }
 .quoted-message, .chat-quote { border-left-color: rgb(79 91 206 / 35%); border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--text-muted); background: var(--surface-sunken); }
 .message-progress { border-top-color: var(--card-hairline); color: var(--text-muted); font-size: var(--fs-sm); }
 
