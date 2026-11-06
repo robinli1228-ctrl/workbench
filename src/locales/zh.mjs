@@ -1577,11 +1577,11 @@ wb discuss peers     查看团队：每个角色的职能、设备、是否空�
 wb call --role 角色 --kind consult|direct|transfer --request-id 稳定编号 --text 说明
                      consult：请教或请人审核；direct：派一个子任务。这两种的结果都回到你这里，需要时用 wb wait 等。
                      transfer：整件转交。对方成为负责人，自己推进、找人审核，做完直接回复用户；结果不再交回你，你这一轮可以直接结束。
-                     重复 --role 可把同一段说明发给几个角色，各自处理。可选 --goal、--scope、--input、--return 写成带标签的几行放在说明前面；--file 路径 附上项目里一个 UTF-8 文件的设备、路径和 SHA256（不贴正文，对方用 wb device read 读）。说明最多 12000 字。重试用同一个编号和内容。
+                     重复 --role 可把同一段说明发给几个角色，各自处理；consult 和 direct 的说明里 @ 到的角色也会收到。可选 --goal、--scope、--input、--return 写成带标签的几行放在说明前面；--file 路径 附上项目里一个 UTF-8 文件的设备、路径和 SHA256（不贴正文，对方用 wb device read 读）。说明最多 12000 字。重试用同一个编号和内容。
                      --kind handoff --delivery-id 编号：配合 wb deliver 的跨设备提交派活。
 wb wait "续接摘要"   登记你在等哪些派出的结果，然后结束本轮；结果都回来、超时（默认 30 分钟，从最后一个开始执行时算起，排在对方其他工作后面的时间不算）或对方 10 分钟仍无法开始时，平台叫醒你。摘要写完整的句子：在等谁、等什么、回来后做什么。也可 wb wait '{"summary":"...","requestIds":["编号"],"timeoutSeconds":1800}'
                      列出的几个请求要全部返回才叫醒你；想先处理先回来的，就只等那一个（requestIds 只写它的编号），处理完再等下一个。
-wb note 文字         在群里留一句话，不派活
+wb note 文字         在群里留一句话。文字里 @ 的角色会收到通知并回应（按 consult 处理，回复交回给你）；只在需要对方处理时 @，单纯提到用名字就行
 wb history [关键词] [--role 角色] [--file 路径] [--since 时间] [--until 时间] [--limit N] [--cursor C]
                      不带关键词列出最近的群聊记录；带关键词搜索。时间写法：30m、2h、3d、today、2026-10-20
 wb history read 编号 [offset] [version]
@@ -1790,6 +1790,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'executionWorkspace.inputVersionMismatch': '仓库 {key} 与要求的输入版本不一致：要求 {expected}，实际 {actual}。旧目录与历史已保留，请将指定版本交付到合适的执行目录。',
   'minimal.workerProtocolMismatch': '该排队回合使用新版指令契约，请升级 Worker 后续接；已保存的输入没有被降级或重写。',
   'minimal.toolEntry': '本轮 WB 工具入口：{wbCommand}。按需使用其 help 命令查询可用操作。',
+  'agentCalls.mentionHint': '说明里 @ 到的 {names} 也收到了这份说明，各自回复，不用另发。',
   'agentCalls.taskHint': '这件事还没有任务：建议用 wb task create 建一个，写清目标和步骤，之后派活用 --task 关联它。',
   'agentCalls.transferHint': '这个任务仍由你负责。本次 direct 已发送，不要重复派发；以后如需整件交给对方，先更新交接说明，再用 --kind transfer，它完成后会直接回复用户，你无需再次汇总；需要结果回到你这里汇总时继续用 direct。',
   'turnInput.fromUser': '【用户消息】',

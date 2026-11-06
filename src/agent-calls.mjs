@@ -3,6 +3,21 @@ import {createHash} from 'node:crypto';
 import {isSupervisorName} from './default-roles.mjs';
 import {tr} from './i18n.mjs';
 import {conversationIdOf,agentConversationInput} from './group-conversations.mjs';
+import {mentionNames} from './rooms.mjs';
+
+/**
+ * Roles of the project @-mentioned in a role's text, other than the writer, the role that called it (its answer goes back to
+ * that caller anyway) and the roles sent the same call with it (they have the question already): mentioning those would only
+ * wake them a second time. Names that are not roles are left alone.
+ */
+export function mentionedRoles(db,run,text) {
+  const roles=db.list('roles').filter(r=>r.projectId===run.projectId&&!r.archivedAt);
+  const request=db.get('coordinationRequests',run.requestId||''),skip=new Set([run.roleId]);
+  if(request?.parentRequestId)skip.add(db.get('coordinationRequests',request.parentRequestId)?.targetRoleId);
+  if(request?.callMessageId)for(const peer of db.listProject('coordinationRequests',run.projectId))if(peer.callMessageId===request.callMessageId)skip.add(peer.targetRoleId);
+  return [...new Map(mentionNames(String(text||'')).map(name=>roles.find(r=>r.name===name)||(isSupervisorName(name)?roles.find(r=>r.systemSupervisor&&!r.platformAssistant):null))
+    .filter(role=>role&&!skip.has(role.id)).map(role=>[role.id,role])).values()];
+}
 
 /** One shared instruction is published atomically; each recipient retains its own queue, request and reply lifecycle. */
 export function createAgentCalls({db,calls,rooms},run,input) {
@@ -22,6 +37,9 @@ export function createAgentCalls({db,calls,rooms},run,input) {
       if(!role)throw new Error(tr('home.targetRoleNotFoundUse'));
       return [role.id,role];
     })).values()];
+    // Roles @-mentioned in a consultation or delegation are sent the same brief; a transfer or delivery keeps its one recipient.
+    const mentionAdded=[];
+    if(['consult','direct'].includes(kind))for(const role of mentionedRoles(db,run,input.text))if(!targets.some(t=>t.id===role.id)){targets.push(role);mentionAdded.push(role.name);}
     if(transfer&&targets.length!==1)throw new Error(tr('wbTools.invalidCallTargets'));
     if(transfer&&targets[0].id===run.roleId)throw new Error(tr('roleCalls.transferToSelf'));
     if(transfer&&input.deliveryId)throw new Error(tr('roleCalls.transferNoDelivery'));
@@ -73,6 +91,8 @@ export function createAgentCalls({db,calls,rooms},run,input) {
     rooms.touch(run.projectId,conversationIdOf(run));
     // Nudges at the moment of dispatch; the call itself is sent unchanged either way.
     const hints=[];
+    // The sender may not know an @ in its brief already reached that role; without this it tends to send the same again.
+    if(mentionAdded.length)hints.push(tr('agentCalls.mentionHint',{names:mentionAdded.map(name=>`@${name}`).join(' ')}));
     // Work handed to others should be tracked as a task; consultations and reviews are not.
     if(['direct','transfer'].includes(kind)&&!linked&&!parent.conversationTaskId)hints.push(tr('agentCalls.taskHint'));
     // Only an owning root turn can transfer; do not suggest a handover that the permission checks would reject.
