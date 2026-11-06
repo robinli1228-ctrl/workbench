@@ -3293,6 +3293,11 @@ body[data-navigation-mode="sessions"] .native-session-gear { display: grid; plac
   #chat-form, .native-takeover-form.chat-composer:not(.native-ask-form) { min-height: 56px; padding-block: 2px; }
   .inspector-tabs { height: 56px; min-height: 56px; padding-block: 5px; box-sizing: border-box; }
   body[data-project-sidebar] .sidebar-footer { height: 56px; min-height: 56px; padding-block: 5px; box-sizing: border-box; }
+  /* The Sessions page dock draws its line on the footer around the form: count that line inside the 56px, as the side docks
+     do, so the three lines meet; before takeover the bar holding the takeover button gets the same height. */
+  .native-session-footer { display: flex; flex-direction: column; box-sizing: border-box; min-height: 56px; border-top-color: var(--card-hairline); }
+  .native-session-footer > .native-takeover-form.chat-composer:not(.native-ask-form), .native-session-footer > .native-takeover-bar { flex: 1 0 auto; min-height: 0; }
+  .native-session-footer > .native-takeover-bar { padding-block: 0; }
 }
 /* 2. Quota lines: both marks the same 22px disc, the figure centred, no decorations. */
 .native-quota-line .role-quota-mark, .native-quota-line .role-quota-mark.is-five-hour, .native-quota-line .role-quota-mark.is-weekly { width: 22px; height: 22px; font-size: 9px; font-weight: 700; }
