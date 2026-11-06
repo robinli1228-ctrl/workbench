@@ -9,7 +9,6 @@ export const defaultPlatformPrompt = () => tr('minimal.platformTemplate');
 // The supervisor has its own editable coordination template; it is not a shared rule for other roles.
 export const defaultSupervisorPrompt = () => tr('minimal.supervisorTemplate');
 
-const PROMPT_LIMIT = 6000;
 /** Runtime rules are always English; UI-localized defaults and user-saved prompts stay independent. */
 export function englishExecutionRules(run,options) {
   return runWithLanguage('en',()=>executionRules(run,options));
@@ -214,7 +213,6 @@ export function updateMemoryOrganizer(record,input) {
 
 function promptValue(value, label) {
   if (typeof value !== 'string') throw new Error(tr('platformPrompts.mustBeText', { label }));
-  if (value.length > PROMPT_LIMIT) throw new Error(tr('platformPrompts.mustNotExceedCharacters', { label, PROMPT_LIMIT }));
   return value.trim();
 }
 

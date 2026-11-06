@@ -795,7 +795,6 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'platformPrompts.selectOrganizerDeviceCliModel': '请完整选择整理设备、CLI 和模型',
   'platformPrompts.organizerDeviceNotSelected': '整理设备未选择',
   'platformPrompts.mustBeText': '{label}必须是文本',
-  'platformPrompts.mustNotExceedCharacters': '{label}不能超过 {PROMPT_LIMIT} 个字符',
   'platformPrompts.mustBeText2': '{label}必须是文本',
   'platformPrompts.mustNotExceedCharacters2': '{label}不能超过 {DEFAULT_FIELD_LIMIT} 个字符',
   'platformPrompts.platformPrompt': '平台提示词',
