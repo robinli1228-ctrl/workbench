@@ -48,6 +48,8 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
       const row=el('div','source-sync-row');row.append(el('span','',status(b.status)));const meta=el('small','workspace-note',`${b.id.slice(0,8)}${b.reason?' · '+issue(b.reason,b.limit):''}`);meta.setAttribute('translate','no');row.append(meta);
       if(!terminal.has(b.status)){const offline=b.nodeIds.filter(id=>!device(id)?.online);if(offline.length)row.append(el('small','workspace-note',t('Waiting for devices: {names}',{names:offline.map(name).join(', ')})));row.append(button('Cancel sync',btn=>act(()=>api(endpoint()+'/batches/'+b.id+'/cancel',{revision:b.revision}),btn)));}
       for(const item of (b.pendingMetadata||[]).slice(0,20))row.append(el('small','workspace-note',`${item.path} · ${issue(item.reason)}`));
+      // Paths one device now leaves out of its scope: the others keep syncing them, that device keeps its last copy.
+      for(const item of (b.scopeSkipped||[]).slice(0,20))row.append(el('small','workspace-note',`${item.path} · ${t('Not synchronized on {name}: outside its sync scope ({reason})',{name:name(item.nodeId),reason:item.reason||'excluded'})}`));
       panel.append(row);
     }
     for(const c of state.conflicts.filter(c=>!['resolved','cancelled'].includes(c.status))){const row=el('div','source-sync-row');const open=button(c.path,()=>detail(c.id));open.setAttribute('translate','no');row.append(open,el('small','workspace-note',status(c.status)));panel.append(row);}

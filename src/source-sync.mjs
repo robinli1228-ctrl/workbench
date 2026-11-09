@@ -267,17 +267,26 @@ export class SourceSync {
       try{for(const c of captures)for(const s of [c.result.base,c.result.manifest])validateSourceCapture(s,c);}catch(e){this.blockPreparation(batch,e.code||'invalid_manifest',e.limit?{limit:e.limit}:{});return;}
       if(batch.scopeKind!=='directory'&&captures[0]?.scopeKind!=='directory'&&new Set(captures.map(c=>`${c.result.base.baseCommit}:${c.result.base.digest}`)).size!==1){this.blockPreparation(batch,'git_baseline_mismatch');return;}}
     if(batch.kind==='preview'){this.db.put('sourceSyncBatches',{...batch,status:'preview_ready',revision:batch.revision+1});return;}
-    // A path leaving the eligible scope is not proof of deletion. Fence all repositories before changing canonical state.
+    // A path leaving the eligible scope on a device (now ignored, a symlink, a nested repository) is not proof of deletion.
+    // That device no longer takes part in the path: its copy is neither read nor written and its last synchronized state is
+    // kept, while the other devices go on syncing it. Fencing the whole batch instead blocked every later one too (the path
+    // stays known), until sync stopped for good.
+    const leftScope=new Map(),skipped=[];
     for(const repositoryId of batch.repositoryIds){
       const canonical=this.db.get('sourceSyncManifests',`${batch.projectId}:${repositoryId}`);
       const captures=this.captures(batch,repositoryId),offered=captures.flatMap(c=>Object.entries(c.result.manifest.entries).filter(([,entry])=>entry).map(([path])=>path));
       try{const combined=Object.fromEntries(captures.flatMap(c=>Object.entries(c.result.manifest.entries).filter(([,entry])=>entry)));checkInventorySize(combined,batch.boundedTransfers);manifestDigest(combined,canonical?.scopePolicy);}catch(e){this.blockPreparation(batch,e.code||'invalid_manifest',e.limit?{limit:e.limit}:{});return;}
+      const byNode=new Map();
       for(const capture of captures){
-        const ack=this.db.get('sourceSyncDevices',`${batch.projectId}:${repositoryId}:${capture.nodeId}`);
+        const ack=this.db.get('sourceSyncDevices',`${batch.projectId}:${repositoryId}:${capture.nodeId}`),left=new Set();
         const known=new Set([...Object.entries(canonical?.entries||{}).filter(([,entry])=>entry).map(([path])=>path),...Object.entries(ack?.entries||{}).filter(([,entry])=>entry).map(([path])=>path),...offered]);
-        const excluded=[...known].find(path=>capture.result.manifest.excluded?.some(e=>path===e.path||path.startsWith(e.path.endsWith('/')?e.path:e.path+'/')));
-        if(excluded){this.blockPreparation(batch,'source_scope_changed',{excludedPath:excluded});return;}
+        for(const path of known){const rule=capture.result.manifest.excluded?.find(e=>path===e.path||path.startsWith(e.path.endsWith('/')?e.path:e.path+'/'));
+          if(rule){left.add(path);skipped.push({repositoryId,path,nodeId:capture.nodeId,reason:rule.reason});}}
+        if(left.size)byNode.set(capture.nodeId,left);
       }
+      // Resolving a conflict needs every side of its path; there the change still stops the batch.
+      if(byNode.size&&['resolution','evidence'].includes(batch.kind)){const first=[...byNode.values()][0];this.blockPreparation(batch,'source_scope_changed',{excludedPath:[...first][0]});return;}
+      leftScope.set(repositoryId,byNode);
     }
     if(['resolution','evidence'].includes(batch.kind)){this.prepareResolution(batch);return;}
     const conflicts=new Set(batch.conflictIds);
@@ -287,12 +296,13 @@ export class SourceSync {
       if(!canonical||canonical.generation!==batch.generation)throw syncError('configuration_changed');
       const captures=this.captures(batch,repositoryId).sort((a,b)=>Number(b.nodeId===batch.sourceNodeId)-Number(a.nodeId===batch.sourceNodeId));
       const entries={...canonical.entries},origins={...canonical.origins},blocked=new Set();
+      const byNode=leftScope.get(repositoryId)||new Map(),leftOn=nodeId=>byNode.get(nodeId)||new Set();
       if(batch.scopeKind==='directory')for(const conflict of this.records('sourceSyncConflicts',batch.projectId).filter(c=>c.repositoryId===repositoryId&&c.syncGeneration===batch.generation&&!['resolved','cancelled'].includes(c.status)))blocked.add(conflict.path);
       for(const c of captures){let ack=this.db.get('sourceSyncDevices',`${id}:${c.nodeId}`);if(!ack||ack.generation!==batch.generation)throw syncError('baseline_missing');
         const binding=batch.bindings.find(b=>b.nodeId===c.nodeId&&b.repositoryId===repositoryId);
         if(binding.readOnlyExport){const sourceBase=binding.sourceBaseManifestId?this.db.get('sourceSyncVersions',binding.sourceBaseManifestId):c.result.base;if(!sourceBase)throw syncError('baseline_missing');ack={...ack,entries:sourceBase.entries};}
         for(const path of new Set([...Object.keys(ack.entries),...Object.keys(c.result.manifest.entries),...Object.keys(entries)])){
-          if(batch.scopeKind==='directory'&&blocked.has(path))continue;
+          if(leftOn(c.nodeId).has(path)||batch.scopeKind==='directory'&&blocked.has(path))continue;
           const base=getEntry(ack.entries,path),local=getEntry(c.result.manifest.entries,path),incoming=getEntry(entries,path),decision=compareEntry(base,incoming,local);
           if(decision==='apply'){entries[path]=local;origins[path]={nodeId:c.nodeId,commandId:c.id};}
           if(decision==='conflict'){
@@ -312,15 +322,22 @@ export class SourceSync {
       sourceInputs.push({repositoryId,baseCommit:updated.baseCommit,generation:updated.generation,manifestRevision:updated.revision,manifestHash:updated.digest,manifestId:versionId});
       for(const c of captures){const changes=[],ack=this.db.get('sourceSyncDevices',`${id}:${c.nodeId}`),ackEntries={...ack.entries};
         if(batch.bindings.some(b=>b.repositoryId===repositoryId&&b.nodeId===c.nodeId&&b.readOnlyExport))continue;
+        // Content that moved in this batch into a path this device leaves out is not deleted from where the device still has
+        // it; a path that already held it before does not hold back an unrelated deletion of the same bytes.
+        const left=leftOn(c.nodeId),movedAway=new Set([...left].filter(path=>!entryEqual(getEntry(entries,path),getEntry(canonical.entries,path))).map(path=>getEntry(entries,path)?.hash).filter(Boolean));
         for(const path of new Set([...Object.keys(entries),...Object.keys(c.result.manifest.entries)])){
-          if(blocked.has(path))continue;const before=getEntry(c.result.manifest.entries,path),after=getEntry(entries,path);
+          if(blocked.has(path)||left.has(path))continue;const before=getEntry(c.result.manifest.entries,path),after=getEntry(entries,path);
+          if(!after&&before&&movedAway.has(before.hash))continue;
           if(entryEqual(before,after)){ackEntries[path]=after;continue;}changes.push({path,before,after});
         }
         this.db.put('sourceSyncDevices',{...ack,entries:ackEntries});
         if(changes.length)this.commandParts(batch,batch.bindings.find(b=>b.repositoryId===repositoryId&&b.nodeId===c.nodeId),'apply',{baseCommit:canonical.baseCommit,changes:batch.scopeKind==='directory'?linkSourceMoves(changes):changes,manifestRevision:updated.revision,manifestHash:updated.digest},'changes',c=>c.after?.size||0);
       }
     }
-    const next={...batch,status:'applying',sourceInputs,conflictIds:[...conflicts],revision:batch.revision+1};this.db.put('sourceSyncBatches',next);this.finish(next);
+    // A device that leaves a path out cannot hold this version, so runs there do not take it as their input.
+    const outside=new Set(skipped.map(item=>item.nodeId));
+    const next={...batch,status:'applying',sourceInputs,conflictIds:[...conflicts],...(skipped.length?{scopeSkipped:skipped.slice(0,20),scopeSkippedCount:skipped.length,
+      sourceInputNodeIds:(batch.sourceInputNodeIds||batch.nodeIds).filter(nodeId=>!outside.has(nodeId))}:{}),revision:batch.revision+1};this.db.put('sourceSyncBatches',next);this.finish(next);
   }
   finish(batch){
     if(batch.detection==='metadata'){if(batch.status==='cancelling'&&!this.db.listSourceSyncCommands({batchId:batch.id,pending:true}).length)this.db.put('sourceSyncBatches',{...batch,status:'cancelled'});else this.metadata.advance(batch);return;}
