@@ -22,6 +22,8 @@ export function executionProgress({run,task,request,online=true}={}) {
   if(run?.status==='queued')return result('queued','queued','Waiting to be scheduled',task?.waitingReason||'');
   if(task?.discussionWait||task?.status==='waiting_discussion'||run?.discussionWaiting)return result('waiting','waiting_reply','Waiting for the current question to be handled',task?.waitingReason||'');
   const waiting={waiting_call:['waiting_reply','Waiting for other roles to reply'],waiting_delivery:['waiting_files','Waiting for file delivery'],waiting_dependencies:['waiting_dependencies','Waiting on prior steps'],waiting_input:['waiting_user','Waiting for user confirmation']}[request?.status];
+  // The work it handed out was interrupted by the user: the wait is over and it is woken to decide, so it no longer shows as waiting.
+  if(request?.status==='waiting_call'&&request.waitEvent?.reason==='interrupted')return result('stopped','cancelled','The work it handed out was interrupted by the user');
   if(request?.status==='waiting_call'&&request.resumeError?.kind==='transient')return result('waiting','resume_retrying','Replies arrived; retrying the follow-up',request.resumeError.message||'');
   if(waiting)return result('waiting',...waiting,request.waitingReason||'');
   if(request?.status==='failed'&&request.failureKind==='resume_failed')return result('error','resume_failed','Replies arrived, but the follow-up failed',request.error||'');

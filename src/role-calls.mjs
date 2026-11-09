@@ -402,7 +402,9 @@ export class RoleCalls {
     // early timeout: the requests stay active and nothing is cancelled or redispatched.
     const blocked=!ready&&!expired?children.filter(c=>!callTerminal.has(c.status)).map(c=>({request:c,block:blockedDependency(this.db,c,time)})).filter(x=>x.block):[];
     if(!ready&&!expired&&!blocked.length)return;
-    const reason=ready?'results':expired?'timeout':'blocked';
+    // Work the user interrupted (by steering the role doing it) wakes the caller to look at that run and decide.
+    const interrupted=ready?children.filter(c=>c.status==='cancelled'&&c.cancelReason==='user_interrupted'):[];
+    const reason=interrupted.length?'interrupted':ready?'results':expired?'timeout':'blocked';
     if(!parent.waitEvent)this.db.put('coordinationRequests',{...parent,waitEvent:{id:`wait:${parent.id}`,reason,observedAt:new Date(time).toISOString(),requestIds:children.map(r=>r.id)}});
     // The user cancelled or redirected the work this wait served: keep the late replies, close the wait, start nothing.
     const source=parent.parentRequestId?this.db.get('coordinationRequests',parent.parentRequestId):null;
@@ -415,7 +417,9 @@ export class RoleCalls {
     try {
       // Creating the continuation and linking it to the wait must roll back together before recording a retry/failure.
       this.db.transaction(()=>{
-      const header = reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')})
+      const header = reason==='interrupted'?tr('minimal.waitInterrupted',{resumeSummary:parent.resumeSummary,requestIds:interrupted.map(r=>r.id).join(', '),
+          roles:[...new Set(interrupted.map(r=>r.targetSnapshot?.name||this.db.get('roles',r.targetRoleId)?.name||r.targetRoleId))].join(', ')})
+        :reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')})
         :reason==='blocked'?tr('minimal.waitBlocked',{resumeSummary:parent.resumeSummary,requestIds:blocked.map(x=>x.request.id).join(', '),reasons:blocked.map(x=>`${x.request.id}: ${x.block.reason}`).join('; ')})
         :tr('roleCalls.assistanceResultsContextOnly', { resumeSummary: parent.resumeSummary });
       const next = this.create({ id: `resume:${createHash('sha256').update(parent.id).digest('hex')}`, projectId: parent.projectId, targetRoleId: parent.targetRoleId,
@@ -529,7 +533,7 @@ export class RoleCalls {
   }
 
   /** Cancelling the chain first blocks new dispatches, then returns the truly active runs so Home can send stop commands. */
-  cancel(requestId,{preserveRunningChildren=false,reason=null}={}) {
+  cancel(requestId,{preserveRunningChildren=false,reason=null,cause=null}={}) {
     return this.db.transaction(()=>{
     let root = this.db.get('coordinationRequests', requestId);
     if (!root) throw new Error(tr('roleCalls.callNotFound'));
@@ -568,7 +572,7 @@ export class RoleCalls {
           const stopRunIds=task?new RoleDiscussions(this.db).invalidateTask(task.id,{reason:tr('roleCalls.businessCallCancelled')}).stopRunIds:[];
           runs.push(...stopRunIds);
           // Fix the original stop targets in the same transaction as the cancelled state; a crash before Home sends the command can still be retransmitted without scanning later runs.
-          this.db.put('coordinationRequests', { ...r, status: 'cancelled', cancelRunIds:[...new Set([...(r.cancelRunIds||[]),...stopRunIds])], updatedAt: new Date().toISOString() });
+          this.db.put('coordinationRequests', { ...r, status: 'cancelled', cancelRunIds:[...new Set([...(r.cancelRunIds||[]),...stopRunIds])],...(cause?{cancelReason:cause}:{}), updatedAt: new Date().toISOString() });
           if(!staleWait)cancelledNow.push(r.id);
           new SessionQueue(this.db).settleRequest(this.db.get('coordinationRequests',r.id));
           // While waiting for a reply the finished business run ID is retained; no further terminal event will clean up the Task for it.
