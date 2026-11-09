@@ -1288,7 +1288,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const pos=optimisticOrder?new Map(optimisticOrder.map((id,i)=>[id,i])):null;
    const provisional=queuesBehind()?pendingSend():null;
    const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||(pos?(pos.get(a.id)??Infinity)-(pos.get(b.id)??Infinity):0)||queueRank(a)-queueRank(b));
-   const signature=JSON.stringify([k(),waiting.map(x=>[x.id,x.prompt,Boolean(x.steer),x.createdAt,(x.attachments||[]).map(a=>a.id)]),queueState,[...queuePending],provisional?[provisional.pending.clientTurnId,provisional.confirmed?'stored':sendState(provisional,operation(k()))]:null]);
+   const signature=JSON.stringify([k(),waiting.map(x=>[x.id,x.prompt,Boolean(x.steer),x.createdAt,(x.attachments||[]).map(a=>a.id),x.waitingReason||null]),queueState,[...queuePending],provisional?[provisional.pending.clientTurnId,provisional.confirmed?'stored':sendState(provisional,operation(k()))]:null]);
    if(queueOrder.active()||signature===queueSignature)return;queueSignature=signature;
    const count=waiting.length+(provisional?1:0);
    queue.hidden=!count;queueList.replaceChildren();if(!count)return;
@@ -1300,7 +1300,10 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    waiting.forEach((turn,i)=>{const row=el('div','message-queue-item'),info=el('div','message-queue-info');
     if(orderable&&!turn.steer){row.dataset.orderId=turn.id;const grip=el('span','message-queue-grip');grip.innerHTML=GRIP;grip.title=t('Drag to reorder');row.append(grip);}
     const text=turn.prompt||(turn.attachments||[]).map(a=>a.name).join(', '),title=el('strong','',`${i+1}. ${text}`);title.title=text;title.translate=false;info.append(title);
-    if(turn.createdAt){const when=el('time','message-queue-time',clock(turn.createdAt));when.dateTime=turn.createdAt;when.title=time(turn.createdAt);when.translate=false;info.append(when);}row.append(info);
+    if(turn.createdAt){const when=el('time','message-queue-time',clock(turn.createdAt));when.dateTime=turn.createdAt;when.title=time(turn.createdAt);when.translate=false;info.append(when);}
+    // The device turned this message away because all its CLI slots were in use; it starts on its own once one frees.
+    if(turn.waitingReason==='device_capacity')info.append(el('span','message-queue-note',t('Waiting for a free CLI slot on the device')));
+    row.append(info);
     const busy=queuePending.has(turn.id),steer=el('button',`icon-button message-queue-steer${busy||turn.steer?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(busy?'Interrupting and starting this message':turn.steer?'Refresh session state and retry this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
     steer.onclick=async()=>{queuePending.add(turn.id);queueSignature='';renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
     row.append(steer);
