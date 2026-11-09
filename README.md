@@ -2,13 +2,13 @@ English | [Simplified Chinese](README.zh-CN.md)
 
 # Agent Workbench
 
-**Bring your AI coding CLIs together. Let them plan, build, review, and pass work to one another.**
+**Turn your coding CLIs into one team across accounts and machines.**
 
-Agent Workbench is a self-hosted workspace for collaboration between **Codex, Claude Code, Grok Build, and Antigravity**. Give the team a goal, assign responsibilities, and let different CLIs carry the work from planning through implementation, review, and testing.
+Agent Workbench is a self-hosted workspace where **Codex, Claude Code, Grok Build, and Antigravity** work together. Give the team a goal, assign responsibilities, and let the CLIs pass work from planning through implementation, review, and testing. Each role runs on a device you choose, using that device's own CLI login, model, tools, and project folder.
 
 For example, Claude Code can develop a plan, Codex can implement it, and Grok or Antigravity can review the result. Review feedback goes back to the implementer, who fixes the issues and returns the work for another check. Each role can continue its own conversation while the team moves the task forward.
 
-The CLIs run on your own computers and servers, using their existing tools and login sessions. Workbench coordinates assignments, feedback, code deliveries, and artifacts in one project conversation.
+Workbench keeps assignments, feedback, code deliveries, and artifacts in one project conversation. It coordinates the native CLIs; it does not replace their accounts or move a vendor's session between devices.
 
 > Development preview (`0.4.0`), intended for a single trusted operator or a small trusted team. Workbench drives native CLIs; model access, billing, and quotas follow each provider's terms. See [current boundaries](#limitations-and-roadmap).
 
@@ -21,9 +21,10 @@ Workbench makes those handoffs part of the project workflow:
 - **Take turns on the same task.** Pass a plan to an implementer, send the implementation for review, and return feedback for revision.
 - **Split independent work.** Assign separate parts of a project to different roles, subject to device capacity and workspace rules.
 - **Review across models.** Ask other roles to inspect an implementation independently, then send the findings back to its author.
+- **Hand off directly across devices.** A role can assign work to a role on another Worker without a manager turn in between; the answer returns to the caller. A queued recipient's wait starts when its execution begins, with a bounded grace period if it never starts.
 - **Keep the next step visible.** Track assignments, pending replies, task records, and execution details in one place.
 
-Address a role directly with `@role`, or ask the project manager to coordinate the work. A role combines a device, CLI, model, reasoning setting, and responsibility. You choose the team and its workflow.
+Address a role directly with `@role`, or ask the project manager to coordinate the work. A role combines a device, CLI, model, reasoning setting, and responsibility. Changing its model or reasoning setting on the same device and CLI updates queued work for that role; an active turn finishes with its original settings. You choose the team and its workflow.
 
 ## A typical collaboration
 
@@ -60,7 +61,9 @@ These are example assignments, not fixed vendor roles. Any supported CLI can tak
 
 Keep requirements, assignments, discussion, and final results together. Use direct mentions, manager coordination, role consultations, or whole-task transfers to decide who works next.
 
-Each group has its own task list with descriptions, steps, owners, status, and change history. Task records describe the work; execution queues and run records show what is actually running or waiting. A successful process exit does not by itself mean the task passed review. When the last turn on a task ends without closing it or handing it on, the task goes back to its owner once to close it or decide the next step. A Claude or Codex role that needs your decision asks with its question card above the chat composer and waits for your answer in the same turn.
+In a project with a manager, a message without `@` or a quote replies to the most recent eligible role answer from the last 30 minutes; otherwise it goes to the manager. In a role's `wb note` or `wb call`, mentioning another role with `@` can notify that role and bring its answer back to the sender.
+
+Each group has its own task list with descriptions, steps, owners, status, and change history. Task records describe the work; execution queues and run records show what is actually running or waiting. Scheduled reminders are shown as platform messages rather than as your own words. A successful process exit does not by itself mean the task passed review. When the last turn on a task ends without closing it or handing it on, the task goes back to its owner once to close it or decide the next step. A Claude or Codex role that needs your decision asks with its question card above the chat composer and waits for your answer in the same turn.
 
 ### Continue native conversations
 
@@ -174,6 +177,7 @@ The [operating guide](docs/OPERATING-GUIDE.md) covers device onboarding, account
 ```sh
 npm ci
 npm run check    # JavaScript syntax checks
+npm test         # behavior tests
 git diff --check
 ```
 
