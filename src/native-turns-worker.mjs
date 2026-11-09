@@ -88,7 +88,7 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
     canStart:(m,{reusing})=>{
       if(isDisconnected())throw Error('This device is not connected to Home');
       if(!runtimes().some(r=>r.type===m.runtime&&r.available&&r.supported!==false))throw Error('CLI is not available on this device');
-      if(!reusing&&occupiedSlots()>=capacity())throw Error('Device CLI capacity is full');
+      if(!reusing&&occupiedSlots()>=capacity())throw Object.assign(Error('Device CLI capacity is full'),{code:'capacity_full'});
     },
     prepareInputs:async m=>{
       let handoffText=null;

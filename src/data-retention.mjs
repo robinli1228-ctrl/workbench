@@ -35,6 +35,32 @@ const sizes=db=>Object.fromEntries(db.db.prepare('SELECT kind,COUNT(*) AS n,SUM(
 const rows=(db,kind,order='ASC')=>db.db.prepare(`SELECT id,data,LENGTH(data) AS bytes FROM records WHERE kind=? ORDER BY rowid ${order}`).iterate(kind);
 const field=(db,kind,paths)=>db.db.prepare(`SELECT ${['id','LENGTH(data) AS bytes',...paths.map((p,i)=>`json_extract(data,'$.${p}') AS f${i}`)].join(',')} FROM records WHERE kind=? ORDER BY rowid`).iterate(kind);
 
+/**
+ * A Worker's capture record holds the scope's whole file list twice, as the command's baseline and the result's manifest:
+ * up to 5 MB a row, 1.5 GB within the one day they are kept on a project syncing once a minute. Once Home has acknowledged
+ * the receipt neither list is read again, so both are dropped in place, inside SQLite (no row is parsed here); the row
+ * itself still goes when the retention period ends. Returns whether the row was compacted.
+ */
+export function compactSyncCommand(db,id){
+ const changed=db.db.prepare(`UPDATE records SET data=json_set(data,'$.command.baselineEntries',json('null'),'$.result.manifest.entries',json('null'),'$.compacted',json('true'))
+  WHERE kind='sourceSyncCommands' AND id=? AND json_extract(data,'$.command.action')='capture' AND json_extract(data,'$.compacted') IS NULL
+  AND json_extract(data,'$.result.status') IN ('completed','partial_conflict','cancelled','blocked')
+  AND (json_type(data,'$.command.baselineEntries')='object' OR json_type(data,'$.result.manifest.entries')='object')`).run(id).changes>0;
+ if(changed)db.recordChanged?.('sourceSyncCommands');
+ return changed;
+}
+/** The same for records acknowledged before this existed, five rows at a time so requests keep being served. */
+export async function compactAcknowledgedCommands(db,{chunk=5}={}){
+ let last=0,count=0;
+ for(;;){
+  const rows=db.db.prepare(`SELECT c.rowid AS r,c.id FROM records c JOIN records t ON t.kind='sourceSyncTransport' AND t.id=c.id
+   WHERE c.kind='sourceSyncCommands' AND c.rowid>? AND json_extract(t.data,'$.acknowledgedAt') IS NOT NULL ORDER BY c.rowid LIMIT ?`).all(last,chunk);
+  if(!rows.length)return count;
+  for(const row of rows){last=row.r;if(compactSyncCommand(db,row.id))count++;}
+  await new Promise(resolve=>setImmediate(resolve));
+ }
+}
+
 /** Which records and blobs the policy lets go right now. Pure: nothing is deleted. */
 export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,now=Date.now()}={}){
  const p=normalizeRetention(policy),plan={records:[],blobs:[],bytes:0,blobBytes:0,kept:{}};
@@ -65,6 +91,8 @@ export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,
    const t=transports.get(c.id);if(t)drop('sourceSyncTransport',c.id,t.bytes||0);
   }else remember(r.data);
  }
+ // Compacted captures no longer name their files' blobs; the Worker's latest snapshot of each scope still does.
+ for(const r of rows(db,'sourceSyncWatchStates'))remember(r.data);
  // Home-side receipt-ack cache and Worker-side journals/cancellations belong to their command.
  const dropped=new Set(plan.records.filter(x=>x.kind==='sourceSyncCommands').map(x=>x.id));
  for(const kind of ['sourceSyncReceiptAcks','sourceSyncJournals','sourceSyncCancellations'])for(const r of rows(db,kind)){

@@ -18,6 +18,7 @@ import {sourceScopeBinding} from './source-sync-scopes.mjs';
 import {SourceSyncWatch} from './source-sync-watch.mjs';
 import {folderAccessFor} from './folder-access.mjs';
 import {saveSourceBlob,readSourceBlob} from './source-sync-files.mjs';
+import {compactSyncCommand} from './data-retention.mjs';
 
 const json=(res,value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
 const matches=(a,b)=>typeof a==='string'&&Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
@@ -231,6 +232,27 @@ export class SourceSyncHome {
       this.db.put('sourceSyncReceiptAcks',{id:`${c.id}:${ack.receiptHash}`,projectId:c.projectId,nodeId,ack});this.socket(nodeId)?.send(JSON.stringify(ack));}
     this.change();await this.tick();
   }
+  /**
+   * A capture's baseline as a change against the one this device was last sent for the scope, when the Worker says it still
+   * holds it (by hash). Each capture carried the whole file list (up to 2.5 MB per scope, about 5 MB per batch for a project
+   * with three repositories) down a link of under 100 KB/s, so a one-file change took most of a minute and held everything
+   * behind it. The Worker checks the rebuilt list against the hash and fetches the whole plan if it does not match.
+   */
+  baselinePlan(plan,header,res){
+    if(plan.action!=='capture'||!plan.baselineHash||!plan.baselineEntries)return plan;
+    const key=`${plan.projectId}:${plan.repositoryId}:${plan.nodeId}`,served=this.db.get('sourceSyncBaselinesServed',key);
+    const held=new Set(String(header||'').split(',').filter(hash=>/^[a-f0-9]{64}$/.test(hash)).slice(0,32));
+    let out=plan;
+    if(served&&held.has(served.hash)){
+      const old=served.hash===plan.baselineHash?plan.baselineEntries:this.db.get('sourceSyncCommands',served.commandId)?.baselineEntries;
+      const delta=old?manifestDelta(old,plan.baselineEntries):null;
+      if(delta&&(Object.keys(delta.changed).length+delta.removed.length)*2<Object.keys(plan.baselineEntries).length){
+        out={...plan,baselineEntries:null,baselineFrom:served.hash,baselineDelta:delta};res.setHeader('X-Source-Sync-Baseline','delta');
+      }
+    }
+    if(served?.hash!==plan.baselineHash)this.db.put('sourceSyncBaselinesServed',{id:key,projectId:plan.projectId,hash:plan.baselineHash,commandId:plan.id});
+    return out;
+  }
   async workerHttp(req,res,pathname){
     const m=pathname.match(/^\/api\/worker\/source-sync\/([a-f0-9]{64})\/(plan|capture|receipt|blobs)(?:\/([a-f0-9]{64}))?$/);if(!m)return false;
     const c=this.db.get('sourceSyncCommands',m[1]);
@@ -249,7 +271,7 @@ export class SourceSyncHome {
     }
     if(m[2]==='plan'&&req.method==='GET'&&c.detection==='metadata'&&c.action!=='cleanup'&&batch.metadataCleanedAt)throw syncError('batch_inactive');
     // The header tells a Worker this Home rebuilds a directory capture from a delta against the command's baseline.
-    if(m[2]==='plan'&&req.method==='GET'){const {result,lastResult,secret,status,lastSentAt,ackedAt,receivedAt,...plan}=c;res.setHeader('X-Source-Sync-Delta','1');if(this.watchUpload)res.setHeader('X-Source-Sync-Pace','1');json(res,plan);return true;}
+    if(m[2]==='plan'&&req.method==='GET'){const {result,lastResult,secret,status,lastSentAt,ackedAt,receivedAt,...plan}=c;res.setHeader('X-Source-Sync-Delta','1');if(this.watchUpload)res.setHeader('X-Source-Sync-Pace','1');json(res,this.baselinePlan(plan,req.headers['x-source-sync-baselines'],res));return true;}
     if(m[2]==='receipt'&&req.method==='PUT'&&c.action!=='capture'){
       const result=await body(req);if(!Array.isArray(result.files)||result.files.length>10000)throw syncError('invalid_receipt');
       const fingerprint=contentHash(JSON.stringify(result)),old=this.db.get('sourceSyncUploadReceipts',c.id);
@@ -367,7 +389,28 @@ export class SourceSyncClient {
    * (it says so in the plan), and they are given up only when the link has taken nothing for a minute. A fixed one-minute
    * limit failed every file over about 1.5 MB on a 25 KB/s link, and each retry sent the same bytes again.
    */
-  async request(message,path,method='GET',value){
+  /** Hashes of the baselines this Worker holds for a project's scopes (one per scope, the last one it was sent). */
+  heldBaselines(projectId){
+    if(typeof projectId!=='string')return [];
+    return this.db.db.prepare("SELECT json_extract(data,'$.hash') AS hash FROM records WHERE kind='sourceSyncBaselines' AND json_extract(data,'$.projectId')=? LIMIT 32").all(projectId).map(r=>r.hash).filter(Boolean);
+  }
+  /** The whole baseline from the held one and Home's change, or null when they do not give exactly the list Home hashed. */
+  rebuildBaseline(command){
+    const id=`${command.projectId}:${command.repositoryId}`,held=this.db.get('sourceSyncBaselines',id);
+    // A held list that does not rebuild Home's is dropped, so the whole plan fetched next replaces it.
+    const refuse=()=>{this.db.remove('sourceSyncBaselines',id);return null;};
+    if(!held||held.hash!==command.baselineFrom)return refuse();
+    let entries;try{entries=applyManifestDelta(held.entries,command.baselineDelta);}catch{return refuse();}
+    if(contentHash(JSON.stringify(entries))!==command.baselineHash)return refuse();
+    const {baselineFrom,baselineDelta,...rest}=command;
+    return {...rest,baselineEntries:entries};
+  }
+  keepBaseline(command){
+    const id=`${command.projectId}:${command.repositoryId}`;
+    if(this.db.db.prepare("SELECT json_extract(data,'$.hash') AS hash FROM records WHERE kind='sourceSyncBaselines' AND id=?").get(id)?.hash===command.baselineHash)return;
+    this.db.put('sourceSyncBaselines',{id,projectId:command.projectId,repositoryId:command.repositoryId,hash:command.baselineHash,entries:command.baselineEntries});
+  }
+  async request(message,path,method='GET',value,extraHeaders={}){
     const bytes=value===undefined?null:Buffer.isBuffer(value)?value:Buffer.from(JSON.stringify(value)),stall=new AbortController();
     let body=bytes,watch=null;
     if(bytes&&(bytes.length>64*1024||message.paced&&this.pace)){
@@ -378,7 +421,7 @@ export class SourceSyncClient {
         if(pace)await pace.take(piece.length,stall.signal);pulled=Date.now();yield piece;pulled=Date.now();}})());
     }
     let response;
-    try{response=await fetch(`${this.home}/api/worker/source-sync/${message.commandId}/${path}`,{method,headers:{Authorization:`Bearer ${message.secret}`,...(value&&!Buffer.isBuffer(value)?{'Content-Type':'application/json'}:{})},body,
+    try{response=await fetch(`${this.home}/api/worker/source-sync/${message.commandId}/${path}`,{method,headers:{Authorization:`Bearer ${message.secret}`,...extraHeaders,...(value&&!Buffer.isBuffer(value)?{'Content-Type':'application/json'}:{})},body,
       ...(body&&body!==bytes?{duplex:'half',signal:stall.signal}:{signal:AbortSignal.timeout(60000)})});}
     catch(error){throw stall.signal.aborted?stall.signal.reason:error;}
     finally{clearInterval(watch);}
@@ -394,10 +437,16 @@ export class SourceSyncClient {
         this.send(receiptEnvelope(message.commandId,settled.terminalResult));return;
       }
       const prior=this.db.get('sourceSyncCommands',message.commandId);
+      // A late resend of a capture Home has already acknowledged: its receipt is settled and its file lists dropped.
+      if(prior?.compacted){this.settleCompacted(message.commandId);return;}
       // A retry with a saved result reads only the plan's headers (whether Home rebuilds deltas), not its body again.
       let delta=false,command=prior?.result&&prior.command?prior.command:null;
-      const plan=command?await this.request(message,'plan').catch(()=>null):await this.request(message,'plan');
-      if(plan){delta=plan.headers.get('x-source-sync-delta')==='1';message={...message,paced:plan.headers.get('x-source-sync-pace')==='1'};if(command)await plan.body?.cancel().catch(()=>{});else command=await plan.json();}
+      // Only a command never seen before takes its baseline as a change: a retry must rebuild the exact command it stored.
+      const held=command||prior?[]:this.heldBaselines(message.projectId);
+      const plan=command?await this.request(message,'plan').catch(()=>null):await this.request(message,'plan','GET',undefined,held.length?{'X-Source-Sync-Baselines':held.join(',')}:{});
+      if(plan){delta=plan.headers.get('x-source-sync-delta')==='1';message={...message,paced:plan.headers.get('x-source-sync-pace')==='1'};if(command)await plan.body?.cancel().catch(()=>{});
+        else{command=await plan.json();if(plan.headers.get('x-source-sync-baseline')==='delta')command=this.rebuildBaseline(command)||await (await this.request(message,'plan')).json();}}
+      if(!prior&&command.action==='capture'&&command.baselineHash&&command.baselineEntries)this.keepBaseline(command);
       if(command.detection==='metadata'&&command.action==='cleanup'&&[...this.inFlight].some(id=>{if(id===command.id)return false;const batchId=this.db.get('sourceSyncTransport',id)?.batchId||this.db.get('sourceSyncCommands',id)?.command?.batchId;return !batchId||batchId===command.batchId;})){
         this.send({type:'source_sync_receipt',commandId:command.id,result:{status:'waiting_idle',reason:'transfer_in_flight'}});return;
       }
@@ -416,6 +465,7 @@ export class SourceSyncClient {
         if(!present){const r=await this.request(message,`blobs/${entry.hash}`),bytes=Buffer.from(await r.arrayBuffer());if(bytes.length!==entry.size||contentHash(bytes)!==entry.hash)throw syncError('blob_corrupt');await saveSourceBlob(blobRoot,bytes);}
       }
       const result=await this.withFolderAccess(message,command,()=>this.worker.execute(command));
+      if(result.compacted){this.settleCompacted(command.id);return;}
       this.watch.received(command,result);
       let alreadyUploaded=false;
       if(saved)try{const proof=await (await this.request(message,'receipt')).json();alreadyUploaded=proof.receiptHash===contentHash(JSON.stringify(result));}catch{ /* Old Homes can still accept the original upload path. */ }
@@ -444,11 +494,15 @@ export class SourceSyncClient {
     const transport=this.db.get('sourceSyncTransport',id);
     if(transport)this.db.put('sourceSyncTransport',{...transport,acknowledgedAt:new Date().toISOString(),receiptDisposition:message.disposition||'accepted',receiptHash:message.receiptHash});
     this.db.remove('sourceSyncReceipts',id);this.sent.delete(id);
+    if(transport)compactSyncCommand(this.db,id);
   }
+  /** An acknowledged, compacted capture leaves no transfer pending, so recovery and blob cleanup are not held by it. */
+  settleCompacted(id){const transport=this.db.get('sourceSyncTransport',id);if(transport&&transport.ready!==true)this.db.put('sourceSyncTransport',{...transport,ready:true,recoveryAttempts:0,nextRecoveryAt:0});}
   cancel(id){
     this.db.put('sourceSyncCancellations',{id});
     if(this.inFlight.has(id))return;
     const record=this.db.get('sourceSyncCommands',id),transport=this.db.get('sourceSyncTransport',id);
+    if(record?.compacted){this.settleCompacted(id);return;}
     if(record&&!record.result){
       // Restart loses the in-memory flight, not the journal. Recover before claiming cancellation.
       if(transport?.message){void this.execute(transport.message);return;}

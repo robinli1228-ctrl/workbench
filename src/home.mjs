@@ -192,7 +192,7 @@ async function nativeSessionRemote({nodeId,runtime,sessionId}){
 const viewers = new Set();
 const queries = new Map();
 let deviceTransport=null;
-const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>change()});
+const cliRecovery=new CliRecoveryHome({db,query:workerQuery,online:id=>online(id),change:()=>{change();scheduleChatSoon();}});
 rooms.nativeRecoveryReason=(task,checked)=>cliRecovery.scheduleReason(task,checked);
 const workspaceFeed = new WorkspaceStateFeed();
 const roleSwitches=new RoleSwitches(db);
@@ -366,9 +366,11 @@ function prepareChatContext(task) {
 /** Only unacknowledged commands are resent; the Worker returns the original result based on the stable command ID. */
 const queuePump=new QueuePump(db,{send:(nodeId,payload)=>send(sockets.get(nodeId),payload),online:id=>online(id)&&sockets.get(id).workerReady,render:renderBatch,
   verify:b=>workerQuery({nodeId:b.workerId},'queue_verification',{batchId:b.id,runId:b.runId,projectId:b.projectId,roleId:b.roleId},10000)});
-const dispatching=new Set();
+// A dispatch asked for while one runs for the same device runs again right after it, not at the next tick.
+const dispatching=new Set(),dispatchAgain=new Set();
 async function dispatch(nodeId) {
-  if(!online(nodeId)||!sockets.get(nodeId).workerReady||dispatching.has(nodeId))return;
+  if(!online(nodeId)||!sockets.get(nodeId).workerReady)return;
+  if(dispatching.has(nodeId)){dispatchAgain.add(nodeId);return;}
   dispatching.add(nodeId);
   try {
   for (const c of db.pendingCommands().filter(c => c.nodeId === nodeId)) {
@@ -469,7 +471,7 @@ async function dispatch(nodeId) {
       delivery: (c.deliveryId || run.deliveryId) ? db.get('deliveries', c.deliveryId || run.deliveryId) : null,
       project: { ...project, root: run.projectRoot ?? project.root }, platformPrompt, language, questions: true });
   }
-  } finally {dispatching.delete(nodeId);}
+  } finally {dispatching.delete(nodeId);if(dispatchAgain.delete(nodeId))void dispatch(nodeId);}
 }
 /** Deployment identity stays separate from bound project versions and task input commits. */
 function softwareInventory() {
@@ -531,6 +533,16 @@ function chatScheduleError(error,requestId='') {
 /** Every entry point (timer, HTTP and Worker events) shares the same exception boundary. */
 function scheduleChat() {
   try {scheduleChatTurn();}catch(error){chatScheduleError(error);}
+}
+/**
+ * Schedule as soon as an event frees a slot or settles work (a run ends, a pre-start check answers), instead of at the next
+ * one-second tick; events of the same moment share one pass. Each hop of a hand-off (a turn ends, its wake is created, the
+ * next turn launches) used to wait for that tick.
+ */
+let chatSoon=false;
+function scheduleChatSoon() {
+  if(chatSoon)return;chatSoon=true;
+  setImmediate(()=>{chatSoon=false;scheduleChat();});
 }
 /** Scheduling does not call a model; it only issues new executions after the Worker has finished reconnection verification. */
 function scheduleChatTurn() {
@@ -1879,9 +1891,9 @@ wss.on('connection', ws => {
       if(m.type==='capacity_state') {
         const appliedCapacity=validateCliCapacity(m.capacity),worker=db.get('workers',nodeId),desiredCapacity=db.get('workerConfigs',nodeId)?.capacity??appliedCapacity;
         const usage={};for(const key of ['active','retained','organizer','terminal'])usage[key]=Math.max(0,Math.min(128,Number(m.usage?.[key])||0));
-        db.put('workers',{...worker,appliedCapacity,desiredCapacity,capacity:Math.min(desiredCapacity,appliedCapacity),cliUsage:usage});
+        db.put('workers',{...worker,appliedCapacity,desiredCapacity,capacity:Math.min(desiredCapacity,appliedCapacity),cliUsage:usage,capacityReportedAt:new Date().toISOString()});
         if(usage.active+usage.organizer+usage.terminal<Math.min(desiredCapacity,appliedCapacity))for(const c of db.list('commands').filter(c=>c.nodeId===nodeId&&!c.acked&&c.capacityDeferred))db.put('commands',{...c,lastSentAt:null});
-        dispatch(nodeId);scheduleChat();change();
+        dispatch(nodeId);scheduleChat();nativeTurns.turns.capacityChanged(nodeId);change();
       }
       if(m.type==='role_session_compacted'){if(recordRoleCompaction(db,nodeId,m))change();}
       if(m.type==='warm_sessions') {
@@ -1926,6 +1938,8 @@ wss.on('connection', ws => {
         });
         send(ws, { type: 'ack', id: m.event.id });
         if(['message','tool','usage','context_usage'].includes(m.event.type))outputChanged();else change();
+        // A run that ended (or a delivery that settled) can let the next turn, a wake or a queued message start now.
+        if(m.event.type==='delivery'||m.event.type==='status'&&terminal.has(db.get('runs',m.event.runId)?.status))scheduleChatSoon();
       }
       if (nativeTurns.message(nodeId,m)) return;
       if (m.type === 'command_ack') { const c = db.get('commands', m.id); if (c?.nodeId === nodeId&&!c.acked) {db.put('commands', { ...c, acked: true,ackedAt:new Date().toISOString() });change();} }
