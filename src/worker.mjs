@@ -28,7 +28,7 @@ import { browseFolders, createFolder, prepareNativeSessionFolder } from './folde
 import {FolderAccess} from './folder-access.mjs';
 import {createWorkerNativeTurns,receiveTurnFiles} from './native-turns-worker.mjs';
 import {SideAsks} from './native-side-ask.mjs';
-import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
+import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention,compactAcknowledgedCommands} from './data-retention.mjs';
 import {listNativeSessions,readNativeSession,readNativeToolDetail,registeredNativeSession,nativeTuiArgs,assertNativeSessionIdle} from './native-sessions.mjs';
 import {createWorkerNativeAgentSwitch,assertNativeSwitchAccess,nativeAgentSourceBusy} from './native-agent-switch-worker.mjs';
 import {readAgentsFile,writeAgentsFile} from './agents-md.mjs';
@@ -1334,7 +1334,8 @@ function vacuumWhenQuiet(){clearTimeout(vacuumRetry);vacuumRetry=null;
   if(!quiet()){vacuumRetry=setTimeout(vacuumWhenQuiet,10*60000);vacuumRetry.unref();return {vacuumed:false,deferred:true};}
   try{const result=vacuumIfWasteful(db);if(result.vacuumed)console.log(`Data: VACUUM ${Math.round(result.before/1048576)} MB -> ${Math.round(result.after/1048576)} MB`);return result;}catch(e){console.error('Data: VACUUM failed',e.message);return {vacuumed:false,error:e.message};}}
 async function runMaintenance(){
-  try{const summary=await cleanupData(db,{policy:retention,blobRoot:sourceSync.blobRoot,log:line=>console.error('Data:',line)});
+  try{const compacted=await compactAcknowledgedCommands(db);if(compacted)console.log(`Data: dropped the file lists of ${compacted} acknowledged sync commands`);
+    const summary=await cleanupData(db,{policy:retention,blobRoot:sourceSync.blobRoot,log:line=>console.error('Data:',line)});
     const n=Object.values(summary.deleted).reduce((a,b)=>a+b,0);if(n||summary.blobsDeleted)console.log(`Data: removed ${n} records (${Math.round(summary.bytes/1048576)} MB) and ${summary.blobsDeleted} blobs (${Math.round(summary.blobBytes/1048576)} MB)`);
     return {...summary,vacuum:vacuumWhenQuiet()};}
   catch(e){console.error('Data: cleanup failed',e.message);return {error:e.message};}

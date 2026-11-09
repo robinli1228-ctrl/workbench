@@ -18,6 +18,7 @@ import {sourceScopeBinding} from './source-sync-scopes.mjs';
 import {SourceSyncWatch} from './source-sync-watch.mjs';
 import {folderAccessFor} from './folder-access.mjs';
 import {saveSourceBlob,readSourceBlob} from './source-sync-files.mjs';
+import {compactSyncCommand} from './data-retention.mjs';
 
 const json=(res,value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
 const matches=(a,b)=>typeof a==='string'&&Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
@@ -436,6 +437,8 @@ export class SourceSyncClient {
         this.send(receiptEnvelope(message.commandId,settled.terminalResult));return;
       }
       const prior=this.db.get('sourceSyncCommands',message.commandId);
+      // A late resend of a capture Home has already acknowledged: its receipt is settled and its file lists dropped.
+      if(prior?.compacted){this.settleCompacted(message.commandId);return;}
       // A retry with a saved result reads only the plan's headers (whether Home rebuilds deltas), not its body again.
       let delta=false,command=prior?.result&&prior.command?prior.command:null;
       // Only a command never seen before takes its baseline as a change: a retry must rebuild the exact command it stored.
@@ -462,6 +465,7 @@ export class SourceSyncClient {
         if(!present){const r=await this.request(message,`blobs/${entry.hash}`),bytes=Buffer.from(await r.arrayBuffer());if(bytes.length!==entry.size||contentHash(bytes)!==entry.hash)throw syncError('blob_corrupt');await saveSourceBlob(blobRoot,bytes);}
       }
       const result=await this.withFolderAccess(message,command,()=>this.worker.execute(command));
+      if(result.compacted){this.settleCompacted(command.id);return;}
       this.watch.received(command,result);
       let alreadyUploaded=false;
       if(saved)try{const proof=await (await this.request(message,'receipt')).json();alreadyUploaded=proof.receiptHash===contentHash(JSON.stringify(result));}catch{ /* Old Homes can still accept the original upload path. */ }
@@ -490,11 +494,15 @@ export class SourceSyncClient {
     const transport=this.db.get('sourceSyncTransport',id);
     if(transport)this.db.put('sourceSyncTransport',{...transport,acknowledgedAt:new Date().toISOString(),receiptDisposition:message.disposition||'accepted',receiptHash:message.receiptHash});
     this.db.remove('sourceSyncReceipts',id);this.sent.delete(id);
+    if(transport)compactSyncCommand(this.db,id);
   }
+  /** An acknowledged, compacted capture leaves no transfer pending, so recovery and blob cleanup are not held by it. */
+  settleCompacted(id){const transport=this.db.get('sourceSyncTransport',id);if(transport&&transport.ready!==true)this.db.put('sourceSyncTransport',{...transport,ready:true,recoveryAttempts:0,nextRecoveryAt:0});}
   cancel(id){
     this.db.put('sourceSyncCancellations',{id});
     if(this.inFlight.has(id))return;
     const record=this.db.get('sourceSyncCommands',id),transport=this.db.get('sourceSyncTransport',id);
+    if(record?.compacted){this.settleCompacted(id);return;}
     if(record&&!record.result){
       // Restart loses the in-memory flight, not the journal. Recover before claiming cancellation.
       if(transport?.message){void this.execute(transport.message);return;}
