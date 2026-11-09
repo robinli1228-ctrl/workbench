@@ -3562,6 +3562,20 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-session-content .nt-activity-text { order: 0; }
 .native-session-content .nt-caret { order: 1; width: 6px; height: 6px; margin: 0 4px 0 2px; border: 0; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); opacity: .8; }
 .native-session-content .nt-activity[open] > .nt-activity-summary .nt-caret { transform: translateY(-2px) rotate(45deg); }
+/* A finished reply opens with how long its turn took; the process folds behind that line, the final text sits under its hairline. */
+.native-session-content .nt-agent.has-worked .nt-body { padding-top: 0; border-top: 0; }
+.native-session-content .nt-worked { padding-bottom: 8px; border-bottom: 1px solid var(--nt-rule); }
+.native-session-content .nt-worked-summary { display: flex; width: fit-content; align-items: center; gap: 6px; padding: 2px 0; list-style: none; cursor: pointer; color: var(--nt-quiet); font-size: 14px; font-variant-numeric: tabular-nums; user-select: none; }
+.native-session-content .nt-worked-summary::-webkit-details-marker { display: none; }
+.native-session-content .nt-worked-summary:hover { color: #4b505b; }
+.native-session-content .nt-worked.is-empty > .nt-worked-summary { cursor: default; }
+.native-session-content .nt-worked.is-empty > .nt-worked-summary:hover { color: var(--nt-quiet); }
+.native-session-content .nt-worked.is-empty .nt-caret { display: none; }
+.native-session-content .nt-worked[open] > .nt-worked-summary .nt-caret { transform: translateY(-2px) rotate(45deg); }
+.native-session-content .nt-worked-process { padding-top: 6px; }
+.native-session-content .nt-agent .nt-worked-process > * { margin-top: 0; margin-bottom: 0; }
+.native-session-content .nt-agent .nt-worked-process > * + * { margin-top: var(--nt-gap); }
+.native-session-content .nt-agent :is(.nt-body, .nt-turn) > .nt-worked + * { margin-top: 12px; }
 .native-session-content .nt-chips { order: 2; margin-left: 4px; gap: 4px; }
 .native-session-content .nt-chip { padding: 1px 8px 1px 5px; border: 0; background: #eef0f4; color: #5f6470; font-size: 11.5px; }
 .native-session-content .nt-chip:hover { background: #e3e6ed; color: var(--nt-text); }

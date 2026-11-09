@@ -237,6 +237,7 @@ export default {
  "A compaction carries no attachments": "压缩不能附带附件",
  "File is outside the session working folder": "文件不在会话工作目录内",
  "Took {duration}": "用时 {duration}",
+ "Work process": "处理过程",
  "This page": "本页面",
  "Chat here": "在这里聊天",
  "Native terminal": "原生终端",

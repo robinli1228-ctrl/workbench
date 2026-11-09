@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const { classifyStep, diffLines, summarizeSteps, fileChips, stepTitle, elapsedText, historyTurns, noteRows } = await import(pathToFileURL(join(root, 'public', 'native-transcript.js')).href);
+const { classifyStep, diffLines, summarizeSteps, fileChips, stepTitle, elapsedText, elapsedMs, historyTurns, noteRows } = await import(pathToFileURL(join(root, 'public', 'native-transcript.js')).href);
 const t = (text, params) => params ? text.replace(/\{(\w+)\}/g, (m, k) => params[k] ?? m) : text;
 
 test('Claude, Codex, Grok and Agy tool items classify into read/edit/write/command/search steps with file paths', () => {
@@ -96,4 +96,11 @@ test('notes collapse: thinking signals (old and new wording) become one thinking
     { kind: 'error', text: 'Model is thinking', count: 1 }
   ]);
   assert.deepEqual(noteRows([{ kind: 'log', text: '   ' }], t), []);
+});
+
+test('a duration label reads back to milliseconds, so a reply can show it again in the page language', () => {
+  for (const ms of [5000, 59000, 331000, 3600000, 3900000]) assert.equal(elapsedMs(elapsedText(0, ms)), Math.floor(ms / 60000) >= 60 ? Math.floor(ms / 60000) * 60000 : ms);
+  assert.equal(elapsedMs('5m 31s'), 331000);
+  assert.ok(Number.isNaN(elapsedMs('')));
+  assert.ok(Number.isNaN(elapsedMs('soon')));
 });

@@ -20,8 +20,9 @@ import {SEND_LABELS,uncertainSend,sendStateOf,sendLocked,lookupFailureState,same
 import {stripAnsi} from './run-log-data.js';
 import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSummary} from './history-prompt.js';
 import {cachedHistory,saveHistory,forgetHistory,compactHistoryPage} from './history-cache.js';
-import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices,resolveToolFile,toolFilePaths,historyContainsReply} from './native-transcript.js';
+import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,elapsedMs,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices,resolveToolFile,toolFilePaths,historyContainsReply} from './native-transcript.js';
 import {deviceAccessRows} from './device-access.js';
+import {formatElapsed} from './elapsed.js';
 import {createAskCard} from './ask-card.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
@@ -595,7 +596,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   flush();
   const last=[...turn.parts].reverse().find(part=>part.kind==='text'),row=chatRow('assistant',last?.text||'',item.runtime,turn.endedAt,null,'completed',item,{content:frag,filePaths:paths});
   row._replyTexts=turn.parts.filter(part=>part.kind==='text').map(part=>simplifiedCliOutput(stripAnsi(part.text||'')));
-  row.dataset.role='assistant';if(process)row.dataset.process='1';
+  row.dataset.role='assistant';row.dataset.turnKey=turnId;if(process)row.dataset.process='1';
   if(startedAt&&turn.endedAt){const ms=Date.parse(turn.endedAt)-Date.parse(startedAt);if(Number.isFinite(ms)&&ms>=0&&ms<12*3600*1000)row.dataset.duration=elapsedText(startedAt,Date.parse(turn.endedAt));}
   nodes.push(row);
   return nodes;
@@ -979,6 +980,8 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  // Sessions opened on this page with "Allow all": once the headless first turn has produced history, chat here without a separate takeover confirmation.
  const pageOpened=new Set();
  const IMAGE_CLIS=new Set(['codex','claude']),openProcesses=new Set();
+ /** Turns whose folded process (the "Took …" line over a finished reply) the reader opened; redraws keep them open. */
+ const openWorked=new Set();
  /** Codex records an attached image as markup with a Worker-local path; show a short placeholder instead. */
 /** CLI titles can start with injected context markup (e.g. <environment_context>); show readable text or the short ID. */
 const displayTitle=item=>{const text=String(item.title||'').replace(/<([a-z_-]+)\b[^>]*>[\s\S]*?(<\/\1>|$)/gi,' ').replace(/\s+/g,' ').trim();return text||`${String(item.id||'').slice(0,8)}\u2026`;};
@@ -1223,7 +1226,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
       if(anchor.dataset.role==='user'||final.trim()&&!historyContainsReply(final,replies.flatMap(row=>row._replyTexts||[]))){
        for(const row of replies){row.hidden=true;row.dataset.nativeLiveHidden='1';}
        const content=el('div','nt-turn');content.append(turnContent(turn,current,{open:openProcesses.has(turn.id)}));
-       const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';reply.classList.add('native-turn-anchored');footNote(reply,endNote(turn));if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());rows[index].after(reply);continue;}
+       const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';reply.dataset.turnKey=turn.id;reply.classList.add('native-turn-anchored');footNote(reply,endNote(turn));if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());rows[index].after(reply);continue;}
       const extra=el('div','native-turn-anchored nt-extra');
       if(hasProcess(turn)&&anchor.dataset.process!=='1')extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
       {const tasks=taskBlock(turn,t);if(tasks)extra.append(tasks);}
@@ -1239,7 +1242,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const userRow=liveIndex>=0?null:chatRow('user',turn.prompt,current.runtime,turn.createdAt,makeFiles());if(userRow){userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);}
     const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));
     if(live)content.append(workingLine(turn));
-    const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';if(!live)footNote(reply,endNote(turn));if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
+    const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';reply.dataset.turnKey=turn.id;if(!live)footNote(reply,endNote(turn));if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
     if(live){feed.append(...(userRow?[userRow,reply]:[reply]));liveReplies.set(turn.id,reply);}else place([userRow,reply],turn.createdAt);
    }
    // The send on its way, drawn at once under its own id with what is known about it; Home's turn replaces it.
@@ -1253,8 +1256,33 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    for(const row of scroll.querySelectorAll('.native-chat-row')){if(row.hidden||!row.dataset.at)continue;const at=new Date(row.dataset.at);if(Number.isNaN(at.getTime()))continue;
     if(!last||at.toDateString()!==last.toDateString()||(row.classList.contains('nt-user')&&at-last>=30*60000)){const day=el('div','nt-day',dayLabel(at));day.translate=false;row.before(day);}last=at;}}
   function groupRows(){markDays();let prev=null;for(const node of scroll.querySelectorAll('.native-chat-row, .native-history-separator, .native-history-loader, .nt-day')){if(node.hidden){node.classList.remove('is-continued');continue;}const role=node.classList.contains('nt-agent')?'agent':node.classList.contains('nt-user')?'user':null;node.classList.toggle('is-continued',Boolean(role)&&prev===role);prev=role;}}
-  /** Every finished reply shows how long its turn took, next to Copy; a reply still running or without a known start shows none. */
-  function markLatestDuration(){attachInterruptionNotices(scroll,t);groupRows();for(const old of scroll.querySelectorAll('.nt-duration'))old.remove();for(const row of scroll.querySelectorAll('.nt-agent')){if(row.hidden||!row.dataset.duration||row.querySelector('.nt-working'))continue;const foot=row.querySelector('.nt-reply-foot');if(foot)foot.insertBefore(el('span','nt-duration',t('Took {duration}',{duration:row.dataset.duration})),foot.querySelector(':scope > .nt-foot-status'));}}
+  /** Every finished reply opens with one line saying how long its turn took; a reply still running keeps its live process in view. */
+  function markLatestDuration(){attachInterruptionNotices(scroll,t);groupRows();for(const row of scroll.querySelectorAll('.nt-agent')){if(row.hidden||row.querySelector('.nt-working'))continue;foldProcess(row);}}
+  /**
+   * Like Codex's "Worked for": a finished reply starts with "Took 5m 31s >" over a hairline. Its tool activity and in-between
+   * notes fold behind that line and only the final text stays below it. Runs again on every redraw, so it reuses its own line.
+   */
+  function foldProcess(row){
+   const body=row.querySelector(':scope > .nt-body');if(!body||!row.querySelector(':scope > .nt-reply-foot'))return;
+   const host=body.querySelector(':scope > .nt-turn')||body,turnKey=row.dataset.turnKey||row.dataset.at||'';
+   let worked=host.querySelector(':scope > .nt-worked'),process=worked?.querySelector(':scope > .nt-worked-process');
+   // Reading order: what is already folded comes first, then the rest of the reply.
+   const parts=[...(process?.children||[]),...[...host.children].filter(node=>node!==worked)];
+   const finalIndex=parts.findLastIndex(node=>node.classList.contains('markdown-body')),folded=parts.filter((_,i)=>i!==finalIndex);
+   const ms=elapsedMs(row.dataset.duration),label=Number.isFinite(ms)?t('Took {duration}',{duration:formatElapsed(ms)}):folded.length?t('Work process'):'';
+   if(!label){if(worked)worked.replaceWith(...folded);row.classList.remove('has-worked');return;}
+   if(!worked){
+    worked=el('details','nt-worked');process=el('div','nt-worked-process');const summary=el('summary','nt-worked-summary');summary.append(el('span','nt-worked-text'),el('span','nt-caret'));
+    summary.addEventListener('click',event=>{if(worked.classList.contains('is-empty')){event.preventDefault();return;}if(turnKey)worked.open?openWorked.delete(turnKey):openWorked.add(turnKey);});
+    worked.append(summary,process);}
+   // Redraws come every second while a reply runs: touch the DOM only when something changed, so pictures and videos are not re-inserted.
+   const text=worked.querySelector('.nt-worked-text');if(text.textContent!==label)text.textContent=label;
+   if(process.children.length!==folded.length||folded.some((node,i)=>process.children[i]!==node))process.replaceChildren(...folded);
+   worked.classList.toggle('is-empty',!folded.length);
+   // Nothing to fold stays shut; a turn without final text keeps its process in view.
+   const open=folded.length>0&&(finalIndex<0||openWorked.has(turnKey));if(worked.open!==open)worked.open=open;
+   if(host.firstElementChild!==worked)host.prepend(worked);if(finalIndex>=0&&worked.nextElementSibling!==parts[finalIndex])worked.after(parts[finalIndex]);row.classList.add('has-worked');
+  }
   /** The composer is built once and kept in place: a refresh that re-created it would move the focused textarea and drop the caret (and any IME composition). */
   const form=el('form','chat-composer native-takeover-form'),barRow=el('div','chat-input-bar'),field=el('div','chat-input-field'),note=el('p','workspace-note native-takeover-note'),tray=el('div','chat-attachments native-takeover-tray');
   // Queued messages sit above the composer like the group-chat queue: steer interrupts the reply and sends that one now, × withdraws it.

@@ -127,6 +127,8 @@ export function diffLines(before,after){
  return {added,removed,rows};
 }
 
+/** Milliseconds back from an elapsedText label ("31s", "5m 31s", "1h 5m"), so the same duration can be shown in the page's language. */
+export const elapsedMs=text=>{const m=/^(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?$/.exec(String(text||'').trim());return m&&m[0]?((+m[1]||0)*3600+(+m[2]||0)*60+(+m[3]||0))*1000:NaN;};
 export const elapsedText=(from,to=Date.now())=>{const s=Math.max(0,Math.round((to-new Date(from).getTime())/1000));if(!Number.isFinite(s))return '';return s<60?`${s}s`:s<3600?`${Math.floor(s/60)}m ${s%60}s`:`${Math.floor(s/3600)}h ${Math.floor(s%3600/60)}m`;};
 const stat=(added,removed)=>[added?`+${added}`:'',removed?`−${removed}`:''].filter(Boolean).join(' ');
 
