@@ -90,6 +90,8 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
   switches.recover();
   // The sweep also retries switch acknowledgements that failed while the Worker stayed connected.
   const sideSweep=setInterval(()=>{sideAsks.sweep();for(const w of db.list('workers'))if(online(w.id))switches.resume(w.id);},5*60000);sideSweep.unref?.();
+  // Messages that wait for a CLI slot try again when a device reports its capacity (home.mjs), and at least this often.
+  const capacitySweep=setInterval(()=>{for(const w of db.list('workers'))if(online(w.id))turns.capacityChanged(w.id);},10000);capacitySweep.unref?.();
   turns.recover();
   // Workers read with no-store; the browser keeps an attachment 10 days, since its ID never names other bytes.
   const file=(res,{item,bytes},disposition=true,cache=false)=>{res.writeHead(200,{'Content-Type':item.mime,'Content-Length':bytes.length,'Cache-Control':cache?MEDIA_CACHE_CONTROL:'private, no-store',

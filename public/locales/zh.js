@@ -955,6 +955,7 @@ export default {
   'Question': '提问',
   'Scheduled reminder': '定时提醒',
   'Not synchronized on {name}: outside its sync scope ({reason})': '{name} 上不同步：已不在它的同步范围内（{reason}）',
+  'Waiting for a free CLI slot on the device': '等待设备空出 CLI 名额',
   'Question from {role}': '{role} 的提问',
   '{v} waiting': '{v} 个待回答',
   'Skip all questions': '跳过全部问题',

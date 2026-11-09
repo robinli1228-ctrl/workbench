@@ -25,6 +25,7 @@ const MAX_EVENT_BYTES=128*1024,MAX_ITEM_BYTES=24*1024;
 const now=()=>new Date().toISOString();
 const sessionKey=(nodeId,runtime,sessionId)=>`${nodeId}/${runtime}/${sessionId}`;
 /** Queue position: the order the user dragged to, otherwise the time it was sent. */
+export const NATIVE_CAPACITY_RETRY_MS=30000;
 const queueRank=turn=>Number.isFinite(turn.queueRank)?turn.queueRank:(Date.parse(turn.createdAt)||0);
 /** Control turns: a compaction request, or the slash command that changes a resident Claude's model or effort in place. */
 const CONTROLS=new Set(['compact','model','effort']);
@@ -139,9 +140,9 @@ export function nativeReplyRanges(turn) {
 }
 
 export function nativeTurnView(turn){
- const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question,disconnectedAt,tasks}=turn;
+ const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question,disconnectedAt,tasks,waitingReason}=turn;
  return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',replyRanges:nativeReplyRanges(turn),status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
-  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{}),...(tasks?.length?{tasks}:{})};
+  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{}),...(tasks?.length?{tasks}:{}),...(waitingReason?{waitingReason}:{})};
 }
 
 /** Home side: validation, idempotent creation, occupancy checks, attachment binding and event intake. */
@@ -239,7 +240,7 @@ export class NativeTurnsHome{
   const lease=this.leases?.reserve({nodeId,runtime,sessionId,previous});
   if(!this.leases)this.assertIdle({runtime,sessionId});
   const handoff=turn.control?null:this.handoffFor?.({nodeId,runtime,sessionId});
-  const started={...turn,status:'queued',phase:'queued',updatedAt:now(),...(handoff?{handoffId:handoff.id}:{})};
+  const started={...turn,status:'queued',phase:'queued',waitingReason:null,updatedAt:now(),...(handoff?{handoffId:handoff.id}:{})};
   this.db.put('nativeTurns',started);
   this.db.put('nativeTakeovers',{id:key,nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
   const settings=this.settings(nodeId,runtime,sessionId);
@@ -249,7 +250,7 @@ export class NativeTurnsHome{
   const capable=this.db.get('workers',nodeId)?.capabilities?.nativePageInstructions===1;
   const instructions=capable&&!delivered&&!turn.control&&pageInstructions?pageInstructions:null;
   if(instructions)this.db.put('nativeTurns',{...started,instructionsVersion:instructions.version});
-  this.send(nodeId,{type:'native_turn',id:turn.id,runtime,sessionId,prompt:turn.prompt,...(instructions?{instructions}:{}),...(handoff?{handoff}:{}),attachments:turn.attachments||[],...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(turn.control?{control:turn.control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
+  this.send(nodeId,{type:'native_turn',id:turn.id,deferCapacity:true,runtime,sessionId,prompt:turn.prompt,...(instructions?{instructions}:{}),...(handoff?{handoff}:{}),attachments:turn.attachments||[],...(settings.model?{model:settings.model}:{}),...(settings.effort?{effort:settings.effort}:{}),...(turn.control?{control:turn.control}:{}),...(gitCredential?{gitCredential}:{}),...(lease||{})});
   this.change();return started;
  }
  /** Queued turns of one session: a steered message first, then in the order the user arranged (by default, the order they were sent). */
@@ -288,6 +289,7 @@ export class NativeTurnsHome{
   while(this.online(nodeId)&&!this.active(nodeId,runtime,sessionId)&&!this.waitsForExit(nodeId,runtime,sessionId)){
    const next=this.waiting(nodeId,runtime,sessionId)[0];if(!next)return;
    if(!next.steer&&this.queueState(nodeId,runtime,sessionId).paused)return;
+   if(next.waitingReason==='device_capacity'&&!this.slotFree(nodeId,next))return;
    try{
     const credential=next.control||!this.gitCredential?null:await this.gitCredential(this.settings(nodeId,runtime,sessionId),{nodeId,runtime,sessionId});
     const fresh=this.db.get('nativeTurns',next.id);
@@ -300,6 +302,22 @@ export class NativeTurnsHome{
     if(fresh?.status==='waiting'){this.db.put('nativeTurns',{...fresh,status:'failed',error:error.message,endedAt:now(),updatedAt:now()});this.change();}
    }
   }
+ }
+ /**
+  * Whether to try a turn the device turned away for a full CLI capacity again: only after a capacity report newer than the
+  * refusal that leaves a slot (an older one is what the refusal contradicted), or after 30 s in case no report comes.
+  */
+ slotFree(nodeId,turn){
+  const worker=this.db.get('workers',nodeId),usage=worker?.cliUsage,capacity=worker?.capacity,since=Date.parse(turn?.deferredAt||0)||0;
+  if(Date.now()-since>=NATIVE_CAPACITY_RETRY_MS)return true;
+  if(!usage||!Number.isFinite(capacity)||!(Date.parse(worker.capacityReportedAt||0)>since))return false;
+  return (usage.active||0)+(usage.organizer||0)+(usage.terminal||0)<capacity;
+ }
+ /** A device reported its capacity (or the periodic check runs): sessions whose first message waits for a slot try again. */
+ capacityChanged(nodeId){
+  const rows=this.db.db.prepare("SELECT DISTINCT json_extract(data,'$.runtime') AS runtime,json_extract(data,'$.sessionId') AS sessionId FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND json_extract(data,'$.status')='waiting' AND json_extract(data,'$.waitingReason')='device_capacity'").all(nodeId);
+  for(const r of rows)void this.pump(nodeId,r.runtime,r.sessionId);
+  return rows.length;
  }
  /** Steer: this queued message goes first and the current reply is interrupted so it starts at once. */
  steer(nodeId,id){
@@ -369,6 +387,13 @@ export class NativeTurnsHome{
    this.leases?.closed(nodeId,m);this.db.put('nativeTakeovers',{...current,status:'closed',reason:m.reason||null,updatedAt:now()});this.change();if(resumeQueue)void this.pump(nodeId,m.runtime,m.sessionId);return true;}
   if(m.type==='native_takeover_lease'){this.leases?.update(nodeId,m);this.change();return true;}
   const turn=this.db.get('nativeTurns',m.id);if(!turn||turn.nodeId!==nodeId)return false;
+  if(m.event?.kind==='status'&&m.event.status==='deferred'){
+   if(ACTIVE.has(turn.status)){
+    const ranks=this.waiting(nodeId,turn.runtime,turn.sessionId).map(queueRank);
+    this.db.put('nativeTurns',{...turn,status:'waiting',phase:null,waitingReason:'device_capacity',deferredAt:now(),queueRank:Math.min(queueRank(turn),...ranks)-1,updatedAt:now()});this.change();
+   }
+   return true;
+  }
   const next=applyNativeTurnEvent(turn,m.event);if(next!==turn)this.db.put('nativeTurns',next);
   if(next.handoffId&&next.inputDeliveryState==='accepted')this.db.put('nativeHandoffDeliveries',{id:`${nodeId}/${next.handoffId}/${turn.sessionId}`,nodeId,runtime:turn.runtime,sessionId:turn.sessionId,handoffId:next.handoffId,deliveredAt:now()});
   // Only explicit input acceptance proves delivery: interruption can also happen before any input is sent.
@@ -530,7 +555,10 @@ export class NativeTurnRunner{
    // Like group-chat runs: the CLI receives the prose in Traditional Chinese; Home keeps what the user typed, the page shows Simplified.
    await state.session.start(m.control?prompt:traditionalInput(prompt));
    if(state.stopRequested)await state.session.stop();
-  }catch(error){end('failed',error.message);}
+  }catch(error){
+   // A full device is not a failure: a Home that can wait gets the turn back and starts it again once a slot frees.
+   if(error.code==='capacity_full'&&m.deferCapacity)end('deferred',error.message);else end('failed',error.message);
+  }
  }
  /** Stop interrupts the current turn; a resident process stays for the next message where the CLI supports it. */
  async stop(id){const state=this.turns.get(id);if(!state)return;state.stopRequested=true;if(state.session)await state.session.stop();}

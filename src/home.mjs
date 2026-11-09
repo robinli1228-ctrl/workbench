@@ -1891,9 +1891,9 @@ wss.on('connection', ws => {
       if(m.type==='capacity_state') {
         const appliedCapacity=validateCliCapacity(m.capacity),worker=db.get('workers',nodeId),desiredCapacity=db.get('workerConfigs',nodeId)?.capacity??appliedCapacity;
         const usage={};for(const key of ['active','retained','organizer','terminal'])usage[key]=Math.max(0,Math.min(128,Number(m.usage?.[key])||0));
-        db.put('workers',{...worker,appliedCapacity,desiredCapacity,capacity:Math.min(desiredCapacity,appliedCapacity),cliUsage:usage});
+        db.put('workers',{...worker,appliedCapacity,desiredCapacity,capacity:Math.min(desiredCapacity,appliedCapacity),cliUsage:usage,capacityReportedAt:new Date().toISOString()});
         if(usage.active+usage.organizer+usage.terminal<Math.min(desiredCapacity,appliedCapacity))for(const c of db.list('commands').filter(c=>c.nodeId===nodeId&&!c.acked&&c.capacityDeferred))db.put('commands',{...c,lastSentAt:null});
-        dispatch(nodeId);scheduleChat();change();
+        dispatch(nodeId);scheduleChat();nativeTurns.turns.capacityChanged(nodeId);change();
       }
       if(m.type==='role_session_compacted'){if(recordRoleCompaction(db,nodeId,m))change();}
       if(m.type==='warm_sessions') {

@@ -3612,6 +3612,7 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 .native-queue .message-queue-info strong { flex: 1; min-width: 0; font-weight: 500; }
 .native-queue .message-queue-time { flex: none; color: #9aa0aa; font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .12s; }
 .native-queue .message-queue-item:hover .message-queue-time, .native-queue .message-queue-item:focus-within .message-queue-time { opacity: 1; }
+.native-queue .message-queue-note { flex: none; color: #b7791f; font-size: 12px; white-space: nowrap; }
 .native-queue .message-queue-item .icon-button { width: 28px; height: 28px; min-height: 28px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); box-shadow: none; }
 .native-queue .message-queue-item .icon-button svg { width: 16px; height: 16px; }
 .native-queue .message-queue-item .message-queue-delete:hover:not(:disabled) { color: var(--danger); background: #fdecec; }
