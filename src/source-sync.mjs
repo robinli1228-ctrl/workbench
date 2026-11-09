@@ -2,13 +2,20 @@ import {checkInventorySize,splitSourceItems} from './source-sync-batching.mjs';
 import {SourceSyncAudit} from './source-sync-audit.mjs';
 import {SourceSyncMetadata} from './source-sync-metadata-home.mjs';
 import {randomBytes} from 'node:crypto';
-import {SOURCE_SYNC_CAPTURE_POLICY,SOURCE_SYNC_LIMITS,validateSourceCapture,contentHash,manifestDigest,compareEntry,entryEqual,linkSourceMoves,syncError,excludedSourcePath} from './source-sync-manifest.mjs';
+import {SOURCE_SYNC_CAPTURE_POLICY,SOURCE_SYNC_LIMITS,validateSourceCapture,contentHash,manifestDigest,sortedEntries,compareEntry,entryEqual,linkSourceMoves,syncError,excludedSourcePath} from './source-sync-manifest.mjs';
 
 import {buildSourceBindings,sourceScopeBinding} from './source-sync-scopes.mjs';
 
 const stamp=()=>new Date().toISOString(),done=new Set(['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready']);
 const getEntry=(entries,path)=>Object.hasOwn(entries,path)?entries[path]:null;
 const identity=(...parts)=>contentHash(JSON.stringify(parts));
+
+/**
+ * A directory capture's baseline, in path order, with its hash, by which a Worker holding an earlier one can be sent only the
+ * change. Path order makes the whole list and one rebuilt from a change the same text, so a retry that fetches the whole plan
+ * matches the command the Worker fingerprinted.
+ */
+const baselineFields=entries=>{const sorted=sortedEntries(entries);return {baselineEntries:sorted,baselineHash:contentHash(JSON.stringify(sorted))};};
 
 /** Home owns metadata only; no filesystem or model operation runs inside its SQLite transactions. */
 export class SourceSync {
@@ -188,7 +195,7 @@ export class SourceSync {
         this.db.put('sourceSyncBatches',{...batch,status:'blocked',reason:'configuration_changed'});continue;
       }
       for(const binding of batch.bindings){const canonical=this.db.get('sourceSyncManifests',`${batch.projectId}:${binding.repositoryId}`);
-        this.command(batch,binding,'capture',{baseCommit:batch.kind==='preview'?null:canonical?.baseCommit,...(binding.scopeKind==='directory'?{baselineEntries:canonical?.entries||{}}:{})});}
+        this.command(batch,binding,'capture',{baseCommit:batch.kind==='preview'?null:canonical?.baseCommit,...(binding.scopeKind==='directory'?baselineFields(canonical?.entries||{}):{})});}
       this.db.put('sourceSyncBatches',{...batch,status:'capturing'});batch.status='capturing';
     }
     return this.db.listSourceSyncCommands({pending:true}).filter(c=>(!c.afterCommandId||['blocked','cancelling','cancelled'].includes(this.db.get('sourceSyncBatches',c.batchId)?.status)||['completed','partial_conflict'].includes(this.db.get('sourceSyncCommands',c.afterCommandId)?.result?.status))&&this.online(c.nodeId)&&(!done.has(this.db.get('sourceSyncBatches',c.batchId)?.status)||this.db.get('sourceSyncBatches',c.batchId)?.status==='blocked'||c.detection==='metadata'&&c.action==='cleanup'));
