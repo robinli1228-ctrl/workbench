@@ -114,6 +114,8 @@ export class SourceSyncWorker {
   async execute(command) {
     const observing=command.scopeKind==='directory'&&command.action==='capture';
     const fingerprint=contentHash(JSON.stringify(command)),old=this.db.get('sourceSyncCommands',command.id);
+    // Home acknowledged this capture and its file lists are gone (compactSyncCommand): nothing to rerun or report again.
+    if(old?.compacted)return {...old.result,compacted:true};
     if(old&&old.fingerprint!==fingerprint)throw syncError('command_conflict');
     if(old?.result&&['completed','partial_conflict','cancelled','blocked'].includes(old.result.status)){
       // Replays restore the durable outbox, never reapply files that may have changed since completion.
