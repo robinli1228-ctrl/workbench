@@ -1225,6 +1225,7 @@ export default {
   'Waiting for the current question to be handled': '等待当前问题处理完成',
   'This round failed; see the logs': '本轮执行失败，请查看日志',
   'This round was stopped': '本轮执行已停止',
+  'The work it handed out was interrupted by the user': '派出的活被用户打断，已取消等待',
   'Awaiting reply · CLI ready': '等待回复 · CLI 已就绪',
   'Waiting for other roles to reply': '等待其他角色回复',
   'Replies arrived; retrying the follow-up': '回复已到，正在重试后续处理',

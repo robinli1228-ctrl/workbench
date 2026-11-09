@@ -51,13 +51,15 @@ export class RoleSteering {
       const requests=this.db.list('coordinationRequests').filter(r=>r.projectId===projectId&&conversationIdOf(r)===conversationId&&r.targetRoleId===task.roleId&&r.taskId!==taskId&&
         active.some(run=>run.id===r.currentRunId));
       for(const request of requests) {
-        for(const id of this.calls.cancel(request.id,{preserveRunningChildren:true}))stopped.add(id);
+        for(const id of this.calls.cancel(request.id,{preserveRunningChildren:true,cause:'user_interrupted'}))stopped.add(id);
         let current=request;
         while(current&&!blocked.has(current.id)) {
           blocked.add(current.id);if(current.planId)planIds.add(current.planId);
           for(const plan of this.db.list('executionPlans').filter(p=>p.parentRequestId===current.id))planIds.add(plan.id);
+          // Only this role's own chain follows the user's new direction. A caller of another role that waits for this work
+          // is not frozen: its wait shows as cancelled and it is woken to look at what happened and decide (RoleCalls.resume).
           const latest=this.db.get('coordinationRequests',current.id);
-          this.db.put('coordinationRequests',{...latest,steeringTaskId:taskId});
+          if(latest.targetRoleId===task.roleId)this.db.put('coordinationRequests',{...latest,steeringTaskId:taskId});
           current=this.db.get('coordinationRequests',current.parentRequestId||current.continuationOf||'');
         }
       }
