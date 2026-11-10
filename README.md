@@ -63,6 +63,8 @@ Keep requirements, assignments, discussion, and final results together. Use dire
 
 In a project with a manager, a message without `@` or a quote replies to the most recent eligible role answer from the last 30 minutes; otherwise it goes to the manager. In a role's `wb note` or `wb call`, mentioning another role with `@` can notify that role and bring its answer back to the sender.
 
+You can quote a reply to a role on another device without publishing a Git commit. The quote provides conversation context; the recipient works in its own project folder. Use an explicit delivery when the task needs a fixed code version.
+
 Each group has its own task list with descriptions, steps, owners, status, and change history. Task records describe the work; execution queues and run records show what is actually running or waiting. Scheduled reminders are shown as platform messages rather than as your own words. A successful process exit does not by itself mean the task passed review. When the last turn on a task ends without closing it or handing it on, the task goes back to its owner once to close it or decide the next step. A Claude or Codex role that needs your decision asks with its question card above the chat composer and waits for your answer in the same turn.
 
 ### Continue native conversations
