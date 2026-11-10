@@ -971,6 +971,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'roleCalls.deliveryExpired': '已取消：它等待的交付已失败或不存在，发出一天后仍没有开始。需要时重新交付并再派一次。',
   'roleCalls.lateReplyAfterCancel': '回复到达时，它所服务的工作已被用户取消或调整方向；回复已保留，旧工作不会恢复',
   'roleCalls.resumeFailed': '回复已到，但后续处理无法开始：{message}。回复已保留；等待已结束，不再占用该角色，如需继续请重新派工',
+  'roleCalls.steeredWaitClosed': '这条等待派出的活早先被用户打断；Home 启动时已关闭这条等待，没有唤醒角色。如需继续请重新派工',
   'roleCalls.staleWaitEnded': '回复早已到达，但后续处理一直没有开始（{reason}）。为避免在旧上下文上自动开新回合，Home 启动时已结束这条等待；回复和历史都已保留，如需继续请重新派工',
   'roleCalls.userHasChangedDirectionOld': '用户已调整方向，旧调用链不能继续派单',
   'roleCalls.collaborationCallsExceed4Levels': '协作调用超过 4 层，请交回计划角色处理',

@@ -162,6 +162,8 @@ db.transaction(()=>{
   discussions.recover();
   // Stuck waits from before the resume fix end explicitly here, so replaying results below cannot revive them.
   calls.reconcileStuckWaits();
+  // Waits another role's steer froze before the steering fix are closed, not woken.
+  calls.closeSteeredWaits();
   calls.recoverTerminalRuns();
   for (const run of db.list('runs').filter(r=>terminal.has(r.status))) rooms.complete(run);
   archiveHistoricalReceipts(db);
