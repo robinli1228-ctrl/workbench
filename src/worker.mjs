@@ -62,7 +62,7 @@ import {inspectWorkspaceGit} from './workspace-git.mjs';
 import { inspectExecutionRepositories, prepareExecutionWorkspace, executionConflict, verifyExecutionVersions,resolveExecutionRepositories,inspectExecutionInput,assertExecutionInputVersions,executionInputBaselines } from './execution-workspace.mjs';
 import { createRunInput, instructionDelivery,executionInstructionComponents,executionEnvironmentHint } from './run-input.mjs';
 import {workMaterialsFolder} from './work-materials.mjs';
-import { inspectGitRepositoryVersion } from './git-version.mjs';
+import { inspectGitRepositoryVersion, alignRepository } from './git-version.mjs';
 import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseline.mjs';
 import { runOrganizer, runModelPrompt } from './conversation-organizer.mjs';
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
@@ -686,7 +686,7 @@ async function query(m,emit=send) {
   if(m.action==='cli_capacity') {
     try{send({type:'reply',id:m.id,result:await applyCapacity(m.path?.capacity)});}catch(e){send({type:'reply',id:m.id,error:e.message});}return;
   }
-  const modifies=['repository_setup','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write','native_session_branch','native_session_delete'].includes(m.action)&&!(m.action==='native_session_delete'&&m.path?.dryRun===true);
+  const modifies=['repository_setup','repository_align','execution_receive','execution_baseline_advance','terminal_prepare','terminal_new','native_terminal_prepare','native_agents_md_write','native_session_branch','native_session_delete'].includes(m.action)&&!(m.action==='native_session_delete'&&m.path?.dryRun===true);
   const guarded=['source_inspect','source_read','read_query','project_file','file','document','artifact_source','collaboration_documents','device_read'].includes(m.action);
   const reply=result=>send(guarded?budgetReadReply({id:m.id,result}).message:{type:'reply',id:m.id,result});
   try {
@@ -1172,18 +1172,30 @@ async function query(m,emit=send) {
         try {
           const root=await projectRoot(repository.localRoot);
           const expected=giteeRepository(repository.repoUrl);
-          const actual=giteeRepository((await exec('git',['remote','get-url','origin'],{cwd:root,timeout:3000})).stdout.trim());
+          // The configured URL, not the one insteadOf rewrites it to (an SSH alias or a mirror), names the repository.
+          const actual=giteeRepository((await exec('git',['config','--get','remote.origin.url'],{cwd:root,timeout:3000})).stdout.trim());
           if(!expected || actual?.webUrl!==expected.webUrl)throw new Error(tr('worker.repositoryOriginDoesNotMatch'));
           const result=await inspectGitRepositoryVersion({...repository,localRoot:root});
           return {repositoryId:repository.id,key:repository.key,localRoot:root,...result};
         } catch(error) {
-          return {repositoryId:repository.id,key:repository.key,localRoot:repository.localRoot,status:'unknown',ahead:0,behind:0,checkedAt:checkedAt(),error:error.message};
+          // A bound folder that is gone (deleted or moved) is reported as such, so the page can offer choosing another one.
+          const missing=typeof repository.localRoot==='string'&&await lstat(repository.localRoot).then(()=>false,e=>e.code==='ENOENT');
+          return {repositoryId:repository.id,key:repository.key,localRoot:repository.localRoot,status:missing?'missing':'unknown',ahead:0,behind:0,checkedAt:checkedAt(),error:error.message};
         }
       };
       for(let offset=0;offset<m.path.repositories.length;offset+=4) {
         results.push(...await Promise.all(m.path.repositories.slice(offset,offset+4).map(inspectOne)));
       }
       send({type:'reply',id:m.id,result:results});return;
+    }
+    if (m.action === 'repository_align') {
+      if (homeDisconnected) throw new Error(tr('worker.homeNotConnected'));
+      const root=await projectRoot(m.path?.localRoot),expected=giteeRepository(m.path?.repoUrl);
+      // No run, terminal takeover or native session may be working in this checkout while its branch moves.
+      assertNativeSessionIdle(db,{nodeId:identity.nodeId,workspace:root,projectId:m.path?.projectId||null});
+      const actual=giteeRepository((await exec('git',['config','--get','remote.origin.url'],{cwd:root,timeout:3000})).stdout.trim());
+      if(!expected||actual?.webUrl!==expected.webUrl)throw new Error(tr('worker.repositoryOriginDoesNotMatch'));
+      reply(await alignRepository({localRoot:root,repoUrl:m.path.repoUrl,credential:m.path.credential,branch:m.path.branch,allowSwitch:m.path.allowSwitch===true}));return;
     }
     if (m.action === 'workspace_check') {
       const localRoot = await projectRoot(m.path);
@@ -1248,7 +1260,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { deviceRead:3,concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,memoryOrganizer:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,mediaPace:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { repositoryAlign:1,deviceRead:3,concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,memoryOrganizer:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,mediaPace:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {

@@ -32,7 +32,9 @@ export class ProjectGitVersions {
       try {
         const payload=[];
         for (const {repository,binding} of list) payload.push({ id:repository.id,key:repository.key,repoUrl:repository.repoUrl,
-          localRoot:binding.localRoot,credential:await this.hosting.auth(repository.accountId,repository.repoUrl) });
+          localRoot:binding.localRoot,credential:await this.hosting.auth(repository.accountId,repository.repoUrl),
+          // Devices are compared with the repository's unified branch when one is set.
+          ...(repository.baseBranch?{targetBranch:repository.baseBranch}:{}) });
         const results=await this.query({nodeId,projectId},'project_git_versions',{repositories:payload},90000);
         for(const result of results) items.push({...result,nodeId});
       } catch(error) {
@@ -42,7 +44,13 @@ export class ProjectGitVersions {
       }
     }));
     items.sort((a,b)=>String(a.nodeId||'').localeCompare(String(b.nodeId||'')) || String(a.key).localeCompare(String(b.key)));
-    const value={id:projectId,projectId,items,summary:summarizeGitVersions(items),updatedAt:new Date().toISOString()};
+    // Each online device's project folder: still there, or deleted/moved since it was bound.
+    const folders=await Promise.all(this.db.list('workspaces').filter(w=>w.projectId===projectId&&w.localRoot).map(async w=>{
+      if(!this.online(w.nodeId))return {nodeId:w.nodeId,status:'offline'};
+      try{await this.query({nodeId:w.nodeId,projectId},'workspace_check',w.localRoot,15000);return {nodeId:w.nodeId,status:'ready'};}
+      catch(error){return {nodeId:w.nodeId,status:'unavailable',error:error.message};}
+    }));
+    const value={id:projectId,projectId,items,folders,summary:summarizeGitVersions(items),updatedAt:new Date().toISOString()};
     this.db.put('projectGitVersions',value);this.change();return value;
   }
 }

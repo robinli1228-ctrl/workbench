@@ -198,9 +198,10 @@
                     <label data-mode="create">Create under<select name="accountId"></select></label>
                     <label data-mode="create">New repository name<input name="remoteName" autocomplete="off" placeholder="Leave blank to use project-folder-repository-folder"></label>
                     <label>Repository folder name<input name="key" required pattern="[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}" placeholder="code / web / api"></label>
+                    <label data-repository-edit hidden>Unified branch<input name="baseBranch" autocomplete="off" placeholder="The branch every device aligns to, e.g. main"></label>
                     <div class="settings-dialog-field"><span class="settings-dialog-label">Put on these devices</span><div id="repository-node-options" class="settings-dialog-checks"></div></div>
                     <p id="project-repository-feedback" class="form-feedback" role="status" hidden></p>
-                    <div class="form-actions"><button class="secondary" id="cancel-project-repository" type="button">Cancel</button><button class="primary" type="submit" data-repository-submit>Add repository</button></div>
+                    <div class="form-actions"><button class="secondary" id="remove-project-repository" type="button" hidden>Remove repository</button><button class="secondary" id="cancel-project-repository" type="button">Cancel</button><button class="primary" type="submit" data-repository-submit>Add repository</button></div>
                   </form>
                 </dialog>
                 </div>

@@ -73,6 +73,7 @@ import { inspectRunProgress } from './run-monitor.mjs';
 import { projectTerminalLock, nativeSessionProjectIds, nativeTerminalProject, terminalCommand, terminalLaunchView, TERMINAL_PREPARATION_TTL_MS } from './terminal-resume.mjs';
 import { ProjectGitVersions } from './project-git-versions.mjs';
 import {SourceSyncHome} from './source-sync-transport.mjs';
+import {RepositoryDevices} from './project-repository-devices.mjs';
 import {syncIndicator} from './sync-indicator.mjs';
 import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
 import {acceptSourceProvenance} from './source-sync-provenance.mjs';
@@ -264,6 +265,7 @@ const credentials = new CredentialStore(join(data, 'credentials'));
 const hosting = new Hosting(db, credentials);
 const projectsAdmin = new ProjectAdmin(db, workerQuery, hosting, change);
 const projectGitVersions = new ProjectGitVersions({db,query:workerQuery,hosting,online,change});
+const repositoryDevices = new RepositoryDevices({db,admin:projectsAdmin,query:workerQuery,hosting,online,change,versions:projectGitVersions});
 const devicesAdmin = new DeviceAdmin({ db, credentials, base, data, workerToken, change, online, homePort: port, reconnect:{
   hold:(id,held)=>held?reconnectingNodes.add(id):reconnectingNodes.delete(id),
   connection:id=>{const socket=sockets.get(id);return socket?.readyState===1?{id:socket,heartbeatAt:socket.lastHeartbeatAt||0}:null;},
@@ -1449,6 +1451,14 @@ const server = http.createServer(async (req, res) => {
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/prepare\/([^/]+)$/)) && req.method === 'POST') return json(res,await projectsAdmin.prepare(m[1],m[2]));
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/repositories$/)) && req.method === 'POST') return json(res,await projectsAdmin.repository(m[1],await body(req)));
+      if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/repositories\/([a-zA-Z0-9_-]{1,40})(?:\/(branch|align)|\/devices\/([^/]+))?$/))) {
+        const [,projectId,key,action,nodeId]=m;
+        if(action==='branch'&&req.method==='POST')return json(res,repositoryDevices.setBranch(projectId,key,await body(req)));
+        if(action==='align'&&req.method==='POST')return json(res,await repositoryDevices.align(projectId,key,await body(req)));
+        if(nodeId&&req.method==='POST')return json(res,await repositoryDevices.moveDevice(projectId,key,decodeURIComponent(nodeId),await body(req)));
+        if(nodeId&&req.method==='DELETE')return json(res,repositoryDevices.removeDevice(projectId,key,decodeURIComponent(nodeId)));
+        if(!action&&!nodeId&&req.method==='DELETE')return json(res,repositoryDevices.removeRepository(projectId,key));
+      }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/setup-proposals\/([^/]+)\/(approve|reject)$/)) && req.method === 'POST') {
         if (m[3] === 'reject') { setup.reject(m[1], m[2]); return json(res, { rejected: true }); }
         return json(res, await setup.approve(m[1], m[2]));

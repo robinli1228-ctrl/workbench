@@ -28,7 +28,9 @@ export function selectGitVersionBindings(repositories, bindings, workers, superv
 }
 
 /** The remote comparison only updates FETCH_HEAD; it does not pull, switch branches, or modify the working tree. */
-export async function inspectGitRepositoryVersion({ localRoot, repoUrl, credential }) {
+export async function inspectGitRepositoryVersion({ localRoot, repoUrl, credential, targetBranch=null }) {
+  // A unified branch compares every device with origin's copy of that branch, whatever branch each one has checked out.
+  if (targetBranch) return inspectAgainstBranch({ localRoot, repoUrl, credential, targetBranch });
   const root = await realpath(localRoot);
   if (await realpath(await git(root, ['rev-parse','--show-toplevel'], repoUrl, credential)) !== root) throw new Error(tr('gitVersion.directoryNotIndependentGitRepository'));
   const branch = await git(root, ['symbolic-ref','--short','HEAD'], repoUrl, credential).catch(() => 'detached');
@@ -74,4 +76,69 @@ export function summarizeGitVersions(items) {
     if (item.checkedAt && (!summary.checkedAt || item.checkedAt > summary.checkedAt)) summary.checkedAt = item.checkedAt;
   }
   return summary;
+}
+
+const validBranch = async (root, branch, repoUrl, credential) => {
+  if (typeof branch !== 'string' || !branch || branch.length > 200 || branch.startsWith('-')) throw new Error(tr('gitVersion.invalidUnifiedBranch'));
+  await git(root, ['check-ref-format', '--branch', branch], repoUrl, credential).catch(() => { throw new Error(tr('gitVersion.invalidUnifiedBranch')); });
+};
+async function repositoryRoot(localRoot, repoUrl, credential) {
+  const root = await realpath(localRoot);
+  if (await realpath(await git(root, ['rev-parse','--show-toplevel'], repoUrl, credential)) !== root) throw new Error(tr('gitVersion.directoryNotIndependentGitRepository'));
+  return root;
+}
+async function fetchBranch(root, branch, repoUrl, credential) {
+  const remoteRef = `refs/remotes/origin/${branch}`;
+  try { await git(root, ['fetch','--no-tags','--','origin',`+refs/heads/${branch}:${remoteRef}`], repoUrl, credential, 15000); return { remoteRef, stale:false }; }
+  catch {
+    try { await git(root, ['show-ref','--verify',remoteRef], repoUrl, credential); } catch { throw new Error(tr('gitVersion.unifiedBranchUnavailable', { branch })); }
+    return { remoteRef, stale:true };
+  }
+}
+const uncommitted = (root, repoUrl, credential) => gitPrintsAnything(root, ['status','--porcelain','--untracked-files=all','--','.',':(exclude).workbench',':(exclude).wb-bridge-*'], { env: gitCredentialEnv(repoUrl, credential) });
+
+/** Where one device stands against origin's copy of the unified branch; nothing in the working tree changes. */
+async function inspectAgainstBranch({ localRoot, repoUrl, credential, targetBranch }) {
+  const root = await repositoryRoot(localRoot, repoUrl, credential);
+  await validBranch(root, targetBranch, repoUrl, credential);
+  const head = await git(root, ['symbolic-ref','-q','--short','HEAD'], repoUrl, credential).catch(() => null), branch = head || 'detached';
+  const localCommit = await git(root, ['rev-parse','HEAD'], repoUrl, credential), dirty = await uncommitted(root, repoUrl, credential);
+  const { remoteRef, stale } = await fetchBranch(root, targetBranch, repoUrl, credential);
+  const remoteCommit = await git(root, ['rev-parse',remoteRef], repoUrl, credential);
+  const [ahead=0, behind=0] = (await git(root, ['rev-list','--left-right','--count',`HEAD...${remoteRef}`], repoUrl, credential)).split(/\s+/).map(Number);
+  const status = ahead && behind ? 'diverged' : ahead ? 'ahead' : behind ? 'behind' : 'synced';
+  return { branch, targetBranch, onTarget:head === targetBranch, localCommit, remoteCommit, ahead, behind, status, dirty, stale,
+    checkedAt:new Date().toISOString(), error:stale ? tr('gitVersion.remoteTemporarilyUnavailableUsingLocal') : null };
+}
+
+/**
+ * Bring one device to origin's copy of the unified branch, only in ways that lose nothing: fast-forward, or switch a clean
+ * working tree to that branch when the user confirmed it. Uncommitted changes, unpushed commits, a diverged branch, commits
+ * reachable only from a detached HEAD, or a remote that could not be reached stay as they are and are reported. Ignored
+ * local files (such as .env) are never overwritten by a tracked file of the same name.
+ */
+export async function alignRepository({ localRoot, repoUrl, credential, branch, allowSwitch=false }) {
+  const root = await repositoryRoot(localRoot, repoUrl, credential);
+  await validBranch(root, branch, repoUrl, credential);
+  const { remoteRef, stale } = await fetchBranch(root, branch, repoUrl, credential);
+  const before = await git(root, ['rev-parse','HEAD'], repoUrl, credential);
+  // An old local copy of the branch is not the unified version: a deleted or unreachable remote branch changes nothing.
+  if (stale) return { status:'remote_unavailable', localCommit:before };
+  if (await uncommitted(root, repoUrl, credential)) return { status:'dirty', localCommit:before };
+  const current = await git(root, ['symbolic-ref','-q','--short','HEAD'], repoUrl, credential).catch(() => null);
+  if (current !== branch) {
+    if (!allowSwitch) return { status:'needs_switch', branch:current || 'detached', localCommit:before };
+    // A detached HEAD whose commits no branch holds would leave them reachable only from the reflog.
+    if (!current && !(await git(root, ['for-each-ref','--count=1','--contains','HEAD','--format=%(refname)','refs/heads','refs/remotes'], repoUrl, credential)))
+      return { status:'detached_commits', localCommit:before };
+    const local = await git(root, ['show-ref','--verify','-q',`refs/heads/${branch}`], repoUrl, credential).then(() => true, () => false);
+    await git(root, local ? ['switch','--no-overwrite-ignore','--',branch] : ['switch','--no-overwrite-ignore','-c',branch,'--track',`origin/${branch}`], repoUrl, credential, 30000);
+  }
+  const [ahead=0, behind=0] = (await git(root, ['rev-list','--left-right','--count',`HEAD...${remoteRef}`], repoUrl, credential)).split(/\s+/).map(Number);
+  const switched = current !== branch ? { switchedFrom:current || 'detached' } : {};
+  if (ahead && behind) return { status:'diverged', ahead, behind, localCommit:await git(root, ['rev-parse','HEAD'], repoUrl, credential), ...switched };
+  if (ahead) return { status:'ahead', ahead, localCommit:await git(root, ['rev-parse','HEAD'], repoUrl, credential), ...switched };
+  if (behind) await git(root, ['merge','--ff-only','--no-overwrite-ignore',remoteRef], repoUrl, credential, 30000);
+  const after = await git(root, ['rev-parse','HEAD'], repoUrl, credential);
+  return { status:behind ? 'updated' : 'synced', from:before, localCommit:after, ...switched };
 }
