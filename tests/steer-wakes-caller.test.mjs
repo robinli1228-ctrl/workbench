@@ -60,3 +60,25 @@ test('without the change the caller stayed waiting for good (the reported sympto
   calls.finish('run-w');
   assert.equal(db.get('coordinationRequests', 'root').status, 'succeeded', 'the woken turn settles the whole chain');
 });
+
+test('a wait an earlier steer froze is closed once at Home start, shown cancelled, and nobody is woken', () => {
+  const { db, calls } = env();
+  // What a steer left before the fix: every request up the chain carried the steering mark, the caller's wait included.
+  db.put('roles', { id: 'sup', projectId: P, name: 'Supervisor', enabled: true, nodeId: 'w1', runtime: 'claude', model: 'm' });
+  db.put('coordinationRequests', { id: 'top', projectId: P, conversationId: P, kind: 'direct', targetRoleId: 'sup', status: 'waiting_call', currentRunId: 'run-top', steeringTaskId: 't9', createdAt: at });
+  db.put('coordinationRequests', { ...db.get('coordinationRequests', 'root'), parentRequestId: 'top', steeringTaskId: 't9' });
+  db.put('coordinationRequests', { ...db.get('coordinationRequests', 'child'), status: 'cancelled', steeringTaskId: 't9' });
+  db.put('coordinationRequests', { id: 'own', projectId: P, conversationId: P, kind: 'direct', targetRoleId: 'sol', status: 'waiting_call', currentRunId: 'run-o', steeringTaskId: 't9', createdAt: at });
+  db.put('runs', { ...db.get('runs', 'run-s'), status: 'interrupted' });
+  const before = db.list('coordinationRequests').length;
+  assert.deepEqual(calls.closeSteeredWaits().sort(), ['root', 'top']);
+  for (const id of ['root', 'top']) {
+    const r = db.get('coordinationRequests', id);
+    assert.equal(r.status, 'cancelled');assert.equal(r.cancelReason, 'user_interrupted');assert.equal(r.continuationRequestId, undefined);
+  }
+  assert.equal(db.list('coordinationRequests').length, before, 'no wake turn is created');
+  assert.equal(db.get('coordinationRequests', 'own').status, 'waiting_call', 'the steered role\'s own chain is left to the new direction');
+  assert.equal(executionProgress({ task: db.get('tasks', 't0'), run: db.get('runs', 'run-c'), request: db.get('coordinationRequests', 'root') }).state, 'stopped');
+  assert.notEqual(card(db).detail, 'Waiting for other roles to reply');
+  assert.deepEqual(calls.closeSteeredWaits(), [], 'once');
+});

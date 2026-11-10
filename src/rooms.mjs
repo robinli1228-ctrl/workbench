@@ -279,30 +279,22 @@ export class Rooms {
       if(scope&&participants.length>12)throw new Error(tr('rooms.roundMatchesRolesExceedingLimit', { length: participants.length }));
       const schedulingTargets=participants.map(r=>r.id);
       const schedulingRoster=participants.map(r=>({id:r.id,name:r.name}));
-      // Informational discussions, supervisor intake and same-role replies do not transfer a Git workspace.
+      // Cross-device quotes carry conversation context; only explicit deliveries transfer code to another device.
+      // Same-device workspace review retains its existing source-run behavior.
       const sourceRoles=source&&quote.kind!=='discussion'&&!source.roleSnapshot?.systemSupervisor
-        ?roles.filter(r=>!r.systemSupervisor&&r.id!==(source.roleId||quote.roleId)):[];
-      let sourceDelivery;
-      if (sourceRoles.length) {
-        if (source.projectId !== projectId || source.status !== 'succeeded' || !source.workspace) throw new Error(tr('rooms.onlyRunsCompletedSuccessfullyKept'));
-        if (sourceRoles.some(r => r.nodeId !== source.nodeId)) {
-          const ready = this.db.list('deliveries').filter(d => d.projectId === projectId && d.sourceRunId === source.id && d.status === 'ready');
-          if (ready.length !== 1) throw new Error(tr('rooms.crossDeviceQuoteNeedsExactly'));
-          sourceDelivery = ready[0];
-        }
-      }
+        ?roles.filter(r=>!r.systemSupervisor&&r.id!==(source.roleId||quote.roleId)&&r.nodeId===source.nodeId):[];
+      if(sourceRoles.length&&(source.projectId!==projectId||source.status!=='succeeded'||!source.workspace))throw new Error(tr('rooms.onlyRunsCompletedSuccessfullyKept'));
       const taskIds = roles.map(role => {
-        const reuseSource=sourceRoles.some(r=>r.id===role.id),delivery=reuseSource&&role.nodeId!==source.nodeId?sourceDelivery:null;
+        const reuseSource=sourceRoles.some(r=>r.id===role.id);
         // The original dispatch text is kept verbatim; quotes and recent conversation are attached separately by source in this turn's context pack.
         const prompt = text || tr('rooms.pleaseReviewAttachmentsInMessage');
         const task = this.db.createTask({ projectId, title: text.slice(0, 80) || tr('rooms.reviewAttachments'), prompt, model: role.model, mode: role.mode });
         this.db.put('tasks', { ...task, conversationId, origin: 'chat', sourceMessageId: clientMessageId, roleId: role.id, roleSnapshot: role,
-          sourceRunId: delivery || !reuseSource ? null : source.id, deliveryId: delivery?.id || null,
-          ...(delivery?.purpose==='review'?{reviewDeliveryId:delivery.id}:{}),
+          sourceRunId: reuseSource ? source.id : null, deliveryId: null,
           quoteMessageId:quote?.id||null,
           attachments: attachments.length ? attachments : (quote?.attachments?.length ? quote.attachments : source?.attachments || []), schedulingTargets,schedulingRoster,
           scheduledJobId,
-          requiresCoordination: Boolean(delivery), broadcast: broadcast || undefined });
+          requiresCoordination: false, broadcast: broadcast || undefined });
         return task.id;
       });
       // A timed reminder is set by a role, not typed by the user, and says so where it appears.

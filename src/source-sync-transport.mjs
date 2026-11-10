@@ -19,6 +19,9 @@ import {SourceSyncWatch} from './source-sync-watch.mjs';
 import {folderAccessFor} from './folder-access.mjs';
 import {saveSourceBlob,readSourceBlob} from './source-sync-files.mjs';
 import {compactSyncCommand} from './data-retention.mjs';
+import {ChangeLists,scopeRequest,CHANGE_LIST_LIMIT} from './source-sync-changes.mjs';
+
+const CHANGE_BATCH_DONE=new Set(['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready']);
 
 const json=(res,value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
 const matches=(a,b)=>typeof a==='string'&&Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
@@ -59,6 +62,52 @@ export class SourceSyncHome {
     this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;this.baselines=new SourceSyncInitialization(this);
     this.conflicts=new SourceSyncConflicts({db,rooms,sync:this.sync,reachability:role=>online(role.nodeId)&&db.get('workers',role.nodeId)?.capabilities?.sourceSyncTools===1&&!runtimeIssue(db.get('workers',role.nodeId),role.runtime,role.model)});
     this.agent=new SourceSyncAgent({db,sync:this.sync,conflicts:this.conflicts,storage:this.storage,query});
+    this.query=query;this.sentLists=new Map();
+  }
+  /** Files waiting to be synchronized, for the open panel only: each online device lists what it changed since it last
+   *  synchronized, and a running batch lists what it is writing where. Nothing is stored; Home only remembers in memory
+   *  which synchronized list it last sent each Worker, so later refreshes send a small change instead of the whole list. */
+  async changes(projectId){
+    const config=this.sync.config(projectId),result={mode:config?.mode||null,detection:config?.detection||null,devices:[],applying:[],applyingTotal:0};
+    if(!config?.enabled||config.scopeKind!=='directory')return result;
+    const batch=this.sync.records('sourceSyncBatches',projectId).filter(b=>!CHANGE_BATCH_DONE.has(b.status)).at(-1);
+    if(batch) {
+      const origins=new Map(),origin=(repositoryId,path)=>{if(!origins.has(repositoryId))origins.set(repositoryId,this.db.get('sourceSyncManifests',`${projectId}:${repositoryId}`)?.origins||{});return origins.get(repositoryId)[path]?.nodeId||batch.sourceNodeId||null;};
+      for(const c of this.db.listSourceSyncCommands({projectId,batchId:batch.id,action:'apply'}))for(const change of c.changes||[]) {
+        if(result.applying.length<CHANGE_LIST_LIMIT)result.applying.push({repositoryId:c.repositoryId,path:change.path,change:change.move?'moved':!change.after||change.after.exists===false?'deleted':change.before&&change.before.exists!==false?'modified':'added',
+          size:change.after?.size??null,previousSize:change.before?.size??null,from:origin(c.repositoryId,change.path),to:c.nodeId,done:Boolean(c.result)});
+        result.applyingTotal++;
+      }
+      result.batchId=batch.id;
+    }
+    // Only continuous sync keeps an observation of each device's files to compare with; simple mode keeps no hashes to compare.
+    if(config.mode!=='continuous'||config.detection==='metadata')return result;
+    result.devices=await Promise.all((config.nodeIds||[]).map(async nodeId=>{
+      if(!this.online(nodeId))return {nodeId,status:'offline'};
+      if(this.db.get('workers',nodeId)?.capabilities?.sourceSyncChanges!==1)return {nodeId,status:'worker_unsupported'};
+      const scopes=[];
+      try {
+        // One query per scope keeps each message small; a Worker that lost its copy is asked once more without it.
+        for(const binding of (config.bindings||[]).filter(b=>b.nodeId===nodeId)) {
+          const scope={repositoryId:binding.repositoryId,generation:config.generation},key=`${nodeId}:${projectId}:${scope.repositoryId}:${scope.generation}`;
+          const entries=this.db.get('sourceSyncDevices',`${projectId}:${scope.repositoryId}:${nodeId}`)?.entries;
+          const served=this.db.get('sourceSyncBaselinesServed',`${projectId}:${scope.repositoryId}:${nodeId}`);
+          const heldEntries=served?.commandId?this.db.get('sourceSyncCommands',served.commandId)?.baselineEntries:null;
+          const held=heldEntries?{hash:served.hash,entries:heldEntries}:null;
+          let reply=null;
+          for(const options of [{sent:this.sentLists.get(key),held},{held:null}]) {
+            const built=scopeRequest(scope,entries,options);
+            if(!built.request){this.sentLists.delete(key);reply={repositoryId:scope.repositoryId,status:'too_large'};break;}
+            reply=(await this.query({nodeId,projectId},'source_sync_changes',{projectId,scopes:[built.request]},20000))[0]||{repositoryId:scope.repositoryId,status:'need_list'};
+            if(reply.status!=='need_list'){this.sentLists.set(key,built.list);break;}
+            this.sentLists.delete(key);
+          }
+          scopes.push(reply);
+        }
+        return {nodeId,status:'ok',scopes};
+      } catch(error){return {nodeId,status:'error',error:error.message,scopes};}
+    }));
+    return result;
   }
   busy(projectId,nodeId){return this.db.listSourceSyncCommands({projectId,nodeId,action:'apply',pending:true}).length>0;}
   async tick(){if(this.ticking)return;this.ticking=true;try{
@@ -326,6 +375,7 @@ export class SourceSyncHome {
     let value;
     if(req.method==='GET'&&!route)value=this.sync.status(projectId);
     else if(req.method==='GET'&&route==='pending'){const q=new URL(req.url,'http://localhost').searchParams;value=this.baselines.pending(projectId,q.get('repositoryId'),{after:q.get('after')||'',limit:q.get('limit')});}
+    else if(req.method==='GET'&&route==='changes')value=await this.changes(projectId);
     else if(req.method==='GET'&&route==='initializations')value=initializationPage(this.db,projectId,Object.fromEntries(new URL(req.url,'http://localhost').searchParams));
     else if(req.method==='GET'&&route==='audit')value=this.sync.audit.list(projectId,Object.fromEntries(new URL(req.url,'http://localhost').searchParams));
     else if(req.method==='GET'&&/^audit\/[-a-f0-9]+$/.test(route))value=this.sync.audit.detail(projectId,route.split('/')[1],Object.fromEntries(new URL(req.url,'http://localhost').searchParams));
@@ -383,6 +433,7 @@ export class SourceSyncClient {
       if(!terminals.has(projectId))terminals.set(projectId,Boolean(takeoverState?.(projectId)));return loaded.size>0||terminals.get(projectId);};
     this.worker=new SourceSyncWorker({db,blobRoot:this.blobRoot,resolveBinding,activeRuns,takeoverState,paused,observationBusy});
     this.watch=new SourceSyncWatch({db,send,resolveBinding,busy:observationBusy,blocked:projectId=>Boolean(db.get('sourceSyncReservations',projectId))});
+    this.changeLists=new ChangeLists({db});
   }
   /**
    * Uploads (file contents, manifests, receipts) go out in pieces: at the shared media pace when Home measures this link
