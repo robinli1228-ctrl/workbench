@@ -490,6 +490,25 @@ export class RoleCalls {
     });
   }
 
+  /** Before the steering fix, steering a role also froze the wait of another role that had called it: the wait kept the
+   *  steering mark, so nothing ever woke or closed it. Close those once at Home start, without waking anyone; a steer now
+   *  only marks the steered role's own requests, so nothing new matches. */
+  closeSteeredWaits(time=Date.now()) {
+    return this.db.transaction(()=>{
+      const closed=[];
+      for(const r of this.db.list('coordinationRequests')) {
+        if(r.status!=='waiting_call'||r.continuationRequestId||!r.steeringTaskId)continue;
+        const steered=this.db.get('tasks',r.steeringTaskId)?.roleId;
+        if(!steered||steered===r.targetRoleId)continue;
+        const at=new Date(time).toISOString(),reason=tr('roleCalls.steeredWaitClosed');
+        const next=this.db.put('coordinationRequests',{...r,status:'cancelled',cancelReason:'user_interrupted',result:reason,waitingReason:null,updatedAt:at});
+        this.settleResult(next,{resumeParents:false});
+        closed.push(r.id);
+      }
+      return closed;
+    });
+  }
+
   /** The stop scope and the command are fixed in the same transaction; an HTTP retransmission can only resend the original scope and cannot rescan for new runs. */
   stopRun(runId,commandId) {
     return this.db.transaction(()=>{
