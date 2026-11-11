@@ -1,3 +1,4 @@
+import {decodeRunInput} from './run-input-archive.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import {conversationIdOf,resolveConversationId,assertConversationRecord,conversationView} from './group-conversations.mjs';
@@ -35,6 +36,7 @@ const chatTask = "json_extract(data,'$.origin')='chat' AND json_extract(data,'$.
 const schedulableRequest = "json_extract(data,'$.status') IN ('queued','waiting_call','waiting_delivery')";
 const pendingCallResult = "json_extract(data,'$.status') IN ('running','queued')";
 const unresolvedRecovery = "COALESCE(json_extract(data,'$.state'),'')!='resolved'";
+const isolatedRun = "COALESCE(json_extract(data,'$.execution.isolated'),0) NOT IN (0,'')";
 const pendingCommand = "COALESCE(json_extract(data,'$.acked'),0) IN (0,'')";
 
 /** SQLite is the persistent record kept separately by Home and each Worker; files are not shared across machines. */
@@ -72,6 +74,10 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_source_command_batch ON records(json_extract(data,'$.projectId'),json_extract(data,'$.batchId')) WHERE kind='sourceSyncCommands';
       CREATE INDEX IF NOT EXISTS records_source_command_pending ON records(json_extract(data,'$.projectId'),json_extract(data,'$.nodeId')) WHERE kind='sourceSyncCommands' AND ${pendingSourceCommand};
       CREATE INDEX IF NOT EXISTS records_source_batch_open ON records(json_extract(data,'$.projectId')) WHERE kind='sourceSyncBatches' AND ${openSourceBatch};
+      CREATE INDEX IF NOT EXISTS records_run_native_identity ON records(json_extract(data,'$.nativeSession.runtime'),json_extract(data,'$.nativeSession.id')) WHERE kind='runs';
+      CREATE INDEX IF NOT EXISTS records_run_task ON records(json_extract(data,'$.taskId')) WHERE kind='runs';
+      CREATE INDEX IF NOT EXISTS records_run_request ON records(json_extract(data,'$.requestId')) WHERE kind='runs';
+      CREATE INDEX IF NOT EXISTS records_isolated_runs ON records(json_extract(data,'$.projectId')) WHERE kind='runs' AND ${isolatedRun};
       CREATE INDEX IF NOT EXISTS records_active_runs ON records(json_extract(data,'$.nodeId')) WHERE kind='runs' AND ${activeRun};
       CREATE INDEX IF NOT EXISTS records_chat_tasks ON records(id) WHERE kind='tasks' AND ${chatTask};
       CREATE INDEX IF NOT EXISTS records_role_steering ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId')) WHERE kind='tasks' AND json_extract(data,'$.steering') IS NOT NULL;
@@ -82,7 +88,9 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_pending_commands ON records(id) WHERE kind='commands' AND ${pendingCommand};
       CREATE INDEX IF NOT EXISTS records_native_driver_read ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId'),json_extract(data,'$.nativeSession.id')) WHERE kind='runs';`);
   }
-  get(kind, id) { const r = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id); return r ? JSON.parse(r.data) : null; }
+  get(kind, id) { const r = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id); return r ? this.decodeRecord(kind,r.data) : null; }
+  /** Run input archives remain ordinary mutable records to callers, with bodies decoded only on access. */
+  decodeRecord(kind,data) { const value=JSON.parse(data);return kind==='runs'?decodeRunInput(value):value; }
   /** UI-only invalidation. Unknown SQL and external connections invalidate every kind; scheduling always reads SQLite. */
   readRevision(kinds) {
     this.revisionTracking=true;
@@ -110,7 +118,17 @@ export class Store {
     if(this.file===':memory:')return Infinity;
     const info=statfsSync(dirname(this.file));return info.bavail*info.bsize;
   }
-  list(kind) { return this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind).map(r => JSON.parse(r.data)); }
+  list(kind) { return this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind).map(r => this.decodeRecord(kind,r.data)); }
+  /** Native provenance needs identity and location only, not frozen prompts or result bodies. */
+  nativeSessionRunMetadata(runtime,sessionId) {
+    return this.db.prepare(`SELECT json_extract(data,'$.projectId') AS projectId,json_extract(data,'$.nodeId') AS nodeId,
+      json_extract(data,'$.roleSessionId') AS roleSessionId,json_extract(data,'$.workspace') AS workspace,
+      json_extract(data,'$.createdAt') AS createdAt FROM records INDEXED BY records_run_native_identity
+      WHERE kind='runs' AND json_extract(data,'$.nativeSession.runtime')=? AND json_extract(data,'$.nativeSession.id')=? ORDER BY rowid`).all(runtime,sessionId);
+  }
+  /** Task and request lookups preserve insertion order without materializing unrelated history. */
+  runsForTask(taskId) {return this.db.prepare("SELECT data FROM records INDEXED BY records_run_task WHERE kind='runs' AND json_extract(data,'$.taskId')=? ORDER BY rowid").all(taskId).map(r=>this.decodeRecord('runs',r.data));}
+  runsForRequest(requestId) {return this.db.prepare("SELECT data FROM records INDEXED BY records_run_request WHERE kind='runs' AND json_extract(data,'$.requestId')=? ORDER BY rowid").all(requestId).map(r=>this.decodeRecord('runs',r.data));}
   /** Acknowledged history never participates in the one-second resend scan; no result or command is deleted. */
   pendingCommands() {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_pending_commands WHERE kind='commands' AND ${pendingCommand} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
@@ -130,11 +148,11 @@ export class Store {
     if(binding.runId){conditions.push('id!=?');params.push(binding.runId);}
     if(binding.roleSessionId){conditions.push("(json_extract(data,'$.roleSessionId') IS NULL OR json_extract(data,'$.roleSessionId')=?)");params.push(binding.roleSessionId);}
     const rows=this.db.prepare(`SELECT data FROM records INDEXED BY records_native_driver_read WHERE ${conditions.join(' AND ')} ORDER BY rowid DESC LIMIT ?`).all(...params,limit+1);
-    return {records:rows.slice(0,limit).reverse().map(r=>JSON.parse(r.data)),partial:rows.length>limit};
+    return {records:rows.slice(0,limit).reverse().map(r=>this.decodeRecord('runs',r.data)),partial:rows.length>limit};
   }
   /** Poll only live scheduling candidates; unknown Run states still reserve capacity, and history stays intact. */
   activeRuns(nodeId) {
-    return this.db.prepare(`SELECT data FROM records INDEXED BY records_active_runs WHERE kind='runs' AND ${activeRun}${nodeId===undefined?'':" AND json_extract(data,'$.nodeId')=?"} ORDER BY rowid`).all(...(nodeId===undefined?[]:[nodeId])).map(r=>JSON.parse(r.data));
+    return this.db.prepare(`SELECT data FROM records INDEXED BY records_active_runs WHERE kind='runs' AND ${activeRun}${nodeId===undefined?'':" AND json_extract(data,'$.nodeId')=?"} ORDER BY rowid`).all(...(nodeId===undefined?[]:[nodeId])).map(r=>this.decodeRecord('runs',r.data));
   }
   /** Only open alerts participate in progress monitoring; closed history stays persisted. */
   openRunAlerts() {
@@ -159,7 +177,7 @@ export class Store {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_pending_call_results WHERE kind='coordinationRequests' AND ${pendingCallResult} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
   }
   conflictRuns() {
-    return this.db.prepare("SELECT data FROM records INDEXED BY records_conflict_runs WHERE kind='runs' AND json_extract(data,'$.sourceConflictId') IS NOT NULL ORDER BY rowid").all().map(r=>JSON.parse(r.data)).filter(r=>r.sourceConflictId);
+    return this.db.prepare("SELECT data FROM records INDEXED BY records_conflict_runs WHERE kind='runs' AND json_extract(data,'$.sourceConflictId') IS NOT NULL ORDER BY rowid").all().map(r=>this.decodeRecord('runs',r.data)).filter(r=>r.sourceConflictId);
   }
   unresolvedRecoveries() {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_unresolved_recoveries WHERE kind='cliRecoveries' AND ${unresolvedRecovery} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
@@ -175,13 +193,13 @@ export class Store {
     return this.db.prepare("SELECT data FROM records WHERE kind='sourceSyncMetadataBaselines' AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.repositoryId')=?"+(generation===undefined?"":" AND json_extract(data,'$.generation')=?")).all(projectId,repositoryId,...(generation===undefined?[]:[generation])).map(r=>JSON.parse(r.data));
   }
   /** Project-local sync metadata must not scan or serialize other projects' full manifests. */
-  listProject(kind,projectId) {return this.db.prepare("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.projectId')=? ORDER BY rowid").all(kind,projectId).map(r=>JSON.parse(r.data));}
+  listProject(kind,projectId) {return this.db.prepare("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.projectId')=? ORDER BY rowid").all(kind,projectId).map(r=>this.decodeRecord(kind,r.data));}
   /** Scope checks need only identity and paths, not full historical outputs on every sync resend. */
   sourceIsolationRuns(projectId) {
     return this.db.prepare(`SELECT json_object('nodeId',data -> '$.nodeId',
       'execution',json_object('isolated',data -> '$.execution.isolated'),
       'workspace',data -> '$.workspace','projectRoot',data -> '$.projectRoot') AS data
-      FROM records WHERE kind='runs' AND json_extract(data,'$.projectId')=? ORDER BY rowid`).all(projectId).map(r=>JSON.parse(r.data));
+      FROM records INDEXED BY records_isolated_runs WHERE kind='runs' AND ${isolatedRun} AND json_extract(data,'$.projectId')=? ORDER BY rowid`).all(projectId).map(r=>JSON.parse(r.data));
   }
   /** Filter before materializing manifest bodies; keep history and the existing row order intact. */
   listSourceSyncCommands({projectId,batchId,nodeId,repositoryId,action,pending=false}={}) {
@@ -219,6 +237,8 @@ export class Store {
     return this.db.prepare(`SELECT t.data FROM records r CROSS JOIN records t WHERE ${conditions.join(' AND ')} ORDER BY COALESCE(json_extract(t.data,'$.${due}'),0),t.rowid LIMIT ?`).all(at,...exclude,limit).map(r=>JSON.parse(r.data));
   }
   put(kind, value) {
+    // A late event/edit expands the original fields before writing; no stale archived body can mask a new value.
+    if(kind==='runs')value=decodeRunInput(value);
     if(this.revisionTracking)this.readRevision([]);
     if(kind==='roomMessages')return this.transaction(()=>{
       const previous=this.get(kind,value.id);
@@ -288,7 +308,7 @@ export class Store {
       if (this.list('coordinationRequests').some(r => r.projectId === id && !['succeeded', 'failed', 'cancelled'].includes(r.status))
         || this.list('plans').some(p => p.projectId === id && !['completed', 'cancelled'].includes(p.status))) throw new Error(tr('store.projectStillHasUnfinishedCalls'));
       if (this.list('deliveries').some(d => d.projectId === id && !['ready', 'cancelled', 'blocked'].includes(d.status))) throw new Error(tr('store.projectStillHasUnfinishedGit'));
-      const runs = this.list('runs').filter(r => r.projectId === id);
+      const runs = this.listProject('runs',id);
       if (runs.some(r => !terminal.has(r.status))) {
         throw new Error(tr('store.projectStillHasExecutionsIn'));
       }
@@ -369,7 +389,7 @@ export class Store {
       if(task.origin==='chat' && this.get('workers',nodeId)?.capabilities?.managedResume!==1)throw new Error(tr('store.upgradeTargetWorkerSupportRole'));
       if (projectTerminalLock(this,task.projectId,nodeId)) throw new Error(tr('store.projectUnderManualTerminalTakeover'));
       if (task.origin === 'chat' && (task.status !== 'ready' || task.roleSnapshot.nodeId !== nodeId)) throw new Error(tr('store.groupChatAssignmentStatusNode'));
-      if (this.list('runs').some(r => r.taskId === taskId && !terminal.has(r.status))) throw new Error(tr('store.taskRunningUnverifiedCannotBe'));
+      if (this.activeRuns().some(r => r.taskId === taskId)) throw new Error(tr('store.taskRunningUnverifiedCannotBe'));
       const repositoryId = null;
       const binding = roleWorkspace(this, task.projectId, nodeId, repositoryId);
       if (!binding) throw new Error(tr('store.bindProjectWorkspaceOnNode'));
@@ -525,7 +545,7 @@ export class Store {
   acceptTask(taskId, runId) {
     return this.transaction(() => {
       const task = this.get('tasks', taskId), run = this.get('runs', runId);
-      const latest = this.list('runs').filter(r => r.taskId === taskId).at(-1);
+      const latest = this.runsForTask(taskId).at(-1);
       if (!task || !run || latest?.id !== runId || run.status !== 'succeeded') throw new Error(tr('store.onlyLatestSuccessfulExecutionCan'));
       return this.put('tasks', { ...task, status: 'done', acceptedRunId: runId, acceptedAt: now() });
     });

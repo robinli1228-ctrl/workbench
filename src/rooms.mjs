@@ -106,7 +106,7 @@ export class Rooms {
     return this.db.transaction(()=>{
       const role=this.db.get('roles',roleId);
       if(role?.projectId!==projectId||role.archivedAt||!role.enabled||!isRoleConfigured(role))throw new Error(tr('rooms.roleDisabled2'));
-      if(!['repair','peer','assignment','proactive_followup','call_outcome','task_return'].includes(source?.kind))throw new Error(tr('rooms.projectNotFound'));
+      if(!['repair','peer','assignment','proactive_followup','call_outcome','task_return','task_start'].includes(source?.kind))throw new Error(tr('rooms.projectNotFound'));
       const fingerprint=JSON.stringify({projectId,roleId,text,source,sourceInputs,execution,...(conversationId!==projectId?{conversationId}:{})}),prior=this.db.get('roomMessages',id);
       if(prior){if(prior.fingerprint!==fingerprint)throw new Error(tr('rooms.projectNotFound'));return prior;}
       const task=this.db.createTask({projectId,title:text.slice(0,80),prompt:text,model:role.model,mode:role.mode});
@@ -115,9 +115,9 @@ export class Rooms {
         ...(source.kind==='repair'?{sourceConflictId:source.conflictId,sourceConflictGeneration:source.generation,sourceConflictAssignmentId:source.assignmentId}:{}),
         ...(source.kind==='peer'?{sourceConflictPeerId:source.conflictId}:{}),
         ...(source.kind==='assignment'?{sourceConflictAssignmentRequestId:source.conflictId}:{})});
-      const platform=['proactive_followup','call_outcome','task_return'].includes(source.kind);
+      const platform=['proactive_followup','call_outcome','task_return','task_start'].includes(source.kind);
       const message=this.db.put('roomMessages',{id,projectId,conversationId,sender:'system',senderName:platform?'Workbench':tr('sourceSync.systemName'),kind:platform?source.kind:'source_conflict',text,taskIds:[task.id],source,fingerprint,createdAt:now(),
-        ...(source.kind==='proactive_followup'?{visibility:'internal',proactiveFollowup:source.context}:['call_outcome','task_return'].includes(source.kind)?{visibility:'internal'}:{} )});
+        ...(source.kind==='proactive_followup'?{visibility:'internal',proactiveFollowup:source.context}:['call_outcome','task_return','task_start'].includes(source.kind)?{visibility:'internal'}:{} )});
       this.touch(projectId,conversationId);return message;
     });
   }
@@ -212,7 +212,7 @@ export class Rooms {
       if (activeRoleSwitch(this.db, roleId)) throw new Error('CLI switch in progress; cannot archive this role.');
       if (role?.projectId !== projectId) throw new Error(tr('rooms.roleDoesNotBelongProject2'));
       if (role.archivedAt) return role;
-      const activeRun = this.db.list('runs').some(r => r.projectId === projectId && r.roleId === roleId && !terminal.has(r.status));
+      const activeRun = this.db.activeRuns().some(r => r.projectId === projectId && r.roleId === roleId);
       const pendingTask = this.db.list('tasks').some(t => t.projectId === projectId && t.roleId === roleId && ['ready', 'in_progress', 'awaiting_acceptance'].includes(t.status));
       const pendingRequest = this.db.list('coordinationRequests').some(r => r.projectId === projectId && r.targetRoleId === roleId && !['succeeded', 'failed', 'cancelled'].includes(r.status));
       if (activeRun || pendingTask || pendingRequest) throw new Error(tr('rooms.roleStillHasUnfinishedWork'));
@@ -501,26 +501,45 @@ export class Rooms {
 
   /** Dispatch synchronously within a single Home, with one active run per role, respecting each node's total capacity. */
   schedule(isReady) {
-    const nodes = new Set(), recoveryChecks = new Set(); let changed = false;
+    const steps=this.scheduleSteps(isReady);let next=steps.next();while(!next.done)next=steps.next(false);return next.value;
+  }
+
+  /** Home yields between complete admissions; synchronous callers keep the same admission implementation. */
+  async scheduleCooperatively(isReady,checkpoint) {
+    const steps=this.scheduleSteps(isReady);let next=steps.next();
+    while(!next.done){const wait=checkpoint();next=steps.next(wait?await wait:false);}return next.value;
+  }
+
+  /** Never yield between capacity/ownership checks and startTask. A resumed slice rebuilds all mutable admission inputs. */
+  *scheduleSteps(isReady) {
+    const nodes = new Set(), recoveryChecks = new Set();let ownership=terminalOwnershipLookup(this.db),changed=false;
     const discussions=new RoleDiscussions(this.db,{online:isReady});changed=discussions.recover().changed;
     const candidates=[...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()];
     // A paused queue that has emptied (sent, recalled or cancelled) un-pauses itself.
-    const paused=new Set();
-    for(const pause of this.db.list('chatQueuePauses')){if(candidates.some(t=>!t.currentRunId&&t.projectId===pause.projectId&&conversationIdOf(t)===pause.conversationId))paused.add(pause.conversationId);else{this.db.remove('chatQueuePauses',pause.id);changed=true;}}
-    for (let task of orderRoleQueue(candidates,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed)) {
+    for(const pause of this.db.list('chatQueuePauses')){if(!candidates.some(t=>!t.currentRunId&&t.projectId===pause.projectId&&conversationIdOf(t)===pause.conversationId)){this.db.remove('chatQueuePauses',pause.id);changed=true;}}
+    let queue=orderRoleQueue(candidates,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed),cursor=0;const visited=new Set();
+    while(cursor<queue.length) {
+      if(yield){
+        ownership=terminalOwnershipLookup(this.db);recoveryChecks.clear();
+        // HTTP/Worker events may cancel, recall, reorder, rebind or add work while this pass is resting.
+        queue=orderRoleQueue([...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()].filter(t=>!visited.has(t.id)),id=>this.db.get('discussionQueueTurns',id)?.priorityUsed);cursor=0;
+      }
+      let task=queue[cursor++];if(!task)break;visited.add(task.id);
+      if(!task.discussionDeliveryId&&!task.discussionIntentId){task=this.db.get('tasks',task.id);if(!task||task.status!=='ready'||task.switchOperationId)continue;}
+      if(!this.db.get('projects',task.projectId))continue;
       if(!task.discussionDeliveryId&&!task.discussionIntentId&&followupFor(this.db,task)){task=new ProactiveFollowup(this.db).prepareStart(task.id);if(!task){changed=true;continue;}}
       const discussion=Boolean(task.discussionDeliveryId||task.discussionIntentId);
       const kind=task.discussionDeliveryId?'discussionDeliveries':'discussionIntents',recordId=task.discussionDeliveryId||task.discussionIntentId;
       const role = effectiveExecutionRole(this.db,task), worker = this.db.get('workers', role.nodeId);
       const active = this.db.activeRuns();
-      const reason = !discussion&&!task.steering&&paused.has(conversationIdOf(task)) ? tr('rooms.queuePaused')
+      const reason = !discussion&&!task.steering&&this.db.get('chatQueuePauses',conversationIdOf(task))?.paused ? tr('rooms.queuePaused')
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)
         : !task.contextPrepared ? tr('rooms.organizingConversation')
         : (task.sourceConflictId||task.sourceConflictPeerId||task.sourceConflictAssignmentRequestId)&&worker?.capabilities?.sourceSyncTools!==1 ? tr('sourceSync.failure',{code:'worker_unsupported',detail:''})
         : sourceInputWaitReason(this.db,task,role.nodeId) ? tr('sourceSync.failure',{code:sourceInputWaitReason(this.db,task,role.nodeId),detail:''})
-        : projectTerminalLock(this.db,task.projectId,role.nodeId) ? tr('rooms.projectUnderManualTerminalTakeover')
+        : projectTerminalLock(this.db,task.projectId,role.nodeId,ownership) ? tr('rooms.projectUnderManualTerminalTakeover')
         : !this.db.get('roles', role.id)?.enabled ? tr('rooms.roleDisabled2')
         : !isReady(role.nodeId) ? tr('rooms.waitingForNodeComeOnline')
         : !worker?.capabilities?.roomRoles ? tr('rooms.upgradeWorkerSupportRoles')
@@ -616,5 +635,5 @@ export class Rooms {
     });
   }
 }
-import { projectTerminalLock } from './terminal-resume.mjs';
+import { projectTerminalLock,terminalOwnershipLookup } from './terminal-resume.mjs';
 import { SessionQueue } from './session-queue.mjs';

@@ -354,6 +354,13 @@
                 <header class="settings-list-head"><div><h3 id="data-usage-title">Stored data</h3><p>What Home and each device store</p></div></header>
                 <div class="settings-list-body"><table class="data-table"><tbody id="data-table"></tbody></table></div>
               </section>
+              <section class="settings-list" aria-labelledby="performance-title">
+                <header class="settings-list-head"><div><h3 id="performance-title">Recent slow operations</h3><p>Home operations taking at least 200 ms; the latest 100 are kept until Home restarts. Refresh to read current observations.</p></div>
+                  <span class="settings-list-actions"><button class="secondary compact" id="performance-refresh" type="button">Refresh</button></span></header>
+                <p class="settings-list-note">Scheduling rests between work units; one blocking step cannot be interrupted. HTTP durations include transfer and waiting time, starting when Home receives the request.</p>
+                <p id="performance-feedback" class="settings-list-note" role="status" hidden></p>
+                <div class="settings-list-body"><table class="data-table"><tbody id="performance-table"></tbody></table></div>
+              </section>
             </section>
             <section class="settings-panel" data-settings-panel="information" data-layout="list" hidden>
               <section class="settings-list" aria-labelledby="software-title">

@@ -6,7 +6,7 @@ const short=value=>typeof value==='string'&&value.length>400?`${value.slice(0,40
 const ROLE_BODY=['prompt','instructions','systemPrompt'];
 /** Bodies the page never shows. The SQL page summaries remove the same paths, so a summary projects exactly like a full record. */
 export const PAGE_BODY_FIELDS=Object.freeze({
-  runs:['result','contextPacket','inputTask','teamContext','resumeNativeSession','runtimeInstructions','executionConfiguration'],
+  runs:['archivedRunInput','result','contextPacket','inputTask','teamContext','resumeNativeSession','runtimeInstructions','executionConfiguration'],
   tasks:['prompt','inputTask','contextPacket','teamContext'],
   requests:['summary','result','resumeSummary','reportSummary','execution'],
   runReports:['summary']});

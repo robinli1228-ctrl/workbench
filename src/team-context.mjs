@@ -4,12 +4,11 @@ import { supportsDiscussion, discussionTargetStatus } from './discussion-policy.
 import { tr } from './i18n.mjs';
 import { roleResponsibility } from './role-definition.mjs';
 
-const finished = new Set(['succeeded','failed','interrupted']);
 const activeTask = new Set(['ready','in_progress','waiting_discussion']);
 
 /** Peer duties come from the independent directory field, never from execution prompts or role names. */
 export function buildTeamContext(db, run, { online, inherit = true, forExecution = false, includeArchived = false } = {}) {
-  const runs = db.list('runs').filter(r=>r.projectId===run.projectId&&!finished.has(r.status));
+  const runs = db.activeRuns().filter(r=>r.projectId===run.projectId);
   const roles = db.list('roles').filter(r=>r.projectId===run.projectId&&(includeArchived||!r.archivedAt||runs.some(active=>active.roleId===r.id)))
     .sort((a,b)=>Number(Boolean(b.systemSupervisor))-Number(Boolean(a.systemSupervisor))||a.id.localeCompare(b.id));
   const tasks = db.list('tasks').filter(t=>t.projectId===run.projectId&&activeTask.has(t.status));

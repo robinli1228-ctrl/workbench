@@ -240,7 +240,7 @@ const sourceSync=new SourceSyncClient({db,data,pace:mediaPace,home:homeUrl.repla
 /** The local outbox is written to disk first and deleted only after Home confirms, so "sent" is never treated as "received". */
 function queueState(q, excludeRunId) {
   const state=turnStates.state(q.key,{ownerNodeId:q.ownerNodeId,runtime:q.runtime,excludeRunId});
-  const active=db.list('runs').some(r=>r.id!==excludeRunId && r.projectId===q.projectId && r.roleId===q.roleId && !terminal.has(r.status));
+  const active=db.activeRuns().some(r=>r.id!==excludeRunId && r.projectId===q.projectId && r.roleId===q.roleId);
   return state&&{...state,turnActive:state.turnActive||active,manualTakeover:state.manualTakeover||Boolean(projectTerminalLock(db,q.projectId,identity.nodeId))};
 }
 function emit(runId, type, payload) {
@@ -354,8 +354,8 @@ async function command(m) {
       if(compacting.has(m.run.roleSessionId))await compacting.get(m.run.roleSessionId);
       await checkNativeDriver(m);
       if(reservation.stopRequested){emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.taskHadNotStartedWas')});return;}
-      if (db.list('runs').some(r => r.id !== c.runId && r.status === 'reconciling')) throw new Error(tr('worker.workerFullHasProcessesAwaiting'));
-      if (executionConflict(m.run,db.list('runs').filter(r=>r.id!==c.runId && !terminal.has(r.status)).map(r=>({...r,nodeId:identity.nodeId})),{concurrent:m.run.concurrentWrites===true})) throw new Error(tr('worker.projectWorkspaceExclusiveOperationStill'));
+      if (db.activeRuns().some(r => r.id !== c.runId && r.status === 'reconciling')) throw new Error(tr('worker.workerFullHasProcessesAwaiting'));
+      if (executionConflict(m.run,db.activeRuns().filter(r=>r.id!==c.runId).map(r=>({...r,nodeId:identity.nodeId})),{concurrent:m.run.concurrentWrites===true})) throw new Error(tr('worker.projectWorkspaceExclusiveOperationStill'));
       emit(c.runId, 'status', { status: 'starting' });
       if(reservation.stopRequested || homeDisconnected || ws?.readyState!==1){emit(c.runId,'status',{status:'interrupted',error:tr('worker.interruptedByStopDisconnectWhile')});return;}
       let executionRepositories = m.run.repositories || [];
@@ -928,7 +928,7 @@ async function query(m,emit=send) {
       const input=m.path||{},runtime=input.runtime;
       const entry=input.entryId?db.get('nativeCatalogEntries',input.entryId):db.list('nativeCatalogEntries').find(e=>e.runtime===runtime&&e.sessionId===input.sessionId);
       if(entry&&(entry.runtime!==runtime||(input.sessionId&&entry.sessionId&&entry.sessionId!==input.sessionId)))throw new Error('Native catalog entry does not match this session');
-      const verdict=await deletableFolder({workspace:entry?.workspace,entry,registry:db.list('nativeCatalogEntries'),runs:db.list('runs').filter(r=>!terminal.has(r.status)),bindings:input.bindings||[],roots:await folderAccess.allowedRoots()});
+      const verdict=await deletableFolder({workspace:entry?.workspace,entry,registry:db.list('nativeCatalogEntries'),runs:db.activeRuns(),bindings:input.bindings||[],roots:await folderAccess.allowedRoots()});
       const holder=verdict.path&&db.list('terminalSessions').find(s=>!['released','cancelled'].includes(s.status)&&s.workspace&&(s.workspace===verdict.path||s.workspace.startsWith(`${verdict.path}/`)||verdict.path.startsWith(`${s.workspace}/`)&&s.sessionId===entry?.sessionId));
       const allowed=verdict.ok&&!holder,reason=!verdict.ok&&!verdict.missing?verdict.reason:holder?'A CLI is still running in this folder; end the takeover or quit it in iTerm first':null;
       if(input.dryRun){send({type:'reply',id:m.id,result:{ok:allowed||Boolean(verdict.missing&&entry),missing:Boolean(verdict.missing),reason,path:verdict.path||entry?.workspace||null}});return;}
@@ -1034,7 +1034,7 @@ async function query(m,emit=send) {
         const input=m.path,role=input.roleSettings;
         if(input.nodeId!==identity.nodeId||typeof input.projectId!=='string'||!input.projectId||typeof input.roleId!=='string'||!input.roleId||!role)throw new Error(tr('worker.invalidTakeoverId'));
         const issue=runtimeIssue({capabilities:{runtimeDiscovery:true},runtimes},role.runtime,role.model);if(issue)throw new Error(issue);
-        const busy=()=>db.list('runs').some(r=>r.status==='reconciling'||r.projectId===input.projectId&&!terminal.has(r.status))||db.list('workerRoleSwitches').some(s=>s.projectId===input.projectId&&s.roleId===input.roleId&&!s.released);
+        const busy=()=>db.activeRuns().some(r=>r.status==='reconciling'||r.projectId===input.projectId)||db.list('workerRoleSwitches').some(s=>s.projectId===input.projectId&&s.roleId===input.roleId&&!s.released);
         if(busy())throw new Error(tr('home.projectStillExecutingOnDevice'));
         await warmSessions.closeProject(input.projectId);
         const workspace=await projectRoot(input.workspace),nativeSession={...await nativeEnvironment(role.runtime),id:null};
@@ -1053,7 +1053,7 @@ async function query(m,emit=send) {
       const r=db.get('runs',m.runId);
       if(r)await warmSessions.closeProject(r.projectId);
       if(!r || !terminal.has(r.status) || sessions.has(r.id) || managedRunProcessState(r)!=='exited')throw new Error(tr('worker.originalCliHasNotExited'));
-      if(db.list('runs').some(other=>other.projectId===r.projectId&&!terminal.has(other.status)))throw new Error(tr('worker.projectStillHasExecutionsOn'));
+      if(db.activeRuns().some(other=>other.projectId===r.projectId))throw new Error(tr('worker.projectStillHasExecutionsOn'));
       const lock=projectTerminalLock(db,r.projectId,identity.nodeId);
       if(lock && lock.id!==id)throw new Error(tr('worker.projectHasBeenTakenOver'));
       if(prior)throw new Error(tr('worker.takeoverIdHasAlreadyBeen'));
@@ -1069,7 +1069,7 @@ async function query(m,emit=send) {
       if(r.permissionScope)scopedTerminalArgs(nativeSession.runtime,r.permissionScope,[base]);
       const info={id,projectId:r.projectId,nodeId:identity.nodeId,runId:r.id,status:'prepared',workspace,nativeSession,privateEnv,historyFile,...(r.permissionScope?{permissionScope:r.permissionScope,toolRoots:[base]}:{}),createdAt:new Date().toISOString()};
       // A dispatch/revocation that occurred during the file check must be rejected again.
-      if(db.get('terminalSessions',id) || projectTerminalLock(db,r.projectId,identity.nodeId) || db.list('runs').some(other=>other.projectId===r.projectId&&!terminal.has(other.status)))throw new Error(tr('worker.executionStateHasChangedCheck'));
+      if(db.get('terminalSessions',id) || projectTerminalLock(db,r.projectId,identity.nodeId) || db.activeRuns().some(other=>other.projectId===r.projectId))throw new Error(tr('worker.executionStateHasChangedCheck'));
       if(occupiedSlots()>=capacity)throw new Error(tr('capacity.full'));
       db.put('terminalSessions',info);
       try{await warmSessions.trim(occupiedSlots());}catch(e){releaseTerminalSession(db,id);reportCapacity();throw e;}
@@ -1246,7 +1246,7 @@ async function query(m,emit=send) {
 }
 // Reconcile saved startup identities after restart; PID reuse never authorizes a signal or native resume.
 recoverDeliveryCommands(db);
-for (const r of db.list('runs').filter(r => !terminal.has(r.status))) {
+for (const r of db.activeRuns()) {
   if(r.cliRecoveryWait){emit(r.id,'status',{status:'waiting_user',cliRecoveryWait:true});continue;}
   const exited=managedRunProcessState(r)==='exited';
   emit(r.id, 'status', { status: exited ? 'interrupted' : 'reconciling', controlLost: true,
@@ -1287,7 +1287,7 @@ function connect() {
         registered=true;readySent=false;eventSent.clear();clearTimeout(reconnectCleanup);
         nativeTurns?.resume?.();
         if(m.retention)retention=normalizeRetention(m.retention);startMaintenance();
-        for (const r of db.list('runs').filter(r => !terminal.has(r.status))) emit(r.id, 'status', { status: r.status });
+        for (const r of db.activeRuns()) emit(r.id, 'status', { status: r.status });
         flushOutbox();console.log(tr('worker.workerConnected', { homeUrl, nodeId: identity.nodeId }));
         if (runtimeRetryDue) { runtimeRetryDue = false; void refreshRuntimes(); }
       }

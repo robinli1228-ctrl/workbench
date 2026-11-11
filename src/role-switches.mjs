@@ -7,7 +7,6 @@ import {tr} from './i18n.mjs';
 import {projectTerminalLock} from './terminal-resume.mjs';
 import {conversationIdOf,groupConversationIdOfSession,resolveConversationId} from './group-conversations.mjs';
 
-const terminal = new Set(['succeeded','failed','interrupted']);
 const planTerminal = new Set(['succeeded','completed_with_issues','completed','cancelled','blocked']);
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 const canonical = value => JSON.stringify(value, function(key,item) {return item && typeof item==='object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(k=>[k,item[k]])) : item;});
@@ -28,7 +27,7 @@ export class RoleSwitches {
   /** Freeze full history once; transfer it over authenticated HTTP rather than the bounded command socket. */
   history(id) {
     const op=this.operation(id),prior=this.db.get('roleSwitchHistory',id);if(prior)return prior;
-    const text=JSON.stringify(this.db.list('runs').filter(r=>r.projectId===op.projectId&&conversationIdOf(r)===conversationIdOf(op)&&r.roleId===op.roleId&&!r.switchOperationId&&!r.historyClearedAt).map(r=>({runId:r.id,sessionId:r.roleSessionId,status:r.status,task:this.db.get('tasks',r.taskId)?.prompt||'',result:r.result||'',error:r.error||''})));
+    const text=JSON.stringify(this.db.listProject('runs',op.projectId).filter(r=>conversationIdOf(r)===conversationIdOf(op)&&r.roleId===op.roleId&&!r.switchOperationId&&!r.historyClearedAt).map(r=>({runId:r.id,sessionId:r.roleSessionId,status:r.status,task:this.db.get('tasks',r.taskId)?.prompt||'',result:r.result||'',error:r.error||''})));
     return this.db.put('roleSwitchHistory',{id,projectId:op.projectId,roleId:op.roleId,text,hash:switchHash(text)});
   }
 
@@ -121,7 +120,7 @@ export class RoleSwitches {
   draining(op) {
     const relevant=t=>t.projectId===op.projectId&&belongsToDrain(this.db,op,t);
     return this.db.list('tasks').some(t=>relevant(t)&&['ready','in_progress','awaiting_acceptance','waiting_discussion'].includes(t.status))
-      ||this.db.list('runs').some(r=>r.projectId===op.projectId&&!terminal.has(r.status)&&relevant(this.db.get('tasks',r.taskId)||{}))
+      ||this.db.activeRuns().some(r=>r.projectId===op.projectId&&relevant(this.db.get('tasks',r.taskId)||{}))
       ||this.db.list('coordinationRequests').some(r=>op.drainRequestIds.includes(r.id)&&!['succeeded','failed','cancelled'].includes(r.status))
       ||this.db.list('executionPlans').some(p=>op.drainPlanIds.includes(p.id)&&!planTerminal.has(p.status));
   }
@@ -134,14 +133,14 @@ export class RoleSwitches {
       if(switchSettled(op))return {type:op.steps.released?'wait':'release_worker',id:`${id}:release`,operation:op};
       if(op.status==='blocked')return {type:'wait',operation:op};
       if(op.status==='cancelling') {
-        const active=this.db.list('runs').filter(r=>r.switchOperationId===id&&!terminal.has(r.status));
+        const active=this.db.activeRuns().filter(r=>r.switchOperationId===id);
         return {type:active.length?'stop':'release_worker',id:`${id}:cancel`,runIds:active.map(r=>r.id),operation:op};
       }
       if(op.status==='draining') {
         if(this.draining(op))return {type:'wait',operation:op};
         // The main session of the chat this switch hands over, not another chat's session of the role.
         const current=sessions(this.db,op.original).find(s=>s.conversationId===groupConversationIdOfSession(s)&&groupConversationIdOfSession(s)===conversationIdOf(op));
-        const history=this.db.list('runs').some(r=>r.projectId===op.projectId&&r.roleId===op.roleId&&!r.switchOperationId&&!r.historyClearedAt)||this.db.list('roleSessions').some(s=>s.projectId===op.projectId&&s.roleId===op.roleId&&s.nativeSessionId&&!s.candidateFor&&!s.historyClearedAt);
+        const history=this.db.listProject('runs',op.projectId).some(r=>r.roleId===op.roleId&&!r.switchOperationId&&!r.historyClearedAt)||this.db.list('roleSessions').some(s=>s.projectId===op.projectId&&s.roleId===op.roleId&&s.nativeSessionId&&!s.candidateFor&&!s.historyClearedAt);
         op=this.save(op,{status:'handoff',sourceSessionId:current?.id||null,sourceGeneration:current?.generation||null,noHistory:!history});
       }
       let type=op.status==='handoff'?'handoff':op.status==='verifying'?'verify':op.status==='prepared'?'commit':'wait';
@@ -161,7 +160,7 @@ export class RoleSwitches {
       if(receipt.step==='released') {
         if(!receipt.settled)throw new Error('Worker settlement is unconfirmed.');
         if(op.status==='cancelling') {
-          if(this.db.list('runs').some(r=>r.switchOperationId===id&&!terminal.has(r.status)))throw new Error('Maintenance still running.');
+          if(this.db.activeRuns().some(r=>r.switchOperationId===id))throw new Error('Maintenance still running.');
           const candidate=op.candidateSessionId&&this.db.get('roleSessions',op.candidateSessionId);
           if(candidate?.activeRunId)throw new Error('Candidate still locked.');
           if(candidate)this.db.put('roleSessions',{...candidate,status:'archived',updatedAt:this.stamp()});
@@ -193,7 +192,7 @@ export class RoleSwitches {
       const role=this.db.get('roles',op.roleId);
       if(switchHash(role)!==switchHash(op.original)||switchHash(this.workspace(role))!==op.workspaceHash)throw new Error('Role or workspace changed during handoff.');
       if(role.systemSupervisor&&switchHash(this.db.get('supervisorConfigs',`${op.projectId}:${op.nodeId}`))!==switchHash(op.originalSupervisorConfig))throw new Error('Supervisor configuration changed during handoff.');
-      if(this.draining(op)||this.db.list('runs').some(r=>r.roleId===op.roleId&&!terminal.has(r.status)))throw new Error('Role execution not settled.');
+      if(this.draining(op)||this.db.activeRuns().some(r=>r.roleId===op.roleId))throw new Error('Role execution not settled.');
       const source=op.sourceSessionId&&this.db.get('roleSessions',op.sourceSessionId),candidate=this.db.get('roleSessions',op.candidateSessionId);
       if(source&&(source.generation!==op.sourceGeneration||source.activeRunId||source.status==='archived'))throw new Error('Source session changed.');
       if(!candidate||candidate.candidateFor!==id||candidate.activeRunId||!candidate.nativeSessionId||candidate.runtime!==op.candidate.runtime)throw new Error('Candidate session not verified.');
@@ -212,7 +211,7 @@ export class RoleSwitches {
         const project=this.db.get('projects',op.projectId);this.db.put('projects',{...project,supervisorNodeId:op.nodeId});
       }
       for(const task of this.db.list('tasks')) {
-        if(task.roleId!==op.roleId||task.status!=='ready'||this.db.list('runs').some(r=>r.taskId===task.id))continue;
+        if(task.roleId!==op.roleId||task.status!=='ready'||this.db.runsForTask(task.id).length>0)continue;
         const executionBinding={switchOperationId:id,role:op.candidate};
         this.db.put('tasks',{...task,executionBinding});
         const request=task.requestId&&this.db.get('coordinationRequests',task.requestId);

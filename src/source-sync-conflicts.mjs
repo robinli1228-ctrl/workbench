@@ -57,7 +57,7 @@ export class SourceSyncConflicts {
     if(['verifying','resolved_pending_sync'].includes(c.status))throw syncError('sync_busy');
     if(role?.projectId!==c.projectId||!role.enabled||role.archivedAt||!isRoleConfigured(role)||!sourceScopeBinding(this.db,c.projectId,c.repositoryId,role.nodeId))throw syncError('modifier_unavailable');
     if(c.ownerRoleId===roleId&&['queued','resolving','verifying','resolved_pending_sync'].includes(c.status))return c;
-    if(this.db.list('runs').some(r=>r.sourceConflictId===c.id&&!terminal.has(r.status)))throw syncError('owner_still_running');
+    if(this.db.activeRuns().some(r=>r.sourceConflictId===c.id))throw syncError('owner_still_running');
     if(c.ownerTaskId){const task=this.db.get('tasks',c.ownerTaskId);if(task)this.db.put('tasks',{...task,status:'cancelled'});}
     const attempts=(c.attempts||0)+1;if(attempts>2&&actor.kind!=='human')return this.escalate(c,'repair_limit');
     const canonical=this.db.get('sourceSyncManifests',`${c.projectId}:${c.repositoryId}`);if(!canonical)throw syncError('baseline_missing');

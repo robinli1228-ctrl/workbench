@@ -65,7 +65,7 @@ function nativeSessionOwnership(db,{nodeId,runtime,sessionId}) {
   if(!sessionId||!runtime||!nodeId)return {projects,unknown};
   const sessions=db.list('roleSessions'),byId=new Map(sessions.map(s=>[s.id,s]));
   for(const session of sessions)if(session.runtime===runtime&&session.nativeSessionId===sessionId&&session.projectId){if(session.nodeId===nodeId)projects.add(session.projectId);else if(!session.nodeId)unknown.add(session.projectId);}
-  for(const run of db.list('runs'))if(run.nativeSession?.runtime===runtime&&run.nativeSession.id===sessionId&&run.projectId){
+  for(const run of db.nativeSessionRunMetadata(runtime,sessionId))if(run.projectId){
     const saved=byId.get(run.roleSessionId),device=run.nodeId||(saved?.projectId===run.projectId?saved.nodeId:null);
     if(device===nodeId)projects.add(run.projectId);else if(!device)unknown.add(run.projectId);
   }
@@ -90,17 +90,30 @@ export function nativeTerminalProject(db,{nodeId,runtime,sessionId,folderProject
 }
 
 /** Keep unreturned leases, including legacy standalone claims that actually own a group's native session. */
-export function terminalOwnsProject(db,session,projectId) {
+export function terminalOwnsProject(db,session,projectId,ownership=nativeSessionOwnership) {
   if(!projectId||closed.has(session.status))return false;
   if(session.projectId===projectId)return true;
   if(!['native','native-turn'].includes(session.kind))return false;
-  const {projects,unknown}=nativeSessionOwnership(db,{nodeId:session.nodeId,runtime:session.runtime||session.nativeSession?.runtime,sessionId:session.sessionId||session.nativeSession?.id});
+  const {projects,unknown}=ownership(db,{nodeId:session.nodeId,runtime:session.runtime||session.nativeSession?.runtime,sessionId:session.sessionId||session.nativeSession?.id});
   return projects.has(projectId)||unknown.has(projectId);
 }
 
+/** One scheduling pass reuses identity queries; any intervening write invalidates the lookup, including external writes. */
+export function terminalOwnershipLookup(db) {
+  const cache=new Map(),changes=db.db.prepare('SELECT total_changes() AS n'),version=db.db.prepare('PRAGMA data_version');let revision;
+  return (store,identity)=>{
+    if(db.db.isTransaction!==false){cache.clear();revision=undefined;return nativeSessionOwnership(store,identity);}
+    const next=changes.get().n+':'+version.get().data_version;
+    if(revision!==next){cache.clear();revision=next;}
+    const key=JSON.stringify([identity.nodeId,identity.runtime,identity.sessionId]);
+    if(!cache.has(key))cache.set(key,nativeSessionOwnership(store,identity));
+    return cache.get(key);
+  };
+}
+
 /** Take over the whole project's execution window on this node, avoiding concurrent use of the shared directory and deliveries. */
-export function projectTerminalLock(db, projectId, nodeId) {
-  return db.list('terminalSessions').find(s => s.nodeId === nodeId && terminalOwnsProject(db,s,projectId)) || null;
+export function projectTerminalLock(db, projectId, nodeId, ownership) {
+  return db.list('terminalSessions').find(s => s.nodeId === nodeId && terminalOwnsProject(db,s,projectId,ownership)) || null;
 }
 
 export function processAlive(pid) {
