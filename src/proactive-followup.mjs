@@ -200,6 +200,33 @@ export class ProactiveFollowup {
         status:t.status,step:t.plan?.steps?.length?`${(t.plan.currentStep||0)+1}/${t.plan.steps.length}`:null,
         stepsDone:t.plan?.steps?.length?t.plan.steps.filter(s=>s.status==='done').length:null,updatedAt:t.updatedAt,openCalls:linked.has(t.id)}));
   }
+  /**
+   * The oldest todo task of a quiet chat that no call is working on goes to its owner as one internal turn to begin it,
+   * at most once per task revision (an owner that leaves it unchanged is not started again; the supervisor's reminder
+   * lists it). A question the user has not answered keeps its run active, so the chat is not quiet and nothing starts.
+   */
+  startIdleTask(state){
+    if(!this.rooms)return null;
+    const conversationId=conversationIdOf(state),requests=this.requests(state),autoStarted=state.autoStarted||{};
+    const linked=new Set(requests.filter(r=>r.conversationTaskId&&!callTerminal.has(r.status)).map(r=>r.conversationTaskId));
+    const rows=this.db.db.prepare(`SELECT id FROM records WHERE kind='conversationTasks' AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.conversationId')=?
+      AND json_extract(data,'$.status')='todo' ORDER BY json_extract(data,'$.createdAt') LIMIT 50`).all(state.projectId,conversationId);
+    for(const {id} of rows){
+      const task=this.db.get('conversationTasks',id);
+      if(!task||task.status!=='todo'||linked.has(task.id)||autoStarted[task.id]===task.revision)continue;
+      const owner=this.db.get('roles',task.ownerRoleId||'');
+      if(!owner?.enabled||owner.archivedAt||!isRoleConfigured(owner))continue;
+      const messageId=`task-start-${createHash('sha256').update(`${task.id}:${task.revision}`).digest('hex').slice(0,32)}`;
+      const message=this.rooms.postSystemTask(state.projectId,{id:messageId,conversationId,roleId:owner.id,text:tr('taskStart.wake',{task:`T${task.number}`,title:task.title}),
+        source:{kind:'task_start',conversationTaskId:task.id}});
+      const request=new RoleCalls(this.db).adoptTask(message.taskIds[0]);
+      // Linked to the task so the owner sees it; marked like a return so its end does not wake the owner again, and an
+      // unstarted turn is withdrawn when the task closes meanwhile (task-return.mjs).
+      this.db.put('coordinationRequests',{...request,conversationTaskId:task.id,taskReturn:true,taskStart:true});
+      return {requestId:request.id,taskId:message.taskIds[0],autoStarted:{...autoStarted,[task.id]:task.revision}};
+    }
+    return null;
+  }
   reminder(state){
     const requests=this.requests(state),byId=new Map(requests.map(r=>[r.id,r])),describe=r=>{
       const seen=new Set();while(r.continuationRequestId&&byId.has(r.continuationRequestId)&&!seen.has(r.id)){seen.add(r.id);r=byId.get(r.continuationRequestId);}
@@ -233,6 +260,9 @@ export class ProactiveFollowup {
           state=this.db.put('proactiveFollowups',{...state,dueAt:new Date(this.clock().getTime()+state.silenceMinutes*60000).toISOString()});
         else if(state.anchorMessageId&&Date.parse(state.dueAt)<=this.clock().getTime()&&!state.requestId){
           if(!state.taskDriven&&this.concluded(state)){this.db.put('proactiveFollowups',{...state,settledMessageId:state.anchorMessageId,waitingReason:null});changed=true;return;}
+          // A quiet chat first starts its oldest todo task that nobody works on; the supervisor's reminder comes once none is left.
+          const start=state.taskDriven?this.startIdleTask(state):null;
+          if(start){this.db.put('proactiveFollowups',{...state,requestId:start.requestId,taskId:start.taskId,autoStarted:start.autoStarted,waitingReason:null});changed=true;return;}
           const role=this.db.get('roles',this.db.get('projects',state.projectId)?.supervisorRoleId||'');
           if(!role?.enabled||role.archivedAt||!isRoleConfigured(role))state=this.db.put('proactiveFollowups',{...state,waitingReason:tr('followup.noSupervisor')});
           else {

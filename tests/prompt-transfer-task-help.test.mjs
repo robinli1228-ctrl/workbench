@@ -13,6 +13,7 @@ const taskPart = packet => renderRunInputParts({ instruction: 'go', ...packet })
 test('only the owner of an open linked task is reminded to close it', () => runWithLanguage('zh', () => {
   const reminder = tr('conversationTasks.ownerReminder');
   assert.ok(taskPart({ roleId: 'exec', conversationTask: task() }).endsWith(reminder));
+  assert.match(reminder, /outside the platform|平台外/, 'only steps outside the platform left also counts as done');
   assert.ok(!taskPart({ roleId: 'reviewer', conversationTask: task() }).includes(reminder), 'a reviewer linked to the task is not its owner');
   assert.ok(!taskPart({ roleId: 'exec', conversationTask: task({ status: 'done' }) }).includes(reminder), 'a closed task needs no reminder');
 }));

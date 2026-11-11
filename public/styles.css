@@ -3299,7 +3299,9 @@ body[data-navigation-mode="sessions"] .native-session-gear { display: grid; plac
    Main composers still grow for quotes, attachments and multiple lines; side-question forms retain their own spacing. */
 @media (min-width: 1001px) {
   #chat-form, .native-takeover-form.chat-composer { display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; min-height: 67px; padding-block: 8px; }
-  #chat-form, .native-takeover-form.chat-composer:not(.native-ask-form) { min-height: 56px; padding-block: 2px; }
+  /* One line sits centred with about 6.8px above and below; the padding keeps that gap when the field grows to several lines,
+     instead of letting the text box touch the dock's bottom edge. 6.5px stays inside the 56px for one line. */
+  #chat-form, .native-takeover-form.chat-composer:not(.native-ask-form) { min-height: 56px; padding-block: 6.5px; }
   .inspector-tabs { height: 56px; min-height: 56px; padding-block: 5px; box-sizing: border-box; }
   body[data-project-sidebar] .sidebar-footer { height: 56px; min-height: 56px; padding-block: 5px; box-sizing: border-box; }
   /* The Sessions page dock draws its line on the footer around the form: count that line inside the 56px, as the side docks
