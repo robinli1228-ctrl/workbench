@@ -625,7 +625,7 @@ export function reassignRequest(db, calls, projectId, requestId, roleId) {
     if (!role || role.projectId !== projectId || role.archivedAt) throw new Error(tr('collabSessions.participantNotInProject'));
     const task = request.taskId ? db.get('tasks', request.taskId) : null;
     const started = request.currentRunId || task?.currentRunId || request.status !== 'queued'
-      || db.list('runs').some(r => r.requestId === requestId || (task && r.taskId === task.id));
+      || db.runsForRequest(requestId).length > 0 || (task && db.runsForTask(task.id).length > 0);
     if (started) throw new Error(tr('sessionQueue.reassignStarted'));
     calls.cancel(requestId);
     const next = calls.create({ id: `${requestId}:to:${roleId}`.slice(0, 200), projectId, targetRoleId: roleId, kind: request.kind, summary: request.summary,

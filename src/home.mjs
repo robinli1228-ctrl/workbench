@@ -1,3 +1,4 @@
+import {compactRunInputs} from './run-input-archive.mjs';
 import {createHomeNativeTurns} from './native-turns-home.mjs';
 import {DeviceTransportHome} from './device-transport-home.mjs';
 import {mergeReportedRuntimes,expireRuntimeQuota} from './runtime-quota.mjs';
@@ -169,7 +170,7 @@ db.transaction(()=>{
   for (const run of db.list('runs').filter(r=>terminal.has(r.status))) rooms.complete(run);
   archiveHistoricalReceipts(db);
 });
-for (const run of db.list('runs').filter(r => !terminal.has(r.status))) db.put('runs', { ...run, status: run.status === 'stopping' ? 'stopping' : 'reconciling' });
+for (const run of db.activeRuns().filter(r => !terminal.has(r.status))) db.put('runs', { ...run, status: run.status === 'stopping' ? 'stopping' : 'reconciling' });
 const sockets = new Map();
 const reconnectingNodes = new Set();
 /** Sessions-page takeover hook (src/native-turns-home.mjs). */
@@ -1147,7 +1148,7 @@ const server = http.createServer(async (req, res) => {
         const owner=nativeTerminalProject(db,{nodeId,runtime:b.runtime,sessionId:b.sessionId,folderProjectIds:preview.projectId?[preview.projectId]:[]}),projectId=owner||`native-tui:${b.operationId}`;
         if(owner&&!db.get('projects',owner))throw Error('The owning group chat is unavailable; its session was not reassigned');
         // Share the existing reservation/return lifecycle when a native folder belongs to a group chat.
-        if(projectTerminalLock(db,projectId,nodeId)||sourceSync.busy(projectId,nodeId)||db.list('runs').some(r=>r.nodeId===nodeId&&(r.status==='reconciling'||r.projectId===projectId&&!terminal.has(r.status))))throw Error('The related group chat is busy; finish its current work first');
+        if(projectTerminalLock(db,projectId,nodeId)||sourceSync.busy(projectId,nodeId)||db.activeRuns().some(r=>r.nodeId===nodeId&&(r.status==='reconciling'||r.projectId===projectId&&!terminal.has(r.status))))throw Error('The related group chat is busy; finish its current work first');
         if(db.get('terminalSessions',b.operationId))throw Error('Terminal request is being prepared');
         const createdAt=entry?.createdAt||new Date().toISOString(),claim={id:b.operationId,kind:'native',catalogEntryId,projectId,nodeId,runtime:b.runtime,sessionId:b.sessionId||null,nativeFingerprint:fingerprint,status:'preparing',createdAt:new Date().toISOString()};
         db.transaction(()=>{if(fresh)db.put('nativeCatalogEntries',{...entry,id:catalogEntryId,nodeId,runtime:b.runtime,sessionId:freshSessionId,title:b.title.trim(),workspace:preview.workspace,origin:'dialog',status:'preparing',hasHistory:false,previewAvailable:false,createdAt,modifiedAt:new Date().toISOString()});activateFolderBinding(folderCandidate);db.put('terminalSessions',claim);});change();
@@ -1282,7 +1283,7 @@ const server = http.createServer(async (req, res) => {
           // Who else is working in this project's other group chats (same folder under concurrent edits, the caller's own role
           // included): names, chat, device and status only, never their tasks or messages.
           const chat=conversationIdOf(run);
-          peers.otherChats=db.list('runs').filter(r=>r.projectId===run.projectId&&conversationIdOf(r)!==chat&&!terminal.has(r.status)).map(r=>({roleId:r.roleId,
+          peers.otherChats=db.activeRuns().filter(r=>r.projectId===run.projectId&&conversationIdOf(r)!==chat&&!terminal.has(r.status)).map(r=>({roleId:r.roleId,
             roleName:r.roleSnapshot?.name||db.get('roles',r.roleId)?.name||r.roleId,ownRole:r.roleId===run.roleId,
             chat:db.get('groupConversations',conversationIdOf(r))?.title||db.get('projects',r.projectId)?.name||conversationIdOf(r),nodeId:r.nodeId,status:r.status,updatedAt:r.updatedAt||null}));
           return json(res,peers);
@@ -1478,7 +1479,7 @@ const server = http.createServer(async (req, res) => {
         const b = await body(req);
         validateLocalSupervisor(db.get('workers', m[2]), b, online(m[2]));
         const project = db.get('projects', m[1]);
-        if (project?.supervisorNodeId !== m[2] && db.list('runs').some(r => r.projectId === m[1] && !terminal.has(r.status))) throw new Error(tr('home.supervisorDeviceCanOnlyBe'));
+        if (project?.supervisorNodeId !== m[2] && db.activeRuns().some(r => r.projectId === m[1] && !terminal.has(r.status))) throw new Error(tr('home.supervisorDeviceCanOnlyBe'));
         if (!db.get('workspaces',`${m[1]}:${m[2]}`)) await projectsAdmin.prepare(m[1],m[2]);
         if (b.enabled && !runtimeReportFresh(db.get('workers', m[2]), b.runtime)) {
           if (!online(m[2])) throw new Error(tr('home.supervisorDeviceOfflineConnectIt'));
@@ -1712,7 +1713,7 @@ const server = http.createServer(async (req, res) => {
           if(existing.runId===r.id && existing.status==='prepared')return json(res,terminalLaunchView(existing));
           throw new Error(tr('home.projectOnDeviceAlreadyUnder'));
         }
-        if(!terminal.has(r.status) || db.list('runs').some(other=>other.projectId===r.projectId&&other.nodeId===r.nodeId&&!terminal.has(other.status)))throw new Error(tr('home.projectStillExecutingOnDevice'));
+        if(!terminal.has(r.status) || db.activeRuns().some(other=>other.projectId===r.projectId&&other.nodeId===r.nodeId&&!terminal.has(other.status)))throw new Error(tr('home.projectStillExecutingOnDevice'));
         const worker=db.get('workers',r.nodeId);
         if(worker?.capabilities?.terminalResume!==1)throw new Error(tr('home.upgradeWorkerOnDeviceFirst'));
         const device=db.list('devices').find(d=>d.nodeId===r.nodeId);
@@ -1968,7 +1969,7 @@ wss.on('connection', ws => {
       sockets.delete(nodeId);
       nativeTurns.disconnected(nodeId);
       for (const [id, q] of queries) if (q.nodeId === nodeId) { queries.delete(id); q.reject(new Error(tr('home.executionNodeDisconnectedTryAgain'))); }
-      for (const r of db.list('runs').filter(r => r.nodeId === nodeId && !terminal.has(r.status))) db.put('runs', { ...r, status: r.status === 'stopping' ? 'stopping' : 'reconciling', updatedAt: new Date().toISOString() });
+      for (const r of db.activeRuns().filter(r => r.nodeId === nodeId && !terminal.has(r.status))) db.put('runs', { ...r, status: r.status === 'stopping' ? 'stopping' : 'reconciling', updatedAt: new Date().toISOString() });
       change();
     }
   });
@@ -1994,11 +1995,13 @@ function homeVacuumWhenQuiet() { clearTimeout(homeVacuumRetry); homeVacuumRetry 
   if (!homeQuiet()) { homeVacuumRetry = setTimeout(homeVacuumWhenQuiet, 10 * 60000); homeVacuumRetry.unref(); return { vacuumed: false, deferred: true }; }
   try { const result = vacuumIfWasteful(db); if (result.vacuumed) console.log(`Data: VACUUM ${Math.round(result.before / 1048576)} MB -> ${Math.round(result.after / 1048576)} MB`); return result; } catch (e) { console.error('Data: VACUUM failed', e.message); return { vacuumed: false, error: e.message }; } }
 async function runHomeMaintenance() {
-  try { const summary = await cleanupData(db, { policy: retentionPolicy(), log: line => console.error('Data:', line) });
+  try { const runInputs=await compactRunInputs(db);
+    if(runInputs.compacted)console.log(`Data: compressed inputs of ${runInputs.compacted} completed runs (${runInputs.beforeBytes-runInputs.afterBytes} bytes saved)`);
+    const summary = await cleanupData(db, { policy: retentionPolicy(), log: line => console.error('Data:', line) });
     const n = Object.values(summary.deleted).reduce((a, b) => a + b, 0); if (n) console.log(`Data: removed ${n} records (${Math.round(summary.bytes / 1048576)} MB)`);
     const syncCache = await sourceSync.storage.sweep(); if (syncCache.blobsDeleted) console.log(`Data: sync cache dropped ${syncCache.blobsDeleted} files (${Math.round(syncCache.blobBytes / 1048576)} MB)`);
     const media = await mediaCache.sweep().catch(e => ({ error: e.message })); if (media.deleted) console.log(`Data: media cache dropped ${media.deleted} files (${Math.round(media.freed / 1048576)} MB)`);
-    return { ...summary, syncCache, mediaCache: media, vacuum: homeVacuumWhenQuiet() }; }
+    return { ...summary, runInputs, syncCache, mediaCache: media, vacuum: homeVacuumWhenQuiet() }; }
   catch (e) { console.error('Data: cleanup failed', e.message); return { error: e.message }; }
 }
 const maintenanceFirst = setTimeout(() => void runHomeMaintenance(), 60000); maintenanceFirst.unref();

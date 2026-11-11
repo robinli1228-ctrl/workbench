@@ -568,7 +568,7 @@ export class RoleCalls {
     // A human steering one role does not authorize interrupting an admitted peer Run, even before launch acknowledgement.
     // Preserve that peer's continuation ancestry and descendants so its late result remains attributable.
     if(preserveRunningChildren) {
-      const active=this.db.list('runs').filter(r=>!terminal.has(r.status)),preserved=new Set();
+      const active=this.db.activeRuns(),preserved=new Set();
       for(const r of all.filter(r=>ids.has(r.id)&&r.targetRoleId!==root.targetRoleId)) {
         if(!active.some(run=>run.id===r.currentRunId||run.requestId===r.id||r.taskId&&(run.taskId===r.taskId||run.businessTaskId===r.taskId)))continue;
         let owner=r;
@@ -586,7 +586,7 @@ export class RoleCalls {
         // A retransmission only repairs the idle wait left by the original turn; it must not cancel a new run that this Task resumed later.
         const staleWait=r.status==='cancelled'&&task?.status==='waiting_discussion'&&task.currentRunId===r.currentRunId
           &&terminal.has(this.db.get('runs',task.currentRunId)?.status)
-          &&!this.db.list('runs').some(run=>(run.taskId===task.id||run.businessTaskId===task.id)&&!terminal.has(run.status));
+          &&!this.db.activeRuns().some(run=>(run.taskId===task.id||run.businessTaskId===task.id));
         if(!callTerminal.has(r.status)||staleWait) {
           const stopRunIds=task?new RoleDiscussions(this.db).invalidateTask(task.id,{reason:tr('roleCalls.businessCallCancelled')}).stopRunIds:[];
           runs.push(...stopRunIds);

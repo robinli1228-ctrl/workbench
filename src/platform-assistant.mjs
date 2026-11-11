@@ -60,7 +60,7 @@ export class PlatformAssistant {
   }
   state(){return {messages:this.db.get('projects',PROJECT_ID)?this.rooms.messages(PROJECT_ID).messages:[],proposals:this.db.list('platformProposals'),
     config:this.db.get('settings','assistant')||{},prompt:configurationPrompt(),
-    tasks:this.db.list('tasks').filter(t=>t.projectId===PROJECT_ID).slice(-10),runs:this.db.list('runs').filter(r=>r.projectId===PROJECT_ID).slice(-10)};}
+    tasks:this.db.list('tasks').filter(t=>t.projectId===PROJECT_ID).slice(-10),runs:this.db.listProject('runs',PROJECT_ID).slice(-10)};}
   async send(input) {
     if(this.preparing)throw new Error(tr('platformAssistant.assistantInitializing'));
     const {nodeId,runtime,model,effort}=input;

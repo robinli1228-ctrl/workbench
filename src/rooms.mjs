@@ -212,7 +212,7 @@ export class Rooms {
       if (activeRoleSwitch(this.db, roleId)) throw new Error('CLI switch in progress; cannot archive this role.');
       if (role?.projectId !== projectId) throw new Error(tr('rooms.roleDoesNotBelongProject2'));
       if (role.archivedAt) return role;
-      const activeRun = this.db.list('runs').some(r => r.projectId === projectId && r.roleId === roleId && !terminal.has(r.status));
+      const activeRun = this.db.activeRuns().some(r => r.projectId === projectId && r.roleId === roleId);
       const pendingTask = this.db.list('tasks').some(t => t.projectId === projectId && t.roleId === roleId && ['ready', 'in_progress', 'awaiting_acceptance'].includes(t.status));
       const pendingRequest = this.db.list('coordinationRequests').some(r => r.projectId === projectId && r.targetRoleId === roleId && !['succeeded', 'failed', 'cancelled'].includes(r.status));
       if (activeRun || pendingTask || pendingRequest) throw new Error(tr('rooms.roleStillHasUnfinishedWork'));
@@ -501,7 +501,7 @@ export class Rooms {
 
   /** Dispatch synchronously within a single Home, with one active run per role, respecting each node's total capacity. */
   schedule(isReady) {
-    const nodes = new Set(), recoveryChecks = new Set(); let changed = false;
+    const nodes = new Set(), recoveryChecks = new Set(),ownership=terminalOwnershipLookup(this.db); let changed = false;
     const discussions=new RoleDiscussions(this.db,{online:isReady});changed=discussions.recover().changed;
     const candidates=[...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()];
     // A paused queue that has emptied (sent, recalled or cancelled) un-pauses itself.
@@ -520,7 +520,7 @@ export class Rooms {
         : !task.contextPrepared ? tr('rooms.organizingConversation')
         : (task.sourceConflictId||task.sourceConflictPeerId||task.sourceConflictAssignmentRequestId)&&worker?.capabilities?.sourceSyncTools!==1 ? tr('sourceSync.failure',{code:'worker_unsupported',detail:''})
         : sourceInputWaitReason(this.db,task,role.nodeId) ? tr('sourceSync.failure',{code:sourceInputWaitReason(this.db,task,role.nodeId),detail:''})
-        : projectTerminalLock(this.db,task.projectId,role.nodeId) ? tr('rooms.projectUnderManualTerminalTakeover')
+        : projectTerminalLock(this.db,task.projectId,role.nodeId,ownership) ? tr('rooms.projectUnderManualTerminalTakeover')
         : !this.db.get('roles', role.id)?.enabled ? tr('rooms.roleDisabled2')
         : !isReady(role.nodeId) ? tr('rooms.waitingForNodeComeOnline')
         : !worker?.capabilities?.roomRoles ? tr('rooms.upgradeWorkerSupportRoles')
@@ -616,5 +616,5 @@ export class Rooms {
     });
   }
 }
-import { projectTerminalLock } from './terminal-resume.mjs';
+import { projectTerminalLock,terminalOwnershipLookup } from './terminal-resume.mjs';
 import { SessionQueue } from './session-queue.mjs';

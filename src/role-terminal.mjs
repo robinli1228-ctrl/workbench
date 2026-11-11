@@ -1,4 +1,3 @@
-import {terminal} from './store.mjs';
 import {roleWorkspace} from './project-repositories.mjs';
 import {activeRoleSwitch} from './role-switch-policy.mjs';
 import {projectTerminalLock} from './terminal-resume.mjs';
@@ -16,7 +15,7 @@ export function newTerminalBinding(db,projectId,roleId,online) {
   if(worker?.capabilities?.terminalFresh!==1)throw new Error(tr('roleTerminal.upgrade'));
   const issue=runtimeIssue(worker,role.runtime,role.model);if(issue)throw new Error(issue);
   if(projectTerminalLock(db,projectId,role.nodeId))throw new Error(tr('home.projectOnDeviceAlreadyUnder'));
-  const active=db.list('runs').filter(r=>r.nodeId===role.nodeId&&!terminal.has(r.status));
+  const active=db.activeRuns(role.nodeId);
   if(active.some(r=>r.status==='reconciling'))throw new Error(tr('rooms.nodeHasRunsAwaitingReconciliation'));
   if(active.some(r=>r.projectId===projectId))throw new Error(tr('home.projectStillExecutingOnDevice'));
   if(active.length+reservedTerminalSlots(db,role.nodeId)+(worker.organizerBusy||0)>=(worker.capacity||1))throw new Error(tr('capacity.full'));

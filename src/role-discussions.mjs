@@ -107,7 +107,7 @@ export class RoleDiscussions {
   assertStart(role,nodeId,task) {
     const switchReason=roleSwitchWaitReason(this.db,{...task,roleId:role.id});if(switchReason)throw new Error(switchReason);
     if(!role?.enabled||role.archivedAt||role.nodeId!==nodeId)throw new Error(tr('roleDiscussions.roleDisabledDeviceHasChanged'));
-    const worker=this.db.get('workers',nodeId),active=this.db.list('runs').filter(r=>!terminal.has(r.status));
+    const worker=this.db.get('workers',nodeId),active=this.db.activeRuns();
     this.assertReady(role);
     if(conversationIdOf(task)!==task.projectId&&worker?.capabilities?.groupConversations!==1)throw new Error(tr('conversations.workerUpgrade'));
     if(active.some(r=>r.nodeId===nodeId&&r.status==='reconciling')||active.filter(r=>r.nodeId===nodeId).length>=(worker.capacity||1)||active.some(r=>r.roleId===role.id&&conversationIdOf(r)===conversationIdOf(task)))throw new Error(tr('roleDiscussions.waitingForRoleFinishNode'));
@@ -129,7 +129,7 @@ export class RoleDiscussions {
       if(['nodeId','runtime','model'].some(k=>role[k]!==task.roleSnapshot?.[k]))throw new Error(tr('roleDiscussions.originalTaskRoleConfigurationHas'));
       const session=this.db.get('roleSessions',thread.ownerSessionId);
       if(!session||session.status==='archived'||session.roleId!==task.roleId||session.nodeId!==nodeId)throw new Error(tr('roleDiscussions.originalBusinessSessionNoLonger'));
-      if(this.db.list('runs').some(r=>r.businessTaskId===task.id&&!terminal.has(r.status)))throw new Error(tr('roleDiscussions.waitingForDiscussionTurnEnd'));
+      if(this.db.activeRuns().some(r=>r.businessTaskId===task.id))throw new Error(tr('roleDiscussions.waitingForDiscussionTurnEnd'));
       // This validated intent continues accepted work, not a new propagation. Retain its private publication boundary even after clearing the charging flag.
       this.db.put('tasks',{...task,status:'ready',waitingReason:null,discussionResumeBlocked:null,
         automaticPropagation:false,explicitPublish:Boolean(task.explicitPublish||task.automaticPropagation||task.collaborationBatchId),
@@ -234,7 +234,7 @@ export class RoleDiscussions {
       for(const thread of this.db.list('discussionThreads').filter(t=>t.taskId===taskId&&t.status==='open'))this.db.put('discussionThreads',{...thread,status:'cancelled',reason,revision:thread.revision+1,updatedAt:now()});
       for(const kind of ['discussionDeliveries','discussionIntents'])for(const item of this.db.list(kind).filter(i=>i.taskId===taskId&&!['consumed','started','cancelled','superseded'].includes(i.status)))this.db.put(kind,{...item,status:'cancelled',error:reason,updatedAt:now()});
       this.db.put('tasks',{...task,discussionWait:null,discussionResumeBlocked:null,...(directionRevision?{directionRevision}:{}),waitingReason:reason});
-      return {stopRunIds:this.db.list('runs').filter(r=>(r.taskId===taskId||r.businessTaskId===taskId)&&!terminal.has(r.status)).map(r=>r.id)};
+      return {stopRunIds:this.db.activeRuns().filter(r=>(r.taskId===taskId||r.businessTaskId===taskId)).map(r=>r.id)};
     });
   }
 
@@ -302,7 +302,7 @@ export class RoleDiscussions {
       availability:m.archived?'archived':!m.enabled?'disabled':!m.configured?'unconfigured':m.online===false?'offline':m.activeRunIds.length?'running':m.tasks.length?'queued':m.online===null?'unknown':'idle',
       communication:m.communication,['token \u662f\u4f59\u989d']:roleTokenBalance(m,this.db.get('workers',m.nodeId))
     }))};
-    const runs=this.db.list('runs').filter(r=>r.projectId===ctx.run.projectId&&!terminal.has(r.status));
+    const runs=this.db.activeRuns().filter(r=>r.projectId===ctx.run.projectId);
     const tasks=this.db.list('tasks').filter(t=>t.projectId===ctx.run.projectId);
     const messages=this.db.list('roomMessages').filter(m=>m.projectId===ctx.run.projectId);
     return {observedAt:team.observedAt,teamVersion:team.version,memberCount:team.memberCount,selfRoleId:team.selfRoleId,notice:tr('roleDiscussions.snapshotManagedRoleStatusNot'),

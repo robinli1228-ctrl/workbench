@@ -164,7 +164,7 @@ export class ExecutionPlans {
           // stage must settle normally, without treating a successful CLI exit as permission to deploy or migrate.
           if(stage.exclusive||stage.members.some(m=>exclusive.has(m.purpose)))throw new Error(tr('executionPlans.exclusiveStageOutsidePlan'));
           if(stage.status==='pending') {
-            if(this.db.list('runs').some(r=>r.projectId===plan.projectId && !terminal.has(r.status))) continue;
+            if(this.db.activeRuns().some(r=>r.projectId===plan.projectId)) continue;
             const nodes=[...new Set(plan.stages.flatMap(s=>s.members.map(m=>m.nodeId)))];
             if(nodes.some(id=>this.db.get('workers',id)?.capabilities?.executionScheduling!==1)) { throw new Error(tr('executionPlans.targetWorkerHasNotBeen')); }
             if(stage.sourceSyncBatchId){

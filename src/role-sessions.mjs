@@ -106,7 +106,7 @@ export class RoleSessions {
       const sessions=this.list(projectId,{roleId}).filter(s=>groupConversationIdOfSession(s)===conversationId),ids=new Set(sessions.map(s=>s.id));
       const current=sessions.find(s=>(expectedSessionId?s.id===expectedSessionId:s.conversationId===conversationId) && s.status!=='archived' && !s.candidateFor);
       if((current?.id||null)!==expectedSessionId)throw new Error(tr('roleSessions.historySessionChanged'));
-      const runs=this.db.list('runs').filter(r=>r.projectId===projectId && conversationIdOf(r)===conversationId && r.roleId===roleId);
+      const runs=this.db.listProject('runs',projectId).filter(r=>conversationIdOf(r)===conversationId && r.roleId===roleId);
       if(sessions.some(s=>s.activeRunId) || runs.some(r=>!['succeeded','failed','interrupted'].includes(r.status))
         || this.db.list('tasks').some(t=>t.projectId===projectId && conversationIdOf(t)===conversationId && t.roleId===roleId && ['ready','in_progress'].includes(t.status))
         || this.db.list('coordinationRequests').some(r=>r.projectId===projectId && conversationIdOf(r)===conversationId && r.targetRoleId===roleId && !['succeeded','failed','cancelled'].includes(r.status))
