@@ -33,17 +33,18 @@ export function answerRecord(questions,given,failed=false){
 
 /**
  * History rows to transcript rows: a question call and its result (paired by call id) become the user's answer row at the
- * result's place and time; a result for a question whose call is on an earlier page names its own questions. A call whose
+ * result's place and time; a result whose call is on an earlier page keeps its tool role until that page is loaded. A call whose
  * result has not come yet shows nothing here (the page's question card stands for it).
  */
 export function answerRows(rows){
- if(!rows.some(row=>row.role==='question_call'||row.role==='question_answer'))return rows;
+ if(!rows.some(row=>row.role==='question_call'))return rows;
  const asked=new Map(),out=[];
  for(const row of rows){
   if(row.role==='question_call'){asked.set(row.callId,row);continue;}
   const call=asked.get(row.callId);
-  if(row.role==='question_answer'||(row.role==='tool_result'&&call)){
-   const questions=call?.questions||Object.keys(row.given?.byText||row.given?.byId||{}).map((question,i)=>({id:row.given?.byId?question:`q${i+1}`,question}));
+  if(call&&['question_answer','tool_result'].includes(row.role)){
+   // The call supplies the trusted question schema, including secret flags. A result alone is still a tool result.
+   const questions=call.questions;
    asked.delete(row.callId);out.push({role:'user',text:'',answer:answerRecord(questions,row.given,row.failed===true),timestamp:row.timestamp||null,...(row.id?{id:row.id}:{})});continue;}
   out.push(row);
  }

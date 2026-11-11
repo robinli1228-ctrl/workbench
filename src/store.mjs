@@ -538,9 +538,13 @@ export class Store {
       // The page splits the role's card at the answer: what the role said since its previous question (or the run start) leads the
       // first part, and the next part is timed from the answer. Only this run's message events in that span are read.
       if (e.type === 'question' && !terminal.has(next.status)) {
-        const since = Math.max(0, ...this.list('approvals').filter(a => a.runId === r.id && a.kind === 'question' && Number.isFinite(a.seq)).map(a => a.seq));
-        const said = this.db.prepare('SELECT data FROM events WHERE run_id=? AND seq>? AND seq<? ORDER BY seq').all(r.id, since, e.seq).map(row => JSON.parse(row.data))
-          .filter(item => item.type === 'message' && typeof item.payload?.text === 'string' && item.payload.phase !== 'final_answer' && item.payload.text.trim()).map(item => item.payload.text.trim());
+        const since = this.db.prepare("SELECT coalesce(max(json_extract(data,'$.seq')),0) AS seq FROM records WHERE kind='approvals' AND json_extract(data,'$.runId')=? AND json_extract(data,'$.kind')='question'").get(r.id).seq;
+        // Only a recent, indexed window contributes to the preview; tool payloads never cross into JS.
+        const recent = this.db.prepare(`SELECT CASE WHEN json_extract(data,'$.type')='message'
+          AND coalesce(json_extract(data,'$.payload.phase'),'')!='final_answer'
+          AND json_type(data,'$.payload.text')='text' THEN substr(json_extract(data,'$.payload.text'),-4000) END AS text
+          FROM events WHERE run_id=? AND seq>? AND seq<? ORDER BY seq DESC LIMIT 128`).all(r.id, since, e.seq);
+        const said = recent.reverse().map(row => row.text?.trim()).filter(Boolean);
         this.put('approvals', { ...e.payload, createdAt: e.createdAt, seq: e.seq, ...(said.length ? { lead: said.join('\n\n').slice(-4000) } : {}) });
       }
       if (e.type === 'question_resolved') { const a = this.get('approvals', e.payload.id); if (a && ['pending', 'responding'].includes(a.status)) this.put('approvals', { ...a, status: e.payload.status || 'answered', resolvedAt: e.createdAt }); }

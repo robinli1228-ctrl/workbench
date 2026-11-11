@@ -1,7 +1,7 @@
 // A CLI's question to the user (Claude's AskUserQuestion, Codex's request_user_input) and the user's answer, read back from
 // the CLI's own history. History pages are parsed one record at a time, so each record is labelled on its own: the call
-// becomes a `question_call` row with its questions, a result that carries answers a `question_answer` row, and the page pairs
-// them by call id into the user's answer message (public/question-answer.js). The question tool is not listed as a step.
+// becomes a `question_call` row with its questions, a result retains its tool row with candidate answers, and the page pairs
+// them by call id only when the question schema is loaded (public/question-answer.js). The question tool is not listed as a step.
 
 const QUESTION_TOOLS = new Set(['AskUserQuestion', 'request_user_input']);
 export const isQuestionTool = name => QUESTION_TOOLS.has(String(name || ''));
