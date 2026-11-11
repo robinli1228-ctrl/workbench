@@ -386,7 +386,7 @@ async function dispatch(nodeId) {
     if (!run) continue;
     // Historical launch receipts cannot execute again; reject them before native ownership reads or other admission work.
     if (c.type === 'launch' && (terminal.has(run.status) || run.status === 'stopping')) continue;
-    if(['launch','delivery_publish'].includes(c.type)&&sourceSync.busy(run.projectId,nodeId))continue;
+    if(sourceSync.blocksDispatch(run.projectId,nodeId,c.type))continue;
     if (['launch','delivery_publish'].includes(c.type) && projectTerminalLock(db,run.projectId,nodeId)) continue;
     const reviewIssue=reviewDeliveryIssue(db.get('workers',nodeId),db.get('deliveries',c.deliveryId||run.deliveryId||''));
     if(c.type==='delivery_publish'&&reviewIssue){
@@ -464,7 +464,7 @@ async function dispatch(nodeId) {
     }
     if(['launch','delivery_publish'].includes(c.type)){
       const currentRequest=run.requestId?db.get('coordinationRequests',run.requestId):db.list('coordinationRequests').find(r=>r.currentRunId===run.id);
-      if(currentRequest?.status==='cancelled'||sourceSync.busy(run.projectId,nodeId)||projectTerminalLock(db,run.projectId,nodeId))continue;
+      if(currentRequest?.status==='cancelled'||sourceSync.blocksDispatch(run.projectId,nodeId,c.type)||projectTerminalLock(db,run.projectId,nodeId))continue;
     }
     const sentAt=new Date().toISOString(),platformPrompt=c.launchInput?.platformPrompt??(run.switchOperationId?'Maintenance only: read existing state; do not perform business actions.':minimal?settings.platformPrompt:legacyExecutionPrompt(settings.platformPrompt));
     // A launch keeps the language it was first sent in, so a re-send after a language change repeats the identical prompt.
