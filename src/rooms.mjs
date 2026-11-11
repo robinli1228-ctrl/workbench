@@ -501,19 +501,38 @@ export class Rooms {
 
   /** Dispatch synchronously within a single Home, with one active run per role, respecting each node's total capacity. */
   schedule(isReady) {
-    const nodes = new Set(), recoveryChecks = new Set(),ownership=terminalOwnershipLookup(this.db); let changed = false;
+    const steps=this.scheduleSteps(isReady);let next=steps.next();while(!next.done)next=steps.next(false);return next.value;
+  }
+
+  /** Home yields between complete admissions; synchronous callers keep the same admission implementation. */
+  async scheduleCooperatively(isReady,checkpoint) {
+    const steps=this.scheduleSteps(isReady);let next=steps.next();
+    while(!next.done){const wait=checkpoint();next=steps.next(wait?await wait:false);}return next.value;
+  }
+
+  /** Never yield between capacity/ownership checks and startTask. A resumed slice rebuilds all mutable admission inputs. */
+  *scheduleSteps(isReady) {
+    const nodes = new Set(), recoveryChecks = new Set();let ownership=terminalOwnershipLookup(this.db),changed=false;
     const discussions=new RoleDiscussions(this.db,{online:isReady});changed=discussions.recover().changed;
     const candidates=[...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()];
     // A paused queue that has emptied (sent, recalled or cancelled) un-pauses itself.
-    const paused=new Set();
-    for(const pause of this.db.list('chatQueuePauses')){if(candidates.some(t=>!t.currentRunId&&t.projectId===pause.projectId&&conversationIdOf(t)===pause.conversationId))paused.add(pause.conversationId);else{this.db.remove('chatQueuePauses',pause.id);changed=true;}}
-    for (let task of orderRoleQueue(candidates,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed)) {
+    for(const pause of this.db.list('chatQueuePauses')){if(!candidates.some(t=>!t.currentRunId&&t.projectId===pause.projectId&&conversationIdOf(t)===pause.conversationId)){this.db.remove('chatQueuePauses',pause.id);changed=true;}}
+    let queue=orderRoleQueue(candidates,id=>this.db.get('discussionQueueTurns',id)?.priorityUsed),cursor=0;const visited=new Set();
+    while(cursor<queue.length) {
+      if(yield){
+        ownership=terminalOwnershipLookup(this.db);recoveryChecks.clear();
+        // HTTP/Worker events may cancel, recall, reorder, rebind or add work while this pass is resting.
+        queue=orderRoleQueue([...this.db.chatTasks(['ready']).filter(t=>!t.switchOperationId),...discussions.candidates()].filter(t=>!visited.has(t.id)),id=>this.db.get('discussionQueueTurns',id)?.priorityUsed);cursor=0;
+      }
+      let task=queue[cursor++];if(!task)break;visited.add(task.id);
+      if(!task.discussionDeliveryId&&!task.discussionIntentId){task=this.db.get('tasks',task.id);if(!task||task.status!=='ready'||task.switchOperationId)continue;}
+      if(!this.db.get('projects',task.projectId))continue;
       if(!task.discussionDeliveryId&&!task.discussionIntentId&&followupFor(this.db,task)){task=new ProactiveFollowup(this.db).prepareStart(task.id);if(!task){changed=true;continue;}}
       const discussion=Boolean(task.discussionDeliveryId||task.discussionIntentId);
       const kind=task.discussionDeliveryId?'discussionDeliveries':'discussionIntents',recordId=task.discussionDeliveryId||task.discussionIntentId;
       const role = effectiveExecutionRole(this.db,task), worker = this.db.get('workers', role.nodeId);
       const active = this.db.activeRuns();
-      const reason = !discussion&&!task.steering&&paused.has(conversationIdOf(task)) ? tr('rooms.queuePaused')
+      const reason = !discussion&&!task.steering&&this.db.get('chatQueuePauses',conversationIdOf(task))?.paused ? tr('rooms.queuePaused')
         : this.db.get('projects',task.projectId)?.setupStatus==='copy_pending' ? tr('teamCopy.notReady')
         : roleSwitchWaitReason(this.db,task) ? roleSwitchWaitReason(this.db,task)
         : steeringWaitReason(this.db,task) ? steeringWaitReason(this.db,task)

@@ -1,4 +1,5 @@
 import {compactRunInputs} from './run-input-archive.mjs';
+import {SlowOperations,cooperativeSlice,coalescedScheduler,httpOperation} from './home-performance.mjs';
 import {createHomeNativeTurns} from './native-turns-home.mjs';
 import {DeviceTransportHome} from './device-transport-home.mjs';
 import {mergeReportedRuntimes,expireRuntimeQuota} from './runtime-quota.mjs';
@@ -104,6 +105,7 @@ if (!workerToken) {
   await chmod(tokenFile, 0o600);
 }
 const db = new Store(join(data, 'home.sqlite'));
+const slowOperations=new SlowOperations();
 // The global "pause remote execution" switch was removed; drop a stored flag so no install keeps a stale paused state around.
 const storedSettings=db.get('settings','main');
 if(storedSettings&&Object.hasOwn(storedSettings,'paused')){const {paused,...rest}=storedSettings;db.put('settings',rest);}
@@ -208,7 +210,7 @@ const change = () => { clearTimeout(changeTimer);changeTimer=null;for (const r o
 const outputChanged=()=>{if(!changeTimer){changeTimer=setTimeout(change,100);changeTimer.unref();}};
 const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify(payload)); };
 const online = id => sockets.get(id)?.readyState === 1&&!reconnectingNodes.has(id);
-const sourceSync=new SourceSyncHome({db,data,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery,watchUpload:(nodeId,req)=>mediaStreams.watchUpload(nodeId,req)});
+const sourceSync=new SourceSyncHome({db,data,diagnostics:slowOperations,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery,watchUpload:(nodeId,req)=>mediaStreams.watchUpload(nodeId,req)});
 const projectFiles=new ProjectFiles({db,online,query:workerQuery});
 // wb device ls / read / write for roles and Sessions-page CLIs: the device's level in the project or session settings
 // decides the scope the Worker gets; at most two requests per device at a time, and a write goes in 48 KB parts, so a
@@ -535,70 +537,88 @@ function chatScheduleError(error,requestId='') {
     if(chatScheduleErrors.size>100)chatScheduleErrors.delete(chatScheduleErrors.keys().next().value);
   }
 }
-/** Every entry point (timer, HTTP and Worker events) shares the same exception boundary. */
-function scheduleChat() {
-  try {scheduleChatTurn();}catch(error){chatScheduleError(error);}
-}
-/**
- * Schedule as soon as an event frees a slot or settles work (a run ends, a pre-start check answers), instead of at the next
- * one-second tick; events of the same moment share one pass. Each hop of a hand-off (a turn ends, its wake is created, the
- * next turn launches) used to wait for that tick.
- */
-let chatSoon=false;
-function scheduleChatSoon() {
-  if(chatSoon)return;chatSoon=true;
-  setImmediate(()=>{chatSoon=false;scheduleChat();});
-}
-/** Scheduling does not call a model; it only issues new executions after the Worker has finished reconnection verification. */
-function scheduleChatTurn() {
-  cliRecovery.tick();
-  void roleSwitchRuntime.tick();
-  if(reconcileCallResults(db,calls))change();
-  try { if(scheduledJobs.tick()) change(); } catch(error) {console.error(tr('home.scheduledJobCheckFailed'),error.message);}
-  void executionPlans.advance().then(changed=>{if(changed)change();}).catch(error=>console.error(tr('home.executionStageAdvanceFailed'),error.message));
-  for (const nodeId of deliveries.schedule()) dispatch(nodeId);
-  for (const task of db.chatTasks().filter(t => !t.switchOperationId && !t.requestId)) calls.adoptTask(task.id);
-  if(calls.expireWaits())change();
-  for (const request of db.schedulableRequests()) {
-    try {
-      if (request.status === 'waiting_call') calls.resume(request.id);
-      if (['queued', 'waiting_delivery'].includes(request.status)) {
-        const next=calls.reconcile(request.id);
-        if(next?.status==='failed'&&next.admissionError)change();
+/** Timer, HTTP and Worker events share one pass; triggers during a yield coalesce into one follow-up. */
+const chatScheduling=coalescedScheduler({run:scheduleChatTurn,onError:chatScheduleError});
+function scheduleChat() { chatScheduling.request(); }
+/** Event-driven wakes and the one-second fallback use the same coalescer. */
+function scheduleChatSoon() { scheduleChat(); }
+/** Scheduling issues executions only after Worker reconciliation, and rests between complete units after 200 ms. */
+async function scheduleChatTurn() {
+  const checkpoint=cooperativeSlice();
+  const phase=async(name,fn)=>{await slowOperations.measureAsync(`scheduler.${name}`,fn);const wait=checkpoint();if(wait)await wait;};
+  await slowOperations.measureAsync('scheduler.pass',async()=>{
+    await phase('recovery',()=>{cliRecovery.tick();void roleSwitchRuntime.tick();});
+    await phase('receipts',()=>{if(reconcileCallResults(db,calls))change();});
+    await phase('jobs',()=>{
+      try {if(scheduledJobs.tick())change();}catch(error){console.error(tr('home.scheduledJobCheckFailed'),error.message);}
+      void executionPlans.advance().then(changed=>{if(changed)change();}).catch(error=>console.error(tr('home.executionStageAdvanceFailed'),error.message));
+    });
+    await phase('deliveries',()=>{for(const nodeId of deliveries.schedule())dispatch(nodeId);});
+    await phase('adopt',async()=>{
+      for(const candidate of db.chatTasks().filter(t=>!t.switchOperationId&&!t.requestId)){
+        const wait=checkpoint();if(wait)await wait;
+        const task=db.get('tasks',candidate.id);if(task&&['ready','in_progress'].includes(task.status)&&!task.switchOperationId&&!task.requestId)calls.adoptTask(task.id);
       }
-    }catch(error){chatScheduleError(error,request.id);}
-  }
-  try {if(wakeCallOutcomes(db,(receipt,text)=>rooms.postSystemTask(receipt.projectId,{id:`outcome-${receipt.id.replace(/^rr:/,'')}`,conversationId:receipt.conversationId,
-    roleId:receipt.ownerRoleId,text,source:{kind:'call_outcome',receiptId:receipt.id}})))change();}catch(error){console.error('Call outcome wake:',error.message);}
-  try {if(wakeTaskReturns(db,(item,text)=>{const message=rooms.postSystemTask(item.projectId,{id:item.id,conversationId:item.conversationId,roleId:item.ownerRoleId,text,
-    source:{kind:'task_return',conversationTaskId:item.conversationTaskId,runId:item.runId}}),request=calls.adoptTask(message.taskIds[0]);
-    db.put('coordinationRequests',{...request,conversationTaskId:item.conversationTaskId,taskReturn:true});return message;}))change();}catch(error){console.error('Task return:',error.message);}
-  try {if(proactiveFollowup.tick())change();}catch(error){console.error('Proactive follow-up:',error.message);}
-  try {if(dueRoleCompactions(db,{online:id=>online(id)&&sockets.get(id).workerReady,send:(nodeId,payload)=>send(sockets.get(nodeId),payload)}))change();}catch(error){console.error('Role compaction:',error.message);}
-  for(const task of db.chatTasks(['ready']))prepareChatContext(task);
-  const scheduled = rooms.schedule(id => online(id) && sockets.get(id).workerReady);
-  for (const nodeId of scheduled.nodes) dispatch(nodeId);
-  for(const nodeId of new Set(db.pendingCommands().filter(c=>(!c.lastSentAt||Date.now()-Date.parse(c.lastSentAt)>=5000)).map(c=>c.nodeId)))void dispatch(nodeId);
-  if (scheduled.changed) change();
-  // Queued work claims capacity first; background organization does not take up the queued waiting stage of business roles.
-  const settings=normalizePlatformSettings(db.get('settings','main')),memoryConfig=settings.memoryOrganizer;
-  // An organizer slot: the device is ready, offers the capability and has room beside running work and other organizers.
-  const organizerSlot=(nodeId,capability)=>online(nodeId) && sockets.get(nodeId).workerReady && db.get('workers',nodeId)?.capabilities?.[capability]===1
-    && db.activeRuns(nodeId).length+reservedTerminalSlots(db,nodeId)+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1);
-  void conversationContext.drainOne({
-    config:settings.conversationOrganizer,
-    // A memory batch holds its device's organizer slot from before its AGENTS.md read until the model answers.
-    canRun:nodeId=>!(platformMemory.processing && memoryConfig.nodeId===nodeId) && organizerSlot(nodeId,'summaryBatches'),
-    query:(snapshot,config)=>workerQuery({nodeId:config.nodeId},'conversation_summary',{snapshot,config},125000),change
-  }).catch(error=>console.error(tr('home.backgroundConversationOrganizationFailed'),error.message));
-  // Memory organizing runs once a day (or when asked), one batch at a time, after conversation organizing on a shared device.
-  if(platformMemory.schedule(memoryConfig))change();
-  void platformMemory.drainOne({
-    config:memoryConfig,
-    canRun:nodeId=>!conversationContext.processing && organizerSlot(nodeId,'memoryOrganizer'),
-    query:(prompt,config)=>workerQuery({nodeId:config.nodeId},'memory_organize',{prompt,config},310000),
-    agentsMd:projectAgentsMd,change
-  }).catch(error=>console.error('Memory organizing:',error.message));
+    });
+    await phase('waits',()=>{if(calls.expireWaits())change();});
+    await phase('requests',async()=>{
+      for(const candidate of db.schedulableRequests()){
+        const wait=checkpoint();if(wait)await wait;
+        const request=db.get('coordinationRequests',candidate.id);if(!request)continue;
+        try {
+          if(request.status==='waiting_call')calls.resume(request.id);
+          if(['queued','waiting_delivery'].includes(request.status)){
+            const next=calls.reconcile(request.id);if(next?.status==='failed'&&next.admissionError)change();
+          }
+        }catch(error){chatScheduleError(error,request.id);}
+      }
+    });
+    await phase('wakes',()=>{
+      try {if(wakeCallOutcomes(db,(receipt,text)=>rooms.postSystemTask(receipt.projectId,{id:`outcome-${receipt.id.replace(/^rr:/,'')}`,conversationId:receipt.conversationId,
+        roleId:receipt.ownerRoleId,text,source:{kind:'call_outcome',receiptId:receipt.id}})))change();}catch(error){console.error('Call outcome wake:',error.message);}
+      try {if(wakeTaskReturns(db,(item,text)=>{const message=rooms.postSystemTask(item.projectId,{id:item.id,conversationId:item.conversationId,roleId:item.ownerRoleId,text,
+        source:{kind:'task_return',conversationTaskId:item.conversationTaskId,runId:item.runId}}),request=calls.adoptTask(message.taskIds[0]);
+        db.put('coordinationRequests',{...request,conversationTaskId:item.conversationTaskId,taskReturn:true});return message;}))change();}catch(error){console.error('Task return:',error.message);}
+    });
+    await phase('followup',()=>{try{if(proactiveFollowup.tick())change();}catch(error){console.error('Proactive follow-up:',error.message);}});
+    await phase('compaction',()=>{try{if(dueRoleCompactions(db,{online:id=>online(id)&&sockets.get(id).workerReady,send:(nodeId,payload)=>send(sockets.get(nodeId),payload)}))change();}catch(error){console.error('Role compaction:',error.message);}});
+    await phase('context',async()=>{
+      for(const candidate of db.chatTasks(['ready'])){
+        const wait=checkpoint();if(wait)await wait;
+        const task=db.get('tasks',candidate.id);if(task?.status==='ready')prepareChatContext(task);
+      }
+    });
+    await phase('rooms',async()=>{
+      const scheduled=await rooms.scheduleCooperatively(id=>online(id)&&sockets.get(id).workerReady,checkpoint);
+      for(const nodeId of scheduled.nodes)dispatch(nodeId);if(scheduled.changed)change();
+    });
+    await phase('dispatch',async()=>{
+      for(const nodeId of new Set(db.pendingCommands().filter(c=>(!c.lastSentAt||Date.now()-Date.parse(c.lastSentAt)>=5000)).map(c=>c.nodeId))){
+        const wait=checkpoint();if(wait)await wait;void dispatch(nodeId);
+      }
+    });
+    // Queued work claims capacity first; background organization does not take a business role's waiting slot.
+    await phase('organizers',()=>{
+      const settings=normalizePlatformSettings(db.get('settings','main')),memoryConfig=settings.memoryOrganizer;
+      // An organizer slot: the device is ready, offers the capability and has room beside running work and other organizers.
+      const organizerSlot=(nodeId,capability)=>online(nodeId) && sockets.get(nodeId).workerReady && db.get('workers',nodeId)?.capabilities?.[capability]===1
+        && db.activeRuns(nodeId).length+reservedTerminalSlots(db,nodeId)+(db.get('workers',nodeId)?.organizerBusy||0)<(db.get('workers',nodeId)?.capacity||1);
+      void conversationContext.drainOne({
+        config:settings.conversationOrganizer,
+        // A memory batch holds its device's organizer slot from before its AGENTS.md read until the model answers.
+        canRun:nodeId=>!(platformMemory.processing && memoryConfig.nodeId===nodeId) && organizerSlot(nodeId,'summaryBatches'),
+        query:(snapshot,config)=>workerQuery({nodeId:config.nodeId},'conversation_summary',{snapshot,config},125000),change
+      }).catch(error=>console.error(tr('home.backgroundConversationOrganizationFailed'),error.message));
+      // Memory organizing runs once a day (or when asked), one batch at a time, after conversation organizing on a shared device.
+      if(platformMemory.schedule(memoryConfig))change();
+      void platformMemory.drainOne({
+        config:memoryConfig,
+        canRun:nodeId=>!conversationContext.processing && organizerSlot(nodeId,'memoryOrganizer'),
+        query:(prompt,config)=>workerQuery({nodeId:config.nodeId},'memory_organize',{prompt,config},310000),
+        agentsMd:projectAgentsMd,change
+      }).catch(error=>console.error('Memory organizing:',error.message));
+    });
+  });
 }
 /** The project's own AGENTS.md from any online device holding its folder, so organizing does not repeat it; null when none is reachable. */
 async function projectAgentsMd(projectId) {
@@ -799,6 +819,9 @@ async function returnTerminal(claim,action) {
   change();scheduleChat();return {released:true,forced:result.forced===true};
 }
 const server = http.createServer(async (req, res) => {
+  // Request-to-finish wall time includes I/O and transfer waits, but not time before Node receives the request.
+  const requestStart=performance.now(),operation=httpOperation(req.url||'');
+  res.once('finish',()=>slowOperations.record(operation,performance.now()-requestStart,{method:req.method,status:res.statusCode}));
   try {
     const url = new URL(req.url, 'http://localhost');
     const pathname = decodeURIComponent(url.pathname);
@@ -1788,6 +1811,7 @@ const server = http.createServer(async (req, res) => {
         for (const ws of sockets.values()) send(ws, { type: 'settings', ...db.get('settings', 'main'), retention });
         change(); return json(res, { retention });
       }
+      if(pathname==='/api/data/performance'&&req.method==='GET')return json(res,slowOperations.snapshot());
       if (pathname === '/api/data/stats' && req.method === 'GET') {
         const home = { ...await dataStats(db, { policy: retentionPolicy() }), mediaCache: await mediaCache.stats().catch(() => null) };
         const devices = await Promise.all(db.list('workers').filter(w => !db.get('removedDevices', w.id)).map(async w => {
@@ -2012,4 +2036,4 @@ const sourceSyncTimer=setInterval(()=>{void sourceSync.tick().catch(e=>console.e
 const progressMonitor=setInterval(()=>{if(inspectRunProgress(db,online))change();},60000);progressMonitor.unref();
 const usageCollector = setInterval(() => { for(const nodeId of sockets.keys())collectUsage(nodeId); }, 6*60*60*1000);
 server.listen(port, host, () => console.log(tr('home.agentWorkbenchHttpData', { host, port, data })));
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { clearInterval(heartbeat); clearInterval(chatScheduler); clearInterval(terminalMonitor); clearInterval(usageCollector); usageRetry.stop(); for (const ws of wss.clients) ws.terminate(); for (const r of viewers) r.end(); server.close(() => { db.close(); process.exit(0); }); });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { chatScheduling.close(); clearInterval(heartbeat); clearInterval(chatScheduler); clearInterval(terminalMonitor); clearInterval(usageCollector); usageRetry.stop(); for (const ws of wss.clients) ws.terminate(); for (const r of viewers) r.end(); server.close(() => { db.close(); process.exit(0); }); });

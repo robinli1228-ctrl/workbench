@@ -13,7 +13,8 @@ const stamp=value=>{const d=new Date(value||'');return Number.isNaN(d.getTime())
 export function createDataSettingsUI({api}){
   const panel=document.querySelector('#settings-data-panel');if(!panel)return {show(){}};
   const form=panel.querySelector('#data-retention-form'),feedback=panel.querySelector('#data-feedback'),table=panel.querySelector('#data-table'),cleanAll=panel.querySelector('#data-clean-all'),refresh=panel.querySelector('#data-refresh');
-  let loading=false,busy=false,last=null;
+  const performanceTable=panel.querySelector('#performance-table'),performanceFeedback=panel.querySelector('#performance-feedback'),performanceRefresh=panel.querySelector('#performance-refresh');
+  let loading=false,busy=false,last=null,performanceLoading=false;
   const note=(text,error=false)=>{feedback.hidden=!text;feedback.textContent=text;feedback.classList.toggle('is-error',error);};
   const mb=bytes=>formatBytes(bytes||0);
   function row(label,stats,{target,online=true,disabled=false,reason=''}){
@@ -44,6 +45,18 @@ export function createDataSettingsUI({api}){
     cleanAll.disabled=busy||!reclaimable;cleanAll.textContent=reclaimable?t('Clean up all ({size})',{size:mb(reclaimable)}):t('Nothing to clean up');
     const r=data.retention||{};form.elements.syncCommandDays.value=r.syncCommandDays??1;form.elements.blobDays.value=r.blobDays??7;form.elements.manifestVersions.value=r.manifestVersions??20;
   }
+  /** Performance reads are independent of Worker storage queries, with no polling while settings are closed. */
+  async function loadPerformance(){
+    if(performanceLoading||!performanceTable)return;performanceLoading=true;performanceRefresh.disabled=true;
+    try{
+      const data=await api('/api/data/performance');performanceTable.replaceChildren();
+      const head=el('tr');for(const title of ['Time','Operation','Duration (ms)','HTTP'])head.append(el('th','',t(title)));performanceTable.append(head);
+      for(const operation of data.operations||[]){const tr=el('tr');tr.append(el('td','',stamp(operation.at)),el('td','',operation.operation),el('td','',String(operation.durationMs)),el('td','',[operation.method,operation.status].filter(Boolean).join(' ')||'—'));performanceTable.append(tr);}
+      if(!data.operations?.length){const tr=el('tr'),td=el('td','',t('No slow operations observed since Home started.'));td.colSpan=4;tr.append(td);performanceTable.append(tr);}
+      performanceFeedback.hidden=true;
+    }catch(error){performanceFeedback.textContent=t('Unable to read slow operations: {message}',{message:error.message});performanceFeedback.hidden=false;}
+    finally{performanceLoading=false;performanceRefresh.disabled=false;}
+  }
   async function load({keepNote=false}={}){if(loading)return;loading=true;refresh.disabled=true;if(!keepNote)note(t('Reading…'));
     try{render(await api('/api/data/stats'));if(!keepNote)note('');}catch(e){note(t('Unable to read data statistics: {message}',{message:e.message}),true);}
     finally{loading=false;refresh.disabled=false;}}
@@ -61,6 +74,7 @@ export function createDataSettingsUI({api}){
     try{await api('/api/settings/retention',{method:'POST',json:{syncCommandDays:Number(f.syncCommandDays.value),blobDays:Number(f.blobDays.value),manifestVersions:Number(f.manifestVersions.value)}});note(t('Retention saved.'));await load();}
     catch(err){note(t('Unable to save: {message}',{message:err.message}),true);}});
   cleanAll.addEventListener('click',()=>void cleanup('all'));
-  refresh.addEventListener('click',()=>void load());
-  return {show(){void load();}};
+  refresh.addEventListener('click',()=>{void load();void loadPerformance();});
+  performanceRefresh?.addEventListener('click',()=>void loadPerformance());
+  return {show(){void load();void loadPerformance();}};
 }
