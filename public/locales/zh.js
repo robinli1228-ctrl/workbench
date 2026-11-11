@@ -4,6 +4,13 @@
  * Brand and product names (Codex, Gitee, GitHub, Windows App, iTerm, ...) are intentionally left as they are inside sentences.
  */
 export default {
+  "Recent slow operations": "最近慢操作",
+  "Home operations taking at least 200 ms; the latest 100 are kept until Home restarts. Refresh to read current observations.": "记录 Home 耗时至少 200 毫秒的操作，保留最近 100 条，Home 重启后清空。点击刷新读取最新记录。",
+  "Scheduling rests between work units; one blocking step cannot be interrupted. HTTP durations include transfer and waiting time, starting when Home receives the request.": "调度会在工作单元之间让出执行时间，单个阻塞步骤无法中断。HTTP 耗时从 Home 收到请求开始，包含传输与等待时间。",
+  "No slow operations observed since Home started.": "Home 启动后尚未观察到慢操作。",
+  "Unable to read slow operations: {message}": "无法读取慢操作：{message}",
+  "Operation": "操作",
+
   "Multiple files in this turn have this name.": "本轮有多个同名文件，无法确定位置。",
   "File location not found in this turn.": "本轮记录中未找到文件位置。",
   "Could not load this turn's file locations.": "暂时无法读取本轮的文件位置。",

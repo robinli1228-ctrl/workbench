@@ -1,3 +1,4 @@
+import {cooperativeSlice} from './home-performance.mjs';
 import {tr} from './i18n.mjs';
 import {metadataReadLookup} from './source-sync-batching.mjs';
 import {initializationPage} from './source-sync-audit.mjs';
@@ -56,7 +57,7 @@ function receiptEnvelope(commandId,result){
 
 /** The existing Home listener transports content; scoped transfer credentials never enter model input. */
 export class SourceSyncHome {
-  constructor({db,data,online,socket,change,rooms,query,now=Date.now,watchUpload=null}){Object.assign(this,{db,online,socket,change,watchUpload});this.sync=new SourceSync({db,online,change,now});
+  constructor({db,data,online,socket,change,rooms,query,now=Date.now,watchUpload=null,diagnostics=null}){Object.assign(this,{db,online,socket,change,watchUpload,diagnostics});this.sync=new SourceSync({db,online,change,now});
     // A failed cleanup is logged and retried at the next start; it must not keep Home from starting.
     try{this.sync.dropExcludedEntries();}catch(error){console.error(tr('sourceSync.cleanupFailed'),error.message);}
     this.storage=new SourceSyncStorage({db,root:join(data,'source-sync')});this.ticking=false;this.baselines=new SourceSyncInitialization(this);
@@ -110,14 +111,24 @@ export class SourceSyncHome {
     return result;
   }
   busy(projectId,nodeId){return this.db.listSourceSyncCommands({projectId,nodeId,action:'apply',pending:true}).length>0;}
-  async tick(){if(this.ticking)return;this.ticking=true;try{
-    this.sync.audit.cleanup();
-    await this.cleanupMetadataBatches();
-    this.baselines.tick();
-    await this.cleanupMetadataConflicts();
-    this.watchTick();
-    this.conflicts.tick();
-    for(const c of this.sync.schedule()){
+  async tick(){if(this.ticking)return;this.ticking=true;
+    const start=performance.now(),checkpoint=cooperativeSlice();
+    const phase=async(name,fn)=>{if(this.diagnostics)await this.diagnostics.measureAsync(`source_sync.${name}`,fn);else await fn();const wait=checkpoint();if(wait)await wait;};
+    try{
+    await phase('audit',()=>this.sync.audit.cleanup());
+    await phase('batches',()=>this.cleanupMetadataBatches());
+    await phase('baselines',()=>this.baselines.tick());
+    await phase('conflict_cleanup',()=>this.cleanupMetadataConflicts());
+    await phase('watch',()=>this.watchTick());
+    await phase('conflicts',()=>this.conflicts.tick());
+    let commands;await phase('schedule',()=>{commands=this.sync.schedule();});
+    await phase('dispatch',async()=>{for(const candidate of commands){
+      const wait=checkpoint();if(wait)await wait;
+      // A user may cancel/reconfigure the batch or settle a receipt while another command is being sent.
+      const c=this.db.get('sourceSyncCommands',candidate.id);if(!c||c.result)continue;
+      const currentBatch=this.db.get('sourceSyncBatches',c.batchId);if(!currentBatch)continue;
+      if(CHANGE_BATCH_DONE.has(currentBatch.status)&&currentBatch.status!=='blocked'&&!(c.detection==='metadata'&&c.action==='cleanup'))continue;
+      if(c.afterCommandId&&!['blocked','cancelling','cancelled'].includes(currentBatch.status)&&!['completed','partial_conflict'].includes(this.db.get('sourceSyncCommands',c.afterCommandId)?.result?.status))continue;
       const socket=this.socket(c.nodeId);if(!socket?.workerReady||socket.readyState!==1)continue;
       if(c.lastSentAt&&Date.now()-Date.parse(c.lastSentAt)<5000)continue;
       // Cleanup uses frozen batch credentials and private paths, even after reconfiguration/cancellation.
@@ -140,8 +151,8 @@ export class SourceSyncHome {
       this.db.put('sourceSyncCommands',{...c,lastSentAt:new Date().toISOString()});
       if(['cancelling','blocked'].includes(this.db.get('sourceSyncBatches',c.batchId)?.status)){socket.send(JSON.stringify({type:'source_sync_cancel',commandId:c.id}));continue;}
       socket.send(JSON.stringify({type:'source_sync_command',commandId:c.id,batchId:c.batchId,projectId:c.projectId,folderAccess:folderAccessFor(this.db,c.nodeId,`project:${c.projectId}`),secret:c.secret}));
-    }
-  }finally{this.ticking=false;}}
+    }});
+  }finally{this.ticking=false;this.diagnostics?.record('source_sync.tick',performance.now()-start);}}
   async cleanupMetadataConflicts(){
     const rows=this.db.db.prepare("SELECT data FROM records INDEXED BY records_metadata_conflict_gc WHERE kind='sourceSyncConflicts' AND json_extract(data,'$.detection')='metadata' AND json_extract(data,'$.status')='resolved' AND json_extract(data,'$.copiesReleasedAt') IS NULL AND id>? ORDER BY id LIMIT 16").all(this.conflictCleanupCursor||'').map(r=>JSON.parse(r.data));
     this.conflictCleanupCursor=rows.at(-1)?.id||'';

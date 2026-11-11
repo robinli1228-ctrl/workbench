@@ -81,6 +81,8 @@ Bind the corresponding project folders on participating devices. Use fixed-commi
 
 Scheduling and terminal ownership checks use indexed run metadata so completed prompts and results do not need to be loaded on every scheduling pass. Historical records remain available.
 
+Home scheduling rests between complete work units after about 200 ms, so HTTP and Worker events can run between slices. Settings → Data shows the latest 100 operations taking at least 200 ms, including scheduling stages, file-sync stages and HTTP request-to-finish durations. These observations stay in memory until Home restarts and use fixed operation labels, without request paths or contents. A single blocking JavaScript or SQLite step cannot be interrupted; HTTP timings include transfer/wait time and start when Home receives the request.
+
 Managed tasks start without a full-project file-attribution scan. Automatic synchronization retains its conflict checks; an unavailable project directory is reported and retried independently of other projects.
 
 Cross-device collaboration passes work and its inputs between roles. It does not migrate a vendor's native session to another device.
