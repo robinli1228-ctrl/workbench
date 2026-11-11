@@ -8,7 +8,7 @@ export function inspectRunProgress(db,online,now=Date.now()) {
     let reason=null;
     if(!online(run.nodeId))reason=tr('runMonitor.deviceOfflineExecutionStateNeeds');
     else if(run.status==='waiting_user')continue;
-    else if(now-Date.parse(run.updatedAt||run.createdAt)>10*60*1000)reason=tr('runMonitor.noRunEventsForOver');
+    else if(run.status!=='queued'&&now-Date.parse(run.updatedAt||run.createdAt)>10*60*1000)reason=tr('runMonitor.noRunEventsForOver');
     const old=db.get('runAlerts',run.id);
     if(reason && (old?.reason!==reason || old.status!=='open')) {
       db.put('runAlerts',{id:run.id,projectId:run.projectId,reason,createdAt:new Date(now).toISOString(),status:'open'});changed=true;

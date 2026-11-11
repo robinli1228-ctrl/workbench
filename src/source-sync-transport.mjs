@@ -111,6 +111,13 @@ export class SourceSyncHome {
     return result;
   }
   busy(projectId,nodeId){return this.db.listSourceSyncCommands({projectId,nodeId,action:'apply',pending:true}).length>0;}
+  /** New Workers arbitrate launches against their local write lease; a queued sync is not a write lock. */
+  blocksDispatch(projectId,nodeId,type){
+    if(!['launch','delivery_publish'].includes(type))return false;
+    if(type==='launch'&&this.db.get('workers',nodeId)?.capabilities?.syncLaunchDeferral===1)return false;
+    // Older Workers fail a launch on a lease collision, and Git publish has no launch-deferral protocol.
+    return this.busy(projectId,nodeId);
+  }
   async tick(){if(this.ticking)return;this.ticking=true;
     const start=performance.now(),checkpoint=cooperativeSlice();
     const phase=async(name,fn)=>{if(this.diagnostics)await this.diagnostics.measureAsync(`source_sync.${name}`,fn);else await fn();const wait=checkpoint();if(wait)await wait;};

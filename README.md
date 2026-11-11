@@ -71,7 +71,7 @@ Each group has its own task list with descriptions, steps, owners, status, and c
 
 The Sessions view lets you browse and continue supported native CLI conversations. Read replies, expand tool calls on demand, and queue follow-up messages while a reply is running.
 
-Claude and Codex also support side questions for a separate discussion alongside the main flow. History, side-question, and quota capabilities vary by CLI.
+When a role or a Sessions-page CLI asks you a question with its question tool, your answer is shown as your own message ("Reply to the question from …", each question with your answer) between the part of its reply before the question and the part after it. Claude and Codex also support side questions for a separate discussion alongside the main flow. History, side-question, and quota capabilities vary by CLI.
 
 ### Hand work between your computer and servers
 
@@ -84,6 +84,8 @@ Scheduling and terminal ownership checks use indexed run metadata so completed p
 Completed Run inputs are kept losslessly: after seven days without updates, Home maintenance compresses large frozen context and instruction fields. Scheduling reads the small record; details and session continuation decode original input on demand. Results, logs and role/session identity remain intact. See [architecture](docs/ARCHITECTURE.md#cold-run-input-storage) before downgrading to an older Home.
 
 Home scheduling rests between complete work units after about 200 ms, so HTTP and Worker events can run between slices. Settings → Data shows the latest 100 operations taking at least 200 ms, including scheduling stages, file-sync stages and HTTP request-to-finish durations. These observations stay in memory until Home restarts and use fixed operation labels, without request paths or contents. A single blocking JavaScript or SQLite step cannot be interrupted; HTTP timings include transfer/wait time and start when Home receives the request.
+
+On updated Workers, queued file synchronization does not block new managed tasks. The Worker arbitrates launch against its actual local synchronization reservation and retries the same launch after the reservation clears; older Workers retain the conservative guard.
 
 Managed tasks start without a full-project file-attribution scan. Automatic synchronization retains its conflict checks; an unavailable project directory is reported and retried independently of other projects.
 
