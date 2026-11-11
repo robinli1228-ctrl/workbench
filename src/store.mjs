@@ -35,6 +35,7 @@ const chatTask = "json_extract(data,'$.origin')='chat' AND json_extract(data,'$.
 const schedulableRequest = "json_extract(data,'$.status') IN ('queued','waiting_call','waiting_delivery')";
 const pendingCallResult = "json_extract(data,'$.status') IN ('running','queued')";
 const unresolvedRecovery = "COALESCE(json_extract(data,'$.state'),'')!='resolved'";
+const isolatedRun = "COALESCE(json_extract(data,'$.execution.isolated'),0) NOT IN (0,'')";
 const pendingCommand = "COALESCE(json_extract(data,'$.acked'),0) IN (0,'')";
 
 /** SQLite is the persistent record kept separately by Home and each Worker; files are not shared across machines. */
@@ -72,6 +73,10 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_source_command_batch ON records(json_extract(data,'$.projectId'),json_extract(data,'$.batchId')) WHERE kind='sourceSyncCommands';
       CREATE INDEX IF NOT EXISTS records_source_command_pending ON records(json_extract(data,'$.projectId'),json_extract(data,'$.nodeId')) WHERE kind='sourceSyncCommands' AND ${pendingSourceCommand};
       CREATE INDEX IF NOT EXISTS records_source_batch_open ON records(json_extract(data,'$.projectId')) WHERE kind='sourceSyncBatches' AND ${openSourceBatch};
+      CREATE INDEX IF NOT EXISTS records_run_native_identity ON records(json_extract(data,'$.nativeSession.runtime'),json_extract(data,'$.nativeSession.id')) WHERE kind='runs';
+      CREATE INDEX IF NOT EXISTS records_run_task ON records(json_extract(data,'$.taskId')) WHERE kind='runs';
+      CREATE INDEX IF NOT EXISTS records_run_request ON records(json_extract(data,'$.requestId')) WHERE kind='runs';
+      CREATE INDEX IF NOT EXISTS records_isolated_runs ON records(json_extract(data,'$.projectId')) WHERE kind='runs' AND ${isolatedRun};
       CREATE INDEX IF NOT EXISTS records_active_runs ON records(json_extract(data,'$.nodeId')) WHERE kind='runs' AND ${activeRun};
       CREATE INDEX IF NOT EXISTS records_chat_tasks ON records(id) WHERE kind='tasks' AND ${chatTask};
       CREATE INDEX IF NOT EXISTS records_role_steering ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId')) WHERE kind='tasks' AND json_extract(data,'$.steering') IS NOT NULL;
@@ -111,6 +116,16 @@ export class Store {
     const info=statfsSync(dirname(this.file));return info.bavail*info.bsize;
   }
   list(kind) { return this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind).map(r => JSON.parse(r.data)); }
+  /** Native provenance needs identity and location only, not frozen prompts or result bodies. */
+  nativeSessionRunMetadata(runtime,sessionId) {
+    return this.db.prepare(`SELECT json_extract(data,'$.projectId') AS projectId,json_extract(data,'$.nodeId') AS nodeId,
+      json_extract(data,'$.roleSessionId') AS roleSessionId,json_extract(data,'$.workspace') AS workspace,
+      json_extract(data,'$.createdAt') AS createdAt FROM records INDEXED BY records_run_native_identity
+      WHERE kind='runs' AND json_extract(data,'$.nativeSession.runtime')=? AND json_extract(data,'$.nativeSession.id')=? ORDER BY rowid`).all(runtime,sessionId);
+  }
+  /** Task and request lookups preserve insertion order without materializing unrelated history. */
+  runsForTask(taskId) {return this.db.prepare("SELECT data FROM records INDEXED BY records_run_task WHERE kind='runs' AND json_extract(data,'$.taskId')=? ORDER BY rowid").all(taskId).map(r=>JSON.parse(r.data));}
+  runsForRequest(requestId) {return this.db.prepare("SELECT data FROM records INDEXED BY records_run_request WHERE kind='runs' AND json_extract(data,'$.requestId')=? ORDER BY rowid").all(requestId).map(r=>JSON.parse(r.data));}
   /** Acknowledged history never participates in the one-second resend scan; no result or command is deleted. */
   pendingCommands() {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_pending_commands WHERE kind='commands' AND ${pendingCommand} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
@@ -181,7 +196,7 @@ export class Store {
     return this.db.prepare(`SELECT json_object('nodeId',data -> '$.nodeId',
       'execution',json_object('isolated',data -> '$.execution.isolated'),
       'workspace',data -> '$.workspace','projectRoot',data -> '$.projectRoot') AS data
-      FROM records WHERE kind='runs' AND json_extract(data,'$.projectId')=? ORDER BY rowid`).all(projectId).map(r=>JSON.parse(r.data));
+      FROM records INDEXED BY records_isolated_runs WHERE kind='runs' AND ${isolatedRun} AND json_extract(data,'$.projectId')=? ORDER BY rowid`).all(projectId).map(r=>JSON.parse(r.data));
   }
   /** Filter before materializing manifest bodies; keep history and the existing row order intact. */
   listSourceSyncCommands({projectId,batchId,nodeId,repositoryId,action,pending=false}={}) {
@@ -288,7 +303,7 @@ export class Store {
       if (this.list('coordinationRequests').some(r => r.projectId === id && !['succeeded', 'failed', 'cancelled'].includes(r.status))
         || this.list('plans').some(p => p.projectId === id && !['completed', 'cancelled'].includes(p.status))) throw new Error(tr('store.projectStillHasUnfinishedCalls'));
       if (this.list('deliveries').some(d => d.projectId === id && !['ready', 'cancelled', 'blocked'].includes(d.status))) throw new Error(tr('store.projectStillHasUnfinishedGit'));
-      const runs = this.list('runs').filter(r => r.projectId === id);
+      const runs = this.listProject('runs',id);
       if (runs.some(r => !terminal.has(r.status))) {
         throw new Error(tr('store.projectStillHasExecutionsIn'));
       }
@@ -369,7 +384,7 @@ export class Store {
       if(task.origin==='chat' && this.get('workers',nodeId)?.capabilities?.managedResume!==1)throw new Error(tr('store.upgradeTargetWorkerSupportRole'));
       if (projectTerminalLock(this,task.projectId,nodeId)) throw new Error(tr('store.projectUnderManualTerminalTakeover'));
       if (task.origin === 'chat' && (task.status !== 'ready' || task.roleSnapshot.nodeId !== nodeId)) throw new Error(tr('store.groupChatAssignmentStatusNode'));
-      if (this.list('runs').some(r => r.taskId === taskId && !terminal.has(r.status))) throw new Error(tr('store.taskRunningUnverifiedCannotBe'));
+      if (this.activeRuns().some(r => r.taskId === taskId)) throw new Error(tr('store.taskRunningUnverifiedCannotBe'));
       const repositoryId = null;
       const binding = roleWorkspace(this, task.projectId, nodeId, repositoryId);
       if (!binding) throw new Error(tr('store.bindProjectWorkspaceOnNode'));
@@ -525,7 +540,7 @@ export class Store {
   acceptTask(taskId, runId) {
     return this.transaction(() => {
       const task = this.get('tasks', taskId), run = this.get('runs', runId);
-      const latest = this.list('runs').filter(r => r.taskId === taskId).at(-1);
+      const latest = this.runsForTask(taskId).at(-1);
       if (!task || !run || latest?.id !== runId || run.status !== 'succeeded') throw new Error(tr('store.onlyLatestSuccessfulExecutionCan'));
       return this.put('tasks', { ...task, status: 'done', acceptedRunId: runId, acceptedAt: now() });
     });

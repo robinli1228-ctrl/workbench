@@ -47,7 +47,7 @@ export function continuationSource(db, run, retained=()=>false) {
   const owner = db.get('workspaceOwners', source.workspace);
   if (!source.projectScope && owner && owner.runId !== source.id) throw new Error(tr('workerCoordinator.continuationWorkspaceHasBeenTaken'));
   // With the project's concurrent-writes switch on, other roles legitimately work in the shared project directory.
-  if (!run.concurrentWrites && db.list('runs').some(r => r.id !== run.id && r.workspace === source.workspace && !['succeeded', 'failed', 'interrupted'].includes(r.status))) throw new Error(tr('workerCoordinator.continuationWorkspaceStillHasUnfinished'));
+  if (!run.concurrentWrites && db.activeRuns().some(r=>r.id !== run.id && r.workspace === source.workspace)) throw new Error(tr('workerCoordinator.continuationWorkspaceStillHasUnfinished'));
   if (source.pid && !retained(source.pid)) {
     try { process.kill(source.pid, 0); throw new Error(tr('workerCoordinator.sourceProcessStillRunningCannot')); }
     catch (error) { if (error.code !== 'ESRCH') throw error; }

@@ -64,7 +64,7 @@ export class SessionTools {
     if(!Number.isSafeInteger(offset)||offset<0)throw new Error(tr('sessionTools.offsetMustBeNonNegative'));
     if(!Number.isSafeInteger(limit)||limit<1||limit>20000)throw new Error(tr('sessionTools.limitMustBe120000'));
     if(offset && !version)throw new Error(tr('sessionTools.versionRequiredContinueReading'));
-    const runs=this.db.list('runs').filter(r=>r.roleSessionId===id && r.projectId===run.projectId && conversationIdOf(r)===conversationIdOf(run));
+    const runs=this.db.listProject('runs',run.projectId).filter(r=>r.roleSessionId===id && conversationIdOf(r)===conversationIdOf(run));
     const content=runs.map(r=>{
       const source=r.sourceMessageId?this.db.get('roomMessages',r.sourceMessageId):null;
       if(source)assertConversationRecord(run,source);

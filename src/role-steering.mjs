@@ -35,7 +35,7 @@ export class RoleSteering {
       const role=this.db.get('roles',task.roleId);
       if(!role?.enabled||role.archivedAt)throw new Error(tr('roleSteering.roleDisabledArchived'));
       if(this.db.list('tasks').some(t=>t.projectId===projectId&&conversationIdOf(t)===conversationId&&t.roleId===task.roleId&&t.steering&&t.status==='ready'&&!t.currentRunId))throw new Error(tr('roleSteering.roleAlreadyHasSteeringMessage'));
-      const active=this.db.list('runs').filter(r=>r.projectId===projectId&&conversationIdOf(r)===conversationId&&r.roleId===task.roleId&&!terminal.has(r.status));
+      const active=this.db.activeRuns().filter(r=>r.projectId===projectId&&conversationIdOf(r)===conversationId&&r.roleId===task.roleId);
       if(input.roleSessionId&&active.some(r=>r.roleSessionId!==input.roleSessionId))throw new Error(tr('conversations.recordMismatch'));
       if(active.some(r=>r.nodeId!==task.roleSnapshot.nodeId||r.roleSnapshot?.runtime!==task.roleSnapshot.runtime))throw new Error(tr('roleSteering.roleDeviceCliHasChanged'));
       if(task.requestId && this.db.get('coordinationRequests',task.requestId)?.status!=='queued')throw new Error(tr('roleSteering.messageStateHasChangedRefresh'));

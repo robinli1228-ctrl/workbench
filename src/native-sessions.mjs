@@ -143,7 +143,7 @@ export async function registeredNativeHistoryFile(runtime,id,{env=process.env,re
 export function registeredNativeSession(db,runtime,sessionId){
  const catalog=db.list('nativeCatalogEntries').find(r=>r.runtime===runtime&&r.sessionId===sessionId);
  if(catalog)return {...catalog,sessionId};
- const run=db.list('runs').find(r=>r.nativeSession?.runtime===runtime&&r.nativeSession.id===sessionId);
+ const run=db.nativeSessionRunMetadata(runtime,sessionId)[0];
  if(run)return {runtime,sessionId,workspace:run.workspace,createdAt:run.createdAt};
  const lease=db.list('terminalSessions').find(r=>['native','native-turn'].includes(r.kind)&&(r.runtime||r.nativeSession?.runtime)===runtime&&(r.sessionId||r.nativeSession?.id||r.nativeOptions?.freshId)===sessionId);
  return lease?{runtime,sessionId,workspace:lease.workspace,createdAt:lease.createdAt}:null;

@@ -90,7 +90,7 @@ export class RoleSwitchWorker {
   /** Drop only this role's warm drivers; historical PID reuse cannot block another CLI transition. */
   async settle(input) {
     for(const sessionId of [input.sourceSessionId,input.candidateSessionId].filter(Boolean))await this.warmSessions.drop(sessionId);
-    const runs=this.db.list('runs').filter(r=>r.projectId===input.projectId&&r.roleId===input.roleId);
+    const runs=this.db.listProject('runs',input.projectId).filter(r=>r.roleId===input.roleId);
     if(runs.some(r=>this.activeSessions.has(r.id)||!terminal.has(r.status)||managedRunProcessState(r)!=='exited'))return false;
     return true;
   }

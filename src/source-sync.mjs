@@ -116,7 +116,7 @@ export class SourceSync {
     if(this.db.listSourceSyncCommands({projectId,pending:true}).length)throw syncError('sync_busy');
     if(!input.enabled){
       if(this.records('sourceSyncConflicts',projectId).some(c=>!['resolved','cancelled'].includes(c.status)))throw syncError('unresolved_conflicts');
-      if(this.db.list('runs').some(r=>r.projectId===projectId&&r.sourceConflictId&&!['succeeded','failed','interrupted'].includes(r.status)))throw syncError('owner_still_running');
+      if(this.db.activeRuns().some(r=>r.projectId===projectId&&r.sourceConflictId))throw syncError('owner_still_running');
       for(const conflict of this.records('sourceSyncConflicts',projectId).filter(c=>!['resolved','cancelled'].includes(c.status))){this.db.put('sourceSyncConflicts',{...conflict,status:'cancelled'});
         for(const task of this.db.list('tasks').filter(t=>t.projectId===projectId&&[t.sourceConflictId,t.sourceConflictPeerId,t.sourceConflictAssignmentRequestId].includes(conflict.id)&&!t.currentRunId))this.db.put('tasks',{...task,status:'cancelled'});
       }
