@@ -87,6 +87,11 @@ export function applyNativeTurnEvent(turn,event){
  if(event.kind==='context_usage'&&event.sample&&typeof event.sample==='object')next.contextUsage={...event.sample};
  // The CLI's question to the user waits on the turn (not in its event list) until the page answers or the CLI withdraws it.
  if(event.kind==='question'&&event.id&&Array.isArray(event.questions)&&event.questions.length){next.question={id:String(event.id),questions:event.questions.slice(0,8),askedAt:now()};next.status='waiting_user';next.phase='waiting';}
+ // An answer given on the page stays in the event list, where the page splits the reply into the part before it and after it.
+ if(event.kind==='question_resolved'&&next.question?.answered&&(!event.id||next.question.id===String(event.id))){const q=next.question;
+  // A secret answer (a password field) is never kept: only that it was filled in.
+  const secret=new Set(q.questions.filter(item=>item.secret).map(item=>item.id)),answers=Object.fromEntries(Object.entries(q.answers||{}).map(([id,value])=>[id,secret.has(id)?['(filled)']:value]));
+  push('answer',{questionId:q.id,questions:q.questions.map(item=>({id:item.id,question:String(item.question||'').slice(0,2000),...(item.secret?{secret:true}:{})})),answers,skip:q.skip===true});}
  if(event.kind==='question_resolved'){if(next.question&&(!event.id||next.question.id===String(event.id))){delete next.question;if(next.status==='waiting_user')next.status='running';if(next.phase==='waiting')next.phase='working';}}
  if(event.kind==='tool'&&event.item){push('tool',{text:clip(String(event.text||'')),item:boundedItem(event.item)});next.phase=['completed','failed'].includes(event.item.status)?'working':'tool';next.toolName=String(event.item.name||event.item.command||event.item.tool||event.item.title||event.item.type||event.text||'').slice(0,200);}
  // Subagents and background shells of the turn sit on it (not in its event list): start on Home's clock, as the turn's own time is,

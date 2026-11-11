@@ -535,7 +535,14 @@ export class Store {
       if (e.type === 'approval' && !terminal.has(next.status)) this.put('approvals', e.payload);
       if (e.type === 'approval_resolved') { const a = this.get('approvals', e.payload.id); if (a) this.put('approvals', { ...a, status: e.payload.status }); }
       // A question to the user shares the approval record: pending until answered, skipped or the turn ends.
-      if (e.type === 'question' && !terminal.has(next.status)) this.put('approvals', { ...e.payload, createdAt: e.createdAt });
+      // The page splits the role's card at the answer: what the role said since its previous question (or the run start) leads the
+      // first part, and the next part is timed from the answer. Only this run's message events in that span are read.
+      if (e.type === 'question' && !terminal.has(next.status)) {
+        const since = Math.max(0, ...this.list('approvals').filter(a => a.runId === r.id && a.kind === 'question' && Number.isFinite(a.seq)).map(a => a.seq));
+        const said = this.db.prepare('SELECT data FROM events WHERE run_id=? AND seq>? AND seq<? ORDER BY seq').all(r.id, since, e.seq).map(row => JSON.parse(row.data))
+          .filter(item => item.type === 'message' && typeof item.payload?.text === 'string' && item.payload.phase !== 'final_answer' && item.payload.text.trim()).map(item => item.payload.text.trim());
+        this.put('approvals', { ...e.payload, createdAt: e.createdAt, seq: e.seq, ...(said.length ? { lead: said.join('\n\n').slice(-4000) } : {}) });
+      }
       if (e.type === 'question_resolved') { const a = this.get('approvals', e.payload.id); if (a && ['pending', 'responding'].includes(a.status)) this.put('approvals', { ...a, status: e.payload.status || 'answered', resolvedAt: e.createdAt }); }
       return next;
     });

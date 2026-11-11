@@ -26,7 +26,7 @@ const STATIC = [
   '/git-version.js', '/plan-dock.js', '/agent-codex.png', '/agent-antigravity.png',
   '/document.html', '/document.js', '/workspace-inspector.js', '/concurrent-writes.js', '/state-data.js', '/execution-progress.js', '/live-scene.js',
   '/i18n.js', '/locales/zh.js', '/locales/native-takeover-zh.js', '/browser-token.js', '/source-sync.js',
-  '/output-language.js', '/vendor/opencc-t2cn.js', '/cli-recovery.js', '/session-queue.js', '/load-bar.js'
+  '/output-language.js', '/vendor/opencc-t2cn.js', '/cli-recovery.js', '/session-queue.js', '/question-answer.js', '/load-bar.js'
 ];
 const staticPaths = new Set(STATIC);
 // These large optional images are cached only if requested, so first install cannot starve state/chat reads over SSH.
