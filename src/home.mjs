@@ -822,6 +822,8 @@ const server = http.createServer(async (req, res) => {
   // Request-to-finish wall time includes I/O and transfer waits, but not time before Node receives the request.
   const requestStart=performance.now(),operation=httpOperation(req.url||'');
   res.once('finish',()=>slowOperations.record(operation,performance.now()-requestStart,{method:req.method,status:res.statusCode}));
+  // Timed-out clients never emit finish; keep the elapsed observation without claiming a completed HTTP status.
+  res.once('close',()=>{if(!res.writableFinished)slowOperations.record(operation,performance.now()-requestStart,{method:req.method});});
   try {
     const url = new URL(req.url, 'http://localhost');
     const pathname = decodeURIComponent(url.pathname);
