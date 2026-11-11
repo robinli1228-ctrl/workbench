@@ -35,7 +35,12 @@ export function createAskCard({t,onSend,shouldFocus=()=>true}) {
     const skip=el('button','secondary compact native-ask-skip',t('Skip')),submit=el('button','primary compact native-ask-send',t('Send'));skip.type=submit.type='button';
     const paint=()=>{for(const row of list.children)row.classList.toggle('is-picked',(st.picked[question.id]||[]).includes(row.dataset.label));submit.disabled=!answerOf().length;};
     question.options.forEach((option,i)=>{const row=el('button','native-ask-option');row.type='button';row.dataset.label=option.label;row.append(el('span','native-ask-key',String(i+1)),el('span','native-ask-label',simplifiedCliOutput(option.label)));
-      if(option.description)row.append(el('span','native-ask-desc',simplifiedCliOutput(option.description)));row.translate=false;
+      if(option.description){const desc=el('span','native-ask-desc'),line=el('span','',simplifiedCliOutput(option.description));desc.append(line);row.append(desc);
+        // A description cut off by the row scrolls sideways while the pointer or focus is on its option, then back.
+        const roll=()=>{const extra=desc.scrollWidth-desc.clientWidth;if(extra<=2)return;desc.style.setProperty('--ask-roll',`${-extra}px`);desc.style.setProperty('--ask-roll-time',`${Math.max(3,extra/40+2).toFixed(1)}s`);desc.classList.add('is-rolling');};
+        const stop=()=>desc.classList.remove('is-rolling');
+        row.addEventListener('pointerenter',roll);row.addEventListener('focus',roll);row.addEventListener('pointerleave',stop);row.addEventListener('blur',stop);}
+      row.translate=false;
       row.addEventListener('click',()=>{const now=new Set(question.multiSelect?st.picked[question.id]||[]:[]);if(now.has(option.label))now.delete(option.label);else now.add(option.label);st.picked[question.id]=[...now];if(!question.multiSelect){other.value='';st.typed[question.id]='';}paint();});
       list.append(row);});
     other.addEventListener('input',()=>{st.typed[question.id]=other.value;if(!question.multiSelect&&other.value.trim())st.picked[question.id]=[];paint();});
