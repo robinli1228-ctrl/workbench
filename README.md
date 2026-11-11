@@ -81,6 +81,8 @@ Bind the corresponding project folders on participating devices. Use fixed-commi
 
 Scheduling and terminal ownership checks use indexed run metadata so completed prompts and results do not need to be loaded on every scheduling pass. Historical records remain available.
 
+Completed Run inputs are kept losslessly: after seven days without updates, Home maintenance compresses large frozen context and instruction fields. Scheduling reads the small record; details and session continuation decode original input on demand. Results, logs and role/session identity remain intact. See [architecture](docs/ARCHITECTURE.md#cold-run-input-storage) before downgrading to an older Home.
+
 Managed tasks start without a full-project file-attribution scan. Automatic synchronization retains its conflict checks; an unavailable project directory is reported and retried independently of other projects.
 
 Cross-device collaboration passes work and its inputs between roles. It does not migrate a vendor's native session to another device.

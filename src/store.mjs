@@ -1,3 +1,4 @@
+import {decodeRunInput} from './run-input-archive.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import {conversationIdOf,resolveConversationId,assertConversationRecord,conversationView} from './group-conversations.mjs';
@@ -87,7 +88,9 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_pending_commands ON records(id) WHERE kind='commands' AND ${pendingCommand};
       CREATE INDEX IF NOT EXISTS records_native_driver_read ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId'),json_extract(data,'$.nativeSession.id')) WHERE kind='runs';`);
   }
-  get(kind, id) { const r = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id); return r ? JSON.parse(r.data) : null; }
+  get(kind, id) { const r = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id); return r ? this.decodeRecord(kind,r.data) : null; }
+  /** Run input archives remain ordinary mutable records to callers, with bodies decoded only on access. */
+  decodeRecord(kind,data) { const value=JSON.parse(data);return kind==='runs'?decodeRunInput(value):value; }
   /** UI-only invalidation. Unknown SQL and external connections invalidate every kind; scheduling always reads SQLite. */
   readRevision(kinds) {
     this.revisionTracking=true;
@@ -115,7 +118,7 @@ export class Store {
     if(this.file===':memory:')return Infinity;
     const info=statfsSync(dirname(this.file));return info.bavail*info.bsize;
   }
-  list(kind) { return this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind).map(r => JSON.parse(r.data)); }
+  list(kind) { return this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind).map(r => this.decodeRecord(kind,r.data)); }
   /** Native provenance needs identity and location only, not frozen prompts or result bodies. */
   nativeSessionRunMetadata(runtime,sessionId) {
     return this.db.prepare(`SELECT json_extract(data,'$.projectId') AS projectId,json_extract(data,'$.nodeId') AS nodeId,
@@ -124,8 +127,8 @@ export class Store {
       WHERE kind='runs' AND json_extract(data,'$.nativeSession.runtime')=? AND json_extract(data,'$.nativeSession.id')=? ORDER BY rowid`).all(runtime,sessionId);
   }
   /** Task and request lookups preserve insertion order without materializing unrelated history. */
-  runsForTask(taskId) {return this.db.prepare("SELECT data FROM records INDEXED BY records_run_task WHERE kind='runs' AND json_extract(data,'$.taskId')=? ORDER BY rowid").all(taskId).map(r=>JSON.parse(r.data));}
-  runsForRequest(requestId) {return this.db.prepare("SELECT data FROM records INDEXED BY records_run_request WHERE kind='runs' AND json_extract(data,'$.requestId')=? ORDER BY rowid").all(requestId).map(r=>JSON.parse(r.data));}
+  runsForTask(taskId) {return this.db.prepare("SELECT data FROM records INDEXED BY records_run_task WHERE kind='runs' AND json_extract(data,'$.taskId')=? ORDER BY rowid").all(taskId).map(r=>this.decodeRecord('runs',r.data));}
+  runsForRequest(requestId) {return this.db.prepare("SELECT data FROM records INDEXED BY records_run_request WHERE kind='runs' AND json_extract(data,'$.requestId')=? ORDER BY rowid").all(requestId).map(r=>this.decodeRecord('runs',r.data));}
   /** Acknowledged history never participates in the one-second resend scan; no result or command is deleted. */
   pendingCommands() {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_pending_commands WHERE kind='commands' AND ${pendingCommand} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
@@ -145,11 +148,11 @@ export class Store {
     if(binding.runId){conditions.push('id!=?');params.push(binding.runId);}
     if(binding.roleSessionId){conditions.push("(json_extract(data,'$.roleSessionId') IS NULL OR json_extract(data,'$.roleSessionId')=?)");params.push(binding.roleSessionId);}
     const rows=this.db.prepare(`SELECT data FROM records INDEXED BY records_native_driver_read WHERE ${conditions.join(' AND ')} ORDER BY rowid DESC LIMIT ?`).all(...params,limit+1);
-    return {records:rows.slice(0,limit).reverse().map(r=>JSON.parse(r.data)),partial:rows.length>limit};
+    return {records:rows.slice(0,limit).reverse().map(r=>this.decodeRecord('runs',r.data)),partial:rows.length>limit};
   }
   /** Poll only live scheduling candidates; unknown Run states still reserve capacity, and history stays intact. */
   activeRuns(nodeId) {
-    return this.db.prepare(`SELECT data FROM records INDEXED BY records_active_runs WHERE kind='runs' AND ${activeRun}${nodeId===undefined?'':" AND json_extract(data,'$.nodeId')=?"} ORDER BY rowid`).all(...(nodeId===undefined?[]:[nodeId])).map(r=>JSON.parse(r.data));
+    return this.db.prepare(`SELECT data FROM records INDEXED BY records_active_runs WHERE kind='runs' AND ${activeRun}${nodeId===undefined?'':" AND json_extract(data,'$.nodeId')=?"} ORDER BY rowid`).all(...(nodeId===undefined?[]:[nodeId])).map(r=>this.decodeRecord('runs',r.data));
   }
   /** Only open alerts participate in progress monitoring; closed history stays persisted. */
   openRunAlerts() {
@@ -174,7 +177,7 @@ export class Store {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_pending_call_results WHERE kind='coordinationRequests' AND ${pendingCallResult} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
   }
   conflictRuns() {
-    return this.db.prepare("SELECT data FROM records INDEXED BY records_conflict_runs WHERE kind='runs' AND json_extract(data,'$.sourceConflictId') IS NOT NULL ORDER BY rowid").all().map(r=>JSON.parse(r.data)).filter(r=>r.sourceConflictId);
+    return this.db.prepare("SELECT data FROM records INDEXED BY records_conflict_runs WHERE kind='runs' AND json_extract(data,'$.sourceConflictId') IS NOT NULL ORDER BY rowid").all().map(r=>this.decodeRecord('runs',r.data)).filter(r=>r.sourceConflictId);
   }
   unresolvedRecoveries() {
     return this.db.prepare(`SELECT data FROM records INDEXED BY records_unresolved_recoveries WHERE kind='cliRecoveries' AND ${unresolvedRecovery} ORDER BY rowid`).all().map(r=>JSON.parse(r.data));
@@ -190,7 +193,7 @@ export class Store {
     return this.db.prepare("SELECT data FROM records WHERE kind='sourceSyncMetadataBaselines' AND json_extract(data,'$.projectId')=? AND json_extract(data,'$.repositoryId')=?"+(generation===undefined?"":" AND json_extract(data,'$.generation')=?")).all(projectId,repositoryId,...(generation===undefined?[]:[generation])).map(r=>JSON.parse(r.data));
   }
   /** Project-local sync metadata must not scan or serialize other projects' full manifests. */
-  listProject(kind,projectId) {return this.db.prepare("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.projectId')=? ORDER BY rowid").all(kind,projectId).map(r=>JSON.parse(r.data));}
+  listProject(kind,projectId) {return this.db.prepare("SELECT data FROM records WHERE kind=? AND json_extract(data,'$.projectId')=? ORDER BY rowid").all(kind,projectId).map(r=>this.decodeRecord(kind,r.data));}
   /** Scope checks need only identity and paths, not full historical outputs on every sync resend. */
   sourceIsolationRuns(projectId) {
     return this.db.prepare(`SELECT json_object('nodeId',data -> '$.nodeId',
@@ -234,6 +237,8 @@ export class Store {
     return this.db.prepare(`SELECT t.data FROM records r CROSS JOIN records t WHERE ${conditions.join(' AND ')} ORDER BY COALESCE(json_extract(t.data,'$.${due}'),0),t.rowid LIMIT ?`).all(at,...exclude,limit).map(r=>JSON.parse(r.data));
   }
   put(kind, value) {
+    // A late event/edit expands the original fields before writing; no stale archived body can mask a new value.
+    if(kind==='runs')value=decodeRunInput(value);
     if(this.revisionTracking)this.readRevision([]);
     if(kind==='roomMessages')return this.transaction(()=>{
       const previous=this.get(kind,value.id);

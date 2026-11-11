@@ -773,3 +773,21 @@ The baseline goes down the same way. Home issues each directory capture's baseli
 
 
 Media relays now retain version-bound continuous prefixes in the existing bounded Home media cache, including interrupted reads after a successful source-version recheck. Only requested bytes are fetched; there is no background download. A later range or download streams the saved prefix and the missing suffix in one response, with disk backpressure, and promotes a full copy only after verification. Noncontiguous seeks still relay directly, simultaneous requests may overlap, files above the per-file cache limit bypass storage, and partial prefixes are never advertised as complete offline copies. Prefixes survive Home restart and share cached-read authorization, expiry and quota eviction with complete files. PR #283’s validators, pacing, failure records and cancellation protocol remain in use; a viewer cancelled while waiting for a relay slot starts no upload. This reduces repeated device traffic; it does not change SSH transport, congestion control or arrival timeouts.
+
+## Cold Run input storage
+
+Home maintenance (one minute after startup, daily, or the existing Data cleanup action) losslessly compresses `contextPacket`, `inputTask`, `teamContext`, `runtimeInstructions` and `executionConfiguration` for terminal Runs whose valid completion and update timestamps are both at least seven days old. Inputs below 16 KiB, active/unknown states and missing/invalid dates are left alone. Only replacements smaller than the original record are written.
+
+`src/run-input-archive.mjs` stores a versioned gzip payload, original byte length and SHA-256 inside the same SQLite Run record. This does not rely on event logs reconstructing frozen inputs. Status, result, error, role/session identity and other searchable metadata stay uncompressed. Store readers expose the original fields lazily, so scans that only inspect metadata avoid parsing old input bodies; detail serialization, input inheritance and edits still see the original values. Existing workspace summary queries omit the private archive envelope. Explicit project deletion removes the archive with its Run, and normal SQLite backups contain it.
+
+Compression is asynchronous, handles one full record at a time and yields between records. An atomic compare-and-swap refuses to overwrite concurrent updates/deletions. Same-Store compaction passes coalesce. Corrupt payloads fail explicitly on input access rather than returning a silently incomplete history. Later writes expand the input before replacing a Run; maintenance may compress it again after it becomes cold. Compression reduces logical record size; the database file itself only shrinks when the existing idle VACUUM policy runs. It does not guarantee a fixed compression ratio or eliminate the cost of explicitly reading every full input.
+
+### Downgrade
+
+Older versions cannot decode the archive envelope. Before starting an older Home, stop Home and other writers to its database, back up the database, and use **this version** to expand the inputs. Do not run the helper against a live database. Alternatively restore a suitable pre-upgrade backup, accounting for newer history separately.
+
+```sh
+node --input-type=module -e 'import {Store} from "./src/store.mjs"; import {restoreRunInputs} from "./src/run-input-archive.mjs"; const db=new Store(process.argv[1]); try { console.log(await restoreRunInputs(db)); } finally { db.close(); }' /xxxxx/home.sqlite
+```
+
+The helper restores original JSON in bounded steps and is safe to repeat after interruption. It reports corrupted inputs as errors; do not downgrade until all archives have been expanded successfully. No archival retention or automatic deletion of conversation history is introduced.

@@ -1,3 +1,4 @@
+import {compactRunInputs} from './run-input-archive.mjs';
 import {createHomeNativeTurns} from './native-turns-home.mjs';
 import {DeviceTransportHome} from './device-transport-home.mjs';
 import {mergeReportedRuntimes,expireRuntimeQuota} from './runtime-quota.mjs';
@@ -1994,11 +1995,13 @@ function homeVacuumWhenQuiet() { clearTimeout(homeVacuumRetry); homeVacuumRetry 
   if (!homeQuiet()) { homeVacuumRetry = setTimeout(homeVacuumWhenQuiet, 10 * 60000); homeVacuumRetry.unref(); return { vacuumed: false, deferred: true }; }
   try { const result = vacuumIfWasteful(db); if (result.vacuumed) console.log(`Data: VACUUM ${Math.round(result.before / 1048576)} MB -> ${Math.round(result.after / 1048576)} MB`); return result; } catch (e) { console.error('Data: VACUUM failed', e.message); return { vacuumed: false, error: e.message }; } }
 async function runHomeMaintenance() {
-  try { const summary = await cleanupData(db, { policy: retentionPolicy(), log: line => console.error('Data:', line) });
+  try { const runInputs=await compactRunInputs(db);
+    if(runInputs.compacted)console.log(`Data: compressed inputs of ${runInputs.compacted} completed runs (${runInputs.beforeBytes-runInputs.afterBytes} bytes saved)`);
+    const summary = await cleanupData(db, { policy: retentionPolicy(), log: line => console.error('Data:', line) });
     const n = Object.values(summary.deleted).reduce((a, b) => a + b, 0); if (n) console.log(`Data: removed ${n} records (${Math.round(summary.bytes / 1048576)} MB)`);
     const syncCache = await sourceSync.storage.sweep(); if (syncCache.blobsDeleted) console.log(`Data: sync cache dropped ${syncCache.blobsDeleted} files (${Math.round(syncCache.blobBytes / 1048576)} MB)`);
     const media = await mediaCache.sweep().catch(e => ({ error: e.message })); if (media.deleted) console.log(`Data: media cache dropped ${media.deleted} files (${Math.round(media.freed / 1048576)} MB)`);
-    return { ...summary, syncCache, mediaCache: media, vacuum: homeVacuumWhenQuiet() }; }
+    return { ...summary, runInputs, syncCache, mediaCache: media, vacuum: homeVacuumWhenQuiet() }; }
   catch (e) { console.error('Data: cleanup failed', e.message); return { error: e.message }; }
 }
 const maintenanceFirst = setTimeout(() => void runHomeMaintenance(), 60000); maintenanceFirst.unref();
