@@ -795,3 +795,5 @@ node --input-type=module -e 'import {Store} from "./src/store.mjs"; import {rest
 ```
 
 The helper restores original JSON in bounded steps and is safe to repeat after interruption. It reports corrupted inputs as errors; do not downgrade until all archives have been expanded successfully. No archival retention or automatic deletion of conversation history is introduced.
+
+Automatic task-start turns recheck follow-up enablement, task revision, owner and silence at admission. Disabling follow-up or changing the task/message anchor withdraws only the unstarted turn and its exact reservation; started work retains its once-per-revision marker. New user waits and linked work hold admission until the conversation is quiet again.
