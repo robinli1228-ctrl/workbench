@@ -4375,3 +4375,14 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
   .native-device-access .device-access-pick { flex: 1 1 0; min-width: 0; }
   .native-device-access .device-access-pick select { flex: 1; min-width: 0; }
 }
+
+/* ---- The user's answer to a question (2026-11-11): drawn as the user's own message. "Reply to the question from …" in small
+   accent type, then each question (small, grey) with the answer under it. An answer is never clamped to three lines. */
+.qa-answer { white-space: normal; line-height: 1.55; }
+.qa-lead { margin-bottom: 4px; color: #5b63b5; font-size: .88em; font-weight: 600; }
+.qa-answer ol { margin: 0; padding-left: 1.3em; }
+.qa-answer li + li { margin-top: 4px; }
+.qa-q { color: #6b7280; font-size: .9em; overflow-wrap: anywhere; }
+.qa-a { font-weight: 550; overflow-wrap: anywhere; }
+.qa-a.is-skipped { color: #9aa1ad; font-weight: 400; }
+.nt-answer .nt-prompt-text { display: block; -webkit-line-clamp: unset; line-clamp: unset; max-height: none; overflow: visible; }

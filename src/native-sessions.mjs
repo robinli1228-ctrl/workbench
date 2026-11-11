@@ -8,6 +8,7 @@ import {resumeArgs,managedRunProcessState,terminalOwnsProject,nativeSessionProje
 import {isHistoryPrompt} from '../public/history-prompt.js';
 import {classifyStep} from '../public/native-transcript.js';
 import {assertNativeSwitchAccess} from './native-agent-switch-worker.mjs';
+import {isQuestionTool,questionsAsked,givenAnswers} from './question-answers.mjs';
 
 const runtimes=new Set(['codex','claude','grok','agy']);
 const idPattern=/^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
@@ -61,17 +62,28 @@ const LEGACY_SWITCH_HELLO='Create this empty session for a Workbench Agent switc
 const bare=text=>text.replace(/[\s"'`*\u201c\u201d\u2018\u2019.!]+/g,' ').trim().toLowerCase();
 const switchSetup=(role,text)=>role==='user'?[NATIVE_SWITCH_HELLO,LEGACY_SWITCH_HELLO].includes(text):role==='assistant'&&bare(text)===bare(NATIVE_SWITCH_READY);
 /** Conversation rows plus the tool calls and results between them; the page pairs them and shows each turn like a page turn. */
-function messagesFrom(rows,runtime,{fullTools=false}={}){return rows.flatMap(row=>{
+function messagesFrom(rows,runtime,{fullTools=false}={}){
+ // A question tool call and a result that carries answers are labelled on their own (pages are parsed one record at a time);
+ // the page pairs them by call id into the user's answer message. Both the page rows and the tool-detail read go through
+ // here, one row for each call or result, so tool positions stay the same.
+ const questionCall=(callId,questions,at)=>({role:'question_call',callId:String(callId||''),questions,timestamp:at});
+ const questionAnswer=(callId,given,failed,at)=>({role:'question_answer',callId:String(callId||''),given,failed:failed===true,timestamp:at});
+ return rows.flatMap(row=>{
  const at=row.timestamp||null,out=[],say=(role,content,extra)=>{const text=bodyText(content);if(text&&!switchSetup(role,text.trim()))out.push({role,text:text.slice(0,12000),timestamp:at,...extra});};
  if(runtime==='claude'){
   // Meta user rows are context Claude Code injects (image descriptions, command caveats), never something the user typed.
   const m=row.isSidechain===true||row.isMeta===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
   // A compaction summary is context Claude Code wrote, not a prompt: the page shows it as a folded system line.
   say(m.role,m.content,row.isCompactSummary===true?{compact:true}:undefined);
-  for(const b of Array.isArray(m.content)?m.content:[]){if(b?.type==='tool_use')out.push(call(b.id,b.name,b.input,at,fullTools));else if(b?.type==='tool_result')out.push(result(b.tool_use_id,b.content,b.is_error,at,fullTools));}
+  for(const b of Array.isArray(m.content)?m.content:[]){
+   if(b?.type==='tool_use'&&isQuestionTool(b.name)&&questionsAsked(b.input).length){out.push(questionCall(b.id,questionsAsked(b.input),at));continue;}
+   if(b?.type==='tool_result'){const given=givenAnswers(toolText(b.content),row.toolUseResult?.answers);if(given){out.push(questionAnswer(b.tool_use_id,given,b.is_error,at));continue;}}
+   if(b?.type==='tool_use')out.push(call(b.id,b.name,b.input,at,fullTools));else if(b?.type==='tool_result')out.push(result(b.tool_use_id,b.content,b.is_error,at,fullTools));}
  }else if(runtime==='codex'){
   if(row.type!=='response_item')return [];const p=row.payload||{};
   if(p.type==='message'){if(['user','assistant'].includes(p.role))say(p.role,p.content);}
+  else if(p.type==='function_call'&&isQuestionTool(p.name)&&questionsAsked(p.arguments).length)out.push(questionCall(p.call_id||p.id,questionsAsked(p.arguments),at));
+  else if(p.type==='function_call_output'&&givenAnswers(p.output))out.push(questionAnswer(p.call_id,givenAnswers(p.output),false,at));
   else if(['function_call','custom_tool_call','local_shell_call'].includes(p.type))out.push(call(p.call_id||p.id,p.name||(p.type==='local_shell_call'?'shell':p.type),fullTools?(p.type==='custom_tool_call'?p.input:p.type==='local_shell_call'?p.action:p.arguments):codexInput(p),at,fullTools));
   else if(['function_call_output','custom_tool_call_output','local_shell_call_output'].includes(p.type))out.push(result(p.call_id,p.output,false,at,fullTools));
  }else if(runtime==='grok'){

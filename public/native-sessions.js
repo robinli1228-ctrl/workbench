@@ -23,6 +23,7 @@ import {cachedHistory,saveHistory,forgetHistory,compactHistoryPage} from './hist
 import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices,resolveToolFile,toolFilePaths,historyContainsReply} from './native-transcript.js';
 import {deviceAccessRows} from './device-access.js';
 import {createAskCard} from './ask-card.js';
+import {answerContent,answerPlainText,answerRows} from './question-answer.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -534,7 +535,12 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  /** Settings read from appended rows refine the ones already known; a field the new rows do not mention keeps its value. */
  const mergeConfiguration=(known,fresh)=>{if(!fresh)return known;const out={...(known||{})};for(const [k,v] of Object.entries(fresh))if(v!=null)out[k]=v;return out;};
  let lastPromptAt=null;
- function renderHistoryRow(m,item){const text=m.role==='user'?cleanUserText(m.text):m.text;
+ /** The user's answer to the CLI's question, as the user's own message; the reply before it and after it are two replies. */
+ function answerRow(record,runtime,at,session,historyId=null){const asker=names[runtime]||t('Assistant'),plain=answerPlainText(record,{asker,t});
+  const row=chatRow('user',plain,runtime,at,null,'completed',session);row.classList.add('nt-answer');row.dataset.role='answer';row.dataset.text=promptKey(plain);if(historyId)row.dataset.historyId=historyId;
+  row.querySelector('.nt-prompt-text')?.replaceChildren(answerContent(record,{asker,t}));return row;}
+ function renderHistoryRow(m,item){if(m.role==='user'&&m.answer){lastPromptAt=m.timestamp||null;return answerRow(m.answer,item.runtime,m.timestamp,item,m.id);}
+  const text=m.role==='user'?cleanUserText(m.text):m.text;
    // Context compaction: one quiet line; the summary Claude carries forward opens on demand.
    if(m.role==='user'&&isCompactSummary(m.text,m.compact)){
     const row=el('details','nt-system nt-compact native-chat-row'),head=el('summary','');row.dataset.role='system';row.dataset.text=`compact:${m.timestamp||m.id||''}`;if(m.id)row.dataset.historyId=m.id;if(m.timestamp)row.dataset.at=m.timestamp;
@@ -562,8 +568,9 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  const turnSignature=(turn,startedAt)=>JSON.stringify([turn.prompt,startedAt,turn.endedAt,turn.parts]);
  /** History reads like page turns: the prompt, then the reply with its tool activity at the recorded positions and how long it took. */
  function renderHistory(rows,item,{turnStartedAt=null}={}){
+  rows=answerRows(rows);
   // Cached per session and language (the nodes carry translated labels and local times).
-  const nodes=[],isPrompt=row=>isHistoryPrompt(row.text),sessionKey=`${key(item)}|${getLanguage()}`,before=renderedTurns.get(sessionKey)||new Map(),after=new Map();
+  const nodes=[],isPrompt=row=>Boolean(row.answer)||isHistoryPrompt(row.text),sessionKey=`${key(item)}|${getLanguage()}`,before=renderedTurns.get(sessionKey)||new Map(),after=new Map();
   // Inside a turn that did change (the one still running), its prompt, text blocks and activity groups that did not change
   // are taken over from the turn's previous rendering, so a picture in a reply that is still growing is not reloaded.
   const piecesBefore=renderedPieces.get(sessionKey)||new Map(),piecesAfter=new Map();
@@ -989,12 +996,28 @@ const cliNoise=text=>/^\s*\d{4}-\d\d-\d\dT\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/
 const promptKey=text=>simplifiedCliOutput(String(text||'')).replace(/\s+/g,' ').trim();
 /** A turn shows its process only when it holds more than the final reply: tools, runtime notes or intermediate messages. */
 const norm=text=>stripAnsi(String(text||'')).replace(/\s+/g,' ').trim();
-const allRows=turn=>liveSceneRows(turn.events||[],turn).rows.filter(r=>!(r.kind==='log'&&cliNoise(r.text)));
+// The question tool is not a step: its question is the card above the composer, its answer the user's message. Its call and
+// its result (matched by id, as the result may come after the answer) both leave the turn's events.
+const withoutQuestionTool=events=>{const ids=new Set(events.filter(e=>e.type==='tool'&&['AskUserQuestion','request_user_input'].includes(e.payload?.item?.name)).map(e=>e.payload.item.id).filter(Boolean));
+ return ids.size?events.filter(e=>!(e.type==='tool'&&(ids.has(e.payload?.item?.id)||['AskUserQuestion','request_user_input'].includes(e.payload?.item?.name)))):events;};
+const allRows=turn=>liveSceneRows(withoutQuestionTool(turn.events||[]),turn).rows.filter(r=>!(r.kind==='log'&&cliNoise(r.text)));
 /** The reply bubble shows the last projected reply; preceding replies and tools remain in the process by identity. */
 const finalReply=turn=>{const rows=allRows(turn),last=[...rows].reverse();return last.find(r=>r.phase==='final_answer'&&!r.aggregate)||last.find(r=>r.kind==='message'||r.kind==='text')||null;};
 const processRows=(turn,{includeFinal=false}={})=>{const rows=allRows(turn),final=finalReply(turn);
  return rows.filter(r=>!['message','text'].includes(r.kind)||norm(r.text)&&(includeFinal||!final||r.key!==final.key));};
 const replyText=turn=>{const f=finalReply(turn);return f?f.text:turn.text||'';};
+/** An answer given on the page splits a turn: each part before an answer is a reply of its own, the answer the user's message. */
+const answerRecordOf=p=>({items:(p.questions||[]).map(q=>{const given=[].concat(p.answers?.[q.id]??[]).map(String).filter(Boolean);
+ return p.skip||!given.length?{question:q.question,skipped:true}:{question:q.question,answer:q.secret?[]:given,...(q.secret?{secret:true}:{})};}),skipped:p.skip===true});
+const turnSegments=turn=>{if(!(turn.events||[]).some(e=>e.type==='answer'))return null;const events=withoutQuestionTool(turn.events);
+ const segments=[];let part=[],start=turn.createdAt;
+ for(const e of events){if(e.type!=='answer'){part.push(e);continue;}
+  segments.push({turn:{...turn,id:`${turn.id}:${segments.length}`,events:part,text:'',parts:[],tasks:[],status:'succeeded',phase:null,question:null,createdAt:start,endedAt:e.createdAt},answer:answerRecordOf(e.payload),answerAt:e.createdAt});
+  part=[];start=e.createdAt;}
+ segments.push({turn:{...turn,id:`${turn.id}:${segments.length}`,events:part,text:part.some(e=>e.type==='message'||e.type==='text')?turn.text:'',createdAt:start}});
+ return segments;};
+/** The part of a turn still being written: after its last answer, or the whole turn. */
+const liveTail=turn=>turnSegments(turn)?.at(-1).turn||turn;
 const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind==='tool'||r.kind==='log'||r.kind==='error')||rows.some(r=>r.kind==='message'||r.kind==='text');};
  /** The group-chat live-scene projection orders text, messages, logs and merged tool states for one turn. */
  const preview=createPreviewSheet(content,t,{onSide:openSide,canSide:canOpenSide});
@@ -1163,10 +1186,27 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   // A send made while a reply runs is queued by Home, so it is drawn in the queue strip rather than the transcript.
   const queuesBehind=()=>Boolean(activeTurn());
   const signatureOf=()=>JSON.stringify([k(),queuesBehind(),(d=>d?[d.pending.clientTurnId,d.confirmed?'stored':sendState(d,operation(k()))]:null)(pendingSend()),[...(historyEl?.querySelectorAll('.native-chat-row:not(.native-turn-anchored)')||[])].map(serialOf),timeline.hasOlder(),[...openProcesses].sort(),
-   turns.map(turn=>isLive(turn)&&!turn.control?[turn.id,turn.status,turn.prompt,turn.attachments,turn.createdAt]:turn)]);
+   turns.map(turn=>isLive(turn)&&!turn.control?[turn.id,turn.status,turn.prompt,turn.attachments,turn.createdAt,(turn.events||[]).filter(e=>e.type==='answer').length]:turn)]);
+  /**
+   * A turn's reply nodes: each part before a page answer is a finished reply of its own followed by the answer, then the
+   * turn's own reply (live or finished). A part with nothing in it (the question came first) draws no reply.
+   */
+  function splitNodes(turn,{live,state,paths}){
+   const segments=turnSegments(turn)||[{turn}],nodes=[];
+   for(const segment of segments.slice(0,-1)){const part=segment.turn;
+    if(processRows(part,{includeFinal:true}).length){const box=el('div','nt-turn');box.append(turnContent(part,current,{open:openProcesses.has(part.id)}));
+     const done=chatRow('assistant',replyText(part),current.runtime,part.endedAt,null,'completed',current,{content:box,filePaths:toolFilePaths(stepsOf(part).steps)});done.dataset.role='assistant';
+     done.dataset.duration=elapsedText(part.createdAt,new Date(part.endedAt).getTime());nodes.push(done);}
+    nodes.push(answerRow(segment.answer,current.runtime,segment.answerAt,current));}
+   const tail=segments.at(-1).turn,content=el('div','nt-turn');content.append(turnContent(tail,current,{live,open:live||openProcesses.has(tail.id)}));
+   if(live)content.append(workingLine(tail));
+   const reply=chatRow('assistant',replyText(tail),current.runtime,live?tail.createdAt:turn.endedAt||tail.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';
+   if(!live)footNote(reply,endNote(turn));if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(tail.createdAt,new Date(turn.endedAt).getTime());
+   return {nodes,reply};
+  }
   function renderFeed({historyChanged=false}={}){const signature=signatureOf();
    if(!historyChanged&&signature===feedSignature&&[...liveReplies.values()].every(row=>row.isConnected)){
-    for(const [id,row] of liveReplies){const turn=turns.find(x=>x.id===id);if(!turn)continue;const content=el('div','nt-turn');content.append(turnContent(turn,current,{live:true,open:true}),workingLine(turn));row.querySelector('.nt-turn')?.replaceWith(content);}
+    for(const [id,row] of liveReplies){const whole=turns.find(x=>x.id===id);if(!whole)continue;const turn=liveTail(whole);const content=el('div','nt-turn');content.append(turnContent(turn,current,{live:true,open:true}),workingLine(turn));row.querySelector('.nt-turn')?.replaceWith(content);}
     return;}
    feedSignature=signature;liveReplies.clear();
    feed.replaceChildren();clearFeedMarks(historyEl);
@@ -1221,14 +1261,15 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
       // prompt's history includes its final prose; clearFeedMarks restores the original rows on the next refresh.
       const final=simplifiedCliOutput(replyText(turn));
       if(anchor.dataset.role==='user'||final.trim()&&!historyContainsReply(final,replies.flatMap(row=>row._replyTexts||[]))){
-       for(const row of replies){row.hidden=true;row.dataset.nativeLiveHidden='1';}
-       const content=el('div','nt-turn');content.append(turnContent(turn,current,{open:openProcesses.has(turn.id)}));
-       const reply=chatRow('assistant',replyText(turn),current.runtime,turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';reply.classList.add('native-turn-anchored');footNote(reply,endNote(turn));if(turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());rows[index].after(reply);continue;}
-      const extra=el('div','native-turn-anchored nt-extra');
-      if(hasProcess(turn)&&anchor.dataset.process!=='1')extra.append(activityFor(turn,{open:openProcesses.has(turn.id)}));
+       // The history's partial rows of this turn (replies and answers) give way to the saved turn, drawn split at its answers.
+       for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++)if(['assistant','answer'].includes(rows[i].dataset.role)){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}
+       const {nodes,reply}=splitNodes(turn,{live:false,state,paths});for(const node of [...nodes,reply])node.classList.add('native-turn-anchored');rows[index].after(...nodes,reply);continue;}
+      // After a page answer the history's last reply is the part after it: its activity and time count from the answer.
+      const tail=liveTail(turn),extra=el('div','native-turn-anchored nt-extra');
+      if(hasProcess(tail)&&anchor.dataset.process!=='1')extra.append(activityFor(tail,{open:openProcesses.has(tail.id)}));
       {const tasks=taskBlock(turn,t);if(tasks)extra.append(tasks);}
       footNote(anchor,endNote(turn),{anchored:true});
-      if(extra.childElementCount){const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}if(turn.endedAt){if(!('historyDuration' in anchor.dataset))anchor.dataset.historyDuration=anchor.dataset.duration||'';anchor.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());}continue;}
+      if(extra.childElementCount){const body=anchor.querySelector('.nt-body');if(body){const md=body.querySelector('.markdown-body');md?md.before(extra):body.append(extra);}}if(turn.endedAt){if(!('historyDuration' in anchor.dataset))anchor.dataset.historyDuration=anchor.dataset.duration||'';anchor.dataset.duration=elapsedText(tail.createdAt,new Date(turn.endedAt).getTime());}continue;}
     }
     const makeFiles=()=>{if(!turn.attachments?.length)return null;const files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));return files;};
     // A running turn whose prompt already reached the history anchors on that row: the history row stays, the feed adds only the live reply,
@@ -1237,10 +1278,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(liveIndex>=0){used.add(liveIndex);const files=makeFiles();if(files){files.classList.add('native-turn-anchored');attachFiles(rows[liveIndex],files);}
      for(let i=liveIndex+1;i<rows.length&&rows[i].dataset.role!=='user';i++){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}}
     const userRow=liveIndex>=0?null:chatRow('user',turn.prompt,current.runtime,turn.createdAt,makeFiles());if(userRow){userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);}
-    const content=el('div','nt-turn');content.append(turnContent(turn,current,{live,open:live||openProcesses.has(turn.id)}));
-    if(live)content.append(workingLine(turn));
-    const reply=chatRow('assistant',replyText(turn),current.runtime,live?turn.createdAt:turn.endedAt||turn.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';if(!live)footNote(reply,endNote(turn));if(!live&&turn.endedAt)reply.dataset.duration=elapsedText(turn.createdAt,new Date(turn.endedAt).getTime());
-    if(live){feed.append(...(userRow?[userRow,reply]:[reply]));liveReplies.set(turn.id,reply);}else place([userRow,reply],turn.createdAt);
+    const {nodes:earlier,reply}=splitNodes(turn,{live,state,paths});
+    if(live){feed.append(...(userRow?[userRow]:[]),...earlier,reply);liveReplies.set(turn.id,reply);}else place([userRow,...earlier,reply].filter(Boolean),turn.createdAt);
    }
    // The send on its way, drawn at once under its own id with what is known about it; Home's turn replaces it.
    {const d=pendingSend();if(d&&!queuesBehind()){const ids=new Set(d.pending.attachmentIds||[]),files=el('div','chat-attachments native-turn-files');for(const item of (d.attachments||[]).filter(a=>ids.has(a.id)))files.append(attachmentCard(item));

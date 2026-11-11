@@ -24,6 +24,7 @@ import {createLocalBrowser} from './local-browser.js';
 import {classifyStep,toolFilePaths} from './native-transcript.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
 import { pastesAsFile, pastedTextName } from './pasted-text.js';
+import {answerContent,answerPlainText} from './question-answer.js';
 
 /** Typed text that grows this long moves into an attachment too; pasted text moves at a much lower limit (pasted-text.js). The file keeps the original line breaks, whitespace and trailing characters. */
 export function longTextFileName(text) {
@@ -783,7 +784,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
 
   function liveText(runId) {
-    return liveByRun.get(runId)?.text || '';
+    const live=liveByRun.get(runId),after=partSeq(runId);
+    // After an answer the live card shows only what the role says from then on; the earlier part is its own card.
+    return after&&live?extractLiveText(live.events.filter(e=>e.seq>after)):live?.text || '';
   }
   async function pullLive(runId) {
     if (!runId || liveFetching.has(runId)) return;
@@ -865,6 +868,27 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
 
   /**
+   * A role's question the user answered (or skipped) splits its card: the part up to the question ("Asked you a question", led
+   * by what it said first), the user's answer as the user's own message, and the rest of the run timed from the answer.
+   */
+  // Only an answer the role received (or is receiving): one that never reached it (the turn ended first) splits nothing.
+  const answeredQuestions=runId=>(data.approvals||[]).filter(a=>a.kind==='question'&&a.runId===runId&&['answered','responding'].includes(a.status)&&(a.skipped||a.answers&&Object.keys(a.answers).length))
+    .sort((x,y)=>String(x.createdAt||'').localeCompare(String(y.createdAt||'')));
+  const answeredAt=a=>a.answeredAt||a.resolvedAt||a.updatedAt||a.createdAt||'';
+  /** Where the role's current part starts: at its last answer, or the run start. */
+  const partStart=run=>{const list=run?answeredQuestions(run.id):[];return list.length?answeredAt(list.at(-1)):run?.startedAt||null;};
+  const partSeq=runId=>Math.max(0,...answeredQuestions(runId).map(a=>a.seq||0));
+  const answerRecordOf=a=>({items:(a.questions||[]).map(q=>{const given=[].concat(a.answers?.[q.id]??[]).map(String).filter(Boolean);
+    return a.skipped||!given.length?{question:q.question,skipped:true}:{question:q.question,answer:given,...(q.secret?{secret:true}:{})};}),skipped:a.skipped===true});
+  /** The two cards one answered question adds to the timeline, as message-like records drawn by renderMessageRow. */
+  function questionCards(run,a,start){
+    const role=run.roleSnapshot||(data.roles||[]).find(r=>r.id===run.roleId)||{},record=answerRecordOf(a),asker=role.name||t('Role');
+    const base={projectId:run.projectId,conversationId:run.conversationId||run.projectId,synthetic:true};
+    return [{...base,id:`ask-${a.id}`,sender:'agent',senderName:role.name,roleId:run.roleId,runId:run.id,kind:'question_ask',text:a.lead||t('Asked you a question'),createdAt:a.createdAt,partStart:start},
+      {...base,id:`answer-${a.id}`,sender:'human',kind:'answer',answer:record,asker,text:answerPlainText(record,{asker,t}),createdAt:answeredAt(a)}];
+  }
+
+  /**
    * A persisted outbound card is complete; only a receiver's own reply follows its run state.
    * A role's card is timed from the start of the run that wrote it: a reply to the run's end, a question or handoff sent
    * during the run to its sending. The card header shows that start.
@@ -877,9 +901,11 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     // A send still on its way says so.
     if(message.localSend==='stored')return {kind,status:'Completed'};
     if(message.localSend)return {kind,status:{sending:'Sending…',checking:'Checking…',offline:'Waiting for network…',failed:'Not sent'}[message.localSend]||'Sending…',state:message.localSend==='failed'?'failed':'waiting'};
+    if(message.kind==='answer')return {kind:'Answer',status:'Completed'};
+    if(message.kind==='question_ask'){const ms=Date.parse(message.createdAt)-Date.parse(message.partStart);return {kind:'Question',status:'Answered',duration:Number.isFinite(ms)&&ms>=0?formatElapsed(ms):'',startedAt:message.partStart||null,done:true};}
     const run=message.sender==='agent'&&message.runId?data.runs?.find(item=>item.id===message.runId)||null:null;
     // Only the run's own execution counts, never its queue time or a missing historical time.
-    const startedAt=run?.startedAt||null,elapsedMs=Date.parse(midTurnNote(message)?message.createdAt:run?.finishedAt)-Date.parse(startedAt);
+    const startedAt=partStart(run),elapsedMs=Date.parse(midTurnNote(message)?message.createdAt:run?.finishedAt)-Date.parse(startedAt);
     const duration=Number.isFinite(elapsedMs)&&elapsedMs>=0?formatElapsed(elapsedMs):'',done=message.sender==='agent';
     if(outbound)return {kind,status:'Completed',...(done?{duration,startedAt,done}:{})};
     if(midTurnNote(message))return {kind,status:'Sent',duration,startedAt,done};
@@ -1059,7 +1085,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     nameLine.translate=false;nameLine.title=nameLine.textContent;
     // The time sits on the name line outside the card, like every other message.
     const header = create('div', 'chat-message-header');
-    const sentAt = run?.startedAt || run?.createdAt || task.createdAt;
+    const sentAt = partStart(run) || run?.createdAt || task.createdAt;
     const time = create('time', '', formatTime(sentAt));
     if (sentAt) time.dateTime = sentAt;
     header.append(nameLine);
@@ -1125,7 +1151,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const preparing=progress.stage==='worker_received';
     const stage=progress.stage==='stopping'?t('Stopping'):label;
     const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', stage);status.title=stage;
-    if (running||preparing) { const elapsed = elapsedEl(create, running?run.startedAt:run.createdAt); if (elapsed) status.append(elapsed); }
+    if (running||preparing) { const elapsed = elapsedEl(create, running?partStart(run):run.createdAt); if (elapsed) status.append(elapsed); }
     const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
     // The CLI occupancy check stays available as one more icon in the row, instead of a box standing in for the body.
     if (recoveryButton) actionBar.append(recoveryButton);
@@ -1170,7 +1196,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     col.append(header);
     const bubble = create('div', `chat-bubble${handoff || replyDirection ? ' handoff-card' : ''}`);
     const top = create('div', 'chat-bubble-top');
-    if (m.replyToId) {
+    // A reply that follows the user's answer answers that, not the message the run started from: no quote above it.
+    if (m.replyToId && !(m.runId && m.id === `result-${m.runId}` && answeredQuestions(m.runId).length)) {
       const source = m.replySource || messages.find(q => q.id === m.replyToId);
       const quoteText=source?simplifiedCliOutput(source.text|| (source.attachments?.length?t('[Attachment] {v}',{v:source.attachments.map(a=>a.name).filter(Boolean).join(t(', '))||source.attachments.length}):'')):'';
       const quote=create(source?.id?'button':'div', 'quoted-message', source ? t('{senderName}: {v}', { senderName: source.senderName, v: quoteText.slice(0, 180)+(quoteText.length>=180?'...':'') }) : 'Quoting an earlier message');
@@ -1178,9 +1205,12 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       top.append(quote);
       bubble.append(top);
     }
-    const recipients=messageRecipients(m,replyDirection);
+    const recipients=m.synthetic?[]:messageRecipients(m,replyDirection);
     const bodyText=messageDisplayText(handoff?m.handoff.summary||m.text:m.text,recipients);
-    const body=replyPreview(bodyText,handoff||agent,m.runId,`message:${m.id}`);
+    let body;
+    // The user's answer to a role's question: the role it answers, then each question with its answer.
+    if(m.kind==='answer'){body=create('div','chat-reply-preview');const inner=create('div','chat-message-text');inner.append(answerContent(m.answer,{asker:m.asker,t}));body.append(inner);}
+    else body=replyPreview(bodyText,handoff||agent,m.runId,`message:${m.id}`);
     if(recipients.length){
       const list=create('span','chat-recipient-list');list.translate=false;
       for(const recipient of recipients)list.append(create('span','chat-recipient role-mention-token',`@${recipient.name}`),document.createTextNode(' '));
@@ -1219,6 +1249,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     actions.push(...discussionActions);
     // A send not yet stored offers only Copy: there is nothing to reply to, open or ask about until Home has it.
     if(m.localSend)actions.splice(0,actions.length,copyMessageButton(m.text));
+    // A question/answer card is drawn from the run's question record: Copy and full screen, nothing to reply to or open.
+    if(m.synthetic)actions.splice(0,actions.length,copyMessageButton(m.text,`group:${scopeId}:message:${m.id}`),fullscreenMessageButton(m.text,agent?m.senderName:t('Me'),agent,null,null,m.runId));
     const footer=create('div','chat-card-footer');setChatCardState(bubble,cardMeta.state);
     const kindLabel=t('{kind} · {status}',{kind:t(cardMeta.kind),status:t(cardMeta.status)}),kindEl=create('span','chat-card-kind');
     // A finished role card: the kind as a small icon, then how long its run took to it, like the running card's timer.
@@ -1338,6 +1370,20 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       const hold=!run||waitsForResult(run);
       entries.push({key,at:old.dataset.entryAt||String(run?.createdAt||''),rank:2,seq:0,hold,missingRun:!run,
         node:retained=>renderLiveBubble({...task,id:task?.id||run?.taskId,currentRunId:id,roleSnapshot:task?.roleSnapshot||run?.roleSnapshot},messages,retained)});
+    }
+    // Answered questions split a role's card: the part up to each question and the user's answer come first, at their times,
+    // and the role's card (its reply, or the live card) moves to its last answer.
+    for(const entry of [...entries]){
+      const runId=entry.key.startsWith('m:result-')?entry.key.slice(9):entry.key.startsWith('run:')?entry.key.slice(4):null;
+      const run=runId&&data.runs?.find(r=>r.id===runId),list=run?answeredQuestions(run.id):[];if(!list.length)continue;
+      // The first question card takes the run's own place, even when a redraw kept the card's later (moved) time; at the
+      // same time a question card comes before its answer, and both before the role's card.
+      let start=run.startedAt||run.createdAt,at=[entry.at,String(run.createdAt||''),answeredAt(list[0])].filter(Boolean).sort()[0];
+      for(const a of list){const [ask,answer]=questionCards(run,a,start);
+        entries.push({key:`m:${ask.id}`,at,rank:1,seq:-1,signature:()=>messageSignature(ask,messages),node:()=>renderMessageRow(ask,messages)},
+          {key:`m:${answer.id}`,at:answer.createdAt,rank:1,seq:0,signature:()=>messageSignature(answer,messages),node:()=>renderMessageRow(answer,messages)});
+        start=at=answer.createdAt;}
+      if(entry.at<at)entry.at=at;
     }
     entries.sort((a,b)=>a.at.localeCompare(b.at)||a.rank-b.rank||a.seq-b.seq);
     const skeleton=!history&&[...pendingReads].some(key=>key.startsWith(`${scopeId}:`));

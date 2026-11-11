@@ -340,7 +340,7 @@ function answerRunQuestion(id, { answers, skip = false, commandId } = {}) {
   if (terminal.has(r.status) || r.status === 'stopping') throw new Error(tr('home.executionHasEndedStopping'));
   db.transaction(() => {
     db.put('commands', { id: commandId, type: 'question_answer', nodeId: r.nodeId, runId: r.id, approvalId: q.id, answers: clean, skip, acked: false });
-    db.put('approvals', { ...q, status: 'responding', answers: clean, skipped: skip });
+    db.put('approvals', { ...q, status: 'responding', answers: clean, skipped: skip, answeredAt: new Date().toISOString() });
   });
   dispatch(r.nodeId); change(); return db.get('approvals', q.id);
 }
@@ -658,6 +658,7 @@ function pageFileMap() {
   files['/live-scene.js']='live-scene.js';
   files['/cli-recovery.js']='cli-recovery.js';
   files['/session-queue.js']='session-queue.js';
+  files['/question-answer.js']='question-answer.js';
   files['/browser-token.js']='browser-token.js';
   files['/configuration-information.js']='configuration-information.js';
   files['/role-switch.js']='role-switch.js';
