@@ -13,6 +13,38 @@ const PREVIOUS_BULK_RULE = {
   en: '- Never carry files, logs or bulk data (such as base64 in parts) in the chat, wb note or call text. Hand material to another device through the sync-scoped .workbench/docs, or commit it and deliver with wb deliver; when the material is outside the sync scope, say which device and path it is on and let the user decide instead of slicing it yourself.'
 };
 
+// Roles do the work themselves by default and only large changes go to another role for review: [old, new].
+const OWN_WORK_EDITS = {
+ "zh": [
+  [
+   "- 按任务计划做事：完成自己负责的步骤后标记该步骤完成，更新任务说明里的交接内容，再转交给下一步角色；整个任务做完再把它标为完成。",
+   "- 按任务计划做事：每完成一步就标记该步骤完成；下一步自己能做就接着做，计划指定了别人或自己做不了才转交，转交前更新任务说明里的交接内容；整个任务做完再把它标为完成。"
+  ],
+  [
+   "- 用户点名了就按用户的安排；没点名时自己判断找谁：设备合适 > 余额充足 > 空闲。正在运行的尽量不打断，没有合适的人就自己做。",
+   "- 默认自己做。用户指定了人，就按用户的安排找他协助；自己完成不了，也可以找同事协助，优先设备合适、余额充足、空闲的。"
+  ],
+  [
+   "- 审核按改动大小安排：只读查询、答疑、文档、配置值、一两个文件且能直接验证的小修，自测后直接交付，不另找人审；其他改动请一位非作者审核，优先找另一家 CLI 的角色；涉及权限、认证、数据迁移、资金、生产操作、安全、对外接口，或改动本身涉及跨仓库、跨设备行为（如同步、设备间通信）的，不论大小，以及用户点名要求的，先请一位非作者确认方案，再请两位非作者依次审核（一次一位），按范围分工（例如一位看主要逻辑、一位看异常和恢复，只有风险很高时第二位才全量再审），然后独立测试。方案、调研类文档需要审时最多审一轮，作者改完直接交付。修复后只请提出问题的人复核。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。",
+   "- 交付前，大的改动请其他角色审核，小改动自测后直接交付；修复后只请提出问题的人复核。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。"
+  ]
+ ],
+ "en": [
+  [
+   "- Follow the task plan: mark your step done, update the handover in the description and transfer to the next role; mark the task done once the work is finished.",
+   "- Follow the task plan: mark each step done as you finish it; carry on with the next step if you can do it, and hand over only when the plan names someone else or you cannot, updating the handover in the description first; mark the task done once the work is finished."
+  ],
+  [
+   "- If the user named someone, follow that; otherwise choose yourself: suitable device > enough quota > idle. Avoid interrupting a running role; if nobody suits, do it yourself.",
+   "- Do the work yourself by default. If the user named someone, bring them in as asked; if you cannot finish it yourself, you may also ask a teammate, preferring a suitable device, enough quota and idle."
+  ],
+  [
+   "- Size reviews to the change: read-only checks, answers, documents, configuration values and small directly verifiable fixes to one or two files are self-tested and delivered unreviewed; other changes get one non-author review, preferably on another CLI; changes touching permissions, authentication, data migration, money, production, security or external interfaces, or behaviour spanning repositories or devices (sync, device-to-device communication), whatever their size, or that the user asked to have fully reviewed, get one non-author plan check, then two non-author reviews in turn (one at a time), split by scope (e.g. main logic / failures and recovery; a second full review only if very risky), then an independent test. Plans and research documents get at most one review round; the author then delivers. After a fix, only the reviewer who raised the issue rechecks it. Asked to review, give only your own review; do not ask others.",
+   "- Before delivering, have another role review a large change; deliver a small one after testing it yourself. After a fix, only the reviewer who raised the issue rechecks it. Asked to review, give only your own review; do not ask others."
+  ]
+ ]
+};
+
 // Report names kept off the instruction files CLIs load: [old, new], generated with difflib from the deployed default.
 const RESERVED_NAME_EDITS = {
  "zh": [
@@ -237,7 +269,10 @@ for (const [lang, heading, next, help] of [['zh', '工作目录：', '找人协�
   test(`${lang}: working-folder rules, upgrade from the previous default, and wb help sync`, () => runWithLanguage(lang, () => {
     const current = defaultPlatformPrompt();
     const undo = edits => (text => edits.reduce((rebuilt, [old, now]) => { assert.ok(rebuilt.includes(now), now.slice(0, 40)); return rebuilt.replace(now, old); }, text));
-    const beforeReserved = undo(RESERVED_NAME_EDITS[lang])(current);
+    const beforeOwn = undo(OWN_WORK_EDITS[lang])(current);
+    assert.equal(createHash('sha256').update(beforeOwn.trim()).digest('hex'), { zh: '342f158b0dd8fd1a5164f29a33e9cf11f23e413c2f14eb242e6ee25c15a7fd46', en: '27ee23b1eb278a7f50f4bdab63cd61b5b72746813ad2de478ca37af720b4642f' }[lang]);
+    assert.equal(normalizePlatformSettings({ platformPrompt: beforeOwn }).platformPrompt, current, 'a saved copy of that default follows the new one');
+    const beforeReserved = undo(RESERVED_NAME_EDITS[lang])(beforeOwn);
     assert.equal(createHash('sha256').update(beforeReserved.trim()).digest('hex'), { zh: '840fe074a89dd2542b022a7337389f6419f90a63ab8588e9635c2da99647c330', en: '371634dcbb64e3ba26e4efa97ce713f5157c8e96238095cc5d59e370c3070be4' }[lang]);
     assert.equal(normalizePlatformSettings({ platformPrompt: beforeReserved }).platformPrompt, current, 'a saved copy of that default follows the new one');
     const beforeHandoff = undo(HANDOFF_EDITS[lang])(beforeReserved);
