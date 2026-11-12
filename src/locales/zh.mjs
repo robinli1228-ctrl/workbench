@@ -1609,6 +1609,7 @@ wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      定时提醒：到点在群里叫醒指定角色。任何角色都可以给自己设；总管还可以给别人设。写操作带稳定 requestId；update/pause/resume/delete 还要 id 和 revision，update 要带完整的 name、description 和时间设置。不写 roleId 就是提醒自己。
                      例：wb timer create '{"requestId":"remind-1","name":"复查","description":"复查部署结果","type":"once","onceAt":"2026-10-25T09:00:00+08:00"}'
+                     重复检查用 interval（最短 5 分钟），说明写一次固定的；做完了用 delete 停掉，不要每次重建单次提醒。例：wb timer create '{"requestId":"check-1","name":"跟进","description":"查看 T16 是否完成","type":"interval","intervalMinutes":5}'
 wb deliver [--review] [--repo key或id]... 编号 完整SHA|auto 说明
                      --repo 可重复，仅用于审核；auto 读取所选 HEAD。审核 SHA 须明确对应一个仓，有歧义时指定 --repo。
                      跨设备交付一个提交，交付会自动推送；auto 取本轮所有仓库的当前 HEAD。--review 只给审核用：发布固定审核分支、在独立目录接收，不推进项目基线

@@ -75,7 +75,7 @@ function normalizeSchedule(input, now, previous, jobType = 'dispatch') {
   }
   if (type === 'interval') {
     const intervalMinutes = Number(raw.intervalMinutes);
-    const minimum = jobType === 'monitor' ? 10 : 15;
+    const minimum = jobType === 'monitor' ? 10 : 5;
     if (!Number.isSafeInteger(intervalMinutes) || intervalMinutes < minimum || intervalMinutes > 525600) throw new Error(tr('scheduledJobs.intervalMustBeAtLeast', { minimum }));
     const same = previous?.type === type && previous.intervalMinutes === intervalMinutes;
     return { type, intervalMinutes, anchorAt: same ? previous.anchorAt : iso(now) };

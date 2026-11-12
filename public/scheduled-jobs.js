@@ -86,7 +86,7 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
   description.name = 'description'; description.rows = 3;
   type.name = 'type'; type.append(option('once', 'Once'), option('interval', 'At intervals'), option('daily', 'Daily'), option('weekly', 'Weekly'));
   const onceAt = input('onceAt', 'datetime-local'), intervalMinutes = input('intervalMinutes', 'number');
-  intervalMinutes.min = '15'; intervalMinutes.step = '1'; intervalMinutes.value = '60';
+  intervalMinutes.min = '5'; intervalMinutes.step = '1'; intervalMinutes.value = '60';
   const time = input('time', 'time'), timezone = input('timezone'); time.value = '09:00'; timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const weekday = create('select'); weekday.name = 'weekday';
   ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].forEach((label, index) => weekday.append(option(String(index), label)));
@@ -130,7 +130,7 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
     const monitor = jobType.value === 'monitor';
     if (monitor) type.value = 'interval';
     for (const item of type.options) item.disabled = monitor && item.value !== 'interval';
-    intervalMinutes.min = monitor ? '10' : '15';
+    intervalMinutes.min = monitor ? '10' : '5';
     if (monitor && Number(intervalMinutes.value) < 10) intervalMinutes.value = '10';
     roleField.hidden = monitor;
     if (monitor) fillRoles(getData().projects?.find(item => item.id === formProject.value)?.supervisorRoleId || '');

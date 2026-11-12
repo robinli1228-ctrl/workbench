@@ -8,8 +8,9 @@ import { Rooms } from '../src/rooms.mjs';
 import { RoleCalls, transferDepth } from '../src/role-calls.mjs';
 import { createAgentCalls } from '../src/agent-calls.mjs';
 import { TimerAgentActions } from '../src/timer-agent.mjs';
+import { ScheduledJobs } from '../src/scheduled-jobs.mjs';
 import { History } from '../src/history.mjs';
-import { runWithLanguage } from '../src/i18n.mjs';
+import { runWithLanguage, tr } from '../src/i18n.mjs';
 import { normalizePlatformSettings, executionRules, defaultPlatformPrompt, defaultSupervisorPrompt } from '../src/platform-prompts.mjs';
 import { helpText } from '../src/wb-tools.mjs';
 
@@ -120,6 +121,14 @@ test('any role keeps its own reminders; only the supervisor sets them for others
   timers.execute(supRun, 'create', { requestId: 'for-c', name: 'x', description: 'x', roleId: 'c', schedule });
   assert.equal(saved.at(-1).roleId, 'c');
   assert.equal(timers.execute(supRun, 'list').jobs.length, 2);
+});
+
+test('a repeating reminder can run every 5 minutes; a progress patrol still needs 10', () => {
+  const e = env(), jobs = new ScheduledJobs(e.db, null);
+  const job = jobs.save(P, { name: 'follow-up', description: 'check whether T16 is done', roleId: 'b', type: 'interval', intervalMinutes: 5 });
+  assert.equal(job.schedule.intervalMinutes, 5);
+  assert.throws(() => jobs.save(P, { name: 'x', description: 'x', roleId: 'b', type: 'interval', intervalMinutes: 4 }), /at least 5|至少 5/);
+  assert.match(tr('wbTools.builtInCollaborationToolsWorkbench'), /"type":"interval","intervalMinutes":5/);
 });
 
 test('wb history read takes a message ID or a run / call ID', () => {
