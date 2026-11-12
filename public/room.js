@@ -1151,6 +1151,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const preparing=progress.stage==='worker_received';
     const stage=progress.stage==='stopping'?t('Stopping'):label;
     const footer = create('div', 'chat-card-footer'), status = create('span', 'chat-card-kind', stage);status.title=stage;
+    // A running CLI shows a spinner instead of the word, then its timer.
+    if(progress.stage==='running'){const spin=create('span','chat-card-spinner');spin.setAttribute('role','img');spin.setAttribute('aria-label',stage);status.replaceChildren(spin);}
     if (running||preparing) { const elapsed = elapsedEl(create, running?partStart(run):run.createdAt); if (elapsed) status.append(elapsed); }
     const actionBar = create('div', 'chat-card-actions'); actionBar.append(...actions);
     // The CLI occupancy check stays available as one more icon in the row, instead of a box standing in for the body.

@@ -2706,6 +2706,11 @@ button.danger:hover:not(:disabled), :is(dialog, #project-form-panel) button.dang
 .chat-typing-row { display: flex; align-items: center; min-height: 22px; }
 .is-live-card .chat-card-footer .elapsed-time { margin-left: 6px; }
 .is-live-card .chat-card-footer .elapsed-time::before { content: '· '; }
+/* A running CLI's footer: a small spinner in place of "In progress", then the timer without the dot. */
+.chat-card-kind:has(> .chat-card-spinner) { display: inline-flex; align-items: center; }
+.chat-card-spinner { flex: none; width: 12px; height: 12px; border: 1.6px solid rgb(79 91 206 / 22%); border-top-color: var(--accent, #4f5bce); border-radius: 50%; animation: role-refresh-spin .9s linear infinite; }
+.is-live-card .chat-card-footer .chat-card-spinner + .elapsed-time::before { content: none; }
+@media (prefers-reduced-motion: reduce) { .chat-card-spinner { animation-duration: 2.4s; } }
 .is-live-card { min-width: min(320px, 100%); }
 
 /* Fix F1: the collapsed rail keeps the bare selected icon (no leftover tile shadow). */
@@ -2889,6 +2894,10 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 }
 .chat-row > .chat-col > .chat-bubble.is-error-card, .chat-bubble.is-error-card, .message-queue-item.is-error-card {
   background: linear-gradient(rgb(220 38 38 / 4%), rgb(220 38 38 / 4%)), #fff;
+}
+/* A role card whose CLI is still running is tinted a very light green; it turns back to white when the run finishes. */
+.chat-row > .chat-col > .chat-bubble.is-running-card {
+  background: linear-gradient(rgb(22 163 74 / 5%), rgb(22 163 74 / 5%)), #fff;
 }
 .is-resume-notice .chat-message-text {
   white-space: pre-wrap; overflow-wrap: anywhere;
