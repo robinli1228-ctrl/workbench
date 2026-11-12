@@ -12,7 +12,7 @@ This design reuses the Home's existing `ScheduledJobs`, the Room/Task/Run model 
 
 The bottom-left buttons are, in order, token statistics, scheduled jobs and base settings. "Scheduled jobs" opens a full-screen page that defaults to the current project and can switch to another project or show a summary of all projects. The list shows project, name, type, target role, enabled state, next time, last check or execution and its result; opening an item shows the trigger records and the related group message or run. The page offers create, edit, pause/enable, run-now, and delete. Editing uses a dialog and deleting requires confirmation. The earlier "project settings, scheduled jobs" form is removed and project settings only keep a link to the management page, so there is one editing interface.
 
-Ordinary "scheduled dispatch" keeps the four schedules once, interval, daily and weekly, dispatches once to a fixed role when due, and the interval is at least 15 minutes. "Progress patrol" is new: it allows only interval schedules, at least 10 minutes, and its target is always the current project supervisor. The page distinguishes the two clearly, and a patrol is never shown as something that calls the supervisor every time.
+Ordinary "scheduled dispatch" keeps the four schedules once, interval, daily and weekly, dispatches once to a fixed role when due, and the interval is at least 5 minutes (lowered from 15 on 2026-11-12). "Progress patrol" is new: it allows only interval schedules, at least 10 minutes, and its target is always the current project supervisor. The page distinguishes the two clearly, and a patrol is never shown as something that calls the supervisor every time.
 
 ## CLI and Home contract
 

@@ -1609,6 +1609,7 @@ wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      Timed reminders: wake a role in the group chat at a set time. Any role may set them for itself; the supervisor may also set them for others. Writes need a stable requestId; update/pause/resume/delete also need id and revision, and update must resend the full name, description and schedule. Without roleId the reminder is for yourself.
                      Example: wb timer create '{"requestId":"remind-1","name":"Recheck","description":"Recheck the deployment","type":"once","onceAt":"2026-10-25T09:00:00+08:00"}'
+                     For repeated checks use interval (at least 5 minutes) with one fixed description; delete it when done instead of re-creating one-off reminders. Example: wb timer create '{"requestId":"check-1","name":"Follow-up","description":"Check whether T16 is done","type":"interval","intervalMinutes":5}'
 wb deliver [--review] [--repo KEY|ID]... ID FULL_SHA|auto DESCRIPTION
                      --repo is repeatable, review-only; auto reads selected HEADs. A review SHA must identify one repository; use --repo if ambiguous.
                      Deliver a commit across devices; the delivery is pushed automatically, and auto takes the current HEAD of every repository in this run. --review is for reviews only: it publishes a fixed review ref received in a separate directory, without advancing project baselines
