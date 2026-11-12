@@ -93,8 +93,9 @@ test('the work materials folder is per task and role inside the project, and nev
 
 for(const lang of ['zh','en'])test(`${lang}: the default prompt sizes reviews, keeps materials out of /tmp, and drops per-file hashes`, () => runWithLanguage(lang,() => {
   const text=defaultPlatformPrompt(),sync=tr('wbTools.helpSync');
-  assert.match(text,lang==='zh'?/自测后直接交付，不另找人审/:/self-tested and delivered unreviewed/);
-  assert.match(text,lang==='zh'?/请一位非作者审核/:/one non-author review/);
+  assert.match(text,lang==='zh'?/默认自己做。/:/Do the work yourself by default\./);
+  assert.match(text,lang==='zh'?/大的改动请其他角色审核，小改动自测后直接交付/:/have another role review a large change; deliver a small one after testing it yourself/);
+  assert.match(text,lang==='zh'?/下一步自己能做就接着做/:/carry on with the next step if you can do it/);
   assert.match(text,lang==='zh'?/修复后只请提出问题的人复核/:/only the reviewer who raised the issue rechecks/);
   assert.doesNotMatch(text,lang==='zh'?/至少请两位非作者的模型角色审核/:/at least two model roles other than the author/);
   assert.match(text,lang==='zh'?/中间资料目录（不同步，不要放 \/tmp）/:/work materials folder from the environment notes \(not synced; never \/tmp\)/);

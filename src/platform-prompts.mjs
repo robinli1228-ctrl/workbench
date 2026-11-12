@@ -125,7 +125,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   'd015a181387f797f3b9161d7835947c7ef3f74c141e5f9858815d1ea321b1200',
   // Defaults before report names were kept off the instruction files CLIs load (CLAUDE.md, AGENTS.md, GEMINI.md).
   '840fe074a89dd2542b022a7337389f6419f90a63ab8588e9635c2da99647c330',
-  '371634dcbb64e3ba26e4efa97ce713f5157c8e96238095cc5d59e370c3070be4'
+  '371634dcbb64e3ba26e4efa97ce713f5157c8e96238095cc5d59e370c3070be4',
+  // Defaults before roles did the work themselves by default and only large changes went to another role for review.
+  '342f158b0dd8fd1a5164f29a33e9cf11f23e413c2f14eb242e6ee25c15a7fd46',
+  '27ee23b1eb278a7f50f4bdab63cd61b5b72746813ad2de478ca37af720b4642f'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */
