@@ -2706,6 +2706,11 @@ button.danger:hover:not(:disabled), :is(dialog, #project-form-panel) button.dang
 .chat-typing-row { display: flex; align-items: center; min-height: 22px; }
 .is-live-card .chat-card-footer .elapsed-time { margin-left: 6px; }
 .is-live-card .chat-card-footer .elapsed-time::before { content: '· '; }
+/* A running CLI's footer: a small spinner in place of "In progress", then the timer without the dot. */
+.chat-card-kind:has(> .chat-card-spinner) { display: inline-flex; align-items: center; }
+.chat-card-spinner { flex: none; width: 12px; height: 12px; border: 1.6px solid rgb(79 91 206 / 22%); border-top-color: var(--accent, #4f5bce); border-radius: 50%; animation: role-refresh-spin .9s linear infinite; }
+.is-live-card .chat-card-footer .chat-card-spinner + .elapsed-time::before { content: none; }
+@media (prefers-reduced-motion: reduce) { .chat-card-spinner { animation-duration: 2.4s; } }
 .is-live-card { min-width: min(320px, 100%); }
 
 /* Fix F1: the collapsed rail keeps the bare selected icon (no leftover tile shadow). */
