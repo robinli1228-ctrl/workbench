@@ -2895,6 +2895,10 @@ body .project-sidebar .sidebar-heading { padding-bottom: 0; }
 .chat-row > .chat-col > .chat-bubble.is-error-card, .chat-bubble.is-error-card, .message-queue-item.is-error-card {
   background: linear-gradient(rgb(220 38 38 / 4%), rgb(220 38 38 / 4%)), #fff;
 }
+/* A role card whose CLI is still running is tinted a very light green; it turns back to white when the run finishes. */
+.chat-row > .chat-col > .chat-bubble.is-running-card {
+  background: linear-gradient(rgb(22 163 74 / 5%), rgb(22 163 74 / 5%)), #fff;
+}
 .is-resume-notice .chat-message-text {
   white-space: pre-wrap; overflow-wrap: anywhere;
 }

@@ -2,6 +2,7 @@
 export function setChatCardState(card, state) {
   card.classList.toggle('is-error-card', state === 'error' || state === 'failed');
   card.classList.toggle('is-waiting-card', ['queued','waiting','waiting_user'].includes(state));
+  card.classList.toggle('is-running-card', state === 'running');
   card.classList.remove('is-latest-card');
   return card;
 }
