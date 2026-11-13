@@ -5,9 +5,13 @@ export function contextSample({usedTokens,limitTokens,model=null,sessionId=null,
   return {usedTokens:count(usedTokens),limitTokens:count(limitTokens)>0?limitTokens:null,model,sessionId,state,observedAt,source:'native',...(compacted?{compacted}:{})};
 }
 
+// A model's window is the same for every session on this Worker; one learned at any turn's end applies to the next process's
+// first requests too, instead of staying unknown until that process finishes a turn.
+const knownClaudeLimits=new Map();
+
 /** Claude reports request input on assistant/message_start, but the resolved model window on result. */
 export class ClaudeContextUsage {
-  constructor(){this.limits=new Map();this.current=null;}
+  constructor(){this.limits=knownClaudeLimits;this.current=null;}
   receive(raw,sessionId){
     if(raw.parent_tool_use_id)return null;
     const event=raw.type==='stream_event'?raw.event:raw;
