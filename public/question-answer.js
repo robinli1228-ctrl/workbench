@@ -5,7 +5,7 @@ import {simplifiedCliOutput} from './output-language.js';
  * question (small, grey) with the answer under it; a skipped question says so. Shared by the Sessions page and the group chat.
  * record: {items:[{question, answer:[…]} | {question, skipped:true}], skipped}.
  */
-export function answerContent(record,{asker,t}){
+export function answerContent(record,{asker,t,questions=true}){
  const box=document.createElement('div');box.className='qa-answer';
  const lead=document.createElement('div');lead.className='qa-lead';lead.textContent=t('Reply to the question from {name}',{name:asker||t('Assistant')});box.append(lead);
  const list=document.createElement('ol');
@@ -13,15 +13,29 @@ export function answerContent(record,{asker,t}){
   const li=document.createElement('li'),q=document.createElement('div'),a=document.createElement('div');
   q.className='qa-q';q.textContent=simplifiedCliOutput(item.question||'');q.translate=false;
   a.className=`qa-a${item.skipped?' is-skipped':''}`;a.textContent=item.skipped?t('Skipped'):item.secret?t('Filled in'):(item.answer||[]).map(simplifiedCliOutput).join(t(', '));if(!item.skipped)a.translate=false;
-  li.append(q,a);list.append(li);
+  if(questions)li.append(q);li.append(a);list.append(li);
  }
  box.append(list);return box;
 }
 
 /** Plain text of an answer for Copy and full screen. */
-export function answerPlainText(record,{asker,t}){
- return [t('Reply to the question from {name}',{name:asker||t('Assistant')}),...(record?.items||[]).map((item,i)=>`${i+1}. ${simplifiedCliOutput(item.question||'')}\n${item.skipped?t('Skipped'):item.secret?t('Filled in'):(item.answer||[]).map(simplifiedCliOutput).join(t(', '))}`)].join('\n');
+export function answerPlainText(record,{asker,t,questions=true}){
+ return [t('Reply to the question from {name}',{name:asker||t('Assistant')}),...(record?.items||[]).map((item,i)=>`${i+1}. ${questions?`${simplifiedCliOutput(item.question||'')}\n`:''}${item.skipped?t('Skipped'):item.secret?t('Filled in'):(item.answer||[]).map(simplifiedCliOutput).join(t(', '))}`)].join('\n');
 }
+
+/** The questions a role asked, numbered, each with its options (labels, small and grey) under it; the group chat's question card. */
+export function questionsContent(questions){
+ const list=document.createElement('ol');list.className='qa-asked';list.translate=false;
+ for(const item of questions||[]){
+  const li=document.createElement('li'),q=document.createElement('div');q.className='qa-asked-q';q.textContent=simplifiedCliOutput(item.question||'');li.append(q);
+  const labels=(item.options||[]).map(o=>simplifiedCliOutput(o?.label||'')).filter(Boolean);
+  if(labels.length){const o=document.createElement('div');o.className='qa-asked-options';o.textContent=labels.join(' / ');li.append(o);}
+  list.append(li);
+ }
+ return list;
+}
+export const questionsPlainText=questions=>(questions||[]).map((item,i)=>{const labels=(item.options||[]).map(o=>simplifiedCliOutput(o?.label||'')).filter(Boolean);
+ return `${i+1}. ${simplifiedCliOutput(item.question||'')}${labels.length?`\n${labels.join(' / ')}`:''}`;}).join('\n');
 
 /** One answer record from the questions asked and the answers given (by question id, or by question text). */
 export function answerRecord(questions,given,failed=false){
