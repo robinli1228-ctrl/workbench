@@ -187,7 +187,10 @@ export class ScheduledJobs {
           if (job.jobType === 'monitor') return this.#checkMonitor(job, dueAt, now, true, { id: occurrenceId, dueAt });
           const next = nextRun(job.schedule, now);
           this.db.put('scheduledJobs', { ...job, nextRunAt: next?.toISOString() || null, lastRunAt: iso(now), updatedAt: iso(now) });
-          return this.#dispatch(job, dueAt, { id: occurrenceId, dueAt });
+          const dispatched = this.#dispatch(job, dueAt, { id: occurrenceId, dueAt });
+          // A one-time reminder that has fired is done: it leaves the list (its occurrence and message stay in the history).
+          if (job.schedule.type === 'once' && !next) this.db.remove('scheduledJobs', job.id);
+          return dispatched;
         });
         if (result) changed = true;
       } catch (error) {
@@ -248,7 +251,8 @@ export class ScheduledJobs {
     });
     const message = this.rooms.post(job.projectId, {
       clientMessageId: messageId, conversationId:conversationIdOf(job), // Reminders say who set them; supervisor patrols keep their own wording. The message limit still applies after labelling.
-      text: (job.jobType === 'monitor' ? text || job.description : tr('scheduledJobs.reminderText', { name: job.name, text: text || job.description })).slice(0, 12000), targetRoleId: role.id, scheduledJobId: job.id
+      // A repeating reminder names its id and how to stop it, so the role can close it without looking it up.
+      text: (job.jobType === 'monitor' ? text || job.description : tr(job.schedule.type === 'once' ? 'scheduledJobs.reminderText' : 'scheduledJobs.reminderTextRepeating', { name: job.name, id: job.id, text: text || job.description })).slice(0, 12000), targetRoleId: role.id, scheduledJobId: job.id
     });
     if(extra.followupMessageIds?.length)for(const taskId of message.taskIds||[]){const task=this.db.get('tasks',taskId);this.db.put('tasks',{...task,followupMessageIds:extra.followupMessageIds});}
     return this.db.put('scheduledOccurrences', { ...occurrence, taskIds: message.taskIds || [], status: 'queued' });
