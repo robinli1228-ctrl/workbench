@@ -811,3 +811,7 @@ Worker admission checks its synchronization reservation before acknowledgment, R
 This allows work to continue while synchronization waits for idle and can postpone a sync under continuous workload. It does not promise a new task already sees a queued remote change: explicit pinned-input/delivery requirements still apply. Queued online Runs no longer produce the ten-minute executing-silence alert; device-offline and actual execution-stall alerts remain.
 
 Question-answer history requires a loaded matching question call before rendering a user answer, so missing secret metadata or unrelated tool outputs cannot create a false user message. Unmatched results retain their original tool representation until earlier history is loaded. Group question previews read at most 128 recent Run events through the Run/sequence index and return only bounded message text, not tool payloads.
+
+Brand assets use `assets/app-icon.svg` as their source: matching blue-and-silver stacked terminal windows for the header, favicon and installed app. PNG exports are 512 and 192 pixels; versioned icon URLs and the existing static-file fingerprint refresh PWA assets.
+
+Timer action receipts retain exact retries from the pre-action namespace. Learned Claude model windows are cached only for the same native session and model, with a bounded in-memory session cache; no other session supplies the window.

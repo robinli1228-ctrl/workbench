@@ -1395,9 +1395,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       // same time a question card comes before its answer, and both before the role's card.
       let start=run.startedAt||run.createdAt,at=[entry.at,String(run.createdAt||''),answeredAt(list[0])].filter(Boolean).sort()[0];
       let source=runReplySource(run,messages);
-      for(const a of list){const [ask,answer]=questionCards(run,a,start,source);source=null;
-        entries.push({key:`m:${ask.id}`,at,rank:1,seq:-1,signature:()=>messageSignature(ask,messages),node:()=>renderMessageRow(ask,messages)},
-          {key:`m:${answer.id}`,at:answer.createdAt,rank:1,seq:0,signature:()=>messageSignature(answer,messages),node:()=>renderMessageRow(answer,messages)});
+      for(const [index,a] of list.entries()){const [ask,answer]=questionCards(run,a,start,source);source=null;
+        entries.push({key:`m:${ask.id}`,at,rank:1,seq:index*2,signature:()=>messageSignature(ask,messages),node:()=>renderMessageRow(ask,messages)},
+          {key:`m:${answer.id}`,at:answer.createdAt,rank:1,seq:index*2+1,signature:()=>messageSignature(answer,messages),node:()=>renderMessageRow(answer,messages)});
         start=at=answer.createdAt;}
       if(entry.at<at)entry.at=at;
     }

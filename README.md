@@ -206,3 +206,5 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before contri
 ## License
 
 [MIT](LICENSE).
+
+The page header and installed-app icons share the blue-and-silver stacked-terminal mark, maintained in `assets/app-icon.svg`.

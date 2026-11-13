@@ -63,9 +63,12 @@ export class TimerAgentActions {
     return this.db.transaction(() => {
       // The supervisor keeps its original keys; other roles get their own namespace so two roles may both use "remind-1".
       // Changes other than create are keyed by action too, so reusing the create's requestId to delete is not a conflict.
-      const id = `${run.projectId}:${conversationIdOf(run)===run.projectId?'':`${conversationIdOf(run)}:`}${supervisor?'':`${run.roleId}:`}${action==='create'?'':`${action}:`}${values.requestId}`;
+      const namespace = `${run.projectId}:${conversationIdOf(run)===run.projectId?'':`${conversationIdOf(run)}:`}${supervisor?'':`${run.roleId}:`}`;
+      const id = action==='create'?`${namespace}${values.requestId}`:JSON.stringify([namespace,action,values.requestId]);
       const fingerprint = JSON.stringify({ action, values });
-      const prior = this.db.get('timerActions', id);
+      // A pre-upgrade receipt used no action prefix; keep its exact retries valid without blocking reuse for another action.
+      const legacy = action==='create'?null:this.db.get('timerActions', `${namespace}${values.requestId}`);
+      const prior = this.db.get('timerActions', id) || (legacy?.action===action?legacy:null);
       if (prior) {
         if (prior.fingerprint !== fingerprint) throw new Error(tr('timerAgent.requestidParameterConflict'));
         return prior.result;
