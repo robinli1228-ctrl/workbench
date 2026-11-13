@@ -78,6 +78,16 @@ test('context snapshots are kept on the turn and a Claude compaction records pre
   assert.equal(sample.state, 'compacted'); assert.equal(sample.usedTokens, 2001); assert.deepEqual(sample.compacted, { preTokens: 20071, postTokens: 2001 });
 });
 
+test('a model window learned at one turn\'s end is known to the next process from its first request', () => {
+  const model = 'claude-test-window-model', start = usage => ({ type: 'assistant', message: { model, usage } });
+  const first = new ClaudeContextUsage();
+  assert.equal(first.receive(start({ input_tokens: 10, cache_read_input_tokens: 90 }), SID).limitTokens, null, 'unknown before any turn ends');
+  assert.equal(first.receive({ type: 'result', modelUsage: { [model]: { contextWindow: 1000000 } } }, SID).limitTokens, 1000000);
+  const next = new ClaudeContextUsage();
+  const sample = next.receive(start({ input_tokens: 449836 }), SID);
+  assert.equal(sample.usedTokens, 449836); assert.equal(sample.limitTokens, 1000000);
+});
+
 test('a hosting account binds to a session only with a matching repository host, and rides on turns as a credential', async () => {
   const { db, sent, turns, worker } = home();
   db.put('hostingAccounts', { id: 'acct-gh', provider: 'github', login: 'robin' });

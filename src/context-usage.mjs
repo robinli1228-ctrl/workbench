@@ -5,13 +5,21 @@ export function contextSample({usedTokens,limitTokens,model=null,sessionId=null,
   return {usedTokens:count(usedTokens),limitTokens:count(limitTokens)>0?limitTokens:null,model,sessionId,state,observedAt,source:'native',...(compacted?{compacted}:{})};
 }
 
+// A fresh process may reuse this session's measured model window, never another session's settings.
+// Bound the in-memory cache; eviction returns the limit to unknown until the CLI reports it again.
+const knownClaudeLimits=new Map();
+
 /** Claude reports request input on assistant/message_start, but the resolved model window on result. */
 export class ClaudeContextUsage {
-  constructor(){this.limits=new Map();this.current=null;}
+  constructor(){this.localLimits=new Map();this.limits=this.localLimits;this.current=null;}
   receive(raw,sessionId){
     if(raw.parent_tool_use_id)return null;
     const event=raw.type==='stream_event'?raw.event:raw;
     if(!event||event.parent_tool_use_id)return null;
+    if(sessionId){
+      if(!knownClaudeLimits.has(sessionId)){knownClaudeLimits.set(sessionId,new Map());if(knownClaudeLimits.size>256)knownClaudeLimits.delete(knownClaudeLimits.keys().next().value);}
+      this.limits=knownClaudeLimits.get(sessionId);
+    }else this.limits=this.localLimits;
     if(event.subtype==='compact_boundary'){const meta=event.compact_metadata||{};return this.current=contextSample({...this.current,usedTokens:count(meta.post_tokens),sessionId,state:'compacted',observedAt:new Date().toISOString(),compacted:{preTokens:count(meta.pre_tokens),postTokens:count(meta.post_tokens)}});}
     const message=['assistant','message_start'].includes(event.type)?event.message:null;
     if(message?.usage&&typeof message.model==='string'){

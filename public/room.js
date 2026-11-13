@@ -24,7 +24,7 @@ import {createLocalBrowser} from './local-browser.js';
 import {classifyStep,toolFilePaths} from './native-transcript.js';
 import { SEND_LABELS, uncertainSend, sendStateOf, sendLocked, lookupFailureState, sameSend } from './send-state.js';
 import { pastesAsFile, pastedTextName } from './pasted-text.js';
-import {answerContent,answerPlainText} from './question-answer.js';
+import {answerContent,answerPlainText,questionsContent,questionsPlainText} from './question-answer.js';
 
 /** Typed text that grows this long moves into an attachment too; pasted text moves at a much lower limit (pasted-text.js). The file keeps the original line breaks, whitespace and trailing characters. */
 export function longTextFileName(text) {
@@ -881,11 +881,21 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   const answerRecordOf=a=>({items:(a.questions||[]).map(q=>{const given=[].concat(a.answers?.[q.id]??[]).map(String).filter(Boolean);
     return a.skipped||!given.length?{question:q.question,skipped:true}:{question:q.question,answer:given,...(q.secret?{secret:true}:{})};}),skipped:a.skipped===true});
   /** The two cards one answered question adds to the timeline, as message-like records drawn by renderMessageRow. */
-  function questionCards(run,a,start){
+  // The question card quotes what the run replies to and lists the questions with their options, so the answer card shows
+  // only the answers. Only the run's first question quotes: later parts answer the user's answer.
+  function questionCards(run,a,start,source){
     const role=run.roleSnapshot||(data.roles||[]).find(r=>r.id===run.roleId)||{},record=answerRecordOf(a),asker=role.name||t('Role');
-    const base={projectId:run.projectId,conversationId:run.conversationId||run.projectId,synthetic:true};
-    return [{...base,id:`ask-${a.id}`,sender:'agent',senderName:role.name,roleId:run.roleId,runId:run.id,kind:'question_ask',text:a.lead||t('Asked you a question'),createdAt:a.createdAt,partStart:start},
-      {...base,id:`answer-${a.id}`,sender:'human',kind:'answer',answer:record,asker,text:answerPlainText(record,{asker,t}),createdAt:answeredAt(a)}];
+    const base={projectId:run.projectId,conversationId:run.conversationId||run.projectId,synthetic:true},asked=(a.questions||[]).filter(q=>q?.question);
+    const text=[a.lead,asked.length?questionsPlainText(asked):t('Asked you a question')].filter(Boolean).join('\n\n');
+    return [{...base,id:`ask-${a.id}`,sender:'agent',senderName:role.name,roleId:run.roleId,runId:run.id,kind:'question_ask',lead:a.lead||'',questions:asked,text,createdAt:a.createdAt,partStart:start,...(source?{replyToId:source.id,replySource:source}:{})},
+      {...base,id:`answer-${a.id}`,sender:'human',kind:'answer',answer:record,asker,text:answerPlainText(record,{asker,t,questions:false}),createdAt:answeredAt(a)}];
+  }
+  /** The message a run replies to, as its result or live card quotes it. */
+  function runReplySource(run,messages){
+    const result=messages.find(q=>q.id===`result-${run.id}`);
+    if(result?.replyToId)return result.replySource||messages.find(q=>q.id===result.replyToId)||null;
+    const task=data.tasks?.find(x=>x.id===run.taskId)||{},request=data.requests?.find(r=>r.id===(run.requestId||task.requestId)),quotes=histories.get(scopeId)?.liveReplySources;
+    return (quotes&&task.id&&Object.hasOwn(quotes,task.id)?quotes[task.id]:messages.find(q=>q.id===(request?.callMessageId||`call:${request?.id}`))||(!request?.parentRequestId&&!['consult','handoff','continuation'].includes(request?.kind)?messages.find(q=>q.id===task.sourceMessageId):null))||null;
   }
 
   /**
@@ -1211,7 +1221,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const bodyText=messageDisplayText(handoff?m.handoff.summary||m.text:m.text,recipients);
     let body;
     // The user's answer to a role's question: the role it answers, then each question with its answer.
-    if(m.kind==='answer'){body=create('div','chat-reply-preview');const inner=create('div','chat-message-text');inner.append(answerContent(m.answer,{asker:m.asker,t}));body.append(inner);}
+    if(m.kind==='answer'){body=create('div','chat-reply-preview');const inner=create('div','chat-message-text');inner.append(answerContent(m.answer,{asker:m.asker,t,questions:false}));body.append(inner);}
+    // A role's question: what it said first (if anything), then the questions with their options.
+    else if(m.kind==='question_ask'&&m.questions?.length){body=m.lead?replyPreview(m.lead,true,m.runId,`message:${m.id}`):create('div','chat-reply-preview');
+      const asked=create('div','chat-message-text qa-asked-box');asked.append(questionsContent(m.questions));body.append(asked);}
     else body=replyPreview(bodyText,handoff||agent,m.runId,`message:${m.id}`);
     if(recipients.length){
       const list=create('span','chat-recipient-list');list.translate=false;
@@ -1381,9 +1394,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       // The first question card takes the run's own place, even when a redraw kept the card's later (moved) time; at the
       // same time a question card comes before its answer, and both before the role's card.
       let start=run.startedAt||run.createdAt,at=[entry.at,String(run.createdAt||''),answeredAt(list[0])].filter(Boolean).sort()[0];
-      for(const a of list){const [ask,answer]=questionCards(run,a,start);
-        entries.push({key:`m:${ask.id}`,at,rank:1,seq:-1,signature:()=>messageSignature(ask,messages),node:()=>renderMessageRow(ask,messages)},
-          {key:`m:${answer.id}`,at:answer.createdAt,rank:1,seq:0,signature:()=>messageSignature(answer,messages),node:()=>renderMessageRow(answer,messages)});
+      let source=runReplySource(run,messages);
+      for(const [index,a] of list.entries()){const [ask,answer]=questionCards(run,a,start,source);source=null;
+        entries.push({key:`m:${ask.id}`,at,rank:1,seq:index*2,signature:()=>messageSignature(ask,messages),node:()=>renderMessageRow(ask,messages)},
+          {key:`m:${answer.id}`,at:answer.createdAt,rank:1,seq:index*2+1,signature:()=>messageSignature(answer,messages),node:()=>renderMessageRow(answer,messages)});
         start=at=answer.createdAt;}
       if(entry.at<at)entry.at=at;
     }

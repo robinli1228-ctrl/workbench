@@ -11,14 +11,18 @@ function normalize(action, input) {
     ? ['requestId', 'id', 'revision'] : WRITE_FIELDS;
   if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error(tr('timerAgent.invalidScheduledJobParametersProject'));
   if (action === 'list') return {};
-  if (typeof input.requestId !== 'string' || !/^[\w:.-]{1,120}$/.test(input.requestId)) throw new Error(tr('timerAgent.stableRequestidRequired'));
-  const result = { requestId: input.requestId };
+  // Pausing, resuming and deleting are idempotent by themselves: they need only the timer id; a requestId or revision, when
+  // given, still makes a retry safe or guards against a changed timer.
+  const toggle = ['pause', 'resume', 'delete'].includes(action);
+  if ((!toggle || input.requestId !== undefined) && (typeof input.requestId !== 'string' || !/^[\w:.-]{1,120}$/.test(input.requestId))) throw new Error(tr('timerAgent.stableRequestidRequired'));
+  const result = input.requestId === undefined ? {} : { requestId: input.requestId };
   if (action !== 'create') {
-    if (typeof input.id !== 'string' || !input.id || !Number.isSafeInteger(input.revision) || input.revision < 1) throw new Error(tr('timerAgent.scheduledJobIdRevisionRequired'));
+    if (typeof input.id !== 'string' || !input.id) throw new Error(tr('timerAgent.scheduledJobIdRevisionRequired'));
+    if ((!toggle || input.revision !== undefined) && (!Number.isSafeInteger(input.revision) || input.revision < 1)) throw new Error(tr('timerAgent.scheduledJobIdRevisionRequired'));
     result.id = input.id;
-    result.revision = input.revision;
+    if (input.revision !== undefined) result.revision = input.revision;
   }
-  if (['pause', 'resume', 'delete'].includes(action)) return result;
+  if (toggle) return result;
   for (const key of ['name', 'description', 'roleId', 'jobType', 'enabled']) if (input[key] !== undefined) result[key] = input[key];
   const source = input.schedule === undefined ? input : input.schedule;
   if (!source || typeof source !== 'object' || Array.isArray(source)) throw new Error(tr('timerAgent.scheduleMustBeObject'));
@@ -45,26 +49,33 @@ export class TimerAgentActions {
       return { jobs: listed.jobs.filter(job => own.has(job.id)), occurrences: listed.occurrences.filter(item => own.has(item.jobId)) };
     }
     const existing = values.id ? this.db.get('scheduledJobs',values.id) : null;
+    // Deleting a timer that is already gone (deleted earlier, or a one-time reminder removed after it fired) is done.
+    if (action === 'delete' && !existing) return { id: values.id, deleted: true };
     if(values.id)assertConversationRecord(run,existing);
     if (action === 'create' && values.roleId === undefined) values.roleId = run.roleId;
     if (action === 'update' && values.roleId === undefined && existing) values.roleId = existing.roleId;
     if (!supervisor && (existing && existing.roleId !== run.roleId || values.roleId !== undefined && values.roleId !== run.roleId)) throw new Error(tr('timerAgent.ownRemindersOnly'));
     if (['create', 'update'].includes(action) && values.roleId && this.db.get('roles', values.roleId)?.projectId !== run.projectId) throw new Error(tr('timerAgent.onlyRolesFromCurrentProject'));
+    const apply = () => action === 'create' || action === 'update' ? this.jobs.save(run.projectId, {...values,conversationId:conversationIdOf(run)})
+      : action === 'pause' || action === 'resume' ? this.jobs.pause(run.projectId, values.id, action === 'resume', values.revision)
+        : this.jobs.remove(run.projectId, values.id, values.revision);
+    if (values.requestId === undefined) return this.db.transaction(apply);
     return this.db.transaction(() => {
       // The supervisor keeps its original keys; other roles get their own namespace so two roles may both use "remind-1".
-      const id = `${run.projectId}:${conversationIdOf(run)===run.projectId?'':`${conversationIdOf(run)}:`}${supervisor?'':`${run.roleId}:`}${values.requestId}`;
+      // Changes other than create are keyed by action too, so reusing the create's requestId to delete is not a conflict.
+      const namespace = `${run.projectId}:${conversationIdOf(run)===run.projectId?'':`${conversationIdOf(run)}:`}${supervisor?'':`${run.roleId}:`}`;
+      const id = action==='create'?`${namespace}${values.requestId}`:JSON.stringify([namespace,action,values.requestId]);
       const fingerprint = JSON.stringify({ action, values });
-      const prior = this.db.get('timerActions', id);
+      // A pre-upgrade receipt used no action prefix; keep its exact retries valid without blocking reuse for another action.
+      const legacy = action==='create'?null:this.db.get('timerActions', `${namespace}${values.requestId}`);
+      const prior = this.db.get('timerActions', id) || (legacy?.action===action?legacy:null);
       if (prior) {
         if (prior.fingerprint !== fingerprint) throw new Error(tr('timerAgent.requestidParameterConflict'));
         return prior.result;
       }
       // Counted after the retry lookup so a retried create still answers; fired one-time reminders no longer count.
       if (!supervisor && action === 'create' && this.db.list('scheduledJobs').filter(job => job.projectId === run.projectId && job.roleId === run.roleId && job.enabled !== false && job.nextRunAt).length >= MAX_OWN_REMINDERS) throw new Error(tr('timerAgent.tooManyReminders', { count: MAX_OWN_REMINDERS }));
-      let result;
-      if (action === 'create' || action === 'update') result = this.jobs.save(run.projectId, {...values,conversationId:conversationIdOf(run)});
-      else if (action === 'pause' || action === 'resume') result = this.jobs.pause(run.projectId, values.id, action === 'resume', values.revision);
-      else result = this.jobs.remove(run.projectId, values.id, values.revision);
+      const result = apply();
       this.db.put('timerActions', { id, projectId: run.projectId, runId: run.id, action, fingerprint,
         result, createdAt: new Date().toISOString() });
       return result;

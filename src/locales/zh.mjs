@@ -1607,9 +1607,9 @@ wb device write '{"device":"设备","path":"notes/a.md","content":"文本"}'
                      查看和修改其他设备上的文件，范围按项目设置里的跨设备权限（默认：查看整台设备，写入项目目录）。相对路径从项目目录算起。ls 可按 name 过滤并向下 depth 层（最多 5，结果最多 500 项，不进 .git、node_modules 等目录，要看就把 path 指进去）；read 默认给最后 tail 行（默认 200，最多 1000），或用 offset/limit 读一页（最多 64 KB，按 nextOffset 续读）；带 match 时在整个文件里找含该文字的行，给最后 tail 条，行首数字是该行的字节位置，可用 offset 读它前后；write 用 content 或 file（本机文本文件）写入，最多 1 MB，append:true 追加，目录不存在会自动创建。密钥、凭据和 .env 文件不可读写。
 wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
-                     定时提醒：到点在群里叫醒指定角色。任何角色都可以给自己设；总管还可以给别人设。写操作带稳定 requestId；update/pause/resume/delete 还要 id 和 revision，update 要带完整的 name、description 和时间设置。不写 roleId 就是提醒自己。
+                     定时提醒：到点在群里叫醒指定角色。任何角色都可以给自己设；总管还可以给别人设。create/update 带稳定 requestId，update 还要 id、revision 和完整的 name、description、时间设置；pause/resume/delete 只要编号：wb timer delete 编号。单次提醒触发后自动删除。不写 roleId 就是提醒自己。
                      例：wb timer create '{"requestId":"remind-1","name":"复查","description":"复查部署结果","type":"once","onceAt":"2026-10-25T09:00:00+08:00"}'
-                     重复检查用 interval（最短 5 分钟），说明写一次固定的；做完了用 delete 停掉，不要每次重建单次提醒。例：wb timer create '{"requestId":"check-1","name":"跟进","description":"查看 T16 是否完成","type":"interval","intervalMinutes":5}'
+                     重复检查用 interval（最短 5 分钟），说明写一次固定的；提醒消息里写着它的编号，做完了用 wb timer delete 编号 停掉，不要每次重建单次提醒。例：wb timer create '{"requestId":"check-1","name":"跟进","description":"查看 T16 是否完成","type":"interval","intervalMinutes":5}'
 wb deliver [--review] [--repo key或id]... 编号 完整SHA|auto 说明
                      --repo 可重复，仅用于审核；auto 读取所选 HEAD。审核 SHA 须明确对应一个仓，有歧义时指定 --repo。
                      跨设备交付一个提交，交付会自动推送；auto 取本轮所有仓库的当前 HEAD。--review 只给审核用：发布固定审核分支、在独立目录接收，不推进项目基线
@@ -1984,6 +1984,7 @@ wb setup propose '<JSON>'  提交配置卡片，等用户确认`,
   'roleCalls.transferNotOwner': `只有任务负责人能转交：你是被请教、被派子任务或在执行计划的某一段里，结果要交回派活的人。需要别人帮忙就用 --kind consult 或 direct。`,
   'timerAgent.tooManyReminders': `你已经有 {count} 个启用的提醒，先删掉或暂停不用的再建。`,
   'scheduledJobs.reminderText': `定时提醒「{name}」：{text}`,
+  'scheduledJobs.reminderTextRepeating': `定时提醒「{name}」（不再需要时用 wb timer delete {id} 关掉）：{text}`,
   'scheduledJobs.reminderSender': `定时提醒`,
   'executionPlans.exclusiveStageOutsidePlan': `迁移、部署、生产操作不能放进执行计划：计划按派活完成自动推进，没有人核对前面的结果。先跑完前面的阶段，你核对后再单独派这一步。`,
   // src/platform-memory.mjs

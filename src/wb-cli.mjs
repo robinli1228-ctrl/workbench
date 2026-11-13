@@ -126,7 +126,9 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'timer') {
       if (sub === 'list' && !rest.length) return out(await agentRequest('/api/agent/timers',{runId:process.env.WB_RUN_ID,action:'list'}));
       if (!['create','update','pause','resume','delete'].includes(sub) || rest.length !== 1) throw new Error(tr('wbCli.usageWbTimerListWb'));
-      return out(await agentRequest('/api/agent/timers',{...JSON.parse(rest[0]),runId:process.env.WB_RUN_ID,action:sub}));
+      // pause / resume / delete also take the bare timer id the reminder message names.
+      const input=['pause','resume','delete'].includes(sub)&&!rest[0].trim().startsWith('{')?{id:rest[0].trim()}:JSON.parse(rest[0]);
+      return out(await agentRequest('/api/agent/timers',{...input,runId:process.env.WB_RUN_ID,action:sub}));
     }
     if (cmd === 'note') return out(await chatPost(tail.join(' ')));
     if (cmd === 'wait') {

@@ -131,6 +131,31 @@ test('a repeating reminder can run every 5 minutes; a progress patrol still need
   assert.match(tr('wbTools.builtInCollaborationToolsWorkbench'), /"type":"interval","intervalMinutes":5/);
 });
 
+test('a role closes a reminder with just its id; a fired one-time reminder leaves the list', () => {
+  const e = env();let now = new Date('2026-11-13T10:00:00Z');
+  const jobs = new ScheduledJobs(e.db, e.rooms, { clock: () => now }), timers = new TimerAgentActions(e.db, jobs), sup = e.db.get('runs', 'r1');
+  const repeating = timers.execute(sup, 'create', { requestId: 'check-1', name: 'follow-up', description: 'check whether T16 is done', roleId: 'b', type: 'interval', intervalMinutes: 5 });
+  const once = timers.execute(sup, 'create', { requestId: 'once-1', name: 'recheck', description: 'recheck the deploy', roleId: 'c', type: 'once', onceAt: '2026-11-13T10:03:00Z' });
+  now = new Date('2026-11-13T10:05:30Z');jobs.tick();
+  const texts = e.db.list('roomMessages').filter(m => m.scheduledJobId).map(m => [m.scheduledJobId, m.text]);
+  assert.match(texts.find(([id]) => id === repeating.id)[1], new RegExp(`wb timer delete ${repeating.id}`), 'a repeating reminder names how to stop it');
+  assert.doesNotMatch(texts.find(([id]) => id === once.id)[1], /wb timer delete/);
+  assert.equal(e.db.get('scheduledJobs', once.id), null, 'the fired one-time reminder is gone');
+  assert.ok(e.db.get('scheduledOccurrences', `${once.id}:2026-11-13T10:03:00.000Z`), 'its occurrence stays');
+  // The reminded role deletes it by id alone, even reusing the create's requestId; deleting again is still done.
+  const builder = { id: 'rb', projectId: P, roleId: 'b', roleSnapshot: e.db.get('roles', 'b') };
+  assert.deepEqual(timers.execute(builder, 'delete', { id: repeating.id }), { id: repeating.id, deleted: true });
+  assert.equal(e.db.get('scheduledJobs', repeating.id), null);
+  assert.deepEqual(timers.execute(sup, 'delete', { requestId: 'check-1', id: repeating.id }), { id: repeating.id, deleted: true });
+  // Pause and resume by id alone, repeatedly.
+  const other = timers.execute(sup, 'create', { requestId: 'check-2', name: 'x', description: 'x', type: 'interval', intervalMinutes: 5 });
+  assert.equal(timers.execute(sup, 'pause', { id: other.id }).enabled, false);
+  assert.equal(timers.execute(sup, 'resume', { id: other.id }).enabled, true);
+  assert.equal(timers.execute(sup, 'pause', { id: other.id }).enabled, false);
+  assert.throws(() => timers.execute(builder, 'delete', { id: other.id }), /ownRemindersOnly|own reminders/);
+  assert.throws(() => timers.execute(sup, 'update', { id: other.id, name: 'x', description: 'x', type: 'interval', intervalMinutes: 5 }), /requestId/i);
+});
+
 test('wb history read takes a message ID or a run / call ID', () => {
   const e = env();
   e.db.put('runs', { ...e.db.get('runs', 'r1'), status: 'succeeded', result: 'final answer' });

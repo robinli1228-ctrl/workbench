@@ -4430,4 +4430,11 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .qa-q { color: #6b7280; font-size: .9em; overflow-wrap: anywhere; }
 .qa-a { font-weight: 550; overflow-wrap: anywhere; }
 .qa-a.is-skipped { color: #9aa1ad; font-weight: 400; }
+/* A role's question card in the group chat: the questions it asked, each with its options in small grey type. */
+.qa-asked-box { white-space: normal; line-height: 1.55; }
+.chat-reply-preview > .markdown-body + .qa-asked-box { margin-top: 8px; }
+.qa-asked { margin: 0; padding-left: 1.3em; }
+.qa-asked li + li { margin-top: 6px; }
+.qa-asked-q { overflow-wrap: anywhere; }
+.qa-asked-options { margin-top: 2px; color: #6b7280; font-size: .88em; overflow-wrap: anywhere; }
 .nt-answer .nt-prompt-text { display: block; -webkit-line-clamp: unset; line-clamp: unset; max-height: none; overflow: visible; }

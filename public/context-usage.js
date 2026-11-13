@@ -8,7 +8,10 @@ export function contextForRole(role,data) {
   const session=(data.roleSessions||[]).find(s=>s.roleId===role.id&&s.projectId===role.projectId&&s.conversationId===role.projectId&&s.nodeId===role.nodeId&&s.runtime===role.runtime&&s.status!=='archived'&&!s.candidateFor&&!s.historyClearedAt);
   const runs=session?(data.runs||[]).filter(r=>r.roleId===role.id&&r.projectId===role.projectId&&r.nodeId===role.nodeId&&r.roleSessionId===session.id&&!r.historyClearedAt&&!r.switchOperationId&&r.roleSnapshot?.runtime===role.runtime&&r.contextUsage&&(!r.contextUsage.sessionId||r.contextUsage.sessionId===session.nativeSessionId)):[];
   runs.sort((a,b)=>Date.parse(b.contextUsage.observedAt||b.createdAt)-Date.parse(a.contextUsage.observedAt||a.createdAt)||Date.parse(b.createdAt)-Date.parse(a.createdAt));
-  const latest=runs[0],sample=(latest?.model||latest?.roleSnapshot?.model)===role.model?latest.contextUsage:{},used=valid(sample.usedTokens)?sample.usedTokens:null,limit=valid(sample.limitTokens)&&sample.limitTokens>0?sample.limitTokens:null;
+  const latest=runs[0],sample=(latest?.model||latest?.roleSnapshot?.model)===role.model?latest.contextUsage:{},used=valid(sample.usedTokens)?sample.usedTokens:null;
+  // A turn still running on a fresh process has not reported its window yet: an earlier turn of this session on the same model has.
+  const limitOf=s=>valid(s?.limitTokens)&&s.limitTokens>0?s.limitTokens:null;
+  const limit=limitOf(sample)??(sample.model?limitOf(runs.find(r=>r.contextUsage.model===sample.model&&limitOf(r.contextUsage))?.contextUsage):null);
   // A compaction finished after the last request is the newer size of this context.
   const c=session?.compaction,newer=c?.finishedAt&&(!sample.observedAt||Date.parse(c.finishedAt)>Date.parse(sample.observedAt));
   const after=c?.status==='compacted'&&valid(c.usedTokensAfter)&&newer&&sample.observedAt?c.usedTokensAfter:null;
