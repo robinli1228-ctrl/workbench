@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runOpenablePath} from '../src/folder-access.mjs';
-import {localFileAddress} from '../public/markdown.js';
+import {localFileAddress,safeLink} from '../public/markdown.js';
 
 test('only paths inside the run workspace, project root or folder binding can be opened in the page', () => {
   const run={workspace:'/xxxxx/proj/.worktrees/run-1',projectRoot:'/xxxxx/proj'};
@@ -20,4 +20,11 @@ test('local file: URLs become their path; remote and malformed ones do not', () 
   assert.equal(localFileAddress('file:///Users/xxxxx/proj/%E6%88%AA%E5%B1%8F%202026.png'),'/Users/xxxxx/proj/截屏 2026.png');
   assert.equal(localFileAddress('file://localhost/xxxxx/a.png'),'/xxxxx/a.png');
   for(const value of ['file://server/share/a.png','https://x.example/a.png','/xxxxx/a.png','file:///a%0Ab.png',null])assert.equal(localFileAddress(value),null,String(value));
+});
+
+test('a picture or file link with a relative path is a local link, not left as raw Markdown', () => {
+  for(const value of ['outputs/悟理TMS官网内容稿-20261113/01-home.png','out/截屏 2026-11-03 17.50.12.png','report.pdf','./a.png','../b/c.png','/xxxxx/a.png','https://x.example/a.png'])
+    assert.equal(safeLink(value),true,value);
+  for(const value of ['javascript:alert(1)','data:image/png;base64,AAAA','word','','a\nb/c.png'])
+    assert.equal(safeLink(value),false,JSON.stringify(value));
 });
