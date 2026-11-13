@@ -815,3 +815,5 @@ Question-answer history requires a loaded matching question call before renderin
 Brand assets use `assets/app-icon.svg` as their source: matching blue-and-silver stacked terminal windows for the header, favicon and installed app. PNG exports are 512 and 192 pixels; versioned icon URLs and the existing static-file fingerprint refresh PWA assets.
 
 Timer action receipts retain exact retries from the pre-action namespace. Learned Claude model windows are cached only for the same native session and model, with a bounded in-memory session cache; no other session supplies the window.
+
+The stacked-terminal icon uses a blue separating contour and a slightly darker cool-grey rear window to keep both panes distinct at small sizes. SVG and PNG exports remain shared across page and installed-app surfaces.

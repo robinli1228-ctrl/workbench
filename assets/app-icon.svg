@@ -7,8 +7,13 @@
     </linearGradient>
     <linearGradient id="silver" x1="0" y1="0" x2=".8" y2="1">
       <stop stop-color="#fff"/>
-      <stop offset=".48" stop-color="#e7edf8"/>
-      <stop offset="1" stop-color="#c6d3ef"/>
+      <stop offset=".48" stop-color="#f0f3fa"/>
+      <stop offset="1" stop-color="#dfe6f3"/>
+    </linearGradient>
+    <linearGradient id="rearSilver" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#e2e6ee"/>
+      <stop offset=".48" stop-color="#cfd6e2"/>
+      <stop offset="1" stop-color="#bcc6d7"/>
     </linearGradient>
     <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
       <stop stop-color="#fff" stop-opacity=".95"/>
@@ -20,9 +25,9 @@
   </defs>
   <rect width="512" height="512" rx="114" fill="url(#blue)"/>
   <rect x="2" y="2" width="508" height="508" rx="112" fill="none" stroke="url(#rim)" stroke-opacity=".22" stroke-width="3"/>
-  <g fill="url(#silver)" stroke="url(#rim)" stroke-width="2.5" filter="url(#depth)">
-    <rect x="173" y="112" width="270" height="224" rx="36"/>
-    <rect x="105" y="179" width="270" height="224" rx="36"/>
+  <g stroke="#1245d4" stroke-width="10" filter="url(#depth)">
+    <rect x="173" y="112" width="270" height="224" rx="36" fill="url(#rearSilver)"/>
+    <rect x="105" y="179" width="270" height="224" rx="36" fill="url(#silver)"/>
   </g>
   <path d="m151 240 47 31-47 30m76 3h54" fill="none" stroke="#1343d0" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
