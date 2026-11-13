@@ -291,10 +291,14 @@ function appendInline(parent, input) {
   }
 }
 
-function safeLink(href) {
+export function safeLink(href) {
   const value = String(href || '').trim();
-  return /^(?:https?:\/\/|mailto:|#|\/|\.\.?\/)/i.test(value)||Boolean(normalizeDocumentAddress(value));
+  return /^(?:https?:\/\/|mailto:|#|\/|\.\.?\/)/i.test(value)||Boolean(normalizeDocumentAddress(value))||relativeFilePath(value);
 }
+
+// A relative file path such as outputs/a.png is a local link too (the chat resolves it in the reply's folder); a scheme, a
+// protocol-relative //host or a bare word without a folder or extension is not.
+const relativeFilePath=value=>value.length<=4096&&!/^[a-z][a-z0-9+.-]*:|^\/\/|^[\s#?]/i.test(value)&&!/[\x00-\x1f\x7f]/.test(value)&&(value.includes('/')||/\.[A-Za-z0-9]{1,8}$/.test(value));
 
 /** A local file: URL (no host, or localhost) as the path it names; anything else is not a local file address. */
 export function localFileAddress(value){
