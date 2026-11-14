@@ -6,8 +6,8 @@ import {tr} from './i18n.mjs';
 import {isRoleConfigured} from './default-roles.mjs';
 import {sourceScopeBinding} from './source-sync-scopes.mjs';
 
-/** Each device's saved copy of a conflicting file, the project folder's ahead of an isolated run output on the same device. */
-export const deviceSides=c=>{const seen=new Map();for(const s of [...c.sides].sort((a,b)=>Number(Boolean(a.sourceRunId))-Number(Boolean(b.sourceRunId))))if(!seen.has(s.nodeId))seen.set(s.nodeId,s);return [...seen.values()];};
+/** A device choice means its project folder; isolated outputs cannot stand in for missing folder evidence. */
+export const deviceSides=c=>{const seen=new Map();for(const s of [...c.sides,...c.receiving||[]])if(!s.sourceRunId&&!seen.has(s.nodeId))seen.set(s.nodeId,s);return [...seen.values()];};
 export const conflictHashes=c=>({base:c.base?.hash??null,sides:c.sides.map(s=>s.entry?.hash??null)});
 
 /** Merge native tool lifecycles; completed shell evidence must follow the last observed source write. */
