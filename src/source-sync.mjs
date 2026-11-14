@@ -395,7 +395,7 @@ export class SourceSync {
       this.db.put('sourceSyncBatches',{...batch,status:batch.kind==='evidence'?'evidence_ready':'blocked',reason:changed?'conflict_changed':null});return;
     }
     const canonical=this.db.get('sourceSyncManifests',`${c.projectId}:${c.repositoryId}`),entry=batch.proposal.entry;
-    const author=this.db.get('runs',batch.proposal.runId),origin=author?.repositories?.find(r=>r.id===c.repositoryId);
+    const author=batch.proposal.runId?this.db.get('runs',batch.proposal.runId):null,origin=author?.repositories?.find(r=>r.id===c.repositoryId);
     const entries={...canonical.entries,[c.path]:entry},version={...canonical,entries,origins:{...canonical.origins,[c.path]:origin?{nodeId:author.nodeId,root:origin.localRoot,sourceRunId:author.id}:{nodeId:batch.sourceNodeId}},digest:manifestDigest(entries,canonical.scopePolicy),revision:canonical.revision+1};
     this.db.put('sourceSyncManifests',version);const id=identity(batch.id,version.digest);this.db.put('sourceSyncVersions',{...version,id});
     const sourceInputs=[{repositoryId:c.repositoryId,baseCommit:version.baseCommit,generation:version.generation,manifestRevision:version.revision,manifestHash:version.digest,manifestId:id}];

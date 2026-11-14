@@ -11,7 +11,7 @@ import {join} from 'node:path';
 import {SourceSync} from './source-sync.mjs';
 import {SourceSyncStorage} from './source-sync-storage.mjs';
 import {SourceSyncWorker} from './source-sync-worker.mjs';
-import {SourceSyncConflicts} from './source-sync-conflicts.mjs';
+import {SourceSyncConflicts,deviceSides} from './source-sync-conflicts.mjs';
 import {SourceSyncAgent} from './source-sync-agent.mjs';
 import {runtimeIssue} from './runtime-probe.mjs';
 import {validateSourceCapture,syncError,syncLimitError,contentHash,entryEqual,manifestDelta,applyManifestDelta,sortedEntries,SOURCE_SYNC_LIMITS} from './source-sync-manifest.mjs';
@@ -68,6 +68,28 @@ export class SourceSyncHome {
   /** Files waiting to be synchronized, for the open panel only: each online device lists what it changed since it last
    *  synchronized, and a running batch lists what it is writing where. Nothing is stored; Home only remembers in memory
    *  which synchronized list it last sent each Worker, so later refreshes send a small change instead of the whole list. */
+  /**
+   * Ticked conflicts on the sync panel: each item names the device to keep, or asks for the newer copy. The newer copy is the
+   * one each device's file system says was modified last, read now; a deleted side, an unreachable device or equal times
+   * cannot say which is newer, so that file is reported and left alone.
+   */
+  async chooseVersions(projectId,items){
+    if(!Array.isArray(items)||!items.length||items.length>200)throw syncError('invalid_scope');
+    const generation=this.sync.config(projectId).generation,unknown=[],chosen=[];
+    for(const item of items){
+      if(item?.newer!==true){chosen.push(item);continue;}
+      const repositoryId=String(item.repositoryId||''),path=String(item.path||'');
+      const c=this.db.listProject('sourceSyncConflicts',projectId).find(x=>x.repositoryId===repositoryId&&x.path===path&&x.syncGeneration===generation&&!['resolved','cancelled'].includes(x.status));
+      if(!c){chosen.push({repositoryId,path,sourceNodeId:''});continue;}
+      // The device's own copy decides (a deleted or unknown one cannot be dated), never an isolated run output.
+      const all=deviceSides(c),sides=all.filter(s=>!s.unknown&&s.entry&&s.root);
+      const times=sides.length===all.length?await Promise.all(sides.map(s=>this.query({nodeId:s.nodeId,projectId},'media_stat',{root:s.root,file:path},10000).then(info=>({nodeId:s.nodeId,at:Number(info?.mtimeMs)}),()=>({nodeId:s.nodeId,at:NaN})))):[];
+      const known=times.filter(x=>Number.isFinite(x.at)).sort((a,b)=>b.at-a.at);
+      if(known.length<2||known.length!==times.length||known[0].at===known[1].at){unknown.push({repositoryId,path,status:'newer_unknown'});continue;}
+      chosen.push({repositoryId,path,sourceNodeId:known[0].nodeId});
+    }
+    return [...(chosen.length?this.conflicts.choose(projectId,chosen):[]),...unknown];
+  }
   async changes(projectId){
     const config=this.sync.config(projectId),result={mode:config?.mode||null,detection:config?.detection||null,devices:[],applying:[],applyingTotal:0};
     if(!config?.enabled||config.scopeKind!=='directory')return result;
@@ -411,6 +433,10 @@ export class SourceSyncHome {
     }
     else if(req.method==='GET'&&/^conflicts\/[^/]+$/.test(route))value=await this.agent.execute({projectId},'read',{conflictId:route.split('/')[1]});
     else if(req.method==='POST'&&/^conflicts\/[^/]+\/read$/.test(route))value=await this.agent.execute({projectId},'read',{...await body(req,100000),conflictId:route.split('/')[1]});
+    else if(req.method==='POST'&&route==='conflicts/choose'){
+      const input=await body(req,200000);if(input.confirmed!==true)throw syncError('confirmation_required');
+      value={items:await this.chooseVersions(projectId,input.items)};
+    }
     else if(req.method==='POST'&&/^conflicts\/[^/]+\/resolve$/.test(route)){
       const c=this.db.get('sourceSyncConflicts',route.split('/')[1]),input=await body(req,100000);
       if(c?.projectId!==projectId||c.detection!=='metadata'||c.generation!==input.generation||input.confirmed!==true||['resolved','cancelled'].includes(c.status))throw syncError('conflict_changed');
