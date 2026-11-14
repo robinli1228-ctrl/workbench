@@ -37,17 +37,29 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
     if(warning)row.append(el('small','source-sync-change-note',warning));
     return row;
   }
-  function drawChanges(){
-    const box=changesBox;if(!box?.isConnected)return;box.replaceChildren(el('h4','',t('Files waiting to sync')));
-    if(!changes){box.append(el('p','workspace-note',t('Loading…')));return;}
-    if(changes.error){box.append(el('p','workspace-note',changes.error));return;}
-    const head=el('div','source-sync-change source-sync-change-head');for(const label of ['File','Direction','Size','Time'])head.append(el('span','',t(label)));
-    const rows=[],notes=[],nodes=state.config.nodeIds||[];
+  /**
+   * Files waiting to sync, newest first. "Conflicts" shows each file changed on more than one device (or with an open conflict
+   * record) once, with every device's time; ticked files are synchronized from one chosen device, or from whichever device
+   * changed the file last. The list is redrawn only when its content changes, so a selection or an open menu survives.
+   */
+  let filter='all',strategy='',drawnChanges='',lastResult=[];const picked=new Set();
+  const keyOf=(repositoryId,path)=>`${repositoryId}\n${path}`;
+  function drawChanges(force=false){
+    const box=changesBox;if(!box?.isConnected)return;
+    const signature=JSON.stringify([changes&&{...changes,at:0},filter,(state.conflicts||[]).map(c=>[c.id,c.status,c.generation])]);
+    if(!force&&signature===drawnChanges&&box.childElementCount){box.querySelector('.source-sync-updated')?.replaceChildren(t('Updated {time}',{time:stamp(changes?.at)}));return;}
+    drawnChanges=signature;box.replaceChildren();
+    if(!changes){box.append(el('h4','',t('Files waiting to sync')),el('p','workspace-note',t('Loading…')));return;}
+    if(changes.error){box.append(el('h4','',t('Files waiting to sync')),el('p','workspace-note',changes.error));return;}
+    const rows=[],notes=[],nodes=state.config.nodeIds||[],files=new Map();
     if(changes.applying?.length){
       for(const item of changes.applying)rows.push({at:Infinity,row:changeRow(item,`${name(item.from)} → ${name(item.to)}`,{when:t(item.done?'Written':'Writing…')})});
       if(changes.applyingTotal>changes.applying.length)notes.push(t('This sync writes {total} files; the first {shown} are shown',{total:changes.applyingTotal,shown:changes.applying.length}));
     }
-    const seen=new Map();for(const device of changes.devices||[])for(const scope of device.scopes||[])for(const item of scope.items||[]){const k=`${scope.repositoryId}\n${item.path}`;seen.set(k,(seen.get(k)||0)+1);}
+    for(const device of changes.devices||[])for(const scope of device.status==='ok'?device.scopes||[]:[])for(const item of scope.status==='ok'?scope.items||[]:[]){
+      const k=keyOf(scope.repositoryId,item.path),file=files.get(k)||{repositoryId:scope.repositoryId,path:item.path,devices:[]};file.devices.push({nodeId:device.nodeId,item});files.set(k,file);}
+    const open=(state.conflicts||[]).filter(c=>!['resolved','cancelled'].includes(c.status)&&c.syncGeneration===state.config.generation),records=new Map(open.map(c=>[keyOf(c.repositoryId,c.path),c]));
+    const conflicts=[...new Set([...[...files].filter(([,f])=>f.devices.length>1).map(([k])=>k),...records.keys()])].map(k=>{const file=files.get(k),record=records.get(k);return {key:k,file,record,repositoryId:file?.repositoryId??record.repositoryId,path:file?.path??record.path};});
     for(const device of changes.devices||[]){
       const others=nodes.filter(id=>id!==device.nodeId).map(name).join(t(', '))||'—';
       if(device.status==='offline'){notes.push(t('{name} is offline; its changes cannot be listed',{name:name(device.nodeId)}));continue;}
@@ -58,51 +70,103 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
         if(scope.status==='too_large'){notes.push(t('{name} · {scope}: too many files to list until the next sync completes',{name:name(device.nodeId),scope:scopeName(scope.repositoryId)}));continue;}
         if(scope.status==='blocked'){notes.push(t('{name} · {scope}: the last scan failed, so its changes are unknown',{name:name(device.nodeId),scope:scopeName(scope.repositoryId)}));continue;}
         if(scope.status!=='ok'){notes.push(t('{name} · {scope}: changes could not be listed this time',{name:name(device.nodeId),scope:scopeName(scope.repositoryId)}));continue;}
-        for(const item of scope.items)rows.push({at:item.modifiedAt?Date.parse(item.modifiedAt):-Infinity,row:changeRow({...item,repositoryId:scope.repositoryId},`${name(device.nodeId)} → ${others}`,{warning:seen.get(`${scope.repositoryId}\n${item.path}`)>1?t('Changed on more than one device; this will be a conflict'):''})});
+        for(const item of scope.items){const k=keyOf(scope.repositoryId,item.path);rows.push({at:item.modifiedAt?Date.parse(item.modifiedAt):-Infinity,row:changeRow({...item,repositoryId:scope.repositoryId},`${name(device.nodeId)} → ${others}`,{warning:conflicts.some(c=>c.key===k)?t('Changed on more than one device; this will be a conflict'):''})});}
         if(scope.total>scope.items.length)notes.push(t('{name} · {scope}: {total} changed files; the first {shown} are shown',{name:name(device.nodeId),scope:scopeName(scope.repositoryId),total:scope.total,shown:scope.items.length}));
       }
     }
     if(changes.detection==='metadata')notes.push(t('Simple mode does not list waiting files; they are compared when a sync runs.'));
     else if(changes.mode!=='continuous')notes.push(t('Manual sync scans files only when you start a sync.'));
-    if(rows.length)box.append(head,...rows.sort((a,b)=>b.at-a.at).map(r=>r.row));else box.append(el('p','workspace-note',t('No files waiting to sync')));
+    // Title and the filter: all files, or only the conflicts.
+    const head=el('div','source-sync-changes-head'),tabs=el('div','source-sync-filter');tabs.setAttribute('role','group');tabs.setAttribute('aria-label',t('Show'));
+    for(const [value,label,count] of [['all','All',rows.length],['conflict','Conflicts',conflicts.length]]){const b=el('button',`source-sync-filter-option${filter===value?' is-active':''}`,`${t(label)} ${count}`);b.type='button';b.setAttribute('aria-pressed',String(filter===value));
+      b.addEventListener('click',()=>{filter=value;lastResult=[];drawChanges(true);});tabs.append(b);}
+    head.append(el('h4','',t('Files waiting to sync')),tabs);box.append(head);
+    if(filter==='conflict')drawConflicts(box,conflicts);
+    else if(rows.length){const top=el('div','source-sync-change source-sync-change-head');for(const label of ['File','Direction','Size','Time'])top.append(el('span','',t(label)));box.append(top,...rows.sort((a,b)=>b.at-a.at).map(r=>r.row));}
+    else box.append(el('p','workspace-note',t('No files waiting to sync')));
     for(const note of notes)box.append(el('p','workspace-note',note));
-    box.append(el('small','workspace-note',t('Updated {time}',{time:stamp(changes.at)})));
+    const foot=el('div','source-sync-foot');foot.append(el('small','workspace-note source-sync-updated',t('Updated {time}',{time:stamp(changes.at)})),button('Sync records',auditRecords,'link-button'));box.append(foot);
   }
+  /** Each conflicting file once: a tick box, every device's time, then one way to sync the ticked ones. */
+  function drawConflicts(box,conflicts){
+    const keys=new Set(conflicts.map(c=>c.key));for(const k of [...picked])if(!keys.has(k))picked.delete(k);
+    if(!conflicts.length){if(lastResult.length)box.append(el('p','workspace-note source-sync-result',lastResult.join('\n')));box.append(el('p','workspace-note',t('No conflicts')));return;}
+    const nodes=state.config.nodeIds||[],choices=[...nodes.map(id=>[`device:${id}`,t('Keep the version on {name}',{name:name(id)})]),['newer',t('Keep the newer version')]];
+    if(!choices.some(([value])=>value===strategy))strategy=choices[0][0];
+    const bar=el('div','source-sync-resolve'),allLabel=el('label','source-sync-choice'),all=el('input');all.type='checkbox';all.checked=conflicts.every(c=>picked.has(c.key));all.indeterminate=!all.checked&&conflicts.some(c=>picked.has(c.key));
+    allLabel.append(all,el('span','',t('Select all')));
+    const select=el('select');select.setAttribute('aria-label',t('Sync with'));for(const [value,label] of choices){const o=el('option','',label);o.value=value;select.append(o);}select.value=strategy;select.addEventListener('change',()=>{strategy=select.value;});
+    const apply=button('Sync selected',b=>resolvePicked(conflicts,b),'primary compact');
+    const count=()=>{apply.disabled=!picked.size;apply.textContent=picked.size?t('Sync {count} selected',{count:picked.size}):t('Sync selected');};
+    bar.append(allLabel,select,apply);box.append(bar);
+    // What the last Sync selected did stays under the bar until the next one, across redraws.
+    if(lastResult.length){const note=el('p','workspace-note source-sync-result',lastResult.join('\n'));note.setAttribute('role','status');box.append(note);}
+    const boxes=[];
+    for(const c of conflicts){
+      const row=el('label','source-sync-change source-sync-conflict'),tick=el('input');tick.type='checkbox';tick.checked=picked.has(c.key);boxes.push([tick,c.key]);
+      const {repositoryId,path}=c,file=el('span','source-sync-change-file'),title=el('strong','',path.split('/').at(-1)),where=el('small','',`${scopeName(repositoryId)} / ${path}`);title.setAttribute('translate','no');where.setAttribute('translate','no');file.append(title,where);
+      const times=el('span','source-sync-conflict-times');for(const d of c.file?.devices||[])times.append(el('span','',`${name(d.nodeId)} · ${d.item.change==='deleted'?t('Deleted'):formatBytes(d.item.size)} · ${stamp(d.item.modifiedAt)}`));
+      if(!c.file?.devices?.length)times.append(el('span','',c.record?status(c.record.status):''));
+      row.append(tick,file,times);
+      tick.addEventListener('change',()=>{if(tick.checked)picked.add(c.key);else picked.delete(c.key);all.checked=conflicts.every(x=>picked.has(x.key));all.indeterminate=!all.checked&&picked.size>0;count();});
+      box.append(row);
+    }
+    all.addEventListener('change',()=>{for(const [tick,k] of boxes){tick.checked=all.checked;if(all.checked)picked.add(k);else picked.delete(k);}all.indeterminate=false;count();});
+    count();
+  }
+  /** Sends the ticked files with the chosen device, or asks Home for the newer copy of each. */
+  async function resolvePicked(conflicts,b){
+    const chosen=conflicts.filter(c=>picked.has(c.key));if(!chosen.length)return;
+    const items=[];
+    // Home reads each device's modification time when the newer copy is asked for.
+    for(const {repositoryId,path} of chosen){items.push(strategy==='newer'?{repositoryId,path,newer:true}:{repositoryId,path,sourceNodeId:strategy.slice(7)});}
+    const label=strategy==='newer'?t('Keep the newer version'):t('Keep the version on {name}',{name:name(strategy.slice(7))});
+    if(!window.confirm(t('Sync {count} files: {how}. The copies on the other devices will be overwritten.',{count:items.length,how:label})))return;
+    await act(async()=>{const r=await api(endpoint()+'/conflicts/choose',{confirmed:true,items});
+      const started=r.items.filter(x=>x.status==='applying').length,failed=r.items.filter(x=>x.status!=='applying');
+      for(const x of r.items)if(x.status==='applying')picked.delete(keyOf(x.repositoryId,x.path));
+      showResult([t('Started syncing {count} files',{count:started}),...failed.map(x=>`${x.path} · ${t(chooseReasons[x.status]||x.status)}`)]);
+      changesAt=0;},b);
+  }
+  const chooseReasons={not_ready:'No conflict record yet; it can be chosen after the next sync',busy:'Already being synced',owner_running:'A role is repairing it right now',side_missing:'That device has no saved version of it',newer_unknown:'The newer version is not known',paused:'File sync is paused',conflict_changed:'Changed in the meantime; check it again'};
+  function showResult(lines){lastResult=lines;drawChanges(true);}
   function modal(title){view++;dialog.replaceChildren();const h=el('header','source-sync-heading'),heading=el('h2','',t(title));heading.id='source-sync-title';h.append(heading,setActionIcon(button('Close',()=>dialog.close(),'icon-button'),'close',t('Close')));const body=el('div','source-sync-body'),note=el('p','workspace-note');note.setAttribute('role','status');dialog.append(h,body,note);if(!dialog.open)dialog.showModal();return {body,note,id:projectId,v:view};}
   dialog.addEventListener('close',()=>view++);
   async function load(force=false){
     if(!projectId||loading||(!force&&Date.now()-loadedAt<2000))return;const id=projectId,e=epoch;loading=true;
-    try{const result=await api(endpoint(id));if(e!==epoch)return;state=result;loadedAt=Date.now();draw();}catch(error){if(e===epoch)panel.replaceChildren(el('p','workspace-note',error.message));}finally{if(e===epoch)loading=false;}
+    try{const result=await api(endpoint(id));if(e!==epoch)return;state=result;loadedAt=Date.now();draw();}catch(error){if(e===epoch){drawnState='';panel.replaceChildren(el('p','workspace-note',error.message));}}finally{if(e===epoch)loading=false;}
   }
-  async function act(fn,b){if(action)return;action=true;if(b)b.disabled=true;const e=epoch;try{await fn();if(e===epoch){await load(true);await refreshState();}}catch(error){if(e===epoch){const note=el('p','workspace-note',error.message);note.setAttribute('role','alert');panel.append(note);}}finally{action=false;if(b?.isConnected)b.disabled=false;}}
-  function draw(){
-    panel.replaceChildren();if(!state)return;
-    const h=el('div','source-sync-heading');h.append(el('h3','',t('Project file sync')),setActionIcon(button('Configure project file sync',configure),'settings',t('Configure project file sync')));panel.append(h,el('p','workspace-note',t(state.config.enabled?'Enabled':'Disabled')),button('Sync records',auditRecords));
-    panel.append(el('p','workspace-note',t('Saved code, documents and resources; Git delivery remains separate.')),el('p','workspace-note',t(state.config.contentMode==='source-and-outputs'?'Source and outputs':'Source only')));
-    if(state.config.detection==='metadata')panel.append(el('p','workspace-note',t('Simple mode: metadata and completion receipts; equal time and size can miss content changes.')));
+  async function act(fn,b){if(action)return;action=true;if(b)b.disabled=true;const e=epoch;try{await fn();if(e===epoch){await load(true);await refreshState();}}catch(error){if(e===epoch){const note=el('p','workspace-note source-sync-error',error.message);note.setAttribute('role','alert');panel.querySelector('.source-sync-error')?.remove();(panel.querySelector('.source-sync-heading')||panel.firstChild)?.after(note);}}finally{action=false;if(b?.isConnected)b.disabled=false;}}
+  /**
+   * One switch for the project's file sync and the list of files waiting to sync. Setup still goes through the configure
+   * dialog (the switch opens it when sync is off); a problem that stops syncing is the only extra line.
+   */
+  let drawnState='';
+  function draw(force=false){
+    if(!state)return;
+    const active=state.batches.filter(b=>!terminal.has(b.status)),waiting=active.map(b=>[b.id,b.revision,b.nodeIds.filter(id=>!device(id)?.online)]).filter(([, ,offline])=>offline.length);
+    // Only what the panel shows: watcher scans and batch progress would otherwise redraw it (closing an open menu) every few seconds.
+    const signature=JSON.stringify([state.config,state.batches.at(-1)?.status,state.batches.at(-1)?.reason,active.length,waiting,(state.conflicts||[]).map(c=>[c.id,c.status,c.generation,c.path]),action]);
+    if(!force&&signature===drawnState&&panel.childElementCount)return;drawnState=signature;
+    panel.replaceChildren();
+    const h=el('div','source-sync-heading'),toggle=el('label','settings-switch'),input=el('input');input.type='checkbox';input.checked=Boolean(state.config.enabled);input.disabled=action;
+    input.setAttribute('aria-label',t('Project file sync'));toggle.title=t('Project file sync');toggle.append(input,el('span'));toggle.lastChild.setAttribute('aria-hidden','true');
+    input.addEventListener('change',()=>{input.checked=Boolean(state.config.enabled);
+      if(!state.config.enabled){void configure();return;}
+      if(!window.confirm(t('Stop project file sync? Files stay as they are on each device.')))return;
+      void act(()=>api(endpoint()+'/config',{enabled:false,revision:state.config.revision},'PUT'));});
+    h.append(el('h3','',t('Project file sync')),toggle);panel.append(h);
     if(state.config.enabled&&state.config.paused)panel.append(el('p','workspace-note',t('File sync is paused: nothing is synchronized until it is resumed from Device Management.')));
-    if(state.config.mode==='continuous')panel.append(el('p','workspace-note',t('Automatic two-way sync continues while this page is closed.')),el('p','workspace-note',`${t('Local display device')}: ${name(state.config.displayNodeId)}`));
-    for(const watcher of state.watchers||[])if(watcher.generation===state.config.generation&&watcher.status!=='watching')panel.append(el('p','workspace-note',`${name(watcher.nodeId)} · ${scopeName(watcher.repositoryId)} · ${t(watchLabels[watcher.status]||labels[watcher.status]||watcher.status)}${watcher.error?' · '+issue(watcher.error,watcher.limit):''}`));
-    if(state.config.enabled&&state.config.scopeKind==='directory'){changesBox=el('div','source-sync-changes');panel.append(changesBox);drawChanges();}
-    if(state.config.enabled){
-      const field=el('label','',t('Source device')),select=el('select');select.setAttribute('aria-label',t('Source device'));
-      for(const id of state.config.nodeIds||[]){const w=device(id),o=el('option','',`${name(id)} · ${t(!w?.online?'Offline':w.capabilities?.sourceSync!==1?'Worker update required':'Online')}`);o.value=id;select.append(o);}
-      if(!state.config.nodeIds.includes(selectedSource))selectedSource=state.config.nodeIds[0];select.value=selectedSource;select.addEventListener('change',()=>selectedSource=select.value);field.append(select);panel.append(field);
-      const sync=button('Sync now',b=>act(()=>api(endpoint()+'/batches',{requestId:crypto.randomUUID(),sourceNodeId:selectedSource,targetNodeIds:state.config.nodeIds.filter(id=>id!==selectedSource)}),b));sync.disabled=action||Boolean(state.config.paused)||state.batches.some(b=>!terminal.has(b.status));panel.append(sync);
+    const last=state.batches.at(-1);if(state.config.enabled&&last?.status==='blocked')panel.append(el('p','workspace-note source-sync-problem',`${status(last.status)}${last.reason?' · '+issue(last.reason,last.limit):''}`));
+    // A sync waiting for an offline device would otherwise hold everything (even switching sync off) with no reason shown.
+    for(const [id,revision,offline] of waiting){const row=el('div','source-sync-problem-row');row.append(el('span','workspace-note source-sync-problem',t('Waiting for devices: {names}',{names:offline.map(name).join(', ')})),button('Cancel sync',btn=>act(()=>api(endpoint()+'/batches/'+id+'/cancel',{revision}),btn)));panel.append(row);}
+    if(state.config.enabled&&state.config.mode!=='continuous'){
+      const busy=state.batches.some(b=>!terminal.has(b.status)),source=state.config.nodeIds.find(id=>device(id)?.online)||state.config.nodeIds[0];
+      const sync=button('Sync now',b=>act(()=>api(endpoint()+'/batches',{requestId:crypto.randomUUID(),sourceNodeId:source,targetNodeIds:state.config.nodeIds.filter(id=>id!==source)}),b));sync.disabled=action||Boolean(state.config.paused)||busy;panel.append(sync);
     }
-    if(state.config.enabled&&state.config.detection==='metadata'){
-      panel.append(button('Establish sync baseline',initialize));
-      panel.append(button('Initialization jobs',initializationJobs));
-    }
-    for(const b of state.batches.slice(-4).reverse()){
-      const row=el('div','source-sync-row');row.append(el('span','',status(b.status)));const meta=el('small','workspace-note',`${b.id.slice(0,8)}${b.reason?' · '+issue(b.reason,b.limit):''}`);meta.setAttribute('translate','no');row.append(meta);
-      if(!terminal.has(b.status)){const offline=b.nodeIds.filter(id=>!device(id)?.online);if(offline.length)row.append(el('small','workspace-note',t('Waiting for devices: {names}',{names:offline.map(name).join(', ')})));row.append(button('Cancel sync',btn=>act(()=>api(endpoint()+'/batches/'+b.id+'/cancel',{revision:b.revision}),btn)));}
-      for(const item of (b.pendingMetadata||[]).slice(0,20))row.append(el('small','workspace-note',`${item.path} · ${issue(item.reason)}`));
-      // Paths one device now leaves out of its scope: the others keep syncing them, that device keeps its last copy.
-      for(const item of (b.scopeSkipped||[]).slice(0,20))row.append(el('small','workspace-note',`${item.path} · ${t('Not synchronized on {name}: outside its sync scope ({reason})',{name:name(item.nodeId),reason:item.reason||'excluded'})}`));
-      panel.append(row);
-    }
-    for(const c of state.conflicts.filter(c=>!['resolved','cancelled'].includes(c.status))){const row=el('div','source-sync-row');const open=button(c.path,()=>detail(c.id));open.setAttribute('translate','no');row.append(open,el('small','workspace-note',status(c.status)));panel.append(row);}
+    if(state.config.enabled&&state.config.detection==='metadata')panel.append(button('Establish sync baseline',initialize),button('Initialization jobs',initializationJobs));
+    if(state.config.enabled&&state.config.scopeKind==='directory'){changesBox=el('div','source-sync-changes');panel.append(changesBox);drawChanges(true);}
+    else if(state.config.enabled)for(const c of state.conflicts.filter(c=>!['resolved','cancelled'].includes(c.status))){const row=el('div','source-sync-row');const open=button(c.path,()=>detail(c.id));open.setAttribute('translate','no');row.append(open,el('small','workspace-note',status(c.status)));panel.append(row);}
   }
   async function initializationJobs(){
     const {body,note,id,v}=modal('Initialization jobs');const list=el('div');let after='',next=null,busy=false;
@@ -211,7 +275,7 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
     }catch(e){if(valid(id,v))note.textContent=e.message;}
   }
   document.querySelector('#configure-project-source-sync')?.addEventListener('click',()=>void configure());
-  onLanguageChange(()=>{draw();if(dialog.open)dialog.close();});
-  const render=()=>{const id=getProject()?.id||null;if(id!==projectId){projectId=id;epoch++;view++;state=null;loading=false;loadedAt=0;selectedSource=null;changes=null;changesLoading=false;changesAt=0;if(dialog.open)dialog.close();panel.replaceChildren();}panel.hidden=!id;if(id&&panel.getClientRects().length){void load();void loadChanges();}};
+  onLanguageChange(()=>{draw(true);if(dialog.open)dialog.close();});
+  const render=()=>{const id=getProject()?.id||null;if(id!==projectId){projectId=id;epoch++;view++;state=null;loading=false;loadedAt=0;selectedSource=null;changes=null;changesLoading=false;changesAt=0;filter='all';strategy='';lastResult=[];picked.clear();drawnState='';drawnChanges='';if(dialog.open)dialog.close();panel.replaceChildren();}panel.hidden=!id;if(id&&panel.getClientRects().length){void load();void loadChanges();}};
   setInterval(()=>{if(!document.hidden)render();},2000);return {render,configure};
 }
