@@ -6,6 +6,8 @@ import {tr} from './i18n.mjs';
 import {isRoleConfigured} from './default-roles.mjs';
 import {sourceScopeBinding} from './source-sync-scopes.mjs';
 
+/** Each device's saved copy of a conflicting file, the project folder's ahead of an isolated run output on the same device. */
+export const deviceSides=c=>{const seen=new Map();for(const s of [...c.sides].sort((a,b)=>Number(Boolean(a.sourceRunId))-Number(Boolean(b.sourceRunId))))if(!seen.has(s.nodeId))seen.set(s.nodeId,s);return [...seen.values()];};
 export const conflictHashes=c=>({base:c.base?.hash??null,sides:c.sides.map(s=>s.entry?.hash??null)});
 
 /** Merge native tool lifecycles; completed shell evidence must follow the last observed source write. */
@@ -102,6 +104,36 @@ export class SourceSyncConflicts {
     if(c.requiresIndependentReview){this.escalate(updated,'independent_review_required');return;}
     if(run.stopRequested||run.controlLost||(c.attempts||0)>=2){this.escalate(updated,'verification_required');return;}
     this.db.put('sourceSyncConflicts',{...updated,status:'open',ownerTaskId:null,assignmentId:null,proposal:null});
+  }
+  /**
+   * The user picks one device's saved version for each chosen file (the page decides which device is newer). It goes out like
+   * a reviewed resolution: every device is read again first, and a file that changed since is reopened instead of overwritten.
+   * A file without a conflict record yet, one already being applied, or one a role is repairing right now is left alone and
+   * reported. Unstarted repair tasks for a chosen file are cancelled.
+   */
+  choose(projectId,items){
+    if(!Array.isArray(items)||!items.length||items.length>200)throw syncError('invalid_scope');
+    const config=this.sync.config(projectId),generation=config.generation,done=new Set(['done','succeeded','failed','cancelled']),settled=new Set(['completed','partial_conflict','blocked','cancelled']);
+    return items.map(item=>{
+      const repositoryId=String(item?.repositoryId||''),path=String(item?.path||''),sourceNodeId=String(item?.sourceNodeId||''),report=status=>({repositoryId,path,status});
+      try{return this.db.transaction(()=>{
+        const c=this.db.listProject('sourceSyncConflicts',projectId).find(x=>x.repositoryId===repositoryId&&x.path===path&&x.syncGeneration===generation&&!['resolved','cancelled'].includes(x.status));
+        if(!c)return report('not_ready');
+        if(config.paused)return report('paused');
+        // A resolution or evidence read already under way for this file decides it first.
+        if(['verifying','resolved_pending_sync','initializing'].includes(c.status)||c.evidencePending||this.db.listSourceSyncBatches({projectId}).some(b=>['resolution','evidence'].includes(b.kind)&&b.conflictIds?.includes(c.id)&&!settled.has(b.status)))return report('busy');
+        if(this.db.activeRuns().some(r=>r.sourceConflictId===c.id))return report('owner_running');
+        const side=deviceSides(c).find(s=>s.nodeId===sourceNodeId&&!s.unknown);
+        if(!side)return report('side_missing');
+        for(const taskId of [c.ownerTaskId,...(c.peerTaskIds||[])].filter(Boolean)){const task=this.db.get('tasks',taskId);if(task&&!task.currentRunId&&!done.has(task.status))this.db.put('tasks',{...task,status:'cancelled'});}
+        // A fresh id per choice: picking the same device again after a blocked attempt starts a new batch, not the old one.
+        const choices=(c.choices||0)+1,proposal={id:contentHash(JSON.stringify([c.id,c.generation,side.nodeId,side.endpointId||side.root||'',choices])),entry:side.entry,sourceNodeId:side.nodeId,sourceRoot:side.root};
+        const chosen=this.db.put('sourceSyncConflicts',{...c,choices,...(c.detection==='metadata'?{}:{status:'verifying',review:{kind:'human_choice',nodeId:side.nodeId,at:new Date().toISOString()}})});
+        const batch=this.sync.resolve(chosen,proposal);
+        if(c.detection!=='metadata')this.db.put('sourceSyncConflicts',{...chosen,resolutionBatchId:batch.id});
+        return {...report('applying'),conflictId:c.id};
+      });}catch(error){return report(error?.code||'conflict_changed');}
+    });
   }
   /** Explicit browser review accepts one exact proposal; distribution still rechecks every destination. */
   acceptReview(id,generation,proposalId){

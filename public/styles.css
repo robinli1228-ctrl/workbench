@@ -1753,7 +1753,23 @@ button.action-icon-button { display: inline-flex; align-items: center; justify-c
 .source-sync-change-file small { color: var(--muted, #667085); }
 .source-sync-change-head { border-top: 0; padding-bottom: 0; color: var(--muted, #667085); font-size: 12px; }
 .source-sync-change-note { grid-column: 1 / -1; color: #b54708; }
-@media (max-width: 640px) { .source-sync-change { grid-template-columns: minmax(0, 1fr) auto; } .source-sync-change-head { display: none; } }
+/* The pending list: a title with All / Conflicts, and in Conflicts one row per file with a tick box and every device's time. */
+.source-sync-changes-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.source-sync-filter { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: #f1f3f7; }
+.source-sync-filter-option { height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted, #667085); font-size: 12px; cursor: pointer; }
+.source-sync-filter-option.is-active { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgb(16 24 40 / 8%); }
+.source-sync-resolve { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 0; }
+.source-sync-resolve .source-sync-choice { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.source-sync-resolve select { width: auto; min-width: 0; max-width: 100%; }
+.source-sync-problem-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.source-sync-change.source-sync-conflict { grid-template-columns: 18px minmax(0, 2.4fr) minmax(0, 2.4fr); align-items: start; cursor: pointer; }
+.source-sync-conflict input { width: auto; margin: 3px 0 0; }
+.source-sync-conflict-times { display: grid; gap: 2px; color: var(--muted, #667085); font-size: 12px; }
+.source-sync-result { white-space: pre-line; }
+.source-sync-problem { color: #b54708; }
+.source-sync-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.source-sync-foot .link-button { padding: 0; border: 0; background: none; color: var(--accent, #4f5bce); font-size: 12px; cursor: pointer; }
+@media (max-width: 640px) { .source-sync-change { grid-template-columns: minmax(0, 1fr) auto; } .source-sync-change.source-sync-conflict { grid-template-columns: 18px minmax(0, 1fr); } .source-sync-conflict-times { grid-column: 2; } .source-sync-change-head { display: none; } }
 .source-sync-dialog { width: min(780px, 94vw); max-height: 88vh; padding: 24px; border: 1px solid #dbe5f1; border-radius: 18px; box-shadow: 0 20px 80px #172d4933; }
 .source-sync-body { display: grid; gap: 16px; padding-top: 16px; }
 .source-sync-body fieldset { border: 1px solid #dbe5f1; border-radius: 10px; padding: 12px; }
