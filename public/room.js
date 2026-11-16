@@ -821,6 +821,14 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     saveDrafts(); composer(); input.focus();
   }
 
+  /** Fills the composer with "@role … continue" (the user still sends it); an unsent draft is kept after it. */
+  function typeContinue(names){
+    if(draft().pending||draft().queueEdit||sendingProject===scopeId)return;
+    const roles=names.filter(name=>(data.roles||[]).some(r=>r.projectId===projectId&&r.name===name));if(!roles.length)return;
+    const lead=`${roles.map(name=>`@${name}`).join(' ')} ${t('Continue')}`,rest=input.value.trim();
+    input.value=rest?`${lead}\n${rest}`:lead;draft().text=input.value;saveDrafts();composer();resizeInput();input.focus();
+  }
+
   function avatarFor(roleOrRuntime, name) {
     const runtime = typeof roleOrRuntime === 'string' ? roleOrRuntime : roleOrRuntime?.runtime;
     const wrap = create('span', 'chat-avatar');
@@ -1235,6 +1243,12 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       (content.classList.contains('markdown-body')&&first?.tagName==='P'?first:content).prepend(list);
     }
     bubble.append(body);
+    // A device is back after an outage: one click puts "@role continue" in the composer for the roles it stopped.
+    if(system&&m.kind==='connection_restored'&&m.continueRoles?.length){
+      const go=create('button','link-button connection-continue',t('Continue'));go.type='button';
+      go.title=t('Fill in a message asking {roles} to continue',{roles:m.continueRoles.join(t(', '))});
+      go.addEventListener('click',()=>typeContinue(m.continueRoles));bubble.append(go);
+    }
     if (m.attachments?.length) {
       const files = create('div','chat-attachments');
       for(const item of m.attachments) files.append(attachmentCard(item));
