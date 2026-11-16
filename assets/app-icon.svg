@@ -26,8 +26,8 @@
   <rect width="512" height="512" rx="114" fill="url(#blue)"/>
   <rect x="2" y="2" width="508" height="508" rx="112" fill="none" stroke="url(#rim)" stroke-opacity=".22" stroke-width="3"/>
   <g stroke="#1245d4" stroke-width="10" filter="url(#depth)">
-    <rect x="173" y="112" width="270" height="224" rx="36" fill="url(#rearSilver)"/>
-    <rect x="105" y="179" width="270" height="224" rx="36" fill="url(#silver)"/>
+    <rect x="168" y="102" width="268" height="224" rx="36" fill="url(#rearSilver)"/>
+    <rect x="76" y="142" width="320" height="268" rx="40" fill="url(#silver)"/>
   </g>
-  <path d="m151 240 47 31-47 30m76 3h54" fill="none" stroke="#1343d0" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+  <path transform="translate(12 12)" d="m151 240 47 31-47 30m76 3h54" fill="none" stroke="#1343d0" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
