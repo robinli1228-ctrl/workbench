@@ -432,9 +432,10 @@ async function command(m) {
       if (reservation.stopRequested || homeDisconnected || ws?.readyState !== 1) { emit(c.runId,'status',{status:'interrupted',error:tr('worker.executionInterruptedByStopDisconnect')});return; }
       bridge = await startAgentBridge({ workspace: folder, runId: c.runId, home: homeHttp, token,
         canSend: (pathname,input) => canSendAgentOperation({quitting,connected:!homeDisconnected&&ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input),
-        blockReason: (pathname,input) => {const block=agentOperationBlock({quitting,connected:!homeDisconnected&&ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input);
-          // Recorded once; it reaches Home with this turn's other buffered events when the link is back.
-          if(block==='home_disconnected'&&!disconnectNoted){disconnectNoted=true;emit(c.runId,'home_disconnected',{});}
+        blockReason: (pathname,input,{final=false}={}) => {const block=agentOperationBlock({quitting,connected:!homeDisconnected&&ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input);
+          // Only the refusal the role actually sees (its wb gave up retrying), once per turn; it reaches Home with this turn's
+          // other buffered events when the link is back.
+          if(block==='home_disconnected'&&final&&!disconnectNoted){disconnectNoted=true;emit(c.runId,'home_disconnected',{});}
           return block;} });
       const wbEnv = agentProcessEnv(await runtimeGitEnvironment({directory:join(data,'git-auth'),key:m.run.roleSessionId||c.runId,repositories:executionRepositories,credentials:m.gitCredentials,env:process.env}), {
         PATH: `${join(base, 'bin')}${delimiter}${process.env.PATH || ''}`,

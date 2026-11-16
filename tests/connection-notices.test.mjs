@@ -44,3 +44,12 @@ test('the Store records the first refused request on the run', () => {
   db.event({ id: 'e2', runId: 'r', seq: 2, type: 'home_disconnected', payload: {}, createdAt: '2026-11-16T13:54:00.000Z' });
   assert.equal(db.get('runs', 'r').homeDisconnectedAt, '2026-11-16T13:53:12.000Z');
 });
+
+test('a replayed or late refusal for a run already named in a restored notice says nothing again', () => {
+  const { db, notices, online, fire, notes } = setup();
+  db.put('runs', { id: 'r1', projectId: 'p', roleId: 'c', nodeId: 'deb', status: 'succeeded', lastSeq: 0 });
+  online.add('deb');notices.stopped(db.get('runs', 'r1'));fire(RESTORE_SETTLE_DELAY);
+  assert.equal(notes().length, 1);assert.ok(db.get('runs', 'r1').connectionNoticedAt);
+  notices.stopped(db.get('runs', 'r1'));fire(RESTORE_SETTLE_DELAY);
+  assert.equal(notes().length, 1, 'no second notice');
+});

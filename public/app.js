@@ -1899,6 +1899,7 @@ function eventPayloadText(event) {
   if (event.type === 'tool') return payload.text || payload.name || safeJson(payload);
   if (event.type === 'usage') return formatUsage(payload) || safeJson(payload);
   if (event.type === 'error') return payload.error || payload.message || payload.text || safeJson(payload);
+  if (event.type === 'home_disconnected') return t('A wb request was not sent: this device had lost its connection to Home');
   return payload.text || payload.message || safeJson(payload);
 }
 

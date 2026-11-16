@@ -20,7 +20,7 @@ export class ConnectionNotices {
   #chat(outage,run){
     const projectId=run.projectId,conversationId=conversationIdOf(run);
     let chat=outage.chats.find(c=>c.projectId===projectId&&c.conversationId===conversationId);
-    if(!chat){chat={projectId,conversationId,working:[],stopped:[],lostNoticeId:null};outage.chats.push(chat);}
+    if(!chat){chat={projectId,conversationId,working:[],stopped:[],stoppedRuns:[],lostNoticeId:null};outage.chats.push(chat);}chat.stoppedRuns||=[];
     return chat;
   }
   #post(chat,kind,text,extra={}){
@@ -42,9 +42,11 @@ export class ConnectionNotices {
   }
   /** A role's wb request was refused because this device could not reach Home: it stops, and will be named on recovery. */
   stopped(run){
-    if(!run?.roleId)return;
+    // A replayed or late event for a run already named in a restored notice says nothing again.
+    if(!run?.roleId||run.connectionNoticedAt)return;
     const outage=this.#outage(run.nodeId),chat=this.#chat(outage,run);
     if(!chat.stopped.includes(run.roleId))chat.stopped.push(run.roleId);
+    if(!chat.stoppedRuns.includes(run.id))chat.stoppedRuns.push(run.id);
     this.db.put('connectionOutages',outage);
     // The refusal is reported once the device is back; give its other buffered events a moment, then say so.
     if(this.online(run.nodeId))this.#timer(`restored:${run.nodeId}`,()=>this.#restored(run.nodeId),RESTORE_SETTLE_DELAY);
@@ -59,6 +61,7 @@ export class ConnectionNotices {
     for(const chat of outage.chats.filter(c=>c.lostNoticeId||c.stopped.length)){
       const names=chat.stopped.map(id=>this.#roleName(id)).filter(Boolean);
       this.#post(chat,'connection_restored',tr(names.length?'connection.restoredStopped':'connection.restored',{device:this.#device(nodeId),roles:names.join(tr('connection.separator'))}),names.length?{continueRoles:names}:{});
+      const at=this.now().toISOString();for(const id of chat.stoppedRuns||[]){const run=this.db.get('runs',id);if(run)this.db.put('runs',{...run,connectionNoticedAt:at});}
     }
     this.db.remove('connectionOutages',nodeId);this.change();
   }

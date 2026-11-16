@@ -825,7 +825,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   function typeContinue(names){
     if(draft().pending||draft().queueEdit||sendingProject===scopeId)return;
     const roles=names.filter(name=>(data.roles||[]).some(r=>r.projectId===projectId&&r.name===name));if(!roles.length)return;
-    const lead=`${roles.map(name=>`@${name}`).join(' ')} ${t('Continue')}`,rest=input.value.trim();
+    const lead=`${roles.map(name=>`@${name}`).join(' ')} ${t('Continue')}`,rest=input.value.trim();if(rest.startsWith(lead)){input.focus();return;}
     input.value=rest?`${lead}\n${rest}`:lead;draft().text=input.value;saveDrafts();composer();resizeInput();input.focus();
   }
 
@@ -1244,10 +1244,12 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     }
     bubble.append(body);
     // A device is back after an outage: one click puts "@role continue" in the composer for the roles it stopped.
-    if(system&&m.kind==='connection_restored'&&m.continueRoles?.length){
+    // Roles that already ran again after the notice need no reminder.
+    const toContinue=system&&m.kind==='connection_restored'?(m.continueRoles||[]).filter(name=>!(data.runs||[]).some(r=>r.projectId===m.projectId&&(r.roleSnapshot?.name===name)&&String(r.createdAt||'')>String(m.createdAt||''))):[];
+    if(toContinue.length){
       const go=create('button','link-button connection-continue',t('Continue'));go.type='button';
-      go.title=t('Fill in a message asking {roles} to continue',{roles:m.continueRoles.join(t(', '))});
-      go.addEventListener('click',()=>typeContinue(m.continueRoles));bubble.append(go);
+      go.title=t('Fill in a message asking {roles} to continue',{roles:toContinue.join(t(', '))});
+      go.addEventListener('click',()=>typeContinue(toContinue));bubble.append(go);
     }
     if (m.attachments?.length) {
       const files = create('div','chat-attachments');
