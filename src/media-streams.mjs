@@ -27,6 +27,14 @@ export const PREVIEW_CHUNK=8*1024*1024;
  */
 export const MEDIA_TIMINGS=Object.freeze({viewStreams:4,downloadStreams:2,slotWaitMs:20000,arrivalMs:20000,idleMs:60000,cancelMs:5000,stopGraceMs:35000,failureMs:90000});
 const PLAYABLE=new Set(['video','audio','image','pdf']);
+// Web pages (HTML, SVG) open in the viewer through /preview/, where their relative files resolve under one directory ticket.
+// Types follow the file name: the Worker only recognises media by header bytes, and nosniff needs exact script and style types.
+const WEB_PAGE=/\.(?:html?|svg)$/i;
+const PREVIEW_TYPES={html:'text/html; charset=utf-8',htm:'text/html; charset=utf-8',svg:'image/svg+xml',css:'text/css; charset=utf-8',js:'text/javascript; charset=utf-8',
+  mjs:'text/javascript; charset=utf-8',json:'application/json; charset=utf-8',map:'application/json; charset=utf-8',txt:'text/plain; charset=utf-8',xml:'application/xml',
+  png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',avif:'image/avif',ico:'image/x-icon',
+  woff:'font/woff',woff2:'font/woff2',ttf:'font/ttf',otf:'font/otf',wasm:'application/wasm',mp4:'video/mp4',webm:'video/webm',mp3:'audio/mpeg',wav:'audio/wav'};
+const previewType=(name,sniffed)=>PREVIEW_TYPES[String(name||'').split('.').at(-1).toLowerCase()]||(sniffed&&sniffed!=='application/octet-stream'?sniffed:'application/octet-stream');
 const STATUS={media_idle:504,media_interrupted:502,source_offline:503,worker_upgrade:501,media_missing:404,file_changed:409,media_busy:503,media_timeout:504,media_ticket_invalid:401,invalid_media_path:400,media_not_file:400};
 const failure=(code,detail='')=>Object.assign(new Error(detail||code),{code,status:STATUS[code]||400});
 const codeOf=error=>error?.code||String(error?.message||'').split(':')[0].trim()||'media_failed';
@@ -129,8 +137,32 @@ export class MediaStreams {
     const ticket=this.sign(payload),worker=this.db.get('workers',source.nodeId);
     const transfers=source.projectId?this.db.listProject('mediaTransfers',source.projectId).filter(t=>t.source?.nodeId===source.nodeId&&t.source.root===source.root&&t.source.path===info.relativePath)
       .map(t=>({id:t.id,nodeId:t.nodeId,status:t.status,received:t.received||0,size:t.size,path:t.path||null,error:t.error||null})):[];
-    return {available:true,ticket,url:`/media/${ticket}`,downloadUrl:`/media/${ticket}?download=1`,name:info.name,size:info.size,mime:info.mime,kind:info.kind,
-      playable:PLAYABLE.has(info.kind),modifiedAt:new Date(info.mtimeMs).toISOString(),expiresAt:new Date(payload.x).toISOString(),sourceNodeId:source.nodeId,sourceName:worker?.name||source.nodeId,transfers};
+    const web=WEB_PAGE.test(info.name);
+    return {available:true,ticket,url:`/media/${ticket}`,downloadUrl:`/media/${ticket}?download=1`,name:info.name,size:info.size,mime:info.mime,kind:web?'web':info.kind,
+      ...(web?{previewUrl:this.previewUrl(source,info.relativePath)}:{}),playable:PLAYABLE.has(info.kind),modifiedAt:new Date(info.mtimeMs).toISOString(),expiresAt:new Date(payload.x).toISOString(),sourceNodeId:source.nodeId,sourceName:worker?.name||source.nodeId,transfers};
+  }
+
+  /**
+   * A web page's address: a ticket for the page's directory (marked w, so it never reads as a file ticket) plus the file name.
+   * The page's relative links (style.css, img/a.png) resolve under the same ticket; each one is described and relayed like
+   * any media file, so the Worker's path checks apply to every file the page loads.
+   */
+  previewUrl(source,relativePath) {
+    const parts=String(relativePath).split(/[\\/]/),file=parts.pop();
+    const payload={v:1,w:1,n:source.nodeId,r:source.root,dir:parts.join('/'),pr:source.projectId||null,ns:source.native||null,x:(Math.floor(this.clock()/DAY)+2)*DAY};
+    return `/preview/${this.sign(payload)}/${encodeURIComponent(file)}`;
+  }
+  /** One file of a previewed page: `rel` is the decoded path after the ticket, relative to the page's directory. */
+  async preview(req,res,token,rel) {
+    if(!['GET','HEAD'].includes(req.method))return respond(res,405,{error:'Method not allowed'});
+    const t=this.verify(token);if(!t?.w)return respond(res,401,{error:'media_ticket_invalid',code:'media_ticket_invalid'});
+    const parts=String(rel||'').split('/');
+    if(!rel||parts.some(part=>!part||part==='.'||part==='..'||part.includes('\\')||part.includes('\0')))return respond(res,400,{error:'invalid_media_path',code:'invalid_media_path'});
+    let info;
+    try{info=await this.describe({projectId:t.pr,nodeId:t.n,root:t.r,path:[t.dir,...parts].filter(Boolean).join('/'),...(t.ns?{native:t.ns}:{})});}
+    catch(error){const code=codeOf(error);return respond(res,STATUS[code]||502,{error:code,code});}
+    if(!info.available)return respond(res,STATUS[info.reason]||404,{error:info.reason,code:info.reason});
+    return this.serve(req,res,info.ticket,{preview:true});
   }
 
   /** At most a few concurrent relays per device and kind; extra requests wait briefly instead of crowding the Worker. */
@@ -146,10 +178,10 @@ export class MediaStreams {
   }
 
   /** Browser-facing reads: Range requests for playing and seeking, full streams for downloads and transfers. */
-  async serve(req,res,token,{download=false}={}) {
+  async serve(req,res,token,{download=false,preview=false}={}) {
     if(!['GET','HEAD'].includes(req.method))return respond(res,405,{error:'Method not allowed'});
     if(req.headers['sec-fetch-site']==='cross-site')return respond(res,403,{error:'Cross-site media request rejected'});
-    const t=this.verify(token);if(!t)return respond(res,401,{error:'media_ticket_invalid',code:'media_ticket_invalid'});
+    const t=this.verify(token);if(!t||t.w)return respond(res,401,{error:'media_ticket_invalid',code:'media_ticket_invalid'});
     // Home's copy of this exact version answers first, so the bytes never cross the device link twice (and still open offline).
     // A removed device's files are not served from the copy either.
     const known=Boolean(this.db.get('workers',t.n))&&!this.db.get('removedDevices',t.n);
@@ -171,11 +203,13 @@ export class MediaStreams {
     }
     const covered=cached||(prefix&&end<prefix.size?prefix.path:null);
     const reason=covered?null:this.usable(t.n);if(reason){this.record(token,reason,'device');return respond(res,STATUS[reason],{error:reason,code:reason});}
-    const inline=!download&&PLAYABLE.has(t.k),filename=encodeURIComponent(t.nm||'file');
-    const headers={'Content-Type':inline?t.t:'application/octet-stream','Accept-Ranges':'bytes','Cache-Control':MEDIA_CACHE_CONTROL,'X-Content-Type-Options':'nosniff',ETag:etag,
+    const inline=preview||!download&&PLAYABLE.has(t.k),filename=encodeURIComponent(t.nm||'file');
+    // A previewed page keeps one address while its files change, so the browser must not reuse an earlier copy.
+    const headers={'Content-Type':preview?previewType(t.nm,t.t):inline?t.t:'application/octet-stream','Accept-Ranges':'bytes','Cache-Control':preview?'no-store':MEDIA_CACHE_CONTROL,'X-Content-Type-Options':'nosniff',ETag:etag,
       ...(Number.isFinite(t.m)?{'Last-Modified':new Date(t.m).toUTCString()}:{}),
       // Browsers will not render a PDF inside a sandboxed document; every other response is sandboxed in case it is opened directly.
-      ...(inline&&t.k==='pdf'?{}:{'Content-Security-Policy':"sandbox; default-src 'none'"}),'Content-Disposition':`${inline?'inline':'attachment'}; filename*=UTF-8''${filename}`,'Content-Length':String(size?end-start+1:0),
+      // Previewed pages run unsandboxed so their scripts and relative files work; the user accepted that they share Home's origin.
+      ...(preview||inline&&t.k==='pdf'?{}:{'Content-Security-Policy':"sandbox; default-src 'none'"}),'Content-Disposition':`${inline?'inline':'attachment'}; filename*=UTF-8''${filename}`,'Content-Length':String(size?end-start+1:0),
       ...(partial?{'Content-Range':`bytes ${start}-${end}/${size}`}:{})};
     const status=partial?206:200;
     if(req.method==='HEAD'||size===0){res.writeHead(status,headers);return res.end();}
@@ -195,7 +229,7 @@ export class MediaStreams {
    */
   async status(req,res,token) {
     if(req.headers['sec-fetch-site']==='cross-site')return respond(res,403,{error:'Cross-site media request rejected'});
-    const t=this.verify(token);if(!t)return respond(res,401,{error:'media_ticket_invalid',code:'media_ticket_invalid'});
+    const t=this.verify(token);if(!t||t.w)return respond(res,401,{error:'media_ticket_invalid',code:'media_ticket_invalid'});
     const known=Boolean(this.db.get('workers',t.n))&&!this.db.get('removedDevices',t.n),cached=this.cache&&known?await this.cache.lookup(t):null;
     const since=this.clock()-this.timings.failureMs,failures=(this.failures.get(token)||[]).filter(f=>f.at>=since);
     return respond(res,200,{device:known?cached?null:this.usable(t.n):'source_offline',failures});
@@ -335,7 +369,7 @@ export class MediaStreams {
    */
   async transfer(projectId,{clientTransferId,ticket,nodeId}) {
     if(!/^[a-f0-9-]{36}$/.test(clientTransferId||''))throw failure('invalid_media_path','Invalid transfer ID');
-    const t=this.verify(ticket);if(!t)throw failure('media_ticket_invalid');
+    const t=this.verify(ticket);if(!t||t.w)throw failure('media_ticket_invalid');
     if(t.pr!==projectId)throw failure('invalid_media_path','Ticket belongs to another project');
     if(nodeId===t.n)throw failure('invalid_media_path','The file is already on that device');
     const binding=this.db.get('workspaces',`${projectId}:${nodeId}`);if(!binding?.localRoot)throw failure('invalid_media_path','The target device has no project directory');

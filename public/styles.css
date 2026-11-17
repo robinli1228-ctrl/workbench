@@ -3773,6 +3773,8 @@ dialog.media-lightbox .media-text { margin: 0; padding: 14px 16px; color: var(--
 .side-preview-media { width: 100%; max-height: 72vh; border-radius: 8px; background: #000; }
 audio.side-preview-media { background: transparent; }
 .side-preview-pdf { flex: 1; width: 100%; min-height: 70vh; border: 0; }
+/* A web page without its own background would otherwise show the panel colour behind its text. */
+.side-preview-web { background: #fff; }
 .side-preview-text, .nt-side-prompt { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--ink); font-family: inherit; font-size: 14px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .nt-side-sheet .nt-code { max-height: none; }
 .side-preview-body .artifact-code { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

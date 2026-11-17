@@ -842,6 +842,9 @@ const server = http.createServer(async (req, res) => {
     if(mediaStatus&&req.method==='GET')return mediaStreams.status(req,res,mediaStatus[1]);
     const mediaRead=pathname.match(/^\/media\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/);
     if(mediaRead)return mediaStreams.serve(req,res,mediaRead[1],{download:url.searchParams.get('download')==='1'});
+    // A previewed web page and the files it loads by relative path, under one signed directory ticket.
+    const previewRead=pathname.match(/^\/preview\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\/(.+)$/);
+    if(previewRead)return mediaStreams.preview(req,res,previewRead[1],previewRead[2]);
       if (pathname === '/healthz') return json(res, { ok: true, version: '0.4.0', toolProtocol:2, build: await staticFingerprint(pageFileMap()) });
     if (pathname.startsWith('/api/')) {
       const bearer = req.headers.authorization || '';

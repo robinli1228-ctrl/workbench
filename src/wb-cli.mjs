@@ -72,10 +72,12 @@ export async function main(argv = process.argv.slice(2)) {
         if(args[0]==='read'){if(!args[1]||args.length>4||args[2]!==undefined&&!/^\d+$/.test(args[2]))throw new Error(tr('wbCli.nativeHistoryUsage'));return out(await agentRequest('/api/agent/native-history',{action:'read',project,chat,id:args[1],offset:args[2]===undefined?0:Number(args[2]),version:args[3]}));}
         return out(await agentRequest('/api/agent/native-history',{action:'search',project,chat,...historySearchInput(args[0]==='search'?args.slice(1):args)}));
       }
+      // Showing the user a page applies to sessions-page CLIs too; it is static text and needs no Run.
+      if(['help','-h','--help'].includes(cmd)&&sub==='preview')return out(tr('wbTools.helpPreview'));
       if(!cmd||['help','-h','--help'].includes(cmd)||cmd==='memory')return out(tr('wbCli.nativeHelp'));
       throw new Error(tr('wbCli.nativeHelp'));
     }
-    if(['help','-h','--help'].includes(cmd)&&['review','sync','errors'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
+    if(['help','-h','--help'].includes(cmd)&&['review','sync','errors','preview'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
     if(!cmd||['help','-h','--help'].includes(cmd)||(tail.some(value=>['--help','-h'].includes(value))&&!tail.includes('--'))||(cmd==='deliver'&&sub==='help'))
       return out(helpText());
     if(['report','schedule','collaboration','pass','notify'].includes(cmd))throw new Error(tr(`wbCli.retired.${cmd}`));
