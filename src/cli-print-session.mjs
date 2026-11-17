@@ -91,7 +91,7 @@ export class CliPrintSession {
     this.resumeSessionId = resumeSessionId;
     this.inheritInstructions = inheritInstructions;
     this.stopping = false; this.done = false;
-    this.backgroundTasks = new Set(); this.awaitingBackground = false;
+    this.backgroundTasks = new Set(); this.backgroundTaskInfo = []; this.awaitingBackground = false;
     this.lastThinkingAt = 0;
     this.contextTracker = runtime==='claude'?new ClaudeContextUsage():null;
     this.answer = ''; this.textBuffer = ''; this.finalText = ''; this.runtimeError = '';
@@ -248,6 +248,8 @@ export class CliPrintSession {
     // Claude reports the full list of its live background tasks (subagents, background shells) on every change.
     if(ownerMessage&&type==='system'&&m.subtype==='background_tasks_changed'&&Array.isArray(m.tasks)) {
       this.backgroundTasks=new Set(m.tasks.map(t=>t?.task_id).filter(Boolean));
+      this.backgroundTaskInfo=m.tasks.filter(t=>t?.task_id).slice(0,20).map(t=>({id:String(t.task_id),description:String(t.description||t.summary||t.command||'').slice(0,200),type:String(t.task_type||t.type||'')}));
+      if(this.awaitingBackground&&this.backgroundTasks.size)this.emit('status',{awaitingBackground:{...this.awaitingSince,tasks:this.backgroundTaskInfo}});
     }
     if (type === 'error' || m.error) {
       // Claude may put auth errors in assistant.message objects; handoff and UI need the actual text.
@@ -256,6 +258,8 @@ export class CliPrintSession {
       else {this.runtimeError = this.runtimeError || errText;this.emit('log', { text: errText });}
     }
     const delta = m.delta?.text || (m.delta?.type === 'text_delta' ? m.delta.text : '') || m.text_delta || (type === 'content_block_delta' ? extractText(m.delta) : '');
+    // A background task came back and Claude is working on it again: the turn is no longer just waiting.
+    if(this.awaitingBackground&&ownerMessage&&(delta||type==='assistant')){this.awaitingBackground=false;this.emit('status',{awaitingBackground:null});}
     if (ownerMessage&&delta) this.appendText(delta);
     else if (ownerMessage&&(type === 'assistant' || type === 'agent_message_chunk' || type === 'agent_message')) {
       const text = extractText(m.message?.content || m.content || m.message || m.text);
@@ -275,7 +279,12 @@ export class CliPrintSession {
       } else if(historicalError||m.status==='SUCCESS' || m.subtype==='success') this.runtimeError='';
       if(this.keepAlive) {
         // Background tasks still run in this process: this reply is only progress, so the Run stays active (slot held, never pooled as idle).
-        if(!this.runtimeError&&this.backgroundTasks.size){this.awaitingBackground=true;this.flushText();this.bestAnswer='';this.bestAnswerId=null;this.finalText='';return;}
+        if(!this.runtimeError&&this.backgroundTasks.size){
+          // Kept so the supervisor can still end the turn with this answer if the background work turns out to be abandoned.
+          this.backgroundAnswer=this.finalText;this.awaitingSince={since:new Date().toISOString()};
+          this.awaitingBackground=true;this.flushText();this.bestAnswer='';this.bestAnswerId=null;this.finalText='';
+          this.emit('status',{awaitingBackground:{...this.awaitingSince,tasks:this.backgroundTaskInfo}});return;
+        }
         this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);
         if(this.runtimeError)this.shutdown();
       }
@@ -406,8 +415,20 @@ export class CliPrintSession {
       this.emit('message', { text: answer, phase: 'final_answer',...(aggregate?{aggregate:true}:{}),...(this.runtime==='claude'&&!aggregate&&this.messageId?{messageId:useBest?this.bestAnswerId:this.messageId}:{}) });
       this.emittedFinal = true;
     }
-    this.done = true; this.awaitingBackground = false;
-    this.emit('status', { status, ...(error ? { error } : {}) });
+    const waited=this.awaitingBackground;this.done = true; this.awaitingBackground = false;
+    this.emit('status', { status, ...(error ? { error } : {}),...(waited?{awaitingBackground:null}:{}) });
+  }
+  /**
+   * The reply is complete and only background tasks keep the turn open; the supervisor judged them abandoned. The turn ends
+   * as succeeded with that reply, and this process (with whatever it still runs) is ended rather than kept warm.
+   */
+  endWithoutBackground() {
+    if(this.done||!this.awaitingBackground||!this.backgroundTasks.size)return false;
+    this.retired=true;if(!this.finalText)this.finalText=this.backgroundAnswer||'';
+    this.finish('succeeded');this.shutdown();
+    // Background shells may sit in the CLI's process group; end the group too once the CLI has had its chance to exit.
+    const pid=this.proc?.pid;if(pid&&process.platform!=='win32')setTimeout(()=>{try{process.kill(-pid,'SIGTERM');}catch{}},4000).unref();
+    return true;
   }
   shutdown() {
     if (!this.proc || this.proc.killed || this.proc.exitCode != null) return;

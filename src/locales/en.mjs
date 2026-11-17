@@ -1605,6 +1605,7 @@ wb device ls '{"device":"DEVICE","path":"logs","name":"*.log","depth":3}'
 wb device read '{"device":"DEVICE","path":"logs/app.log","tail":200,"match":"ERROR"}'
 wb device write '{"device":"DEVICE","path":"notes/a.md","content":"TEXT"}'
                      Look at and change files on other devices, as far as the cross-device access in the project settings allows (default: read the whole device, write the project folder). Relative paths start at the project folder. ls filters by name and goes depth levels down (at most 5, at most 500 entries; .git, node_modules and the like are not entered, point path inside to see them); read gives the last tail lines (default 200, at most 1000), or a page with offset/limit (at most 64 KB; continue with nextOffset); with match it finds the lines containing the text anywhere in the file and gives the last tail of them, each starting with its byte offset, which offset can then read around; write takes content or file (a local text file), at most 1 MB, append:true appends, and missing folders are created. Keys, credentials and .env files are neither read nor written.
+wb run finish <run id>  Supervisor only, during a stall check: end a turn whose reply is complete and only abandoned background commands keep open (the reply is kept, the turn counts as done, those commands end).
 wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      Timed reminders: wake a role in the group chat at a set time. Any role may set them for itself; the supervisor may also set them for others. create/update need a stable requestId, and update also needs id, revision and the full name, description and schedule; pause/resume/delete need only the id: wb timer delete <id>. A one-time reminder is deleted once it has fired. Without roleId the reminder is for yourself.
@@ -1945,6 +1946,15 @@ You personally do only the simplest things: answer a question directly, check on
   'connection.restored': 'Device {device} is connected again.',
   'connection.restoredStopped': 'Device {device} is connected again. {roles} stopped because of the outage and can be asked to continue.',
   'connection.separator': ', ',
+  "stallCheck.task": "[Stall check] {role}'s turn ({runId}) has had no output for over 10 minutes; its last output was at {last}. Its reply has not finished.\nFirst read it with wb history read {runId} to see what it is doing and where it is stuck. If it is still working normally (for example a long build), leave it; if you cannot tell or it needs stopping, do not stop it yourself: ask the user in the chat.\nThis is a background check: at the end say one line of conclusion in the chat with wb note, and post nothing else.",
+  "stallCheck.taskAwaiting": "[Stall check] {role}'s turn ({runId}) has had no output for over 10 minutes; its last output was at {last}. Its reply finished at {since}, but background commands are still open, so the turn still shows as running:\n{tasks}\nFirst read it with wb history read {runId} to see what these commands are for. If they are no longer useful (for example waiting for input that will never come, or the work was done another way), end the turn with wb run finish {runId}: its reply is kept, the turn counts as done and those commands are ended. If they still do useful work, leave it; if you cannot tell, ask the user in the chat.\nThis is a background check: at the end say one line of conclusion in the chat with wb note, and post nothing else.",
+  "stallCheck.noTaskDetails": "(no description of the background commands)",
+  "stallCheck.onlyFromCheck": "A turn can only be finished from the stall check raised for it.",
+  "stallCheck.supervisorOnly": "Only the project supervisor can end another role's turn.",
+  "stallCheck.runNotFound": "This turn does not exist or is not in this project.",
+  "stallCheck.notAwaitingBackground": "This turn's reply has not finished, so wb run finish cannot end it; ask the user if it needs stopping.",
+  "worker.finishBackgroundRefused": "The finish request was not carried out: the turn is no longer only waiting for background commands.",
+  "wbCli.usageWbRunFinish": "Usage: wb run finish <run id>",
   'resultReceipts.cancelledReason': 'The call was cancelled before it produced a result',
   'runContext.receiptNoRun': 'not executed',
   'runContext.receiptFiles': `{count} attached file(s)`,

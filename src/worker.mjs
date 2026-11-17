@@ -327,7 +327,7 @@ async function command(m) {
     const deferred=db.get('runs',c.runId);
     if (deferred&&!deferred.cliRecoveryWait) { send({ type: 'command_ack', id: c.id }); return; }
     // Reconnect and terminal resume retain this run's frozen policy, never the role's mutable current settings.
-    db.put('runs', { ...deferred,id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,concurrentWrites:m.run.concurrentWrites===true,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: deferred?.seq||0,cliRecoveryWait:false,error:null,
+    db.put('runs', { ...deferred,id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,concurrentWrites:m.run.concurrentWrites===true,...(m.run.diagnosis===true?{diagnosis:true}:{}),roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: deferred?.seq||0,cliRecoveryWait:false,error:null,
       ...(m.run.permissionScope!==undefined?{permissionScope:m.run.permissionScope,permissionContract:m.run.permissionContract}:{}),
       collaborationBatchId:m.run.collaborationBatchId||null,collaborationBatch:m.run.collaborationBatch||null,
       collaborationCycleId:m.run.collaborationCycleId||null,propagationBudget:m.run.propagationBudget||null,
@@ -604,7 +604,7 @@ async function command(m) {
       } catch (error) {
         emit(c.runId, 'log', { text: tr('worker.writtenHandoffWasNotRecorded', { message: error.message }) });
       }
-      if(finalStatus?.status==='succeeded' && keepAlive && !homeDisconnected && !quitting && !session.stopping) {
+      if(finalStatus?.status==='succeeded' && keepAlive && !homeDisconnected && !quitting && !session.stopping && !session.retired) {
         sessions.delete(c.runId);
         warmSessions.keep(m.run.roleSessionId,fingerprint,session,{projectId:m.run.projectId,roleId:m.run.roleId,runtime:runtimeType,runId:c.runId});
         await warmSessions.trim(occupiedSlots());
@@ -648,6 +648,11 @@ async function command(m) {
     finally {db.remove('sourceSyncOperations',c.id);}
     const event = recordDeliveryResult(db, c.id, payload);
     if (event) send({ type: 'event', event });
+  }
+  // The supervisor ends a turn whose reply is complete but whose background tasks never finished (src/stall-checks.mjs).
+  if (c.type === 'finish_background') {
+    const s = sessions.get(c.runId);
+    if (!(s instanceof CliPrintSession) || !s.endWithoutBackground()) emit(c.runId, 'log', { text: tr('worker.finishBackgroundRefused') });
   }
   if (c.type === 'stop') {
     let r = db.get('runs', c.runId);

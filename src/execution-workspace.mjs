@@ -152,6 +152,8 @@ export async function prepareExecutionWorkspace(root,run,repositories) {
 export function executionConflict(candidate,active,{concurrent=false}={}) {
   return active.some(other => {
     if (other.projectId!==candidate.projectId) return false;
+    // A read-only diagnosis (a supervisor's stall check) neither waits for nor holds the project workspace.
+    if (candidate.diagnosis || other.diagnosis) return false;
     if (concurrent && (!candidate.execution || !other.execution)) return false;
     if (candidate.execution?.exclusive || other.execution?.exclusive) return true;
     if (candidate.nodeId!==other.nodeId) return false;

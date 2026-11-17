@@ -409,7 +409,7 @@ export class Store {
           roleId:task.roleSnapshot?.id||task.roleId,nodeId,runtime:task.roleSnapshot?.runtime||'codex',model:task.model,workspaceRoot:binding.localRoot}) : null;
       const run = { id: randomUUID(), taskId, projectId: task.projectId, conversationId, sessionConversationId:taskConversationId(task), nodeId, repositoryId,turnPurpose:'task',directionRevision:task.directionRevision||1,
         collaborationSessionId:task.collaborationSessionId||null,collaborationCycleId:task.collaborationCycleId||null,
-        continuationBatchId:task.continuationBatchId||null,...(task.explicitPublish?{explicitPublish:true}:{}),
+        continuationBatchId:task.continuationBatchId||null,...(task.explicitPublish?{explicitPublish:true}:{}),...(task.diagnosis?{diagnosis:true}:{}),
         ...(task.automaticPropagation&&!task.collaborationBatchId?{propagationBudget:'reserved',explicitPublish:true}:{}),
         ...(followupFor(this,task)?{proactiveFollowup:followupFor(this,task),backgroundFollowup:privateFollowup(this,task)}:{}),
         ...(isSwitchMaintenance(task)?{switchOperationId:task.switchOperationId,switchPhase:task.switchPhase,switchHandoffHash:task.switchHandoffHash}:{}),

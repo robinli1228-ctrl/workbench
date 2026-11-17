@@ -73,6 +73,7 @@ import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
 import { TimerAgentActions } from './timer-agent.mjs';
 import { inspectRunProgress } from './run-monitor.mjs';
+import { dispatchStallChecks } from './stall-checks.mjs';
 import { projectTerminalLock, nativeSessionProjectIds, nativeTerminalProject, terminalCommand, terminalLaunchView, TERMINAL_PREPARATION_TTL_MS } from './terminal-resume.mjs';
 import { ProjectGitVersions } from './project-git-versions.mjs';
 import {SourceSyncHome} from './source-sync-transport.mjs';
@@ -1302,6 +1303,20 @@ const server = http.createServer(async (req, res) => {
         if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
         if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
         if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary','/api/agent/memory/search'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
+        // The supervisor ends another role's turn whose reply is complete and that only an abandoned background task keeps open.
+        if(pathname==='/api/agent/run-finish'){
+          if(!run.roleSnapshot?.systemSupervisor||db.get('projects',run.projectId)?.supervisorRoleId!==run.roleId)throw new Error(tr('stallCheck.supervisorOnly'));
+          // Only from the stall check that was raised for that very turn.
+          if(!run.diagnosis||run.proactiveFollowup?.runId!==String(b.targetRunId||''))throw new Error(tr('stallCheck.onlyFromCheck'));
+          const target=db.get('runs',String(b.targetRunId||''));
+          if(!target||target.projectId!==run.projectId)throw new Error(tr('stallCheck.runNotFound'));
+          if(terminal.has(target.status))return json(res,{runId:target.id,status:target.status,alreadyEnded:true});
+          if(!target.awaitingBackground)throw new Error(tr('stallCheck.notAwaitingBackground'));
+          // One command per waiting period: a later wait of the same turn can be finished again.
+          const commandId=`finish-background-${target.id}-${Date.parse(target.awaitingBackground.since||'')||0}`;
+          if(!db.get('commands',commandId))db.put('commands',{id:commandId,type:'finish_background',runId:target.id,nodeId:target.nodeId,acked:false,createdAt:new Date().toISOString()});
+          change();return json(res,{runId:target.id,status:'finishing'});
+        }
         if(pathname==='/api/agent/source-sync'){const result=await sourceSync.agent.execute(run,b.action,b.input||{});change();return json(res,result);}
         if(pathname==='/api/agent/source-candidates'){const result=b.finish?await sourceSync.agent.completeCandidate(run,b.candidateId):sourceSync.agent.stageCandidate(run,b);change();return json(res,result);}
         if(pathname==='/api/agent/discussions') {
@@ -2041,7 +2056,7 @@ const maintenanceDaily = setInterval(() => void runHomeMaintenance(), 24 * 36000
 const sessionQueueTimer=setInterval(()=>{try{queuePump.tick();void queuePump.reconcileVerifications().then(changed=>{if(changed)change();}).catch(e=>console.error(e.message));}catch(e){console.error(e.message);}},2000);sessionQueueTimer.unref();
 const terminalMonitor=setInterval(()=>{void reconcileTerminals();},15000);terminalMonitor.unref();
 const sourceSyncTimer=setInterval(()=>{void sourceSync.tick().catch(e=>console.error(e.message));},1000);sourceSyncTimer.unref();
-const progressMonitor=setInterval(()=>{if(inspectRunProgress(db,online))change();},60000);progressMonitor.unref();
+const progressMonitor=setInterval(()=>{const flagged=inspectRunProgress(db,online),checked=dispatchStallChecks(db,rooms);if(flagged||checked)change();},60000);progressMonitor.unref();
 const usageCollector = setInterval(() => { for(const nodeId of sockets.keys())collectUsage(nodeId); }, 6*60*60*1000);
 server.listen(port, host, () => console.log(tr('home.agentWorkbenchHttpData', { host, port, data })));
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { chatScheduling.close(); clearInterval(heartbeat); clearInterval(chatScheduler); clearInterval(terminalMonitor); clearInterval(usageCollector); usageRetry.stop(); for (const ws of wss.clients) ws.terminate(); for (const r of viewers) r.end(); server.close(() => { db.close(); process.exit(0); }); });
