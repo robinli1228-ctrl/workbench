@@ -4454,3 +4454,7 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .qa-asked-q { overflow-wrap: anywhere; }
 .qa-asked-options { margin-top: 2px; color: #6b7280; font-size: .88em; overflow-wrap: anywhere; }
 .nt-answer .nt-prompt-text { display: block; -webkit-line-clamp: unset; line-clamp: unset; max-height: none; overflow: visible; }
+
+/* A device back after an outage: "Continue" fills "@role continue" into the composer. */
+.chat-bubble > .connection-continue { justify-self: start; margin-top: 6px; padding: 0; border: 0; background: none; color: var(--accent, #4f5bce); font-size: 13px; font-weight: 500; cursor: pointer; }
+.chat-bubble > .connection-continue:hover { text-decoration: underline; }

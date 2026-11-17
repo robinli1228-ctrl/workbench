@@ -68,6 +68,7 @@ import { History } from './history.mjs';
 import { archiveHistoricalReceipts, wakeCallOutcomes } from './result-receipts.mjs';
 import { wakeTaskReturns } from './task-return.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
+import { ConnectionNotices } from './connection-notices.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
 import { TimerAgentActions } from './timer-agent.mjs';
@@ -132,6 +133,8 @@ function syncSupervisorInstructions() {
   }
 }
 const rooms = new Rooms(db);
+// A device link that drops while roles work there, and its recovery, are told in the group chat (no automatic retries).
+const connectionNotices=new ConnectionNotices({db,change:()=>change(),online:id=>online(id)});
 const projectTeamCopy=new ProjectTeamCopy({db,query:workerQuery,online:id=>online(id),change:()=>change()});
 const attachments = new Attachments(db, join(data, 'attachments'));
 rooms.attachments = attachments;
@@ -1909,7 +1912,7 @@ wss.on('connection', ws => {
         nodeId = m.node.id;
         if (db.get('removedDevices',nodeId)) { ws.close(1008, 'Device registration was deleted'); nodeId = null; return; }
         if (sockets.get(nodeId)?.readyState===1) { ws.close(1008, tr('home.workerAlreadyConnected')); nodeId = null; return; }
-        sockets.set(nodeId, ws); clearTimeout(registerTimer);
+        sockets.set(nodeId, ws); clearTimeout(registerTimer);connectionNotices.connected(nodeId);
         const config=db.get('workerConfigs',nodeId),limits=registrationCapacity(m.node,config);
         // A restarted Worker reports a fresh probe; the saved quota of the same account survives it.
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId,runtimes:mergeReportedRuntimes(db.get('workers',nodeId)?.runtimes,m.node.runtimes), lastSeen: new Date().toISOString() });
@@ -1975,6 +1978,7 @@ wss.on('connection', ws => {
           rooms.complete(current);
           // A role whose work has ended with a large context is marked for compaction in its retained process once it stays idle.
           if(m.event.type==='status')noteRoleCompaction(db,db.get('runs',current.id),{online});
+          if(m.event.type==='home_disconnected')connectionNotices.stopped(db.get('runs',current.id));
         });
         send(ws, { type: 'ack', id: m.event.id });
         if(['message','tool','usage','context_usage'].includes(m.event.type))outputChanged();else change();
@@ -1997,6 +2001,7 @@ wss.on('connection', ws => {
       nativeTurns.disconnected(nodeId);
       for (const [id, q] of queries) if (q.nodeId === nodeId) { queries.delete(id); q.reject(new Error(tr('home.executionNodeDisconnectedTryAgain'))); }
       for (const r of db.activeRuns().filter(r => r.nodeId === nodeId && !terminal.has(r.status))) db.put('runs', { ...r, status: r.status === 'stopping' ? 'stopping' : 'reconciling', updatedAt: new Date().toISOString() });
+      connectionNotices.disconnected(nodeId);
       change();
     }
   });
