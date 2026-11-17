@@ -1293,7 +1293,8 @@ Attachments: {p1} (the body does not include the attachments' full text)`,
 Project rules and decisions live in AGENTS.md at the project root (loaded natively by your CLI). Do not read all history end to end; pass only short summaries and source IDs.
 Consult with wb call --role ROLE --kind consult --request-id STABLE_ID --text DESCRIPTION; same-project cross-device calls are delivered directly. Ask one clear question at a time with the necessary background, file versions and the expected answer; retry the same question with the same ID. Send one question to several roles with one wb call and repeated --role flags. If you need the answers, wb wait with a short resume note and end the turn. Do not poll, sleep or send keep-alive messages.
 When consulted, give your conclusion and the necessary evidence directly; do not modify files by default, and do not call the asker back to hand over the answer. End once resolved, without acknowledgement/thank-you exchanges. An @ in group-chat text does not trigger dispatch.
-When configuration is wrong or a call is rejected, report the blocker; do not bypass wb to curl the Home Agent interface directly.{p1}`,
+When configuration is wrong or a call is rejected, report the blocker; do not bypass wb to curl the Home Agent interface directly.
+To show the user a page, give a previewable URL or HTML file path rather than only a screenshot; see wb help preview.{p1}`,
   // src/runtime-probe.mjs
   'runtimeProbe.noRunnableCodexCliFound': 'No runnable Codex CLI found; install it on the device or check CODEX_BIN/PATH',
   'runtimeProbe.appServerCouldNotStart': 'App Server could not start',
@@ -1614,8 +1615,8 @@ wb deliver [--review] [--repo KEY|ID]... ID FULL_SHA|auto DESCRIPTION
                      --repo is repeatable, review-only; auto reads selected HEADs. A review SHA must identify one repository; use --repo if ambiguous.
                      Deliver a commit across devices; the delivery is pushed automatically, and auto takes the current HEAD of every repository in this run. --review is for reviews only: it publishes a fixed review ref received in a separate directory, without advancing project baselines
 wb session current   Show this turn's role session identity
-wb help sync | wb help review | wb help errors
-                     Notes on cross-device sync, independent review and tool error codes
+wb help sync | wb help review | wb help errors | wb help preview
+                     Notes on cross-device sync, independent review, tool error codes and showing the user a page
 
 A retained process puts --turn RUN_ID before the current-turn tool entry. Each turn has its own invocation: use the one in this turn's [wb command] block, never a previous turn's.`,
   // src/worker-coordinator.mjs
@@ -1792,6 +1793,15 @@ You personally do only the simplest things: answer a question directly, check on
 - Formal review, acceptance testing and other fixed-version work use committed delivery (wb deliver or automatic schedule delivery, no duplicates) with the full SHA; the delivery is pushed automatically, then checked on receipt. Synchronized files are for quick looks only, never a substitute for commits or formal acceptance. Give work your device cannot do to a role on the target device; if it is unavailable, report the block rather than reassign and claim completion.
 - Full test suites or builds run by the execution role are development self-tests, not the independent test. Put long checklists or evidence in .workbench/docs or the work materials folder and name the device and path in the handoff.`,
   'wbTools.helpErrors': `Tool errors start with a [code]: run_reconciling and home_disconnected did not run, so retry with the same request ID; after run_stopping or run_ended, do not retry in this turn.`,
+  'wbTools.helpPreview': `Showing the user a page:
+- Give a previewable address or file path for how a page looks; do not send only screenshots. Keep screenshots for evidence, or for what cannot be previewed. The user opens it in the page's viewer and can pin it to the right.
+- Pages that need a backend, sign-in or real data: run the service where the user's browser can reach it (usually the computer running Home, or a test environment it can open) and write the full address in the reply, such as http://localhost:PORT/PATH. localhost, IP addresses and addresses with a port preview in the page; other addresses open in a new tab as before.
+- To deploy on the user's computer when you are not on that device, use wb call to assign an execution or testing role there; a sessions-page CLI cannot assign, so say so and give the deployment steps. Whoever deploys:
+  - reads the project's .workbench/docs/local-preview.md first and keeps its ports; without that file, checks earlier deployments with wb history, then creates it;
+  - exports a fixed commit into a Git-ignored folder and starts it there, never in a synced bound folder, where sync may move files out from under the running service;
+  - starts it in the background and replaces only the service it owns, leaving other ports alone;
+  - updates local-preview.md afterwards and replies with the address, port, PID and commit.
+- Pages without a backend (prototypes, sample pages, HTML reports, SVG): write a .html or .svg file with relative resource paths (Vite builds: base: './') and put the file path in the reply.`,
   'minimal.identity': 'You are executing through Workbench as {name} (role ID: {roleId}).',
   'minimal.sharedReportDirectory': 'Shared report directory (absolute): {path}. Write authorized public reports here, not under a repository-relative .workbench/docs or a temporary worktree. Keep unpublished review material private; this path does not grant extra write permissions.',
   'minimal.inputRepositoryVersions': 'Actual input at task start (cwd {cwd}): {versions}. commit is the execution HEAD; boundCommit is the current project comparison, not the code in a retained session. Check the assigned version and these exact paths before code work; do not silently update the retained workspace.',
@@ -2023,7 +2033,8 @@ wb device write '{"device":"DEVICE","path":"/ABSOLUTE/PATH/a.md","content":"TEXT
 wb history [--project PROJECT] [--chat CHAT] [WORDS]   wb history read ID [--project PROJECT]
                      Read-only look at a project group chat's messages and each turn's result; --project may be left out when there is one project.
 wb history --tasks [--project PROJECT] [--chat CHAT] [--status todo|in_progress|done|cancelled|all]
-                     The chat tasks of every project (or the one named), unfinished ones by default: chat, number, title, status, owner and step.`,
+                     The chat tasks of every project (or the one named), unfinished ones by default: chat, number, title, status, owner and step.
+wb help preview      How to show the user a page (address preview, HTML files, deploying on the user's computer)`,
   'platformMemory.searchUsage': `Usage: wb memory search [WORDS] [--type TYPE] [--cli claude|codex|grok|agy] [--device DEVICE] [--since TIME] [--limit 1-100]`,
   'platformMemory.unknownType': `Type must be one of: {types}`,
   'platformMemory.contentLength': `Memory text is required, up to {limit} characters`,

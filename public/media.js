@@ -10,11 +10,11 @@ import {wildcardPath} from './markdown.js';
  * it: the card only asks Home for metadata, and the viewer streams the byte ranges the browser needs through a short
  * signed ticket, so a file of any size can be watched while it is still arriving. Downloads stream to disk on demand.
  */
-const EXT='mp4|m4v|mov|webm|mkv|ogv|mp3|m4a|aac|wav|ogg|oga|opus|flac|png|jpe?g|gif|webp|pdf|zip|tar|tgz|gz|7z';
+const EXT='mp4|m4v|mov|webm|mkv|ogv|mp3|m4a|aac|wav|ogg|oga|opus|flac|png|jpe?g|gif|webp|pdf|html?|svg|zip|tar|tgz|gz|7z';
 const STOP='\\s`<>"\'，。；：！？、()\\[\\]';
 const PATTERN=new RegExp(`(?:\\/|\\.\\.?\\/)?(?:[^${STOP}\\/]+\\/)*[^${STOP}\\/]+\\.(?:${EXT})(?=$|[\\s，。；：！？、()\\[\\]])`,'gi');
 const EXACT=new RegExp(`^[^${STOP}]+\\.(?:${EXT})$`,'i');
-const ICON={video:'▶',audio:'♪',image:'▣',pdf:'PDF',file:'⬇'};
+const ICON={video:'▶',audio:'♪',image:'▣',pdf:'PDF',web:'WEB',file:'⬇'};
 /** File types by extension, for the colour of a file glyph's label. */
 const FILE_TYPES=[['text',/^(md|markdown|txt|log|rtf)$/],['code',/^(js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|sql|json|yaml|yml|toml|xml|html|css|scss|vue)$/],
  ['archive',/^(zip|tar|gz|tgz|bz2|xz|7z|rar)$/],['pdf',/^pdf$/],['sheet',/^(csv|tsv|xls|xlsx|numbers)$/],['doc',/^(doc|docx|pages|odt)$/],['slides',/^(ppt|pptx|key|odp)$/],['image',/^(png|jpe?g|gif|webp|svg|heic|bmp)$/],['media',/^(mp4|mov|webm|mkv|mp3|wav|m4a|flac)$/]];
@@ -35,6 +35,8 @@ export function mediaKindFromName(name) {
   if(/^(?:mp4|m4v|mov|webm|mkv|ogv)$/.test(ext))return 'video';
   if(/^(?:mp3|m4a|aac|wav|ogg|oga|opus|flac)$/.test(ext))return 'audio';
   if(/^(?:png|jpe?g|gif|webp)$/.test(ext))return 'image';
+  // HTML and SVG open as pages in the viewer (Home serves them under /preview/ with their relative files).
+  if(/^(?:html?|svg)$/.test(ext))return 'web';
   return ext==='pdf'?'pdf':'file';
 }
 export function formatBytes(bytes) {
@@ -84,9 +86,45 @@ export function mediaPathMatches(text) {
   return found;
 }
 
+/**
+ * Addresses of development and test services open in the viewer like a file: loopback and .local names, IP addresses and
+ * any address with an explicit port. Other sites (GitHub and the like) mostly refuse to be embedded, so their links keep
+ * opening a new tab; so does Home's own origin. Returns the normalised address, or null.
+ */
+export function previewableUrl(raw,home=globalThis.location?.origin) {
+  let url;try{url=new URL(String(raw||''));}catch{return null;}
+  if(!/^https?:$/.test(url.protocol)||url.username||url.password||home&&url.origin===home)return null;
+  const host=url.hostname;
+  return /^(?:localhost|[\w.-]+\.localhost|[\w-]+(?:\.[\w-]+)*\.local|\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:.]+\])$/i.test(host)||url.port?url.href:null;
+}
+const URL_TEXT=/https?:\/\/[^\s<>"'`，。；：！？、（）()[\]{}]+/gi;
+function openWebOnClick(link,href){
+  if(link.dataset.webPreview!==undefined)return;link.dataset.webPreview='';
+  // A plain click opens the viewer; modified and middle clicks keep the browser's own new-tab behaviour.
+  link.addEventListener('click',event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();event.stopPropagation();openUrlViewer(href);});
+}
+/** Links, bare addresses and inline-code addresses of development and test services open in the viewer. */
+function linkWebPages(root) {
+  for(const link of root.querySelectorAll('a[href]')){const href=previewableUrl(link.getAttribute('href'));if(href)openWebOnClick(link,href);}
+  const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes=[];let node;
+  while((node=walker.nextNode()))if(node.textContent.includes('://')&&!node.parentElement.closest('a,pre,button,.media-card'))nodes.push(node);
+  for(const text of nodes){
+    const value=text.textContent,fragment=document.createDocumentFragment();let cursor=0;
+    for(const match of value.matchAll(URL_TEXT)){
+      const address=match[0].replace(/[.,;:!?]+$/,''),href=previewableUrl(address);if(!href)continue;
+      const link=el('a','',address);link.href=href;link.target='_blank';link.rel='noopener noreferrer';openWebOnClick(link,href);
+      fragment.append(document.createTextNode(value.slice(cursor,match.index)),link);cursor=match.index+address.length;
+    }
+    if(!cursor)continue;
+    fragment.append(document.createTextNode(value.slice(cursor)));text.replaceWith(fragment);
+  }
+}
+
 /** Replace file paths that name media or large binary files with cards; code blocks, links and buttons are left alone. */
 export function linkMedia(root,context) {
-  if(!root||!context?.describe)return root;
+  if(!root)return root;
+  linkWebPages(root);
+  if(!context?.describe)return root;
   root.normalize();
   const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes=[];let node;
   while((node=walker.nextNode()))if(!node.parentElement.closest('a,pre,button,.media-card'))nodes.push(node);
@@ -279,6 +317,17 @@ export function openTextLightbox({name,size=null,at=null,url}){
   }).catch(error=>{if(v.version!==viewerVersion)return;v.overlay.hidden=true;v.status.hidden=false;v.status.textContent=t('Unable to open: {message}',{message:error.message});});
 }
 
+/** A development or test service's page in the same viewer: no download, so that button opens it in a new tab instead. */
+export function openUrlViewer(url) {
+  const v=lightbox({name:url}),{download,stage,overlay,status}=v;
+  download.removeAttribute('download');download.href=url;download.target='_blank';download.rel='noopener noreferrer';setActionIcon(download,'link',t('Open in new tab'));download.hidden=false;
+  copyAction(v.copy,{text:url});
+  // A site that refuses to be embedded leaves the frame blank, and the page cannot tell; say where to go instead.
+  status.hidden=false;status.textContent=t('If the page stays blank, the site may not allow embedding; open it in a new tab.');
+  const frame=el('iframe','media-pdf media-web');frame.title=url;frame.referrerPolicy='no-referrer';frame.addEventListener('load',()=>{overlay.hidden=true;});frame.src=url;stage.prepend(frame);
+  offerSide(v,{kind:'web',title:url,src:url,download:url,external:true});
+}
+
 /** The viewer streams through the ticket URL: playback starts with the first ranges, seeking fetches only what is needed. */
 export async function openMediaViewer(path,context,{at=null,from=null}={}) {
   const v=lightbox({name:baseName(path),at,from}),{version,download,stage,overlay,status,title,bytes}=v;
@@ -293,7 +342,8 @@ export async function openMediaViewer(path,context,{at=null,from=null}={}) {
   bytes.textContent=formatBytes(info.size);if(!at)v.setTime(info.modifiedAt);
   download.href=info.downloadUrl;download.hidden=false;download.title=t('Download to this computer · {size}',{size:formatBytes(info.size)});
   copyAction(v.copy,{url:info.url,kind:info.kind,text:info.copyOf?info.name:path});
-  if(info.kind!=='file')offerSide(v,{kind:info.kind,title:info.name||baseName(path),subtitle:path,size:info.size,at:at||info.modifiedAt||null,src:info.url,download:info.downloadUrl,renew:()=>describeQueued(context,path,{fresh:true}).then(fresh=>fresh.available?fresh.url:null)});
+  const web=info.kind==='web'&&info.previewUrl;
+  if(info.kind!=='file'&&(info.kind!=='web'||web))offerSide(v,{kind:info.kind,title:info.name||baseName(path),subtitle:path,size:info.size,at:at||info.modifiedAt||null,src:web?info.previewUrl:info.url,download:info.downloadUrl,renew:()=>describeQueued(context,path,{fresh:true}).then(fresh=>fresh.available?(web?fresh.previewUrl:fresh.url):null)});
   const summary=[info.copyOf?t('Playing the local copy on {device}; the source device is offline.',{device:info.sourceName}):t('From {device}',{device:info.sourceName}),formatBytes(info.size)].join(' · ');
   renderStage(stage,overlay,status,info,summary,path,context,version);
   return info;
@@ -332,6 +382,15 @@ function renderStage(stage,overlay,status,info,summary,path,context,version) {
     const image=el('img','media-image');image.alt=info.name;image.decoding='async';
     image.addEventListener('load',()=>{overlay.hidden=true;slow.stop();});image.addEventListener('error',()=>void fail(image));slow.start();
     image.src=info.url;stage.prepend(image);return;
+  }
+  if(info.kind==='web'&&info.previewUrl){
+    const frame=el('iframe','media-pdf media-web');frame.title=info.name;
+    frame.addEventListener('load',()=>{overlay.hidden=true;
+      // Same origin, so the page can be inspected: a build that loads /assets/… from the site root cannot work here.
+      let absolute=null;try{absolute=frame.contentDocument?.querySelector('script[src^="/"]:not([src^="//"]),link[rel~="stylesheet"][href^="/"]:not([href^="//"])');}catch{}
+      if(absolute&&version===viewerVersion){status.hidden=false;status.textContent=t('This page loads files from the site root (such as /assets/…). Build it with relative paths (Vite: base: \'./\') to preview it here.');}
+    });
+    frame.src=info.previewUrl;stage.prepend(frame);return;
   }
   if(info.kind==='pdf'){
     const frame=el('iframe','media-pdf');frame.title=info.name;frame.addEventListener('load',()=>{overlay.hidden=true;});frame.src=info.url;stage.prepend(frame);return;

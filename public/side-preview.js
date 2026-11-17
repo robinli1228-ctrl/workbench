@@ -30,8 +30,9 @@ export function sideButton(className,label,item,{before=null}={}){
 
 /**
  * The panel. An item is { title, subtitle?, size?, at?, copyText?, download?, downloadName? } plus one body:
- * render() for a ready node (a message, a diff, file text), or kind image|video|audio|pdf with src (a URL or a
- * promise of one; renew() gives a fresh URL once when a signed link has expired), or kind text with text.
+ * render() for a ready node (a message, a diff, file text), or kind image|video|audio|pdf|web with src (a URL or a
+ * promise of one; renew() gives a fresh URL once when a signed link has expired), or kind text with text. external marks
+ * a web address: its download button opens it in a new tab instead.
  * Object URLs are copied into the panel's own, so a session releasing its attachments does not blank the preview.
  */
 export function createSidePreview({t,formatSize=()=>'',stamp=()=>'',copyAction=null,emptyText}){
@@ -49,9 +50,9 @@ export function createSidePreview({t,formatSize=()=>'',stamp=()=>'',copyAction=n
     const blob=await (await fetch(src)).blob();const url=URL.createObjectURL(blob);owned=url;return url;
   }
   function media(kind,src,item,ticket){
-    const node=kind==='image'?el('img','side-preview-image'):kind==='pdf'?el('iframe','side-preview-pdf'):el(kind,'side-preview-media');
+    const node=kind==='image'?el('img','side-preview-image'):kind==='pdf'||kind==='web'?el('iframe',kind==='web'?'side-preview-pdf side-preview-web':'side-preview-pdf'):el(kind,'side-preview-media');
     if(kind==='image'){node.alt=item.title||'';node.decoding='async';}
-    else if(kind==='pdf')node.title=item.title||'';
+    else if(kind==='pdf'||kind==='web'){node.title=item.title||'';if(item.external)node.referrerPolicy='no-referrer';}
     else{node.controls=true;node.preload='metadata';node.setAttribute('playsinline','');}
     let renewed=false;
     node.addEventListener('error',async()=>{
@@ -67,6 +68,7 @@ export function createSidePreview({t,formatSize=()=>'',stamp=()=>'',copyAction=n
     sub.textContent=[item.subtitle,item.size!=null?formatSize(item.size):'',item.at?stamp(item.at):''].filter(Boolean).join(' · ');sub.title=item.subtitle||'';
     actions.replaceChildren();body.replaceChildren(el('p','workspace-note side-preview-note',t('Loading…')));
     const download=setActionIcon(el('a','chat-icon-btn side-preview-download'),'follow',t('Download'));download.hidden=true;download.setAttribute('download',item.downloadName||item.title||'');
+    if(item.external){download.removeAttribute('download');download.target='_blank';download.rel='noopener noreferrer';setActionIcon(download,'link',t('Open in new tab'));}
     const copy=iconButton('copy',t('Copy'),()=>{});copy.hidden=true;
     actions.append(download,copy,iconButton('close',t('Close preview'),clear));
     const setCopy=options=>{if(copyAction)copyAction(copy,options);else{copy.hidden=false;copy.onclick=()=>void copyText(copy,options.text||'').catch(()=>{});}};
@@ -78,6 +80,7 @@ export function createSidePreview({t,formatSize=()=>'',stamp=()=>'',copyAction=n
         const src=await own(await Promise.resolve(item.src));if(ticket!==version)return;
         node=media(item.kind,src,item,ticket);
         if(item.kind==='image')setCopy({url:src,kind:'image',text:item.title||''});
+        else if(item.external)setCopy({text:src});
         if(!item.download){download.href=src;download.hidden=false;}
       }
       if(ticket!==version)return;

@@ -1293,6 +1293,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
 项目规则和决策见项目根目录的 AGENTS.md（各 CLI 原生加载）。不要通读所有历史，仅传短摘要和来源编号。
 咨询 wb call --role 角色 --kind consult --request-id 固定编号 --text 说明；同项目跨设备也直接投递。每次问一个明确问题，附必要背景、文件版本和期望答案；同一问题重试沿用编号。同一问题发给多名角色时，一次 wb call 重复 --role。确需等待答案时，wb wait 简短续接说明并结束本轮。不要轮询、sleep 或发送保活消息。
 收到咨询直接给结论和必要依据，不默认修改文件，不反向 call 提问者来交答案。解决后结束，不发送收到/谢谢式往返。群聊正文 @ 不触发派单。
+要给用户看页面效果时，给可预览的网址或 HTML 文件路径，不要只发截图；做法见 wb help preview。
 配置错误或调用被拒绝时报告阻塞，不绕过 wb 直接 curl Home Agent 接口。{p1}`,
   // src/runtime-probe.mjs
   'runtimeProbe.noRunnableCodexCliFound': '未找到可运行的 Codex CLI，请在设备上安装或检查 CODEX_BIN/PATH',
@@ -1614,8 +1615,8 @@ wb deliver [--review] [--repo key或id]... 编号 完整SHA|auto 说明
                      --repo 可重复，仅用于审核；auto 读取所选 HEAD。审核 SHA 须明确对应一个仓，有歧义时指定 --repo。
                      跨设备交付一个提交，交付会自动推送；auto 取本轮所有仓库的当前 HEAD。--review 只给审核用：发布固定审核分支、在独立目录接收，不推进项目基线
 wb session current   查看本轮的角色会话身份
-wb help sync | wb help review | wb help errors
-                     跨设备同步、独立审核、工具报错码的说明
+wb help sync | wb help review | wb help errors | wb help preview
+                     跨设备同步、独立审核、工具报错码、给用户看页面的说明
 
 常驻进程在当前工具入口前加 --turn RUN_ID。每轮的调用方式都不同，用本轮【wb 命令】里给的，不要沿用上一轮的。`,
   // src/worker-coordinator.mjs
@@ -1792,6 +1793,15 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 正式审核、测试验收等固定版本工作用已提交 commit 交付（wb deliver 或排程自动交付，勿重复），写完整 SHA；交付自动推送，接收核对后执行；同步文件只用于临时查看和快检，不代替提交或正式验收。本设备做不了的交目标设备角色，目标不可用就说明阻塞，不改派冒充完成。
 - 整套测试或大型编译交执行跑属于开发阶段的自测，不算独立测试。较长的清单或证据写进文件，放在 .workbench/docs 或中间资料目录，交接时写明设备和路径。`,
   'wbTools.helpErrors': `工具报错以 [code] 开头：run_reconciling、home_disconnected 表示请求没有执行，用同一请求编号重试；run_stopping、run_ended 表示本次已结束，本轮不再重试。`,
+  'wbTools.helpPreview': `给用户看页面：
+- 页面效果优先给可预览的网址或文件路径，不要只发截图；截图只用于留证据，或确实预览不了的时候。用户点开后在页面弹窗里显示，也可以固定到右侧。
+- 要后端、登录、真实数据的页面：服务要跑在用户浏览器能访问的地方（通常是运行 Home 的那台电脑，或它能打开的测试环境），回复里写完整网址，例如 http://localhost:端口/路径。localhost、IP 地址和带端口的网址在页面里预览，其他网址照常在新标签页打开。
+- 需要在用户的电脑上部署而你不在那台设备时，用 wb call 派那台设备上的执行或测试角色；会话页不能派，就说明并给出部署步骤。部署方：
+  - 先读项目的 .workbench/docs/local-preview.md，沿用已有端口；没有这个文件，就用 wb history 查以前的部署记录，再新建；
+  - 从固定提交导出到 Git 忽略的目录再启动，不要在开启同步的绑定目录里运行，同步可能挪走运行中的文件；
+  - 后台启动；只替换自己负责的服务，不动其他端口；
+  - 完成后更新 local-preview.md，回复写明网址、端口、PID 和提交。
+- 不依赖后端的页面（原型、样例页、HTML 报告、SVG）：写成 .html 或 .svg 文件，资源用相对路径（Vite 构建用 base: './'），回复里写出文件路径。`,
   'minimal.identity': '当前通过 Workbench 执行，角色为 {name}（角色 ID：{roleId}）。',
   'minimal.sharedReportDirectory': '共享报告目录（绝对路径）：{path}。获准公开的报告写入这里，不要写到仓库相对路径的 .workbench/docs 或临时工作区。未公开审核材料仍须保密；此路径不授予额外写权限。',
   'minimal.inputRepositoryVersions': '任务启动时的实际输入（工作目录 {cwd}）：{versions}。commit 是执行目录 HEAD；boundCommit 仅是当前项目的对照，不代表旧会话内的代码。代码任务先核对指定版本和这些实际路径，不静默更新旧目录。',
@@ -2023,7 +2033,8 @@ wb device write '{"device":"设备","path":"/绝对路径/a.md","content":"文�
 wb history [--project 项目] [--chat 群聊] [关键词]   wb history read 编号 [--project 项目]
                      只读查看项目群聊的消息和每轮结论；只有一个项目时可省略 --project。
 wb history --tasks [--project 项目] [--chat 群聊] [--status todo|in_progress|done|cancelled|all]
-                     列出所有项目（或指定项目）的群聊任务，默认只列未完成的：群聊、编号、标题、状态、负责人和步骤。`,
+                     列出所有项目（或指定项目）的群聊任务，默认只列未完成的：群聊、编号、标题、状态、负责人和步骤。
+wb help preview      给用户看页面（网址预览、HTML 文件、在用户电脑上部署）的做法`,
   'platformMemory.searchUsage': `用法：wb memory search [关键词] [--type 类型] [--cli claude|codex|grok|agy] [--device 设备] [--since 时间] [--limit 1-100]`,
   'platformMemory.unknownType': `类型只能是：{types}`,
   'platformMemory.contentLength': `记忆内容要写，最多 {limit} 字`,
