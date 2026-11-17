@@ -8,6 +8,7 @@ import {conversationIdOf} from './group-conversations.mjs';
  * check for it: the facts, and the choice to leave it, end it with `wb run finish` when its reply is complete and only an
  * abandoned background command keeps it open, or ask the user. The check is internal (no chat message, no reply card);
  * the supervisor speaks in the chat once, with a one-line conclusion through `wb note`.
+ * Checks keep ordinary workspace admission: adapters without enforced read-only access can queue behind the quiet turn.
  */
 export function dispatchStallChecks(db,rooms){
   let changed=false;

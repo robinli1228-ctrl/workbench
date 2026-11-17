@@ -113,7 +113,7 @@ export class Rooms {
       this.db.put('tasks',{...task,conversationId,origin:'chat',roleId,roleSnapshot:role,sourceMessageId:id,contextPrepared:true,sourceInputs,execution,
         ...(source.kind==='proactive_followup'?{proactiveFollowup:source.context,proactiveInitial:true,backgroundFollowup:true}:{}),
         // A stall check runs in the background like a follow-up (no reply card, private result) without its silence rules.
-        // It only reads and decides, so the quiet turn's workspace lock (the very thing it checks) cannot hold it back.
+        // Its CLI may still have write access, so it keeps the ordinary workspace lock and can queue behind the quiet turn.
         ...(source.kind==='stall_check'?{proactiveFollowup:source.context,backgroundFollowup:true,diagnosis:true}:{}),
         ...(source.kind==='repair'?{sourceConflictId:source.conflictId,sourceConflictGeneration:source.generation,sourceConflictAssignmentId:source.assignmentId}:{}),
         ...(source.kind==='peer'?{sourceConflictPeerId:source.conflictId}:{}),

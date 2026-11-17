@@ -29,7 +29,7 @@ test('a quiet turn whose reply finished but background commands stay open: one i
   assert.match(message.text, /wb run finish r1/);assert.match(message.text, /Write recheck file/);
   const task = db.get('tasks', message.taskIds[0]);
   assert.equal(task.roleId, 'sup');assert.equal(task.backgroundFollowup, true, 'runs in the background, its result stays private');
-  assert.equal(task.diagnosis, true, 'read-only: not held back by the quiet turn\'s workspace');
+  assert.equal(task.diagnosis, true, 'identifies the scoped stall check without granting a lock exemption');
   assert.equal(dispatchStallChecks(db, rooms), false, 'once per alert');assert.equal(db.list('roomMessages').length, 1);
   // A new alert for the same turn (it spoke and went quiet again) is not checked a second time.
   db.put('runAlerts', { ...db.get('runAlerts', 'r1'), createdAt: new Date().toISOString(), checkMessageId: null });
@@ -52,9 +52,9 @@ test('no check for a turn still replying (no finish offered), an offline device,
   assert.equal(db.list('roomMessages').length, 1);
 });
 
-test('a diagnosis run neither waits for nor holds the project workspace', () => {
+test('a diagnosis run keeps the project workspace lock because its CLI may still have write access', () => {
   const busy = [{ projectId: 'p', nodeId: 'w1' }];
   assert.equal(executionConflict({ projectId: 'p', nodeId: 'w1' }, busy), true);
-  assert.equal(executionConflict({ projectId: 'p', nodeId: 'w1', diagnosis: true }, busy), false);
-  assert.equal(executionConflict({ projectId: 'p', nodeId: 'w1' }, [{ projectId: 'p', nodeId: 'w1', diagnosis: true }]), false);
+  assert.equal(executionConflict({ projectId: 'p', nodeId: 'w1', diagnosis: true }, busy), true);
+  assert.equal(executionConflict({ projectId: 'p', nodeId: 'w1' }, [{ projectId: 'p', nodeId: 'w1', diagnosis: true }]), true);
 });
