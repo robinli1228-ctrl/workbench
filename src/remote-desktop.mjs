@@ -45,7 +45,7 @@ export function desktopTunnelSpec(device, keyPath) {
 }
 
 /** Only the registered loopback forward and an established SSH connection to its target qualify for reuse. */
-export function matchesDesktopTunnel(device, command, connections) {
+export function matchesDesktopTunnel(device, command, connections, transportCommand = '') {
   const config = normalizeDesktopConfig(device);
   if (!config) return false;
   const words = String(command || '').trim().split(/\s+/);
@@ -56,10 +56,17 @@ export function matchesDesktopTunnel(device, command, connections) {
   const samePort = forwards.filter(value => Number(value.match(/^(?:(?:\[[^\]]+\]|[^:]*):)?(\d+):/)?.[1]) === config.desktopLocalPort);
   if (!samePort.length || samePort.some(value => value !== forward)) return false;
   const target = `${isIP(device.host) === 6 ? `[${device.host}]` : device.host}:${Number(device.port)}`;
-  return String(connections || '').split('\n').some(line => {
+  const connectedTo = target => String(connections || '').split('\n').some(line => {
     const remote = line.startsWith('n') ? line.slice(1).split('->')[1] : null;
     return remote && (isIP(device.host) ? remote === target : remote.endsWith(`:${Number(device.port)}`));
   });
+  if (connectedTo(target)) return true;
+  // A verified SSH listener is already authenticated; its direct nc child may carry that SSH channel over loopback SOCKS5.
+  const transport = String(transportCommand).trim().split(/\s+/), proxy = transport[4]?.match(/^127\.0\.0\.1:(\d+)$/);
+  if (!isIP(device.host) || transport.length !== 7 || transport[0] !== '/usr/bin/nc' || transport[1] !== '-X' || transport[2] !== '5'
+    || transport[3] !== '-x' || !proxy || Number(proxy[1]) < 1 || Number(proxy[1]) > 65535
+    || transport[5] !== device.host || transport[6] !== String(Number(device.port))) return false;
+  return connectedTo(transport[4]);
 }
 
 /** Inspect a same-user listener without taking ownership of it; unknown ports and failed inspection remain blocked. */
@@ -87,7 +94,7 @@ export async function probeExistingDesktopTunnel(device) {
     const identity = await inspect(pid, 'lstart=,command='), command = identity.split(/\s+/).slice(5).join(' ');
     let matched = matchesDesktopTunnel(device, command, await connectionsOf(pid));
     if (!matched) {
-      // Trust only a direct, same-user system nc transport, not arbitrary descendants or proxy chains.
+      // Trust only the direct, same-user system nc child, with its exact target and either a direct or loopback SOCKS5 socket.
       if (!isIP(device.host)) return null;
       const {stdout} = await execute('/usr/bin/pgrep', ['-P',pid,'-u',uid,'-x','nc'], {timeout:2000});
       const children = [...new Set(stdout.trim().split(/\s+/).filter(value => /^\d+$/.test(value)))];
@@ -95,7 +102,7 @@ export async function probeExistingDesktopTunnel(device) {
       const child = children[0], fields = 'ppid=,uid=,lstart=,command=', before = await inspect(child, fields), words = before.split(/\s+/);
       if (words[0] !== pid || words[1] !== uid || words[7] !== '/usr/bin/nc'
         || words.at(-2) !== device.host || words.at(-1) !== String(Number(device.port))) return null;
-      matched = matchesDesktopTunnel(device, command, await connectionsOf(child));
+      matched = matchesDesktopTunnel(device, command, await connectionsOf(child), words.slice(7).join(' '));
       if (!matched || await inspect(child, fields) !== before) return null;
     }
     // Recheck start time and listener ownership; reuse never grants ownership for later shutdown.
