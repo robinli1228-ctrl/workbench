@@ -232,3 +232,17 @@ test('a control turn is exactly its own command; it cannot carry /clear or anoth
   assert.doesNotThrow(() => turns.create('n1', worker, body(5, 'model', '/model haiku')));
   assert.equal(turns.create('n1', worker, body(6, 'compact', '/clear')).prompt, '/compact', 'a compaction always sends /compact');
 });
+
+test('a subagent shows the model the main session asked for, then the one its own messages name; the page stores it', () => {
+  const r = resident();
+  const uuid = r.turn('review this');r.echo(uuid);
+  r.session.receive({ type: 'assistant', session_id: SID, parent_tool_use_id: null, message: { model: 'claude-opus-5-5', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Agent', input: { subagent_type: 'general-purpose', model: 'haiku', prompt: 'x' } }] } });
+  r.sys('task_started', { task_id: 'a1', tool_use_id: 'toolu_1', task_type: 'local_agent', description: 'Review', subagent_type: 'general-purpose' });
+  r.session.receive({ type: 'assistant', session_id: SID, parent_tool_use_id: 'toolu_1', message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'hi' }] } });
+  r.session.receive({ type: 'assistant', session_id: SID, parent_tool_use_id: 'toolu_1', message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'again' }] } });
+  const events = r.out.filter(e => e.type === 'task').map(e => e.payload);
+  assert.deepEqual(events.map(x => x.model), ['haiku', 'claude-haiku-5-5'], 'the hint at start, the real model once, not on every message');
+  let turn = { id: 't', status: 'running', events: [] };
+  for (const task of events) turn = applyNativeTurnEvent(turn, { kind: 'task', task });
+  assert.equal(turn.tasks[0].model, 'claude-haiku-5-5');
+});

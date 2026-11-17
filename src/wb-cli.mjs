@@ -23,7 +23,7 @@ function sessionOptions(args) {
   return values;
 }
 
-const COMMANDS=['task','sync','discuss','capabilities','session','setup','history','memory','device','timer','note','wait','deliver','call'];
+const COMMANDS=['task','sync','discuss','capabilities','session','setup','history','memory','device','timer','run','note','wait','deliver','call'];
 
 export async function main(argv = process.argv.slice(2)) {
   const turnId=argv[0]==='--turn'?argv[1]:undefined;
@@ -72,10 +72,12 @@ export async function main(argv = process.argv.slice(2)) {
         if(args[0]==='read'){if(!args[1]||args.length>4||args[2]!==undefined&&!/^\d+$/.test(args[2]))throw new Error(tr('wbCli.nativeHistoryUsage'));return out(await agentRequest('/api/agent/native-history',{action:'read',project,chat,id:args[1],offset:args[2]===undefined?0:Number(args[2]),version:args[3]}));}
         return out(await agentRequest('/api/agent/native-history',{action:'search',project,chat,...historySearchInput(args[0]==='search'?args.slice(1):args)}));
       }
+      // Showing the user a page applies to sessions-page CLIs too; it is static text and needs no Run.
+      if(['help','-h','--help'].includes(cmd)&&sub==='preview')return out(tr('wbTools.helpPreview'));
       if(!cmd||['help','-h','--help'].includes(cmd)||cmd==='memory')return out(tr('wbCli.nativeHelp'));
       throw new Error(tr('wbCli.nativeHelp'));
     }
-    if(['help','-h','--help'].includes(cmd)&&['review','sync','errors'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
+    if(['help','-h','--help'].includes(cmd)&&['review','sync','errors','preview'].includes(sub))return out(tr(`wbTools.help${sub[0].toUpperCase()}${sub.slice(1)}`));
     if(!cmd||['help','-h','--help'].includes(cmd)||(tail.some(value=>['--help','-h'].includes(value))&&!tail.includes('--'))||(cmd==='deliver'&&sub==='help'))
       return out(helpText());
     if(['report','schedule','collaboration','pass','notify'].includes(cmd))throw new Error(tr(`wbCli.retired.${cmd}`));
@@ -122,6 +124,11 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'device') {
       const input=await deviceInput('wbCli.deviceUsage');
       return out(deviceText(await agentRequest(sub==='write'?'/api/agent/device-write':'/api/agent/device-read',{...input,runId:process.env.WB_RUN_ID})));
+    }
+    // Supervisor only: end another role's quiet turn whose reply is complete and only an abandoned background task keeps open.
+    if (cmd === 'run') {
+      if (sub !== 'finish' || rest.length !== 1 || !rest[0]) throw new Error(tr('wbCli.usageWbRunFinish'));
+      return out(await agentRequest('/api/agent/run-finish',{runId:process.env.WB_RUN_ID,targetRunId:rest[0]}));
     }
     if (cmd === 'timer') {
       if (sub === 'list' && !rest.length) return out(await agentRequest('/api/agent/timers',{runId:process.env.WB_RUN_ID,action:'list'}));

@@ -68,10 +68,12 @@ import { History } from './history.mjs';
 import { archiveHistoricalReceipts, wakeCallOutcomes } from './result-receipts.mjs';
 import { wakeTaskReturns } from './task-return.mjs';
 import { ScheduledJobs } from './scheduled-jobs.mjs';
+import { ConnectionNotices } from './connection-notices.mjs';
 import {ProactiveFollowup} from './proactive-followup.mjs';
 import {CliRecoveryHome} from './cli-session-recovery-home.mjs';
 import { TimerAgentActions } from './timer-agent.mjs';
 import { inspectRunProgress } from './run-monitor.mjs';
+import { dispatchStallChecks } from './stall-checks.mjs';
 import { projectTerminalLock, nativeSessionProjectIds, nativeTerminalProject, terminalCommand, terminalLaunchView, TERMINAL_PREPARATION_TTL_MS } from './terminal-resume.mjs';
 import { ProjectGitVersions } from './project-git-versions.mjs';
 import {SourceSyncHome} from './source-sync-transport.mjs';
@@ -132,6 +134,8 @@ function syncSupervisorInstructions() {
   }
 }
 const rooms = new Rooms(db);
+// A device link that drops while roles work there, and its recovery, are told in the group chat (no automatic retries).
+const connectionNotices=new ConnectionNotices({db,change:()=>change(),online:id=>online(id)});
 const projectTeamCopy=new ProjectTeamCopy({db,query:workerQuery,online:id=>online(id),change:()=>change()});
 const attachments = new Attachments(db, join(data, 'attachments'));
 rooms.attachments = attachments;
@@ -838,6 +842,9 @@ const server = http.createServer(async (req, res) => {
     if(mediaStatus&&req.method==='GET')return mediaStreams.status(req,res,mediaStatus[1]);
     const mediaRead=pathname.match(/^\/media\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/);
     if(mediaRead)return mediaStreams.serve(req,res,mediaRead[1],{download:url.searchParams.get('download')==='1'});
+    // A previewed web page and the files it loads by relative path, under one signed directory ticket.
+    const previewRead=pathname.match(/^\/preview\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\/(.+)$/);
+    if(previewRead)return mediaStreams.preview(req,res,previewRead[1],previewRead[2]);
       if (pathname === '/healthz') return json(res, { ok: true, version: '0.4.0', toolProtocol:2, build: await staticFingerprint(pageFileMap()) });
     if (pathname.startsWith('/api/')) {
       const bearer = req.headers.authorization || '';
@@ -1299,6 +1306,20 @@ const server = http.createServer(async (req, res) => {
         if (run?.status === 'stopping') throw Object.assign(new Error(tr('home.runStopping')),{code:'run_stopping'});
         if (!run || terminal.has(run.status)) throw Object.assign(new Error(tr('home.currentExecutionHasEndedStopping')),{code:'run_ended'});
         if(run.switchOperationId&&!['/api/agent/history/search','/api/agent/history/read','/api/agent/sessions/current','/api/agent/conversation/summary','/api/agent/memory/search'].includes(pathname))throw new Error('CLI handoff maintenance permits history reads only.');
+        // The supervisor ends another role's turn whose reply is complete and that only an abandoned background task keeps open.
+        if(pathname==='/api/agent/run-finish'){
+          if(!run.roleSnapshot?.systemSupervisor||db.get('projects',run.projectId)?.supervisorRoleId!==run.roleId)throw new Error(tr('stallCheck.supervisorOnly'));
+          // Only from the stall check that was raised for that very turn.
+          if(!run.diagnosis||run.proactiveFollowup?.runId!==String(b.targetRunId||''))throw new Error(tr('stallCheck.onlyFromCheck'));
+          const target=db.get('runs',String(b.targetRunId||''));
+          if(!target||target.projectId!==run.projectId)throw new Error(tr('stallCheck.runNotFound'));
+          if(terminal.has(target.status))return json(res,{runId:target.id,status:target.status,alreadyEnded:true});
+          if(!target.awaitingBackground)throw new Error(tr('stallCheck.notAwaitingBackground'));
+          // One command per waiting period: a later wait of the same turn can be finished again.
+          const commandId=`finish-background-${target.id}-${Date.parse(target.awaitingBackground.since||'')||0}`;
+          if(!db.get('commands',commandId))db.put('commands',{id:commandId,type:'finish_background',runId:target.id,nodeId:target.nodeId,acked:false,createdAt:new Date().toISOString()});
+          change();return json(res,{runId:target.id,status:'finishing'});
+        }
         if(pathname==='/api/agent/source-sync'){const result=await sourceSync.agent.execute(run,b.action,b.input||{});change();return json(res,result);}
         if(pathname==='/api/agent/source-candidates'){const result=b.finish?await sourceSync.agent.completeCandidate(run,b.candidateId):sourceSync.agent.stageCandidate(run,b);change();return json(res,result);}
         if(pathname==='/api/agent/discussions') {
@@ -1909,7 +1930,7 @@ wss.on('connection', ws => {
         nodeId = m.node.id;
         if (db.get('removedDevices',nodeId)) { ws.close(1008, 'Device registration was deleted'); nodeId = null; return; }
         if (sockets.get(nodeId)?.readyState===1) { ws.close(1008, tr('home.workerAlreadyConnected')); nodeId = null; return; }
-        sockets.set(nodeId, ws); clearTimeout(registerTimer);
+        sockets.set(nodeId, ws); clearTimeout(registerTimer);connectionNotices.connected(nodeId);
         const config=db.get('workerConfigs',nodeId),limits=registrationCapacity(m.node,config);
         // A restarted Worker reports a fresh probe; the saved quota of the same account survives it.
         db.put('workers', { ...m.node, ...config,...limits,id:nodeId,runtimes:mergeReportedRuntimes(db.get('workers',nodeId)?.runtimes,m.node.runtimes), lastSeen: new Date().toISOString() });
@@ -1975,6 +1996,7 @@ wss.on('connection', ws => {
           rooms.complete(current);
           // A role whose work has ended with a large context is marked for compaction in its retained process once it stays idle.
           if(m.event.type==='status')noteRoleCompaction(db,db.get('runs',current.id),{online});
+          if(m.event.type==='home_disconnected')connectionNotices.stopped(db.get('runs',current.id));
         });
         send(ws, { type: 'ack', id: m.event.id });
         if(['message','tool','usage','context_usage'].includes(m.event.type))outputChanged();else change();
@@ -1997,6 +2019,7 @@ wss.on('connection', ws => {
       nativeTurns.disconnected(nodeId);
       for (const [id, q] of queries) if (q.nodeId === nodeId) { queries.delete(id); q.reject(new Error(tr('home.executionNodeDisconnectedTryAgain'))); }
       for (const r of db.activeRuns().filter(r => r.nodeId === nodeId && !terminal.has(r.status))) db.put('runs', { ...r, status: r.status === 'stopping' ? 'stopping' : 'reconciling', updatedAt: new Date().toISOString() });
+      connectionNotices.disconnected(nodeId);
       change();
     }
   });
@@ -2036,7 +2059,7 @@ const maintenanceDaily = setInterval(() => void runHomeMaintenance(), 24 * 36000
 const sessionQueueTimer=setInterval(()=>{try{queuePump.tick();void queuePump.reconcileVerifications().then(changed=>{if(changed)change();}).catch(e=>console.error(e.message));}catch(e){console.error(e.message);}},2000);sessionQueueTimer.unref();
 const terminalMonitor=setInterval(()=>{void reconcileTerminals();},15000);terminalMonitor.unref();
 const sourceSyncTimer=setInterval(()=>{void sourceSync.tick().catch(e=>console.error(e.message));},1000);sourceSyncTimer.unref();
-const progressMonitor=setInterval(()=>{if(inspectRunProgress(db,online))change();},60000);progressMonitor.unref();
+const progressMonitor=setInterval(()=>{const flagged=inspectRunProgress(db,online),checked=dispatchStallChecks(db,rooms);if(flagged||checked)change();},60000);progressMonitor.unref();
 const usageCollector = setInterval(() => { for(const nodeId of sockets.keys())collectUsage(nodeId); }, 6*60*60*1000);
 server.listen(port, host, () => console.log(tr('home.agentWorkbenchHttpData', { host, port, data })));
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { chatScheduling.close(); clearInterval(heartbeat); clearInterval(chatScheduler); clearInterval(terminalMonitor); clearInterval(usageCollector); usageRetry.stop(); for (const ws of wss.clients) ws.terminate(); for (const r of viewers) r.end(); server.close(() => { db.close(); process.exit(0); }); });

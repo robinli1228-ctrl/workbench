@@ -4,7 +4,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { tr } from './i18n.mjs';
 
 // Paths a role's wb command may reach; Home re-checks each request against the run and its role.
-const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary', '/api/agent/memory/search', '/api/agent/device-read', '/api/agent/device-write', '/api/agent/native-memory/search','/api/agent/native-device-read', '/api/agent/native-device-write', '/api/agent/native-history',
+const allowed = new Set(['/api/agent/conversation-tasks', '/api/agent/setup/catalog', '/api/agent/setup/propose', '/api/agent/timers', '/api/agent/run-finish', '/api/agent/note', '/api/agent/calls', '/api/agent/wait', '/api/agent/deliveries', '/api/agent/deliveries/review', '/api/agent/history/search', '/api/agent/history/read', '/api/agent/sessions/current', '/api/agent/conversation/summary', '/api/agent/memory/search', '/api/agent/device-read', '/api/agent/device-write', '/api/agent/native-memory/search','/api/agent/native-device-read', '/api/agent/native-device-write', '/api/agent/native-history',
   '/api/agent/discussions', '/api/agent/source-sync']);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -24,7 +24,8 @@ const RETRYABLE=new Set(['run_reconciling','home_disconnected']),RETRY_DELAYS=[1
 const blockMessage=code=>tr({home_disconnected:'agentBridge.homeDisconnected',run_stopping:'home.runStopping',run_reconciling:'home.runReconciling'}[code]||'agentBridge.executionHasStoppedRemoteOperations');
 async function withRetry(send) {
   for(let attempt=0;;attempt++) {
-    try{return await send();}
+    // The last attempt says so: a refusal that the model will actually see is told apart from one a retry may still fix.
+    try{return await send(attempt>=RETRY_DELAYS.length);}
     catch(error){
       if(!RETRYABLE.has(error.code)||attempt>=RETRY_DELAYS.length){if(error.code&&!error.message.startsWith(`[${error.code}]`))error.message=`[${error.code}] ${error.message}`;throw error;}
       await delay(RETRY_DELAYS[attempt]);
@@ -58,14 +59,14 @@ export function agentProcessEnv(base, additions) {
 
 /** The CLI sandbox needs no network access; requests can only land in this workspace and are sent on its behalf by the Worker that holds the connection. */
 export async function agentRequest(pathname, payload) {
-  return withRetry(()=>agentRequestOnce(pathname,payload));
+  return withRetry(final=>agentRequestOnce(pathname,payload,final));
 }
-async function agentRequestOnce(pathname,payload) {
+async function agentRequestOnce(pathname,payload,final=false) {
   if (!allowed.has(pathname)) throw new Error(tr('agentBridge.operationNotAgentTool'));
   const directory = process.env.WB_BRIDGE;
   if (!directory) return homeRequest(process.env.WB_HOME, process.env.WB_TOKEN, pathname, payload);
   const id = randomUUID(), temporary = join(directory, `${id}.tmp`), requestFile = join(directory, `${id}.request`);
-  await writeFile(temporary, JSON.stringify({ pathname, payload }), { flag: 'wx', mode: 0o600 });
+  await writeFile(temporary, JSON.stringify({ pathname, payload, ...(final?{final:true}:{}) }), { flag: 'wx', mode: 0o600 });
   await rename(temporary, requestFile);
   const deadline = Date.now() + waitFor(pathname) + 5000;
   while (Date.now() < deadline) {
@@ -122,7 +123,7 @@ export async function startAgentBridge({ workspace, runId, home, token, canSend,
             if (!info.isFile() || info.size > REQUEST_FILE_BYTES) throw new Error(tr('agentBridge.toolRequestFileInvalidToo'));
             const input = JSON.parse(await readFile(path, 'utf8'));
             assertAgentSender(input.payload,input.pathname);
-            const block=blockReason?blockReason(input.pathname,input.payload):canSend(input.pathname,input.payload)?null:'run_ended';
+            const block=blockReason?blockReason(input.pathname,input.payload,{final:input.final===true}):canSend(input.pathname,input.payload)?null:'run_ended';
             if (block) throw Object.assign(new Error(blockMessage(block)),{code:block});
             if(input.payload?.runId&&input.payload.runId!==runId)throw new Error(tr('agentBridge.toolRequestCannotImpersonateAnother'));
             // A role's run bridge never serves the Sessions-page endpoints (they trust the session named by the Worker).

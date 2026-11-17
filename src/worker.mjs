@@ -327,7 +327,7 @@ async function command(m) {
     const deferred=db.get('runs',c.runId);
     if (deferred&&!deferred.cliRecoveryWait) { send({ type: 'command_ack', id: c.id }); return; }
     // Reconnect and terminal resume retain this run's frozen policy, never the role's mutable current settings.
-    db.put('runs', { ...deferred,id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,concurrentWrites:m.run.concurrentWrites===true,roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: deferred?.seq||0,cliRecoveryWait:false,error:null,
+    db.put('runs', { ...deferred,id: c.runId, projectId: m.run.projectId, nodeId:identity.nodeId,execution:m.run.execution||null,concurrentWrites:m.run.concurrentWrites===true,...(m.run.diagnosis===true?{diagnosis:true}:{}),roleId: m.run.roleId,roleSessionId:m.run.roleSessionId, status: 'starting', seq: deferred?.seq||0,cliRecoveryWait:false,error:null,
       ...(m.run.permissionScope!==undefined?{permissionScope:m.run.permissionScope,permissionContract:m.run.permissionContract}:{}),
       collaborationBatchId:m.run.collaborationBatchId||null,collaborationBatch:m.run.collaborationBatch||null,
       collaborationCycleId:m.run.collaborationCycleId||null,propagationBudget:m.run.propagationBudget||null,
@@ -336,7 +336,7 @@ async function command(m) {
     // Send an ordered transition for this recovery retry; later guards may report a fresh wait, failure or cancellation.
     if(deferred?.cliRecoveryWait)emit(c.runId,'status',{status:'starting',cliRecoveryWait:false,cliRecovery:null,error:null});
     send({ type: 'command_ack', id: c.id });
-    let bridge, ending=false;
+    let bridge, ending=false, disconnectNoted=false;
     const reservation = { preparing: true, stopRequested: false };
     sessions.set(c.runId,reservation);
     try {
@@ -432,7 +432,11 @@ async function command(m) {
       if (reservation.stopRequested || homeDisconnected || ws?.readyState !== 1) { emit(c.runId,'status',{status:'interrupted',error:tr('worker.executionInterruptedByStopDisconnect')});return; }
       bridge = await startAgentBridge({ workspace: folder, runId: c.runId, home: homeHttp, token,
         canSend: (pathname,input) => canSendAgentOperation({quitting,connected:!homeDisconnected&&ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input),
-        blockReason: (pathname,input) => agentOperationBlock({quitting,connected:!homeDisconnected&&ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input) });
+        blockReason: (pathname,input,{final=false}={}) => {const block=agentOperationBlock({quitting,connected:!homeDisconnected&&ws?.readyState===1,status:db.get('runs',c.runId)?.status},pathname,input);
+          // Only the refusal the role actually sees (its wb gave up retrying), once per turn; it reaches Home with this turn's
+          // other buffered events when the link is back.
+          if(block==='home_disconnected'&&final&&!disconnectNoted){disconnectNoted=true;emit(c.runId,'home_disconnected',{});}
+          return block;} });
       const wbEnv = agentProcessEnv(await runtimeGitEnvironment({directory:join(data,'git-auth'),key:m.run.roleSessionId||c.runId,repositories:executionRepositories,credentials:m.gitCredentials,env:process.env}), {
         PATH: `${join(base, 'bin')}${delimiter}${process.env.PATH || ''}`,
         WB_PROJECT_ROOT: m.run.execution?.isolated ? folder : root,
@@ -600,7 +604,7 @@ async function command(m) {
       } catch (error) {
         emit(c.runId, 'log', { text: tr('worker.writtenHandoffWasNotRecorded', { message: error.message }) });
       }
-      if(finalStatus?.status==='succeeded' && keepAlive && !homeDisconnected && !quitting && !session.stopping) {
+      if(finalStatus?.status==='succeeded' && keepAlive && !homeDisconnected && !quitting && !session.stopping && !session.retired) {
         sessions.delete(c.runId);
         warmSessions.keep(m.run.roleSessionId,fingerprint,session,{projectId:m.run.projectId,roleId:m.run.roleId,runtime:runtimeType,runId:c.runId});
         await warmSessions.trim(occupiedSlots());
@@ -644,6 +648,11 @@ async function command(m) {
     finally {db.remove('sourceSyncOperations',c.id);}
     const event = recordDeliveryResult(db, c.id, payload);
     if (event) send({ type: 'event', event });
+  }
+  // The supervisor ends a turn whose reply is complete but whose background tasks never finished (src/stall-checks.mjs).
+  if (c.type === 'finish_background') {
+    const s = sessions.get(c.runId);
+    if (!(s instanceof CliPrintSession) || !s.endWithoutBackground()) emit(c.runId, 'log', { text: tr('worker.finishBackgroundRefused') });
   }
   if (c.type === 'stop') {
     let r = db.get('runs', c.runId);

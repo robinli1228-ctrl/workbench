@@ -35,7 +35,7 @@ const CONTROLS=new Set(['compact','model','effort']);
  * A nudge, not a rule: the page shows the model's questions as cards, so prefer asking to guessing.
  */
 // The tools part goes to every page-driven CLI; the question-card part only to the CLIs whose question tool the page shows.
-const PAGE_TOOLS='Workbench also keeps one platform memory shared by every project, device and CLI (environment, accounts and secrets, lessons, procedures); search it in the shell with `wb memory search WORDS` when the environment, accounts or earlier pitfalls matter. To look at or change files on another device (for example a local service\'s logs), use `wb device ls`, `wb device read` and `wb device write` (see `wb help`; how far it reaches is set in the session settings), rather than asking for copies; to read a project\'s group chat, use `wb history --project NAME`, and `wb history --tasks` lists the chat tasks still open in every project.';
+const PAGE_TOOLS='Workbench also keeps one platform memory shared by every project, device and CLI (environment, accounts and secrets, lessons, procedures); search it in the shell with `wb memory search WORDS` when the environment, accounts or earlier pitfalls matter. To look at or change files on another device (for example a local service\'s logs), use `wb device ls`, `wb device read` and `wb device write` (see `wb help`; how far it reaches is set in the session settings), rather than asking for copies; to read a project\'s group chat, use `wb history --project NAME`, and `wb history --tasks` lists the chat tasks still open in every project. To show the user a page, give a previewable URL or HTML file path rather than only a screenshot; see `wb help preview`.';
 export const PAGE_INSTRUCTIONS='This session is now also driven from a Workbench page, which shows AskUserQuestion / request_user_input as a card with options and a free-text field. When a requirement is unclear or a choice belongs to the user, prefer asking with that tool over guessing or listing the options as plain text. Keep questions short, with a few options and the recommended one marked. '+PAGE_TOOLS;
 export const PAGE_INSTRUCTIONS_VERSION=createHash('sha256').update(PAGE_INSTRUCTIONS).digest('hex').slice(0,16);
 const TOOL_INSTRUCTIONS='This session is now also driven from a Workbench page. '+PAGE_TOOLS;
@@ -99,10 +99,10 @@ export function applyNativeTurnEvent(turn,event){
  if(event.kind==='task'&&event.task?.id){
   const tk=event.task,id=String(tk.id).slice(0,80),tasks=[...(next.tasks||[])],i=tasks.findIndex(x=>x.id===id),str=(v,n)=>typeof v==='string'?v.slice(0,n):undefined;
   // One carried over from an earlier turn keeps its device-measured age, so its time counts from when it really started.
-  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',status:'running',
+  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',...(str(tk.model,80)?{model:str(tk.model,80)}:{}),status:'running',
    startedAt:tk.earlier&&Number.isFinite(tk.elapsedMs)&&tk.elapsedMs>=0?new Date(Date.now()-tk.elapsedMs).toISOString():now(),...(tk.earlier===true?{earlier:true}:{})});
   else if(i>=0&&tasks[i].status==='running'){const x={...tasks[i]};
-   if(typeof tk.activity==='string')x.activity=str(tk.activity,200);if(Number.isFinite(tk.toolUses))x.toolUses=tk.toolUses;
+   if(typeof tk.activity==='string')x.activity=str(tk.activity,200);if(Number.isFinite(tk.toolUses))x.toolUses=tk.toolUses;if(str(tk.model,80))x.model=str(tk.model,80);
    if(['completed','failed','stopped'].includes(tk.status)){x.status=tk.status;x.endedAt=now();if(Number.isFinite(tk.durationMs)&&tk.durationMs>=0)x.durationMs=tk.durationMs;}
    tasks[i]=x;}
   // At most 20 rows; finished ones leave first (oldest first), a running one only if all are running.

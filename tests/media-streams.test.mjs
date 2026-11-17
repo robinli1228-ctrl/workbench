@@ -11,7 +11,7 @@ import {MediaStreams,PREVIEW_CHUNK} from '../src/media-streams.mjs';
 import {MediaCache} from '../src/media-cache.mjs';
 import {sniffMedia,mediaPath,statMedia,streamMedia,hashMedia,receiveMedia} from '../src/media-files.mjs';
 import {captureDirectorySnapshot} from '../src/source-sync-files.mjs';
-import {mediaPathMatches,mediaKindFromName,formatBytes} from '../public/media.js';
+import {mediaPathMatches,mediaKindFromName,formatBytes,previewableUrl,webAddresses,inlineCodeMediaPath} from '../public/media.js';
 
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 /** A response stand-in that discards bytes, for driving a relay directly. */
@@ -52,6 +52,8 @@ async function harness({capable=true,cache=false,uploadDelay=0}={}) {
     const url=new URL(req.url,'http://x');let m;
     if((m=url.pathname.match(/^\/api\/worker\/media-streams\/([a-f0-9-]{36})$/)))return void media.receive(req,res,m[1]);
     if((m=url.pathname.match(/^\/media\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/)))return void media.serve(req,res,m[1],{download:url.searchParams.get('download')==='1'});
+    // Home decodes the whole path before matching, as here.
+    if((m=decodeURIComponent(url.pathname).match(/^\/preview\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\/(.+)$/)))return void media.preview(req,res,m[1],m[2]);
     res.writeHead(404);res.end();
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));base=`http://127.0.0.1:${server.address().port}`;
@@ -267,6 +269,52 @@ test('chat text turns media paths into cards and leaves URLs and documents alone
   assert.deepEqual(paths('https://example.com/video.mp4 and notes.md and src/app.js'),[]);
   assert.equal(mediaKindFromName('a.mkv'),'video');assert.equal(mediaKindFromName('a.flac'),'audio');assert.equal(mediaKindFromName('a.zip'),'file');
   assert.equal(formatBytes(25*1024*1024),'25 MB');assert.equal(formatBytes(1536),'1.5 KB');
+});
+
+test('development and test service addresses open in the viewer; other sites keep opening a new tab', () => {
+  const home='http://127.0.0.1:4310';
+  assert.equal(previewableUrl('http://localhost:8081/waybill?id=1',home),'http://localhost:8081/waybill?id=1');
+  assert.equal(previewableUrl('http://192.0.2.10/',home),'http://192.0.2.10/');
+  assert.equal(previewableUrl('https://test.example.com:2888/app',home),'https://test.example.com:2888/app');
+  assert.equal(previewableUrl('http://printer.local/',home),'http://printer.local/');
+  assert.equal(previewableUrl('http://[::1]:5173/',home),'http://[::1]:5173/');
+  for(const other of ['https://github.com/xxxxx/xxxxx/pull/1','http://127.0.0.1:4310/api/state','http://user:pw@localhost:8081/','javascript:alert(1)','file:///etc/hosts','not a url'])
+    assert.equal(previewableUrl(other,home),null,other);
+  assert.equal(mediaKindFromName('out/site/index.html'),'web');assert.equal(mediaKindFromName('diagram.svg'),'web');
+  assert.deepEqual(mediaPathMatches('打开 out/site/index.html 看看').map(m=>m.path),['out/site/index.html']);
+  // Addresses in text, IPv6 included, lose trailing punctuation; other sites are not picked up.
+  assert.deepEqual(webAddresses('看 http://[::1]:8080/，或 http://localhost:5173/a?b=1. 以及 https://github.com/xxxxx/xxxxx',home).map(a=>a.address),['http://[::1]:8080/','http://localhost:5173/a?b=1']);
+  // Inline code holding a web address is not a device path, even when it ends in .html or .png.
+  assert.equal(inlineCodeMediaPath('https://github.com/xxxxx/xxxxx/blob/main/index.html'),null);
+  assert.equal(inlineCodeMediaPath('http://127.0.0.1:4317/shot.png'),null);
+  assert.equal(inlineCodeMediaPath(' out/site/index.html '),'out/site/index.html');
+});
+
+test('a web page previews with the files it loads by relative path, and its ticket reads nothing outside its folder', async () => {
+  const h=await harness();
+  try {
+    const site=join(h.source,'out','site');
+    await mkdir(join(site,'css'),{recursive:true});await mkdir(join(site,'.secret'),{recursive:true});
+    await writeFile(join(site,'index.html'),'<link rel="stylesheet" href="css/app.css"><script src="app.js"></script><p>hi</p>');
+    await writeFile(join(site,'css','app.css'),'p{color:red}');await writeFile(join(site,'app.js'),'console.log(1)');
+    await writeFile(join(site,'.secret','key.txt'),'secret');await writeFile(join(h.source,'out','outside.txt'),'outside');
+    const info=await h.media.describe(h.media.sourceForRun(h.run,'out/site/index.html'));
+    assert.equal(info.kind,'web');assert.match(info.previewUrl,/^\/preview\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\/index\.html$/);
+    const page=await fetch(h.base+info.previewUrl);
+    assert.equal(page.status,200);assert.equal(page.headers.get('content-type'),'text/html; charset=utf-8');
+    assert.equal(page.headers.get('content-security-policy'),null);assert.equal(page.headers.get('cache-control'),'no-store');
+    assert.match(await page.text(),/<p>hi<\/p>/);
+    const folder=h.base+info.previewUrl.replace(/index\.html$/,'');
+    const css=await fetch(folder+'css/app.css');assert.equal(css.headers.get('content-type'),'text/css; charset=utf-8');assert.equal(await css.text(),'p{color:red}');
+    const js=await fetch(folder+'app.js');assert.equal(js.headers.get('content-type'),'text/javascript; charset=utf-8');assert.equal(await js.text(),'console.log(1)');
+    // Hidden folders stay blocked by the Worker's path checks, and an encoded ".." cannot climb out of the page's folder.
+    for(const [path,status] of [['.secret/key.txt',400],['css%2F..%2F..%2Foutside.txt',400],['missing.css',404]]){
+      const response=await fetch(folder+path);assert.equal(response.status,status,path);await response.text();
+    }
+    // A folder ticket is not a file ticket, and a file ticket is not a folder ticket.
+    const folderTicket=info.previewUrl.split('/')[2];
+    for(const url of [`/media/${folderTicket}`,`/preview/${info.ticket}/index.html`]){const response=await fetch(h.base+url);assert.equal(response.status,401,url);await response.text();}
+  } finally {await h.close();}
 });
 
 test('a bare file name missing from the folder is found in its outputs or artifacts folder, and plays from there', async () => {

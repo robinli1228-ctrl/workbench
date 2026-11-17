@@ -409,7 +409,7 @@ export class Store {
           roleId:task.roleSnapshot?.id||task.roleId,nodeId,runtime:task.roleSnapshot?.runtime||'codex',model:task.model,workspaceRoot:binding.localRoot}) : null;
       const run = { id: randomUUID(), taskId, projectId: task.projectId, conversationId, sessionConversationId:taskConversationId(task), nodeId, repositoryId,turnPurpose:'task',directionRevision:task.directionRevision||1,
         collaborationSessionId:task.collaborationSessionId||null,collaborationCycleId:task.collaborationCycleId||null,
-        continuationBatchId:task.continuationBatchId||null,...(task.explicitPublish?{explicitPublish:true}:{}),
+        continuationBatchId:task.continuationBatchId||null,...(task.explicitPublish?{explicitPublish:true}:{}),...(task.diagnosis?{diagnosis:true}:{}),
         ...(task.automaticPropagation&&!task.collaborationBatchId?{propagationBudget:'reserved',explicitPublish:true}:{}),
         ...(followupFor(this,task)?{proactiveFollowup:followupFor(this,task),backgroundFollowup:privateFollowup(this,task)}:{}),
         ...(isSwitchMaintenance(task)?{switchOperationId:task.switchOperationId,switchPhase:task.switchPhase,switchHandoffHash:task.switchHandoffHash}:{}),
@@ -504,6 +504,8 @@ export class Store {
       }
       if (e.type === 'usage') next.usage = e.payload;
       if (e.type === 'context_usage') next.contextUsage = e.payload;
+      // The Worker refused one of this turn's wb requests while it could not reach Home (the role was told to stop).
+      if (e.type === 'home_disconnected' && !next.homeDisconnectedAt) next.homeDisconnectedAt = e.createdAt;
       // Preserve finished business results while accepting the owning Worker's driver-exit facts.
       if(e.type==='status'&&terminal.has(r.status)&&e.payload.runtimeRetained===false&&e.payload.processSettled===true)
         Object.assign(next,{runtimeRetained:false,processSettled:true,driverState:e.payload.driverState,...(e.payload.pid===null?{pid:null,previousPid:e.payload.previousPid||r.pid}:{})});

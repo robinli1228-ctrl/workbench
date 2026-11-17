@@ -76,6 +76,7 @@ export class NativeCliSession extends CliPrintSession {
       // The live background-task list is kept between turns too, so a later turn knows what is still running.
       if(message.type==='system'&&message.subtype==='background_tasks_changed'&&!message.parent_tool_use_id&&Array.isArray(message.tasks)){this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
         for(const id of this.liveTasks?.keys()||[])if(!this.backgroundTasks.has(id))this.liveTasks.delete(id);}
+      if(message.type==='assistant')this.subagentModels(message);
       if(message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id){
         this.track(message);
         // Before the echo only a task this turn already lists (one carried over from an earlier turn) may report on it.
@@ -123,6 +124,16 @@ export class NativeCliSession extends CliPrintSession {
       this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;this.backgroundTasks=live;}}
     this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;}
   }
+  /**
+   * Which model a subagent uses: the one the main session asked for when it called the Agent tool, until the subagent's own
+   * first message (which names the model it really runs) replaces it. Claude links both to the task by the call's id.
+   */
+  subagentModels(message){
+    const hints=this.agentModelHints||=new Map();
+    if(!message.parent_tool_use_id){for(const block of message.message?.content||[])if(block?.type==='tool_use'&&['Agent','Task'].includes(block.name)&&typeof block.input?.model==='string')hints.set(block.id,block.input.model.slice(0,80));if(hints.size>50)hints.delete(hints.keys().next().value);return;}
+    const model=typeof message.message?.model==='string'?message.message.model.slice(0,80):'';if(!model)return;
+    for(const [id,known] of this.tasks||[])if(known.toolUseId===message.parent_tool_use_id&&!known.modelSeen){known.modelSeen=true;if(known.model!==model){known.model=model;this.emit('task',{id,status:'running',model});}}
+  }
   /** Process-wide record of the live tasks (they outlive the turn that started them), so a later turn can show what it waits for. */
   track(m){
     const id=m.task_id;if(!id)return;const live=this.liveTasks||=new Map();
@@ -140,7 +151,9 @@ export class NativeCliSession extends CliPrintSession {
    * without a start here (a task of an earlier, killed process) is not reported. */
   task(m){
     const id=m.task_id;if(!id)return;const tasks=this.tasks||=new Map(),known=tasks.get(id),now=Date.now();
-    if(m.subtype==='task_started'){tasks.set(id,{at:now,shown:0});return this.emit('task',{id,status:'running',kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80)});}
+    if(m.subtype==='task_started'){const toolUseId=typeof m.tool_use_id==='string'?m.tool_use_id:null,model=toolUseId?this.agentModelHints?.get(toolUseId):undefined;
+      tasks.set(id,{at:now,shown:0,toolUseId,model});
+      return this.emit('task',{id,status:'running',kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80),...(model?{model}:{})});}
     if(!known)return;
     if(m.subtype==='task_progress'){if(now-known.shown<5000)return;known.shown=now;return this.emit('task',{id,status:'running',activity:String(m.description||'').slice(0,200),toolUses:Number.isFinite(m.usage?.tool_uses)?m.usage.tool_uses:undefined});}
     const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
