@@ -4458,3 +4458,7 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 /* A device back after an outage: "Continue" fills "@role continue" into the composer. */
 .chat-bubble > .connection-continue { justify-self: start; margin-top: 6px; padding: 0; border: 0; background: none; color: var(--accent, #4f5bce); font-size: 13px; font-weight: 500; cursor: pointer; }
 .chat-bubble > .connection-continue:hover { text-decoration: underline; }
+/* Run log steps: when a step started and how long it took appear on hover (or keyboard focus), after the step. */
+.nt-step-time, .nt-activity-time { margin-left: 10px; color: var(--nt-quiet, var(--muted)); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; opacity: 0; transition: opacity .12s; }
+.nt-step-head:is(:hover, :focus-visible) .nt-step-time, .nt-activity-summary:is(:hover, :focus-visible) .nt-activity-time { opacity: 1; }
+@media (hover: none) { .nt-step-time, .nt-activity-time { opacity: 1; } }

@@ -2341,4 +2341,7 @@ export default {
   "Continue": "继续",
   "Fill in a message asking {roles} to continue": "填入让 {roles} 继续的消息",
   "A wb request was not sent: this device had lost its connection to Home": "有一个 wb 请求没发出：本设备当时与主控断开了连接",
+  "running for {time}": "已运行 {time}",
+  "since {time}": "{time} 起",
+  "under a second": "不到 1 秒",
 };

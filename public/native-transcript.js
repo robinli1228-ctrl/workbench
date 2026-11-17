@@ -2,6 +2,7 @@ import {copyText} from './role-icons.js';
 /** Session transcript rendering: one activity line per turn (expandable steps), file chips with a preview sheet, and a single working line.
  * Pure DOM helpers; the data still comes from the turn events (live-scene rows) that the Sessions page already loads. */
 import {stripAnsi} from './run-log-data.js';
+import {formatElapsed} from './elapsed.js';
 
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
 const MAX_DIFF_LINES=4000,MAX_PREVIEW=400000;
@@ -198,7 +199,7 @@ export function noteRows(notes,t){
  for(const note of notes){
   const raw=stripAnsi(String(note.text||'')).replace(/\s+/g,' ').trim(),thinking=note.kind!=='error'&&THINKING.test(raw);
   const kind=note.kind==='error'?'error':thinking?'thinking':'note',text=thinking?t('Model is thinking'):raw.slice(0,160),key=`${kind}\0${text}`;
-  if(!text)continue;const row=rows.get(key);if(row)row.count++;else rows.set(key,{kind,text,count:1});
+  if(!text)continue;const row=rows.get(key);if(row){row.count++;if(note.createdAt&&!(row.at>note.createdAt))row.at=note.createdAt;}else rows.set(key,{kind,text,count:1,...(note.createdAt?{at:note.createdAt}:{})});
  }
  return [...rows.values()];
 }
@@ -206,6 +207,19 @@ export function noteRows(notes,t){
 /** Largest call plus result a history step rebuilds into its normal view; bigger records are read as raw chunks. */
 const FULL_DETAIL_CHARS=524288;
 /** The activity block: summary line with file chips; the step list opens on click (or stays open while live). */
+/** A recorded time as HH:MM:SS, with the date in front when it is not today; '' when unknown. */
+function clock(iso){
+ const d=new Date(iso||'');if(!Number.isFinite(d.getTime()))return '';
+ const time=d.toLocaleTimeString('en-GB',{hour12:false}),today=new Date().toDateString()===d.toDateString();
+ return today?time:`${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${time}`;
+}
+/** When a step started and how long it took (or has been running): shown on hover, so a stalled step can be told apart. */
+export function stepTimeText(step,t,now=Date.now()){
+ const start=clock(step.startedAt);if(!start)return '';
+ const begin=Date.parse(step.startedAt),end=Date.parse(step.endedAt||'');
+ if(step.running)return `${start} · ${t('running for {time}',{time:formatElapsed(Math.max(0,now-begin))})}`;
+ return Number.isFinite(end)&&end>=begin?`${start} · ${end-begin<1000?t('under a second'):formatElapsed(end-begin)}`:start;
+}
 export function activityBlock({steps,notes=[],t,live=false,duration='',open=false,onPreview,onDetail,onToggle}){
  const box=el('details','nt-activity');box.open=open;
  const summary=el('summary','nt-activity-summary');
@@ -217,6 +231,9 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
  const chips=fileChips(steps);
  const lazyOpeners=new Map();
  if(chips.length){const row=el('span','nt-chips');for(const {path,step} of chips.slice(0,8)){const chip=el('button','nt-chip');chip.type='button';chip.title=path;chip.append(stepIcon(step.kind),el('span','',basename(path)));if(step.kind==='edit'&&(step.added||step.removed))chip.append(el('span','nt-chip-stat',stat(step.added,step.removed)));chip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();if(step.detailRefs?.length&&onDetail)void previewLazy(step,path);else onPreview?.(step,path);});row.append(chip);}if(chips.length>8)row.append(el('span','nt-chip-more',`+${chips.length-8}`));summary.append(row);}
+ // The span the group covers, from its first step's start to its last step's end (or "since" while one still runs).
+ const starts=steps.map(s=>s.startedAt).filter(Boolean).sort(),ends=steps.map(s=>s.endedAt).filter(Boolean).sort();
+ if(starts.length){const running=steps.some(s=>s.running),span=running||!ends.length?t('since {time}',{time:clock(starts[0])}):`${clock(starts[0])} – ${clock(ends.at(-1))}`;summary.append(el('span','nt-activity-time',span));}
  box.append(summary);
  let list=null;
  // A history step carries only its summary. Its full call and result are read on demand and then shown exactly like a
@@ -265,7 +282,9 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
   const row=el('div',`nt-step is-${step.kind}${step.failed?' is-failed':''}${step.running?' is-running':''}`);
   const head=el('button','nt-step-head');head.type='button';const {verb,target,title,stat:s}=stepTitle(step,t);
   head.append(stepIcon(step.kind),el('span','nt-step-verb',verb));const tgt=el('span','nt-step-target',target);tgt.translate=false;if(title)tgt.title=title;head.append(tgt);
-  if(s)head.append(el('span','nt-step-stat',s));if(step.failed)head.append(el('span','nt-step-flag',t('Failed')));else if(step.running)head.append(el('span','nt-step-flag is-running',t('Running')));
+  if(s)head.append(el('span','nt-step-stat',s));
+  const when=stepTimeText(step,t);if(when)head.append(el('span','nt-step-time',when));
+  if(step.failed)head.append(el('span','nt-step-flag',t('Failed')));else if(step.running)head.append(el('span','nt-step-flag is-running',t('Running')));
   row.append(head);
   if(step.detailRefs?.length&&step.error)row.append(el('div','nt-detail-error',step.error));
   const openStep=step.detailRefs?.length&&onDetail?lazyDetail(row,step):()=>{const openNow=row.classList.toggle('is-open');if(openNow&&!row.querySelector('.nt-detail'))row.append(stepDetail(step,t));};lazyOpeners.set(step,openStep);head.addEventListener('click',openStep);
@@ -274,7 +293,7 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
  }
  // Runtime notes, merged: the same note shows once with "×N". The CLI's periodic "model is thinking" signal becomes one
  // thinking row with a brain icon; older records' "(native progress event received)" suffix is dropped.
- for(const note of noteRows(notes,t)){const row=el('div',`nt-step is-${note.kind}`);const head=el('div','nt-step-head is-static');head.append(stepIcon(note.kind),el('span','nt-step-target',note.text));if(note.count>1)head.append(el('span','nt-step-count',`\u00d7${note.count}`));row.append(head);list.append(row);}
+ for(const note of noteRows(notes,t)){const row=el('div',`nt-step is-${note.kind}`);const head=el('div','nt-step-head is-static');head.append(stepIcon(note.kind),el('span','nt-step-target',note.text));if(note.at)head.append(el('span','nt-step-time',clock(note.at)));if(note.count>1)head.append(el('span','nt-step-count',`\u00d7${note.count}`));row.append(head);list.append(row);}
  box.append(list);return list;};
  if(open)ensureList();
  box.addEventListener('toggle',()=>{if(box.open)ensureList();onToggle?.(box.open);});

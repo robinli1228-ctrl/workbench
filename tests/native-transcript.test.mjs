@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const { classifyStep, diffLines, summarizeSteps, fileChips, stepTitle, elapsedText, historyTurns, noteRows } = await import(pathToFileURL(join(root, 'public', 'native-transcript.js')).href);
+const { classifyStep, diffLines, summarizeSteps, fileChips, stepTitle, elapsedText, historyTurns, noteRows, stepTimeText } = await import(pathToFileURL(join(root, 'public', 'native-transcript.js')).href);
 const t = (text, params) => params ? text.replace(/\{(\w+)\}/g, (m, k) => params[k] ?? m) : text;
 
 test('Claude, Codex, Grok and Agy tool items classify into read/edit/write/command/search steps with file paths', () => {
@@ -96,4 +96,15 @@ test('notes collapse: thinking signals (old and new wording) become one thinking
     { kind: 'error', text: 'Model is thinking', count: 1 }
   ]);
   assert.deepEqual(noteRows([{ kind: 'log', text: '   ' }], t), []);
+});
+
+test('a run log step shows when it started and how long it took or has been running; thinking keeps its latest time', () => {
+  const today = new Date(), at = s => new Date(today.getFullYear(), today.getMonth(), today.getDate(), 11, 18, s).toISOString();
+  assert.equal(stepTimeText({ startedAt: at(35), endedAt: at(43) }, t), '11:18:35 · 8s');
+  assert.equal(stepTimeText({ startedAt: at(35), endedAt: at(35) }, t), '11:18:35 · under a second');
+  assert.equal(stepTimeText({ startedAt: at(35), running: true }, t, Date.parse(at(35)) + 125000), '11:18:35 · running for 2m 05s');
+  assert.equal(stepTimeText({ startedAt: at(35) }, t), '11:18:35');
+  assert.equal(stepTimeText({}, t), '', 'no recorded time, nothing shown (Sessions page steps)');
+  const rows = noteRows([{ kind: 'log', text: 'thinking', createdAt: at(1) }, { kind: 'log', text: 'thinking', createdAt: at(9) }], t);
+  assert.equal(rows[0].count, 2);assert.equal(rows[0].at, at(9));
 });
