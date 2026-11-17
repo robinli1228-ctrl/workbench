@@ -99,10 +99,10 @@ export function applyNativeTurnEvent(turn,event){
  if(event.kind==='task'&&event.task?.id){
   const tk=event.task,id=String(tk.id).slice(0,80),tasks=[...(next.tasks||[])],i=tasks.findIndex(x=>x.id===id),str=(v,n)=>typeof v==='string'?v.slice(0,n):undefined;
   // One carried over from an earlier turn keeps its device-measured age, so its time counts from when it really started.
-  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',status:'running',
+  if(i<0&&tk.status==='running'&&['agent','shell'].includes(tk.kind))tasks.push({id,kind:tk.kind,description:str(tk.description,200)||'',agentType:str(tk.agentType,80)||'',...(str(tk.model,80)?{model:str(tk.model,80)}:{}),status:'running',
    startedAt:tk.earlier&&Number.isFinite(tk.elapsedMs)&&tk.elapsedMs>=0?new Date(Date.now()-tk.elapsedMs).toISOString():now(),...(tk.earlier===true?{earlier:true}:{})});
   else if(i>=0&&tasks[i].status==='running'){const x={...tasks[i]};
-   if(typeof tk.activity==='string')x.activity=str(tk.activity,200);if(Number.isFinite(tk.toolUses))x.toolUses=tk.toolUses;
+   if(typeof tk.activity==='string')x.activity=str(tk.activity,200);if(Number.isFinite(tk.toolUses))x.toolUses=tk.toolUses;if(str(tk.model,80))x.model=str(tk.model,80);
    if(['completed','failed','stopped'].includes(tk.status)){x.status=tk.status;x.endedAt=now();if(Number.isFinite(tk.durationMs)&&tk.durationMs>=0)x.durationMs=tk.durationMs;}
    tasks[i]=x;}
   // At most 20 rows; finished ones leave first (oldest first), a running one only if all are running.

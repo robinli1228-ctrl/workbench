@@ -302,30 +302,42 @@ export function activityBlock({steps,notes=[],t,live=false,duration='',open=fals
 
 /** The turn's subagents and background shells: what each is, what it is doing now, whether it finished and how long it ran
  * (counting up while it runs). A task the record still calls running after its turn ended was stopped with it. */
+/** A model id as the page shows it: the "claude-" prefix and a trailing date stamp dropped (claude-haiku-5-5 -> haiku-5-5). */
+const modelName=model=>String(model||'').replace(/^claude-/,'').replace(/-\d{8}$/,'');
+/**
+ * The turn's subagents and background commands, each in its own card (subagents first): what each is, its model for a
+ * subagent, what it is doing now, and whether it runs or how it ended, with its time.
+ */
 export function taskBlock(turn,t,{live=false}={}){
  const tasks=turn?.tasks||[];if(!tasks.length)return null;
- const status=x=>x.status==='running'&&!live?'unknown':x.status,running=tasks.filter(x=>status(x)==='running').length;
- const agents=tasks.filter(x=>x.kind!=='shell').length,shells=tasks.length-agents;
- const box=el('div','nt-tasks'),head=el('div','nt-tasks-head');
- head.append(stepIcon('agent'),el('span','nt-tasks-title',[agents?t(agents===1?'1 subagent':'{n} subagents',{n:agents}):'',shells?t(shells===1?'1 background command':'{n} background commands',{n:shells}):''].filter(Boolean).join(' · ')));
- // "All finished" only when none failed or was stopped; otherwise say how many did not finish.
- const unfinished=tasks.filter(x=>['failed','stopped'].includes(status(x))).length;
- head.append(el('span',`nt-tasks-count${running?' is-running':''}`,running?t('{n} running',{n:running}):tasks.some(x=>status(x)==='unknown')?t('Status unknown'):unfinished?t('{n} failed or stopped',{n:unfinished}):t('All finished')));
- box.append(head);
- for(const x of tasks){
-  const state=status(x),row=el('div',`nt-task is-${state}`),name=el('span','nt-task-name',x.description||t(x.kind==='shell'?'Background command':'Subagent'));name.title=x.description||'';
-  row.append(stepIcon(x.kind==='shell'?'command':'agent'),name);
-  if(x.agentType){const type=el('span','nt-task-type',x.agentType);type.translate=false;type.title=x.agentType;row.append(type);}
-  if(x.earlier)row.append(el('span','nt-task-type nt-task-earlier',t('Earlier turn')));
-  // Claude words progress as "Running <step>"; the state at the end already says it runs.
-  const activity=String(x.activity||'').replace(/^Running\s+/,'');
-  if(state==='running'&&activity){const now=el('span','nt-task-activity',activity);now.title=activity;row.append(now);}
-  const took=state==='running'?elapsedText(x.startedAt):Number.isFinite(x.durationMs)?elapsedText(0,x.durationMs):x.endedAt?elapsedText(x.startedAt,new Date(x.endedAt).getTime()):'';
-  const label=t(state==='running'?'Running':state==='completed'?'Finished':state==='failed'?'Failed':state==='unknown'?'Status unknown':'Stopped');
-  const end=el('span','nt-task-state');if(state==='running')end.append(el('span','nt-pulse'));end.append(el('span','',took?`${label} \u00b7 ${took}`:label));row.append(end);
-  box.append(row);
- }
- return box;
+ const status=x=>x.status==='running'&&!live?'unknown':x.status;
+ const card=(list,kind)=>{
+  const running=list.filter(x=>status(x)==='running').length,box=el('div',`nt-tasks is-${kind}`),head=el('div','nt-tasks-head');
+  head.append(stepIcon(kind==='shell'?'command':'agent'),el('span','nt-tasks-title',kind==='shell'?t(list.length===1?'1 background command':'{n} background commands',{n:list.length}):t(list.length===1?'1 subagent':'{n} subagents',{n:list.length})));
+  // "All finished" only when none failed or was stopped; otherwise say how many did not finish.
+  const unfinished=list.filter(x=>['failed','stopped'].includes(status(x))).length;
+  head.append(el('span',`nt-tasks-count${running?' is-running':''}`,running?t('{n} running',{n:running}):list.some(x=>status(x)==='unknown')?t('Status unknown'):unfinished?t('{n} failed or stopped',{n:unfinished}):t('All finished')));
+  box.append(head);
+  for(const x of list){
+   const state=status(x),row=el('div',`nt-task is-${state}`),name=el('span','nt-task-name',x.description||t(x.kind==='shell'?'Background command':'Subagent'));name.title=x.description||'';
+   row.append(stepIcon(x.kind==='shell'?'command':'agent'),name);
+   if(x.agentType){const type=el('span','nt-task-type',x.agentType);type.translate=false;type.title=x.agentType;row.append(type);}
+   if(x.model){const model=el('span','nt-task-type nt-task-model',modelName(x.model));model.translate=false;model.title=x.model;row.append(model);}
+   if(x.earlier)row.append(el('span','nt-task-type nt-task-earlier',t('Earlier turn')));
+   // Claude words progress as "Running <step>"; the state at the end already says it runs.
+   const activity=String(x.activity||'').replace(/^Running\s+/,'');
+   if(state==='running'&&activity){const now=el('span','nt-task-activity',activity);now.title=activity;row.append(now);}
+   const took=state==='running'?elapsedText(x.startedAt):Number.isFinite(x.durationMs)?elapsedText(0,x.durationMs):x.endedAt?elapsedText(x.startedAt,new Date(x.endedAt).getTime()):'';
+   const label=t(state==='running'?'Running':state==='completed'?'Finished':state==='failed'?'Failed':state==='unknown'?'Status unknown':'Stopped');
+   const end=el('span','nt-task-state');if(state==='running')end.append(el('span','nt-pulse'));end.append(el('span','',took?`${label} \u00b7 ${took}`:label));row.append(end);
+   box.append(row);
+  }
+  return box;
+ };
+ const agents=tasks.filter(x=>x.kind!=='shell'),shells=tasks.filter(x=>x.kind==='shell'),groups=el('div','nt-task-groups');
+ if(agents.length)groups.append(card(agents,'agent'));
+ if(shells.length)groups.append(card(shells,'shell'));
+ return groups;
 }
 
 /** A sheet over the transcript column that shows one file: a transcript step (latest edit as a diff, content read or written) or the file as it is on the device. */

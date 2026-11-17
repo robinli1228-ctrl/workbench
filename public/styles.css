@@ -3988,6 +3988,9 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 #chat-feed .attachment-file-card > .chat-icon-btn { top: 50%; margin-top: -11px; }
 
 /* Subagents and background shells of a turn: one row each with what it is, what it is doing now, and how long it ran. */
+.nt-task-groups { display: grid; gap: 8px; max-width: 640px; }
+.nt-task-groups > .nt-tasks { max-width: none; }
+.nt-task-model { color: #4f5bce; background: #eef0ff; }
 .nt-tasks { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; max-width: 640px; padding: 6px 10px; border: 1px solid #eceef2; border-radius: 8px; background: #fafbfc; font-size: 13px; }
 .nt-tasks-head { display: flex; align-items: center; gap: 7px; padding: 1px 0 3px; color: #6b7080; font-size: 12.5px; }
 .nt-tasks-count { margin-left: auto; color: #9da2ab; font-variant-numeric: tabular-nums; }
