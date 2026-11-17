@@ -4454,3 +4454,8 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .qa-asked-q { overflow-wrap: anywhere; }
 .qa-asked-options { margin-top: 2px; color: #6b7280; font-size: .88em; overflow-wrap: anywhere; }
 .nt-answer .nt-prompt-text { display: block; -webkit-line-clamp: unset; line-clamp: unset; max-height: none; overflow: visible; }
+
+/* Run log steps: when a step started and how long it took appear on hover (or keyboard focus), after the step. */
+.nt-step-time, .nt-activity-time { margin-left: 10px; color: var(--nt-quiet, var(--muted)); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; opacity: 0; transition: opacity .12s; }
+.nt-step-head:is(:hover, :focus-visible) .nt-step-time, .nt-activity-summary:is(:hover, :focus-visible) .nt-activity-time { opacity: 1; }
+@media (hover: none) { .nt-step-time, .nt-activity-time { opacity: 1; } }

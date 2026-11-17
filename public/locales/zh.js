@@ -2338,4 +2338,7 @@ export default {
   "Changed in the meantime; check it again": "期间又有改动，请重新确认",
   "Stop project file sync? Files stay as they are on each device.": "关闭项目文件同步？各设备上的文件保持现状。",
   "File sync is paused": "文件同步已暂停",
+  "running for {time}": "已运行 {time}",
+  "since {time}": "{time} 起",
+  "under a second": "不到 1 秒",
 };
