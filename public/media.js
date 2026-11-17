@@ -97,7 +97,14 @@ export function previewableUrl(raw,home=globalThis.location?.origin) {
   const host=url.hostname;
   return /^(?:localhost|[\w.-]+\.localhost|[\w-]+(?:\.[\w-]+)*\.local|\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:.]+\])$/i.test(host)||url.port?url.href:null;
 }
-const URL_TEXT=/https?:\/\/[^\s<>"'`，。；：！？、（）()[\]{}]+/gi;
+// The host may be a bracketed IPv6 address; brackets elsewhere end the address, as do spaces, quotes and CJK punctuation.
+const URL_TEXT=/https?:\/\/(?:\[[0-9a-f:.]+\]|[^\s<>"'`，。；：！？、（）()[\]{}\/])[^\s<>"'`，。；：！？、（）()[\]{}]*/gi;
+/** Development and test service addresses written in text, without trailing punctuation: [{index,address,href}]. */
+export function webAddresses(text,home=globalThis.location?.origin) {
+  const found=[];
+  for(const match of String(text||'').matchAll(URL_TEXT)){const address=match[0].replace(/[.,;:!?]+$/,''),href=previewableUrl(address,home);if(href)found.push({index:match.index,address,href});}
+  return found;
+}
 function openWebOnClick(link,href){
   if(link.dataset.webPreview!==undefined)return;link.dataset.webPreview='';
   // A plain click opens the viewer; modified and middle clicks keep the browser's own new-tab behaviour.
@@ -110,14 +117,19 @@ function linkWebPages(root) {
   while((node=walker.nextNode()))if(node.textContent.includes('://')&&!node.parentElement.closest('a,pre,button,.media-card'))nodes.push(node);
   for(const text of nodes){
     const value=text.textContent,fragment=document.createDocumentFragment();let cursor=0;
-    for(const match of value.matchAll(URL_TEXT)){
-      const address=match[0].replace(/[.,;:!?]+$/,''),href=previewableUrl(address);if(!href)continue;
+    for(const {index,address,href} of webAddresses(value)){
       const link=el('a','',address);link.href=href;link.target='_blank';link.rel='noopener noreferrer';openWebOnClick(link,href);
-      fragment.append(document.createTextNode(value.slice(cursor,match.index)),link);cursor=match.index+address.length;
+      fragment.append(document.createTextNode(value.slice(cursor,index)),link);cursor=index+address.length;
     }
     if(!cursor)continue;
     fragment.append(document.createTextNode(value.slice(cursor)));text.replaceWith(fragment);
   }
+}
+
+/** Inline code that is exactly one media or page path (a web address such as https://…/index.html is not one), or null. */
+export function inlineCodeMediaPath(value) {
+  const path=String(value||'').trim();
+  return EXACT.test(path)&&!/^[a-z][a-z0-9+.-]*:/i.test(path)&&!wildcardPath(path)?path:null;
 }
 
 /** Replace file paths that name media or large binary files with cards; code blocks, links and buttons are left alone. */
@@ -132,7 +144,7 @@ export function linkMedia(root,context) {
   // Cards in a message show a preview (image thumbnail, video first frame) once the file is described.
   const card=path=>{const item=mediaCard(path,context,{describe:described++<12,preview:true});return item;};
   for(const text of nodes){
-    const value=text.textContent,exact=text.parentElement.tagName==='CODE'&&EXACT.test(value.trim())&&!wildcardPath(value);
+    const value=text.textContent,exact=text.parentElement.tagName==='CODE'&&Boolean(inlineCodeMediaPath(value));
     const matches=exact?[{index:value.indexOf(value.trim()),path:value.trim()}]:mediaPathMatches(value);if(!matches.length)continue;
     const fragment=document.createDocumentFragment();let cursor=0;
     for(const match of matches){fragment.append(document.createTextNode(value.slice(cursor,match.index)),card(match.path));cursor=match.index+match.path.length;}
@@ -247,7 +259,9 @@ function step(delta){
  */
 function lightbox({name,size=null,at=null,from=null}){
   const version=++viewerVersion;viewerFrom=from;
-  if(!viewer){viewer=el('dialog','media-viewer media-lightbox');viewer.addEventListener('close',()=>{viewerVersion++;viewerFrom=null;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});});
+  if(!viewer){viewer=el('dialog','media-viewer media-lightbox');viewer.addEventListener('close',()=>{viewerVersion++;viewerFrom=null;viewer.querySelectorAll('video,audio').forEach(media=>{media.pause();media.removeAttribute('src');media.load();});
+      // A web page keeps running (timers, polling, sockets) while the closed dialog holds it; "Open on the right" would run it twice.
+      viewer.querySelectorAll('iframe').forEach(frame=>frame.remove());});
     // ← → step through neighbouring pictures (not while typing or while a video has focus, where arrows seek).
     viewer.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight'].includes(event.key)||event.altKey||event.ctrlKey||event.metaKey)return;if(event.target.closest?.('input,textarea,video,audio'))return;event.preventDefault();step(event.key==='ArrowLeft'?-1:1);});
     // A horizontal swipe on the picture does the same on touch screens.
@@ -340,10 +354,12 @@ export async function openMediaViewer(path,context,{at=null,from=null}={}) {
   title.textContent=info.name||baseName(path);
   if(!info.available){overlay.hidden=true;status.hidden=false;status.textContent=t(REASONS[info.reason]||'Unavailable');stage.append(el('p','media-unavailable',info.reason==='source_offline'?t('The device that holds this file is offline, and there is no complete local copy to play.'):t(REASONS[info.reason]||'Unavailable')));return info;}
   bytes.textContent=formatBytes(info.size);if(!at)v.setTime(info.modifiedAt);
-  download.href=info.downloadUrl;download.hidden=false;download.title=t('Download to this computer · {size}',{size:formatBytes(info.size)});
-  copyAction(v.copy,{url:info.url,kind:info.kind,text:info.copyOf?info.name:path});
   const web=info.kind==='web'&&info.previewUrl;
-  if(info.kind!=='file'&&(info.kind!=='web'||web))offerSide(v,{kind:info.kind,title:info.name||baseName(path),subtitle:path,size:info.size,at:at||info.modifiedAt||null,src:web?info.previewUrl:info.url,download:info.downloadUrl,renew:()=>describeQueued(context,path,{fresh:true}).then(fresh=>fresh.available?(web?fresh.previewUrl:fresh.url):null)});
+  download.href=info.downloadUrl;download.hidden=false;download.title=t('Download to this computer · {size}',{size:formatBytes(info.size)});
+  // A page is for viewing (and the browser's own tools in a full tab), so that place opens it in a new tab, as for addresses.
+  if(web){download.removeAttribute('download');download.href=info.previewUrl;download.target='_blank';download.rel='noopener';setActionIcon(download,'link',t('Open in new tab'));}
+  copyAction(v.copy,{url:info.url,kind:info.kind,text:info.copyOf?info.name:path});
+  if(info.kind!=='file'&&(info.kind!=='web'||web))offerSide(v,{kind:info.kind,title:info.name||baseName(path),subtitle:path,size:info.size,at:at||info.modifiedAt||null,src:web?info.previewUrl:info.url,download:web?info.previewUrl:info.downloadUrl,external:Boolean(web),...(web?{copyText:path}:{}),renew:()=>describeQueued(context,path,{fresh:true}).then(fresh=>fresh.available?(web?fresh.previewUrl:fresh.url):null)});
   const summary=[info.copyOf?t('Playing the local copy on {device}; the source device is offline.',{device:info.sourceName}):t('From {device}',{device:info.sourceName}),formatBytes(info.size)].join(' · ');
   renderStage(stage,overlay,status,info,summary,path,context,version);
   return info;

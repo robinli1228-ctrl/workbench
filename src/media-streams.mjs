@@ -229,7 +229,7 @@ export class MediaStreams {
    */
   async status(req,res,token) {
     if(req.headers['sec-fetch-site']==='cross-site')return respond(res,403,{error:'Cross-site media request rejected'});
-    const t=this.verify(token);if(!t)return respond(res,401,{error:'media_ticket_invalid',code:'media_ticket_invalid'});
+    const t=this.verify(token);if(!t||t.w)return respond(res,401,{error:'media_ticket_invalid',code:'media_ticket_invalid'});
     const known=Boolean(this.db.get('workers',t.n))&&!this.db.get('removedDevices',t.n),cached=this.cache&&known?await this.cache.lookup(t):null;
     const since=this.clock()-this.timings.failureMs,failures=(this.failures.get(token)||[]).filter(f=>f.at>=since);
     return respond(res,200,{device:known?cached?null:this.usable(t.n):'source_offline',failures});
@@ -369,7 +369,7 @@ export class MediaStreams {
    */
   async transfer(projectId,{clientTransferId,ticket,nodeId}) {
     if(!/^[a-f0-9-]{36}$/.test(clientTransferId||''))throw failure('invalid_media_path','Invalid transfer ID');
-    const t=this.verify(ticket);if(!t)throw failure('media_ticket_invalid');
+    const t=this.verify(ticket);if(!t||t.w)throw failure('media_ticket_invalid');
     if(t.pr!==projectId)throw failure('invalid_media_path','Ticket belongs to another project');
     if(nodeId===t.n)throw failure('invalid_media_path','The file is already on that device');
     const binding=this.db.get('workspaces',`${projectId}:${nodeId}`);if(!binding?.localRoot)throw failure('invalid_media_path','The target device has no project directory');

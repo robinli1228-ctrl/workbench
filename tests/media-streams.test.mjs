@@ -11,7 +11,7 @@ import {MediaStreams,PREVIEW_CHUNK} from '../src/media-streams.mjs';
 import {MediaCache} from '../src/media-cache.mjs';
 import {sniffMedia,mediaPath,statMedia,streamMedia,hashMedia,receiveMedia} from '../src/media-files.mjs';
 import {captureDirectorySnapshot} from '../src/source-sync-files.mjs';
-import {mediaPathMatches,mediaKindFromName,formatBytes,previewableUrl} from '../public/media.js';
+import {mediaPathMatches,mediaKindFromName,formatBytes,previewableUrl,webAddresses,inlineCodeMediaPath} from '../public/media.js';
 
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 /** A response stand-in that discards bytes, for driving a relay directly. */
@@ -282,6 +282,12 @@ test('development and test service addresses open in the viewer; other sites kee
     assert.equal(previewableUrl(other,home),null,other);
   assert.equal(mediaKindFromName('out/site/index.html'),'web');assert.equal(mediaKindFromName('diagram.svg'),'web');
   assert.deepEqual(mediaPathMatches('打开 out/site/index.html 看看').map(m=>m.path),['out/site/index.html']);
+  // Addresses in text, IPv6 included, lose trailing punctuation; other sites are not picked up.
+  assert.deepEqual(webAddresses('看 http://[::1]:8080/，或 http://localhost:5173/a?b=1. 以及 https://github.com/xxxxx/xxxxx',home).map(a=>a.address),['http://[::1]:8080/','http://localhost:5173/a?b=1']);
+  // Inline code holding a web address is not a device path, even when it ends in .html or .png.
+  assert.equal(inlineCodeMediaPath('https://github.com/xxxxx/xxxxx/blob/main/index.html'),null);
+  assert.equal(inlineCodeMediaPath('http://127.0.0.1:4317/shot.png'),null);
+  assert.equal(inlineCodeMediaPath(' out/site/index.html '),'out/site/index.html');
 });
 
 test('a web page previews with the files it loads by relative path, and its ticket reads nothing outside its folder', async () => {

@@ -80,7 +80,7 @@ export function createSidePreview({t,formatSize=()=>'',stamp=()=>'',copyAction=n
         const src=await own(await Promise.resolve(item.src));if(ticket!==version)return;
         node=media(item.kind,src,item,ticket);
         if(item.kind==='image')setCopy({url:src,kind:'image',text:item.title||''});
-        else if(item.external)setCopy({text:src});
+        else if(item.external)setCopy({text:item.copyText??src});
         if(!item.download){download.href=src;download.hidden=false;}
       }
       if(ticket!==version)return;
