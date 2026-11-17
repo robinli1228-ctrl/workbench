@@ -23,7 +23,7 @@ function sessionOptions(args) {
   return values;
 }
 
-const COMMANDS=['task','sync','discuss','capabilities','session','setup','history','memory','device','timer','note','wait','deliver','call'];
+const COMMANDS=['task','sync','discuss','capabilities','session','setup','history','memory','device','timer','run','note','wait','deliver','call'];
 
 export async function main(argv = process.argv.slice(2)) {
   const turnId=argv[0]==='--turn'?argv[1]:undefined;
@@ -122,6 +122,11 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'device') {
       const input=await deviceInput('wbCli.deviceUsage');
       return out(deviceText(await agentRequest(sub==='write'?'/api/agent/device-write':'/api/agent/device-read',{...input,runId:process.env.WB_RUN_ID})));
+    }
+    // Supervisor only: end another role's quiet turn whose reply is complete and only an abandoned background task keeps open.
+    if (cmd === 'run') {
+      if (sub !== 'finish' || rest.length !== 1 || !rest[0]) throw new Error(tr('wbCli.usageWbRunFinish'));
+      return out(await agentRequest('/api/agent/run-finish',{runId:process.env.WB_RUN_ID,targetRunId:rest[0]}));
     }
     if (cmd === 'timer') {
       if (sub === 'list' && !rest.length) return out(await agentRequest('/api/agent/timers',{runId:process.env.WB_RUN_ID,action:'list'}));

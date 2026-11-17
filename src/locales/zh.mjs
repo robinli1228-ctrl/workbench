@@ -1605,6 +1605,7 @@ wb device ls '{"device":"设备","path":"logs","name":"*.log","depth":3}'
 wb device read '{"device":"设备","path":"logs/app.log","tail":200,"match":"ERROR"}'
 wb device write '{"device":"设备","path":"notes/a.md","content":"文本"}'
                      查看和修改其他设备上的文件，范围按项目设置里的跨设备权限（默认：查看整台设备，写入项目目录）。相对路径从项目目录算起。ls 可按 name 过滤并向下 depth 层（最多 5，结果最多 500 项，不进 .git、node_modules 等目录，要看就把 path 指进去）；read 默认给最后 tail 行（默认 200，最多 1000），或用 offset/limit 读一页（最多 64 KB，按 nextOffset 续读）；带 match 时在整个文件里找含该文字的行，给最后 tail 条，行首数字是该行的字节位置，可用 offset 读它前后；write 用 content 或 file（本机文本文件）写入，最多 1 MB，append:true 追加，目录不存在会自动创建。密钥、凭据和 .env 文件不可读写。
+wb run finish 轮次编号  仅主管：无进展核查时，收尾一个回答已结束、只剩废弃后台命令的轮次（保留回答、记为完成、结束这些后台命令）。
 wb timer list
 wb timer create|update|pause|resume|delete '<JSON>'
                      定时提醒：到点在群里叫醒指定角色。任何角色都可以给自己设；总管还可以给别人设。create/update 带稳定 requestId，update 还要 id、revision 和完整的 name、description、时间设置；pause/resume/delete 只要编号：wb timer delete 编号。单次提醒触发后自动删除。不写 roleId 就是提醒自己。
@@ -1940,6 +1941,15 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'timerMonitor.resultReceipts': `{role} 空闲，还有 {count} 条派出请求的结果没有交给它`,
   'home.runReconciling': '主控正在重启后对账这次执行，本次请求未执行。请稍后用同一请求编号重试',
   'home.runStopping': '这次执行正在停止，本次请求未执行。本轮不要再重试',
+  "stallCheck.task": "【无进展核查】{role} 的这一轮（{runId}）已经超过 10 分钟没有任何输出，最后一次输出在 {last}。它的回答还没有结束。\n先用 wb history read {runId} 看它在做什么、卡在哪里。还在正常工作（例如长时间编译）就不处理；看不出来或需要停下时，不要自己停它，在群里请用户决定。\n这是后台核查，只在最后用 wb note 在群里说一句结论（一句话），不要发别的消息。",
+  "stallCheck.taskAwaiting": "【无进展核查】{role} 的这一轮（{runId}）已经超过 10 分钟没有任何输出，最后一次输出在 {last}。它的回答在 {since} 已经结束，但还有后台命令没结束，这一轮因此一直显示执行中：\n{tasks}\n先用 wb history read {runId} 看这些后台命令是做什么的。如果它们已经没用（例如在等永远不会来的输入，或者活已经用别的办法做完了），用 wb run finish {runId} 收尾：保留它的回答、这一轮记为完成，并结束这些后台命令；如果它们还在做有用的事，就不处理；判断不了就在群里请用户决定。\n这是后台核查，只在最后用 wb note 在群里说一句结论（一句话），不要发别的消息。",
+  "stallCheck.noTaskDetails": "（没有拿到后台命令的说明）",
+  "stallCheck.onlyFromCheck": "只能在为这一轮发起的无进展核查里收尾它。",
+  "stallCheck.supervisorOnly": "只有项目主管能收尾其他角色的这一轮。",
+  "stallCheck.runNotFound": "找不到这一轮，或者它不属于本项目。",
+  "stallCheck.notAwaitingBackground": "这一轮的回答还没有结束，不能用 wb run finish 收尾；需要停止时请用户决定。",
+  "worker.finishBackgroundRefused": "收尾请求没有执行：这一轮已经不在只等后台命令的状态。",
+  "wbCli.usageWbRunFinish": "用法: wb run finish 轮次编号",
   'agentBridge.homeDisconnected': '本设备与主控的连接已断开，请求未发出。请用同一请求编号重试',
   'resultReceipts.cancelledReason': '调用在产生结果前已取消',
   'runContext.receiptNoRun': '未执行',

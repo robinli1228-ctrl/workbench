@@ -5,13 +5,13 @@ import { tr } from './i18n.mjs';
 export function inspectRunProgress(db,online,now=Date.now()) {
   let changed=false;
   for(const run of db.activeRuns()) {
-    let reason=null;
-    if(!online(run.nodeId))reason=tr('runMonitor.deviceOfflineExecutionStateNeeds');
+    let reason=null,kind=null;
+    if(!online(run.nodeId)){reason=tr('runMonitor.deviceOfflineExecutionStateNeeds');kind='offline';}
     else if(run.status==='waiting_user')continue;
-    else if(run.status!=='queued'&&now-Date.parse(run.updatedAt||run.createdAt)>10*60*1000)reason=tr('runMonitor.noRunEventsForOver');
+    else if(run.status!=='queued'&&now-Date.parse(run.updatedAt||run.createdAt)>10*60*1000){reason=tr('runMonitor.noRunEventsForOver');kind='silent';}
     const old=db.get('runAlerts',run.id);
     if(reason && (old?.reason!==reason || old.status!=='open')) {
-      db.put('runAlerts',{id:run.id,projectId:run.projectId,reason,createdAt:new Date(now).toISOString(),status:'open'});changed=true;
+      db.put('runAlerts',{id:run.id,projectId:run.projectId,reason,kind,createdAt:new Date(now).toISOString(),status:'open'});changed=true;
     } else if(!reason && old?.status==='open') {db.put('runAlerts',{...old,status:'resolved'});changed=true;}
   }
   for(const alert of db.openRunAlerts())if(terminal.has(db.get('runs',alert.id)?.status)){db.put('runAlerts',{...alert,status:'resolved'});changed=true;}
