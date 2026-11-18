@@ -8,6 +8,11 @@ import { LifecycleError } from './lifecycle.mjs';
 const page = readFileSync(new URL('../public/settings.html', import.meta.url));
 const script = readFileSync(new URL('../public/settings.js', import.meta.url));
 
+/** 分享记录对外的样子：令牌只拼进公网链接里返回，方便随时再复制。 */
+function shareView(item, config) {
+  return { id: item.id, mode: item.mode, scope: item.scope, createdAt: item.createdAt, expiresAt: item.expiresAt, url: new URL(`/s/${item.token}`, config.publicOrigin).href };
+}
+
 function authorized(value, key) {
   const actual = Buffer.from(value || ''), expected = Buffer.from(`Bearer ${key}`);
   return actual.length === expected.length && timingSafeEqual(actual, expected);
@@ -27,7 +32,7 @@ export function createAdmin({ configFile, auth, tunnel, adminKey, onConfigSaved 
         return res.end(url.pathname === '/' ? page : script);
       }
       if (!authorized(req.headers.authorization, adminKey)) return json(res, 401, { error: '管理凭据已失效，请在 Mac 上重新打开设置页' });
-      if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, { passwordConfigured: auth.configured(), tunnel: tunnel.status(), capabilities: { configPatch: 1 } });
+      if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, { passwordConfigured: auth.configured(), tunnel: tunnel.status(), capabilities: { configPatch: 1, shares: 1 } });
       if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, await loadConfig(configFile));
       if (req.method === 'POST' && url.pathname === '/api/config-patch') {
         const patch = await readJson(req, 16384);
@@ -62,6 +67,18 @@ export function createAdmin({ configFile, auth, tunnel, adminKey, onConfigSaved 
       }
       if (req.method === 'POST' && url.pathname === '/api/stop') { await tunnel.stop(); return json(res, 200, { ok: true, tunnel: tunnel.status() }); }
       if (req.method === 'POST' && url.pathname === '/api/test') return json(res, 200, await tunnel.test());
+      if (req.method === 'GET' && url.pathname === '/api/shares') {
+        const config = await loadConfig(configFile);
+        return json(res, 200, { items: auth.listShares().map(item => shareView(item, config)) });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/shares') {
+        const body = await readJson(req, 4096), config = await loadConfig(configFile);
+        return json(res, 200, shareView(await auth.createShare({ scope: body.scope, mode: body.mode, ttlMs: body.ttlMs }), config));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/shares/revoke') {
+        const body = await readJson(req, 1024);
+        return json(res, 200, { ok: await auth.revokeShare(body.id) });
+      }
       return json(res, 404, { error: '设置入口不存在' });
     } catch (error) {
       if (error instanceof LifecycleError) return json(res, 503, { error: error.message });

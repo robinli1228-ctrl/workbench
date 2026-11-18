@@ -90,6 +90,8 @@ export function turnOrigin(db,task,request) {
   const source=task?.sourceMessageId?db.get('roomMessages',task.sourceMessageId):null;
   if(source?.sender==='system')return {kind:'platform'};
   if(source?.sender==='agent')return {kind:'role',name:source.senderName||null};
+  // A guest on a share link is named, so roles can tell several people apart; the owner stays the plain user message.
+  if(source?.guest&&source.senderName)return {kind:'human',guest:source.senderName};
   return {kind:'human'};
 }
 

@@ -110,6 +110,25 @@ const db = new Store(join(data, 'home.sqlite'));
 const slowOperations=new SlowOperations();
 // The global "pause remote execution" switch was removed; drop a stored flag so no install keeps a stale paused state around.
 const storedSettings=db.get('settings','main');
+/** Share link presets; the relay also refuses anything longer than 15 days. */
+const SHARE_TTLS={'1h':3600000,'1d':86400000,'7d':7*86400000,'15d':15*86400000};
+const shareText=(value,limit=200)=>typeof value==='string'&&value.trim()&&value.length<=limit?value.trim():null;
+/** One group chat (project and sub-chat) or one session (device, CLI and session), with the title the guest page shows. */
+function shareScope(input) {
+  if(input?.kind==='group'){
+    const projectId=shareText(input.projectId),conversationId=resolveConversationId(db,projectId,shareText(input.conversationId)||projectId);
+    const title=new GroupConversations(db).list(projectId).find(c=>c.id===conversationId)?.title||'';
+    return {kind:'group',projectId,conversationId,title:String(title).slice(0,120)};
+  }
+  if(input?.kind==='native'){
+    const nodeId=shareText(input.nodeId),runtime=shareText(input.runtime,32),sessionId=shareText(input.sessionId),entryId=shareText(input.entryId);
+    if(!nodeId||!runtime||!(sessionId||entryId))throw new Error(tr('home.shareOptionsInvalid'));
+    return {kind:'native',nodeId,runtime,...(sessionId?{sessionId}:{}),...(entryId?{entryId}:{}),title:shareText(input.title,120)||''};
+  }
+  throw new Error(tr('home.shareOptionsInvalid'));
+}
+const sameShareScope=(a,b)=>a?.kind===b.kind&&(b.kind==='group'?a.projectId===b.projectId&&a.conversationId===b.conversationId
+  :a.nodeId===b.nodeId&&a.runtime===b.runtime&&(b.entryId?a.entryId===b.entryId:a.sessionId===b.sessionId));
 if(storedSettings&&Object.hasOwn(storedSettings,'paused')){const {paused,...rest}=storedSettings;db.put('settings',rest);}
 // The fixed role is now called Manager; a manager still carrying a former default name takes the new one in the same language,
 // unless another role of the project already has that name (that role keeps it, and @name keeps reaching it).
@@ -686,6 +705,8 @@ function pageFileMap() {
   files['/history-cache.js']='history-cache.js';
   files['/data-settings.js']='data-settings.js';
   files['/remote-access-settings.js']='remote-access-settings.js';
+  files['/share-mode.js']='share-mode.js';
+  files['/share-settings.js']='share-settings.js';
   files['/native-history-timeline.js']='native-history-timeline.js';
   files['/native-session-groups.js']='native-session-groups.js';
   files['/create-folder.js']='create-folder.js';
@@ -1829,6 +1850,22 @@ const server = http.createServer(async (req, res) => {
         change(); return json(res, { language });
       }
       // Data page: what Home and each device hold, what the retention policy lets go, and a cleanup on demand.
+      // Share links (remote access): one group chat or one session, read-only or open to messages, for at most 15 days.
+      if (pathname === '/api/shares' && req.method === 'GET') {
+        const scope = shareScope(Object.fromEntries(url.searchParams));
+        return json(res, { items: (await remoteAccessSettings.shares('list')).filter(item => sameShareScope(item.scope, scope)) });
+      }
+      if (pathname === '/api/shares' && req.method === 'POST') {
+        const b = await body(req), ttlMs = SHARE_TTLS[b.ttl];
+        if (!ttlMs || !['ro', 'rw'].includes(b.mode)) return json(res, { error: tr('home.shareOptionsInvalid') }, 400);
+        return json(res, await remoteAccessSettings.shares('create', { scope: shareScope(b.scope || {}), mode: b.mode, ttlMs }));
+      }
+      if ((m = pathname.match(/^\/api\/shares\/([a-f0-9]{16})\/revoke$/)) && req.method === 'POST') return json(res, await remoteAccessSettings.shares('revoke', { id: m[1] }));
+      if (pathname === '/api/settings/owner-name' && req.method === 'POST') {
+        const ownerName = String((await body(req)).ownerName ?? '').trim().slice(0, 32);
+        db.put('settings', { ...(db.get('settings', 'main') || {}), id: 'main', ownerName });
+        change(); return json(res, { ownerName });
+      }
       if (pathname === '/api/settings/retention' && req.method === 'POST') {
         const b = await body(req), retention = normalizeRetention(b);
         db.put('settings', { ...(db.get('settings', 'main') || {}), id: 'main', retention });

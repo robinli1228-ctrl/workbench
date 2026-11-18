@@ -5,6 +5,9 @@ import { readJson, json } from './http-utils.mjs';
 const loginHtml = readFileSync(new URL('../public/login.html', import.meta.url));
 const loginScript = readFileSync(new URL('../public/login.js', import.meta.url));
 const cookieName = '__Host-wb-access';
+// 分享链接换来的 Cookie 单独命名：主人自己的登录 Cookie 优先，打开分享链接不会顶掉主人的登录。
+const shareCookieName = '__Host-wb-share';
+const shareScopeKeys = ['projectId', 'conversationId', 'nodeId', 'runtime', 'sessionId', 'entryId', 'title'];
 const cookieFlags = 'Path=/; HttpOnly; Secure; SameSite=Lax';
 const hopHeaders = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 
@@ -13,9 +16,9 @@ function copyHeaders(headers) {
   return Object.fromEntries(Object.entries(headers).filter(([key]) => !excluded.has(key)));
 }
 
-function cookie(req) {
-  const values = String(req.headers.cookie || '').split(';').map(part => part.trim()).filter(part => part.startsWith(`${cookieName}=`));
-  return values.length === 1 ? values[0].slice(cookieName.length + 1) : '';
+function cookie(req, name = cookieName) {
+  const values = String(req.headers.cookie || '').split(';').map(part => part.trim()).filter(part => part.startsWith(`${name}=`));
+  return values.length === 1 ? values[0].slice(name.length + 1) : '';
 }
 
 /** 对路径只接受单层规范编码；阻止网关和 Home 对同一路径解释不同。 */
@@ -40,6 +43,16 @@ function loginPage(res, status) {
   });
   res.end(loginHtml);
 }
+
+/** 分享失效或主人电脑离线时给访客看的一句话，不暴露内部信息。 */
+function notice(res, status, title, detail) {
+  res.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
+    'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+  });
+  res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><div style="font:15px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:72px 20px;color:#68736d"><strong style="display:block;color:#17201b;font-size:17px;margin-bottom:6px">${title}</strong>${detail}</div>`);
+}
+const shareEnded = res => notice(res, 410, '这个分享已过期或已被撤销', '请联系分享给你的人重新发一个链接。');
 
 /** 公网只进入该监听器；本机设置在另一个从不转发的监听器中。 */
 export function createGateway({ config, auth, readHomeToken }) {
@@ -70,13 +83,31 @@ export function createGateway({ config, auth, readHomeToken }) {
         return json(res, 200, { ok: true, expiresAt: login.expiresAt }, { 'set-cookie': `${cookieName}=${login.token}; Max-Age=1296000; ${cookieFlags}` });
       }
 
-      const token = cookie(req);
-      const session = await auth.verify(token);
-      if (!session) {
-        if ((req.method === 'GET' || req.method === 'HEAD') && (pathname === '/' || String(req.headers.accept).includes('text/html'))) return loginPage(res, 401);
-        return json(res, 401, { error: '登录已失效，请刷新页面重新登录' });
+      // 分享链接：链接本身就是凭据，换成分享 Cookie 后跳到只显示这一个群聊或会话的页面。
+      const link = pathname.match(/^\/s\/([A-Za-z0-9_-]{43})$/);
+      if (link && ['GET', 'HEAD'].includes(req.method)) {
+        const shared = await auth.verifyShare(link[1]);
+        if (!shared) return shareEnded(res);
+        const params = new URLSearchParams({ share: shared.share.scope.kind === 'native' ? 'native' : 'group', mode: shared.share.mode });
+        for (const key of shareScopeKeys) if (typeof shared.share.scope[key] === 'string' && shared.share.scope[key]) params.set(key, shared.share.scope[key]);
+        const maxAge = Math.max(1, Math.floor((shared.expiresAt - Date.now()) / 1000));
+        res.writeHead(302, { location: `/?${params}`, 'set-cookie': `${shareCookieName}=${link[1]}; Max-Age=${maxAge}; ${cookieFlags}`, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+        return res.end();
       }
-      if (pathname === '/_access/session' && req.method === 'GET') return json(res, 200, { loggedIn: true, expiresAt: session.expiresAt });
+
+      const token = cookie(req);
+      const owner = await auth.verify(token);
+      const shareToken = owner ? '' : cookie(req, shareCookieName);
+      const shared = shareToken ? await auth.verifyShare(shareToken) : null;
+      const session = owner || shared;
+      if (!session) {
+        if ((req.method === 'GET' || req.method === 'HEAD') && (pathname === '/' || String(req.headers.accept).includes('text/html'))) return shareToken ? shareEnded(res) : loginPage(res, 401);
+        return json(res, 401, { error: shareToken ? '这个分享已过期或已被撤销' : '登录已失效，请刷新页面重新登录' });
+      }
+      if (pathname === '/_access/session' && req.method === 'GET') return json(res, 200, { loggedIn: true, expiresAt: session.expiresAt, ...(shared ? { share: shared.share } : {}) });
+      if (shared && pathname === '/_access/logout' && req.method === 'POST') return json(res, 200, { ok: true }, { 'set-cookie': `${shareCookieName}=; Max-Age=0; ${cookieFlags}` });
+      // 只读分享只放行读取；页面另外藏起输入框，这里保证真的发不出去。
+      if (shared?.share.mode === 'ro' && !['GET', 'HEAD'].includes(req.method)) return json(res, 403, { error: '这个分享是只读的' });
       if (pathname === '/_access/logout' && req.method === 'POST') {
         await auth.logout(token);
         return json(res, 200, { ok: true }, { 'set-cookie': `${cookieName}=; Max-Age=0; ${cookieFlags}` });
@@ -129,6 +160,7 @@ export function createGateway({ config, auth, readHomeToken }) {
       upstream.on('error', () => {
         if (finished || res.destroyed) return;
         if (res.headersSent) res.destroy();
+        else if (req.method === 'GET' && String(req.headers.accept).includes('text/html')) notice(res, 502, '主人的电脑暂时离线', '恢复连接后刷新页面即可继续。');
         else json(res, 502, { error: 'Mac Home 暂时无法访问，请稍后刷新；本次写请求不会自动重发' });
       });
       req.pipe(upstream);

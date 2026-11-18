@@ -22,6 +22,7 @@ import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSumm
 import {cachedHistory,saveHistory,forgetHistory,compactHistoryPage} from './history-cache.js';
 import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices,resolveToolFile,toolFilePaths,historyContainsReply} from './native-transcript.js';
 import {deviceAccessRows} from './device-access.js';
+import {createSharePanel} from './share-settings.js';
 import {createAskCard} from './ask-card.js';
 import {answerContent,answerPlainText,answerRows} from './question-answer.js';
 
@@ -846,7 +847,15 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    catch(error){accessNote.className='global-error';accessNote.textContent=t(error.message);}
   }}));
   access.append(accessRows,accessNote);
-  body.append(nameCard,access,repo,agents,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
+  body.append(nameCard,access,repo,agents,fork);
+  // Basic | Share tabs: share links for this one session (read-only or open to messages, at most 15 days).
+  const share=createSharePanel({api,t,scope:()=>({kind:'native',nodeId:value.nodeId,runtime:value.runtime,sessionId:nativeId(value)||'',entryId:value.entryId||'',title:value.title||''}),
+   hint:t('Read-only: guests can only watch. Open to messages: guests can type into this session.')});
+  const sharePane=el('div','native-settings-dialog native-share-pane');sharePane.hidden=true;sharePane.append(share.root);
+  const tabs=el('div','settings-tabs native-settings-tabs');tabs.setAttribute('role','tablist');
+  const tab=(label,pane)=>{const b=button(label,()=>{for(const other of tabs.children)other.setAttribute('aria-selected',String(other===b));body.hidden=pane!==body;sharePane.hidden=pane!==sharePane;if(pane===sharePane)void share.load();},'settings-tab');b.setAttribute('role','tab');b.setAttribute('aria-selected',String(pane===body));return b;};
+  tabs.append(tab('Basic',body),tab('Share',sharePane));
+  dialog.append(tabs,body,sharePane);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
  }
  /** A branch says where it came from at the top of its transcript, with a way back to the original (a Codex branch shows
   * only its own turns; the conversation before the fork lives in the original). */

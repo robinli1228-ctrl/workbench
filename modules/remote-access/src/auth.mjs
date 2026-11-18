@@ -6,6 +6,10 @@ import { ensurePrivateDirectory, readPrivateJson, writePrivateJson } from './pri
 
 const derive = promisify(scrypt);
 const lifetime = 15 * 24 * 60 * 60 * 1000;
+// 分享链接最长 15 天，从创建时算，不续期；有效分享数有上限，避免无限增长。
+export const SHARE_MAX_MS = lifetime;
+const maxShares = 200;
+const shareToken = /^[A-Za-z0-9_-]{43}$/;
 const digest = value => createHash('sha256').update(value).digest('hex');
 
 function checkState(value) {
@@ -13,6 +17,10 @@ function checkState(value) {
   if (value.password !== null && (!/^[a-f0-9]{32}$/.test(value.password?.salt) || !/^[a-f0-9]{128}$/.test(value.password?.hash))) throw new Error('密码校验状态损坏');
   for (const [id, entry] of Object.entries(value.sessions)) {
     if (!/^[a-f0-9]{64}$/.test(id) || !Number.isSafeInteger(entry?.expiresAt)) throw new Error('登录状态损坏');
+  }
+  if (value.shares !== undefined && (!value.shares || Array.isArray(value.shares) || typeof value.shares !== 'object')) throw new Error('分享状态损坏');
+  for (const [id, entry] of Object.entries(value.shares || {})) {
+    if (!/^[a-f0-9]{16}$/.test(id) || !shareToken.test(entry?.token) || !Number.isSafeInteger(entry?.expiresAt) || !['ro', 'rw'].includes(entry?.mode) || !entry?.scope || typeof entry.scope !== 'object') throw new Error('分享状态损坏');
   }
   return value;
 }
@@ -45,7 +53,8 @@ export async function createAuthStore({ stateDir, now = Date.now }) {
       return serialize(async () => {
         const salt = randomBytes(16).toString('hex');
         const hash = (await derive(password, salt, 64)).toString('hex');
-        await persist({ version: 1, password: { salt, hash }, sessions: {} });
+        // 改密码是一次全面重置：登录和分享链接一起失效。
+        await persist({ version: 1, password: { salt, hash }, sessions: {}, shares: {} });
         events.emit('revoke', null);
       });
     },
@@ -78,6 +87,45 @@ export async function createAuthStore({ stateDir, now = Date.now }) {
       if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
       const id = digest(token), entry = state.sessions[id];
       return entry && entry.expiresAt > now() ? { id, expiresAt: entry.expiresAt } : null;
+    },
+    /** 分享会话：链接本身就是凭据（不需要密码），带范围、权限和固定到期时间；网关以 share:<编号> 跟踪它的连接。 */
+    async verifyShare(token) {
+      await queue;
+      if (typeof token !== 'string' || !shareToken.test(token)) return null;
+      for (const [id, entry] of Object.entries(state.shares || {})) {
+        if (entry.token.length === token.length && timingSafeEqual(Buffer.from(entry.token), Buffer.from(token)))
+          return entry.expiresAt > now() ? { id: `share:${id}`, expiresAt: entry.expiresAt, share: { id, mode: entry.mode, scope: entry.scope, expiresAt: entry.expiresAt } } : null;
+      }
+      return null;
+    },
+    /** 有效的分享（已过期的不列出），令牌一并返回，方便随时再复制链接。 */
+    listShares() {
+      return Object.entries(state.shares || {}).filter(([, entry]) => entry.expiresAt > now())
+        .map(([id, entry]) => ({ id, token: entry.token, mode: entry.mode, scope: entry.scope, createdAt: entry.createdAt, expiresAt: entry.expiresAt }))
+        .sort((a, b) => b.createdAt - a.createdAt);
+    },
+    async createShare({ scope, mode, ttlMs }) {
+      if (!['ro', 'rw'].includes(mode) || !Number.isSafeInteger(ttlMs) || ttlMs <= 0 || ttlMs > SHARE_MAX_MS) throw Object.assign(new Error('分享参数无效'), { status: 400 });
+      if (!scope || typeof scope !== 'object' || Array.isArray(scope) || JSON.stringify(scope).length > 2048) throw Object.assign(new Error('分享范围无效'), { status: 400 });
+      return serialize(async () => {
+        const shares = Object.fromEntries(Object.entries(state.shares || {}).filter(([, entry]) => entry.expiresAt > now()));
+        if (Object.keys(shares).length >= maxShares) throw Object.assign(new Error('有效分享过多，请先让不用的链接失效'), { status: 429 });
+        const id = randomBytes(8).toString('hex'), token = randomBytes(32).toString('base64url'), createdAt = now();
+        shares[id] = { token, mode, scope, createdAt, expiresAt: createdAt + ttlMs };
+        await persist({ ...state, shares });
+        return { id, token, mode, scope, createdAt, expiresAt: createdAt + ttlMs };
+      });
+    },
+    /** 让链接立即失效，并通知网关断开用这个链接打开的页面。 */
+    async revokeShare(id) {
+      if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) return false;
+      return serialize(async () => {
+        if (!state.shares?.[id]) return false;
+        const shares = { ...state.shares }; delete shares[id];
+        await persist({ ...state, shares });
+        events.emit('revoke', `share:${id}`);
+        return true;
+      });
     },
     /** 注销只处理当前凭证，通知网关关闭相关长连接。 */
     async logout(token) {

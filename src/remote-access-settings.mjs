@@ -112,5 +112,16 @@ export function createRemoteAccessSettings({ configFile, homeOrigin, now = Date.
     }
     return true;
   }
-  return { handle };
+  /**
+   * Share links for one group chat or session. Home's own API token has already authorised the caller (the page's settings
+   * tab); the relay keeps the records and builds the public link, so Home stores no share state of its own.
+   */
+  async function shares(action, input = {}) {
+    const config = await loadConfig(configFile).catch(() => { throw failure('Set up remote access first; share links open through it.', 409); });
+    if (action === 'list') return (await call(config, 'shares')).items || [];
+    if (action === 'create') return call(config, 'shares', { scope: input.scope, mode: input.mode, ttlMs: input.ttlMs });
+    if (action === 'revoke') return call(config, 'shares/revoke', { id: input.id });
+    throw failure('Unknown share operation.', 400);
+  }
+  return { handle, shares };
 }
