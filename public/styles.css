@@ -87,7 +87,6 @@ body[data-workspace-view="settings"] .app-shell { grid-template-columns: 244px m
 body[data-workspace-view="settings"][data-project-sidebar="collapsed"] .app-shell { grid-template-columns: 64px minmax(0, 1fr); }
 body[data-workspace-view="settings"][data-project-sidebar="hidden"] .app-shell { grid-template-columns: minmax(0, 1fr); }
 body[data-workspace-view="settings"] .node-sidebar { display: none; }
-body[data-workspace-view="settings"] #show-history,
 body[data-workspace-view="settings"] #show-project-settings { display: none; }
 
 .brand-mark {
@@ -374,8 +373,6 @@ body[data-navigation-mode="sessions"] #empty-state,
 body[data-navigation-mode="sessions"] #project-form-panel,
 body[data-navigation-mode="sessions"] #project-repository,
 body[data-navigation-mode="sessions"] #show-project-settings,
-body[data-navigation-mode="sessions"] #show-history,
-body[data-navigation-mode="sessions"] #show-plan-history,
 body[data-navigation-mode="sessions"] #refresh-state,
 body[data-navigation-mode="sessions"] #node-sidebar > :not(#native-session-sidebar) { display: none !important; }
 .native-session-filters { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 6px; padding: 4px 0 12px; flex-shrink: 0; }
@@ -1935,12 +1932,13 @@ dialog .live-scene-input { border-color: var(--dialog-line); border-radius: 10px
 .role-history-panel .settings-block > details > summary { margin-top: 8px; color: var(--accent); font-size: 12px; cursor: pointer; }
 
 /* 历史列表去掉逐条大边框，长标题最多两行，不允许把弹窗撑宽。 */
-#history-dialog { width: min(960px, calc(100vw - 32px)); }
-#history-dialog .task-list { gap: 0; min-width: 0; }
-#history-dialog .task-card { display: block; min-width: 0; border: 0; border-bottom: 1px solid var(--dialog-line); border-radius: 0; padding: 18px 8px; color: #262626; background: #fff; box-shadow: none; }
-#history-dialog .task-card:hover, #history-dialog .task-card.active { background: #f0f5ff; }
-#history-dialog .task-card h3 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; overflow-wrap: anywhere; font-size: 14px; font-weight: 500; line-height: 1.6; }
-#history-dialog .task-card .meta { color: #656c7d; font-size: 12px; }
+#project-panel-history .task-list { gap: 0; min-width: 0; }
+#project-panel-history .history-block { padding-block: 4px; }
+#project-panel-history .task-card:last-child { border-bottom: 0; }
+#project-panel-history .task-card { display: block; min-width: 0; border: 0; border-bottom: 1px solid var(--dialog-line); border-radius: 0; padding: 18px 8px; color: #262626; background: #fff; box-shadow: none; }
+#project-panel-history .task-card:hover, #project-panel-history .task-card.active { background: #f0f5ff; }
+#project-panel-history .task-card h3 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; overflow-wrap: anywhere; font-size: 14px; font-weight: 500; line-height: 1.6; }
+#project-panel-history .task-card .meta { color: #656c7d; font-size: 12px; }
 dialog.role-switch-dialog { width: min(640px, calc(100vw - 32px)); }
 
 @media (max-width: 600px) {

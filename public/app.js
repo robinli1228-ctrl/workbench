@@ -38,7 +38,6 @@ import { tokenUsageUI } from './token-usage.js';
 import { createScheduledJobsUI } from './scheduled-jobs.js';
 import { formatGitVersionStatus, formatProjectGitSummary } from './git-version.js';
 import { runTimeline, formatTokenMillions, partitionRunLog, displayRunInput, contextUsageLabel, mergeRunEvents, shouldShowFinalResult, toolStatusLabel, stripAnsi, taskRunDisplayStatus } from './run-log-data.js';
-import { planDismissKey, planDockState, planMemberLabel, planStageActivity, planActivity } from './plan-dock.js';
 import {createWorkspaceInspector,initWorkspaceColumns} from './workspace-inspector.js';
 import {applyStateUpdate} from './state-data.js';
 import { TOKEN_KEY, readApiToken, saveApiToken } from './browser-token.js';
@@ -140,7 +139,6 @@ for (const [id, name, label] of [
   ['refresh-state', 'refresh', 'Refresh'],
   ['show-project-settings', 'gear', 'Project Settings'],
   ['toggle-inspector', 'panel', 'Hide right panel'],
-  ['show-history', 'history', 'History'],
   ['add-role-sidebar', 'plus', 'Add role'],
   ['refresh-role-status', 'refresh', 'Refresh role status and remaining quota']
 ]) {
@@ -323,7 +321,6 @@ function openTask(taskId,runId=null) {
   runOriginal.close();originalRunSnapshot=null;
   app.selectedTaskId = taskId; app.events = []; app.files = []; app.detailTab = 'output'; app.detailRunId = null; app.loadedRunId = null; app.requestVersion++;
   app.pinnedDetailRunId=app.data.runs.some(r=>r.id===runId&&r.taskId===taskId)?runId:null;
-  document.querySelector('#history-dialog').close();
   if (!dom.runDialog.open) dom.runDialog.showModal();
   renderTaskDetail(); void refreshRunDetails();
 }
@@ -646,7 +643,6 @@ function render() {
   teamCopyUI.sync();
   renderRoles();
   renderProjectGitVersion();
-  renderExecutionPlans();
   schedulesUI.refresh();
   renderSettingsDevices();
   renderOnlineDevices();
@@ -664,87 +660,6 @@ function render() {
   nativeSessionUI.sync();
 }
 
-const DISMISSED_PLANS_KEY = 'agent-workbench.dismissed-plans';
-let dismissedPlanKeys;
-try {
-  const stored = JSON.parse(localStorage.getItem(DISMISSED_PLANS_KEY) || '[]');
-  dismissedPlanKeys = Array.isArray(stored) ? stored.filter(key => typeof key === 'string') : [];
-} catch { dismissedPlanKeys = []; }
-function saveDismissedPlans() {
-  try { localStorage.setItem(DISMISSED_PLANS_KEY, JSON.stringify(dismissedPlanKeys)); } catch { /* Even when storage is unavailable, this page can still be closed. */ }
-}
-document.querySelector('#show-plan-history').innerHTML = UI_ICON.log;
-document.querySelector('#show-plan-history').addEventListener('click', () => {
-  const projectPlans = new Set(planDockState(app.data.executionPlans, app.data.requests, app.selectedProjectId).plans.map(planDismissKey));
-  dismissedPlanKeys = dismissedPlanKeys.filter(key => !projectPlans.has(key));
-  saveDismissedPlans();
-  mobilePanel('chat');
-  renderExecutionPlans();
-  const details = document.querySelector('#execution-plans details');
-  if (details) { details.open = true; details.querySelector('summary')?.focus(); }
-});
-
-/** Show only the supervisor's latest project plan; closing is a display preference of this browser only and does not change scheduling. */
-function renderExecutionPlans() {
-  const panel=document.querySelector('#execution-plans');
-  const state=planDockState(app.data.executionPlans,app.data.requests,app.selectedProjectId,dismissedPlanKeys);
-  document.querySelector('#show-plan-history').hidden=!state.plans.some(plan=>dismissedPlanKeys.includes(planDismissKey(plan)));
-  const previous=panel.querySelector('details');
-  const open=panel.dataset.projectId===app.selectedProjectId && Boolean(previous?.open);
-  panel.replaceChildren();panel.hidden=!state.current;if(!state.current)return;
-  panel.dataset.projectId=app.selectedProjectId;
-  const details=document.createElement('details');details.open=open;
-  const summary=document.createElement('summary');
-  const activity=plan=>planActivity(plan,app.data.requests||[],app.data.runs||[],app.data.tasks||[]);
-  const title=document.createElement('strong');title.textContent=t('Manager plan · {currentStage}', { currentStage: t(state.currentStage) });
-  const progress=document.createElement('span');progress.className='execution-progress';progress.textContent=`${state.completed}/${state.total}`;
-  const badge=document.createElement('span');badge.className='execution-status';badge.textContent=t(activity(state.current).label);
-  summary.append(title,progress,badge);details.append(summary);panel.append(details);
-  panel.style.setProperty('--plan-progress',String(state.total?state.completed/state.total:0));
-  if(state.dismissible.some(plan=>plan.id===state.current.id)) {
-    const close=create('button','execution-plan-close');close.type='button';close.title='Close finished plan';close.setAttribute('aria-label','Close finished plan');
-    close.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
-    close.onclick=()=>{
-      // Closes this round only; old plans do not take its place and their execution status is unchanged.
-      dismissedPlanKeys=[...new Set([...dismissedPlanKeys,...state.dismissible.map(planDismissKey)])];
-      saveDismissedPlans();renderExecutionPlans();document.querySelector('#chat-text')?.focus({preventScroll:true});
-    };
-    panel.classList.add('is-dismissible');panel.append(close);
-  } else panel.classList.remove('is-dismissible');
-  const list=document.createElement('div');list.className='execution-plan-list';details.append(list);
-  const count=document.createElement('p');count.className='execution-plan-count';count.textContent='Legacy plan history · read only';
-  list.append(count);
-  for(const plan of state.plans) {
-    const item=document.createElement('section');item.className='execution-plan-item';
-    const progress=activity(plan);
-    const heading=document.createElement('h3');heading.textContent=`${plan.reason} · ${t(progress.label)}`;
-    item.append(heading);
-    const note=plan.error||plan.waitingReason||progress?.reason||plan.fallbackReason;
-    if(note){const p=document.createElement('p');p.textContent=note;item.append(p);}
-    if((plan.deliveryIds||[]).some(id=>{
-      const delivery=(app.data.deliveries||[]).find(d=>d.id===id);
-      return delivery&&!delivery.approvedAt&&['waiting_source','awaiting_approval'].includes(delivery.status);
-    })) {
-      const p=document.createElement('p');p.textContent='Git delivery awaits confirmation; review and act in the run details';item.append(p);
-    }
-    for(const stage of plan.stages||[]) {
-      const row=document.createElement('div');row.className='execution-stage';
-      const label=document.createElement('span');
-      const mode=stage.exclusive?'Exclusive serial':stage.mode==='parallel' && plan.isolated!==false?'Parallel':'Sequential';
-      label.textContent=`${stage.index+1}. ${stage.title} · ${t(mode)} · ${t(planStageActivity(stage,app.data.requests||[],app.data.runs||[],app.data.tasks||[]).label)}`;
-      const members=document.createElement('small');
-      members.textContent=(stage.members||[]).map(m=>{
-        let request=(app.data.requests||[]).find(r=>r.id===m.requestId);
-        for(let i=0;request?.continuationRequestId&&i<20;i++)request=(app.data.requests||[]).find(r=>r.id===request.continuationRequestId);
-        const task=app.data.tasks.find(t=>t.id===request?.taskId);
-        const run=(app.data.runs||[]).find(r=>r.id===request?.currentRunId);
-        return `@${m.role} ${t(planMemberLabel(request,run,task))}`;
-      }).join(' · ');
-      row.append(label,members);item.append(row);
-    }
-    list.append(item);
-  }
-}
 
 function renderProjects() {
   if(projectOrder.active())return;
@@ -2196,8 +2111,6 @@ document.querySelector('#show-project-form').addEventListener('click', () => nat
 document.querySelector('#empty-create-project').addEventListener('click', () => showProjectForm(true));
 document.querySelector('#close-project-form').addEventListener('click', () => showProjectForm(false));
 document.querySelector('#cancel-project').addEventListener('click', () => showProjectForm(false));
-document.querySelector('#show-history').addEventListener('click', () => { renderTasks(); document.querySelector('#history-dialog').showModal(); });
-document.querySelector('#close-history').addEventListener('click', () => document.querySelector('#history-dialog').close());
 document.querySelector('#close-device-edit').addEventListener('click', () => document.querySelector('#device-edit-dialog').close());
 document.querySelector('#device-edit-dialog').addEventListener('close', () => document.querySelector('#device-edit-content').replaceChildren());
 document.querySelector('#close-run').addEventListener('click', () => { dom.runDialog.close(); app.requestVersion++; });
