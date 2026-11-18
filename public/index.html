@@ -140,6 +140,7 @@
               <button id="project-tab-workspace" type="button" role="tab" data-project-settings-tab="workspace" aria-controls="project-panel-workspace" aria-selected="false" tabindex="-1">Repositories and workspace</button>
               <button id="project-tab-sync" type="button" role="tab" data-project-settings-tab="sync" aria-controls="project-panel-sync" aria-selected="false" tabindex="-1">File sync</button>
               <button id="project-tab-coordination" type="button" role="tab" data-project-settings-tab="coordination" aria-controls="project-panel-coordination" aria-selected="false" tabindex="-1">Collaboration and scheduling</button>
+              <button id="project-tab-share" type="button" role="tab" data-project-settings-tab="share" aria-controls="project-panel-share" aria-selected="false" tabindex="-1">Share</button>
               <button id="project-tab-history" type="button" role="tab" data-project-settings-tab="history" aria-controls="project-panel-history" aria-selected="false" tabindex="-1">Execution History</button>
             </nav>
             <button class="secondary" id="close-settings-page" type="button">Close</button>
@@ -207,6 +208,8 @@
                 <div id="project-panel-sync" data-project-settings-panel="sync" role="tabpanel" aria-labelledby="project-tab-sync" tabindex="0" hidden>
                 <section id="source-sync-panel" class="settings-block" aria-label="Source sync" hidden></section>
                 </div>
+                <div id="project-panel-share" data-project-settings-panel="share" role="tabpanel" aria-labelledby="project-tab-share" tabindex="0" hidden>
+                <section id="project-share-panel" class="settings-block" aria-label="Share"></section>
                 <div id="project-panel-history" data-project-settings-panel="history" role="tabpanel" aria-labelledby="project-tab-history" tabindex="0" hidden>
                 <section class="settings-block history-block" aria-label="Execution History"><div class="task-list" id="task-list"></div></section>
                 </div>
@@ -494,6 +497,7 @@
               </section>
               <section class="settings-list" aria-labelledby="language-section-title">
                 <header class="settings-list-head"><div><h3>Interface</h3></div></header>
+                <div class="settings-row"><span class="settings-row-label"><label for="owner-name-input">User name</label><small>Shown as the sender of your messages, including on share links</small></span><span class="settings-row-value"><input id="owner-name-input" type="text" maxlength="32" autocomplete="off" placeholder="Me"><span id="owner-name-feedback" class="form-feedback" role="status" hidden></span></span></div>
                 <div class="settings-row"><span class="settings-row-label"><span id="language-section-title">Language</span><small>Remembered in this browser and saved on Home</small></span><span class="settings-row-value"></span>
                   <select id="language-select" aria-labelledby="language-section-title">
                     <option value="en" translate="no">English</option>

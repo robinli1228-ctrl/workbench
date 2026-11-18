@@ -4,6 +4,7 @@ import {sideButton} from './side-preview.js';
 import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale, getLanguage } from './i18n.js';
 import { trackLoading } from './load-bar.js';
+import {shareGuestName} from './share-mode.js';
 import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
 import { renderMarkdown, renderMessageMarkdown } from './markdown.js';
 import { linkMedia, openImageLightbox, openVideoLightbox, markImageOpener, fileGlyph } from './media.js';
@@ -1183,6 +1184,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
 
   function renderMessageRow(m, messages) {
     const agent = m.sender === 'agent';
+    // People: a share-link guest by the name they typed; the owner by the current user name (Basic Settings), else "Me".
+    const humanName = m.sender === 'human' && !m.scheduledJobId ? (m.guest ? m.senderName : String(data.settings?.ownerName || '').trim()) : '';
     const handoff = m.kind === 'handoff' && m.handoff;
     const replyDirection=dialogueReplyDirection(m,messages,data);
     const discussion=discussionDisplay(m,data);
@@ -1203,9 +1206,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const time = create('time', '', formatTime(shownAt));
     if (shownAt) time.dateTime = shownAt;
     if (cardMeta.startedAt) time.title = t('Started {start} · sent {sent}', { start: formatTime(cardMeta.startedAt), sent: formatTime(m.createdAt) });
-    const sender=create('div', 'chat-name', agent ? m.senderName : system ? m.senderName || 'Workbench' : reminder ? 'Scheduled reminder' : 'Me');
-    // Saved role names are identities, not UI dictionary keys.
-    if(agent)sender.setAttribute('translate','no');
+    const sender=create('div', 'chat-name', agent ? m.senderName : system ? m.senderName || 'Workbench' : reminder ? 'Scheduled reminder' : humanName || 'Me');
+    // Saved role names and people's names are identities, not UI dictionary keys.
+    if(agent||humanName)sender.setAttribute('translate','no');
     if(agent)sender.title=m.senderName||'';
     // Name and send time share the line above the card; the card itself starts with the reply quote, if any.
     header.append(sender);
@@ -1271,8 +1274,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);}finally{restore();}
     }),`stop:${discussion.stopRunId}`));
     actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text,`group:${scopeId}:message:${m.id}`));
-    actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, m.senderName, agent || Boolean(handoff), m.attachments, null, m.runId));
-    actions.push(sideMessageButton(handoff ? m.handoff.summary || m.text : m.text,m.senderName,agent||Boolean(handoff),m.attachments,m.runId));
+    const shownName = agent || handoff ? m.senderName : humanName || (m.sender === 'human' && !m.guest && !m.scheduledJobId ? t('Me') : m.senderName);
+    actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, shownName, agent || Boolean(handoff), m.attachments, null, m.runId));
+    actions.push(sideMessageButton(handoff ? m.handoff.summary || m.text : m.text,shownName,agent||Boolean(handoff),m.attachments,m.runId));
     if(agent&&m.runId&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk(m)));
     if (m.runId) {
       const run = data.runs?.find(r => r.id === m.runId);
@@ -1282,7 +1286,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     // A send not yet stored offers only Copy: there is nothing to reply to, open or ask about until Home has it.
     if(m.localSend)actions.splice(0,actions.length,copyMessageButton(m.text));
     // A question/answer card is drawn from the run's question record: Copy and full screen, nothing to reply to or open.
-    if(m.synthetic)actions.splice(0,actions.length,copyMessageButton(m.text,`group:${scopeId}:message:${m.id}`),fullscreenMessageButton(m.text,agent?m.senderName:t('Me'),agent,null,null,m.runId));
+    if(m.synthetic)actions.splice(0,actions.length,copyMessageButton(m.text,`group:${scopeId}:message:${m.id}`),fullscreenMessageButton(m.text,agent?m.senderName:humanName||t('Me'),agent,null,null,m.runId));
     const footer=create('div','chat-card-footer');setChatCardState(bubble,cardMeta.state);
     const kindLabel=t('{kind} · {status}',{kind:t(cardMeta.kind),status:t(cardMeta.status)}),kindEl=create('span','chat-card-kind');
     // A finished role card: the kind as a small icon, then how long its run took to it, like the running card's timer.
@@ -1335,7 +1339,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const run=m.runId?data.runs?.find(r=>r.id===m.runId)||null:null,task=run&&data.tasks?.find(item=>item.id===run.taskId)||null;
     const replyDirection=dialogueReplyDirection(m,messages,data),source=m.replyToId?m.replySource||messages.find(q=>q.id===m.replyToId)||null:null;
     let discussion=null;try{discussion=JSON.stringify(discussionDisplay(m,data));}catch{return null;}
-    return JSON.stringify([getLanguage(),scopeId,projectId,Boolean(openSideAsk),m,run,task,run&&(data.runReports?.find(r=>r.id===run.id)||null),
+    // The owner's current user name is part of how a person's card looks, so renaming redraws the kept cards.
+    return JSON.stringify([getLanguage(),scopeId,projectId,Boolean(openSideAsk),String(data.settings?.ownerName||''),m,run,task,run&&(data.runReports?.find(r=>r.id===run.id)||null),
       m.sender==='agent'?(data.roles||[]).find(r=>r.id===m.roleId)||null:null,source&&[source.id,source.senderName,source.text,source.attachments],
       replyDirection,discussion,messageRecipients(m,replyDirection).map(r=>[r.id,r.name]),messageCardMeta(m),m.runId?filePathsFor(m.runId):null]);
   }
@@ -1634,7 +1639,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (!d.pending && !input.value.trim() && !d.attachments?.length) return;
     if(d.discussion&&d.attachments?.length){setError('Use text for discussion replies; send attachments as a separate regular message');return;}
     if (!d.pending) {
-      const payload = { conversationId:targetConversationId, text: input.value, replyToId: d.replyToId || null, attachmentIds:(d.attachments||[]).map(a=>a.id),...(d.discussion&&!hasMention(input.value)?{discussion:d.discussion}:{}) };
+      const guestName = shareGuestName();
+      const payload = { conversationId:targetConversationId, text: input.value, replyToId: d.replyToId || null, attachmentIds:(d.attachments||[]).map(a=>a.id),...(guestName?{guestName}:{}),...(d.discussion&&!hasMention(input.value)?{discussion:d.discussion}:{}) };
       // A retry of exactly the content Home rejected keeps its id; any edit gets a new id, never the old one.
       d.pending = { clientMessageId: sameSend(d.rejected?.payload, payload) ? d.rejected.clientMessageId : crypto.randomUUID(), ...payload };
     }

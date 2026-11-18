@@ -4465,3 +4465,30 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 .nt-step-time, .nt-activity-time { margin-left: 10px; color: var(--nt-quiet, var(--muted)); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; opacity: 0; transition: opacity .12s; }
 .nt-step-head:is(:hover, :focus-visible) .nt-step-time, .nt-activity-summary:is(:hover, :focus-visible) .nt-activity-time { opacity: 1; }
 @media (hover: none) { .nt-step-time, .nt-activity-time { opacity: 1; } }
+
+/* Share links: a guest sees one group chat or session, without the project list, mode switch or settings entries. */
+html[data-share] #project-sidebar, html[data-share] #toggle-project-sidebar, html[data-share] #toggle-project-sidebar-collapse,
+html[data-share] #navigation-mode, html[data-share] #show-app-settings, html[data-share] #mobile-projects, html[data-share] #show-project-settings,
+html[data-share] #native-session-settings, html[data-share] #settings-page, html[data-share] #add-role-sidebar,
+html[data-share] #project-splitter, html[data-share] #project-tab-share, html[data-share] #project-panel-share { display: none !important; }
+/* The layout itself follows the page's own "project list hidden" state, which app.js forces on share links. */
+/* Read-only links have no message box (the gateway refuses writes on them as well). */
+html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-session-footer { display: none !important; }
+
+/* Share tab (group chat and session settings). */
+.share-panel { display: grid; gap: 12px; padding: 4px 0; }
+.share-heading { margin: 0; font-weight: 700; }
+.share-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.share-row-label { width: 72px; color: var(--muted); }
+.share-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.share-chip { min-height: 32px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink); }
+.share-chip[aria-pressed="true"] { border-color: var(--green); background: var(--green-soft); color: var(--green-dark); font-weight: 700; }
+.share-hint { margin: -4px 0 0 84px; }
+.share-links-title { margin: 8px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.share-links { display: grid; gap: 8px; }
+.share-link { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.share-url { flex: 1; min-width: 200px; font-size: 13px; word-break: break-all; }
+.share-tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: #eef1ef; color: var(--muted); white-space: nowrap; }
+.share-tag.is-open { background: #fff4e5; color: var(--warning); }
+.share-left { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.native-settings-tabs { margin: 0 0 12px; }

@@ -40,7 +40,8 @@ export function executionEnvironmentHint({cwd,projectRoot,boundary,repositories=
 }
 
 const originLabel=origin=>origin?.kind==='platform'?sentText('turnInput.fromPlatform')
-  :origin?.kind==='role'?origin.name?sentText('turnInput.fromRole',{name:origin.name}):sentText('turnInput.fromRoleUnknown'):sentText('turnInput.fromUser');
+  :origin?.kind==='role'?origin.name?sentText('turnInput.fromRole',{name:origin.name}):sentText('turnInput.fromRoleUnknown')
+  :origin?.guest?sentText('turnInput.fromGuest',{name:origin.guest}):sentText('turnInput.fromUser');
 
 /**
  * One turn's input in a fixed order: the message (origin label, text, attachments), then a divider and each platform

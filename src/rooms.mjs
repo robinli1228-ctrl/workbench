@@ -224,7 +224,7 @@ export class Rooms {
   }
 
   /** The message and the execution records of all recipient roles are committed together; resending does not dispatch again. */
-  post(projectId, { clientMessageId, text = '', replyToId = null, attachmentIds = [], targetRoleId = null, scheduledJobId = null, conversationId }) {
+  post(projectId, { clientMessageId, text = '', replyToId = null, attachmentIds = [], targetRoleId = null, scheduledJobId = null, conversationId, guestName = null }) {
     conversationId=resolveConversationId(this.db,projectId,conversationId);
     if (typeof clientMessageId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(clientMessageId)) throw new Error(tr('rooms.invalidMessageId'));
     if (typeof text !== 'string' || (!text.trim() && !attachmentIds.length) || text.length > 12000) throw new Error(tr('rooms.enterTextAddAttachmentText'));
@@ -301,7 +301,9 @@ export class Rooms {
         return task.id;
       });
       // A timed reminder is set by a role, not typed by the user, and says so where it appears.
-      const message = this.db.put('roomMessages', { id: clientMessageId, projectId, conversationId, sender: 'human', senderName: scheduledJobId ? tr('scheduledJobs.reminderSender') : tr('rooms.me'), ...(scheduledJobId ? { scheduledJobId } : {}), text, attachments, replyToId, taskIds, broadcast: broadcast || undefined, createdAt: now(), fingerprint });
+      // A guest on a share link signs with the name they typed; the owner's messages carry the user name from Basic Settings.
+      const guest = !scheduledJobId && typeof guestName === 'string' && guestName.trim() ? guestName.trim().slice(0, 32) : null;
+      const message = this.db.put('roomMessages', { id: clientMessageId, projectId, conversationId, sender: 'human', senderName: scheduledJobId ? tr('scheduledJobs.reminderSender') : guest || String(this.db.get('settings', 'main')?.ownerName || '').trim() || tr('rooms.me'), ...(guest ? { guest: true } : {}), ...(scheduledJobId ? { scheduledJobId } : {}), text, attachments, replyToId, taskIds, broadcast: broadcast || undefined, createdAt: now(), fingerprint });
       if(!project.systemConfig)new ConversationContext(this.db).enqueue(projectId,conversationId);
       this.touch(projectId,conversationId);
       return message;

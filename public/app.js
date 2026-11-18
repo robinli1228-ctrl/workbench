@@ -1,4 +1,7 @@
+// First: a share link points the saved selection at the shared chat or session before anything below reads it.
+import './share-mode.js';
 import {copyText,pendingAction,bindPendingAction,bindCopyFeedback} from './role-icons.js';
+import {createSharePanel} from './share-settings.js';
 import {createDocumentPreview} from './side-preview.js';
 import {deliveryRepositorySummary} from './delivery-summary.js';
 import {renderRetiredCommandWarning} from './retired-commands.js';
@@ -291,6 +294,8 @@ window.visualViewport?.addEventListener('resize', viewportHeight); window.addEve
 
 const remoteAccessUI=createRemoteAccessSettingsUI({root:document.querySelector('#remote-access-settings'),api});
 function openSettings(value = 'general') {
+  // A share link has no settings page (it is hidden), so entries that would open it do nothing there.
+  if (document.documentElement.dataset.share) return;
   let tab = normalizeSettingsTab(value);
   if (tab === 'project' && !projectsUI.prepareSettings()) tab = 'general';
   dom.projectFormPanel.hidden = true;
@@ -302,7 +307,9 @@ function openSettings(value = 'general') {
   if (tab === 'usage') tokenUI.show({resetScroll:true});
   if (tab === 'data') dataUI.show();
   if (tab === 'memory') { renderMemoryOrganizer(); void memoryUI.load(); }
-  if (tab === 'general') void remoteAccessUI.refresh();
+  // Both read panels set up near the end of this module; a call during start-up simply skips them.
+  if (tab === 'general') { void remoteAccessUI.refresh(); try { fillOwnerName(); } catch {} }
+  if (tab === 'project') try { refreshProjectShare(); } catch {}
   if (tab === 'timers') schedulesUI.show();
   if (tab === 'prompts') renderPlatformPrompts();
   mobilePanel('chat');
@@ -409,7 +416,14 @@ async function api(path, options = {}) {
     : await response.text();
 
   if (!response.ok) {
-    if(response.status===401 && !app.authPromptShown) {
+    // On a share link a 401 means the link expired or was revoked: reload, and the gateway answers with that notice
+    // instead of the page asking a guest for Home's access token.
+    if(response.status===401 && document.documentElement.dataset.share) {
+      // At most one reload in 15 s, so a 401 from Home itself cannot loop the page.
+      let last=0;try{last=Number(sessionStorage.getItem('agent-workbench.share-reload')||0);}catch{}
+      if(!app.shareEnded&&Date.now()-last>15000){app.shareEnded=true;try{sessionStorage.setItem('agent-workbench.share-reload',String(Date.now()));}catch{}location.reload();}
+    }
+    else if(response.status===401 && !app.authPromptShown) {
       app.authPromptShown=true;
       const dialog=document.querySelector('#api-token-dialog');
       if(dialog && !dialog.open)dialog.showModal();
@@ -2064,7 +2078,8 @@ function startSse() {
 
 const SIDEBAR_KEY = 'agent-workbench.project-sidebar';
 function setProjectSidebarMode(mode) {
-  const next = ['expanded', 'collapsed', 'hidden'].includes(mode) ? mode : 'expanded';
+  // A share link never shows the project list; the stylesheet's own "hidden" layout then fits every inspector state.
+  const next = document.documentElement.dataset.share ? 'hidden' : ['expanded', 'collapsed', 'hidden'].includes(mode) ? mode : 'expanded';
   document.body.dataset.projectSidebar = next;
   sessionStorage.setItem(SIDEBAR_KEY, next);
   const toggle = document.querySelector('#toggle-project-sidebar');
@@ -2158,6 +2173,27 @@ document.querySelector('#show-scheduled-jobs')?.addEventListener('click', () => 
 document.querySelector('#open-project-timers')?.addEventListener('click', () => { schedulesUI.select(getCurrentProject()?.id || ''); openSettings('timers'); });
 document.querySelector('#close-settings-page')?.addEventListener('click', closeSettings);
 initProjectSettingsTabs(dom.settingsPage);
+// Share tab: links for the sub-chat that was open when the settings opened (several sub-chats share one project's settings).
+const projectShareScope=()=>({kind:'group',projectId:app.selectedProjectId||'',conversationId:app.selectedConversationId||app.selectedProjectId||''});
+const projectSharePanel=createSharePanel({api,t,scope:projectShareScope,hint:t('Read-only: guests can only watch. Open to messages: guests type a name when they open the link, then can send messages and @ roles.')});
+const projectShareHeading=create('p','share-heading');
+document.querySelector('#project-share-panel')?.append(projectShareHeading,projectSharePanel.root);
+function refreshProjectShare(){
+  const title=app.data.conversations?.find(c=>c.id===projectShareScope().conversationId)?.title||getCurrentProject()?.name||'';
+  projectShareHeading.textContent=t('Sharing: {title}',{title});void projectSharePanel.load();
+}
+document.querySelector('#project-tab-share')?.addEventListener('click',refreshProjectShare);
+// User name: shown as the sender of the owner's messages (empty keeps "Me").
+const ownerNameInput=document.querySelector('#owner-name-input');
+function fillOwnerName(){if(ownerNameInput&&document.activeElement!==ownerNameInput)ownerNameInput.value=app.data?.settings?.ownerName||'';}
+{
+  const input=ownerNameInput,note=document.querySelector('#owner-name-feedback');
+  input?.addEventListener('change',async()=>{
+    note.hidden=false;note.textContent=t('Saving…');
+    try{const saved=await api('/api/settings/owner-name',{method:'POST',json:{ownerName:input.value}});app.data.settings={...app.data.settings,ownerName:saved.ownerName};input.value=saved.ownerName;note.textContent=t('Saved');render();}
+    catch(error){note.textContent=t(error.message);}
+  });
+}
 dom.settingsPage?.querySelectorAll('[data-settings-tab]').forEach(button => {
   button.addEventListener('click', () => openSettings(button.dataset.settingsTab));
 });
