@@ -2075,6 +2075,8 @@ export default {
   "Read-only: guests can only watch. Open to messages: guests type a name when they open the link, then can send messages and @ roles.": "只读：访客只能看。可发言：访客打开链接时填一个称呼，之后能发消息、@ 角色。",
   "Read-only: guests can only watch. Open to messages: guests can type into this session.": "只读：访客只能看。可发言：访客可以在这个会话里输入。",
   "Saving…": "正在保存…",
+  "Too many valid share links; revoke the ones you no longer need.": "有效的分享链接太多了，请先让不用的链接失效。",
+  "Set up remote access first; share links open through it.": "请先设置远程访问，分享链接要通过它打开。",
   "Open in new tab": "在新标签页打开",
   "If the page stays blank, the site may not allow embedding; open it in a new tab.": "页面一直空白时，可能是网站不允许嵌入，请在新标签页打开。",
   "This page loads files from the site root (such as /assets/…). Build it with relative paths (Vite: base: './') to preview it here.": "这个页面从网站根路径加载文件（例如 /assets/…），要在这里预览，请用相对路径构建（Vite 设置 base: './'）。",

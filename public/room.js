@@ -1274,7 +1274,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);}finally{restore();}
     }),`stop:${discussion.stopRunId}`));
     actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text,`group:${scopeId}:message:${m.id}`));
-    const shownName = agent || handoff || !humanName ? m.senderName : humanName;
+    const shownName = agent || handoff ? m.senderName : humanName || (m.sender === 'human' && !m.guest && !m.scheduledJobId ? t('Me') : m.senderName);
     actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, shownName, agent || Boolean(handoff), m.attachments, null, m.runId));
     actions.push(sideMessageButton(handoff ? m.handoff.summary || m.text : m.text,shownName,agent||Boolean(handoff),m.attachments,m.runId));
     if(agent&&m.runId&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk(m)));
