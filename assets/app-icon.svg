@@ -23,7 +23,7 @@
       <feDropShadow dx="0" dy="9" stdDeviation="8" flood-color="#00145f" flood-opacity=".2"/>
     </filter>
   </defs>
-  <g transform="translate(25.6 25.6) scale(0.9)">
+  <g transform="translate(48.64 48.64) scale(0.81)">
     <rect width="512" height="512" rx="114" fill="url(#blue)"/>
     <rect x="2" y="2" width="508" height="508" rx="112" fill="none" stroke="url(#rim)" stroke-opacity=".22" stroke-width="3"/>
     <g stroke="#1245d4" stroke-width="10" filter="url(#depth)">
