@@ -1849,7 +1849,6 @@ const server = http.createServer(async (req, res) => {
         for (const ws of sockets.values()) send(ws, { type: 'language', language });
         change(); return json(res, { language });
       }
-      // Data page: what Home and each device hold, what the retention policy lets go, and a cleanup on demand.
       // Share links (remote access): one group chat or one session, read-only or open to messages, for at most 15 days.
       if (pathname === '/api/shares' && req.method === 'GET') {
         const scope = shareScope(Object.fromEntries(url.searchParams));
@@ -1866,6 +1865,7 @@ const server = http.createServer(async (req, res) => {
         db.put('settings', { ...(db.get('settings', 'main') || {}), id: 'main', ownerName });
         change(); return json(res, { ownerName });
       }
+      // Data page: what Home and each device hold, what the retention policy lets go, and a cleanup on demand.
       if (pathname === '/api/settings/retention' && req.method === 'POST') {
         const b = await body(req), retention = normalizeRetention(b);
         db.put('settings', { ...(db.get('settings', 'main') || {}), id: 'main', retention });

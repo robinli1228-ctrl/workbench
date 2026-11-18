@@ -4472,7 +4472,7 @@ dialog.media-lightbox .media-nav-next { right: 10px; }
 html[data-share] #project-sidebar, html[data-share] #toggle-project-sidebar, html[data-share] #toggle-project-sidebar-collapse,
 html[data-share] #navigation-mode, html[data-share] #show-app-settings, html[data-share] #mobile-projects, html[data-share] #show-project-settings,
 html[data-share] #native-session-settings, html[data-share] #settings-page, html[data-share] #add-role-sidebar,
-html[data-share] #project-splitter { display: none !important; }
+html[data-share] #project-splitter, html[data-share] #project-tab-share, html[data-share] #project-panel-share { display: none !important; }
 /* The layout itself follows the page's own "project list hidden" state, which app.js forces on share links. */
 /* Read-only links have no message box (the gateway refuses writes on them as well). */
 html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-session-footer { display: none !important; }

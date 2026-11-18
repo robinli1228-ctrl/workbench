@@ -121,6 +121,8 @@ export function createGateway({ config, auth, readHomeToken }) {
         if (wanted && new URLSearchParams(query).toString() !== new URLSearchParams(wanted.slice(2)).toString()) { res.writeHead(302, { location: wanted, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); return res.end(); }
         if (!shared && new URLSearchParams(query).has('share')) { res.writeHead(302, { location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); return res.end(); }
       }
+      // 分享链接只归主人管：访客页面不显示分享 tab，这里也不放行，访客既看不到别的链接，也不能再生成新链接。
+      if (shared && (pathname === '/api/shares' || pathname.startsWith('/api/shares/'))) return json(res, 403, { error: '访客不能管理分享链接' });
       // 只读分享只放行读取；页面另外藏起输入框，这里保证真的发不出去。
       if (shared?.share.mode === 'ro' && !['GET', 'HEAD'].includes(req.method)) return json(res, 403, { error: '这个分享是只读的' });
       if (pathname === '/_access/logout' && req.method === 'POST') {

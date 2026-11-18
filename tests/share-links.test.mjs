@@ -12,6 +12,7 @@ import { createGateway } from '../modules/remote-access/src/gateway.mjs';
 import { Store } from '../src/store.mjs';
 import { Rooms } from '../src/rooms.mjs';
 import { turnOrigin } from '../src/run-context.mjs';
+import { tr } from '../src/i18n.mjs';
 import { shareTimeLeft, shareQuery } from '../public/share-settings.js';
 
 const DAY = 86400000;
@@ -90,6 +91,12 @@ test('a share link opens without the password, scoped page in the URL, and read-
     const rw = await h.auth.createShare({ scope, mode: 'rw', ttlMs: DAY });
     const rwCookie = String((await h.request(`/s/${rw.token}`)).headers['set-cookie']).split(';')[0];
     assert.equal((await h.request('/api/projects/p1/messages', { method: 'POST', cookie: rwCookie, body: '{}' })).status, 200);
+    // Only the owner manages links: a guest can neither list them nor make or end one, whatever the link allows.
+    const before = h.seen.length;
+    for (const [path, method, guest] of [['/api/shares?kind=group&projectId=p1', 'GET', cookie], ['/api/shares', 'POST', rwCookie], [`/api/shares/${ro.id}/revoke`, 'POST', rwCookie]]) {
+      assert.equal((await h.request(path, { method, cookie: guest, body: method === 'POST' ? '{}' : undefined })).status, 403);
+    }
+    assert.equal(h.seen.length, before);
     // Revoked: the link and the cookie it gave both end with a plain notice, not the password page.
     await h.auth.revokeShare(ro.id);
     assert.equal((await h.request(`/s/${ro.token}`, { accept: 'text/html' })).status, 410);
@@ -144,7 +151,7 @@ test('guests sign with their own name; the owner with the user name; roles see w
   db.put('roles', { id: 'a', projectId: P, name: 'Dev', enabled: true, configured: true, nodeId: N, runtime: 'claude', model: 'haiku' });
   const rooms = new Rooms(db); rooms.touch = () => {};
   const mine = rooms.post(P, { clientMessageId: 'm1', text: '@Dev hello' });
-  assert.equal(mine.senderName, 'Me');
+  assert.equal(mine.senderName, tr('rooms.me'));
   assert.equal(mine.guest, undefined);
   db.put('settings', { id: 'main', ownerName: 'Xiaoming' });
   assert.equal(rooms.post(P, { clientMessageId: 'm2', text: '@Dev again' }).senderName, 'Xiaoming');
