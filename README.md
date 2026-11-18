@@ -207,4 +207,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before contri
 
 [MIT](LICENSE).
 
-The page header and installed-app icons share the blue-and-silver stacked-terminal mark, with a larger foreground window and balanced rear-window exposure, maintained in `assets/app-icon.svg`. The complete mark is centered at 90% scale within the icon canvas.
+The page header and installed-app icons share the blue-and-silver stacked-terminal mark, with a larger foreground window and balanced rear-window exposure, maintained in `assets/app-icon.svg`. The complete mark is centered at 81% scale within the icon canvas. A matching `assets/app-icon.icns` export is available for macOS app packaging.

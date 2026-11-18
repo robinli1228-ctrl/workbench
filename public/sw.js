@@ -4,6 +4,7 @@ const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
+  '/share-mode.js', '/share-settings.js',
   '/group-conversations.js',
   '/model-usage.js',
   '/quota-state.js',
@@ -23,7 +24,7 @@ const STATIC = [
   '/platform-admin.js', '/configuration-information.js', '/project-space.js', '/platform-memory.js', '/token-usage.js', '/run-log-data.js', '/room.js', '/ask-card.js',
   '/markdown.js', '/media.js', '/local-browser.js', '/device-access.js', '/project-settings.js', '/role-icons.js', '/settings-page.js',
   '/supervisor-settings.js', '/elapsed.js', '/send-state.js', '/permission-scope.js', '/role-templates.js', '/role-switch.js', '/role-history.js', '/project-setup.js', '/history-view.js', '/scheduled-jobs.js',
-  '/git-version.js', '/plan-dock.js', '/agent-codex.png', '/agent-antigravity.png',
+  '/git-version.js', '/agent-codex.png', '/agent-antigravity.png',
   '/document.html', '/document.js', '/workspace-inspector.js', '/concurrent-writes.js', '/state-data.js', '/execution-progress.js', '/live-scene.js',
   '/i18n.js', '/locales/zh.js', '/locales/native-takeover-zh.js', '/browser-token.js', '/source-sync.js',
   '/output-language.js', '/vendor/opencc-t2cn.js', '/cli-recovery.js', '/session-queue.js', '/question-answer.js', '/load-bar.js'
@@ -53,6 +54,13 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   // Cache public static assets only; APIs carrying chats, tasks and credentials always go to Home.
   if (url.origin !== self.location.origin || !staticPaths.has(url.pathname)) return;
+  // Opening the page goes to the network first: through remote access the gateway answers a navigation itself (a share
+  // link's address, the owner leaving a share address, the notice for an expired link, the login page). The cached page
+  // is only the offline fallback; scripts and styles below stay cache-first.
+  if (request.mode === 'navigate') {
+    event.respondWith(fetch(request).catch(async () => (await (await caches.open(CACHE)).match('/')) || Response.error()));
+    return;
+  }
   // Cache first: Home puts a fingerprint of every page file into CACHE, so a changed file always arrives as a new service
   // worker with a fresh cache, and a cached copy is never stale within its version. Only files missing from the cache
   // (optional images, or a precache that failed) go to the network.

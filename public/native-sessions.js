@@ -22,6 +22,8 @@ import {taskNotificationOf,cleanUserText,commandOf,isHistoryPrompt,isCompactSumm
 import {cachedHistory,saveHistory,forgetHistory,compactHistoryPage} from './history-cache.js';
 import {classifyStep,activityBlock,taskBlock,createPreviewSheet,elapsedText,stepTitle,stepIcon,fileChips,historyTurns,nativeInterruptionText,attachInterruptionNotices,resolveToolFile,toolFilePaths,historyContainsReply} from './native-transcript.js';
 import {deviceAccessRows} from './device-access.js';
+import {createSharePanel} from './share-settings.js';
+import {share} from './share-mode.js';
 import {createAskCard} from './ask-card.js';
 import {answerContent,answerPlainText,answerRows} from './question-answer.js';
 
@@ -452,7 +454,10 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  }
  function options(select,values){const old=select.value;select.replaceChildren(...values.map(([value,label])=>{const o=el('option','',label);o.value=value;return o;}));if(values.some(([v])=>v===old))select.value=old;}
  // First visit shows dialog-created sessions; options() preserves any explicit choice on later refreshes.
- function populate(){const signature=JSON.stringify((getData().workers||[]).map(w=>[w.id,w.name,w.online,w.nodeKind,w.runtimes?.map(r=>[r.type,r.available,r.supported])]));if(signature===lastCatalog)return false;lastCatalog=signature;options(device,[['created',t('Created sessions')],['all',t('All sessions')],['group',t('Group chats')],['local',t('Local machine')],['cloud',t('Servers')],['other',t('Other devices')]]);options(tool,[['all',t('All Agents')],...Object.entries(names)]);return true;}
+ function populate(){const signature=JSON.stringify((getData().workers||[]).map(w=>[w.id,w.name,w.online,w.nodeKind,w.runtimes?.map(r=>[r.type,r.available,r.supported])]));if(signature===lastCatalog)return false;lastCatalog=signature;options(device,[['created',t('Created sessions')],['all',t('All sessions')],['group',t('Group chats')],['local',t('Local machine')],['cloud',t('Servers')],['other',t('Other devices')]]);options(tool,[['all',t('All Agents')],...Object.entries(names)]);
+  // A shared session may be a group-chat role's or a taken-over one: list every kind so the guest's session is found.
+  if(share?.kind==='native'&&!device.dataset.shareScoped){device.value='all';device.dataset.shareScoped='1';}
+  return true;}
  function workers(){return(getData().workers||[]).filter(w=>['all','created','group'].includes(device.value)||(device.value==='other'?!['local','cloud'].includes(w.nodeKind):w.nodeKind===device.value));}
  /** Keep the selected name in the shared header, including after state refreshes and selection resets. */
  function renderTitle(){onSelect();if(!active()||document.body.dataset.workspaceView==='settings')return;const title=document.querySelector('#workspace-title');title.translate=!selected;title.textContent=selected?displayTitle(selected):t('Native sessions');gear.disabled=!selected;}
@@ -508,7 +513,8 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   // back to its top row. A selection already made is never replaced, and a partial catalogue never pre-empts the remembered one.
   const autoSelect=(settled=false)=>{if(selected||dialog.open||!items.length||ticket!==version)return;
    let wanted=null;try{wanted=sessionStorage.getItem(SELECTION_KEY);}catch{}
-   const next=(wanted&&items.find(item=>key(item)===wanted))||(settled?listOrder.ordered(groupNativeSessions(items),group=>group.id.startsWith('conversation:')?group.id:key(group.latest))[0]?.latest:null);
+   // A share link shows only its own session, never the top row in its place.
+   const next=(wanted&&items.find(item=>key(item)===wanted))||(settled&&!share?listOrder.ordered(groupNativeSessions(items),group=>group.id.startsWith('conversation:')?group.id:key(group.latest))[0]?.latest:null);
    if(next)void read(next);};
   // 首次/切换筛选先显示 Home 保存的目录；不等待远端，也不把预览当成新鲜的历史核验。
   if((!quiet||!previous.length)&&getData().capabilities?.nativeCatalogCache===1){
@@ -846,7 +852,20 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    catch(error){accessNote.className='global-error';accessNote.textContent=t(error.message);}
   }}));
   access.append(accessRows,accessNote);
-  body.append(nameCard,access,repo,agents,fork);dialog.append(body);renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
+  body.append(nameCard,access,repo,agents,fork);
+  // Basic | Share tabs: share links for this one session (read-only or open to messages, at most 15 days). A share page
+  // never offers the Share tab: only the owner makes or ends links.
+  if(share)dialog.append(body);
+  else{
+   const sharePanel=createSharePanel({api,t,scope:()=>({kind:'native',nodeId:value.nodeId,runtime:value.runtime,sessionId:nativeId(value)||'',entryId:value.entryId||'',title:value.title||''}),
+    hint:t('Read-only: guests can only watch. Open to messages: guests can type into this session.')});
+   const sharePane=el('div','native-settings-dialog native-share-pane');sharePane.hidden=true;sharePane.append(sharePanel.root);
+   const tabs=el('div','settings-tabs native-settings-tabs');tabs.setAttribute('role','tablist');
+   const tab=(label,pane)=>{const b=button(label,()=>{for(const other of tabs.children)other.setAttribute('aria-selected',String(other===b));body.hidden=pane!==body;sharePane.hidden=pane!==sharePane;if(pane===sharePane)void sharePanel.load();},'settings-tab');b.setAttribute('role','tab');b.setAttribute('aria-selected',String(pane===body));return b;};
+   tabs.append(tab('Basic',body),tab('Share',sharePane));
+   dialog.append(tabs,body,sharePane);
+  }
+  renderGit(value);renderAgents(value);if(!gitCache.get(key(value)))void loadGit(value);dialog.showModal();
  }
  /** A branch says where it came from at the top of its transcript, with a way back to the original (a Codex branch shows
   * only its own turns; the conversation before the fork lives in the original). */

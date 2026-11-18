@@ -1,4 +1,7 @@
+// First: a share link points the saved selection at the shared chat or session before anything below reads it.
+import './share-mode.js';
 import {copyText,pendingAction,bindPendingAction,bindCopyFeedback} from './role-icons.js';
+import {createSharePanel} from './share-settings.js';
 import {createDocumentPreview} from './side-preview.js';
 import {deliveryRepositorySummary} from './delivery-summary.js';
 import {renderRetiredCommandWarning} from './retired-commands.js';
@@ -38,7 +41,6 @@ import { tokenUsageUI } from './token-usage.js';
 import { createScheduledJobsUI } from './scheduled-jobs.js';
 import { formatGitVersionStatus, formatProjectGitSummary } from './git-version.js';
 import { runTimeline, formatTokenMillions, partitionRunLog, displayRunInput, contextUsageLabel, mergeRunEvents, shouldShowFinalResult, toolStatusLabel, stripAnsi, taskRunDisplayStatus } from './run-log-data.js';
-import { planDismissKey, planDockState, planMemberLabel, planStageActivity, planActivity } from './plan-dock.js';
 import {createWorkspaceInspector,initWorkspaceColumns} from './workspace-inspector.js';
 import {applyStateUpdate} from './state-data.js';
 import { TOKEN_KEY, readApiToken, saveApiToken } from './browser-token.js';
@@ -140,7 +142,6 @@ for (const [id, name, label] of [
   ['refresh-state', 'refresh', 'Refresh'],
   ['show-project-settings', 'gear', 'Project Settings'],
   ['toggle-inspector', 'panel', 'Hide right panel'],
-  ['show-history', 'history', 'History'],
   ['add-role-sidebar', 'plus', 'Add role'],
   ['refresh-role-status', 'refresh', 'Refresh role status and remaining quota']
 ]) {
@@ -293,6 +294,8 @@ window.visualViewport?.addEventListener('resize', viewportHeight); window.addEve
 
 const remoteAccessUI=createRemoteAccessSettingsUI({root:document.querySelector('#remote-access-settings'),api});
 function openSettings(value = 'general') {
+  // A share link has no settings page (it is hidden), so entries that would open it do nothing there.
+  if (document.documentElement.dataset.share) return;
   let tab = normalizeSettingsTab(value);
   if (tab === 'project' && !projectsUI.prepareSettings()) tab = 'general';
   dom.projectFormPanel.hidden = true;
@@ -304,7 +307,9 @@ function openSettings(value = 'general') {
   if (tab === 'usage') tokenUI.show({resetScroll:true});
   if (tab === 'data') dataUI.show();
   if (tab === 'memory') { renderMemoryOrganizer(); void memoryUI.load(); }
-  if (tab === 'general') void remoteAccessUI.refresh();
+  // Both read panels set up near the end of this module; a call during start-up simply skips them.
+  if (tab === 'general') { void remoteAccessUI.refresh(); try { fillOwnerName(); } catch {} }
+  if (tab === 'project') try { refreshProjectShare(); } catch {}
   if (tab === 'timers') schedulesUI.show();
   if (tab === 'prompts') renderPlatformPrompts();
   mobilePanel('chat');
@@ -323,7 +328,6 @@ function openTask(taskId,runId=null) {
   runOriginal.close();originalRunSnapshot=null;
   app.selectedTaskId = taskId; app.events = []; app.files = []; app.detailTab = 'output'; app.detailRunId = null; app.loadedRunId = null; app.requestVersion++;
   app.pinnedDetailRunId=app.data.runs.some(r=>r.id===runId&&r.taskId===taskId)?runId:null;
-  document.querySelector('#history-dialog').close();
   if (!dom.runDialog.open) dom.runDialog.showModal();
   renderTaskDetail(); void refreshRunDetails();
 }
@@ -412,7 +416,14 @@ async function api(path, options = {}) {
     : await response.text();
 
   if (!response.ok) {
-    if(response.status===401 && !app.authPromptShown) {
+    // On a share link a 401 means the link expired or was revoked: reload, and the gateway answers with that notice
+    // instead of the page asking a guest for Home's access token.
+    if(response.status===401 && document.documentElement.dataset.share) {
+      // At most one reload in 15 s, so a 401 from Home itself cannot loop the page.
+      let last=0;try{last=Number(sessionStorage.getItem('agent-workbench.share-reload')||0);}catch{}
+      if(!app.shareEnded&&Date.now()-last>15000){app.shareEnded=true;try{sessionStorage.setItem('agent-workbench.share-reload',String(Date.now()));}catch{}location.reload();}
+    }
+    else if(response.status===401 && !app.authPromptShown) {
       app.authPromptShown=true;
       const dialog=document.querySelector('#api-token-dialog');
       if(dialog && !dialog.open)dialog.showModal();
@@ -646,7 +657,6 @@ function render() {
   teamCopyUI.sync();
   renderRoles();
   renderProjectGitVersion();
-  renderExecutionPlans();
   schedulesUI.refresh();
   renderSettingsDevices();
   renderOnlineDevices();
@@ -664,87 +674,6 @@ function render() {
   nativeSessionUI.sync();
 }
 
-const DISMISSED_PLANS_KEY = 'agent-workbench.dismissed-plans';
-let dismissedPlanKeys;
-try {
-  const stored = JSON.parse(localStorage.getItem(DISMISSED_PLANS_KEY) || '[]');
-  dismissedPlanKeys = Array.isArray(stored) ? stored.filter(key => typeof key === 'string') : [];
-} catch { dismissedPlanKeys = []; }
-function saveDismissedPlans() {
-  try { localStorage.setItem(DISMISSED_PLANS_KEY, JSON.stringify(dismissedPlanKeys)); } catch { /* Even when storage is unavailable, this page can still be closed. */ }
-}
-document.querySelector('#show-plan-history').innerHTML = UI_ICON.log;
-document.querySelector('#show-plan-history').addEventListener('click', () => {
-  const projectPlans = new Set(planDockState(app.data.executionPlans, app.data.requests, app.selectedProjectId).plans.map(planDismissKey));
-  dismissedPlanKeys = dismissedPlanKeys.filter(key => !projectPlans.has(key));
-  saveDismissedPlans();
-  mobilePanel('chat');
-  renderExecutionPlans();
-  const details = document.querySelector('#execution-plans details');
-  if (details) { details.open = true; details.querySelector('summary')?.focus(); }
-});
-
-/** Show only the supervisor's latest project plan; closing is a display preference of this browser only and does not change scheduling. */
-function renderExecutionPlans() {
-  const panel=document.querySelector('#execution-plans');
-  const state=planDockState(app.data.executionPlans,app.data.requests,app.selectedProjectId,dismissedPlanKeys);
-  document.querySelector('#show-plan-history').hidden=!state.plans.some(plan=>dismissedPlanKeys.includes(planDismissKey(plan)));
-  const previous=panel.querySelector('details');
-  const open=panel.dataset.projectId===app.selectedProjectId && Boolean(previous?.open);
-  panel.replaceChildren();panel.hidden=!state.current;if(!state.current)return;
-  panel.dataset.projectId=app.selectedProjectId;
-  const details=document.createElement('details');details.open=open;
-  const summary=document.createElement('summary');
-  const activity=plan=>planActivity(plan,app.data.requests||[],app.data.runs||[],app.data.tasks||[]);
-  const title=document.createElement('strong');title.textContent=t('Manager plan · {currentStage}', { currentStage: t(state.currentStage) });
-  const progress=document.createElement('span');progress.className='execution-progress';progress.textContent=`${state.completed}/${state.total}`;
-  const badge=document.createElement('span');badge.className='execution-status';badge.textContent=t(activity(state.current).label);
-  summary.append(title,progress,badge);details.append(summary);panel.append(details);
-  panel.style.setProperty('--plan-progress',String(state.total?state.completed/state.total:0));
-  if(state.dismissible.some(plan=>plan.id===state.current.id)) {
-    const close=create('button','execution-plan-close');close.type='button';close.title='Close finished plan';close.setAttribute('aria-label','Close finished plan');
-    close.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
-    close.onclick=()=>{
-      // Closes this round only; old plans do not take its place and their execution status is unchanged.
-      dismissedPlanKeys=[...new Set([...dismissedPlanKeys,...state.dismissible.map(planDismissKey)])];
-      saveDismissedPlans();renderExecutionPlans();document.querySelector('#chat-text')?.focus({preventScroll:true});
-    };
-    panel.classList.add('is-dismissible');panel.append(close);
-  } else panel.classList.remove('is-dismissible');
-  const list=document.createElement('div');list.className='execution-plan-list';details.append(list);
-  const count=document.createElement('p');count.className='execution-plan-count';count.textContent='Legacy plan history · read only';
-  list.append(count);
-  for(const plan of state.plans) {
-    const item=document.createElement('section');item.className='execution-plan-item';
-    const progress=activity(plan);
-    const heading=document.createElement('h3');heading.textContent=`${plan.reason} · ${t(progress.label)}`;
-    item.append(heading);
-    const note=plan.error||plan.waitingReason||progress?.reason||plan.fallbackReason;
-    if(note){const p=document.createElement('p');p.textContent=note;item.append(p);}
-    if((plan.deliveryIds||[]).some(id=>{
-      const delivery=(app.data.deliveries||[]).find(d=>d.id===id);
-      return delivery&&!delivery.approvedAt&&['waiting_source','awaiting_approval'].includes(delivery.status);
-    })) {
-      const p=document.createElement('p');p.textContent='Git delivery awaits confirmation; review and act in the run details';item.append(p);
-    }
-    for(const stage of plan.stages||[]) {
-      const row=document.createElement('div');row.className='execution-stage';
-      const label=document.createElement('span');
-      const mode=stage.exclusive?'Exclusive serial':stage.mode==='parallel' && plan.isolated!==false?'Parallel':'Sequential';
-      label.textContent=`${stage.index+1}. ${stage.title} · ${t(mode)} · ${t(planStageActivity(stage,app.data.requests||[],app.data.runs||[],app.data.tasks||[]).label)}`;
-      const members=document.createElement('small');
-      members.textContent=(stage.members||[]).map(m=>{
-        let request=(app.data.requests||[]).find(r=>r.id===m.requestId);
-        for(let i=0;request?.continuationRequestId&&i<20;i++)request=(app.data.requests||[]).find(r=>r.id===request.continuationRequestId);
-        const task=app.data.tasks.find(t=>t.id===request?.taskId);
-        const run=(app.data.runs||[]).find(r=>r.id===request?.currentRunId);
-        return `@${m.role} ${t(planMemberLabel(request,run,task))}`;
-      }).join(' · ');
-      row.append(label,members);item.append(row);
-    }
-    list.append(item);
-  }
-}
 
 function renderProjects() {
   if(projectOrder.active())return;
@@ -2149,7 +2078,8 @@ function startSse() {
 
 const SIDEBAR_KEY = 'agent-workbench.project-sidebar';
 function setProjectSidebarMode(mode) {
-  const next = ['expanded', 'collapsed', 'hidden'].includes(mode) ? mode : 'expanded';
+  // A share link never shows the project list; the stylesheet's own "hidden" layout then fits every inspector state.
+  const next = document.documentElement.dataset.share ? 'hidden' : ['expanded', 'collapsed', 'hidden'].includes(mode) ? mode : 'expanded';
   document.body.dataset.projectSidebar = next;
   sessionStorage.setItem(SIDEBAR_KEY, next);
   const toggle = document.querySelector('#toggle-project-sidebar');
@@ -2196,8 +2126,6 @@ document.querySelector('#show-project-form').addEventListener('click', () => nat
 document.querySelector('#empty-create-project').addEventListener('click', () => showProjectForm(true));
 document.querySelector('#close-project-form').addEventListener('click', () => showProjectForm(false));
 document.querySelector('#cancel-project').addEventListener('click', () => showProjectForm(false));
-document.querySelector('#show-history').addEventListener('click', () => { renderTasks(); document.querySelector('#history-dialog').showModal(); });
-document.querySelector('#close-history').addEventListener('click', () => document.querySelector('#history-dialog').close());
 document.querySelector('#close-device-edit').addEventListener('click', () => document.querySelector('#device-edit-dialog').close());
 document.querySelector('#device-edit-dialog').addEventListener('close', () => document.querySelector('#device-edit-content').replaceChildren());
 document.querySelector('#close-run').addEventListener('click', () => { dom.runDialog.close(); app.requestVersion++; });
@@ -2245,6 +2173,27 @@ document.querySelector('#show-scheduled-jobs')?.addEventListener('click', () => 
 document.querySelector('#open-project-timers')?.addEventListener('click', () => { schedulesUI.select(getCurrentProject()?.id || ''); openSettings('timers'); });
 document.querySelector('#close-settings-page')?.addEventListener('click', closeSettings);
 initProjectSettingsTabs(dom.settingsPage);
+// Share tab: links for the sub-chat that was open when the settings opened (several sub-chats share one project's settings).
+const projectShareScope=()=>({kind:'group',projectId:app.selectedProjectId||'',conversationId:app.selectedConversationId||app.selectedProjectId||''});
+const projectSharePanel=createSharePanel({api,t,scope:projectShareScope,hint:t('Read-only: guests can only watch. Open to messages: guests type a name when they open the link, then can send messages and @ roles.')});
+const projectShareHeading=create('p','share-heading');
+document.querySelector('#project-share-panel')?.append(projectShareHeading,projectSharePanel.root);
+function refreshProjectShare(){
+  const title=app.data.conversations?.find(c=>c.id===projectShareScope().conversationId)?.title||getCurrentProject()?.name||'';
+  projectShareHeading.textContent=t('Sharing: {title}',{title});void projectSharePanel.load();
+}
+document.querySelector('#project-tab-share')?.addEventListener('click',refreshProjectShare);
+// User name: shown as the sender of the owner's messages (empty keeps "Me").
+const ownerNameInput=document.querySelector('#owner-name-input');
+function fillOwnerName(){if(ownerNameInput&&document.activeElement!==ownerNameInput)ownerNameInput.value=app.data?.settings?.ownerName||'';}
+{
+  const input=ownerNameInput,note=document.querySelector('#owner-name-feedback');
+  input?.addEventListener('change',async()=>{
+    note.hidden=false;note.textContent=t('Saving…');
+    try{const saved=await api('/api/settings/owner-name',{method:'POST',json:{ownerName:input.value}});app.data.settings={...app.data.settings,ownerName:saved.ownerName};input.value=saved.ownerName;note.textContent=t('Saved');render();}
+    catch(error){note.textContent=t(error.message);}
+  });
+}
 dom.settingsPage?.querySelectorAll('[data-settings-tab]').forEach(button => {
   button.addEventListener('click', () => openSettings(button.dataset.settingsTab));
 });
