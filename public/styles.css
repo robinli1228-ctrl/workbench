@@ -4476,19 +4476,24 @@ html[data-share] #project-splitter, html[data-share] #project-tab-share, html[da
 html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-session-footer { display: none !important; }
 
 /* Share tab (group chat and session settings). */
-.share-panel { display: grid; gap: 12px; padding: 4px 0; }
-.share-heading { margin: 0; font-weight: 700; }
-.share-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.share-row-label { width: 72px; color: var(--muted); }
-.share-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.share-chip { min-height: 32px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink); }
-.share-chip[aria-pressed="true"] { border-color: var(--green); background: var(--green-soft); color: var(--green-dark); font-weight: 700; }
-.share-hint { margin: -4px 0 0 84px; }
-.share-links-title { margin: 8px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
-.share-links { display: grid; gap: 8px; }
-.share-link { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
-.share-url { flex: 1; min-width: 200px; font-size: 13px; word-break: break-all; }
-.share-tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: #eef1ef; color: var(--muted); white-space: nowrap; }
-.share-tag.is-open { background: #fff4e5; color: var(--warning); }
-.share-left { font-size: 12px; color: var(--muted); white-space: nowrap; }
+/* The panel is made of the settings list parts (cards, rows, segmented control, chips), so it follows the other tabs;
+   only the link rows and the session dialog need lines of their own. */
+.share-url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.share-panel .settings-row-actions { gap: 8px; }
+.share-panel button.share-revoke { color: var(--danger); border-color: #edc7cc; background: #fff; }
+.share-panel button.share-revoke:hover:not(:disabled) { border-color: var(--danger); background: #fff5f5; }
+/* In the session settings dialog the same parts take the dialog's section look (heading from .native-settings-section). */
+.native-share-pane .share-panel { display: grid; gap: 18px; }
+.native-share-pane .settings-list-head p { margin: 0 0 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.native-share-pane .settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 44px; padding: 6px 0; border-top: 1px solid var(--line); }
+.native-share-pane .settings-row-label { flex: 0 0 72px; color: var(--ink); font-size: 13px; font-weight: 550; }
+.native-share-pane .settings-row-label small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.native-share-pane .settings-row-value { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.native-share-pane .settings-row-value.muted { color: var(--muted); font-size: 12px; }
+.native-share-pane .settings-row-main { flex: 1 1 160px; min-width: 0; }
+.native-share-pane .settings-row-main > strong { display: block; color: var(--ink); font-size: 13px; font-weight: 550; }
+.native-share-pane .settings-row-main > small { display: block; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.native-share-pane .settings-row-actions { display: flex; flex: none; align-items: center; margin-left: auto; }
+.native-share-pane .settings-row .secondary { margin-top: 0; }
+.native-share-pane :is(.settings-list-note, .settings-list-empty) { margin: 0; padding: 8px 0 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .native-settings-tabs { margin: 0 0 12px; }
