@@ -48,6 +48,7 @@ export function createRemoteAccessSettings({ configFile, homeOrigin, now = Date.
     }
     const result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     // Do not forward raw service/configuration errors, which can include private paths.
+    if (response.status === 429 && route.startsWith('shares')) throw failure('Too many valid share links; revoke the ones you no longer need.', 429);
     if (!response.ok) throw failure(response.status === 400 ? 'Check the server settings or set an access password first.' : 'Operation failed. Check local relay status before retrying.', response.status === 400 ? 400 : 503);
     return result;
   }

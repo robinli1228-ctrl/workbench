@@ -59,8 +59,8 @@ async function gatewayHarness() {
   const config = { publicOrigin: 'https://xxxxx.example.com', homeUrl: `http://127.0.0.1:${home.address().port}` };
   const gateway = createGateway({ config, auth, readHomeToken: async () => 'home-token' });
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve));
-  const request = (path, { method = 'GET', cookie = '', accept = 'application/json', body } = {}) => new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port: gateway.address().port, path, method, headers: { host: 'xxxxx.example.com', accept, ...(cookie ? { cookie } : {}), ...(method !== 'GET' ? { origin: 'https://xxxxx.example.com', 'content-type': 'application/json' } : {}) } }, res => {
+  const request = (path, { method = 'GET', cookie = '', accept = 'application/json', body, headers = {} } = {}) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: gateway.address().port, path, method, headers: { host: 'xxxxx.example.com', accept, ...(cookie ? { cookie } : {}), ...(method !== 'GET' ? { origin: 'https://xxxxx.example.com', 'content-type': 'application/json' } : {}), ...headers } }, res => {
       let text = ''; res.on('data', chunk => { text += chunk; }); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text }));
     });
     req.on('error', reject); req.end(body);
@@ -97,6 +97,29 @@ test('a share link opens without the password, scoped page in the URL, and read-
     assert.equal(stale.status, 410);
     assert.match(stale.text, /这个分享已过期或已被撤销/);
     assert.equal((await h.request('/api/state', { cookie })).status, 401);
+  } finally { await h.close(); }
+});
+
+test('a link clicked on another site opens; a guest is kept on the share address; the owner never enters share mode', async () => {
+  const h = await gatewayHarness();
+  try {
+    const share = await h.auth.createShare({ scope, mode: 'ro', ttlMs: DAY });
+    const crossSite = { 'sec-fetch-site': 'cross-site' };
+    const opened = await h.request(`/s/${share.token}`, { accept: 'text/html', headers: { ...crossSite, 'sec-fetch-mode': 'navigate' } });
+    assert.equal(opened.status, 302);
+    assert.equal((await h.request('/api/state', { headers: { ...crossSite, 'sec-fetch-mode': 'cors' } })).status, 403);
+    const cookie = String(opened.headers['set-cookie']).split(';')[0], wanted = opened.headers.location;
+    // A bookmark or home-screen icon opening "/" lands on the share address again.
+    const home = await h.request('/', { cookie, accept: 'text/html' });
+    assert.deepEqual([home.status, home.headers.location], [302, wanted]);
+    assert.equal((await h.request(wanted, { cookie, accept: 'text/html' })).status, 200);
+    // The owner, logged in, clicking the link stays the owner: no share cookie, and share addresses lead home.
+    const login = await h.request('/_access/login', { method: 'POST', body: JSON.stringify({ password: 'a long enough password' }) });
+    const owner = String(login.headers['set-cookie']).split(';')[0];
+    const ownerClick = await h.request(`/s/${share.token}`, { cookie: owner, accept: 'text/html' });
+    assert.deepEqual([ownerClick.status, ownerClick.headers.location, ownerClick.headers['set-cookie']], [302, '/', undefined]);
+    const ownerShareUrl = await h.request(wanted, { cookie: owner, accept: 'text/html' });
+    assert.deepEqual([ownerShareUrl.status, ownerShareUrl.headers.location], [302, '/']);
   } finally { await h.close(); }
 });
 

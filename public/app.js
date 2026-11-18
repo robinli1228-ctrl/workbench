@@ -296,6 +296,8 @@ window.visualViewport?.addEventListener('resize', viewportHeight); window.addEve
 
 const remoteAccessUI=createRemoteAccessSettingsUI({root:document.querySelector('#remote-access-settings'),api});
 function openSettings(value = 'general') {
+  // A share link has no settings page (it is hidden), so entries that would open it do nothing there.
+  if (document.documentElement.dataset.share) return;
   let tab = normalizeSettingsTab(value);
   if (tab === 'project' && !projectsUI.prepareSettings()) tab = 'general';
   dom.projectFormPanel.hidden = true;
@@ -417,7 +419,14 @@ async function api(path, options = {}) {
     : await response.text();
 
   if (!response.ok) {
-    if(response.status===401 && !app.authPromptShown) {
+    // On a share link a 401 means the link expired or was revoked: reload, and the gateway answers with that notice
+    // instead of the page asking a guest for Home's access token.
+    if(response.status===401 && document.documentElement.dataset.share) {
+      // At most one reload in 15 s, so a 401 from Home itself cannot loop the page.
+      let last=0;try{last=Number(sessionStorage.getItem('agent-workbench.share-reload')||0);}catch{}
+      if(!app.shareEnded&&Date.now()-last>15000){app.shareEnded=true;try{sessionStorage.setItem('agent-workbench.share-reload',String(Date.now()));}catch{}location.reload();}
+    }
+    else if(response.status===401 && !app.authPromptShown) {
       app.authPromptShown=true;
       const dialog=document.querySelector('#api-token-dialog');
       if(dialog && !dialog.open)dialog.showModal();
@@ -2154,7 +2163,8 @@ function startSse() {
 
 const SIDEBAR_KEY = 'agent-workbench.project-sidebar';
 function setProjectSidebarMode(mode) {
-  const next = ['expanded', 'collapsed', 'hidden'].includes(mode) ? mode : 'expanded';
+  // A share link never shows the project list; the stylesheet's own "hidden" layout then fits every inspector state.
+  const next = document.documentElement.dataset.share ? 'hidden' : ['expanded', 'collapsed', 'hidden'].includes(mode) ? mode : 'expanded';
   document.body.dataset.projectSidebar = next;
   sessionStorage.setItem(SIDEBAR_KEY, next);
   const toggle = document.querySelector('#toggle-project-sidebar');

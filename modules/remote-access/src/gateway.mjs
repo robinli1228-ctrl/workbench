@@ -53,6 +53,12 @@ function notice(res, status, title, detail) {
   res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><div style="font:15px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:72px 20px;color:#68736d"><strong style="display:block;color:#17201b;font-size:17px;margin-bottom:6px">${title}</strong>${detail}</div>`);
 }
 const shareEnded = res => notice(res, 410, '这个分享已过期或已被撤销', '请联系分享给你的人重新发一个链接。');
+/** 分享页的唯一地址：网关据此把访客固定在这一个群聊或会话上，页面只按这个地址进入分享模式。 */
+function shareLocation(share) {
+  const params = new URLSearchParams({ share: share.scope.kind === 'native' ? 'native' : 'group', mode: share.mode });
+  for (const key of shareScopeKeys) if (typeof share.scope[key] === 'string' && share.scope[key]) params.set(key, share.scope[key]);
+  return `/?${params}`;
+}
 
 /** 公网只进入该监听器；本机设置在另一个从不转发的监听器中。 */
 export function createGateway({ config, auth, readHomeToken }) {
@@ -65,7 +71,9 @@ export function createGateway({ config, auth, readHomeToken }) {
   const server = http.createServer(async (req, res) => {
     try {
       const publicOrigin = new URL(config.publicOrigin), home = new URL(config.homeUrl);
-      if (req.headers.host !== publicOrigin.host || (req.headers.origin && req.headers.origin !== publicOrigin.origin) || req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: '访问来源不匹配' });
+      // 别的网站上点开的链接是跨站的顶层导航（GET），要放行，分享链接正是这样被打开的；跨站的其他读取和所有写请求仍拒绝。
+      const navigation = ['GET', 'HEAD'].includes(req.method) && req.headers['sec-fetch-mode'] === 'navigate';
+      if (req.headers.host !== publicOrigin.host || (req.headers.origin && req.headers.origin !== publicOrigin.origin) || (req.headers['sec-fetch-site'] === 'cross-site' && !navigation)) return json(res, 403, { error: '访问来源不匹配' });
       if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return json(res, 405, { error: '请求方式不支持' });
       if (!['GET', 'HEAD'].includes(req.method) && req.headers.origin !== publicOrigin.origin) return json(res, 403, { error: '写请求必须来自本站' });
       const { pathname, upstreamPath } = route(req);
@@ -88,10 +96,10 @@ export function createGateway({ config, auth, readHomeToken }) {
       if (link && ['GET', 'HEAD'].includes(req.method)) {
         const shared = await auth.verifyShare(link[1]);
         if (!shared) return shareEnded(res);
-        const params = new URLSearchParams({ share: shared.share.scope.kind === 'native' ? 'native' : 'group', mode: shared.share.mode });
-        for (const key of shareScopeKeys) if (typeof shared.share.scope[key] === 'string' && shared.share.scope[key]) params.set(key, shared.share.scope[key]);
+        // 主人自己点开分享链接时仍是主人：不种分享 Cookie，直接回到普通页面（预览分享效果请用无痕窗口）。
+        if (await auth.verify(cookie(req))) { res.writeHead(302, { location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); return res.end(); }
         const maxAge = Math.max(1, Math.floor((shared.expiresAt - Date.now()) / 1000));
-        res.writeHead(302, { location: `/?${params}`, 'set-cookie': `${shareCookieName}=${link[1]}; Max-Age=${maxAge}; ${cookieFlags}`, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+        res.writeHead(302, { location: shareLocation(shared.share), 'set-cookie': `${shareCookieName}=${link[1]}; Max-Age=${maxAge}; ${cookieFlags}`, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
         return res.end();
       }
 
@@ -106,6 +114,13 @@ export function createGateway({ config, auth, readHomeToken }) {
       }
       if (pathname === '/_access/session' && req.method === 'GET') return json(res, 200, { loggedIn: true, expiresAt: session.expiresAt, ...(shared ? { share: shared.share } : {}) });
       if (shared && pathname === '/_access/logout' && req.method === 'POST') return json(res, 200, { ok: true }, { 'set-cookie': `${shareCookieName}=; Max-Age=0; ${cookieFlags}` });
+      // 打开页面时校正地址：访客总是落在自己那条分享的地址上（书签、主屏图标打开的 / 也一样），主人则不进入分享模式。
+      if (req.method === 'GET' && pathname === '/' && String(req.headers.accept).includes('text/html')) {
+        const query = new URL(req.url, 'http://gateway.invalid').search, wanted = shared ? shareLocation(shared.share) : null;
+        // 两边都按查询参数规范化后再比，编码写法不同不会造成反复跳转。
+        if (wanted && new URLSearchParams(query).toString() !== new URLSearchParams(wanted.slice(2)).toString()) { res.writeHead(302, { location: wanted, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); return res.end(); }
+        if (!shared && new URLSearchParams(query).has('share')) { res.writeHead(302, { location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); return res.end(); }
+      }
       // 只读分享只放行读取；页面另外藏起输入框，这里保证真的发不出去。
       if (shared?.share.mode === 'ro' && !['GET', 'HEAD'].includes(req.method)) return json(res, 403, { error: '这个分享是只读的' });
       if (pathname === '/_access/logout' && req.method === 'POST') {

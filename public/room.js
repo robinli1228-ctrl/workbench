@@ -1274,8 +1274,9 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       try{await api(`/api/runs/${encodeURIComponent(discussion.stopRunId)}/stop`,{method:'POST',json:{commandId:`discussion-owner-stop:${discussion.stopRunId}:${discussion.questionId}`}});await refreshState({quiet:true});}catch(e){setError(e.message);}finally{restore();}
     }),`stop:${discussion.stopRunId}`));
     actions.push(copyMessageButton(handoff ? m.handoff.summary || m.text : m.text,`group:${scopeId}:message:${m.id}`));
-    actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, m.senderName, agent || Boolean(handoff), m.attachments, null, m.runId));
-    actions.push(sideMessageButton(handoff ? m.handoff.summary || m.text : m.text,m.senderName,agent||Boolean(handoff),m.attachments,m.runId));
+    const shownName = agent || handoff || !humanName ? m.senderName : humanName;
+    actions.push(fullscreenMessageButton(handoff ? m.handoff.summary || m.text : m.text, shownName, agent || Boolean(handoff), m.attachments, null, m.runId));
+    actions.push(sideMessageButton(handoff ? m.handoff.summary || m.text : m.text,shownName,agent||Boolean(handoff),m.attachments,m.runId));
     if(agent&&m.runId&&openSideAsk)actions.push(iconAction('sideAsk','Side question',()=>void openSideAsk(m)));
     if (m.runId) {
       const run = data.runs?.find(r => r.id === m.runId);
@@ -1338,7 +1339,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const run=m.runId?data.runs?.find(r=>r.id===m.runId)||null:null,task=run&&data.tasks?.find(item=>item.id===run.taskId)||null;
     const replyDirection=dialogueReplyDirection(m,messages,data),source=m.replyToId?m.replySource||messages.find(q=>q.id===m.replyToId)||null:null;
     let discussion=null;try{discussion=JSON.stringify(discussionDisplay(m,data));}catch{return null;}
-    return JSON.stringify([getLanguage(),scopeId,projectId,Boolean(openSideAsk),m,run,task,run&&(data.runReports?.find(r=>r.id===run.id)||null),
+    // The owner's current user name is part of how a person's card looks, so renaming redraws the kept cards.
+    return JSON.stringify([getLanguage(),scopeId,projectId,Boolean(openSideAsk),String(data.settings?.ownerName||''),m,run,task,run&&(data.runReports?.find(r=>r.id===run.id)||null),
       m.sender==='agent'?(data.roles||[]).find(r=>r.id===m.roleId)||null:null,source&&[source.id,source.senderName,source.text,source.attachments],
       replyDirection,discussion,messageRecipients(m,replyDirection).map(r=>[r.id,r.name]),messageCardMeta(m),m.runId?filePathsFor(m.runId):null]);
   }

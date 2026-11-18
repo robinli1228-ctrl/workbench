@@ -57,7 +57,7 @@ export function createSharePanel({api,t,scope,heading='',hint=''}){
   }
   async function load(){
     const ticket=++version;
-    try{const result=await api(`/api/shares?${shareQuery(scope())}`);if(ticket===version)draw(result.items||[]);}
+    try{const result=await api(`/api/shares?${shareQuery(scope())}`);if(ticket===version){say('');draw(result.items||[]);}}
     catch(error){if(ticket===version){list.replaceChildren();say(t(error.message),true);}}
   }
   create.addEventListener('click',async()=>{
