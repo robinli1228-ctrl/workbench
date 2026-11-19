@@ -73,15 +73,6 @@ export class NativeCliSession extends CliPrintSession {
       if(['control_request','control_cancel_request'].includes(message.type))return this.receiveControl(message);
     }
     if(this.keepAlive&&this.runtime==='claude'&&message&&typeof message==='object'){
-      // The live background-task list is kept between turns too, so a later turn knows what is still running.
-      if(message.type==='system'&&message.subtype==='background_tasks_changed'&&!message.parent_tool_use_id&&Array.isArray(message.tasks)){this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
-        for(const id of this.liveTasks?.keys()||[])if(!this.backgroundTasks.has(id))this.liveTasks.delete(id);}
-      if(message.type==='assistant')this.subagentModels(message);
-      if(message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id){
-        this.track(message);
-        // Before the echo only a task this turn already lists (one carried over from an earlier turn) may report on it.
-        if(!this.done&&(!this.awaitingEcho||this.tasks?.has(message.task_id)))this.task(message);
-      }
       if(this.receiveSupplement(message))return;
       // A rejected queued input has no replay. Only its own negative receipt may settle it without an echo.
       if(this.awaitingEcho&&!this.done&&!this.stopping&&message.type==='command_lifecycle'&&!message.parent_tool_use_id&&message.command_uuid===this.inputUuid&&message.session_id===this.inputSessionId&&['refused','discarded'].includes(message.state)){
@@ -116,7 +107,10 @@ export class NativeCliSession extends CliPrintSession {
         return;
       }
       // While our input is being withdrawn, what Claude says (and its result) is the notice turn's, which keeps running.
-      if(this.awaitingEcho&&(!this.stopping||this.withdrawing)&&message.type!=='system')return;
+      if(this.awaitingEcho&&(!this.stopping||this.withdrawing)&&message.type!=='system'){
+        if(message.type==='assistant')this.subagentModels(message);
+        return;
+      }
     }
     // Native Claude interrupts a turn without killing its resident process; only its owner's result confirms that boundary.
     if(!this.done&&this.stopping&&!this.closing&&this.keepAlive&&this.runtime==='claude'&&message?.type==='result'&&!message.parent_tool_use_id)return this.finish('interrupted');
@@ -124,42 +118,6 @@ export class NativeCliSession extends CliPrintSession {
     if(this.controlTurn&&message?.type==='result'&&!message.parent_tool_use_id){const live=this.backgroundTasks;this.backgroundTasks=new Set();
       this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;this.backgroundTasks=live;}}
     this.receiving=true;try{return super.receive(message);}finally{this.receiving=false;}
-  }
-  /**
-   * Which model a subagent uses: the one the main session asked for when it called the Agent tool, until the subagent's own
-   * first message (which names the model it really runs) replaces it. Claude links both to the task by the call's id.
-   */
-  subagentModels(message){
-    const hints=this.agentModelHints||=new Map();
-    if(!message.parent_tool_use_id){for(const block of message.message?.content||[])if(block?.type==='tool_use'&&['Agent','Task'].includes(block.name)&&typeof block.input?.model==='string')hints.set(block.id,block.input.model.slice(0,80));if(hints.size>50)hints.delete(hints.keys().next().value);return;}
-    const model=typeof message.message?.model==='string'?message.message.model.slice(0,80):'';if(!model)return;
-    for(const [id,known] of this.tasks||[])if(known.toolUseId===message.parent_tool_use_id&&!known.modelSeen){known.modelSeen=true;if(known.model!==model){known.model=model;this.emit('task',{id,status:'running',model});}}
-  }
-  /** Process-wide record of the live tasks (they outlive the turn that started them), so a later turn can show what it waits for. */
-  track(m){
-    const id=m.task_id;if(!id)return;const live=this.liveTasks||=new Map();
-    if(m.subtype==='task_started')return void live.set(id,{at:Date.now(),kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80)});
-    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
-    if(status&&!['pending','running'].includes(status))live.delete(id);
-  }
-  /** Live tasks this turn does not list yet, shown as from earlier (a control turn does not wait for them, so it lists none). */
-  carryLiveTasks(){
-    if(this.controlTurn)return;const tasks=this.tasks||=new Map();
-    for(const id of this.backgroundTasks||[]){const info=this.liveTasks?.get(id);if(!info||tasks.has(id))continue;tasks.set(id,{at:info.at,shown:0});
-      this.emit('task',{id,status:'running',kind:info.kind,description:info.description,agentType:info.agentType,earlier:true,elapsedMs:Date.now()-info.at});}
-  }
-  /** A subagent or background shell of this turn for the page: start, what it is doing now (at most every 5s), end. An end
-   * without a start here (a task of an earlier, killed process) is not reported. */
-  task(m){
-    const id=m.task_id;if(!id)return;const tasks=this.tasks||=new Map(),known=tasks.get(id),now=Date.now();
-    if(m.subtype==='task_started'){const toolUseId=typeof m.tool_use_id==='string'?m.tool_use_id:null,model=toolUseId?this.agentModelHints?.get(toolUseId):undefined;
-      tasks.set(id,{at:now,shown:0,toolUseId,model});
-      return this.emit('task',{id,status:'running',kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80),...(model?{model}:{})});}
-    if(!known)return;
-    if(m.subtype==='task_progress'){if(now-known.shown<5000)return;known.shown=now;return this.emit('task',{id,status:'running',activity:String(m.description||'').slice(0,200),toolUses:Number.isFinite(m.usage?.tool_uses)?m.usage.tool_uses:undefined});}
-    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
-    if(!status||['pending','running'].includes(status))return;
-    tasks.delete(id);this.emit('task',{id,status:['completed','failed'].includes(status)?status:'stopped',durationMs:now-known.at});
   }
   sendTurn(prompt) {
     this.initializeQuestions();

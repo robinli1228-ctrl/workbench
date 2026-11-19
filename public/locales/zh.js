@@ -1374,6 +1374,8 @@ export default {
   'Interrupting and starting this message': '正在打断当前执行并启动这条引导',
   'Add to this role current turn without interrupting it': '补充进该角色当前这轮，不打断',
   'Adding to this role current turn': '正在补充进该角色当前这轮',
+  'Run started at': '开始于',
+  'Added · {time}': '补充 · {time}',
   'Refresh session state and retry this message': '重新核对会话状态并启动这条消息',
   'Interrupt this role now and run this message first; actions already performed are not rolled back': '立即打断该角色并优先执行这条引导；已执行操作不会回滚',
   'Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept': '立即打断该角色，在原会话中处理这条引导；旧任务不自动续跑，已有修改保留',

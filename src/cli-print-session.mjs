@@ -199,6 +199,8 @@ export class CliPrintSession {
     const echo=this.keepAlive&&this.runtime==='claude';
     if(echo){message.uuid=this.echoUuid=randomUUID();this.echoSession=message.session_id;}
     this.supplements=new Map();this.resultHeld=false;
+    // This turn's visible tasks; ones an earlier turn left running are listed with the time they have run so far.
+    if(this.runtime==='claude'){this.tasks=new Map();this.carryLiveTasks();}
     this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error&&!echo)this.emit('status',{inputDeliveryState:'accepted'});});
   }
   /**
@@ -239,6 +241,56 @@ export class CliPrintSession {
     for(const [uuid,id] of this.supplements){this.write({type:'control_request',request_id:`withdraw-${uuid}`,request:{subtype:'cancel_async_message',message_uuid:uuid}});this.emit('supplement_failed',{id,error:'The reply ended first'});}
     this.supplements.clear();
   }
+  /**
+   * Claude's subagents and background shells, for the page: the live list (kept between turns, so a later turn knows what
+   * still runs) and this turn's task events. Before this turn's echo only a task it already lists may report on it.
+   */
+  observeTasks(message){
+    // Also while idle or stopping: a turn that starts later must not wait for a task that already ended.
+    if(message.type==='system'&&message.subtype==='background_tasks_changed'&&!message.parent_tool_use_id&&Array.isArray(message.tasks)){this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
+      for(const id of this.liveTasks?.keys()||[])if(!this.backgroundTasks.has(id))this.liveTasks.delete(id);}
+    if(message.type==='assistant')this.subagentModels(message);
+    if(message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id){
+      this.track(message);
+      if(!this.done&&(!(this.awaitingEcho||this.echoUuid)||this.tasks?.has(message.task_id)))this.task(message);
+    }
+  }
+  /**
+   * Which model a subagent uses: the one the main session asked for when it called the Agent tool, until the subagent's own
+   * first message (which names the model it really runs) replaces it. Claude links both to the task by the call's id.
+   */
+  subagentModels(message){
+    const hints=this.agentModelHints||=new Map();
+    if(!message.parent_tool_use_id){for(const block of message.message?.content||[])if(block?.type==='tool_use'&&['Agent','Task'].includes(block.name)&&typeof block.input?.model==='string')hints.set(block.id,block.input.model.slice(0,80));if(hints.size>50)hints.delete(hints.keys().next().value);return;}
+    const model=typeof message.message?.model==='string'?message.message.model.slice(0,80):'';if(!model)return;
+    for(const [id,known] of this.tasks||[])if(known.toolUseId===message.parent_tool_use_id&&!known.modelSeen){known.modelSeen=true;if(known.model!==model){known.model=model;this.emit('task',{id,status:'running',model});}}
+  }
+  /** Process-wide record of the live tasks (they outlive the turn that started them), so a later turn can show what it waits for. */
+  track(m){
+    const id=m.task_id;if(!id)return;const live=this.liveTasks||=new Map();
+    if(m.subtype==='task_started')return void live.set(id,{at:Date.now(),kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80)});
+    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
+    if(status&&!['pending','running'].includes(status))live.delete(id);
+  }
+  /** Live tasks this turn does not list yet, shown as from earlier (a control turn does not wait for them, so it lists none). */
+  carryLiveTasks(){
+    if(this.controlTurn)return;const tasks=this.tasks||=new Map();
+    for(const id of this.backgroundTasks||[]){const info=this.liveTasks?.get(id);if(!info||tasks.has(id))continue;tasks.set(id,{at:info.at,shown:0});
+      this.emit('task',{id,status:'running',kind:info.kind,description:info.description,agentType:info.agentType,earlier:true,elapsedMs:Date.now()-info.at});}
+  }
+  /** A subagent or background shell of this turn for the page: start, what it is doing now (at most every 5s), end. An end
+   * without a start here (a task of an earlier, killed process) is not reported. */
+  task(m){
+    const id=m.task_id;if(!id)return;const tasks=this.tasks||=new Map(),known=tasks.get(id),now=Date.now();
+    if(m.subtype==='task_started'){const toolUseId=typeof m.tool_use_id==='string'?m.tool_use_id:null,model=toolUseId?this.agentModelHints?.get(toolUseId):undefined;
+      tasks.set(id,{at:now,shown:0,toolUseId,model});
+      return this.emit('task',{id,status:'running',kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80),...(model?{model}:{})});}
+    if(!known)return;
+    if(m.subtype==='task_progress'){if(now-known.shown<5000)return;known.shown=now;return this.emit('task',{id,status:'running',activity:String(m.description||'').slice(0,200),toolUses:Number.isFinite(m.usage?.tool_uses)?m.usage.tool_uses:undefined});}
+    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
+    if(!status||['pending','running'].includes(status))return;
+    tasks.delete(id);this.emit('task',{id,status:['completed','failed'].includes(status)?status:'stopped',durationMs:now-known.at});
+  }
   receiveLine(line) {
     if (!line.trim()) return;
     let m; try { m = JSON.parse(line); } catch { this.emit('log', { text: line.slice(0, 6000) }); return; }
@@ -256,9 +308,12 @@ export class CliPrintSession {
     // this turn's, so they neither show in it nor end it (otherwise a reply to an old notice ends the turn as "no text" and the
     // real answer that follows is lost). Replays of other messages are never output.
     if(this.keepAlive&&this.runtime==='claude'&&raw?.type==='user'&&raw.isReplay){
-      if(this.echoUuid&&raw.uuid===this.echoUuid&&!raw.parent_tool_use_id&&(!this.echoSession||raw.session_id===this.echoSession)){this.echoUuid=null;this.emit('status',{inputDeliveryState:'accepted'});}
+      if(this.echoUuid&&raw.uuid===this.echoUuid&&!raw.parent_tool_use_id&&(!this.echoSession||raw.session_id===this.echoSession)){this.echoUuid=null;this.emit('status',{inputDeliveryState:'accepted'});
+        // Tasks started while it was still queued (by a notice answered first) hold this turn open too: list them now.
+        if(this.runtime==='claude')this.carryLiveTasks();}
       return;
     }
+    if(this.runtime==='claude'&&raw&&typeof raw==='object')this.observeTasks(raw);
     if(this.echoUuid&&raw?.type!=='system')return;
     if(this.done||this.stopping)return;
     if (!raw || typeof raw !== 'object') return;
