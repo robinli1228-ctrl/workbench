@@ -1087,6 +1087,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   function renderLiveBubble(task, messages, retainedText = '') {
     // A recalled draft never ran: keep its human history, without inventing a stopped Agent reply.
     if(task.queueEditId&&!task.currentRunId)return null;
+    // A message added to a turn that was already running is answered by that turn's reply, not by a card of its own.
+    if(task.mergedIntoRunId&&!task.currentRunId)return null;
     // Share the queue's actual displayed membership rather than maintaining a second eligibility rule.
     if(messageQueue.hasTask(task.id))return null;
     const run = data.runs?.find(r => r.id === task.currentRunId);
