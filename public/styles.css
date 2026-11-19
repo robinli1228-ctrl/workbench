@@ -4497,3 +4497,43 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
 .native-share-pane .settings-row .secondary { margin-top: 0; }
 .native-share-pane :is(.settings-list-note, .settings-list-empty) { margin: 0; padding: 8px 0 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .native-settings-tabs { margin: 0 0 12px; }
+
+/* Run detail (2026-11-19): who ran it and how it stands in the title row, one quiet meta line, underline tabs, and the run
+   record laid out like a Sessions-page turn (steps, subagent cards, reply, Copy + time). */
+#run-dialog .run-dialog-heading { padding: 18px 24px 12px; align-items: flex-start; }
+#run-dialog .run-dialog-heading-content { display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; }
+#run-dialog .run-dialog-heading-content::after { content: ""; order: 3; flex-basis: 100%; height: 8px; }
+#run-dialog .run-dialog-meta { display: contents; }
+#run-dialog-title { order: 1; display: inline-flex; align-items: center; gap: 9px; min-width: 0; color: #0f172a; font-size: 17px; font-weight: 650; line-height: 1.4; }
+#run-dialog-status { order: 2; margin-left: 0; }
+#run-dialog-created { order: 4; display: inline-flex; flex-wrap: wrap; gap: 4px 16px; padding-left: 0; border-left: 0; }
+#run-dialog-session { order: 5; margin-left: 16px; gap: 4px 16px; flex-wrap: wrap; }
+.run-heading-avatar { display: inline-flex; flex: none; }
+.run-heading-avatar :is(svg, img) { width: 26px; height: 26px; }
+.run-heading-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-heading-model { flex: none; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #4338ca; font-size: 12px; font-weight: 500; }
+#run-dialog .run-dialog-meta .status-chip { font-size: 12px; padding: 3px 10px; }
+.run-meta-item { display: inline-flex; align-items: center; gap: 5px; color: #64748b; font-size: 12.5px; }
+.run-meta-item b { color: #334155; font-weight: 500; }
+.run-meta-item code { padding: 1px 6px; border-radius: 6px; background: #f1f5f9; color: #475569; font-size: 12px; }
+#run-dialog .run-tab-list { gap: 22px; padding: 0 24px; background: #fff; border-bottom: 1px solid var(--line); }
+#run-dialog .run-tab { min-height: 0; margin-bottom: -1px; padding: 10px 2px; border-radius: 0; border-bottom: 2px solid transparent; color: #64748b; background: transparent; font-size: 14px; font-weight: 500; }
+#run-dialog .run-tab:hover { color: #334155; background: transparent; }
+#run-dialog .run-tab.active { color: var(--accent-dark); background: transparent; border-bottom-color: var(--accent); font-weight: 600; }
+#run-dialog .run-tab-icon { display: none; }
+#run-dialog .run-tab-panel { padding: 20px 28px 28px; background: #fafbfc; }
+#run-dialog .run-transcript { gap: 12px; background: transparent; }
+#run-dialog .run-transcript .nt-task-groups { max-width: 760px; }
+.run-added { display: flex; align-items: center; gap: 10px; margin: 6px 0; color: #6d28d9; font-size: 13px; }
+.run-added::before, .run-added::after { content: ""; flex: 0 0 18px; height: 1px; background: #e9d5ff; }
+.run-added::after { flex: 1; }
+.run-added-label { flex: none; font-weight: 600; }
+.run-added-text { min-width: 0; padding: 4px 10px; border-radius: 8px; background: #f5f3ff; color: #4c1d95; overflow-wrap: anywhere; }
+#run-dialog .run-reply-foot { margin-top: -4px; padding-left: 0; }
+#run-dialog .run-transcript > .nt-working { margin-top: 2px; }
+@media (max-width: 720px) {
+  #run-dialog .run-dialog-heading { padding: calc(10px + env(safe-area-inset-top)) 12px 10px; }
+  #run-dialog-session { margin-left: 0; }
+  #run-dialog .run-tab-list { gap: 16px; padding: 0 12px; }
+  #run-dialog .run-tab-panel { padding: 14px 12px 20px; }
+}
