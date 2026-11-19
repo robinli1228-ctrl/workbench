@@ -255,8 +255,8 @@ function step(delta){
 }
 /**
  * One viewer for every image and video in the chats (media named in replies and attachments people send). One slim bar on
- * top: name, size, "3 / 12" and the message time on the left, download, open on the right, copy and close on the right; the
- * picture takes the rest. On a phone the viewer is full screen, the bar floats over the picture, and a tap on the picture
+ * top: only the name on the left (size, "3 / 12" and the message time in its tooltip) and download, open on the right, copy
+ * and close on the right; the picture takes the rest. On a phone the viewer is full screen, the bar floats over the picture, and a tap on the picture
  * hides or shows it.
  */
 function lightbox({name,size=null,at=null,from=null}){
@@ -290,6 +290,8 @@ function lightbox({name,size=null,at=null,from=null}){
    label.append(el('span','media-lightbox-count',`${index+1} / ${list.length}`));
   }
   label.append(when);bar.append(label,actions);
+  // Size, position and time stay out of the bar; the name's tooltip carries them (they can arrive after the viewer opens).
+  label.addEventListener('pointerenter',()=>{title.title=[name,bytes.textContent,label.querySelector('.media-lightbox-count')?.textContent,when.textContent].filter(Boolean).join(' \u00b7 ');});
   viewer.classList.remove('is-immersive');
   // Phone: a tap on the picture (not on a control or a playing video) hides or shows the bar.
   stage.addEventListener('click',event=>{if(!matchMedia('(max-width: 720px)').matches||event.target.closest('button,a,video,audio,iframe'))return;viewer.classList.toggle('is-immersive');});
