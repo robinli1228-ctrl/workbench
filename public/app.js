@@ -2175,13 +2175,10 @@ document.querySelector('#close-settings-page')?.addEventListener('click', closeS
 initProjectSettingsTabs(dom.settingsPage);
 // Share tab: links for the sub-chat that was open when the settings opened (several sub-chats share one project's settings).
 const projectShareScope=()=>({kind:'group',projectId:app.selectedProjectId||'',conversationId:app.selectedConversationId||app.selectedProjectId||''});
-const projectSharePanel=createSharePanel({api,t,scope:projectShareScope,hint:t('Read-only: guests can only watch. Open to messages: guests type a name when they open the link, then can send messages and @ roles.')});
-const projectShareHeading=create('p','share-heading');
-document.querySelector('#project-share-panel')?.append(projectShareHeading,projectSharePanel.root);
-function refreshProjectShare(){
-  const title=app.data.conversations?.find(c=>c.id===projectShareScope().conversationId)?.title||getCurrentProject()?.name||'';
-  projectShareHeading.textContent=t('Sharing: {title}',{title});void projectSharePanel.load();
-}
+const projectShareTitle=()=>app.data.conversations?.find(c=>c.id===projectShareScope().conversationId)?.title||getCurrentProject()?.name||'';
+const projectSharePanel=createSharePanel({api,t,scope:projectShareScope,title:projectShareTitle,hint:t('Read-only: guests can only watch. Open to messages: guests type a name when they open the link, then can send messages and @ roles.')});
+document.querySelector('#project-share-panel')?.append(projectSharePanel.root);
+function refreshProjectShare(){void projectSharePanel.load();}
 document.querySelector('#project-tab-share')?.addEventListener('click',refreshProjectShare);
 // User name: shown as the sender of the owner's messages (empty keeps "Me").
 const ownerNameInput=document.querySelector('#owner-name-input');

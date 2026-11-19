@@ -2,6 +2,7 @@ import {copyText} from './role-icons.js';
 
 const TTLS=[['1h','1 hour'],['1d','1 day'],['7d','7 days'],['15d','15 days']];
 const MODES=[['ro','Read-only'],['rw','Open to messages']];
+let panels=0;
 
 /** Time left on a link, in the largest whole unit. */
 export function shareTimeLeft(expiresAt,t,now=Date.now()){
@@ -17,46 +18,64 @@ export const shareQuery=scope=>new URLSearchParams(Object.entries(scope).filter(
  * The Share tab of a group chat's or a session's settings: read-only or open to messages, a validity period (at most 15
  * days), a button that makes a link, and the links still valid, each with Copy and Revoke. Revoking ends the link at the
  * gateway and closes pages already open on it. Records live with remote access, which builds the public link.
+ * Built from the settings page's own parts (list cards with a header, label/control rows, the segmented control, chips
+ * and the empty line) so it lines up with the other tabs; `variant: 'dialog'` gives the cards the session dialog's
+ * section look instead.
  */
-export function createSharePanel({api,t,scope,heading='',hint=''}){
+export function createSharePanel({api,t,scope,title=()=>'',hint='',variant='page'}){
   const el=(tag,className='',value)=>{const node=document.createElement(tag);if(className)node.className=className;if(value!==undefined)node.textContent=value;return node;};
-  const root=el('div','share-panel');let mode='ro',ttl='1d',version=0;
-  const chips=(options,current,onPick)=>{
-    const group=el('div','share-chips');group.setAttribute('role','radiogroup');
+  const id=++panels;let mode='ro',ttl='1d',version=0;
+  const card=(heading,note)=>{
+    const section=el('section',variant==='dialog'?'settings-list native-settings-section':'settings-list'),header=el('header','settings-list-head'),text=el('div'),h3=el('h3','',heading);
+    text.append(h3);if(note)text.append(el('p','',note));header.append(text);section.append(header);return {section,h3};
+  };
+  const segmented=(name,options,current,onPick)=>{
+    const group=el('span','settings-segmented');group.setAttribute('role','radiogroup');group.setAttribute('aria-label',t(name));
     for(const [value,label] of options){
-      const chip=el('button','share-chip',t(label));chip.type='button';chip.dataset.value=value;chip.setAttribute('aria-pressed',String(value===current));
-      chip.addEventListener('click',()=>{for(const other of group.children)other.setAttribute('aria-pressed',String(other===chip));onPick(value);});
-      group.append(chip);
+      const option=el('label'),input=el('input');input.type='radio';input.name=`share-${name.toLowerCase()}-${id}`;input.value=value;input.checked=value===current;
+      input.addEventListener('change',()=>{if(input.checked)onPick(value);});
+      option.append(input,el('span','',t(label)));group.append(option);
     }
     return group;
   };
-  const row=(label,control)=>{const line=el('div','share-row');line.append(el('span','share-row-label',t(label)),control);return line;};
+  const row=(label,note,control)=>{
+    const line=el('div','settings-row'),name=el('span','settings-row-label',t(label)),value=el('span','settings-row-value');
+    if(note)name.append(el('small','',t(note)));value.append(control);line.append(name,value);return line;
+  };
+
+  // New link: permission, validity, then the button (the link is copied when it is made).
+  const making=card('',hint);
   const create=el('button','primary',t('Create link'));create.type='button';
-  const feedback=el('p','form-feedback share-feedback');feedback.setAttribute('role','status');feedback.hidden=true;
-  const list=el('div','share-links');
+  const createRow=el('div','settings-row share-create-row');createRow.append(el('span','settings-row-value muted',t('The link is copied when it is made')),create);
+  const feedback=el('p','settings-list-note');feedback.setAttribute('role','status');feedback.hidden=true;
   const say=(message,error=false)=>{feedback.hidden=!message;feedback.textContent=message||'';feedback.classList.toggle('global-error',error);};
-  if(heading)root.append(el('p','share-heading',heading));
-  root.append(row('Permission',chips(MODES,mode,value=>{mode=value;})));
-  if(hint)root.append(el('p','native-side-hint share-hint',hint));
-  root.append(row('Validity',chips(TTLS,ttl,value=>{ttl=value;})));
-  const actions=el('div','share-row');actions.append(el('span','share-row-label',''),create);
-  const linksTitle=el('p','share-links-title',t('Valid links'));
-  root.append(actions,feedback,linksTitle,list);
+  making.section.append(row('Permission','',segmented('Permission',MODES,mode,value=>{mode=value;})),
+    row('Validity','At most 15 days',segmented('Validity',TTLS,ttl,value=>{ttl=value;})),createRow,feedback);
+
+  // Links still valid.
+  const valid=card(t('Valid links'),t('Revoking a link also closes pages already open on it.'));
+  const list=el('div','share-links');valid.section.append(list);
+  const root=el('div','settings-list-stack share-panel');root.append(making.section,valid.section);
+  const name=()=>{const value=title();making.h3.textContent=value?t('Sharing: {title}',{title:value}):t('New share link');};
+  name();
 
   function draw(items){
     list.replaceChildren();
-    if(!items.length){list.append(el('p','native-side-hint',t('No share links yet')));return;}
+    if(!items.length){list.append(el('div','settings-list-empty',t('No share links yet')));return;}
     for(const item of items){
-      const line=el('div','share-link'),tag=el('span',`share-tag${item.mode==='rw'?' is-open':''}`,t(item.mode==='rw'?'Open to messages':'Read-only'));
-      const url=el('code','share-url',item.url);url.translate=false;
+      const line=el('div','settings-row share-link'),main=el('span','settings-row-main');
+      const url=el('small','share-url',item.url);url.translate=false;url.title=item.url;
+      main.append(el('strong','',shareTimeLeft(item.expiresAt,t)),url);
+      const tag=el('span',`settings-chip${item.mode==='rw'?' warn':''}`,t(item.mode==='rw'?'Open to messages':'Read-only'));
+      const actions=el('span','settings-row-actions');
       const copy=el('button','secondary',t('Copy'));copy.type='button';copy.addEventListener('click',()=>void copyText(copy,item.url).catch(()=>{}));
-      const revoke=el('button','secondary danger',t('Revoke'));revoke.type='button';
+      const revoke=el('button','secondary share-revoke',t('Revoke'));revoke.type='button';
       revoke.addEventListener('click',async()=>{revoke.disabled=true;try{await api(`/api/shares/${encodeURIComponent(item.id)}/revoke`,{method:'POST',json:{}});await load();}catch(error){revoke.disabled=false;say(t(error.message),true);}});
-      line.append(tag,url,el('span','share-left',shareTimeLeft(item.expiresAt,t)),copy,revoke);list.append(line);
+      actions.append(copy,revoke);line.append(main,tag,actions);list.append(line);
     }
   }
   async function load(){
-    const ticket=++version;
+    name();const ticket=++version;
     try{const result=await api(`/api/shares?${shareQuery(scope())}`);if(ticket===version){say('');draw(result.items||[]);}}
     catch(error){if(ticket===version){list.replaceChildren();say(t(error.message),true);}}
   }

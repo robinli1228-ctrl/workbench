@@ -857,8 +857,8 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   // never offers the Share tab: only the owner makes or ends links.
   if(share)dialog.append(body);
   else{
-   const sharePanel=createSharePanel({api,t,scope:()=>({kind:'native',nodeId:value.nodeId,runtime:value.runtime,sessionId:nativeId(value)||'',entryId:value.entryId||'',title:value.title||''}),
-    hint:t('Read-only: guests can only watch. Open to messages: guests can type into this session.')});
+   const sharePanel=createSharePanel({api,t,variant:'dialog',scope:()=>({kind:'native',nodeId:value.nodeId,runtime:value.runtime,sessionId:nativeId(value)||'',entryId:value.entryId||'',title:value.title||''}),
+    title:()=>displayTitle(value),hint:t('Read-only: guests can only watch. Open to messages: guests can type into this session.')});
    const sharePane=el('div','native-settings-dialog native-share-pane');sharePane.hidden=true;sharePane.append(sharePanel.root);
    const tabs=el('div','settings-tabs native-settings-tabs');tabs.setAttribute('role','tablist');
    const tab=(label,pane)=>{const b=button(label,()=>{for(const other of tabs.children)other.setAttribute('aria-selected',String(other===b));body.hidden=pane!==body;sharePane.hidden=pane!==sharePane;if(pane===sharePane)void sharePanel.load();},'settings-tab');b.setAttribute('role','tab');b.setAttribute('aria-selected',String(pane===body));return b;};
