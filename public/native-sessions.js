@@ -1028,10 +1028,12 @@ const replyText=turn=>{const f=finalReply(turn);return f?f.text:turn.text||'';};
 /** An answer given on the page splits a turn: each part before an answer is a reply of its own, the answer the user's message. */
 const answerRecordOf=p=>({items:(p.questions||[]).map(q=>{const given=[].concat(p.answers?.[q.id]??[]).map(String).filter(Boolean);
  return p.skip||!given.length?{question:q.question,skipped:true}:{question:q.question,answer:q.secret?[]:given,...(q.secret?{secret:true}:{})};}),skipped:p.skip===true});
-const turnSegments=turn=>{if(!(turn.events||[]).some(e=>e.type==='answer'))return null;const events=withoutQuestionTool(turn.events);
+// A message the user added to the running reply (Claude, Codex) splits it the same way: the reply before it, then the message.
+const splitsTurn=e=>e.type==='answer'||e.type==='supplement';
+const turnSegments=turn=>{if(!(turn.events||[]).some(splitsTurn))return null;const events=withoutQuestionTool(turn.events);
  const segments=[];let part=[],start=turn.createdAt;
- for(const e of events){if(e.type!=='answer'){part.push(e);continue;}
-  segments.push({turn:{...turn,id:`${turn.id}:${segments.length}`,events:part,text:'',parts:[],tasks:[],status:'succeeded',phase:null,question:null,createdAt:start,endedAt:e.createdAt},answer:answerRecordOf(e.payload),answerAt:e.createdAt});
+ for(const e of events){if(!splitsTurn(e)){part.push(e);continue;}
+  segments.push({turn:{...turn,id:`${turn.id}:${segments.length}`,events:part,text:'',parts:[],tasks:[],status:'succeeded',phase:null,question:null,createdAt:start,endedAt:e.createdAt},...(e.type==='answer'?{answer:answerRecordOf(e.payload)}:{supplement:e.payload}),answerAt:e.createdAt});
   part=[];start=e.createdAt;}
  segments.push({turn:{...turn,id:`${turn.id}:${segments.length}`,events:part,text:part.some(e=>e.type==='message'||e.type==='text')?turn.text:'',createdAt:start}});
  return segments;};
@@ -1205,18 +1207,23 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   // A send made while a reply runs is queued by Home, so it is drawn in the queue strip rather than the transcript.
   const queuesBehind=()=>Boolean(activeTurn());
   const signatureOf=()=>JSON.stringify([k(),queuesBehind(),(d=>d?[d.pending.clientTurnId,d.confirmed?'stored':sendState(d,operation(k()))]:null)(pendingSend()),[...(historyEl?.querySelectorAll('.native-chat-row:not(.native-turn-anchored)')||[])].map(serialOf),timeline.hasOlder(),[...openProcesses].sort(),
-   turns.map(turn=>isLive(turn)&&!turn.control?[turn.id,turn.status,turn.prompt,turn.attachments,turn.createdAt,(turn.events||[]).filter(e=>e.type==='answer').length]:turn)]);
+   turns.map(turn=>isLive(turn)&&!turn.control?[turn.id,turn.status,turn.prompt,turn.attachments,turn.createdAt,(turn.events||[]).filter(splitsTurn).length]:turn)]);
   /**
    * A turn's reply nodes: each part before a page answer is a finished reply of its own followed by the answer, then the
    * turn's own reply (live or finished). A part with nothing in it (the question came first) draws no reply.
    */
+  /** The added message, drawn as the user's own message inside the reply it joined. */
+  function supplementRow(added,at){const files=el('div','chat-attachments native-turn-files');for(const item of added.attachments||[])files.append(attachmentCard(item));
+   const row=chatRow('user',added.text||'',current.runtime,at,files.childElementCount?files:null);row.dataset.role='supplement';row.dataset.text=promptKey(added.text);row.classList.add('nt-supplement');return row;}
+  /** History rows of the messages added to this turn: the CLI records them as user messages, but they belong to this turn's reply. */
+  const addedKeys=turn=>new Set((turn.events||[]).filter(e=>e.type==='supplement').map(e=>promptKey(e.payload?.text)));
   function splitNodes(turn,{live,state,paths}){
    const segments=turnSegments(turn)||[{turn}],nodes=[];
    for(const segment of segments.slice(0,-1)){const part=segment.turn;
     if(processRows(part,{includeFinal:true}).length){const box=el('div','nt-turn');box.append(turnContent(part,current,{open:openProcesses.has(part.id)}));
      const done=chatRow('assistant',replyText(part),current.runtime,part.endedAt,null,'completed',current,{content:box,filePaths:toolFilePaths(stepsOf(part).steps)});done.dataset.role='assistant';
      done.dataset.duration=elapsedText(part.createdAt,new Date(part.endedAt).getTime());nodes.push(done);}
-    nodes.push(answerRow(segment.answer,current.runtime,segment.answerAt,current));}
+    nodes.push(segment.supplement?supplementRow(segment.supplement,segment.answerAt):answerRow(segment.answer,current.runtime,segment.answerAt,current));}
    const tail=segments.at(-1).turn,content=el('div','nt-turn');content.append(turnContent(tail,current,{live,open:live||openProcesses.has(tail.id)}));
    if(live)content.append(workingLine(tail));
    const reply=chatRow('assistant',replyText(tail),current.runtime,live?tail.createdAt:turn.endedAt||tail.createdAt,null,state,current,{content,filePaths:paths});reply.dataset.role='assistant';
@@ -1249,7 +1256,8 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     let anchor=after;while(anchor.nextElementSibling?.classList.contains('native-chat-row')&&(anchor.nextElementSibling.dataset.role!=='user'||anchor.nextElementSibling.classList.contains('native-turn-anchored')))anchor=anchor.nextElementSibling;
     anchor.after(...nodes);};
    for(const turn of turns){
-    if(turn.status==='waiting')continue;
+    // A merged message is drawn inside the reply it was added to.
+    if(turn.status==='waiting'||turn.status==='merged')continue;
     if(turn.status==='cancelled'){
      // A message the user deleted or took back to edit is gone, not "not sent".
      if(turn.withdrawn)continue;
@@ -1273,15 +1281,15 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const live=['queued','starting','running','waiting_user','stopping'].includes(turn.status);
     const paths=toolFilePaths(stepsOf(turn).steps);
     if(!live&&turn.endedAt&&turn.prompt.trim()){
-     const index=promptIndex(turn,'user',promptKey(turn.prompt));
-     if(index>=0){used.add(index);let anchor=rows[index];const replies=[];for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++){anchor=rows[i];if(anchor.dataset.role==='assistant')replies.push(anchor);}
+     const index=promptIndex(turn,'user',promptKey(turn.prompt)),added=addedKeys(turn),inTurn=row=>row.dataset.role!=='user'||added.has(row.dataset.text);
+     if(index>=0){used.add(index);let anchor=rows[index];const replies=[];for(let i=index+1;i<rows.length&&inTurn(rows[i]);i++){anchor=rows[i];if(anchor.dataset.role==='assistant')replies.push(anchor);}
       if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));attachFiles(rows[index],files);}
       // A native history snapshot can contain only the initial commentary. Keep the saved reply until that same
       // prompt's history includes its final prose; clearFeedMarks restores the original rows on the next refresh.
       const final=simplifiedCliOutput(replyText(turn));
       if(anchor.dataset.role==='user'||final.trim()&&!historyContainsReply(final,replies.flatMap(row=>row._replyTexts||[]))){
        // The history's partial rows of this turn (replies and answers) give way to the saved turn, drawn split at its answers.
-       for(let i=index+1;i<rows.length&&rows[i].dataset.role!=='user';i++)if(['assistant','answer'].includes(rows[i].dataset.role)){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}
+       for(let i=index+1;i<rows.length&&inTurn(rows[i]);i++)if(['assistant','answer','user'].includes(rows[i].dataset.role)){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}
        const {nodes,reply}=splitNodes(turn,{live:false,state,paths});for(const node of [...nodes,reply])node.classList.add('native-turn-anchored');rows[index].after(...nodes,reply);continue;}
       // After a page answer the history's last reply is the part after it: its activity and time count from the answer.
       const tail=liveTail(turn),extra=el('div','native-turn-anchored nt-extra');
@@ -1293,9 +1301,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const makeFiles=()=>{if(!turn.attachments?.length)return null;const files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));return files;};
     // A running turn whose prompt already reached the history anchors on that row: the history row stays, the feed adds only the live reply,
     // and the history's partial reply rows for this turn are hidden while the live one shows.
-    const liveIndex=live?promptIndex(turn,'user',promptKey(turn.prompt)):-1;
+    const liveIndex=live?promptIndex(turn,'user',promptKey(turn.prompt)):-1,liveAdded=addedKeys(turn);
     if(liveIndex>=0){used.add(liveIndex);const files=makeFiles();if(files){files.classList.add('native-turn-anchored');attachFiles(rows[liveIndex],files);}
-     for(let i=liveIndex+1;i<rows.length&&rows[i].dataset.role!=='user';i++){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}}
+     for(let i=liveIndex+1;i<rows.length&&(rows[i].dataset.role!=='user'||liveAdded.has(rows[i].dataset.text));i++){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}}
     const userRow=liveIndex>=0?null:chatRow('user',turn.prompt,current.runtime,turn.createdAt,makeFiles());if(userRow){userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);}
     const {nodes:earlier,reply}=splitNodes(turn,{live,state,paths});
     if(live){feed.append(...(userRow?[userRow]:[]),...earlier,reply);liveReplies.set(turn.id,reply);}else place([userRow,...earlier,reply].filter(Boolean),turn.createdAt);
@@ -1346,7 +1354,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    const pos=optimisticOrder?new Map(optimisticOrder.map((id,i)=>[id,i])):null;
    const provisional=queuesBehind()?pendingSend():null;
    const waiting=turns.filter(x=>x.status==='waiting').sort((a,b)=>Number(Boolean(b.steer))-Number(Boolean(a.steer))||(pos?(pos.get(a.id)??Infinity)-(pos.get(b.id)??Infinity):0)||queueRank(a)-queueRank(b));
-   const signature=JSON.stringify([k(),waiting.map(x=>[x.id,x.prompt,Boolean(x.steer),x.createdAt,(x.attachments||[]).map(a=>a.id),x.waitingReason||null]),queueState,[...queuePending],provisional?[provisional.pending.clientTurnId,provisional.confirmed?'stored':sendState(provisional,operation(k()))]:null]);
+   const signature=JSON.stringify([k(),waiting.map(x=>[x.id,x.prompt,Boolean(x.steer),Boolean(x.supplementing),x.createdAt,(x.attachments||[]).map(a=>a.id),x.waitingReason||null]),queueState,[...queuePending],provisional?[provisional.pending.clientTurnId,provisional.confirmed?'stored':sendState(provisional,operation(k()))]:null]);
    if(queueOrder.active()||signature===queueSignature)return;queueSignature=signature;
    const count=waiting.length+(provisional?1:0);
    queue.hidden=!count;queueList.replaceChildren();if(!count)return;
@@ -1362,11 +1370,12 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     // The device turned this message away because all its CLI slots were in use; it starts on its own once one frees.
     if(turn.waitingReason==='device_capacity')info.append(el('span','message-queue-note',t('Waiting for a free CLI slot on the device')));
     row.append(info);
-    const busy=queuePending.has(turn.id),steer=el('button',`icon-button message-queue-steer${busy||turn.steer?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(busy?'Interrupting and starting this message':turn.steer?'Refresh session state and retry this message':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
+    // Claude and Codex take a steered message into the reply that is running; other CLIs interrupt the reply first.
+    const busy=queuePending.has(turn.id)||Boolean(turn.supplementing),adds=['claude','codex'].includes(turn.runtime),steer=el('button',`icon-button message-queue-steer${busy||turn.steer?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(turn.supplementing?'Adding this message to the current reply':busy?(adds?'Sending this message':'Interrupting and starting this message'):turn.steer?(adds?'Send this message first':'Refresh session state and retry this message'):adds?'Add this message to the current reply without interrupting it':'Interrupt the current reply and send this message now');steer.disabled=Boolean(turn.supplementing);steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
     steer.onclick=async()=>{queuePending.add(turn.id);queueSignature='';renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
     row.append(steer);
     if(queueState){const edit=iconButton('edit','Edit: back to the input box',()=>void editQueued(turn),'message-queue-edit');edit.disabled=busy||Boolean(operation().editing);row.append(edit);}
-    const remove=iconButton('trash','Delete',()=>void withdrawQueued(turn),'message-queue-delete');remove.disabled=queuePending.has(turn.id);row.append(remove);
+    const remove=iconButton('trash','Delete',()=>void withdrawQueued(turn),'message-queue-delete');remove.disabled=busy;row.append(remove);
     queueList.append(row);});
    // The send on its way, last in line, with no controls until Home has stored it.
    if(provisional){const row=el('div','message-queue-item is-pending'),info=el('div','message-queue-info'),text=provisional.pending.text||(provisional.attachments||[]).map(a=>a.name).join(', '),title=el('strong','',`${count}. ${text}`);title.title=text;title.translate=false;

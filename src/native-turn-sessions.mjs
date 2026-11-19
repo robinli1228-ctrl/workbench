@@ -52,6 +52,12 @@ export class NativeCodexSession extends CodexSession {
   }
   shutdown(){if(this.hold)return;super.shutdown();}
   close(){this.hold=false;super.shutdown();}
+  /** A queued message added to the running turn through turn/steer; the turn goes on and answers with it in mind. */
+  supplement({id,prompt,files=[]}){
+    if(this.done||this.stopping||this.control||!this.threadId||!this.turnId)return this.emit('supplement_failed',{id,error:'The reply has already ended'});
+    const input=[{type:'text',text:prompt},...files.filter(f=>f.mime?.startsWith('image/')).map(f=>({type:'localImage',path:f.path}))];
+    this.request('turn/steer',{threadId:this.threadId,expectedTurnId:this.turnId,input}).then(()=>this.emit('supplement',{id}),error=>this.emit('supplement_failed',{id,error:error.message}));
+  }
 }
 
 /** Claude/Agy resident stream-json input, Grok one process per turn. Claude gets images as base64 content blocks. */
@@ -82,6 +88,13 @@ export class NativeCliSession extends CliPrintSession {
         // Before the echo only a task this turn already lists (one carried over from an earlier turn) may report on it.
         if(!this.done&&(!this.awaitingEcho||this.tasks?.has(message.task_id)))this.task(message);
       }
+      // A message added to this reply: its echo is the moment Claude takes it (at its next step); a refusal leaves it unsent.
+      const added=!message.parent_tool_use_id&&this.supplements?.size?this.supplements.get(message.type==='command_lifecycle'?message.command_uuid:message.type==='user'&&message.isReplay?message.uuid:null):null;
+      if(added&&message.type==='user'){this.supplements.delete(message.uuid);this.resultHeld=false;this.emit('supplement',{id:added});return;}
+      if(added&&['refused','discarded','cancelled'].includes(message.state)){this.supplements.delete(message.command_uuid);this.emit('supplement_failed',{id:added,error:`Claude ${message.state} this message`});
+        // The reply had already finished and waited only for this message: it ends now with what it said.
+        if(this.resultHeld&&!this.supplements.size&&!this.done){this.resultHeld=false;this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);}
+        return;}
       // A rejected queued input has no replay. Only its own negative receipt may settle it without an echo.
       if(this.awaitingEcho&&!this.done&&!this.stopping&&message.type==='command_lifecycle'&&!message.parent_tool_use_id&&message.command_uuid===this.inputUuid&&message.session_id===this.inputSessionId&&['refused','discarded'].includes(message.state)){
         this.awaitingEcho=false;
@@ -171,7 +184,7 @@ export class NativeCliSession extends CliPrintSession {
     this.slashInput=String(prompt).trimStart().startsWith('/');
     // Queued background notices are replayed too; UUID identity, not text, binds even repeated prompts to this input.
     if(this.awaitingEcho)message.uuid=this.inputUuid=randomUUID();else this.inputUuid=null;
-    this.inputStarted=false;this.withdrawing=null;
+    this.inputStarted=false;this.withdrawing=null;this.supplements=new Map();this.resultHeld=false;
     this.inputSessionId=message.session_id;
     // Process-wide backgroundTasks still gates completion; this map only owns the current turn's visible tasks.
     this.tasks=new Map();
@@ -180,12 +193,29 @@ export class NativeCliSession extends CliPrintSession {
     const needsEcho=this.awaitingEcho;
     this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error&&!needsEcho)this.emit('status',{inputDeliveryState:'accepted'});});
   }
+  /**
+   * A queued message added to the reply that is running: written to Claude's input now, read by Claude at its next step
+   * (after the tool it is waiting for), so the reply goes on with it. Until its echo the turn does not end on a result.
+   */
+  supplement({id,prompt,images=[]}){
+    if(!this.questionsSupported||this.done||this.stopping||this.awaitingEcho||this.controlTurn||!this.proc?.stdin?.writable)return this.emit('supplement_failed',{id,error:'The reply has already ended'});
+    const content=images.length?[{type:'text',text:prompt},...images.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
+    const uuid=randomUUID();(this.supplements||=new Map()).set(uuid,id);
+    this.proc.stdin.write(`${JSON.stringify({type:'user',session_id:this.inputSessionId||this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null,uuid})}\n`,error=>{
+      if(error&&this.supplements?.delete(uuid))this.emit('supplement_failed',{id,error:error.message});});
+  }
+  /** A result while an added message still waits in Claude's queue is not the end: Claude answers that message next. */
+  inputsQueued(){return Boolean(this.supplements?.size)&&!this.stopping;}
   /** Resident Claude interrupts only the current turn through the stream-json control channel; others end the process. */
   async stop() {
     if(this.done)return;
     this.stopping=true;
     this.dropQuestion();
     if(this.keepAlive&&this.runtime==='claude'&&this.proc?.stdin?.writable){
+      // Added messages still in Claude's queue are withdrawn so they do not run unseen after the stop.
+      for(const uuid of this.supplements?.keys()||[])this.write({type:'control_request',request_id:`withdraw-${uuid}`,request:{subtype:'cancel_async_message',message_uuid:uuid}});
+      // The reply itself had finished: there is nothing to interrupt.
+      if(this.resultHeld){this.resultHeld=false;return this.finish('interrupted');}
       // Not yet started, the input still waits in Claude's queue: withdraw only it, so it does not run unseen after the stop and
       // the turn Claude is running for something else (a task notice) goes on. Its 'cancelled' receipt ends the stop.
       if(this.awaitingEcho&&this.inputUuid&&!this.inputStarted){this.withdrawing=`withdraw-${Date.now()}`;this.write({type:'control_request',request_id:this.withdrawing,request:{subtype:'cancel_async_message',message_uuid:this.inputUuid}});}

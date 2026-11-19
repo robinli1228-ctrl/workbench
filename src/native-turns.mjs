@@ -14,6 +14,8 @@ export const NATIVE_TURN_RUNTIMES=['codex','claude','grok','agy'];
 export const NATIVE_RESIDENT_RUNTIMES=new Set(['codex','claude','agy']);
 /** Images reach the model only where the adapter has a native image input. */
 export const NATIVE_IMAGE_RUNTIMES=new Set(['codex','claude']);
+/** CLIs that take a message into the reply that is running: resident Claude reads it at its next step, Codex through turn/steer. */
+export const SUPPLEMENT_RUNTIMES=new Set(['codex','claude']);
 export const NATIVE_IDLE_MS=30*60*1000;
 /** How long a Worker keeps its turns running after losing Home (a tunnel blip), and how much longer Home waits before it gives up on them. */
 export const NATIVE_RECONNECT_GRACE_MS=3*60*1000,NATIVE_DISCONNECT_EXPIRE_MS=NATIVE_RECONNECT_GRACE_MS+60*1000;
@@ -109,6 +111,8 @@ export function applyNativeTurnEvent(turn,event){
   while(tasks.length>20){const j=tasks.findIndex(x=>x.status!=='running');tasks.splice(j<0?0:j,1);}
   next.tasks=tasks;
  }
+ // A queued message the user added to this reply while it ran: the page draws it as the user's message at this point of the reply.
+ if(event.kind==='supplement'&&typeof event.text==='string')push('supplement',{turnId:String(event.turnId||''),text:clip(event.text),attachments:(event.attachments||[]).slice(0,6).map(({id,name,mime,size})=>({id,name,mime,size}))});
  if(event.kind==='log'&&typeof event.text==='string'){push('log',{text:clip(event.text)});if(event.thinking)next.phase='thinking';}
  if(event.kind==='status'){
   // Input acceptance is independent of the task outcome; a later failure cannot undo delivery.
@@ -145,9 +149,9 @@ export function nativeReplyRanges(turn) {
 }
 
 export function nativeTurnView(turn){
- const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question,disconnectedAt,tasks,waitingReason}=turn;
+ const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question,disconnectedAt,tasks,waitingReason,supplementOf,mergedInto}=turn;
  return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',replyRanges:nativeReplyRanges(turn),status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
-  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{}),...(tasks?.length?{tasks}:{}),...(waitingReason?{waitingReason}:{})};
+  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{}),...(tasks?.length?{tasks}:{}),...(waitingReason?{waitingReason}:{}),...(supplementOf?{supplementing:true}:{}),...(mergedInto?{mergedInto}:{})};
 }
 
 /** Home side: validation, idempotent creation, occupancy checks, attachment binding and event intake. */
@@ -245,7 +249,8 @@ export class NativeTurnsHome{
   const lease=this.leases?.reserve({nodeId,runtime,sessionId,previous});
   if(!this.leases)this.assertIdle({runtime,sessionId});
   const handoff=turn.control?null:this.handoffFor?.({nodeId,runtime,sessionId});
-  const started={...turn,status:'queued',phase:'queued',waitingReason:null,updatedAt:now(),...(handoff?{handoffId:handoff.id}:{})};
+  // A message whose supplement did not settle before its reply ended (a stop) starts as its own turn.
+  const {supplementOf:_supplement,...base}=turn,started={...base,status:'queued',phase:'queued',waitingReason:null,updatedAt:now(),...(handoff?{handoffId:handoff.id}:{})};
   this.db.put('nativeTurns',started);
   this.db.put('nativeTakeovers',{id:key,nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
   const settings=this.settings(nodeId,runtime,sessionId);
@@ -324,14 +329,35 @@ export class NativeTurnsHome{
   for(const r of rows)void this.pump(nodeId,r.runtime,r.sessionId);
   return rows.length;
  }
- /** Steer: this queued message goes first and the current reply is interrupted so it starts at once. */
+ /**
+  * Steer: this queued message goes first. Claude and Codex take it into the reply that is running (Claude at its next step,
+  * Codex at once) without interrupting it; if they cannot, it stays first in line. Other CLIs interrupt the reply so it starts at once.
+  */
  steer(nodeId,id){
   const turn=this.db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
-  if(turn.status!=='waiting')return nativeTurnView(turn);
-  this.db.put('nativeTurns',{...turn,steer:true,steerAt:now(),updatedAt:now()});
-  const active=this.active(turn.nodeId,turn.runtime,turn.sessionId);
-  if(active&&ACTIVE.has(active.status))this.stop(nodeId,active.id);else{this.change();void this.pump(turn.nodeId,turn.runtime,turn.sessionId);}
+  if(turn.status!=='waiting'||turn.supplementOf)return nativeTurnView(turn);
+  const active=this.active(turn.nodeId,turn.runtime,turn.sessionId),marked={...turn,steer:true,steerAt:turn.steerAt||now(),updatedAt:now()};
+  if(active&&this.canSupplement(active,turn)){
+   this.db.put('nativeTurns',{...marked,supplementOf:active.id});
+   this.send(nodeId,{type:'native_turn_supplement',id:active.id,supplementId:turn.id,prompt:turn.prompt,attachments:turn.attachments||[]});
+   this.change();return nativeTurnView(this.db.get('nativeTurns',id));
+  }
+  this.db.put('nativeTurns',marked);
+  if(active&&ACTIVE.has(active.status)&&!SUPPLEMENT_RUNTIMES.has(turn.runtime))this.stop(nodeId,active.id);else{this.change();void this.pump(turn.nodeId,turn.runtime,turn.sessionId);}
   return nativeTurnView(this.db.get('nativeTurns',id));
+ }
+ /** A running page reply of Claude or Codex on a Worker that can add input to it; a control turn (/compact, /model) never takes one. */
+ canSupplement(active,turn){
+  return SUPPLEMENT_RUNTIMES.has(turn.runtime)&&active.status==='running'&&!active.control&&!turn.control&&!active.disconnectedAt&&this.online(turn.nodeId)&&this.db.get('workers',turn.nodeId)?.capabilities?.nativeSupplement===1;
+ }
+ /** The Worker's answer to a supplement: taken into the reply (the message leaves the queue), or not (it stays first in line). */
+ supplemented(turn,event){
+  const queued=this.db.get('nativeTurns',String(event.supplementId||''));
+  if(!queued||queued.status!=='waiting'||queued.supplementOf!==turn.id)return turn;
+  const {supplementOf,...rest}=queued;
+  if(event.kind==='supplement_failed'){this.db.put('nativeTurns',{...rest,updatedAt:now()});void this.pump(turn.nodeId,turn.runtime,turn.sessionId);return turn;}
+  this.db.put('nativeTurns',{...rest,status:'merged',mergedInto:turn.id,inputDeliveryState:'accepted',endedAt:now(),updatedAt:now()});
+  return applyNativeTurnEvent(turn,{kind:'supplement',turnId:queued.id,text:queued.prompt,attachments:queued.attachments||[]});
  }
  cancelWaiting(nodeId,runtime,sessionId,reason){
   let changed=false;
@@ -339,10 +365,10 @@ export class NativeTurnsHome{
   return changed;
  }
  /** Workers download only the attachments bound to an unfinished turn. */
- attachmentFor(turnId,attachmentId){const turn=this.db.get('nativeTurns',turnId);if(!turn||!(ACTIVE.has(turn.status)||turn.status==='stopping')||!turn.attachments?.some(a=>a.id===attachmentId))throw Error('Attachment does not belong to an unfinished takeover turn');return {owner:NativeTurnsHome.owner(turn.nodeId),id:attachmentId};}
+ attachmentFor(turnId,attachmentId){const turn=this.db.get('nativeTurns',turnId);if(!turn||!(ACTIVE.has(turn.status)||turn.status==='stopping'||turn.status==='waiting'&&turn.supplementOf)||!turn.attachments?.some(a=>a.id===attachmentId))throw Error('Attachment does not belong to an unfinished takeover turn');return {owner:NativeTurnsHome.owner(turn.nodeId),id:attachmentId};}
  stop(nodeId,id){
   const turn=this.db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
-  if(turn.status==='waiting'){this.db.put('nativeTurns',{...turn,status:'cancelled',withdrawn:true,endedAt:now(),updatedAt:now()});this.change();return nativeTurnView(this.db.get('nativeTurns',id));}
+  if(turn.status==='waiting'){if(turn.supplementOf)throw Error('This message is being added to the current reply');this.db.put('nativeTurns',{...turn,status:'cancelled',withdrawn:true,endedAt:now(),updatedAt:now()});this.change();return nativeTurnView(this.db.get('nativeTurns',id));}
   if(!ACTIVE.has(turn.status))return nativeTurnView(turn);
   this.db.put('nativeTurns',{...turn,status:'stopping',updatedAt:now()});this.send(nodeId,{type:'native_turn_stop',id});this.change();return nativeTurnView(this.db.get('nativeTurns',id));
  }
@@ -364,6 +390,7 @@ export class NativeTurnsHome{
  withdraw(nodeId,id){
   const turn=this.db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
   if(turn.status!=='waiting')throw Error('This message has already been sent');
+  if(turn.supplementOf)throw Error('This message is being added to the current reply');
   this.db.put('nativeTurns',{...turn,status:'cancelled',withdrawn:true,endedAt:now(),updatedAt:now()});this.queueState(turn.nodeId,turn.runtime,turn.sessionId);this.change();
   return nativeTurnView(this.db.get('nativeTurns',id));
  }
@@ -399,6 +426,7 @@ export class NativeTurnsHome{
    }
    return true;
   }
+  if(['supplement','supplement_failed'].includes(m.event?.kind)){const next=this.supplemented(turn,m.event);if(next!==turn)this.db.put('nativeTurns',next);this.change();return true;}
   const next=applyNativeTurnEvent(turn,m.event);if(next!==turn)this.db.put('nativeTurns',next);
   if(next.handoffId&&next.inputDeliveryState==='accepted')this.db.put('nativeHandoffDeliveries',{id:`${nodeId}/${next.handoffId}/${turn.sessionId}`,nodeId,runtime:turn.runtime,sessionId:turn.sessionId,handoffId:next.handoffId,deliveredAt:now()});
   // Only explicit input acceptance proves delivery: interruption can also happen before any input is sent.
@@ -461,11 +489,17 @@ export class NativeTurnsHome{
  }
 }
 
+const uuidPattern=/^[a-f0-9-]{36}$/;
+/** A message's text for the CLI: images go as image input (Claude, Codex); other files are named by their local paths. */
+function inputText(runtime,prompt,files=[]){
+ const others=files.filter(f=>!(NATIVE_IMAGE_RUNTIMES.has(runtime)&&f.mime?.startsWith('image/')));
+ return [prompt,others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
+}
 const alive=session=>Boolean(session?.proc&&session.proc.exitCode===null&&session.proc.signalCode===null&&!session.proc.killed);
 
 /** Worker side: one resident CLI per taken-over session (where supported), exact resume in the history's original folder. */
 export class NativeTurnRunner{
- constructor({send,createSession,resolveSession,canStart,prepareInputs=async()=>({files:[],images:[]}),cleanup=null,idleMs=NATIVE_IDLE_MS,leases=null,onQuota=()=>{}}){Object.assign(this,{send,createSession,resolveSession,canStart,prepareInputs,cleanup,idleMs,leases,onQuota});this.turns=new Map();this.resident=new Map();this.closing=new Map();this.outbox=null;this.graceTimer=null;}
+ constructor({send,createSession,resolveSession,canStart,prepareInputs=async()=>({files:[],images:[]}),receiveFiles=async()=>({files:[],images:[]}),cleanup=null,idleMs=NATIVE_IDLE_MS,leases=null,onQuota=()=>{}}){Object.assign(this,{send,createSession,resolveSession,canStart,prepareInputs,receiveFiles,cleanup,idleMs,leases,onQuota});this.turns=new Map();this.resident=new Map();this.closing=new Map();this.outbox=null;this.graceTimer=null;}
  /** Messages to Home go out at once while connected and wait in order while Home is away (see suspend/resume). */
  post(m){
   if(!this.outbox)return this.send(m);
@@ -505,7 +539,7 @@ export class NativeTurnRunner{
   if(this.turns.has(m.id))return;
   const key=`${m.runtime}/${m.sessionId}`,existing=this.resident.get(key),state={stopRequested:false,session:null,key,resident:Boolean(existing),message:m,acquired:false};this.turns.set(m.id,state);
   let ended=false;
-  const end=(status,error)=>{if(ended)return;ended=true;this.turns.delete(m.id);void Promise.resolve().then(()=>this.cleanup?.(m.id)).catch(()=>{});
+  const end=(status,error)=>{if(ended)return;ended=true;this.turns.delete(m.id);for(const id of [m.id,...(state.extraFiles||[])])void Promise.resolve().then(()=>this.cleanup?.(id)).catch(()=>{});
    const entry=this.resident.get(key);
    // Preparation may fail before reuse() attaches this turn. The old idle CLI still belongs to its lease.
    const retained=Boolean(entry&&state.resident&&!state.session&&alive(entry.session)&&!entry.closing&&(!this.leases||entry.session.done));
@@ -527,8 +561,7 @@ export class NativeTurnRunner{
    const {files=[],images=[],env=null,handoffText=null}=await this.prepareInputs(m,workspace);
    if(state.stopRequested)return end('interrupted');
    if(images.length&&!NATIVE_IMAGE_RUNTIMES.has(m.runtime))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');
-   const others=files.filter(f=>!(m.runtime==='codex'&&f.mime?.startsWith('image/'))&&!(m.runtime==='claude'&&f.mime?.startsWith('image/')));
-   const body=[m.prompt,others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
+   const body=inputText(m.runtime,m.prompt,files);
    const prompt=withPageInstructions(!m.control&&handoffText?`<system-reminder>\nWorkbench Agent handoff:\n${handoffText.replaceAll('<','\\u003c')}\n</system-reminder>\n\n${body}`:body,m.control?null:m.instructions);
    const emit=(type,p={})=>{
     if(type==='quota')return this.onQuota(m.runtime,p,state.session?.quotaIdentity);
@@ -547,6 +580,7 @@ export class NativeTurnRunner{
     else if(type==='question'&&p.id&&Array.isArray(p.questions))this.event(m.id,{kind:'question',id:String(p.id),questions:p.questions});
     else if(type==='question_resolved')this.event(m.id,{kind:'question_resolved',id:p.id==null?null:String(p.id)});
     else if(type==='task'&&p.id)this.event(m.id,{kind:'task',task:p});
+    else if(['supplement','supplement_failed'].includes(type)&&p.id)this.event(m.id,{kind:type,supplementId:String(p.id),...(p.error?{error:String(p.error).slice(0,500)}:{})});
    };
    // Model/effort from the Sessions page: flags at spawn for Claude/Agy (Claude later changes them in place), per turn for Codex and Grok.
    const resident=NATIVE_RESIDENT_RUNTIMES.has(m.runtime),inputs={attachments:files,inputImages:images,model:typeof m.model==='string'&&m.model?m.model:null,effort:typeof m.effort==='string'&&m.effort?m.effort:null,control:m.control||null,...(env?{env}:{})};
@@ -564,6 +598,22 @@ export class NativeTurnRunner{
    // A full device is not a failure: a Home that can wait gets the turn back and starts it again once a slot frees.
    if(error.code==='capacity_full'&&m.deferCapacity)end('deferred',error.message);else end('failed',error.message);
   }
+ }
+ /**
+  * A queued message added to the running reply (Claude/Codex). The session reports whether the CLI took it ('supplement') or
+  * not ('supplement_failed'); a reply that already ended, or a CLI without this input, answers 'supplement_failed' at once.
+  */
+ async supplement(m){
+  const state=this.turns.get(m.id),failed=error=>this.event(m.id,{kind:'supplement_failed',supplementId:String(m.supplementId||''),error});
+  if(!uuidPattern.test(m.supplementId||''))return;
+  if(!state?.session||state.stopRequested||typeof state.session.supplement!=='function')return failed('The reply has already ended');
+  try{
+   const runtime=state.message.runtime;(state.extraFiles||=[]).push(m.supplementId);
+   const {files=[],images=[]}=await this.receiveFiles({...m,id:m.supplementId,runtime});
+   if(files.some(f=>f.mime?.startsWith('image/'))&&!NATIVE_IMAGE_RUNTIMES.has(runtime))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');
+   if(this.turns.get(m.id)!==state)return failed('The reply has already ended');
+   state.session.supplement({id:m.supplementId,prompt:traditionalInput(inputText(runtime,m.prompt,files)),images,files});
+  }catch(error){failed(error.message);}
  }
  /** Stop interrupts the current turn; a resident process stays for the next message where the CLI supports it. */
  async stop(id){const state=this.turns.get(id);if(!state)return;state.stopRequested=true;if(state.session)await state.session.stop();}

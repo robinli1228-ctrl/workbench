@@ -1,4 +1,4 @@
-// Messages sent while a taken-over session is replying wait in Home's queue; the next starts when the reply ends, steer interrupts.
+// Messages sent while a taken-over session is replying wait in Home's queue; the next starts when the reply ends, steer interrupts (Claude and Codex: adds, see native-turn-supplement.test.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join, dirname } from 'node:path';
@@ -11,11 +11,11 @@ const { Store } = await load('store.mjs');
 const SID = '00000000-1111-4222-8333-444444444444';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function home({ online = () => true } = {}) {
+function home({ online = () => true, runtime = 'claude' } = {}) {
   const db = new Store(':memory:'), sent = [], credentials = [];
   const turns = new NativeTurnsHome({ db, send: (nodeId, m) => sent.push({ nodeId, ...m }), online, change() {}, assertIdle() {}, attachments: { resolve: () => [] }, gitCredential: async () => { credentials.push(1); return 'token'; } });
   const worker = { capabilities: { nativeTurns: 3 } };
-  const send = (clientTurnId, text) => turns.create('n1', worker, { runtime: 'claude', sessionId: SID, clientTurnId, text });
+  const send = (clientTurnId, text) => turns.create('n1', worker, { runtime, sessionId: SID, clientTurnId, text });
   const status = (id, status) => turns.receive('n1', { type: 'native_turn_event', id, event: { kind: 'status', status } });
   const starts = () => sent.filter(m => m.type === 'native_turn').map(m => m.prompt);
   return { db, sent, turns, send, status, starts, credentials };
@@ -39,7 +39,7 @@ test('a message sent during a reply waits, then starts by itself when the reply 
 });
 
 test('steer puts a queued message first and interrupts the current reply; cancel withdraws it without touching the Worker', async () => {
-  const { db, sent, turns, send, status, starts } = home();
+  const { db, sent, turns, send, status, starts } = home({ runtime: 'grok' });
   const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'second'), c = send('client-turn-c', 'third');
   const steered = turns.steer('n1', c.id);
   assert.equal(steered.steer, true); assert.equal(steered.status, 'waiting');
@@ -49,7 +49,7 @@ test('steer puts a queued message first and interrupts the current reply; cancel
   assert.equal(cancelled.status, 'cancelled'); assert.equal(sent.filter(m => m.type === 'native_turn_stop').length, 1);
   status(a.id, 'interrupted'); await tick();
   assert.deepEqual(starts(), ['first', 'third']);
-  assert.equal(turns.list('n1', 'claude', SID).find(t => t.id === b.id).status, 'cancelled');
+  assert.equal(turns.list('n1', 'grok', SID).find(t => t.id === b.id).status, 'cancelled');
 });
 
 test('ending the takeover or losing the device drops queued messages instead of sending them later', async () => {

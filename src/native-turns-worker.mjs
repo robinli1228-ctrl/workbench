@@ -105,6 +105,12 @@ export function createWorkerNativeTurns({db,send,data,homeHttp,token,projectRoot
       const env=agentProcessEnv(gitEnv,{PATH:[WB_BIN,gitEnv.PATH||'',dirname(process.execPath)].filter(Boolean).join(delimiter),WB_BRIDGE:await bridges.open(m.runtime,m.sessionId),WB_NATIVE:'1'});
       return {files,images,env,handoffText};
     },
+    // A message added to a running reply brings only its own files; the rest of the turn's inputs are already in place.
+    receiveFiles:async m=>{
+      const files=await receiveTurnFiles({items:m.attachments||[],turnId:m.id,root:join(data,'native-turn-files'),home:homeHttp,token});
+      const images=m.runtime==='claude'?await Promise.all(files.filter(f=>f.mime.startsWith('image/')).map(async f=>({mime:f.mime,data:(await readFile(f.path)).toString('base64')}))):[];
+      return {files,images};
+    },
     resolveSession:async(runtime,sessionId,{message:m})=>{
       const history=await readNativeSession(runtime,sessionId,{record:m.record||registeredNativeSession(db,runtime,sessionId)});
       const savedWorkspace=nativeAgentSessionWorkspace(db,{runtime,sessionId,historyWorkspace:history.workspace});if(!savedWorkspace)return {workspace:null};
