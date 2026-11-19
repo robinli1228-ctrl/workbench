@@ -654,6 +654,12 @@ async function command(m) {
     const s = sessions.get(c.runId);
     if (!(s instanceof CliPrintSession) || !s.endWithoutBackground()) emit(c.runId, 'log', { text: tr('worker.finishBackgroundRefused') });
   }
+  // A queued group-chat message the user added to this role's running turn (Claude, Codex); the session answers through its events.
+  if (c.type === 'supplement') {
+    const s = sessions.get(c.runId);
+    if (s && !s.preparing && typeof s.supplement === 'function') s.supplement({ id: c.taskId, prompt: traditionalInput(String(c.text || '')), images: [], files: [] });
+    else emit(c.runId, 'supplement_failed', { id: c.taskId, error: 'The turn has already ended' });
+  }
   if (c.type === 'stop') {
     let r = db.get('runs', c.runId);
     if (!r) { r = db.put('runs', { id: c.runId, seq: 0 }); emit(c.runId, 'status', { status: 'interrupted',processSettled:true,error: tr('worker.taskHadNotStartedWas') }); }
@@ -1272,7 +1278,7 @@ function connect() {
     send({ type: 'register', nativeTurns: nativeTurns?.activeIds?.() || [], node: { id: identity.nodeId, name: process.env.NODE_NAME || hostname(), platform: systemPlatform,organizerBusy:organizerRunning,
       nodeKind: resolveNodeKind(process.env.NODE_KIND, systemPlatform),softwareVersion,
       remoteDesktopUrl: normalizeRemoteDesktopUrl(process.env.REMOTE_DESKTOP_URL),
-      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { repositoryAlign:1,deviceRead:3,concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,syncLaunchDeferral:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,sourceSyncChanges:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,memoryOrganizer:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,mediaPace:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
+      workspaceRoot:defaultRoot,warmSessions:warmSessions.snapshot(), capabilities: { repositoryAlign:1,deviceRead:3,concurrentWrites:1,recordedArtifacts:1,nativeToolDetails:1,reviewDeliveries:1,localFolderSelection:folderAccess.local?1:0,permissionScopes:workerPermissionScopes(systemPlatform),permissionContract:PERMISSION_CONTRACT_VERSION,nativeDefaultFolder:1,nativeProjectFolder:1,nativeAgentsMd:1,groupConversations:1,projectTeamCopy:1,nativeSessions:2,nativeSessionOwnership:1,nativeHistoryPages:1,dataRetention:1,nativeSideAsk:1,groupSideAsk:1,groupSideAskPrevious:1,nativePageInstructions:1,nativeSupplement:1,groupSupplement:1,roleCompaction:1,nativeAgentSwitch:1,nativeTakeover:1,nativeTakeoverRefresh:1,nativePageOpen:1,nativeFiles:1,nativeControls:1,nativeTurns:3,cliRecovery:1,minimalInstructions:1,terminalFresh:1,terminalControl:['darwin','linux'].includes(systemPlatform)?1:0,terminalAutoReturn:1,cliCapacity:1,roleSwitch:1,sourceSync:1,syncLaunchDeferral:1,sourceSyncBatching:1,sourceSyncDirectory:1,sourceSyncMetadataMode:1,sourceSyncOutputs:1,sourceSyncTools:1,sourceSyncChanges:1,projectFiles:1,openProjectFolder:systemPlatform==='darwin'&&resolveNodeKind(process.env.NODE_KIND,systemPlatform)==='local'?1:0,peerStatus:1,...discussionCapabilities(),summaryBatches:1,memoryOrganizer:1,stableInstructions:1,warmSessions:1,gitVersions:1,attachmentTransfer:1,mediaStream:1,mediaPace:1,workspaceGit:1,nativeSessionTitle:1,nativeBranch:1,managedResume:1,sessionTools:1,timerTools:1,terminalResume:1,collaborationTools:2,sessionQueue:2,executionScheduling:1,attachments:1, projectSpace:1, workspaceBindings: true, roomRoles: true, projectBrowser: true, directoryCreate:1, runtimeDiscovery: true, tokenUsage:1, coordinationVersion: 1, projectSetup: 1 }, allowedRoots: roots, runtimes, capacity } });
   });
   ws.on('message', async bytes => {
     try {
@@ -1320,6 +1326,8 @@ function connect() {
       if (m.type === 'side_ask') void runWithLanguage(m.language, () => sideAsks.ask(m));
       if (m.type === 'side_ask_close') void sideAsks.close(m.sideId,'cleared');
       if (m.type === 'native_turn_answer') nativeTurns.answer(m.id,m);
+      if (m.type === 'native_turn_supplement') void nativeTurns.supplement(m);
+      if (m.type === 'native_turn_supplement_cancel') nativeTurns.cancelSupplement(m);
       if (m.type === 'native_takeover_release') void nativeTurns.releaseLease(m.runtime,m.sessionId,m.leaseId).catch(e=>console.error('Native takeover release:',e.message));
       if (m.type === 'error') console.error(tr('worker.rejectedByHome'), m.error);
     } catch (e) { console.error(tr('worker.protocolError'), e.message); }

@@ -1894,7 +1894,7 @@ dialog .native-picker-actions { margin-top: 16px; }
 dialog .native-launch-result { padding-top: 20px; }
 
 /* 这些窗口已有独立滚动正文，继续保留其布局，不引入第二个页面滚动层。 */
-dialog:is(#role-dialog, #supervisor-settings, #run-dialog, .live-scene, .message-fullscreen) { padding: 0; overflow: hidden; }
+dialog:is(#role-dialog, #supervisor-settings, #run-dialog, .live-scene, .message-fullscreen, .media-lightbox) { padding: 0; overflow: hidden; }
 dialog:is(#role-dialog, #supervisor-settings, #run-dialog, .live-scene, .message-fullscreen) > :is(.dialog-heading, .live-scene-heading, .message-fullscreen-heading) { position: static; flex-shrink: 0; top: 0; margin: 0; }
 dialog:is(.live-scene, .message-fullscreen) { margin: auto; }
 dialog.message-fullscreen { display: flex; flex-direction: column; }
@@ -1942,7 +1942,7 @@ dialog .live-scene-input { border-color: var(--dialog-line); border-radius: 10px
 dialog.role-switch-dialog { width: min(640px, calc(100vw - 32px)); }
 
 @media (max-width: 600px) {
-  :is(dialog, #role-dialog):not(.live-scene):not(.message-fullscreen):not(#run-dialog):not(#role-dialog):not(#supervisor-settings) { height: fit-content; }
+  :is(dialog, #role-dialog):not(.live-scene):not(.message-fullscreen):not(.media-lightbox):not(#run-dialog):not(#role-dialog):not(#supervisor-settings) { height: fit-content; }
   :is(dialog, #project-form-panel) { --dialog-space: 16px; max-width: calc(100vw - 20px); max-height: calc(var(--app-height, 100dvh) - 24px); }
   :is(dialog, #project-form-panel) > :is(.dialog-heading, .panel-heading, .source-sync-heading, .message-fullscreen-heading, .live-scene-heading) { min-height: 56px; padding-block: 12px; gap: 10px; }
   :is(dialog, #project-form-panel) > :is(.dialog-heading, .panel-heading, .source-sync-heading, .live-scene-heading) :is(h2, h3), dialog > .message-fullscreen-heading > strong { font-size: 18px; }
@@ -3662,20 +3662,17 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 
 /* ---- One viewer for every picture and video in the chats: download, copy and close at the top right; a plain light stage
    (no black bars); name and size bottom left, the message time bottom right. ---- */
-dialog.media-lightbox { width: min(1100px, calc(100vw - 48px)); max-width: none; max-height: calc(var(--app-height, 100dvh) - 48px); padding: 0; overflow: hidden; }
+dialog.media-lightbox { width: min(1280px, calc(100vw - 32px)); max-width: none; max-height: calc(var(--app-height, 100dvh) - 32px); padding: 0; overflow: hidden; }
 dialog.media-lightbox[open] { display: flex; flex-direction: column; }
-.media-lightbox-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 10px 12px 0; }
 .media-lightbox-actions .chat-icon-btn { display: grid; place-items: center; width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 6px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
 .media-lightbox-actions .chat-icon-btn:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
 .media-lightbox-actions .chat-icon-btn svg { width: 18px; height: 18px; }
 .media-lightbox-actions .media-download { margin-left: 0; }
-dialog.media-lightbox .media-stage { flex: 1; min-height: 200px; margin: 6px 16px 0; border-radius: 10px; background: transparent; }
-dialog.media-lightbox .media-stage img, dialog.media-lightbox .media-stage video { max-width: 100%; max-height: calc(var(--app-height, 100dvh) - 190px); border-radius: 8px; object-fit: contain; }
+dialog.media-lightbox .media-stage { flex: 1; min-height: 200px; margin: 0 8px 8px; border-radius: 10px; background: transparent; }
+dialog.media-lightbox .media-stage img, dialog.media-lightbox .media-stage video { max-width: 100%; max-height: calc(var(--app-height, 100dvh) - 96px); border-radius: 8px; object-fit: contain; }
 dialog.media-lightbox .media-loading { inset: 50% auto auto 50%; transform: translate(-50%, -50%); background: rgb(15 23 42 / 62%); }
 dialog.media-lightbox .media-unavailable { color: var(--muted); }
 dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); font-size: 12.5px; }
-.media-lightbox-foot { display: flex; align-items: center; gap: 16px; padding: 12px 18px 14px; }
-.media-lightbox-label { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin-right: auto; }
 .media-lightbox-name { overflow: hidden; color: var(--ink); font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .media-lightbox-size, .media-lightbox-time { flex: none; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
@@ -4497,3 +4494,75 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
 .native-share-pane .settings-row .secondary { margin-top: 0; }
 .native-share-pane :is(.settings-list-note, .settings-list-empty) { margin: 0; padding: 8px 0 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .native-settings-tabs { margin: 0 0 12px; }
+
+/* Run detail (2026-11-19): who ran it and how it stands in the title row, one quiet meta line, underline tabs, and the run
+   record laid out like a Sessions-page turn (steps, subagent cards, reply, Copy + time). */
+#run-dialog .run-dialog-heading { padding: 18px 24px 12px; align-items: flex-start; }
+#run-dialog .run-dialog-heading-content { display: flex; flex-wrap: wrap; align-items: center; column-gap: 10px; }
+#run-dialog .run-dialog-heading-content::after { content: ""; order: 3; flex-basis: 100%; height: 8px; }
+#run-dialog .run-dialog-meta { display: contents; }
+#run-dialog-title { order: 1; display: inline-flex; align-items: center; gap: 9px; min-width: 0; color: #0f172a; font-size: 17px; font-weight: 650; line-height: 1.4; }
+#run-dialog-status { order: 2; margin-left: 0; }
+#run-dialog-created { order: 4; display: inline-flex; flex-wrap: wrap; gap: 4px 16px; padding-left: 0; border-left: 0; }
+#run-dialog-session { order: 5; margin-left: 16px; gap: 4px 16px; flex-wrap: wrap; }
+.run-heading-avatar { display: inline-flex; flex: none; }
+.run-heading-avatar :is(svg, img) { width: 26px; height: 26px; }
+.run-heading-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-heading-model { flex: none; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #4338ca; font-size: 12px; font-weight: 500; }
+#run-dialog .run-dialog-meta .status-chip { font-size: 12px; padding: 3px 10px; }
+.run-meta-item { display: inline-flex; align-items: center; gap: 5px; color: #64748b; font-size: 12.5px; }
+.run-meta-item b { color: #334155; font-weight: 500; }
+.run-meta-item code { padding: 1px 6px; border-radius: 6px; background: #f1f5f9; color: #475569; font-size: 12px; }
+#run-dialog .run-tab-list { gap: 22px; padding: 0 24px; background: #fff; border-bottom: 1px solid var(--line); }
+#run-dialog .run-tab { min-height: 0; margin-bottom: -1px; padding: 10px 2px; border-radius: 0; border-bottom: 2px solid transparent; color: #64748b; background: transparent; font-size: 14px; font-weight: 500; }
+#run-dialog .run-tab:hover { color: #334155; background: transparent; }
+#run-dialog .run-tab.active { color: var(--accent-dark); background: transparent; border-bottom-color: var(--accent); font-weight: 600; }
+#run-dialog .run-tab-icon { display: none; }
+#run-dialog .run-tab-panel { padding: 20px 28px 28px; background: #fafbfc; }
+#run-dialog .run-transcript { gap: 12px; background: transparent; }
+#run-dialog .run-transcript .nt-task-groups { max-width: 760px; }
+#run-dialog .run-transcript .nt-tasks { background: #fff; }
+.run-added { display: flex; align-items: center; gap: 10px; margin: 6px 0; color: #6d28d9; font-size: 13px; }
+.run-added::before, .run-added::after { content: ""; flex: 0 0 18px; height: 1px; background: #e9d5ff; }
+.run-added::after { flex: 1; }
+.run-added-label { flex: none; font-weight: 600; }
+.run-added-text { min-width: 0; padding: 4px 10px; border-radius: 8px; background: #f5f3ff; color: #4c1d95; overflow-wrap: anywhere; }
+#run-dialog .run-reply-foot { margin-top: -4px; padding-left: 0; }
+#run-dialog .run-transcript > .nt-working { margin-top: 2px; }
+@media (max-width: 720px) {
+  #run-dialog .run-dialog-heading { padding: calc(10px + env(safe-area-inset-top)) 12px 10px; }
+  #run-dialog-session { margin-left: 0; }
+  #run-dialog .run-tab-list { gap: 16px; padding: 0 12px; }
+  #run-dialog .run-tab-panel { padding: 14px 12px 20px; }
+}
+
+/* Media viewer (2026-11-19): one slim bar (only the name on the left, icons on the right; size, n / m and time in the name's tooltip) instead of a top icon row and
+   a bottom caption; the picture takes the rest. Phones: full screen, the bar floats over the picture and a tap hides it. */
+.media-lightbox-bar { display: flex; flex: none; align-items: center; gap: 12px; min-height: 44px; padding: 4px 6px 4px 16px; }
+.media-lightbox-label { display: flex; flex: 1; align-items: baseline; gap: 10px; min-width: 0; }
+.media-lightbox-bar :is(.media-lightbox-size, .media-lightbox-time, .media-lightbox-count) { display: none; }
+.media-lightbox-actions { display: flex; flex: none; gap: 2px; padding: 0; }
+@media (max-width: 720px) {
+  dialog:is(.media-lightbox, #wb-media-lightbox) { width: 100vw; max-width: 100vw; height: var(--app-height, 100dvh); max-height: none; margin: 0; border: 0; border-radius: 0; background: #0b0f19; }
+  .media-lightbox-bar { position: absolute; inset: 0 0 auto; z-index: 3; padding: calc(4px + env(safe-area-inset-top)) 4px 18px 14px; background: linear-gradient(rgb(11 15 25 / 82%), rgb(11 15 25 / 0)); transition: opacity .18s; }
+  .media-lightbox-bar .media-lightbox-name { color: #fff; }
+  .media-lightbox-actions .chat-icon-btn { color: #e2e8f0; }
+  .media-lightbox-actions .chat-icon-btn:hover { color: #fff; background: rgb(255 255 255 / 12%); }
+  dialog.media-lightbox.is-immersive .media-lightbox-bar { opacity: 0; pointer-events: none; }
+  dialog.media-lightbox .media-stage { margin: 0; border-radius: 0; }
+  dialog.media-lightbox .media-stage img, dialog.media-lightbox .media-stage video { max-height: var(--app-height, 100dvh); border-radius: 0; }
+  dialog.media-lightbox .media-nav { display: none; }
+  dialog.media-lightbox .media-stage:is(.is-text, :has(iframe)) { margin: calc(52px + env(safe-area-inset-top)) 0 0; border: 0; }
+  dialog.media-lightbox .media-status { position: absolute; inset: auto 12px calc(12px + env(safe-area-inset-bottom)); z-index: 3; }
+}
+
+/* Group chat cards on phones (2026-11-19): the role's avatar moves up into the name line (small, before the name), so its card
+   runs the full width from the left edge; more space between one message and the next. */
+@media (max-width: 720px) {
+  #chat-feed .chat-row { margin-bottom: 26px; }
+  #chat-feed .chat-row:not(.human) { position: relative; gap: 0; }
+  #chat-feed .chat-row:not(.human) > .chat-avatar { position: absolute; top: 0; left: 0; z-index: 1; width: 24px; height: 24px; border-radius: 6px; }
+  #chat-feed .chat-row:not(.human) > .chat-avatar :is(.role-icon, .role-icon svg, img, svg) { width: 24px; height: 24px; border-radius: 6px; }
+  #chat-feed .chat-row:not(.human) > .chat-col { flex: 1; width: 100%; max-width: 100%; }
+  #chat-feed .chat-row:not(.human) .chat-message-header { min-height: 24px; align-items: center; padding-left: 31px; }
+}

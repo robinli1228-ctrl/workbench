@@ -198,7 +198,110 @@ export class CliPrintSession {
     // first (after a restart, the notice of a background command the old process left), so delivery is confirmed on the echo.
     const echo=this.keepAlive&&this.runtime==='claude';
     if(echo){message.uuid=this.echoUuid=randomUUID();this.echoSession=message.session_id;}
+    this.supplements=new Map();this.resultHeld=false;
+    // This turn's visible tasks; ones an earlier turn left running are listed with the time they have run so far.
+    if(this.runtime==='claude'){this.tasks=new Map();this.carryLiveTasks();}
     this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error&&!echo)this.emit('status',{inputDeliveryState:'accepted'});});
+  }
+  /**
+   * A queued message added to the reply that is running: written to Claude's input now, read by Claude at its next step
+   * (after the tool it is waiting for), so the reply goes on with it. Until its echo the turn does not end on a result.
+   */
+  supplement({id,prompt,images=[]}){
+    if(!this.keepAlive||this.runtime!=='claude'||this.done||this.stopping||this.echoUuid||this.awaitingEcho||this.controlTurn||!this.proc?.stdin?.writable)return this.emit('supplement_failed',{id,error:'The reply has already ended'});
+    const content=images.length?[...(prompt?[{type:'text',text:prompt}]:[]),...images.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
+    const uuid=randomUUID();(this.supplements||=new Map()).set(uuid,id);
+    this.proc.stdin.write(`${JSON.stringify({type:'user',session_id:this.inputSessionId||this.echoSession||this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null,uuid})}\n`,error=>{
+      if(error&&this.supplements?.delete(uuid))this.emit('supplement_failed',{id,error:error.message});});
+  }
+  /** Delete on the page: ask Claude to take the message back from its queue; its 'cancelled' receipt reports it withdrawn. */
+  cancelSupplement(id){const uuid=[...(this.supplements||new Map())].find(([,value])=>value===id)?.[0];
+    if(!uuid)return this.emit('supplement_failed',{id,error:'Not waiting in the queue'});
+    this.write({type:'control_request',request_id:`withdraw-${uuid}`,request:{subtype:'cancel_async_message',message_uuid:uuid}});}
+  /** A result while an added message still waits in Claude's queue is not the end: Claude answers that message next. */
+  inputsQueued(){return Boolean(this.supplements?.size)&&!this.stopping;}
+  /**
+   * Claude's answer about an added message: its echo, or its own started/completed receipt (a build that folds it in without a
+   * replay), means Claude took it; a refusal leaves it unsent. True when the message is consumed here.
+   */
+  receiveSupplement(message){
+    if(!this.supplements?.size||!message||message.parent_tool_use_id)return false;
+    const key=message.type==='command_lifecycle'?message.command_uuid:message.type==='user'&&message.isReplay?message.uuid:null,id=key?this.supplements.get(key):null;
+    if(!id)return false;
+    if(message.type==='user'||['started','completed'].includes(message.state)){this.supplements.delete(key);this.resultHeld=false;this.emit('supplement',{id});return message.type==='user';}
+    if(!['refused','discarded','cancelled'].includes(message.state))return false;
+    this.supplements.delete(key);this.emit('supplement_failed',{id,error:`Claude ${message.state} this message`});
+    // Reassess background work before publishing the held result.
+    if(this.resultHeld&&!this.supplements.size&&!this.done){this.resultHeld=false;this.settleResidentResult();}
+    return true;
+  }
+  /** The turn ends (an error, a stop) with added messages Claude has not read: take them back so they do not run unseen afterwards. */
+  withdrawSupplements(){
+    if(!this.supplements?.size)return;
+    for(const [uuid,id] of this.supplements){this.write({type:'control_request',request_id:`withdraw-${uuid}`,request:{subtype:'cancel_async_message',message_uuid:uuid}});this.emit('supplement_failed',{id,error:'The reply ended first'});}
+    this.supplements.clear();
+  }
+  /**
+   * Claude's subagents and background shells, for the page: the live list (kept between turns, so a later turn knows what
+   * still runs) and this turn's task events. Before this turn's echo only a task it already lists may report on it.
+   */
+  observeTasks(message){
+    // Also while idle or stopping: a turn that starts later must not wait for a task that already ended.
+    if(message.type==='system'&&message.subtype==='background_tasks_changed'&&!message.parent_tool_use_id&&Array.isArray(message.tasks)){this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
+      for(const id of this.liveTasks?.keys()||[])if(!this.backgroundTasks.has(id))this.liveTasks.delete(id);}
+    if(message.type==='assistant')this.subagentModels(message);
+    if(message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id){
+      this.track(message);
+      if(!this.done&&(!(this.awaitingEcho||this.echoUuid)||this.tasks?.has(message.task_id)))this.task(message);
+    }
+  }
+  /**
+   * Which model a subagent uses: the one the main session asked for when it called the Agent tool, until the subagent's own
+   * first message (which names the model it really runs) replaces it. Claude links both to the task by the call's id.
+   */
+  subagentModels(message){
+    const hints=this.agentModelHints||=new Map();
+    if(!message.parent_tool_use_id){for(const block of message.message?.content||[])if(block?.type==='tool_use'&&['Agent','Task'].includes(block.name)&&typeof block.input?.model==='string')hints.set(block.id,block.input.model.slice(0,80));if(hints.size>50)hints.delete(hints.keys().next().value);return;}
+    const model=typeof message.message?.model==='string'?message.message.model.slice(0,80):'';if(!model)return;
+    for(const [id,known] of this.tasks||[])if(known.toolUseId===message.parent_tool_use_id&&!known.modelSeen){known.modelSeen=true;if(known.model!==model){known.model=model;this.emit('task',{id,status:'running',model});}}
+  }
+  /** Process-wide record of the live tasks (they outlive the turn that started them), so a later turn can show what it waits for. */
+  track(m){
+    const id=m.task_id;if(!id)return;const live=this.liveTasks||=new Map();
+    if(m.subtype==='task_started')return void live.set(id,{at:Date.now(),kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80)});
+    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
+    if(status&&!['pending','running'].includes(status))live.delete(id);
+  }
+  /** Live tasks this turn does not list yet, shown as from earlier (a control turn does not wait for them, so it lists none). */
+  carryLiveTasks(){
+    if(this.controlTurn)return;const tasks=this.tasks||=new Map();
+    for(const id of this.backgroundTasks||[]){const info=this.liveTasks?.get(id);if(!info||tasks.has(id))continue;tasks.set(id,{at:info.at,shown:0});
+      this.emit('task',{id,status:'running',kind:info.kind,description:info.description,agentType:info.agentType,earlier:true,elapsedMs:Date.now()-info.at});}
+  }
+  /** A subagent or background shell of this turn for the page: start, what it is doing now (at most every 5s), end. An end
+   * without a start here (a task of an earlier, killed process) is not reported. */
+  task(m){
+    const id=m.task_id;if(!id)return;const tasks=this.tasks||=new Map(),known=tasks.get(id),now=Date.now();
+    if(m.subtype==='task_started'){const toolUseId=typeof m.tool_use_id==='string'?m.tool_use_id:null,model=toolUseId?this.agentModelHints?.get(toolUseId):undefined;
+      tasks.set(id,{at:now,shown:0,toolUseId,model});
+      return this.emit('task',{id,status:'running',kind:m.task_type==='local_bash'?'shell':'agent',description:String(m.description||'').slice(0,200),agentType:String(m.subagent_type||'').slice(0,80),...(model?{model}:{})});}
+    if(!known)return;
+    if(m.subtype==='task_progress'){if(now-known.shown<5000)return;known.shown=now;return this.emit('task',{id,status:'running',activity:String(m.description||'').slice(0,200),toolUses:Number.isFinite(m.usage?.tool_uses)?m.usage.tool_uses:undefined});}
+    const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
+    if(!status||['pending','running'].includes(status))return;
+    tasks.delete(id);this.emit('task',{id,status:['completed','failed'].includes(status)?status:'stopped',durationMs:now-known.at});
+  }
+  /** A resident process with live background work cannot be returned to the idle pool. */
+  settleResidentResult(){
+    // Background tasks still run in this process: this reply is only progress, so the Run stays active (slot held, never pooled as idle).
+    if(!this.runtimeError&&this.backgroundTasks.size){
+      // Kept so the supervisor can still end the turn with this answer if the background work turns out to be abandoned.
+      this.backgroundAnswer=this.finalText;this.awaitingSince={since:new Date().toISOString()};
+      this.awaitingBackground=true;this.flushText();this.bestAnswer='';this.bestAnswerId=null;this.finalText='';
+      this.emit('status',{awaitingBackground:{...this.awaitingSince,tasks:this.backgroundTaskInfo}});return;
+    }
+    this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);
+    if(this.runtimeError)this.shutdown();
   }
   receiveLine(line) {
     if (!line.trim()) return;
@@ -207,6 +310,7 @@ export class CliPrintSession {
   }
   receive(raw) {
     if(this.questionsSupported&&['control_request','control_cancel_request','control_response'].includes(raw?.type))return this.receiveControl(raw);
+    if(this.keepAlive&&this.runtime==='claude'&&this.receiveSupplement(raw))return;
     if(this.runtime==='claude'&&raw?.type==='rate_limit_event') {
       if(raw.session_id!==(this.nativeSessionId||this.resumeSessionId))return;
       const sample=normalizeRuntimeQuota('claude',raw);if(sample)this.emit('quota',sample);
@@ -216,9 +320,12 @@ export class CliPrintSession {
     // this turn's, so they neither show in it nor end it (otherwise a reply to an old notice ends the turn as "no text" and the
     // real answer that follows is lost). Replays of other messages are never output.
     if(this.keepAlive&&this.runtime==='claude'&&raw?.type==='user'&&raw.isReplay){
-      if(this.echoUuid&&raw.uuid===this.echoUuid&&!raw.parent_tool_use_id&&(!this.echoSession||raw.session_id===this.echoSession)){this.echoUuid=null;this.emit('status',{inputDeliveryState:'accepted'});}
+      if(this.echoUuid&&raw.uuid===this.echoUuid&&!raw.parent_tool_use_id&&(!this.echoSession||raw.session_id===this.echoSession)){this.echoUuid=null;this.emit('status',{inputDeliveryState:'accepted'});
+        // Tasks started while it was still queued (by a notice answered first) hold this turn open too: list them now.
+        if(this.runtime==='claude')this.carryLiveTasks();}
       return;
     }
+    if(this.runtime==='claude'&&raw&&typeof raw==='object')this.observeTasks(raw);
     if(this.echoUuid&&raw?.type!=='system')return;
     if(this.done||this.stopping)return;
     if (!raw || typeof raw !== 'object') return;
@@ -278,15 +385,9 @@ export class CliPrintSession {
         this.emit('log', { text: this.runtimeError });
       } else if(historicalError||m.status==='SUCCESS' || m.subtype==='success') this.runtimeError='';
       if(this.keepAlive) {
-        // Background tasks still run in this process: this reply is only progress, so the Run stays active (slot held, never pooled as idle).
-        if(!this.runtimeError&&this.backgroundTasks.size){
-          // Kept so the supervisor can still end the turn with this answer if the background work turns out to be abandoned.
-          this.backgroundAnswer=this.finalText;this.awaitingSince={since:new Date().toISOString()};
-          this.awaitingBackground=true;this.flushText();this.bestAnswer='';this.bestAnswerId=null;this.finalText='';
-          this.emit('status',{awaitingBackground:{...this.awaitingSince,tasks:this.backgroundTaskInfo}});return;
-        }
-        this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);
-        if(this.runtimeError)this.shutdown();
+        // A message added to this reply still waits in the CLI's queue: the CLI answers it next, still within this turn.
+        if(!this.runtimeError&&this.inputsQueued?.()){this.resultHeld=true;this.flushText();return;}
+        this.settleResidentResult();
       }
     }
     // Agy 1.2.x reports the tool lifecycle via step_update; a stable ID lets the page merge start and end.
@@ -403,6 +504,7 @@ export class CliPrintSession {
   }
   finish(status, error) {
     if (this.done) return;
+    this.withdrawSupplements();
     this.flushText();
     // Claude sometimes sends the full body as an assistant message while result only returns "see the body above".
     // Only override the short result when a single body is significantly more complete, to avoid mistaking an ordinary progress message for the final answer.

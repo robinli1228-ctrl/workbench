@@ -10,7 +10,7 @@ import {createDataSettingsUI} from './data-settings.js';
 import {createRemoteAccessSettingsUI} from './remote-access-settings.js';
 import { t, getLanguage, setLanguage, onLanguageChange, syncLanguageWithBackend, dateLocale } from './i18n.js';
 import { trackLoading } from './load-bar.js';
-import {activityBlock,classifyStep,createPreviewSheet} from './native-transcript.js';
+import {activityBlock,classifyStep,createPreviewSheet,taskBlock,stepTitle,elapsedText} from './native-transcript.js';
 import stepZh from './locales/native-takeover-zh.js';
 import {renderMarkdown} from './markdown.js';
 import {simplifiedCliOutput} from './output-language.js';
@@ -40,7 +40,7 @@ import { platformMemoryUI } from './platform-memory.js';
 import { tokenUsageUI } from './token-usage.js';
 import { createScheduledJobsUI } from './scheduled-jobs.js';
 import { formatGitVersionStatus, formatProjectGitSummary } from './git-version.js';
-import { runTimeline, formatTokenMillions, partitionRunLog, displayRunInput, contextUsageLabel, mergeRunEvents, shouldShowFinalResult, toolStatusLabel, stripAnsi, taskRunDisplayStatus } from './run-log-data.js';
+import { runTimeline, runTasks, formatTokenMillions, partitionRunLog, displayRunInput, contextUsageLabel, mergeRunEvents, shouldShowFinalResult, toolStatusLabel, stripAnsi, taskRunDisplayStatus } from './run-log-data.js';
 import {createWorkspaceInspector,initWorkspaceColumns} from './workspace-inspector.js';
 import {applyStateUpdate} from './state-data.js';
 import { TOKEN_KEY, readApiToken, saveApiToken } from './browser-token.js';
@@ -1478,16 +1478,10 @@ function renderTaskDetail() {
   }
 
   const latestRun = getDetailRun(task.id);
-  dom.runTitle.textContent = latestRun?.inputTask?.title||task.title;
-  dom.runTitle.title = dom.runTitle.textContent;
-  dom.runCreated.textContent = formatTime(task.createdAt);
-  dom.runSession.replaceChildren(create('span','',t('Session ID')),create('span','run-session-short',latestRun?.threadId?`…${latestRun.threadId.slice(-8)}`:t('Not available')));
-  if(latestRun?.threadId){dom.runSession.title=latestRun.threadId;dom.runSession.append(runCopyButton(latestRun.threadId));}else dom.runSession.removeAttribute('title');
-  dom.runStatus.replaceChildren(statusChip(taskDisplayStatus(task, latestRun)));
+  renderRunHeading(task, latestRun);
 
   renderRunToolbar(task, latestRun);
   const body = create('div', 'detail-body');
-  if (latestRun) body.append(renderRunSummary(latestRun));
   const tabs = renderRunTabs(task, latestRun), messages = [];
   // Keep status details and approval controls in the scrolling content, below the fixed metadata and tabs.
   if (latestRun?.error) messages.push(create('div', 'inline-error full-width', latestRun.error));
@@ -1510,6 +1504,39 @@ function renderTaskDetail() {
   else if (panel && oldPanel && oldRunId === app.detailRunId && oldTab !== `run-tab-${app.detailTab}`) panel.scrollTop = 0;
   else if (panel && oldPanel && oldRunId === app.detailRunId) panel.scrollTop = app.detailTab === 'output' && activeRun && followTail ? panel.scrollHeight : oldScroll;
   else if (panel) panel.scrollTop = 0;
+}
+
+/**
+ * The run's heading: who ran it (agent icon, role, model) and how it stands (status, with its time), then one quiet line with
+ * when it started, the device, the session and the tokens it used. Values that are not known are left out; the message text
+ * itself is in the chat and the Input tab (its full title stays the heading's tooltip).
+ */
+function renderRunHeading(task, run) {
+  const role=run?.roleSnapshot||task.roleSnapshot||{},runtime=role.runtime||run?.runtime,model=run?.model||role.model;
+  const title=run?.inputTask?.title||task.title||'';
+  const avatar=create('span','run-heading-avatar');avatar.append(agentIconEl(runtime));
+  const name=create('span','run-heading-name',role.name||task.title||t('Role'));name.translate=false;
+  dom.runTitle.replaceChildren(avatar,name);dom.runTitle.title=title;
+  if(model){const tag=create('span','run-heading-model',model);tag.translate=false;dom.runTitle.append(tag);}
+  const status=taskDisplayStatus(task, run),chip=statusChip(status),took=run&&!['queued','starting','running','waiting_user','stopping'].includes(run.status)?runDuration(run):'';
+  if(run&&['starting','running','waiting_user'].includes(run.status)){const since=elapsedEl(create,run.startedAt||run.createdAt,'run-heading-elapsed');if(since)chip.append(create('span','',' \u00b7 '),since);}
+  else if(took)chip.append(create('span','',` \u00b7 ${runStepText('Took {duration}',{duration:took})}`));
+  dom.runStatus.replaceChildren(chip);
+  const item=(label,value,cls='')=>{const span=create('span',`run-meta-item ${cls}`.trim());span.append(create('span','run-meta-label',label),value);return span;};
+  const started=run?.startedAt||run?.createdAt||task.createdAt;
+  dom.runCreated.replaceChildren(item(t('Run started at'),create('b','',formatTime(started))));
+  const worker=run?.nodeId&&(app.data.workers||[]).find(w=>w.id===run.nodeId);
+  if(worker){const device=create('b','',workerDisplayName(worker));device.translate=false;dom.runCreated.append(item(t('Device'),device));}
+  dom.runSession.replaceChildren();dom.runSession.removeAttribute('title');
+  if(run?.threadId){const id=create('code','run-session-short',`${run.threadId.slice(0,8)}\u2026`);id.translate=false;dom.runSession.append(item(t('Session'),id),runCopyButton(run.threadId));dom.runSession.title=run.threadId;}
+  const raw=run?.usage,usage=raw&&typeof raw==='object'?raw:{totalTokens:raw};
+  let known=[['inputTokens','input_tokens','Input'],['outputTokens','output_tokens','Output']].map(([key,legacy,label])=>[label,formatTokenMillions(usage[key]??usage[legacy])]).filter(([,v])=>v);
+  // Older runs recorded only a total.
+  if(!known.length){const total=formatTokenMillions(usage.totalTokens??usage.total_tokens);if(total)known=[['Total',total]];}
+  if(known.length){const value=create('b','',known.map(([label,v])=>`${t(label)} ${v.replace(' ','')}`).join(' \u00b7 '));
+    const cached=formatTokenMillions(usage.cachedInputTokens??usage.cached_input_tokens),total=formatTokenMillions(usage.totalTokens??usage.total_tokens);
+    value.title=[cached&&`${t('Cached input')} ${cached}`,total&&`${t('Total')} ${total}`,t('Cached input is included in input. 1 M = 1,000,000 tokens.')].filter(Boolean).join(' \u00b7 ');
+    dom.runSession.append(item(runtime==='codex'?t('Token · Session cumulative'):'Token',value,'run-meta-token'));}
 }
 
 function renderRunToolbar(task, run) {
@@ -1579,24 +1606,13 @@ function runCopyButton(value) {
   return bindCopyFeedback(button,`run:${app.detailRunId}:${value}`);
 }
 
-function renderRunSummary(run) {
-  const summary=create('div','run-summary run-usage');
-  const label=create('span','run-usage-label',run.roleSnapshot?.runtime==='codex'?'Token · Session cumulative':'Token');
-  label.title=t('Cached input is included in input. 1 M = 1,000,000 tokens.');summary.append(label);
-  const raw=run.usage,usage=raw&&typeof raw==='object'?raw:{totalTokens:raw};
-  for(const [key,legacy,name] of [['inputTokens','input_tokens','Input'],['cachedInputTokens','cached_input_tokens','Cached input'],['outputTokens','output_tokens','Output'],['totalTokens','total_tokens','Total']]){
-    const value=usage[key]??usage[legacy],item=create('span',`run-usage-item${key==='totalTokens'?' is-total':''}`);
-    const amount=formatTokenMillions(value);item.append(create('span','',name),create('strong','',amount??t('Not available')));if(amount)item.title=String(value);summary.append(item);
-  }
-  return summary;
-}
 
 /** The conversation log groups input, output, tools, artifacts and stored original text of the same Run. */
 function renderRunTabs(task, run) {
   const logs = partitionRunLog(app.events);
   const tabs = [
-    ['input', 'Input'],
     ['output', 'Run record'],
+    ['input', 'Input'],
     ['artifacts', 'Artifacts'],
     ['original', 'Result original']
   ];
@@ -1708,20 +1724,61 @@ function renderGroupedRunInput(section,input) {
 }
 
 /** Reuse the Sessions transcript's expandable steps; no user messages or sender header in a Run. */
+/**
+ * One run, as the Sessions page shows a turn: the role's steps, its subagents and background commands, its notes and reply,
+ * then Copy and how long it took (or, while it runs, what it is doing now). The user's own message is in the chat and the Input
+ * tab; only a message added to this run while it ran shows here, as a divider where the reply took it.
+ */
 function renderRunOutput(run, events) {
   const section=create('section','run-log-content run-transcript native-session-content');
+  // The working line only while the CLI is at it; queued, stopping or reconciling runs say so in the heading.
+  const live=Boolean(run)&&['starting','running','waiting_user'].includes(run.status);
   const rows=runTimeline(events);
+  const tasks=runTasks(events,run);let taskCard=tasks.length?taskBlock({tasks},runStepText,{live}):null;
+  let runningStep=null;
   const appendText=(value)=>{const body=create('div','markdown-body run-reply');body.append(renderMarkdown(simplifiedCliOutput(value)));section.append(body);};
   if(!rows.length&&!run?.result)section.append(create('div','event-empty',run?'Waiting for CLI output…':'Task has not started yet'));
   for(const row of rows){
     if(row.kind==='tools'){
       const block=activityBlock({steps:row.tools.map(tool=>{const step=classifyStep(tool.item,run?.status);step.startedAt=tool.createdAt;if(!step.running&&tool.updatedAt)step.endedAt=tool.updatedAt;if(tool.item.query!=null){step.args={...step.args,query:step.args.query??tool.item.query};if(step.kind==='web'&&!step.url)step.url=typeof tool.item.query==='string'?tool.item.query:JSON.stringify(tool.item.query);if(step.kind==='search'&&!step.query)step.query=tool.item.query;}return step;}),notes:row.notes.map(note=>({...note,text:simplifiedCliOutput(note.text)})),t:runStepText,onPreview:(step,path)=>runPreview.open(step,path)});
       block.dataset.toolId=String(row.seq);section.append(block);
-    }else if(row.kind==='text')appendText(row.text);
+      if(live)runningStep=row.tools.map(tool=>classifyStep(tool.item,run.status)).reverse().find(step=>step.running)||runningStep;
+      // The subagent and background-command cards follow the first steps, as on the Sessions page.
+      if(taskCard){section.append(taskCard);taskCard=null;}
+    }else if(row.kind==='added')section.append(addedDivider(row));
+    else if(row.kind==='text')appendText(row.text);
     else section.append(create('div','nt-error',simplifiedCliOutput(row.text)));
   }
+  if(taskCard)section.prepend(taskCard);
   if(shouldShowFinalResult(run?.result,partitionRunLog(events).output))appendText(run.result);
+  if(live){
+    // What it is doing now: the running step, or the background work that still holds the turn open.
+    const line=create('div','nt-working'),waiting=tasks.filter(x=>x.status==='running').length;
+    line.append(create('span','nt-pulse'),elapsedEl(create,run.startedAt||run.createdAt,'nt-working-time')||create('span','nt-working-time',''),create('span','nt-working-hint',runningStep?(({verb,target})=>`${verb} ${target||''}`.trim())(stepTitle(runningStep,runStepText)):run.awaitingBackground&&waiting?runStepText(waiting===1?'Waiting for 1 background task\u2026':'Waiting for {n} background tasks\u2026',{n:waiting}):runStepText('Working…')));
+    section.append(line);
+  }else if(run&&(run.result||rows.length)){
+    const foot=create('div','nt-reply-foot run-reply-foot'),copy=create('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));
+    // The reply as shown: the stored result, or the streamed text when the run ended without one.
+    const reply=run.result||rows.filter(row=>row.kind==='text').map(row=>row.text).join('\n\n');
+    copy.addEventListener('click',()=>void copyText(copy,simplifiedCliOutput(reply)).catch(()=>{}));copy.disabled=!reply.trim();foot.append(bindCopyFeedback(copy,`run-reply:${run.id}`));
+    const took=runDuration(run);if(took)foot.append(create('span','nt-duration',runStepText('Took {duration}',{duration:took})));
+    section.append(foot);
+  }
   return section;
+}
+
+/** How long a run took, from its start to its end; none for a run without both. */
+function runDuration(run){
+  const start=Date.parse(run?.startedAt||run?.createdAt||''),end=Date.parse(run?.finishedAt||'');
+  return Number.isFinite(start)&&Number.isFinite(end)&&end>=start?elapsedText(start,end):'';
+}
+
+/** A message the user added to this run while it ran: where the reply took it, with its text. */
+function addedDivider(row){
+  const task=(app.data.tasks||[]).find(item=>item.id===row.taskId),line=create('div','run-added');
+  const label=create('span','run-added-label',t('Added · {time}',{time:row.createdAt?new Date(row.createdAt).toLocaleTimeString(dateLocale(),{hour:'2-digit',minute:'2-digit'}):''}));
+  const text=create('span','run-added-text',simplifiedCliOutput(task?.prompt||task?.title||''));text.translate=false;
+  line.append(label,text);return line;
 }
 
 function renderRunArtifacts(run) {

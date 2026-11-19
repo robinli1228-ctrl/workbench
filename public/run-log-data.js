@@ -70,6 +70,26 @@ export function partitionRunLog(events = []) {
   return result;
 }
 
+/**
+ * Subagents and background shells of a run, from its 'task' events, kept the way the Sessions page keeps them on a turn: a
+ * start, what it is doing now, how it ended and how long it took. One still running when the run ended is "status unknown".
+ */
+export function runTasks(events=[],run={}){
+  const tasks=new Map();
+  for(const event of events){
+    const p=event.type==='task'?event.payload:null;if(!p?.id)continue;
+    const id=String(p.id).slice(0,80),known=tasks.get(id),text=(v,n)=>typeof v==='string'?v.slice(0,n):'';
+    if(!known){if(p.status==='running'&&['agent','shell'].includes(p.kind))tasks.set(id,{id,kind:p.kind,description:text(p.description,200),agentType:text(p.agentType,80),...(text(p.model,80)?{model:text(p.model,80)}:{}),status:'running',
+      startedAt:p.earlier===true&&Number.isFinite(p.elapsedMs)?new Date(Date.parse(event.createdAt)-p.elapsedMs).toISOString():event.createdAt,...(p.earlier===true?{earlier:true}:{})});continue;}
+    if(known.status!=='running')continue;
+    if(typeof p.activity==='string')known.activity=text(p.activity,200);
+    if(text(p.model,80))known.model=text(p.model,80);
+    if(['completed','failed','stopped'].includes(p.status)){known.status=p.status;known.endedAt=event.createdAt;if(Number.isFinite(p.durationMs))known.durationMs=p.durationMs;}
+  }
+  const ended=['succeeded','failed','interrupted'].includes(run?.status);
+  return [...tasks.values()].slice(-20).map(x=>ended&&x.status==='running'?{...x,status:'unknown',endedAt:run.finishedAt||x.startedAt}:x);
+}
+
 /** Token 只换显示单位；缺失值保持未知，小于两位小数的非零用量不显示成零。 */
 export function formatTokenMillions(value) {
   if (value == null || value === '' || !Number.isFinite(Number(value)) || Number(value) < 0) return null;
@@ -80,7 +100,8 @@ export function formatTokenMillions(value) {
 /** 工具和运行提示组成会话页的活动块；正文保持顺序，输入只出现在独立输入页。 */
 export function runTimeline(events = []) {
   const logs=partitionRunLog(events),rows=[];
-  const entries=[...logs.output.map(event=>({seq:event.seq,event})),...logs.tools.map(tool=>({seq:tool.seq,tool}))].sort((a,b)=>(a.seq||0)-(b.seq||0));
+  const added=events.filter(event=>event.type==='supplement'&&event.payload?.id);
+  const entries=[...[...logs.output,...added].map(event=>({seq:event.seq,event})),...logs.tools.map(tool=>({seq:tool.seq,tool}))].sort((a,b)=>(a.seq||0)-(b.seq||0));
   for(const entry of entries){
     const last=rows.at(-1);
     if(entry.tool){
@@ -89,6 +110,10 @@ export function runTimeline(events = []) {
       continue;
     }
     const event=entry.event,payload=event.payload||{};
+    if(event.type==='supplement'){
+      rows.push({kind:'added',seq:entry.seq,createdAt:event.createdAt,taskId:String(payload.id)});
+      continue;
+    }
     const text=stripAnsi(typeof payload==='string'?payload:typeof payload.text==='string'?payload.text:typeof payload.message==='string'?payload.message:['log','error'].includes(event.type)?JSON.stringify(payload):'');
     if(!text)continue;
     if(event.type==='log'){
