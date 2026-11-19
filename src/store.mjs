@@ -11,7 +11,7 @@ import { projectTerminalLock, terminalOwnsProject } from './terminal-resume.mjs'
 import { RoleSessions,taskConversationId } from './role-sessions.mjs';
 import {ConversationTasks} from './conversation-tasks.mjs';
 import { buildRunContext, turnOrigin, turnReferences } from './run-context.mjs';
-import { steeringWaitReason } from './role-steering.mjs';
+import { steeringWaitReason,settleGroupSupplement } from './role-steering.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import { tr } from './i18n.mjs';
 import {switchSettled,roleSwitchWaitReason,effectiveExecutionRole,isSwitchMaintenance} from './role-switch-policy.mjs';
@@ -456,7 +456,8 @@ export class Store {
       }
       if(roleSession)new RoleSessions(this).claim(roleSession.id,run.id);
       this.put('runs', run);
-      this.put('tasks', { ...storedTask, status: 'in_progress', currentRunId: run.id });
+      // A message whose addition to the previous turn never settled starts as its own run.
+      {const {supplementing:_supplementing,...startedTask}=storedTask;this.put('tasks', { ...startedTask, status: 'in_progress', currentRunId: run.id });}
       if (task.requestId) {
         const request = this.get('coordinationRequests', task.requestId);
         if (!request || request.status !== 'queued') throw new Error(tr('store.callWasCancelledItsStatus'));
@@ -534,6 +535,7 @@ export class Store {
         if (!r.discussionDeliveryId && task && (!task.currentRunId || task.currentRunId === r.id) && !['done','cancelled'].includes(task.status)) this.put('tasks', { ...task, waitingReason:next.discussionWaiting?task.waitingReason:null,error:next.status==='failed'?next.error||null:null,status:next.discussionWaiting?'waiting_discussion': next.status === 'succeeded' ? (task.origin === 'chat' ? 'completed' : 'awaiting_acceptance') : 'blocked' });
         for (const a of this.list('approvals').filter(a => a.runId === r.id && ['pending', 'responding'].includes(a.status))) this.put('approvals', { ...a, status: 'expired' });
       }
+      if (e.type === 'supplement' || e.type === 'supplement_failed') settleGroupSupplement(this, next, e.type, e.payload);
       if (e.type === 'approval' && !terminal.has(next.status)) this.put('approvals', e.payload);
       if (e.type === 'approval_resolved') { const a = this.get('approvals', e.payload.id); if (a) this.put('approvals', { ...a, status: e.payload.status }); }
       // A question to the user shares the approval record: pending until answered, skipped or the turn ends.

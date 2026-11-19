@@ -198,7 +198,46 @@ export class CliPrintSession {
     // first (after a restart, the notice of a background command the old process left), so delivery is confirmed on the echo.
     const echo=this.keepAlive&&this.runtime==='claude';
     if(echo){message.uuid=this.echoUuid=randomUUID();this.echoSession=message.session_id;}
+    this.supplements=new Map();this.resultHeld=false;
     this.proc.stdin.write(`${JSON.stringify(message)}\n`,error=>{if(!error&&!echo)this.emit('status',{inputDeliveryState:'accepted'});});
+  }
+  /**
+   * A queued message added to the reply that is running: written to Claude's input now, read by Claude at its next step
+   * (after the tool it is waiting for), so the reply goes on with it. Until its echo the turn does not end on a result.
+   */
+  supplement({id,prompt,images=[]}){
+    if(!this.keepAlive||this.runtime!=='claude'||this.done||this.stopping||this.echoUuid||this.awaitingEcho||this.controlTurn||!this.proc?.stdin?.writable)return this.emit('supplement_failed',{id,error:'The reply has already ended'});
+    const content=images.length?[...(prompt?[{type:'text',text:prompt}]:[]),...images.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
+    const uuid=randomUUID();(this.supplements||=new Map()).set(uuid,id);
+    this.proc.stdin.write(`${JSON.stringify({type:'user',session_id:this.inputSessionId||this.echoSession||this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null,uuid})}\n`,error=>{
+      if(error&&this.supplements?.delete(uuid))this.emit('supplement_failed',{id,error:error.message});});
+  }
+  /** Delete on the page: ask Claude to take the message back from its queue; its 'cancelled' receipt reports it withdrawn. */
+  cancelSupplement(id){const uuid=[...(this.supplements||new Map())].find(([,value])=>value===id)?.[0];
+    if(!uuid)return this.emit('supplement_failed',{id,error:'Not waiting in the queue'});
+    this.write({type:'control_request',request_id:`withdraw-${uuid}`,request:{subtype:'cancel_async_message',message_uuid:uuid}});}
+  /** A result while an added message still waits in Claude's queue is not the end: Claude answers that message next. */
+  inputsQueued(){return Boolean(this.supplements?.size)&&!this.stopping;}
+  /**
+   * Claude's answer about an added message: its echo, or its own started/completed receipt (a build that folds it in without a
+   * replay), means Claude took it; a refusal leaves it unsent. True when the message is consumed here.
+   */
+  receiveSupplement(message){
+    if(!this.supplements?.size||!message||message.parent_tool_use_id)return false;
+    const key=message.type==='command_lifecycle'?message.command_uuid:message.type==='user'&&message.isReplay?message.uuid:null,id=key?this.supplements.get(key):null;
+    if(!id)return false;
+    if(message.type==='user'||['started','completed'].includes(message.state)){this.supplements.delete(key);this.resultHeld=false;this.emit('supplement',{id});return message.type==='user';}
+    if(!['refused','discarded','cancelled'].includes(message.state))return false;
+    this.supplements.delete(key);this.emit('supplement_failed',{id,error:`Claude ${message.state} this message`});
+    // The reply had already finished and waited only for this message: it ends now with what it said.
+    if(this.resultHeld&&!this.supplements.size&&!this.done){this.resultHeld=false;this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);}
+    return true;
+  }
+  /** The turn ends (an error, a stop) with added messages Claude has not read: take them back so they do not run unseen afterwards. */
+  withdrawSupplements(){
+    if(!this.supplements?.size)return;
+    for(const [uuid,id] of this.supplements){this.write({type:'control_request',request_id:`withdraw-${uuid}`,request:{subtype:'cancel_async_message',message_uuid:uuid}});this.emit('supplement_failed',{id,error:'The reply ended first'});}
+    this.supplements.clear();
   }
   receiveLine(line) {
     if (!line.trim()) return;
@@ -207,6 +246,7 @@ export class CliPrintSession {
   }
   receive(raw) {
     if(this.questionsSupported&&['control_request','control_cancel_request','control_response'].includes(raw?.type))return this.receiveControl(raw);
+    if(this.keepAlive&&this.runtime==='claude'&&this.receiveSupplement(raw))return;
     if(this.runtime==='claude'&&raw?.type==='rate_limit_event') {
       if(raw.session_id!==(this.nativeSessionId||this.resumeSessionId))return;
       const sample=normalizeRuntimeQuota('claude',raw);if(sample)this.emit('quota',sample);
@@ -405,6 +445,7 @@ export class CliPrintSession {
   }
   finish(status, error) {
     if (this.done) return;
+    this.withdrawSupplements();
     this.flushText();
     // Claude sometimes sends the full body as an assistant message while result only returns "see the body above".
     // Only override the short result when a single body is significantly more complete, to avoid mistaking an ordinary progress message for the final answer.

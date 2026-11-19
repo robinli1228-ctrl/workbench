@@ -1127,6 +1127,9 @@ Assistance results (context only):
   'roleSteering.userHasChangedDirectionOld': 'The user has changed direction; the old plan no longer advances automatically',
   'roleSteering.interruptingWaitingForOldRun2': 'Interrupting; waiting for the old run to confirm it has stopped',
   'roleSteering.continueWithNewInstructionFirst': 'Continue with the new instruction first',
+  'rooms.messageBeingAdded': 'This message is being added to the current turn of the role; it can no longer be cancelled or edited',
+  'roleSteering.addingToCurrentTurn': 'Adding this message to the current turn of the role',
+  'roleSteering.supplementText': 'The user added this message while you were working on this turn. It adds to the current task and does not replace it; take it into account and continue:\n\n{text}',
   // src/rooms.mjs
   'rooms.projectNotFound': 'Project not found',
   'rooms.editSystemSupervisorThroughSupervisor': 'Edit the system manager through the manager settings',

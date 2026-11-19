@@ -264,20 +264,22 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       info.append(title);row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
       const human=!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination;
-      if(human&&!task.steering){
+      if(human&&!task.steering&&!task.supplementing){
         const edit=create('button','icon-button message-queue-edit');edit.type='button';edit.innerHTML=UI_ICON.edit;edit.title='Return queued message to input';edit.setAttribute('aria-label',t('Return queued message to input'));
         edit.disabled=pending.has(task.id);edit.onclick=async()=>{pending.add(task.id);edit.disabled=true;try{await editQueued(task);}finally{pending.delete(task.id);edit.disabled=false;}};row.append(edit);
       }
       if(human) {
         const run=runs.get(task.currentRunId),stopped=(task.steering?.waitForRunIds||[]).map(id=>runs.get(id));
         const error=task.steering?(task.error||run?.error||stopped.find(r=>r?.status==='reconciling')?.error):steeringErrors.get(task.id);
-        const busy=(Boolean(task.steering)||steeringPending.has(task.id))&&!error;
+        // Claude and Codex roles take the message into their running turn rather than being interrupted (role-steering.mjs supplement).
+        const adds=Boolean(data.capabilities?.groupSupplement)&&['claude','codex'].includes(task.roleSnapshot?.runtime)&&busyRoles.has(task.roleId);
+        const busy=(Boolean(task.steering)||Boolean(task.supplementing)||steeringPending.has(task.id))&&!error;
         row.classList.toggle('is-error-card',Boolean(error));
         const steer=create('button',`icon-button message-queue-steer${busy?' is-active':''}${error?' is-error':''}`);steer.type='button';
         steer.setAttribute('aria-busy',String(busy));steer.setAttribute('aria-label',error?t('Steering needs attention'):t(busy?'Steering':'Steer now'));
         steer.innerHTML=busy?'<svg class="message-queue-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>':error?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></svg>':'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
-        steer.title=error?t('Steering needs attention: {reason}',{reason:error}):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):busyRoles.has(task.roleId)?t('Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept'):t('Run this message first; nothing is interrupted, and a pending wait keeps its place in the queue');
-        steer.disabled=Boolean(task.steering)||pending.has(task.id)||!(data.capabilities?.roleSteering>=2);
+        steer.title=error?t('Steering needs attention: {reason}',{reason:error}):task.supplementing||busy&&adds?t('Adding to this role current turn'):adds?t('Add to this role current turn without interrupting it'):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):busyRoles.has(task.roleId)?t('Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept'):t('Run this message first; nothing is interrupted, and a pending wait keeps its place in the queue');
+        steer.disabled=Boolean(task.steering)||Boolean(task.supplementing)||pending.has(task.id)||!(data.capabilities?.roleSteering>=2);
         if(!(data.capabilities?.roleSteering>=2))steer.title='Steer now becomes available after the service is upgraded';
         steer.onclick=async()=>{
           pending.add(task.id);steeringPending.add(task.id);steeringErrors.delete(task.id);setError('');view.update(lastData,currentProject);
@@ -285,7 +287,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
           try {
             const receipt=await api(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.id)}/steer`,{method:'POST',json:{mode:'replace',commandId:commands.get(task.id),conversationId:task.conversationId||task.projectId}});
             // A successful stop request stays busy even if the following workspace refresh fails.
-            const current=lastData.tasks?.find(t=>t.id===task.id);if(current)current.steering=receipt;
+            const current=lastData.tasks?.find(t=>t.id===task.id);if(current&&receipt.supplementing)current.supplementing={runId:receipt.runId};else if(current&&!receipt.queuedFirst)current.steering=receipt;
             await refreshState({quiet:true});
           }
           catch(error){steeringErrors.set(task.id,error.message);setError(error.message);}
@@ -297,7 +299,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       const recovery=cliRecoveryUI.button(task);
       if(recovery){recovery.className='icon-button cli-recovery-open';row.append(recovery);}
       const cancel=closeIcon(create('button','icon-button'));cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
-      cancel.disabled=pending.has(task.id)||Boolean(task.currentRunId)||task.status!=='ready';cancel.onclick=async()=>{
+      cancel.disabled=pending.has(task.id)||Boolean(task.currentRunId)||Boolean(task.supplementing)||task.status!=='ready';cancel.onclick=async()=>{
         cancel.disabled=true;try{await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`,{method:'POST',json:{}});await refreshState({quiet:true});}catch(error){setError(error.message);cancel.disabled=false;}
       };row.append(cancel);list.append(row);
     }
