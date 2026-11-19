@@ -254,8 +254,10 @@ function step(delta){
   if(next){next.scrollIntoView({block:'nearest'});next.click();}
 }
 /**
- * One viewer for every image and video in the chats (media named in replies and attachments people send): download, copy and
- * close at the top right; the picture on a plain stage; its name and size bottom left, the message time bottom right.
+ * One viewer for every image and video in the chats (media named in replies and attachments people send). One slim bar on
+ * top: only the name on the left (size, "3 / 12" and the message time in its tooltip) and download, open on the right, copy
+ * and close on the right; the picture takes the rest. On a phone the viewer is full screen, the bar floats over the picture, and a tap on the picture
+ * hides or shows it.
  */
 function lightbox({name,size=null,at=null,from=null}){
   const version=++viewerVersion;viewerFrom=from;
@@ -275,9 +277,9 @@ function lightbox({name,size=null,at=null,from=null}){
   const close=setActionIcon(el('button','chat-icon-btn'),'close',t('Close'));close.type='button';close.addEventListener('click',()=>viewer.close());close.autofocus=true;
   actions.append(download,side,copy,close);
   const stage=el('div','media-stage'),overlay=el('div','media-loading',t('Loading…')),status=el('p','workspace-note media-status');status.setAttribute('role','status');status.hidden=true;stage.append(overlay);
-  const foot=el('div','media-lightbox-foot'),label=el('div','media-lightbox-label'),title=el('strong','media-lightbox-name',name),bytes=el('span','media-lightbox-size',size==null?'':formatBytes(size)),when=el('time','media-lightbox-time');
+  const bar=el('div','media-lightbox-bar'),label=el('div','media-lightbox-label'),title=el('strong','media-lightbox-name',name),bytes=el('span','media-lightbox-size',size==null?'':formatBytes(size)),when=el('time','media-lightbox-time');
   const setTime=value=>{when.textContent=stamp(value);if(when.textContent)when.dateTime=value;};setTime(at);
-  label.append(title,bytes);foot.append(label,when);
+  label.append(title,bytes);
   // Previous / next picture in this conversation, with "3 / 12" beside the name; hidden at either end and for a single picture.
   const {list,index}=neighbours(from);
   if(index>=0&&list.length>1){
@@ -287,7 +289,13 @@ function lightbox({name,size=null,at=null,from=null}){
    stage.append(arrow(-1,'Previous picture','m15 18-6-6 6-6'),arrow(1,'Next picture','m9 18 6-6-6-6'));
    label.append(el('span','media-lightbox-count',`${index+1} / ${list.length}`));
   }
-  viewer.setAttribute('aria-label',name);viewer.replaceChildren(actions,stage,status,foot);
+  label.append(when);bar.append(label,actions);
+  // Size, position and time stay out of the bar; the name's tooltip carries them (they can arrive after the viewer opens).
+  label.addEventListener('pointerenter',()=>{title.title=[name,bytes.textContent,label.querySelector('.media-lightbox-count')?.textContent,when.textContent].filter(Boolean).join(' \u00b7 ');});
+  viewer.classList.remove('is-immersive');
+  // Phone: a tap on the picture (not on a control or a playing video) hides or shows the bar.
+  stage.addEventListener('click',event=>{if(!matchMedia('(max-width: 720px)').matches||event.target.closest('button,a,video,audio,iframe'))return;viewer.classList.toggle('is-immersive');});
+  viewer.setAttribute('aria-label',name);viewer.replaceChildren(bar,stage,status);
   if(!viewer.open)viewer.showModal();
   // Switching pictures replaces the focused arrow; keep keyboard navigation inside the still-open dialog.
   else close.focus({preventScroll:true});

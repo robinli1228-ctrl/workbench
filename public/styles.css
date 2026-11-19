@@ -1894,7 +1894,7 @@ dialog .native-picker-actions { margin-top: 16px; }
 dialog .native-launch-result { padding-top: 20px; }
 
 /* 这些窗口已有独立滚动正文，继续保留其布局，不引入第二个页面滚动层。 */
-dialog:is(#role-dialog, #supervisor-settings, #run-dialog, .live-scene, .message-fullscreen) { padding: 0; overflow: hidden; }
+dialog:is(#role-dialog, #supervisor-settings, #run-dialog, .live-scene, .message-fullscreen, .media-lightbox) { padding: 0; overflow: hidden; }
 dialog:is(#role-dialog, #supervisor-settings, #run-dialog, .live-scene, .message-fullscreen) > :is(.dialog-heading, .live-scene-heading, .message-fullscreen-heading) { position: static; flex-shrink: 0; top: 0; margin: 0; }
 dialog:is(.live-scene, .message-fullscreen) { margin: auto; }
 dialog.message-fullscreen { display: flex; flex-direction: column; }
@@ -1942,7 +1942,7 @@ dialog .live-scene-input { border-color: var(--dialog-line); border-radius: 10px
 dialog.role-switch-dialog { width: min(640px, calc(100vw - 32px)); }
 
 @media (max-width: 600px) {
-  :is(dialog, #role-dialog):not(.live-scene):not(.message-fullscreen):not(#run-dialog):not(#role-dialog):not(#supervisor-settings) { height: fit-content; }
+  :is(dialog, #role-dialog):not(.live-scene):not(.message-fullscreen):not(.media-lightbox):not(#run-dialog):not(#role-dialog):not(#supervisor-settings) { height: fit-content; }
   :is(dialog, #project-form-panel) { --dialog-space: 16px; max-width: calc(100vw - 20px); max-height: calc(var(--app-height, 100dvh) - 24px); }
   :is(dialog, #project-form-panel) > :is(.dialog-heading, .panel-heading, .source-sync-heading, .message-fullscreen-heading, .live-scene-heading) { min-height: 56px; padding-block: 12px; gap: 10px; }
   :is(dialog, #project-form-panel) > :is(.dialog-heading, .panel-heading, .source-sync-heading, .live-scene-heading) :is(h2, h3), dialog > .message-fullscreen-heading > strong { font-size: 18px; }
@@ -3662,20 +3662,17 @@ body :is(.native-setting, .native-session-filters, .run-toolbar) select:not([mul
 
 /* ---- One viewer for every picture and video in the chats: download, copy and close at the top right; a plain light stage
    (no black bars); name and size bottom left, the message time bottom right. ---- */
-dialog.media-lightbox { width: min(1100px, calc(100vw - 48px)); max-width: none; max-height: calc(var(--app-height, 100dvh) - 48px); padding: 0; overflow: hidden; }
+dialog.media-lightbox { width: min(1280px, calc(100vw - 32px)); max-width: none; max-height: calc(var(--app-height, 100dvh) - 32px); padding: 0; overflow: hidden; }
 dialog.media-lightbox[open] { display: flex; flex-direction: column; }
-.media-lightbox-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 10px 12px 0; }
 .media-lightbox-actions .chat-icon-btn { display: grid; place-items: center; width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 6px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); box-shadow: none; }
 .media-lightbox-actions .chat-icon-btn:hover { color: var(--ink); background: rgb(0 0 0 / 6%); }
 .media-lightbox-actions .chat-icon-btn svg { width: 18px; height: 18px; }
 .media-lightbox-actions .media-download { margin-left: 0; }
-dialog.media-lightbox .media-stage { flex: 1; min-height: 200px; margin: 6px 16px 0; border-radius: 10px; background: transparent; }
-dialog.media-lightbox .media-stage img, dialog.media-lightbox .media-stage video { max-width: 100%; max-height: calc(var(--app-height, 100dvh) - 190px); border-radius: 8px; object-fit: contain; }
+dialog.media-lightbox .media-stage { flex: 1; min-height: 200px; margin: 0 8px 8px; border-radius: 10px; background: transparent; }
+dialog.media-lightbox .media-stage img, dialog.media-lightbox .media-stage video { max-width: 100%; max-height: calc(var(--app-height, 100dvh) - 96px); border-radius: 8px; object-fit: contain; }
 dialog.media-lightbox .media-loading { inset: 50% auto auto 50%; transform: translate(-50%, -50%); background: rgb(15 23 42 / 62%); }
 dialog.media-lightbox .media-unavailable { color: var(--muted); }
 dialog.media-lightbox .media-status { margin: 8px 16px 0; color: var(--danger); font-size: 12.5px; }
-.media-lightbox-foot { display: flex; align-items: center; gap: 16px; padding: 12px 18px 14px; }
-.media-lightbox-label { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin-right: auto; }
 .media-lightbox-name { overflow: hidden; color: var(--ink); font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .media-lightbox-size, .media-lightbox-time { flex: none; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
@@ -4537,4 +4534,24 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
   #run-dialog-session { margin-left: 0; }
   #run-dialog .run-tab-list { gap: 16px; padding: 0 12px; }
   #run-dialog .run-tab-panel { padding: 14px 12px 20px; }
+}
+
+/* Media viewer (2026-11-19): one slim bar (only the name on the left, icons on the right; size, n / m and time in the name's tooltip) instead of a top icon row and
+   a bottom caption; the picture takes the rest. Phones: full screen, the bar floats over the picture and a tap hides it. */
+.media-lightbox-bar { display: flex; flex: none; align-items: center; gap: 12px; min-height: 44px; padding: 4px 6px 4px 16px; }
+.media-lightbox-label { display: flex; flex: 1; align-items: baseline; gap: 10px; min-width: 0; }
+.media-lightbox-bar :is(.media-lightbox-size, .media-lightbox-time, .media-lightbox-count) { display: none; }
+.media-lightbox-actions { display: flex; flex: none; gap: 2px; padding: 0; }
+@media (max-width: 720px) {
+  dialog:is(.media-lightbox, #wb-media-lightbox) { width: 100vw; max-width: 100vw; height: var(--app-height, 100dvh); max-height: none; margin: 0; border: 0; border-radius: 0; background: #0b0f19; }
+  .media-lightbox-bar { position: absolute; inset: 0 0 auto; z-index: 3; padding: calc(4px + env(safe-area-inset-top)) 4px 18px 14px; background: linear-gradient(rgb(11 15 25 / 82%), rgb(11 15 25 / 0)); transition: opacity .18s; }
+  .media-lightbox-bar .media-lightbox-name { color: #fff; }
+  .media-lightbox-actions .chat-icon-btn { color: #e2e8f0; }
+  .media-lightbox-actions .chat-icon-btn:hover { color: #fff; background: rgb(255 255 255 / 12%); }
+  dialog.media-lightbox.is-immersive .media-lightbox-bar { opacity: 0; pointer-events: none; }
+  dialog.media-lightbox .media-stage { margin: 0; border-radius: 0; }
+  dialog.media-lightbox .media-stage img, dialog.media-lightbox .media-stage video { max-height: var(--app-height, 100dvh); border-radius: 0; }
+  dialog.media-lightbox .media-nav { display: none; }
+  dialog.media-lightbox .media-stage:is(.is-text, :has(iframe)) { margin: calc(52px + env(safe-area-inset-top)) 0 0; border: 0; }
+  dialog.media-lightbox .media-status { position: absolute; inset: auto 12px calc(12px + env(safe-area-inset-bottom)); z-index: 3; }
 }
