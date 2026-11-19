@@ -4497,3 +4497,14 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
 .native-share-pane .settings-row .secondary { margin-top: 0; }
 .native-share-pane :is(.settings-list-note, .settings-list-empty) { margin: 0; padding: 8px 0 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .native-settings-tabs { margin: 0 0 12px; }
+
+/* Group chat cards on phones (2026-11-19): the role's avatar moves up into the name line (small, before the name), so its card
+   runs the full width from the left edge; more space between one message and the next. */
+@media (max-width: 720px) {
+  #chat-feed .chat-row { margin-bottom: 22px; }
+  #chat-feed .chat-row:not(.human) { position: relative; gap: 0; }
+  #chat-feed .chat-row:not(.human) > .chat-avatar { position: absolute; top: 0; left: 0; z-index: 1; width: 22px; height: 22px; border-radius: 6px; }
+  #chat-feed .chat-row:not(.human) > .chat-avatar :is(.role-icon, .role-icon svg, img, svg) { width: 22px; height: 22px; border-radius: 6px; }
+  #chat-feed .chat-row:not(.human) > .chat-col { flex: 1; width: 100%; max-width: 100%; }
+  #chat-feed .chat-row:not(.human) .chat-message-header { min-height: 22px; align-items: center; padding-left: 29px; }
+}
