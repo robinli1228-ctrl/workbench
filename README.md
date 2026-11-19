@@ -69,7 +69,7 @@ Each group has its own task list with descriptions, steps, owners, status, and c
 
 ### Continue native conversations
 
-The Sessions view lets you browse and continue supported native CLI conversations. Read replies, expand tool calls on demand, and queue follow-up messages while a reply is running.
+The Sessions view lets you browse and continue supported native CLI conversations. Read replies, expand tool calls on demand, and queue follow-up messages while a reply is running. With Claude and Codex, Steer on a queued message adds it to the running reply without interrupting it.
 
 When a role or a Sessions-page CLI asks you a question with its question tool, your answer is shown as your own message ("Reply to the question from …", each question with your answer) between the part of its reply before the question and the part after it. Claude and Codex also support side questions for a separate discussion alongside the main flow. History, side-question, and quota capabilities vary by CLI.
 

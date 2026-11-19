@@ -278,6 +278,8 @@ export class CliPrintSession {
         this.emit('log', { text: this.runtimeError });
       } else if(historicalError||m.status==='SUCCESS' || m.subtype==='success') this.runtimeError='';
       if(this.keepAlive) {
+        // A message added to this reply still waits in the CLI's queue: the CLI answers it next, still within this turn.
+        if(!this.runtimeError&&this.inputsQueued?.()){this.resultHeld=true;this.flushText();return;}
         // Background tasks still run in this process: this reply is only progress, so the Run stays active (slot held, never pooled as idle).
         if(!this.runtimeError&&this.backgroundTasks.size){
           // Kept so the supervisor can still end the turn with this answer if the background work turns out to be abandoned.

@@ -301,7 +301,7 @@ const devicesAdmin = new DeviceAdmin({ db, credentials, base, data, workerToken,
     const worker=db.get('workers',id),usage=worker?.cliUsage;
     if(!usage||['active','retained','organizer','terminal'].some(key=>!Number.isFinite(usage[key])))throw new Error(tr('deviceAdmin.reconnectUnverified'));
     const taskNode=t=>t.executionBinding?.role?.nodeId||t.roleSnapshot?.nodeId||db.get('roles',t.assignedRoleId||t.roleId)?.nodeId;
-    const native=db.db.prepare("SELECT 1 FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND coalesce(json_extract(data,'$.status'),'') NOT IN ('succeeded','failed','interrupted','cancelled','stopped') LIMIT 1").get(id);
+    const native=db.db.prepare("SELECT 1 FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.nodeId')=? AND coalesce(json_extract(data,'$.status'),'') NOT IN ('succeeded','failed','interrupted','cancelled','stopped','merged') LIMIT 1").get(id);
     if(Object.values(usage).some(n=>typeof n==='number'&&n>0)||(worker.warmSessions||[]).length||Number(worker.organizerBusy)>0
       ||dispatching.has(id)||db.activeRuns(id).length||native||db.chatTasks().some(t=>taskNode(t)===id)
       ||[...queries.values()].some(q=>q.nodeId===id)
