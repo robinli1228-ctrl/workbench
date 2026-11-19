@@ -152,7 +152,7 @@ export function createHomeNativeTurns({db,dataDir,send,online,change,busy=()=>fa
       const id=decodeURIComponent(a),turn=db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
       if(turn.status==='waiting')await refresh(nodeId,turn.runtime,turn.sessionId);
       json(res,turns.steer(nodeId,id));return true;}
-    if(area==='turns'&&a&&b==='withdraw'&&req.method==='POST'){json(res,turns.withdraw(nodeId,decodeURIComponent(a)));return true;}
+    if(area==='turns'&&a&&b==='withdraw'&&req.method==='POST'){json(res,turns.withdraw(nodeId,decodeURIComponent(a),await body(req)));return true;}
     if(area==='turns'&&a&&b==='answer'&&req.method==='POST'){json(res,turns.answer(nodeId,decodeURIComponent(a),await body(req)));return true;}
     // Pause/resume the session's queue or store its dragged order; both live on Home, which dispatches the next message.
     if(area==='turns'&&a==='queue'&&!b&&req.method==='POST'){json(res,turns.setQueue(nodeId,await body(req)));return true;}

@@ -90,7 +90,9 @@ export class NativeCliSession extends CliPrintSession {
       }
       // A message added to this reply: its echo is the moment Claude takes it (at its next step); a refusal leaves it unsent.
       const added=!message.parent_tool_use_id&&this.supplements?.size?this.supplements.get(message.type==='command_lifecycle'?message.command_uuid:message.type==='user'&&message.isReplay?message.uuid:null):null;
-      if(added&&message.type==='user'){this.supplements.delete(message.uuid);this.resultHeld=false;this.emit('supplement',{id:added});return;}
+      // Its echo, or its own started/completed receipt (a build that folds it in without a replay), means Claude took it.
+      if(added&&(message.type==='user'||['started','completed'].includes(message.state))){this.supplements.delete(message.type==='user'?message.uuid:message.command_uuid);this.resultHeld=false;this.emit('supplement',{id:added});if(message.type==='user')return;}
+      else
       if(added&&['refused','discarded','cancelled'].includes(message.state)){this.supplements.delete(message.command_uuid);this.emit('supplement_failed',{id:added,error:`Claude ${message.state} this message`});
         // The reply had already finished and waited only for this message: it ends now with what it said.
         if(this.resultHeld&&!this.supplements.size&&!this.done){this.resultHeld=false;this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);}
@@ -199,11 +201,15 @@ export class NativeCliSession extends CliPrintSession {
    */
   supplement({id,prompt,images=[]}){
     if(!this.questionsSupported||this.done||this.stopping||this.awaitingEcho||this.controlTurn||!this.proc?.stdin?.writable)return this.emit('supplement_failed',{id,error:'The reply has already ended'});
-    const content=images.length?[{type:'text',text:prompt},...images.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
+    const content=images.length?[...(prompt?[{type:'text',text:prompt}]:[]),...images.map(image=>({type:'image',source:{type:'base64',media_type:image.mime,data:image.data}}))]:prompt;
     const uuid=randomUUID();(this.supplements||=new Map()).set(uuid,id);
     this.proc.stdin.write(`${JSON.stringify({type:'user',session_id:this.inputSessionId||this.nativeSessionId||this.resumeSessionId||'',message:{role:'user',content},parent_tool_use_id:null,uuid})}\n`,error=>{
       if(error&&this.supplements?.delete(uuid))this.emit('supplement_failed',{id,error:error.message});});
   }
+  /** Delete on the page: ask Claude to take the message back from its queue; its 'cancelled' receipt reports it withdrawn. */
+  cancelSupplement(id){const uuid=[...(this.supplements||new Map())].find(([,value])=>value===id)?.[0];
+    if(!uuid)return this.emit('supplement_failed',{id,error:'Not waiting in the queue'});
+    this.write({type:'control_request',request_id:`withdraw-${uuid}`,request:{subtype:'cancel_async_message',message_uuid:uuid}});}
   /** A result while an added message still waits in Claude's queue is not the end: Claude answers that message next. */
   inputsQueued(){return Boolean(this.supplements?.size)&&!this.stopping;}
   /** Resident Claude interrupts only the current turn through the stream-json control channel; others end the process. */
@@ -226,7 +232,10 @@ export class NativeCliSession extends CliPrintSession {
     this.close();
   }
   interrupt(){this.write({type:'control_request',request_id:`interrupt-${Date.now()}`,request:{subtype:'interrupt'}});}
-  finish(status,error){clearTimeout(this.interruptTimer);if(this.keepAlive&&this.stopping&&status!=='interrupted')return super.finish('interrupted');return super.finish(status,error);}
+  finish(status,error){clearTimeout(this.interruptTimer);
+    // The turn ends (an error, a stop) with added messages Claude has not read: take them back so they do not run unseen
+    // afterwards; Home then sends them as their own turn.
+    if(!this.done&&this.supplements?.size){for(const [uuid,id] of this.supplements){this.write({type:'control_request',request_id:`withdraw-${uuid}`,request:{subtype:'cancel_async_message',message_uuid:uuid}});this.emit('supplement_failed',{id,error:'The reply ended first'});}this.supplements.clear();}if(this.keepAlive&&this.stopping&&status!=='interrupted')return super.finish('interrupted');return super.finish(status,error);}
   /** After a finished resident turn (including an error result) the process stays; only close() or a live failure ends it. */
   shutdown(){if(this.keepAlive&&this.done&&!this.closing&&this.receiving)return;super.shutdown();}
   close(){this.closing=true;super.shutdown();}

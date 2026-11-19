@@ -1215,8 +1215,6 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
   /** The added message, drawn as the user's own message inside the reply it joined. */
   function supplementRow(added,at){const files=el('div','chat-attachments native-turn-files');for(const item of added.attachments||[])files.append(attachmentCard(item));
    const row=chatRow('user',added.text||'',current.runtime,at,files.childElementCount?files:null);row.dataset.role='supplement';row.dataset.text=promptKey(added.text);row.classList.add('nt-supplement');return row;}
-  /** History rows of the messages added to this turn: the CLI records them as user messages, but they belong to this turn's reply. */
-  const addedKeys=turn=>new Set((turn.events||[]).filter(e=>e.type==='supplement').map(e=>promptKey(e.payload?.text)));
   function splitNodes(turn,{live,state,paths}){
    const segments=turnSegments(turn)||[{turn}],nodes=[];
    for(const segment of segments.slice(0,-1)){const part=segment.turn;
@@ -1241,6 +1239,15 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    // never under the newest history. One that belongs to a history page not loaded yet is left to that page.
    const attachFiles=(row,files)=>(row.querySelector('.nt-prompt-files')||row.querySelector('.nt-body'))?.append(files);
    const rowAt=row=>Date.parse(row.dataset.at||''),dated=rows.filter(row=>Number.isFinite(rowAt(row)));
+   // A message added to a running reply is recorded by the CLI as a user message. Before any prompt is bound, each added message
+   // claims its own history row (the first matching one from a minute before it was taken to a minute after its turn ended): that
+   // row belongs to its turn's reply, and no other turn binds to it.
+   const claimed=new Map();
+   for(const turn of turns)for(const e of (turn.events||[]).filter(e=>e.type==='supplement')){
+    const key=promptKey(e.payload?.text),from=Date.parse(e.createdAt||'')-60000,until=Date.parse(turn.endedAt||'')+60000;
+    const i=rows.findIndex((row,i)=>!claimed.has(i)&&row.dataset.role==='user'&&row.dataset.text===key&&rowAt(row)>=from&&(!Number.isFinite(until)||rowAt(row)<=until));
+    if(i>=0){claimed.set(i,{turnId:turn.id,added:e.payload});used.add(i);}}
+   const inTurn=(turn,i)=>rows[i].dataset.role!=='user'||claimed.get(i)?.turnId===turn.id;
    // Text alone cannot identify repeated prompts. Bind one timestamp-compatible history ID and reuse it only in this session.
    const promptIndex=(turn,role,text)=>{
     const known=historyAnchors.get(turn.id);
@@ -1281,15 +1288,17 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const live=['queued','starting','running','waiting_user','stopping'].includes(turn.status);
     const paths=toolFilePaths(stepsOf(turn).steps);
     if(!live&&turn.endedAt&&turn.prompt.trim()){
-     const index=promptIndex(turn,'user',promptKey(turn.prompt)),added=addedKeys(turn),inTurn=row=>row.dataset.role!=='user'||added.has(row.dataset.text);
-     if(index>=0){used.add(index);let anchor=rows[index];const replies=[];for(let i=index+1;i<rows.length&&inTurn(rows[i]);i++){anchor=rows[i];if(anchor.dataset.role==='assistant')replies.push(anchor);}
+     const index=promptIndex(turn,'user',promptKey(turn.prompt));
+     if(index>=0){used.add(index);let anchor=rows[index];const replies=[];for(let i=index+1;i<rows.length&&inTurn(turn,i);i++){anchor=rows[i];if(anchor.dataset.role==='assistant')replies.push(anchor);
+       // An added message keeps its files under its own history row, as the prompt does.
+       const added=claimed.get(i)?.added;if(added?.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of added.attachments)files.append(attachmentCard(item));attachFiles(rows[i],files);}}
       if(turn.attachments?.length){const files=el('div','chat-attachments native-turn-files native-turn-anchored');for(const item of turn.attachments)files.append(attachmentCard(item));attachFiles(rows[index],files);}
       // A native history snapshot can contain only the initial commentary. Keep the saved reply until that same
       // prompt's history includes its final prose; clearFeedMarks restores the original rows on the next refresh.
       const final=simplifiedCliOutput(replyText(turn));
       if(anchor.dataset.role==='user'||final.trim()&&!historyContainsReply(final,replies.flatMap(row=>row._replyTexts||[]))){
        // The history's partial rows of this turn (replies and answers) give way to the saved turn, drawn split at its answers.
-       for(let i=index+1;i<rows.length&&inTurn(rows[i]);i++)if(['assistant','answer','user'].includes(rows[i].dataset.role)){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}
+       for(let i=index+1;i<rows.length&&inTurn(turn,i);i++)if(['assistant','answer','user'].includes(rows[i].dataset.role)){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}
        const {nodes,reply}=splitNodes(turn,{live:false,state,paths});for(const node of [...nodes,reply])node.classList.add('native-turn-anchored');rows[index].after(...nodes,reply);continue;}
       // After a page answer the history's last reply is the part after it: its activity and time count from the answer.
       const tail=liveTail(turn),extra=el('div','native-turn-anchored nt-extra');
@@ -1301,9 +1310,9 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     const makeFiles=()=>{if(!turn.attachments?.length)return null;const files=el('div','chat-attachments native-turn-files');for(const item of turn.attachments)files.append(attachmentCard(item));return files;};
     // A running turn whose prompt already reached the history anchors on that row: the history row stays, the feed adds only the live reply,
     // and the history's partial reply rows for this turn are hidden while the live one shows.
-    const liveIndex=live?promptIndex(turn,'user',promptKey(turn.prompt)):-1,liveAdded=addedKeys(turn);
+    const liveIndex=live?promptIndex(turn,'user',promptKey(turn.prompt)):-1;
     if(liveIndex>=0){used.add(liveIndex);const files=makeFiles();if(files){files.classList.add('native-turn-anchored');attachFiles(rows[liveIndex],files);}
-     for(let i=liveIndex+1;i<rows.length&&(rows[i].dataset.role!=='user'||liveAdded.has(rows[i].dataset.text));i++){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}}
+     for(let i=liveIndex+1;i<rows.length&&inTurn(turn,i);i++){rows[i].hidden=true;rows[i].dataset.nativeLiveHidden='1';}}
     const userRow=liveIndex>=0?null:chatRow('user',turn.prompt,current.runtime,turn.createdAt,makeFiles());if(userRow){userRow.dataset.role='user';userRow.dataset.text=promptKey(turn.prompt);}
     const {nodes:earlier,reply}=splitNodes(turn,{live,state,paths});
     if(live){feed.append(...(userRow?[userRow]:[]),...earlier,reply);liveReplies.set(turn.id,reply);}else place([userRow,...earlier,reply].filter(Boolean),turn.createdAt);
@@ -1336,7 +1345,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
    persist:async ids=>{optimisticOrder=ids;try{await api(`${turnsUrl()}/queue`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,order:ids}});}catch(error){operation().message=t(error.message);render();}finally{optimisticOrder=null;await refresh();}}});
   async function setQueuePaused(paused){try{const result=await api(`${turnsUrl()}/queue`,{method:'POST',json:{runtime:current.runtime,sessionId:current.sessionId,paused}});queueState=result.queue||queueState;renderQueue();await refresh();}catch(error){operation().message=t(error.message);render();}}
   // Delete and edit take a message out only while it still waits; an older Home without withdraw cancels it the old way.
-  async function withdrawQueued(turn){queuePending.add(turn.id);renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/${queueState?'withdraw':'stop'}`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}}
+  async function withdrawQueued(turn){queuePending.add(turn.id);renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/${queueState?'withdraw':'stop'}`,{method:'POST',json:{cancelSupplement:true}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}}
   /** 撤回期间只锁原会话的草稿，返回结果不能写入后来切换的会话。 */
   async function editQueued(turn){const id=k(),d=draft(id),op=operation(id);
    if(op.editing||op.sending||op.releasing||op.uploads)return;
@@ -1371,11 +1380,12 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
     if(turn.waitingReason==='device_capacity')info.append(el('span','message-queue-note',t('Waiting for a free CLI slot on the device')));
     row.append(info);
     // Claude and Codex take a steered message into the reply that is running; other CLIs interrupt the reply first.
-    const busy=queuePending.has(turn.id)||Boolean(turn.supplementing),adds=['claude','codex'].includes(turn.runtime),steer=el('button',`icon-button message-queue-steer${busy||turn.steer?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(turn.supplementing?'Adding this message to the current reply':busy?(adds?'Sending this message':'Interrupting and starting this message'):turn.steer?(adds?'Send this message first':'Refresh session state and retry this message'):adds?'Add this message to the current reply without interrupting it':'Interrupt the current reply and send this message now');steer.disabled=Boolean(turn.supplementing);steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
+    const busy=queuePending.has(turn.id)||Boolean(turn.supplementing),live=activeTurn(),adds=['claude','codex'].includes(turn.runtime)&&live?.status==='running'&&!live.control,steer=el('button',`icon-button message-queue-steer${busy||turn.steer?' is-active':''}`);steer.type='button';steer.innerHTML="<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 13v8\"/><path d=\"M12 3v3\"/><path d=\"M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z\"/></svg>";steer.title=t(turn.supplementing?'Adding this message to the current reply':busy?(adds?'Sending this message':'Interrupting and starting this message'):turn.steer?(adds?'Send this message first':'Refresh session state and retry this message'):adds?'Add this message to the current reply without interrupting it':'Interrupt the current reply and send this message now');steer.setAttribute('aria-label',steer.title);steer.disabled=busy;
     steer.onclick=async()=>{queuePending.add(turn.id);queueSignature='';renderQueue();try{await api(`${turnsUrl()}/${encodeURIComponent(turn.id)}/steer`,{method:'POST',json:{}});await refresh();}catch(error){operation().message=t(error.message);render();}finally{queuePending.delete(turn.id);renderQueue();}};
     row.append(steer);
     if(queueState){const edit=iconButton('edit','Edit: back to the input box',()=>void editQueued(turn),'message-queue-edit');edit.disabled=busy||Boolean(operation().editing);row.append(edit);}
-    const remove=iconButton('trash','Delete',()=>void withdrawQueued(turn),'message-queue-delete');remove.disabled=busy;row.append(remove);
+    const remove=iconButton('trash','Delete',()=>void withdrawQueued(turn),'message-queue-delete');// A message Claude has not read yet can still be taken back from its queue.
+    remove.disabled=queuePending.has(turn.id)||Boolean(turn.supplementing)&&(turn.runtime!=='claude'||Boolean(turn.withdrawing));row.append(remove);
     queueList.append(row);});
    // The send on its way, last in line, with no controls until Home has stored it.
    if(provisional){const row=el('div','message-queue-item is-pending'),info=el('div','message-queue-info'),text=provisional.pending.text||(provisional.attachments||[]).map(a=>a.name).join(', '),title=el('strong','',`${count}. ${text}`);title.title=text;title.translate=false;

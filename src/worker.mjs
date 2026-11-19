@@ -1321,6 +1321,7 @@ function connect() {
       if (m.type === 'side_ask_close') void sideAsks.close(m.sideId,'cleared');
       if (m.type === 'native_turn_answer') nativeTurns.answer(m.id,m);
       if (m.type === 'native_turn_supplement') void nativeTurns.supplement(m);
+      if (m.type === 'native_turn_supplement_cancel') nativeTurns.cancelSupplement(m);
       if (m.type === 'native_takeover_release') void nativeTurns.releaseLease(m.runtime,m.sessionId,m.leaseId).catch(e=>console.error('Native takeover release:',e.message));
       if (m.type === 'error') console.error(tr('worker.rejectedByHome'), m.error);
     } catch (e) { console.error(tr('worker.protocolError'), e.message); }

@@ -139,6 +139,52 @@ test('Worker: a supplement for a reply that already ended answers at once that i
 
 test('Claude history shows a message read mid-turn (a queued command) as the user message', () => {
   const rows = [{ type: 'attachment', timestamp: 't1', attachment: { type: 'queued_command', prompt: 'extra facts', commandMode: 'prompt' } },
-    { type: 'attachment', timestamp: 't2', attachment: { type: 'queued_command', prompt: '<task-notification>', commandMode: 'task-notification' } }];
-  assert.deepEqual(historyMessages(rows, 'claude').map(m => [m.role, m.text]), [['user', 'extra facts']]);
+    { type: 'attachment', timestamp: 't2', attachment: { type: 'queued_command', prompt: '<task-notification>', commandMode: 'task-notification' } },
+    { type: 'attachment', timestamp: 't3', attachment: { type: 'queued_command', prompt: '<agent-message from=x>report</agent-message>', commandMode: 'prompt', origin: { kind: 'peer' } } },
+    { type: 'attachment', timestamp: 't4', attachment: { type: 'queued_command', prompt: 'typed', commandMode: 'prompt', origin: { kind: 'human' } } }];
+  assert.deepEqual(historyMessages(rows, 'claude').map(m => [m.role, m.text]), [['user', 'extra facts'], ['user', 'typed']], 'a subagent report is not the user');
+});
+
+test('a slash command is never added to a reply; delete takes a message back from Claude while it waits there', async () => {
+  const { db, sent, turns, send, event } = home();
+  const a = send('client-turn-a', 'first'), slash = send('client-turn-s', '/cost'), b = send('client-turn-b', 'oops');
+  event(a.id, { kind: 'status', status: 'running' });
+  turns.steer('n1', slash.id);
+  assert.ok(!sent.some(m => m.type === 'native_turn_supplement'), 'a slash command waits for its own turn');
+  turns.steer('n1', b.id);
+  assert.throws(() => turns.withdraw('n1', b.id), /being added/, 'edit cannot take it back');
+  assert.equal(turns.withdraw('n1', b.id, { cancelSupplement: true }).withdrawing, true);
+  turns.withdraw('n1', b.id, { cancelSupplement: true });
+  assert.equal(sent.filter(m => m.type === 'native_turn_supplement_cancel' && m.supplementId === b.id).length, 1);
+  event(a.id, { kind: 'supplement_failed', supplementId: b.id });
+  assert.equal(db.get('nativeTurns', b.id).status, 'cancelled'); assert.equal(db.get('nativeTurns', b.id).withdrawn, true);
+});
+
+test('Home restart says an added message may have reached the CLI', () => {
+  const { db, turns, send, event } = home();
+  const a = send('client-turn-a', 'first'), b = send('client-turn-b', 'extra');
+  event(a.id, { kind: 'status', status: 'running' });
+  turns.steer('n1', b.id);
+  turns.recover();
+  assert.match(db.get('nativeTurns', b.id).error, /may have read it/);
+});
+
+test('Claude: an error ending takes unread added messages back; a started receipt also counts as taken', () => {
+  let r = resident();
+  r.session.supplement({ id: 'q1', prompt: 'extra', images: [] });
+  const uuid = r.sent.at(-1).uuid;
+  r.session.receive({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: SID });
+  assert.ok(r.sent.some(m => m.type === 'control_request' && m.request.message_uuid === uuid), 'withdrawn so it does not run unseen');
+  assert.equal(r.of('supplement_failed')[0].id, 'q1');
+  assert.deepEqual(r.ended(), ['failed']);
+  r = resident();
+  r.session.supplement({ id: 'q2', prompt: 'extra', images: [] });
+  r.session.receive({ type: 'command_lifecycle', command_uuid: r.sent.at(-1).uuid, state: 'started', session_id: SID });
+  assert.deepEqual(r.of('supplement'), [{ id: 'q2' }]);
+  r.say('answer');
+  assert.deepEqual(r.ended(), ['succeeded']);
+  r = resident();
+  r.session.supplement({ id: 'q3', prompt: 'extra', images: [] });
+  r.session.cancelSupplement('q3');
+  assert.equal(r.sent.at(-1).request.subtype, 'cancel_async_message');
 });

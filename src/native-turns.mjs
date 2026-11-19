@@ -151,7 +151,7 @@ export function nativeReplyRanges(turn) {
 export function nativeTurnView(turn){
  const {prompt,text,status,error,id,runtime,sessionId,nodeId,createdAt,endedAt,clientTurnId,events,phase,toolName,attachments,resident,control,contextUsage,steer,queueRank,withdrawn,question,disconnectedAt,tasks,waitingReason,supplementOf,mergedInto}=turn;
  return {id,clientTurnId,nodeId,runtime,sessionId,prompt,text:text||'',replyRanges:nativeReplyRanges(turn),status,phase:phase||null,toolName:toolName||null,error:error||null,createdAt,endedAt:endedAt||null,events:events||[],
-  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{}),...(tasks?.length?{tasks}:{}),...(waitingReason?{waitingReason}:{}),...(supplementOf?{supplementing:true}:{}),...(mergedInto?{mergedInto}:{})};
+  attachments:(attachments||[]).map(({id,name,mime,size})=>({id,name,mime,size})),resident:Boolean(resident),control:control||null,contextUsage:contextUsage||null,steer:Boolean(steer),...(Number.isFinite(queueRank)?{queueRank}:{}),...(withdrawn?{withdrawn:true}:{}),...(question?{question}:{}),...(disconnectedAt?{disconnectedAt}:{}),...(tasks?.length?{tasks}:{}),...(waitingReason?{waitingReason}:{}),...(supplementOf?{supplementing:true}:{}),...(supplementOf&&turn.withdrawing?{withdrawing:true}:{}),...(mergedInto?{mergedInto}:{})};
 }
 
 /** Home side: validation, idempotent creation, occupancy checks, attachment binding and event intake. */
@@ -250,7 +250,7 @@ export class NativeTurnsHome{
   if(!this.leases)this.assertIdle({runtime,sessionId});
   const handoff=turn.control?null:this.handoffFor?.({nodeId,runtime,sessionId});
   // A message whose supplement did not settle before its reply ended (a stop) starts as its own turn.
-  const {supplementOf:_supplement,...base}=turn,started={...base,status:'queued',phase:'queued',waitingReason:null,updatedAt:now(),...(handoff?{handoffId:handoff.id}:{})};
+  const {supplementOf:_supplement,withdrawing:_withdrawing,...base}=turn,started={...base,status:'queued',phase:'queued',waitingReason:null,updatedAt:now(),...(handoff?{handoffId:handoff.id}:{})};
   this.db.put('nativeTurns',started);
   this.db.put('nativeTakeovers',{id:key,nodeId,runtime,sessionId,status:'open',...(lease?{leaseId:lease.leaseId}:{}),updatedAt:now()});
   const settings=this.settings(nodeId,runtime,sessionId);
@@ -348,13 +348,15 @@ export class NativeTurnsHome{
  }
  /** A running page reply of Claude or Codex on a Worker that can add input to it; a control turn (/compact, /model) never takes one. */
  canSupplement(active,turn){
-  return SUPPLEMENT_RUNTIMES.has(turn.runtime)&&active.status==='running'&&!active.control&&!turn.control&&!active.disconnectedAt&&this.online(turn.nodeId)&&this.db.get('workers',turn.nodeId)?.capabilities?.nativeSupplement===1;
+  // A slash command is a CLI command, not words for the model: it waits for its own turn.
+  return SUPPLEMENT_RUNTIMES.has(turn.runtime)&&!String(turn.prompt||'').trimStart().startsWith('/')&&active.status==='running'&&!active.control&&!turn.control&&!active.disconnectedAt&&this.online(turn.nodeId)&&this.db.get('workers',turn.nodeId)?.capabilities?.nativeSupplement===1;
  }
  /** The Worker's answer to a supplement: taken into the reply (the message leaves the queue), or not (it stays first in line). */
  supplemented(turn,event){
   const queued=this.db.get('nativeTurns',String(event.supplementId||''));
   if(!queued||queued.status!=='waiting'||queued.supplementOf!==turn.id)return turn;
-  const {supplementOf,...rest}=queued;
+  const {supplementOf,withdrawing,...rest}=queued;
+  if(event.kind==='supplement_failed'&&withdrawing){this.db.put('nativeTurns',{...rest,status:'cancelled',withdrawn:true,endedAt:now(),updatedAt:now()});this.change();return turn;}
   if(event.kind==='supplement_failed'){this.db.put('nativeTurns',{...rest,updatedAt:now()});void this.pump(turn.nodeId,turn.runtime,turn.sessionId);return turn;}
   this.db.put('nativeTurns',{...rest,status:'merged',mergedInto:turn.id,inputDeliveryState:'accepted',endedAt:now(),updatedAt:now()});
   return applyNativeTurnEvent(turn,{kind:'supplement',turnId:queued.id,text:queued.prompt,attachments:queued.attachments||[]});
@@ -387,10 +389,16 @@ export class NativeTurnsHome{
   return nativeTurnView(this.db.get('nativeTurns',id));
  }
  /** Delete or edit a queued message: it leaves the queue only while still waiting, so a message that has just started is never interrupted. */
- withdraw(nodeId,id){
+ withdraw(nodeId,id,{cancelSupplement=false}={}){
   const turn=this.db.get('nativeTurns',id);if(!turn||turn.nodeId!==nodeId)throw Error('Takeover turn not found');
   if(turn.status!=='waiting')throw Error('This message has already been sent');
-  if(turn.supplementOf)throw Error('This message is being added to the current reply');
+  if(turn.supplementOf){
+   // Claude reads an added message only at its next step; until then delete asks it to take the message back from its queue.
+   // The CLI's answer settles it: withdrawn (the message is deleted) or already read (it stays in the reply).
+   if(!cancelSupplement||turn.runtime!=='claude')throw Error('This message is being added to the current reply');
+   if(!turn.withdrawing){this.db.put('nativeTurns',{...turn,withdrawing:true,updatedAt:now()});this.send(nodeId,{type:'native_turn_supplement_cancel',id:turn.supplementOf,supplementId:turn.id});this.change();}
+   return nativeTurnView(this.db.get('nativeTurns',id));
+  }
   this.db.put('nativeTurns',{...turn,status:'cancelled',withdrawn:true,endedAt:now(),updatedAt:now()});this.queueState(turn.nodeId,turn.runtime,turn.sessionId);this.change();
   return nativeTurnView(this.db.get('nativeTurns',id));
  }
@@ -448,7 +456,7 @@ export class NativeTurnsHome{
   return true;
  }
  /** After a Home restart no Worker connection carries an unfinished turn any more. */
- recover(){for(const t of this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.status')='waiting'").all().map(r=>JSON.parse(r.data)))this.db.put('nativeTurns',{...t,status:'cancelled',error:'Home restarted before this message was sent',endedAt:now(),updatedAt:now()});for(const t of nativeTurnRows(this.db,{active:true,limit:-1}))this.db.put('nativeTurns',{...t,status:this.leases?'stopping':'interrupted',phase:null,error:'Home restarted; awaiting process verification',...(!this.leases?{endedAt:now()}:{})});for(const p of this.db.list('nativeTakeovers'))if(p.status==='open')this.db.put('nativeTakeovers',{...p,status:this.leases?'closing':'closed',reason:'home_restart'});}
+ recover(){for(const t of this.db.db.prepare("SELECT data FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.status')='waiting'").all().map(r=>JSON.parse(r.data)))this.db.put('nativeTurns',{...t,status:'cancelled',error:t.supplementOf?'Home restarted while this message was being added to the reply; the CLI may have read it':'Home restarted before this message was sent',endedAt:now(),updatedAt:now()});for(const t of nativeTurnRows(this.db,{active:true,limit:-1}))this.db.put('nativeTurns',{...t,status:this.leases?'stopping':'interrupted',phase:null,error:'Home restarted; awaiting process verification',...(!this.leases?{endedAt:now()}:{})});for(const p of this.db.list('nativeTakeovers'))if(p.status==='open')this.db.put('nativeTakeovers',{...p,status:this.leases?'closing':'closed',reason:'home_restart'});}
  /**
   * A lost Worker connection no longer ends its turns at once: the Worker keeps them running for NATIVE_RECONNECT_GRACE_MS and
   * buffers their events, so a tunnel blip costs nothing. Turns and queued messages are marked disconnected for the page; if
@@ -504,7 +512,7 @@ export class NativeTurnRunner{
  post(m){
   if(!this.outbox)return this.send(m);
   // A full buffer sheds the oldest text, log and tool reports first; status events (how a turn ended) are always kept.
-  if(this.outbox.length>=20000){const i=this.outbox.findIndex(x=>x.type==='native_turn_event'&&x.event?.kind!=='status');if(i>=0)this.outbox.splice(i,1);}
+  if(this.outbox.length>=20000){const i=this.outbox.findIndex(x=>x.type==='native_turn_event'&&!['status','supplement','supplement_failed'].includes(x.event?.kind));if(i>=0)this.outbox.splice(i,1);}
   this.outbox.push(m);
  }
  /** Turn ids this Worker still runs, or whose reports still wait in the buffer; sent with the next registration so Home can
@@ -615,6 +623,10 @@ export class NativeTurnRunner{
    state.session.supplement({id:m.supplementId,prompt:traditionalInput(inputText(runtime,m.prompt,files)),images,files});
   }catch(error){failed(error.message);}
  }
+ /** Delete of a message still waiting in Claude's queue: Claude answers through the session ('supplement_failed' once withdrawn). */
+ cancelSupplement(m){const state=this.turns.get(m.id);
+  if(typeof state?.session?.cancelSupplement!=='function')return this.event(m.id,{kind:'supplement_failed',supplementId:String(m.supplementId||''),error:'The reply has already ended'});
+  state.session.cancelSupplement(String(m.supplementId||''));}
  /** Stop interrupts the current turn; a resident process stays for the next message where the CLI supports it. */
  async stop(id){const state=this.turns.get(id);if(!state)return;state.stopRequested=true;if(state.session)await state.session.stop();}
  /** The page's answer reaches the session that asked; a stale answer is reported on the turn instead of being dropped silently. */

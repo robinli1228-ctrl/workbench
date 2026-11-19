@@ -72,7 +72,7 @@ function messagesFrom(rows,runtime,{fullTools=false}={}){
  const at=row.timestamp||null,out=[],say=(role,content,extra)=>{const text=bodyText(content);if(text&&!switchSetup(role,text.trim()))out.push({role,text:text.slice(0,12000),timestamp:at,...extra});};
  if(runtime==='claude'){
   // A message sent while Claude was working, which it read at its next step: recorded as a queued command, shown as the user's.
-  if(row.type==='attachment'&&row.isSidechain!==true&&row.attachment?.type==='queued_command'&&row.attachment.commandMode==='prompt'){say('user',row.attachment.prompt);return out;}
+  if(row.type==='attachment'&&row.isSidechain!==true&&row.attachment?.type==='queued_command'&&row.attachment.commandMode==='prompt'&&(!row.attachment.origin||row.attachment.origin.kind==='human')){say('user',row.attachment.prompt);return out;}
   // Meta user rows are context Claude Code injects (image descriptions, command caveats), never something the user typed.
   const m=row.isSidechain===true||row.isMeta===true?null:claudeMessage(row);if(!m||!['user','assistant'].includes(m.role))return [];
   // A compaction summary is context Claude Code wrote, not a prompt: the page shows it as a folded system line.
