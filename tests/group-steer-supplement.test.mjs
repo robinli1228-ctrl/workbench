@@ -75,3 +75,40 @@ test('a late answer for a message that already started on its own changes nothin
   event(db, 'supplement', { id: 't9' });
   assert.notEqual(db.get('tasks', 't9').status, 'completed', 'a late answer does not complete a task that started on its own');
 });
+
+test('a merged message shares the outcome of its turn: the reply on success, blocked with the reason on failure', () => {
+  let { db, steering } = env();
+  steering.supplement(P, 't9', {}, { online: () => true });
+  event(db, 'supplement', { id: 't9' });
+  const { roleSessionId: _session, ...plain } = db.get('runs', 'run-1');
+  db.put('runs', { ...plain, result: 'done, logs checked' });
+  event(db, 'status', { status: 'succeeded' });
+  assert.equal(db.get('coordinationRequests', 'r9').result, 'done, logs checked');
+  assert.equal(db.get('tasks', 't9').status, 'completed');
+  ({ db, steering } = env());
+  steering.supplement(P, 't9', {}, { online: () => true });
+  event(db, 'supplement', { id: 't9' });
+  { const { roleSessionId: _session, ...plain } = db.get('runs', 'run-1'); db.put('runs', plain); }
+  event(db, 'status', { status: 'failed', error: 'API error' });
+  assert.equal(db.get('tasks', 't9').status, 'blocked');
+  assert.equal(db.get('coordinationRequests', 'r9').status, 'failed');
+});
+
+test('a message the Worker could not add goes to the front; a flag left by a turn that ended does not lock it', () => {
+  let { db, steering } = env();
+  steering.supplement(P, 't9', {}, { online: () => true });
+  event(db, 'supplement_failed', { id: 't9' });
+  assert.ok(db.get('tasks', 't9').queueOrder < Date.parse(db.get('tasks', 't8').createdAt));
+  ({ db, steering } = env());
+  steering.supplement(P, 't9', {}, { online: () => true });
+  db.put('runs', { ...db.get('runs', 'run-1'), status: 'failed' });
+  assert.equal(new Rooms(db).cancel('t9').status, 'cancelled', 'cancel works again once the turn ended');
+});
+
+test('a turn whose reply is not posted to the chat does not take the message', () => {
+  for (const extra of [{ explicitPublish: true }, { backgroundFollowup: true }, { handoffWait: { requestId: 'x' } }]) {
+    const { db, steering } = env();
+    db.put('runs', { ...db.get('runs', 'run-1'), ...extra });
+    assert.deepEqual(steering.supplement(P, 't9', {}, { online: () => true }), { queuedFirst: true });
+  }
+});

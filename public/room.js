@@ -258,13 +258,15 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
         info.append(title,create('span','',t(sending.status)));row.append(info);list.append(row);continue;
       }
       const task=item.task;
+      // Being added to a turn only while that turn is still going (role-steering.mjs supplementPending).
+      const supplementing=Boolean(task.supplementing)&&!['succeeded','failed','interrupted','cancelled'].includes(runs.get(task.supplementing.runId)?.status);
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
-      if(data.capabilities?.queueOrder&&!task.steering&&!steeringPending.has(task.id)){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
+      if(data.capabilities?.queueOrder&&!task.steering&&!supplementing&&!steeringPending.has(task.id)){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
       const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||t('Role')} · ${task.title||task.prompt}`);title.title=task.prompt||task.title;
       info.append(title);row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
       const human=!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination;
-      if(human&&!task.steering&&!task.supplementing){
+      if(human&&!task.steering&&!supplementing){
         const edit=create('button','icon-button message-queue-edit');edit.type='button';edit.innerHTML=UI_ICON.edit;edit.title='Return queued message to input';edit.setAttribute('aria-label',t('Return queued message to input'));
         edit.disabled=pending.has(task.id);edit.onclick=async()=>{pending.add(task.id);edit.disabled=true;try{await editQueued(task);}finally{pending.delete(task.id);edit.disabled=false;}};row.append(edit);
       }
@@ -272,14 +274,15 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
         const run=runs.get(task.currentRunId),stopped=(task.steering?.waitForRunIds||[]).map(id=>runs.get(id));
         const error=task.steering?(task.error||run?.error||stopped.find(r=>r?.status==='reconciling')?.error):steeringErrors.get(task.id);
         // Claude and Codex roles take the message into their running turn rather than being interrupted (role-steering.mjs supplement).
-        const adds=Boolean(data.capabilities?.groupSupplement)&&['claude','codex'].includes(task.roleSnapshot?.runtime)&&busyRoles.has(task.roleId);
-        const busy=(Boolean(task.steering)||Boolean(task.supplementing)||steeringPending.has(task.id))&&!error;
+        const adds=Boolean(data.capabilities?.groupSupplement)&&['claude','codex'].includes(task.roleSnapshot?.runtime)&&busyRoles.has(task.roleId)
+          &&(data.runs||[]).some(r=>r.roleId===task.roleId&&r.status==='running'&&(r.conversationId||r.projectId)===(task.conversationId||task.projectId));
+        const busy=(Boolean(task.steering)||supplementing||steeringPending.has(task.id))&&!error;
         row.classList.toggle('is-error-card',Boolean(error));
         const steer=create('button',`icon-button message-queue-steer${busy?' is-active':''}${error?' is-error':''}`);steer.type='button';
         steer.setAttribute('aria-busy',String(busy));steer.setAttribute('aria-label',error?t('Steering needs attention'):t(busy?'Steering':'Steer now'));
         steer.innerHTML=busy?'<svg class="message-queue-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/></svg>':error?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></svg>':'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/></svg>';
-        steer.title=error?t('Steering needs attention: {reason}',{reason:error}):task.supplementing||busy&&adds?t('Adding to this role current turn'):adds?t('Add to this role current turn without interrupting it'):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):busyRoles.has(task.roleId)?t('Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept'):t('Run this message first; nothing is interrupted, and a pending wait keeps its place in the queue');
-        steer.disabled=Boolean(task.steering)||Boolean(task.supplementing)||pending.has(task.id)||!(data.capabilities?.roleSteering>=2);
+        steer.title=error?t('Steering needs attention: {reason}',{reason:error}):supplementing||busy&&adds?t('Adding to this role current turn'):adds?t('Add to this role current turn without interrupting it'):busy?[t('Interrupting and starting this message'),task.waitingReason].filter(Boolean).join(' · '):busyRoles.has(task.roleId)?t('Interrupt this role now; run this message in the same conversation. The old task will not resume automatically; existing changes are kept'):t('Run this message first; nothing is interrupted, and a pending wait keeps its place in the queue');
+        steer.disabled=Boolean(task.steering)||supplementing||pending.has(task.id)||!(data.capabilities?.roleSteering>=2);
         if(!(data.capabilities?.roleSteering>=2))steer.title='Steer now becomes available after the service is upgraded';
         steer.onclick=async()=>{
           pending.add(task.id);steeringPending.add(task.id);steeringErrors.delete(task.id);setError('');view.update(lastData,currentProject);
@@ -299,7 +302,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       const recovery=cliRecoveryUI.button(task);
       if(recovery){recovery.className='icon-button cli-recovery-open';row.append(recovery);}
       const cancel=closeIcon(create('button','icon-button'));cancel.type='button';cancel.title='Cancel queued item';cancel.setAttribute('aria-label',t('Cancel queued item {v} {v2}', { v: task.roleSnapshot?.name||t('Role'), v2: task.title||'' }));
-      cancel.disabled=pending.has(task.id)||Boolean(task.currentRunId)||Boolean(task.supplementing)||task.status!=='ready';cancel.onclick=async()=>{
+      cancel.disabled=pending.has(task.id)||Boolean(task.currentRunId)||supplementing||task.status!=='ready';cancel.onclick=async()=>{
         cancel.disabled=true;try{await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`,{method:'POST',json:{}});await refreshState({quiet:true});}catch(error){setError(error.message);cancel.disabled=false;}
       };row.append(cancel);list.append(row);
     }
@@ -672,7 +675,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   /** A message that waited joins the chat at its first reply's start (Home records the same time), never above later messages. */
   function startedAt(m) {
     if (!queuedMessageIds.has(m.id)) return m;
-    const starts = (data.runs || []).filter(r => (m.taskIds || []).includes(r.taskId)).map(r => String(r.createdAt || '')).filter(Boolean).sort();
+    const starts = [...(data.runs || []).filter(r => (m.taskIds || []).includes(r.taskId)).map(r => String(r.createdAt || '')),
+      ...(data.tasks || []).filter(t => (m.taskIds || []).includes(t.id) && t.mergedAt).map(t => String(t.mergedAt))].filter(Boolean).sort();
     return starts[0] && starts[0] > String(m.orderAt || m.createdAt || '') ? { ...m, orderAt: starts[0] } : m;
   }
   /** Sends this chat holds in the queue whose tasks Home has not reported yet, with their send state. */
@@ -1426,6 +1430,12 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
           {key:`m:${answer.id}`,at:answer.createdAt,rank:1,seq:index*2+1,signature:()=>messageSignature(answer,messages),node:()=>renderMessageRow(answer,messages)});
         start=at=answer.createdAt;}
       if(entry.at<at)entry.at=at;
+    }
+    // A message added to a running turn shows at the time it was taken; the role's card that answers it moves below it.
+    for(const entry of entries){
+      const runId=entry.key.startsWith('m:result-')?entry.key.slice(9):entry.key.startsWith('run:')?entry.key.slice(4):null;if(!runId)continue;
+      const merged=(data.tasks||[]).filter(t=>t.mergedIntoRunId===runId&&t.mergedAt).map(t=>String(t.mergedAt)).sort().at(-1);
+      if(merged&&entry.at<merged)entry.at=merged;
     }
     entries.sort((a,b)=>a.at.localeCompare(b.at)||a.rank-b.rank||a.seq-b.seq);
     const skeleton=!history&&[...pendingReads].some(key=>key.startsWith(`${scopeId}:`));

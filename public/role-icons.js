@@ -125,7 +125,8 @@ export function roleActivity(role, tasks = [], runs = [], {requests=[],warm=fals
   const ownRequests=requests.filter(r=>r.targetRoleId===role.id),online=worker===undefined||Boolean(worker?.online);
   const entries=ownTasks.map(task=>{const run=byId.get(task.currentRunId),request=(run&&ownRequests.find(r=>r.currentRunId===run.id))||ownRequests.filter(r=>r.taskId===task.id).at(-1);return {task,run,request,progress:executionProgress({task,run,request,online:true})};});
   // Historical outcomes never determine current availability. Use timestamps, not response-array insertion order.
-  const latest=entries.filter(e=>['error','completed','stopped'].includes(e.progress.state)).sort((a,b)=>
+  // A message added to another run's turn has no outcome of its own; that run's outcome counts.
+  const latest=entries.filter(e=>['error','completed','stopped'].includes(e.progress.state)&&!(e.task.mergedIntoRunId&&!e.run)).sort((a,b)=>
     (Date.parse(a.run?.createdAt||a.task.createdAt)||0)-(Date.parse(b.run?.createdAt||b.task.createdAt)||0)).at(-1);
   const lastFailure=latest?.progress.state==='error'?{taskId:latest.task.id,runId:latest.run?.id||null,
     reason:latest.progress.reason||latest.task.error||latest.request?.error||latest.progress.detail,

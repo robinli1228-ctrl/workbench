@@ -11,7 +11,7 @@ import { projectTerminalLock, terminalOwnsProject } from './terminal-resume.mjs'
 import { RoleSessions,taskConversationId } from './role-sessions.mjs';
 import {ConversationTasks} from './conversation-tasks.mjs';
 import { buildRunContext, turnOrigin, turnReferences } from './run-context.mjs';
-import { steeringWaitReason,settleGroupSupplement } from './role-steering.mjs';
+import { steeringWaitReason,settleGroupSupplement,settleMergedTasks } from './role-steering.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import { tr } from './i18n.mjs';
 import {switchSettled,roleSwitchWaitReason,effectiveExecutionRole,isSwitchMaintenance} from './role-switch-policy.mjs';
@@ -533,6 +533,7 @@ export class Store {
         if(next.roleSessionId && !terminal.has(r.status))new RoleSessions(this).release(next.roleSessionId,next.id);
         const task = this.get('tasks', r.taskId);
         if (!r.discussionDeliveryId && task && (!task.currentRunId || task.currentRunId === r.id) && !['done','cancelled'].includes(task.status)) this.put('tasks', { ...task, waitingReason:next.discussionWaiting?task.waitingReason:null,error:next.status==='failed'?next.error||null:null,status:next.discussionWaiting?'waiting_discussion': next.status === 'succeeded' ? (task.origin === 'chat' ? 'completed' : 'awaiting_acceptance') : 'blocked' });
+        if (!terminal.has(r.status)) settleMergedTasks(this, next);
         for (const a of this.list('approvals').filter(a => a.runId === r.id && ['pending', 'responding'].includes(a.status))) this.put('approvals', { ...a, status: 'expired' });
       }
       if (e.type === 'supplement' || e.type === 'supplement_failed') settleGroupSupplement(this, next, e.type, e.payload);

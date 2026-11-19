@@ -353,7 +353,10 @@ For peer preservation, an already-dispatched nonterminal Run includes a queued o
 
 For Claude and Codex roles with a turn in that chat, Steer never interrupts (`RoleSteering.supplement`):
 - **When the turn can take the message:** the turn is `running` in a resident role session on a Worker with `groupSupplement`, and the message has no attachments and is not a slash command. Home marks the Task `supplementing` and writes a `supplement` command; the Worker passes it to the session (the same Claude stream-json input and Codex `turn/steer` as the Sessions page). The Worker answers with a `supplement` run event: the Task is `completed` with `mergedIntoRunId`, its queued request is `succeeded`, and the message joins the chat at that moment (`placeAtStart`). The role's current reply answers it.
-- **When the Worker answers `supplement_failed`:** the Task stays queued and starts after the turn.
+- **The merged message shares its turn's outcome (`settleMergedTasks` on the terminal event):** on success its request carries the run's reply; on failure or stop the Task is `blocked` and the request `failed` with the run's reason.
+- **Turns that cannot take a message:** turns whose reply is not posted to the chat (explicit publish, private or background follow-up, handoff wait, read-only review).
+- **When the Worker answers `supplement_failed`:** the Task stays queued, moves to the front, and starts after the turn.
+- **Stale flags:** a `supplementing` flag stops counting once its run is terminal (`supplementPending`), so a lost answer never locks the message.
 - **When the turn cannot take it now:** the Task only moves to the front of the queue.
 - **While pending:** the message cannot be cancelled or edited. A Task that starts on its own drops the flag, and late answers are ignored.
 - **Other CLIs and idle roles:** they keep the steer below.

@@ -4,6 +4,7 @@ import { tr } from './i18n.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
 import {placeAtStart,queueKey} from './rooms.mjs';
 import {SessionQueue} from './session-queue.mjs';
+import {privateFollowup} from './proactive-followup.mjs';
 
 /** Roles whose running turn can take a queued message without being interrupted: resident Claude (next step) and Codex (turn/steer). */
 const SUPPLEMENT_RUNTIMES=new Set(['claude','codex']);
@@ -13,11 +14,33 @@ const SUPPLEMENT_RUNTIMES=new Set(['claude','codex']);
  * answers it), the message joins the chat now and leaves the queue. Not taken: it stays queued and starts after the turn.
  * A task that already started or was cancelled meanwhile is left alone.
  */
+const frontOfQueue=(db,task)=>Math.min(queueKey(task),...db.chatTasks(['ready']).filter(t=>t.projectId===task.projectId&&conversationIdOf(t)===conversationIdOf(task)&&t.id!==task.id).map(queueKey))-1;
+/** A supplement flag counts only while the turn it was sent to is still going; a turn that ended (or was reconciled) frees the message. */
+export const supplementPending=(db,task)=>Boolean(task?.supplementing)&&!terminal.has(db.get('runs',task.supplementing.runId)?.status);
+
+/**
+ * A turn ended: messages added to it share its outcome. When it succeeded their requests carry its reply; when it failed or
+ * was stopped they are marked blocked with its reason, so a message the CLI read is never silently taken as answered.
+ * Messages still waiting to be added to it are freed.
+ */
+export function settleMergedTasks(db,run) {
+  const rows=sql=>db.db.prepare(`SELECT data FROM records WHERE kind='tasks' AND ${sql}=?`).all(run.id).map(r=>JSON.parse(r.data));
+  const at=new Date().toISOString();
+  for(const task of rows("json_extract(data,'$.supplementing.runId')")){if(task.status!=='ready'||task.currentRunId)continue;const {supplementing,...rest}=task;db.put('tasks',{...rest,waitingReason:null});}
+  for(const task of rows("json_extract(data,'$.mergedIntoRunId')")){
+    if(task.currentRunId)continue;
+    const ok=run.status==='succeeded',request=task.requestId?db.get('coordinationRequests',task.requestId):null;
+    if(!ok&&task.status==='completed')db.put('tasks',{...task,status:'blocked',error:run.error||null});
+    if(request?.mergedIntoRunId===run.id)db.put('coordinationRequests',{...request,status:ok?'succeeded':'failed',result:ok?run.result||'':'',...(ok?{}:{error:run.error||tr('rooms.runFailed')}),updatedAt:at});
+  }
+}
+
 export function settleGroupSupplement(db,run,type,payload={}) {
   const task=db.get('tasks',String(payload.id||''));
   if(!task||task.supplementing?.runId!==run.id||task.status!=='ready'||task.currentRunId)return;
   const {supplementing,...rest}=task,at=new Date().toISOString();
-  if(type==='supplement_failed'){db.put('tasks',{...rest,waitingReason:null});return;}
+  // Not taken: first in line, so it starts right after the turn, as the user asked by steering it.
+  if(type==='supplement_failed'){db.put('tasks',{...rest,waitingReason:null,queueOrder:frontOfQueue(db,task)});return;}
   db.put('tasks',{...rest,status:'completed',waitingReason:null,mergedIntoRunId:run.id,mergedAt:at});
   const request=task.requestId?db.get('coordinationRequests',task.requestId):null;
   if(request&&request.status==='queued'){const settled=db.put('coordinationRequests',{...request,status:'succeeded',mergedIntoRunId:run.id,result:'',updatedAt:at});new SessionQueue(db).settleRequest(settled);}
@@ -50,7 +73,7 @@ export class RoleSteering {
     return this.db.transaction(()=>{
       const task=this.db.get('tasks',taskId);
       if(!task||task.projectId!==projectId||conversationIdOf(task)!==conversationId)return null;
-      if(task.supplementing)return {supplementing:true,runId:task.supplementing.runId};
+      if(supplementPending(this.db,task))return {supplementing:true,runId:task.supplementing.runId};
       const message=this.db.get('roomMessages',task.sourceMessageId);
       if(task.origin!=='chat'||task.status!=='ready'||task.currentRunId||task.steering||message?.sender!=='human'||!message.taskIds?.includes(task.id)||task.scheduledJobId||task.planId||task.continuationRunId)return null;
       if(!SUPPLEMENT_RUNTIMES.has(task.roleSnapshot?.runtime))return null;
@@ -59,11 +82,13 @@ export class RoleSteering {
       if(!active.length)return null;
       const run=active.length===1?active[0]:null;
       const takes=run&&run.status==='running'&&run.roleSessionId&&!run.discussionDeliveryId&&!run.switchOperationId&&!run.diagnosis&&!run.stopRequested
+        // Only a turn whose reply is posted to the chat can answer the message: not a private follow-up, an explicitly published
+        // collaboration turn, a background follow-up, a handoff wait or a read-only review.
+        &&!run.explicitPublish&&!run.backgroundFollowup&&!run.handoffWait&&!run.execution?.purpose&&!privateFollowup(this.db,run)
         &&run.nodeId===task.roleSnapshot.nodeId&&run.roleSnapshot?.runtime===task.roleSnapshot.runtime&&!message.attachments?.length&&!String(message.text||'').trimStart().startsWith('/')
         &&online(run.nodeId)&&this.db.get('workers',run.nodeId)?.capabilities?.groupSupplement===1;
       if(!takes){
-        const ready=this.db.chatTasks(['ready']).filter(t=>t.projectId===projectId&&conversationIdOf(t)===conversationId&&t.id!==task.id);
-        this.db.put('tasks',{...task,queueOrder:Math.min(queueKey(task),...ready.map(queueKey))-1});
+        this.db.put('tasks',{...task,queueOrder:frontOfQueue(this.db,task)});
         return {queuedFirst:true};
       }
       const at=new Date().toISOString(),id=`supplement-${task.id}-${run.id}`;
