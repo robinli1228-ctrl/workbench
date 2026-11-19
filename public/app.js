@@ -1752,7 +1752,7 @@ function renderRunOutput(run, events) {
   if(live){
     // What it is doing now: the running step, or the background work that still holds the turn open.
     const line=create('div','nt-working'),waiting=tasks.filter(x=>x.status==='running').length;
-    line.append(create('span','nt-pulse'),create('span','nt-working-time',elapsedText(run.startedAt||run.createdAt)),create('span','nt-working-hint',runningStep?stepTitle(runningStep,runStepText):run.awaitingBackground&&waiting?runStepText(waiting===1?'Waiting for 1 background task\u2026':'Waiting for {n} background tasks\u2026',{n:waiting}):runStepText('Working…')));
+    line.append(create('span','nt-pulse'),elapsedEl(create,run.startedAt||run.createdAt,'nt-working-time')||create('span','nt-working-time',''),create('span','nt-working-hint',runningStep?stepTitle(runningStep,runStepText):run.awaitingBackground&&waiting?runStepText(waiting===1?'Waiting for 1 background task\u2026':'Waiting for {n} background tasks\u2026',{n:waiting}):runStepText('Working…')));
     section.append(line);
   }else if(run&&(run.result||rows.length)){
     const foot=create('div','nt-reply-foot run-reply-foot'),copy=create('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));
