@@ -100,7 +100,8 @@ export function formatTokenMillions(value) {
 /** 工具和运行提示组成会话页的活动块；正文保持顺序，输入只出现在独立输入页。 */
 export function runTimeline(events = []) {
   const logs=partitionRunLog(events),rows=[];
-  const entries=[...logs.output.map(event=>({seq:event.seq,event})),...logs.tools.map(tool=>({seq:tool.seq,tool}))].sort((a,b)=>(a.seq||0)-(b.seq||0));
+  const added=events.filter(event=>event.type==='supplement'&&event.payload?.id);
+  const entries=[...[...logs.output,...added].map(event=>({seq:event.seq,event})),...logs.tools.map(tool=>({seq:tool.seq,tool}))].sort((a,b)=>(a.seq||0)-(b.seq||0));
   for(const entry of entries){
     const last=rows.at(-1);
     if(entry.tool){
@@ -109,6 +110,10 @@ export function runTimeline(events = []) {
       continue;
     }
     const event=entry.event,payload=event.payload||{};
+    if(event.type==='supplement'){
+      rows.push({kind:'added',seq:entry.seq,createdAt:event.createdAt,taskId:String(payload.id)});
+      continue;
+    }
     const text=stripAnsi(typeof payload==='string'?payload:typeof payload.text==='string'?payload.text:typeof payload.message==='string'?payload.message:['log','error'].includes(event.type)?JSON.stringify(payload):'');
     if(!text)continue;
     if(event.type==='log'){

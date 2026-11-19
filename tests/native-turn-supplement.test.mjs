@@ -118,6 +118,31 @@ test('Claude: a refused added message is reported, and a reply that waited only 
   assert.equal(r.of('supplement_failed').at(-1).id, 'q3');
 });
 
+test('Claude: withdrawing a supplement preserves the wait for live background work', () => {
+  const r = resident();
+  r.session.supplement({ id: 'q1', prompt: 'extra' });
+  const uuid = r.sent.at(-1).uuid;
+  r.session.receive({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'task-one' }] });
+  r.say('reply before background work finished');
+  r.session.receive({ type: 'command_lifecycle', command_uuid: uuid, state: 'cancelled', session_id: SID });
+  assert.deepEqual(r.ended(), []);
+  assert.equal(r.of('status').at(-1).awaitingBackground.tasks[0].id, 'task-one');
+});
+
+test('Worker: withdrawing during attachment preparation never reaches the CLI', async () => {
+  const sent = [], submitted = [];
+  let resolveFiles;
+  const runner = new NativeTurnRunner({ send: m => sent.push(m), receiveFiles: () => new Promise(resolve => { resolveFiles = resolve; }) });
+  runner.turns.set('active', { message: { runtime: 'claude' }, session: { supplement: m => submitted.push(m), cancelSupplement() {} } });
+  const m = { id: 'active', supplementId: '00000000-1111-4222-8333-555555555555', prompt: 'extra', attachments: [{ id: 'file' }] };
+  const preparing = runner.supplement(m);
+  runner.cancelSupplement(m);
+  resolveFiles({ files: [{ name: 'example.txt', path: '/tmp/example.txt' }] });
+  await preparing;
+  assert.deepEqual(submitted, []);
+  assert.deepEqual(sent.map(m => m.event.kind), ['supplement_failed']);
+});
+
 test('Codex: the added message goes through turn/steer on the running turn', async () => {
   const out = [], requests = [];
   const session = new NativeCodexSession({ cwd: tmpdir(), keepAlive: true, resumeSessionId: SID, emit: (type, payload) => out.push({ type, payload }) });
@@ -128,6 +153,20 @@ test('Codex: the added message goes through turn/steer on the running turn', asy
   await tick();
   assert.deepEqual(requests[0], { method: 'turn/steer', params: { threadId: SID, expectedTurnId: 'turn-1', input: [{ type: 'text', text: 'extra' }, { type: 'localImage', path: '/tmp/x.png' }] } });
   assert.deepEqual(out.map(e => [e.type, e.payload.id]), [['supplement', 'q1'], ['supplement_failed', 'q2']]);
+});
+
+test('Codex: steer receipt precedes completion even when stdout is read in one chunk', async () => {
+  const events = [];
+  const session = new NativeCodexSession({ cwd: tmpdir(), keepAlive: true, resumeSessionId: SID, emit: (kind, detail) => events.push({ kind, detail }) });
+  session.threadId = SID;
+  session.turnId = 'active';
+  let rpc;
+  session.write = request => { rpc = request; return true; };
+  session.supplement({ id: 'queued', prompt: 'extra' });
+  session.receive({ id: rpc.id, result: { turnId: 'active' } });
+  session.receive({ method: 'turn/completed', params: { turn: { id: 'active', status: 'completed' } } });
+  await tick();
+  assert.deepEqual(events.map(event => event.kind), ['supplement', 'status']);
 });
 
 test('Worker: a supplement for a reply that already ended answers at once that it was not taken', async () => {

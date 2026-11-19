@@ -615,18 +615,33 @@ export class NativeTurnRunner{
   const state=this.turns.get(m.id),failed=error=>this.event(m.id,{kind:'supplement_failed',supplementId:String(m.supplementId||''),error});
   if(!uuidPattern.test(m.supplementId||''))return;
   if(!state?.session||state.stopRequested||typeof state.session.supplement!=='function')return failed('The reply has already ended');
+  const preparing=state.preparingSupplements||=new Map();
+  if(preparing.has(m.supplementId))return;
+  const input={withdrawn:false};
+  preparing.set(m.supplementId,input);
   try{
    const runtime=state.message.runtime;(state.extraFiles||=[]).push(m.supplementId);
    const {files=[],images=[]}=await this.receiveFiles({...m,id:m.supplementId,runtime});
+   if(input.withdrawn)return;
    if(files.some(f=>f.mime?.startsWith('image/'))&&!NATIVE_IMAGE_RUNTIMES.has(runtime))throw Error('This CLI cannot receive images in a takeover; send files or use iTerm');
-   if(this.turns.get(m.id)!==state)return failed('The reply has already ended');
+   if(this.turns.get(m.id)!==state||state.stopRequested)return failed('The reply has already ended');
    state.session.supplement({id:m.supplementId,prompt:traditionalInput(inputText(runtime,m.prompt,files)),images,files});
-  }catch(error){failed(error.message);}
+  }catch(error){if(!input.withdrawn)failed(error.message);}
+  finally{preparing.delete(m.supplementId);}
  }
- /** Delete of a message still waiting in Claude's queue: Claude answers through the session ('supplement_failed' once withdrawn). */
- cancelSupplement(m){const state=this.turns.get(m.id);
-  if(typeof state?.session?.cancelSupplement!=='function')return this.event(m.id,{kind:'supplement_failed',supplementId:String(m.supplementId||''),error:'The reply has already ended'});
-  state.session.cancelSupplement(String(m.supplementId||''));}
+ /** Withdraw before writing to the CLI, or forward the request if Claude already has the input queued. */
+ cancelSupplement(m){
+  const state=this.turns.get(m.id),id=String(m.supplementId||''),input=state?.preparingSupplements?.get(id);
+  if(input){
+   if(!input.withdrawn){
+    input.withdrawn=true;
+    this.event(m.id,{kind:'supplement_failed',supplementId:id,error:'Withdrawn before delivery'});
+   }
+   return;
+  }
+  if(typeof state?.session?.cancelSupplement!=='function')return this.event(m.id,{kind:'supplement_failed',supplementId:id,error:'The reply has already ended'});
+  state.session.cancelSupplement(id);
+ }
  /** Stop interrupts the current turn; a resident process stays for the next message where the CLI supports it. */
  async stop(id){const state=this.turns.get(id);if(!state)return;state.stopRequested=true;if(state.session)await state.session.stop();}
  /** The page's answer reaches the session that asked; a stale answer is reported on the turn instead of being dropped silently. */

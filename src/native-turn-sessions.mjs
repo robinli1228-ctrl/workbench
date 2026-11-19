@@ -38,12 +38,12 @@ export class NativeCodexSession extends CodexSession {
     return response.thread;
   }
   /** The chosen model rides on every turn; a compaction control turn starts thread/compact/start instead of a prompt (it completes as an ordinary turn). */
-  request(method,params) {
+  request(method,params,onResponse) {
     if(method==='initialize')params={...params,capabilities:{...(params?.capabilities||{}),experimentalApi:true}};
     // A turn/started notification may precede the empty compaction acknowledgement.
     if(method==='turn/start'&&this.control==='compact')return super.request('thread/compact/start',{threadId:params.threadId}).then(result=>({turn:{id:result?.turn?.id??this.turnId}}));
     if(method==='turn/start'&&this.model)params={...params,model:this.model};
-    return super.request(method,params);
+    return super.request(method,params,onResponse);
   }
   receive(m) {
     // An interrupted resident turn keeps the app-server; the base adapter would otherwise shut it down.

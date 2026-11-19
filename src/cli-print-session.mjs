@@ -231,8 +231,8 @@ export class CliPrintSession {
     if(message.type==='user'||['started','completed'].includes(message.state)){this.supplements.delete(key);this.resultHeld=false;this.emit('supplement',{id});return message.type==='user';}
     if(!['refused','discarded','cancelled'].includes(message.state))return false;
     this.supplements.delete(key);this.emit('supplement_failed',{id,error:`Claude ${message.state} this message`});
-    // The reply had already finished and waited only for this message: it ends now with what it said.
-    if(this.resultHeld&&!this.supplements.size&&!this.done){this.resultHeld=false;this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);}
+    // Reassess background work before publishing the held result.
+    if(this.resultHeld&&!this.supplements.size&&!this.done){this.resultHeld=false;this.settleResidentResult();}
     return true;
   }
   /** The turn ends (an error, a stop) with added messages Claude has not read: take them back so they do not run unseen afterwards. */
@@ -290,6 +290,18 @@ export class CliPrintSession {
     const status=m.subtype==='task_notification'?m.status:m.subtype==='task_updated'?m.patch?.status:null;
     if(!status||['pending','running'].includes(status))return;
     tasks.delete(id);this.emit('task',{id,status:['completed','failed'].includes(status)?status:'stopped',durationMs:now-known.at});
+  }
+  /** A resident process with live background work cannot be returned to the idle pool. */
+  settleResidentResult(){
+    // Background tasks still run in this process: this reply is only progress, so the Run stays active (slot held, never pooled as idle).
+    if(!this.runtimeError&&this.backgroundTasks.size){
+      // Kept so the supervisor can still end the turn with this answer if the background work turns out to be abandoned.
+      this.backgroundAnswer=this.finalText;this.awaitingSince={since:new Date().toISOString()};
+      this.awaitingBackground=true;this.flushText();this.bestAnswer='';this.bestAnswerId=null;this.finalText='';
+      this.emit('status',{awaitingBackground:{...this.awaitingSince,tasks:this.backgroundTaskInfo}});return;
+    }
+    this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);
+    if(this.runtimeError)this.shutdown();
   }
   receiveLine(line) {
     if (!line.trim()) return;
@@ -375,15 +387,7 @@ export class CliPrintSession {
       if(this.keepAlive) {
         // A message added to this reply still waits in the CLI's queue: the CLI answers it next, still within this turn.
         if(!this.runtimeError&&this.inputsQueued?.()){this.resultHeld=true;this.flushText();return;}
-        // Background tasks still run in this process: this reply is only progress, so the Run stays active (slot held, never pooled as idle).
-        if(!this.runtimeError&&this.backgroundTasks.size){
-          // Kept so the supervisor can still end the turn with this answer if the background work turns out to be abandoned.
-          this.backgroundAnswer=this.finalText;this.awaitingSince={since:new Date().toISOString()};
-          this.awaitingBackground=true;this.flushText();this.bestAnswer='';this.bestAnswerId=null;this.finalText='';
-          this.emit('status',{awaitingBackground:{...this.awaitingSince,tasks:this.backgroundTaskInfo}});return;
-        }
-        this.finish(this.runtimeError?'failed':'succeeded',this.runtimeError||undefined);
-        if(this.runtimeError)this.shutdown();
+        this.settleResidentResult();
       }
     }
     // Agy 1.2.x reports the tool lifecycle via step_update; a stable ID lets the page merge start and end.

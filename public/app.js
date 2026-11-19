@@ -1733,8 +1733,7 @@ function renderRunOutput(run, events) {
   const section=create('section','run-log-content run-transcript native-session-content');
   // The working line only while the CLI is at it; queued, stopping or reconciling runs say so in the heading.
   const live=Boolean(run)&&['starting','running','waiting_user'].includes(run.status);
-  const added=events.filter(e=>e.type==='supplement'&&e.payload?.id).map(e=>({kind:'added',seq:e.seq,createdAt:e.createdAt,taskId:String(e.payload.id)}));
-  const rows=[...runTimeline(events),...added].sort((a,b)=>(a.seq||0)-(b.seq||0));
+  const rows=runTimeline(events);
   const tasks=runTasks(events,run);let taskCard=tasks.length?taskBlock({tasks},runStepText,{live}):null;
   let runningStep=null;
   const appendText=(value)=>{const body=create('div','markdown-body run-reply');body.append(renderMarkdown(simplifiedCliOutput(value)));section.append(body);};
@@ -1778,7 +1777,7 @@ function runDuration(run){
 function addedDivider(row){
   const task=(app.data.tasks||[]).find(item=>item.id===row.taskId),line=create('div','run-added');
   const label=create('span','run-added-label',t('Added · {time}',{time:row.createdAt?new Date(row.createdAt).toLocaleTimeString(dateLocale(),{hour:'2-digit',minute:'2-digit'}):''}));
-  const text=create('span','run-added-text',simplifiedCliOutput(task?.title||task?.prompt||''));text.translate=false;
+  const text=create('span','run-added-text',simplifiedCliOutput(task?.prompt||task?.title||''));text.translate=false;
   line.append(label,text);return line;
 }
 

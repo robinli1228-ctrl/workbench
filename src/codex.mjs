@@ -177,13 +177,13 @@ export class CodexSession {
     if(!this.done)this.finish(this.turnId?'reconciling':'failed',tr('codex.codexCommunicationWasInterrupted', { message: error.message }));
     this.shutdown();
   }
-  request(method, params) {
+  request(method, params, onResponse) {
     // A compaction turn (control 'compact') starts thread/compact/start instead of a prompt; it completes as an ordinary turn.
     if(method==='turn/start'&&this.control==='compact')return this.request('thread/compact/start',{threadId:params.threadId}).then(result=>({turn:{id:result?.turn?.id??this.turnId}}));
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(tr('codex.codexTimedOut', { method }))); }, 45000);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, onResponse });
       if(!this.write({ id, method, params })) {clearTimeout(timer);this.pending.delete(id);reject(new Error(tr('codex.codexInputConnectionClosed')));}
     });
   }
@@ -192,7 +192,10 @@ export class CodexSession {
     if (m.id !== undefined && !m.method) {
       const p = this.pending.get(m.id); if (!p) return;
       clearTimeout(p.timer); this.pending.delete(m.id);
-      m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result); return;
+      const error=m.error?new Error(m.error.message):null;
+      p.onResponse?.(error);
+      error ? p.reject(error) : p.resolve(m.result);
+      return;
     }
     if (m.id !== undefined && m.method) {
       // request_user_input: the model's questions wait for the page (a takeover or a group-chat role opts in); elsewhere the request is rejected as before.
@@ -283,7 +286,16 @@ export class CodexSession {
   supplement({id,prompt,files=[]}){
     if(this.done||this.stopping||this.control==='compact'||!this.threadId||!this.turnId)return this.emit('supplement_failed',{id,error:'The reply has already ended'});
     const input=[{type:'text',text:prompt},...files.filter(f=>f.mime?.startsWith('image/')).map(f=>({type:'localImage',path:f.path}))];
-    this.request('turn/steer',{threadId:this.threadId,expectedTurnId:this.turnId,input}).then(()=>this.emit('supplement',{id}),error=>this.emit('supplement_failed',{id,error:error.message}));
+    // The next line in the same stdout chunk can complete this turn before a Promise callback runs.
+    const emit=this.emit;
+    let reported=false;
+    const report=error=>{
+      if(reported)return;
+      reported=true;
+      if(error)emit('supplement_failed',{id,error:error.message});
+      else emit('supplement',{id});
+    };
+    this.request('turn/steer',{threadId:this.threadId,expectedTurnId:this.turnId,input},report).then(()=>report(),report);
   }
   async stop() {
     if (this.done) return;
