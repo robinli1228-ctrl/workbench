@@ -133,3 +133,12 @@ test('a group chat Claude run reports its subagents and background shells as tas
   const tasks = out.filter(e => e.type === 'task').map(e => e.payload);
   assert.deepEqual(tasks.map(x => [x.id, x.status, x.kind || null, x.model || null]), [['k1', 'running', 'agent', 'haiku'], ['k1', 'completed', null, null]]);
 });
+
+test('an idle Claude process still learns that its background task ended (the next turn does not wait for it)', async () => {
+  const { CliPrintSession } = await load('cli-print-session.mjs');
+  const session = new CliPrintSession({ cwd: '/xxxxx', runtime: 'claude', model: 'haiku', emit() {} });
+  session.receive({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'x' }] });
+  session.done = true;
+  session.receive({ type: 'system', subtype: 'background_tasks_changed', tasks: [] });
+  assert.equal(session.backgroundTasks.size, 0);
+});

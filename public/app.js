@@ -1530,7 +1530,9 @@ function renderRunHeading(task, run) {
   dom.runSession.replaceChildren();dom.runSession.removeAttribute('title');
   if(run?.threadId){const id=create('code','run-session-short',`${run.threadId.slice(0,8)}\u2026`);id.translate=false;dom.runSession.append(item(t('Session'),id),runCopyButton(run.threadId));dom.runSession.title=run.threadId;}
   const raw=run?.usage,usage=raw&&typeof raw==='object'?raw:{totalTokens:raw};
-  const known=[['inputTokens','input_tokens','Input'],['outputTokens','output_tokens','Output']].map(([key,legacy,label])=>[label,formatTokenMillions(usage[key]??usage[legacy])]).filter(([,v])=>v);
+  let known=[['inputTokens','input_tokens','Input'],['outputTokens','output_tokens','Output']].map(([key,legacy,label])=>[label,formatTokenMillions(usage[key]??usage[legacy])]).filter(([,v])=>v);
+  // Older runs recorded only a total.
+  if(!known.length){const total=formatTokenMillions(usage.totalTokens??usage.total_tokens);if(total)known=[['Total',total]];}
   if(known.length){const value=create('b','',known.map(([label,v])=>`${t(label)} ${v.replace(' ','')}`).join(' \u00b7 '));
     const cached=formatTokenMillions(usage.cachedInputTokens??usage.cached_input_tokens),total=formatTokenMillions(usage.totalTokens??usage.total_tokens);
     value.title=[cached&&`${t('Cached input')} ${cached}`,total&&`${t('Total')} ${total}`,t('Cached input is included in input. 1 M = 1,000,000 tokens.')].filter(Boolean).join(' \u00b7 ');
@@ -1729,7 +1731,8 @@ function renderGroupedRunInput(section,input) {
  */
 function renderRunOutput(run, events) {
   const section=create('section','run-log-content run-transcript native-session-content');
-  const live=Boolean(run)&&!['succeeded','failed','interrupted'].includes(run.status);
+  // The working line only while the CLI is at it; queued, stopping or reconciling runs say so in the heading.
+  const live=Boolean(run)&&['starting','running','waiting_user'].includes(run.status);
   const added=events.filter(e=>e.type==='supplement'&&e.payload?.id).map(e=>({kind:'added',seq:e.seq,createdAt:e.createdAt,taskId:String(e.payload.id)}));
   const rows=[...runTimeline(events),...added].sort((a,b)=>(a.seq||0)-(b.seq||0));
   const tasks=runTasks(events,run);let taskCard=tasks.length?taskBlock({tasks},runStepText,{live}):null;
@@ -1752,11 +1755,13 @@ function renderRunOutput(run, events) {
   if(live){
     // What it is doing now: the running step, or the background work that still holds the turn open.
     const line=create('div','nt-working'),waiting=tasks.filter(x=>x.status==='running').length;
-    line.append(create('span','nt-pulse'),elapsedEl(create,run.startedAt||run.createdAt,'nt-working-time')||create('span','nt-working-time',''),create('span','nt-working-hint',runningStep?stepTitle(runningStep,runStepText):run.awaitingBackground&&waiting?runStepText(waiting===1?'Waiting for 1 background task\u2026':'Waiting for {n} background tasks\u2026',{n:waiting}):runStepText('Working…')));
+    line.append(create('span','nt-pulse'),elapsedEl(create,run.startedAt||run.createdAt,'nt-working-time')||create('span','nt-working-time',''),create('span','nt-working-hint',runningStep?(({verb,target})=>`${verb} ${target||''}`.trim())(stepTitle(runningStep,runStepText)):run.awaitingBackground&&waiting?runStepText(waiting===1?'Waiting for 1 background task\u2026':'Waiting for {n} background tasks\u2026',{n:waiting}):runStepText('Working…')));
     section.append(line);
   }else if(run&&(run.result||rows.length)){
     const foot=create('div','nt-reply-foot run-reply-foot'),copy=create('button','icon-button nt-copy');copy.type='button';setActionIcon(copy,'copy',t('Copy'));
-    copy.addEventListener('click',()=>void copyText(copy,run.result||'').catch(()=>{}));foot.append(copy);
+    // The reply as shown: the stored result, or the streamed text when the run ended without one.
+    const reply=run.result||rows.filter(row=>row.kind==='text').map(row=>row.text).join('\n\n');
+    copy.addEventListener('click',()=>void copyText(copy,simplifiedCliOutput(reply)).catch(()=>{}));copy.disabled=!reply.trim();foot.append(bindCopyFeedback(copy,`run-reply:${run.id}`));
     const took=runDuration(run);if(took)foot.append(create('span','nt-duration',runStepText('Took {duration}',{duration:took})));
     section.append(foot);
   }

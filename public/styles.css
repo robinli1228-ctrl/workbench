@@ -4524,6 +4524,7 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
 #run-dialog .run-tab-panel { padding: 20px 28px 28px; background: #fafbfc; }
 #run-dialog .run-transcript { gap: 12px; background: transparent; }
 #run-dialog .run-transcript .nt-task-groups { max-width: 760px; }
+#run-dialog .run-transcript .nt-tasks { background: #fff; }
 .run-added { display: flex; align-items: center; gap: 10px; margin: 6px 0; color: #6d28d9; font-size: 13px; }
 .run-added::before, .run-added::after { content: ""; flex: 0 0 18px; height: 1px; background: #e9d5ff; }
 .run-added::after { flex: 1; }

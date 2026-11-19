@@ -207,8 +207,9 @@ export class CliPrintSession {
    * still runs) and this turn's task events. Before this turn's echo only a task it already lists may report on it.
    */
   observeTasks(message){
-    if(message.type==='system'&&message.subtype==='background_tasks_changed'&&!message.parent_tool_use_id&&Array.isArray(message.tasks)){const live=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
-      for(const id of this.liveTasks?.keys()||[])if(!live.has(id))this.liveTasks.delete(id);}
+    // Also while idle or stopping: a turn that starts later must not wait for a task that already ended.
+    if(message.type==='system'&&message.subtype==='background_tasks_changed'&&!message.parent_tool_use_id&&Array.isArray(message.tasks)){this.backgroundTasks=new Set(message.tasks.map(t=>t?.task_id).filter(Boolean));
+      for(const id of this.liveTasks?.keys()||[])if(!this.backgroundTasks.has(id))this.liveTasks.delete(id);}
     if(message.type==='assistant')this.subagentModels(message);
     if(message.type==='system'&&String(message.subtype||'').startsWith('task_')&&!message.parent_tool_use_id){
       this.track(message);
@@ -267,7 +268,9 @@ export class CliPrintSession {
     // this turn's, so they neither show in it nor end it (otherwise a reply to an old notice ends the turn as "no text" and the
     // real answer that follows is lost). Replays of other messages are never output.
     if(this.keepAlive&&this.runtime==='claude'&&raw?.type==='user'&&raw.isReplay){
-      if(this.echoUuid&&raw.uuid===this.echoUuid&&!raw.parent_tool_use_id&&(!this.echoSession||raw.session_id===this.echoSession)){this.echoUuid=null;this.emit('status',{inputDeliveryState:'accepted'});}
+      if(this.echoUuid&&raw.uuid===this.echoUuid&&!raw.parent_tool_use_id&&(!this.echoSession||raw.session_id===this.echoSession)){this.echoUuid=null;this.emit('status',{inputDeliveryState:'accepted'});
+        // Tasks started while it was still queued (by a notice answered first) hold this turn open too: list them now.
+        if(this.runtime==='claude')this.carryLiveTasks();}
       return;
     }
     if(this.runtime==='claude'&&raw&&typeof raw==='object')this.observeTasks(raw);
