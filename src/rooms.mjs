@@ -15,7 +15,7 @@ import { roleWorkspace } from './project-repositories.mjs';
 import { executionConflict } from './execution-workspace.mjs';
 import { concurrentWritesAllowed } from './concurrent-writes.mjs';
 import { resolveRolePermissionScope, withPermissionScope } from './role-permissions.mjs';
-import { steeringWaitReason } from './role-steering.mjs';
+import { steeringWaitReason,supplementPending } from './role-steering.mjs';
 import { ConversationContext } from './conversation-context.mjs';
 import {RoleDiscussions} from './role-discussions.mjs';
 import {ProactiveFollowup,followupFor,privateFollowup} from './proactive-followup.mjs';
@@ -45,7 +45,7 @@ export function reorderedQueueKeys(tasks,taskIds) {
  * A message that waited in the queue joins the chat when its first reply starts (the page holds it in the queue until then),
  * so it never lands above messages sent while it waited. Not when another recipient already started: it is in the chat.
  */
-function placeAtStart(db,task,startedAt) {
+export function placeAtStart(db,task,startedAt) {
   const message=task.sourceMessageId&&db.get('roomMessages',task.sourceMessageId);
   if(message?.sender!=='human'||message.orderAt)return;
   if((message.taskIds||[]).some(id=>id!==task.id&&!['ready','cancelled'].includes(db.get('tasks',id)?.status)))return;
@@ -489,7 +489,7 @@ export class Rooms {
       const belongs=value=>value?.projectId===projectId&&conversationIdOf(value)===conversationId;
       if(!belongs(selected)||!belongs(message)||message.sender!=='human'||!message.taskIds?.includes(taskId))throw new Error(tr('rooms.queueEditUnavailable'));
       const tasks=message.taskIds.map(id=>this.db.get('tasks',id));
-      const editable=task=>belongs(task)&&task.origin==='chat'&&task.sourceMessageId===message.id&&!task.currentRunId&&!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination&&!task.steering;
+      const editable=task=>belongs(task)&&task.origin==='chat'&&task.sourceMessageId===message.id&&!task.currentRunId&&!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination&&!task.steering&&!supplementPending(this.db,task);
       const replay=tasks.every(task=>editable(task)&&task.status==='cancelled'&&task.queueEditId===commandId);
       if(!replay&&tasks.some(task=>!editable(task)||task.status!=='ready'))throw new Error(tr('rooms.queueEditUnavailable'));
       if(!replay){for(const task of tasks)this.db.put('tasks',{...this.cancel(task.id),queueEditId:commandId});this.touch(projectId,conversationId);}
@@ -501,6 +501,8 @@ export class Rooms {
   cancel(taskId) {
     const task = this.db.get('tasks', taskId);
     if (task?.origin !== 'chat' || task.currentRunId || !['ready', 'cancelled'].includes(task.status)) throw new Error(tr('rooms.onlyGroupChatAssignmentsHave'));
+    // Being added to the role's running turn: the CLI may already hold it, so it cannot be taken back here.
+    if (supplementPending(this.db, task)) throw new Error(tr('rooms.messageBeingAdded'));
     return this.db.put('tasks', { ...task, status: 'cancelled', waitingReason: null });
   }
 

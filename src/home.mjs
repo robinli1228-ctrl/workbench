@@ -526,7 +526,7 @@ function snapshot(scope=null) {
   }
   // Keep fixed supervisors separate from editable work roles and hide the platform assistant.
   const supervisorIds=new Map(db.list('projects').filter(p=>!p.systemConfig&&p.supervisorRoleId).map(p=>[p.id,p.supervisorRoleId]));
-  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {nativeCatalogCache:1,roleSteering:2,groupConversations:1,projectTeamCopy:1,queueOrder:1,queuePause:1}, homePlatform: process.platform, queuedWaits: queuedWaits(db), projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
+  return { [WORKSPACE_SUMMARY]:page?progress:null,version: tr('home.040ProjectWorkspace'), language: getLanguage(), capabilities: {nativeCatalogCache:1,roleSteering:2,groupSupplement:1,groupConversations:1,projectTeamCopy:1,queueOrder:1,queuePause:1}, homePlatform: process.platform, queuedWaits: queuedWaits(db), projects: db.list('projects').filter(p => !p.systemConfig), projectCopies:db.list('projectCopyOperations').map(projectCopyView), conversations:db.list('projects').filter(p=>!p.systemConfig).flatMap(p=>new GroupConversations(db).list(p.id)),  roles: db.list('roles').filter(r => !r.systemSupervisor), rooms: db.list('rooms'), workspaces: db.list('workspaces'), tasks, runs:page?[...runs,...page.otherActiveRuns]:runs,
     supervisorRoles:db.list('roles').filter(r=>supervisorIds.get(r.projectId)===r.id&&r.systemSupervisor&&!r.platformAssistant&&!r.archivedAt).map(({instructions,...r})=>({...r,responsibility:roleResponsibility(r)})),
     discussionThreads:db.list('discussionThreads'),discussionDeliveries:db.list('discussionDeliveries'),
     roleSwitches:db.list('roleSwitches').map(roleSwitchView),
@@ -1676,7 +1676,11 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if ((m = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/steer$/)) && req.method === 'POST') {
-        const input=await body(req),result=steering.request(m[1],m[2],input.commandId,input);
+        const input=await body(req);
+        // Claude and Codex roles take the message into their running turn (or queue it first) instead of being interrupted.
+        const added=steering.supplement(m[1],m[2],input,{online});
+        if(added){if(added.nodeId)dispatch(added.nodeId);scheduleChat();change();return json(res,added);}
+        const result=steering.request(m[1],m[2],input.commandId,input);
         // A steer for a role that is only waiting stops nothing; only an interrupted running turn has runs to wait for.
         for(const id of result.waitForRunIds||[])dispatch(db.get('runs',id).nodeId);
         scheduleChat();change();return json(res,result);

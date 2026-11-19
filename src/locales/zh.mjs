@@ -1127,6 +1127,9 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'roleSteering.userHasChangedDirectionOld': '用户已调整方向，旧计划不再自动推进',
   'roleSteering.interruptingWaitingForOldRun2': '正在打断，等待旧执行确认停止',
   'roleSteering.continueWithNewInstructionFirst': '优先按新指令继续',
+  'rooms.messageBeingAdded': '这条消息正在补充进角色当前这轮，不能再取消或编辑',
+  'roleSteering.addingToCurrentTurn': '正在把这条消息补充进角色当前这轮',
+  'roleSteering.supplementText': '用户在你处理这一轮时补充了下面这条消息。它是对当前任务的补充，不是新任务；请结合它继续：\n\n{text}',
   // src/rooms.mjs
   'rooms.projectNotFound': '项目不存在',
   'rooms.editSystemSupervisorThroughSupervisor': '请通过主管配置编辑系统主管',

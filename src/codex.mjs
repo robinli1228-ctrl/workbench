@@ -279,6 +279,12 @@ export class CodexSession {
     this.emit('approval_resolved', { id, status: decision === 'accept' ? 'accepted' : 'declined' });
     if (!this.done && !this.stopping) this.emit('status', { status: 'running' });
   }
+  /** A queued message added to the running turn through turn/steer; the turn goes on and answers with it in mind. */
+  supplement({id,prompt,files=[]}){
+    if(this.done||this.stopping||this.control==='compact'||!this.threadId||!this.turnId)return this.emit('supplement_failed',{id,error:'The reply has already ended'});
+    const input=[{type:'text',text:prompt},...files.filter(f=>f.mime?.startsWith('image/')).map(f=>({type:'localImage',path:f.path}))];
+    this.request('turn/steer',{threadId:this.threadId,expectedTurnId:this.turnId,input}).then(()=>this.emit('supplement',{id}),error=>this.emit('supplement_failed',{id,error:error.message}));
+  }
   async stop() {
     if (this.done) return;
     this.stopping = true;
