@@ -65,8 +65,8 @@ export function createDataSettingsUI({api}){
     if(!confirm(t('Delete the reclaimable data now? Chat history, session turns, attachments and run logs are never touched.')))return;
     busy=true;if(last)render(last);note(t('Cleaning up… this can take a moment on a large store.'));
     try{const result=await api('/api/data/cleanup',{method:'POST',json:{target}});
-      const freed=Object.values(result).reduce((sum,r)=>sum+(r?.bytes||0)+(r?.blobBytes||0),0),deferred=Object.values(result).some(r=>r?.vacuum?.deferred);
-      note(t('Removed {size}.',{size:mb(freed)})+(deferred?` ${t('The file itself shrinks at the next idle moment.')}`:''));}
+      const freed=Object.values(result).reduce((sum,r)=>sum+(r?.bytes||0)+(r?.blobBytes||0),0);
+      note(t('Removed {size}.',{size:mb(freed)})+(freed?` ${t('SQLite reuses freed database space. Shrinking the file requires separate maintenance.')}`:''));}
     catch(e){note(t('Cleanup failed: {message}',{message:e.message}),true);}
     finally{busy=false;await load({keepNote:true});}
   }
