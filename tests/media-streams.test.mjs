@@ -288,6 +288,13 @@ test('development and test service addresses open in the viewer; other sites kee
   assert.equal(inlineCodeMediaPath('https://github.com/xxxxx/xxxxx/blob/main/index.html'),null);
   assert.equal(inlineCodeMediaPath('http://127.0.0.1:4317/shot.png'),null);
   assert.equal(inlineCodeMediaPath(' out/site/index.html '),'out/site/index.html');
+  // A folder with a space in its name ("TMS AI") keeps the whole path in inline code; a command with a second path or an option does not.
+  assert.equal(inlineCodeMediaPath('/xxxxx/TMS AI/.workbench/docs/report/TMS-AI-COVERAGE.html'),'/xxxxx/TMS AI/.workbench/docs/report/TMS-AI-COVERAGE.html');
+  assert.equal(inlineCodeMediaPath('~/Desktop/Screen Shot 2026-11-03 17.50.12.png'),'~/Desktop/Screen Shot 2026-11-03 17.50.12.png');
+  assert.equal(inlineCodeMediaPath('open /tmp/a.png'),null);
+  assert.equal(inlineCodeMediaPath('/tmp/a b/x.png -v'),null);
+  assert.equal(inlineCodeMediaPath('see a.png and b.png'),null);
+  assert.equal(inlineCodeMediaPath('/tmp/a b/*.png'),null);
 });
 
 test('a web page previews with the files it loads by relative path, and its ticket reads nothing outside its folder', async () => {
