@@ -35,7 +35,8 @@ test('a change waits for 30 quiet seconds, then only its directory is captured; 
   // Every few hours, and after a device reconnects, the batch covers all directories again.
   settle();notice('code-a:p1');tick(WATCH_SWEEP_MS);
   assert.equal(calls[3].repositoryIds, undefined);
-  settle();home.sweepDue('p1');notice('code-b:p1');tick(WATCH_QUIET_MS + 1);
+  settle();home.sweepDue('p1');tick(1);assert.equal(calls.length, 4, 'a reconnect right after a sweep does not ask for another');
+  tick(600000);home.sweepDue('p1');notice('code-b:p1');tick(WATCH_QUIET_MS + 1);
   assert.equal(calls[4].repositoryIds, undefined, 'a reconnected device asks for one full sweep');
   settle();notice('code-b:p1');tick(WATCH_QUIET_MS + 1);
   assert.deepEqual(calls[5].repositoryIds, ['code-b:p1']);
@@ -50,10 +51,26 @@ test('a directory that keeps changing (a heartbeat) still syncs: at most two min
   assert.equal(calls.length, 1, 'but not beyond the maximum wait');
 });
 
-test('a synced folder\'s top-level tmp/ stays on its device; other tmp folders and shared docs still sync', () => {
-  assert.equal(excludedSourcePath('tmp/mac-baidu-setup/heartbeat-locked-followup.json'), true);
-  assert.equal(excludedSourcePath('tmp/a.txt', { contentMode: 'source-and-outputs' }), true);
-  assert.equal(excludedSourcePath('src/tmp/fixture.json'), false);
-  assert.equal(excludedSourcePath('tmp'), false);
-  assert.equal(excludedSourcePath('.workbench/docs/report/TMS-AI-COVERAGE.html', { sharedDocs: true }), false);
+test('a synced folder\'s top-level tmp/ stays on its device in directory sync; reading project files in place and git scopes are unaffected', () => {
+  const dir = { sharedDocs: false, excludeRoots: [] };
+  assert.equal(excludedSourcePath('tmp/mac-baidu-setup/heartbeat-locked-followup.json', dir), true);
+  assert.equal(excludedSourcePath('tmp', dir), true, 'the folder itself, so scans do not walk into it');
+  assert.equal(excludedSourcePath('Tmp/a.txt', { ...dir, contentMode: 'source-and-outputs' }), true);
+  assert.equal(excludedSourcePath('src/tmp/fixture.json', dir), false);
+  assert.equal(excludedSourcePath('tmp/a.txt', { ...dir, deviceLocal: true }), false, 'project file reads in place');
+  assert.equal(excludedSourcePath('tmp/a.txt'), false, 'git-scope captures');
+  assert.equal(excludedSourcePath('.workbench/docs/report/TMS-AI-COVERAGE.html', { sharedDocs: true, excludeRoots: [] }), false);
+});
+
+test('a batch cancelled by a pause is retried after resuming; a stopped directory rides along; a full sweep that did not finish is owed again', async t => {
+  const { db, calls, notice, settle, tick } = await setup(t);
+  notice('code-a:p1');tick(WATCH_QUIET_MS + 1);
+  db.put('sourceSyncBatches', { id: 'b1', projectId: 'p1', kind: 'sync', status: 'cancelled', reason: 'sync_paused' });
+  tick(1);tick(400000);
+  assert.equal(calls.length, 2, 'retried');assert.equal(calls[1].repositoryIds, undefined, 'the unfinished full sweep is owed again');
+  db.put('sourceSyncBatches', { id: 'b2', projectId: 'p1', kind: 'sync', status: 'completed' });tick(1);
+  // code-b stopped for good on an earlier batch: it is shown as an error and joins the next batch.
+  db.put('sourceSyncWatchNotices', { id: 'srv:p1:code-b:p1', projectId: 'p1', nodeId: 'srv', repositoryId: 'code-b:p1', generation: 3, noticeId: 'x', batchId: 'old', error: 'invalid_manifest' });
+  notice('code-a:p1');tick(WATCH_QUIET_MS + 1);
+  assert.deepEqual(calls[2].repositoryIds.sort(), ['code-a:p1', 'code-b:p1']);
 });

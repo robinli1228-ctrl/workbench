@@ -44,7 +44,7 @@ export function normalizeFileRead(input){
     if(typeof input.expectHash!=='string'||!/^[a-f0-9]{64}$/.test(input.expectHash))throw readError('invalid_read_request');
   }
   if(input.metadata!==undefined&&typeof input.metadata!=='boolean')throw readError('invalid_read_request');
-  return {requestId:readId(input.requestId),...normalizeReadSelector(input),path:validateSourcePath(input.path,{sharedDocs:true}),freshness,
+  return {requestId:readId(input.requestId),...normalizeReadSelector(input),path:validateSourcePath(input.path,{sharedDocs:true,deviceLocal:true}),freshness,
     ...(input.expectHash!==undefined?{expectHash:input.expectHash}:{}),metadata:input.metadata??false};
 }
 

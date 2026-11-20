@@ -50,7 +50,7 @@ export class ProjectFiles {
       const repo=this.db.get('repositories',binding.repositoryId),rel=beneath(binding.root,absolute);
       if(repo?.projectId!==projectId||!repo.key||!rel?.startsWith('.workbench/docs/'))continue;
       const path=`.workbench/docs/repositories/${encodeURIComponent(repo.key)}/${rel.slice('.workbench/docs/'.length)}`;
-      try{validateSourcePath(path,{sharedDocs:true,excludeRoots:[]});return {scopeId:projectFileScopeId(projectId),path};}catch{}
+      try{validateSourcePath(path,{sharedDocs:true,excludeRoots:[],deviceLocal:true});return {scopeId:projectFileScopeId(projectId),path};}catch{}
     }
     return null;
   }
@@ -60,7 +60,7 @@ export class ProjectFiles {
     if(typeof path!=='string'||path.length>4096)return null;
     const logicalDocument=!isAbsolute(path)&&path.startsWith('.workbench/docs/');
     // This logical shared root is resolved separately from the Run workspace; validate its original spelling first.
-    if(logicalDocument)try{validateSourcePath(path,{sharedDocs:true,excludeRoots:[]});}catch{return null;}
+    if(logicalDocument)try{validateSourcePath(path,{sharedDocs:true,excludeRoots:[],deviceLocal:true});}catch{return null;}
     const projectRoot=this.db.get('workspaces',`${run.projectId}:${run.nodeId}`)?.localRoot;
     if(logicalDocument&&(!run.projectRoot||!projectRoot||resolve(run.projectRoot)!==resolve(projectRoot)))return null;
     if(!isAbsolute(path)&&!run.workspace&&!logicalDocument)return null;
@@ -70,7 +70,7 @@ export class ProjectFiles {
     for(const binding of this.readBindings(run.projectId,run.nodeId).sort((a,b)=>b.root.length-a.root.length)){
       if(sourceScopeBinding(this.db,run.projectId,binding.repositoryId,run.nodeId)?.localRoot!==binding.root)continue;
       const rel=relative(binding.root,absolute);if(!rel||isAbsolute(rel)||rel==='..'||rel.startsWith('../'))continue;
-      try{validateSourcePath(rel,binding.scopePolicy);return {scopeId:binding.repositoryId,path:rel};}catch{}
+      try{validateSourcePath(rel,{...binding.scopePolicy,deviceLocal:true});return {scopeId:binding.repositoryId,path:rel};}catch{}
     }
     // A reply can quote another device's shared path. Translate only current bindings of this project,
     // never relative Run paths, isolated outputs, or an ambiguous same-spelled scope on another device.
@@ -80,7 +80,7 @@ export class ProjectFiles {
     for(const nodeId of nodes)for(const binding of this.readBindings(run.projectId,nodeId)){
       if(sourceScopeBinding(this.db,run.projectId,binding.repositoryId,nodeId)?.localRoot!==binding.root)continue;
       const rel=beneath(binding.root,absolute);if(!rel)continue;
-      try{validateSourcePath(rel,binding.scopePolicy);const ref={scopeId:binding.repositoryId,path:rel};references.set(JSON.stringify(ref),ref);}catch{}
+      try{validateSourcePath(rel,{...binding.scopePolicy,deviceLocal:true});const ref={scopeId:binding.repositoryId,path:rel};references.set(JSON.stringify(ref),ref);}catch{}
     }
     return references.size===1?[...references.values()][0]:null;
   }
@@ -98,7 +98,7 @@ export class ProjectFiles {
     return result;
   }
   async read(projectId,scopeId,path,{metadata=false}={}){
-    const binding=this.binding(projectId,scopeId);validateSourcePath(path,binding.scopePolicy);
+    const binding=this.binding(projectId,scopeId);validateSourcePath(path,{...binding.scopePolicy,deviceLocal:true});
     const result=await this.queryBinding(binding,'project_file',{path,metadata});
     if(result.relativePath!==path||result.path&&result.path!==resolve(binding.root,path))throw syncError('invalid_file_response');
     return {...result,projectId,scopeId,nodeId:binding.nodeId,syncState:this.state(projectId,binding,path,result.entry),shared:true};
@@ -107,7 +107,7 @@ export class ProjectFiles {
     const config=this.config(projectId),items=[],errors=[];let partial=false;
     for(const scopeId of [...new Set(config.bindings.filter(b=>b.nodeId===config.displayNodeId).map(b=>b.repositoryId))]){
       try{const binding=this.binding(projectId,scopeId),result=await this.queryBinding(binding,'project_files',{limit:200});partial ||= result.partial;
-        for(const file of result.items){validateSourcePath(file.relativePath,binding.scopePolicy);if(file.path!==resolve(binding.root,file.relativePath))throw syncError('invalid_file_response');
+        for(const file of result.items){validateSourcePath(file.relativePath,{...binding.scopePolicy,deviceLocal:true});if(file.path!==resolve(binding.root,file.relativePath))throw syncError('invalid_file_response');
           items.push({...file,projectId,scopeId,nodeId:binding.nodeId,name:basename(file.relativePath),type:extname(file.relativePath).slice(1).toUpperCase()||'FILE',source:'Local project file',shared:true,syncState:this.state(projectId,binding,file.relativePath,file.entry)});
         }
         const known=new Set(result.items.map(f=>f.relativePath));

@@ -5,8 +5,10 @@ import {tr} from './i18n.mjs';
 export const SOURCE_SYNC_LIMITS=Object.freeze({fileBytes:20*1024*1024,batchBytes:100*1024*1024,paths:10000,projectBytes:1024*1024*1024});
 // Earlier unshipped captures cannot prove the ignored-path scope used by deletion decisions.
 export const SOURCE_SYNC_CAPTURE_POLICY=2;
-export const DIRECTORY_SYNC_CAPTURE_POLICY=3;
-export const OUTPUT_SYNC_CAPTURE_POLICY=4;
+// Directory captures since November 2026 leave a synced folder's top-level tmp/ out: an older Worker's capture (which still
+// lists it) is refused as unsupported instead of failing on its tmp/ paths.
+export const DIRECTORY_SYNC_CAPTURE_POLICY=5;
+export const OUTPUT_SYNC_CAPTURE_POLICY=6;
 export const includesSyncOutputs=policy=>policy?.contentMode==='source-and-outputs';
 export const contentHash=bytes=>createHash('sha256').update(bytes).digest('hex');
 
@@ -27,8 +29,9 @@ export function excludedSourcePath(path,policy={}) {
   const parts=String(path).split('/');
   // Integration copies stay device-local, including project containers without Git metadata.
   if(parts.includes('.local-integration'))return true;
-  // A synced folder's top-level tmp/ holds run state and scratch files (heartbeats, staging copies): it stays on its device.
-  if(parts[0]==='tmp'&&parts.length>1)return true;
+  // A synced folder's top-level tmp/ (and the folder itself, so scans do not enter it) holds run state and scratch files
+  // (heartbeats, staging copies): directory sync leaves it on its device. Reading project files in place (deviceLocal) still may.
+  if(Array.isArray(policy.excludeRoots)&&!policy.deviceLocal&&/^tmp$/i.test(parts[0]))return true;
   const shared=policy.sharedDocs===true&&parts[0]==='.workbench'&&parts[1]==='docs'&&parts.length>2;
   if(!shared&&policy.onlySharedDocs||(policy.excludeRoots||[]).some(root=>root?(path===root||path.startsWith(root+'/')):!shared))return true;
   if(includesSyncOutputs(policy))return parts.some(part=>/^(?:\.git|\.worktrees|\.data|node_modules|vendor|\.venv|venv|__pycache__|\.codex|\.claude|\.ssh|\.netrc|_netrc|\.npmrc|\.pypirc|\.agent-workbench-project\.json|worker-config\.json|auth(?:-profiles)?\.json|build|dist)$/i.test(part)

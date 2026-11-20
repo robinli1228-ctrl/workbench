@@ -201,10 +201,10 @@ Project-file synchronization is an opt-in capability separate from browser state
 
 Watch batches (`SourceSyncHome.watchTick`):
 - **Waiting:** a project's change notices become a batch once they have been quiet for 30 s, and at most 2 minutes after the first notice, so a burst of edits or a heartbeat becomes one batch. A retried notice is not held back again.
-- **Scope:** the batch captures only the directories (repositories) named by the notices, on every device.
-- **Full sweep:** the next batch covers all of the project's directories once in these cases, recorded in `sourceSyncWatchSweeps`:
+- **Scope:** the batch captures only the directories (repositories) named by the notices, on every device. A directory whose earlier batch stopped for good joins it again. A batch cancelled by a pause is retried after resuming.
+- **Full sweep:** the next batch covers all of the project's directories once in these cases, recorded in `sourceSyncWatchSweeps` (a sweep whose batch was blocked or cancelled is owed again):
   - after Home starts;
-  - after a device's connection changes;
+  - after a device's connection changes (at most once every 10 minutes);
   - after a configuration generation change;
   - every 4 hours.
 
@@ -800,7 +800,10 @@ Sidebar descriptions reuse `bindDescriptionNotes` in `public/role-icons.js`: exi
 
 `.worktrees` is a mandatory sync exclusion again (`excludedSourcePath`): the platform's `run-*` folders, the retired project baselines and any worktree a role created by hand all stay on their device. Role-created worktrees had been synchronized as plain folders for a few days; on a real project they made up 99% of the manifest and saturated the Home tunnel, and the copies had no `.git` to work in. At startup Home drops stored manifest, device-acknowledgement and metadata-baseline entries whose paths are excluded under the stored scope policy (`SourceSync.dropExcludedEntries`), recomputing the canonical digest and revision, and cancels open conflicts on such paths together with their unstarted repair tasks; without that, a project that had synchronized a worktree would fence every later batch on `source_scope_changed` or fail digest validation of its own stored manifest. Entries leave the records only; no deletion is sent to any device. Pending commands from before the start that still name such paths block their batch with `source_scope_changed` (once at start and on each receipt), so they are reconciled but never redispatched; receipts skip excluded paths, and a cancelled conflict stays cancelled through later resolution outcomes. The default platform prompt now tells roles to work in the shared bound folder, not to create worktrees, and not to switch branches, stash, reset, clean or stage other people's files there; cross-device sharing of committed work goes through Git delivery. It tells roles to read files and logs on another project device themselves with `wb device ls` / `wb device read`, and forbids carrying files, logs or bulk data (such as base64 in parts) in the chat, `wb note` or call text: material for another device goes through the sync-scoped `.workbench/docs` or `wb deliver`, or is named by device and path when the other role can read it with `wb device read`; otherwise it is reported for the user to decide. (The per-turn tool line in the minimal input only names the `wb` entry, so commands roles should reach for unprompted are named in this prompt.)
 - Temporary integration copies under `.local-integration/` are excluded from source synchronization in every content mode, even when the project container is not a Git repository. Existing baseline entries leave sync metadata through the same startup cleanup; device files remain in place.
-- A synced folder's top-level `tmp/` (run state and scratch files such as heartbeats and staging copies) is excluded in every content mode as well. At startup the existing records drop its entries the same way, and no deletion is sent to the other device. Roles that need such a file read it with `wb device read`.
+- **A synced folder's top-level `tmp/`:** this folder (run state and scratch files such as heartbeats and staging copies) is excluded from directory sync in every content mode, and scans do not enter it.
+  - **Existing records:** at startup they drop its entries the same way, and no deletion is sent to the other device.
+  - **Reading in place:** project-file reads (`deviceLocal`) still reach it, and roles on another device read it with `wb device read`.
+  - **Mixed versions:** directory capture policies became 5 and 6, so a capture from an older Worker is refused as unsupported rather than failing on its `tmp/` paths.
 
 Native page polling allows one outstanding read for the current session generation. Switching sessions and confirming a send invalidate only the appropriate read; a late send response from another session cannot invalidate the current session. Copy-feedback timers belong to their rendered buttons, so an unused candidate node cannot cancel the visible button's three-second reset.
 

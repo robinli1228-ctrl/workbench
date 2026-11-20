@@ -242,9 +242,9 @@ export class SourceSyncHome {
         else if(['blocked','cancelled'].includes(batch?.status)){
           // A newly supported protocol can retry one old size refusal without editing its historical batch.
           if(!batch.boundedTransfers&&this.sync.supportsBatching(config.nodeIds)&&['manifest_too_large','batch_too_large'].includes(batch.reason)){this.db.put('sourceSyncWatchNotices',{...n,batchId:null,error:null});continue;}
-          const retryable=typeof batch.reason==='number'||['transfer_failed','waiting_device','paused'].includes(batch.reason);
+          const retryable=typeof batch.reason==='number'||['transfer_failed','waiting_device','paused','sync_paused'].includes(batch.reason);
           if(!retryable||(n.attempts||0)>=5){if(n.error!==(batch.reason||'retry_limit'))this.db.put('sourceSyncWatchNotices',{...n,error:batch.reason||'retry_limit'});continue;}
-          if(Date.now()-Date.parse(n.queuedAt)>retryDelay(n.attempts||1))this.db.put('sourceSyncWatchNotices',{...n,batchId:null});
+          if(this.clock()-Date.parse(n.queuedAt)>retryDelay(n.attempts||1))this.db.put('sourceSyncWatchNotices',{...n,batchId:null});
         }
       }
       if(this.db.listSourceSyncBatches({projectId:config.projectId}).length)continue;
@@ -252,17 +252,24 @@ export class SourceSyncHome {
       const now=this.clock(),at=n=>Date.parse(n.receivedAt||n.observedAt)||0;
       // A retried notice (its batch failed) is not held back again.
       if(!pending.some(n=>n.attempts)&&now-Math.max(...pending.map(at))<WATCH_QUIET_MS&&now-Math.min(...pending.map(n=>Date.parse(n.firstAt||'')||at(n)))<WATCH_MAX_WAIT_MS)continue;
-      const sweep=this.db.get('sourceSyncWatchSweeps',config.projectId),full=!sweep||sweep.due||sweep.generation!==config.generation||now-Date.parse(sweep.at||0)>=WATCH_SWEEP_MS;
-      const changed=[...new Set(pending.map(n=>n.repositoryId))].filter(id=>config.repositoryIds.includes(id));
+      // A full sweep whose batch did not finish is owed again.
+      const sweep=this.db.get('sourceSyncWatchSweeps',config.projectId),sweptBatch=sweep?.batchId?this.db.get('sourceSyncBatches',sweep.batchId):null;
+      const full=!sweep||sweep.due||sweep.generation!==config.generation||now-Date.parse(sweep.at||0)>=WATCH_SWEEP_MS||['blocked','cancelled'].includes(sweptBatch?.status);
+      // Directories whose earlier batch stopped for good (an error is shown) ride along, as they did when every batch was full.
+      const stuck=this.db.listProject('sourceSyncWatchNotices',config.projectId).filter(n=>n.generation===config.generation&&!n.handled&&n.error);
+      const changed=[...new Set([...pending,...stuck].map(n=>n.repositoryId))].filter(id=>config.repositoryIds.includes(id));
       const sourceNodeId=config.nodeIds.includes(pending[0].nodeId)?pending[0].nodeId:config.nodeIds[0];
-      try{const batch=this.sync.request(config.projectId,{requestId:contentHash(JSON.stringify(pending.map(n=>[n.noticeId,n.attempts||0]))),sourceNodeId,targetNodeIds:config.nodeIds.filter(id=>id!==sourceNodeId),...(full||!changed.length?{}:{repositoryIds:changed})} ,{kind:'watcher'});
-        if(full)this.db.put('sourceSyncWatchSweeps',{id:config.projectId,projectId:config.projectId,generation:config.generation,at:new Date(now).toISOString(),due:false});
-        for(const n of pending)this.db.put('sourceSyncWatchNotices',{...n,batchId:batch.id,queuedAt:new Date().toISOString(),attempts:(n.attempts||0)+1});
+      try{const batch=this.sync.request(config.projectId,{requestId:contentHash(JSON.stringify([pending.map(n=>[n.noticeId,n.attempts||0]),full?'all':changed])),sourceNodeId,targetNodeIds:config.nodeIds.filter(id=>id!==sourceNodeId),...(full||!changed.length?{}:{repositoryIds:changed})} ,{kind:'watcher'});
+        if(full)this.db.put('sourceSyncWatchSweeps',{id:config.projectId,projectId:config.projectId,generation:config.generation,at:new Date(now).toISOString(),due:false,batchId:batch.id});
+        for(const n of pending)this.db.put('sourceSyncWatchNotices',{...n,batchId:batch.id,queuedAt:new Date(now).toISOString(),attempts:(n.attempts||0)+1});
       }catch(e){for(const n of pending)this.db.put('sourceSyncWatchNotices',{...n,error:e.code||'queue_failed'});}
     }
   }
   /** The project's next watch batch captures every directory once (device reconnect, Home start). */
-  sweepDue(projectId){const sweep=this.db.get('sourceSyncWatchSweeps',projectId);if(!sweep?.due)this.db.put('sourceSyncWatchSweeps',{...(sweep||{id:projectId,projectId}),due:true});}
+  sweepDue(projectId){const sweep=this.db.get('sourceSyncWatchSweeps',projectId);
+    // A flapping link does not turn every batch into a full one: one sweep per ten minutes is enough.
+    if(sweep&&(sweep.due||this.clock()-Date.parse(sweep.at||0)<600000))return;
+    this.db.put('sourceSyncWatchSweeps',{...(sweep||{id:projectId,projectId}),due:true});}
   watchMessage(nodeId,message){
     if(message.type==='source_sync_watch_ack'){const socket=this.socket(nodeId);if(socket)socket.sourceWatchAck=message.version;return;}
     const config=this.sync.config(message.projectId);
