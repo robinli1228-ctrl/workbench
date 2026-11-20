@@ -4556,13 +4556,18 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
   dialog.media-lightbox .media-status { position: absolute; inset: auto 12px calc(12px + env(safe-area-inset-bottom)); z-index: 3; }
 }
 
-/* Group chat cards on phones (2026-11-19): the role's avatar moves up into the name line (small, before the name), so its card
-   runs the full width from the left edge; more space between one message and the next. */
+/* Group chat cards on phones (2026-11-19): the avatar moves up into the name line (small, before the name), so the card runs
+   the full width from the left edge; more space between one message and the next. Role cards and the platform's own
+   left-side messages (Workbench notices, scheduled reminders) share it (2026-11-20). */
 @media (max-width: 720px) {
   #chat-feed .chat-row { margin-bottom: 26px; }
-  #chat-feed .chat-row:not(.human) { position: relative; gap: 0; }
-  #chat-feed .chat-row:not(.human) > .chat-avatar { position: absolute; top: 0; left: 0; z-index: 1; width: 24px; height: 24px; border-radius: 6px; }
-  #chat-feed .chat-row:not(.human) > .chat-avatar :is(.role-icon, .role-icon svg, img, svg) { width: 24px; height: 24px; border-radius: 6px; }
-  #chat-feed .chat-row:not(.human) > .chat-col { flex: 1; width: 100%; max-width: 100%; }
-  #chat-feed .chat-row:not(.human) .chat-message-header { min-height: 24px; align-items: center; padding-left: 31px; }
+  #chat-feed .chat-row:is(:not(.human), .is-reminder) { position: relative; gap: 0; }
+  #chat-feed .chat-row:is(:not(.human), .is-reminder) > .chat-avatar { position: absolute; top: 0; left: 0; z-index: 1; width: 24px; height: 24px; border-radius: 6px; }
+  #chat-feed .chat-row:is(:not(.human), .is-reminder) > .chat-avatar :is(.role-icon, .role-icon svg, img) { width: 24px; height: 24px; border-radius: 6px; }
+  #chat-feed .chat-row:not(.human) > .chat-avatar > svg { width: 24px; height: 24px; border-radius: 6px; }
+  #chat-feed .chat-row.is-reminder > .chat-avatar-reminder svg { width: 15px; height: 15px; }
+  #chat-feed .chat-row:is(:not(.human), .is-reminder) > .chat-col { flex: 1; width: 100%; max-width: 100%; justify-items: stretch; }
+  /* Only a row with an avatar leaves room for it in the name line. */
+  #chat-feed .chat-row:is(:not(.human), .is-reminder):has(> .chat-avatar) .chat-message-header { min-height: 24px; align-items: center; padding-left: 31px; }
+}
 }
