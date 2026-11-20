@@ -27,6 +27,8 @@ export function excludedSourcePath(path,policy={}) {
   const parts=String(path).split('/');
   // Integration copies stay device-local, including project containers without Git metadata.
   if(parts.includes('.local-integration'))return true;
+  // A synced folder's top-level tmp/ holds run state and scratch files (heartbeats, staging copies): it stays on its device.
+  if(parts[0]==='tmp'&&parts.length>1)return true;
   const shared=policy.sharedDocs===true&&parts[0]==='.workbench'&&parts[1]==='docs'&&parts.length>2;
   if(!shared&&policy.onlySharedDocs||(policy.excludeRoots||[]).some(root=>root?(path===root||path.startsWith(root+'/')):!shared))return true;
   if(includesSyncOutputs(policy))return parts.some(part=>/^(?:\.git|\.worktrees|\.data|node_modules|vendor|\.venv|venv|__pycache__|\.codex|\.claude|\.ssh|\.netrc|_netrc|\.npmrc|\.pypirc|\.agent-workbench-project\.json|worker-config\.json|auth(?:-profiles)?\.json|build|dist)$/i.test(part)
