@@ -17,6 +17,7 @@ export const RETENTION_DEFAULTS=Object.freeze({syncCommandDays:1,blobDays:7,mani
 const DAY=86400000,TERMINAL=new Set(['completed','partial_conflict','cancelled','blocked']);
 const TERMINAL_BATCH=new Set(['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready']);
 const HASH=/[a-f0-9]{64}/g;
+const COMMAND_PAYLOADS=['sourceSyncTransport','sourceSyncUploads','sourceSyncUploadReceipts'];
 // These are the plan's inputs. Store revisions also invalidate on direct SQL or another connection's writes.
 const RETENTION_KINDS=['sourceSyncBatches','sourceSyncCommands','sourceSyncTransport','sourceSyncReceipts','sourceSyncReceiptAcks','sourceSyncJournals','sourceSyncCancellations','workspaces','repositoryWorkspaces','sourceSyncConflicts','runs','sourceSyncVersions','sourceSyncWatchStates'];
 
@@ -26,7 +27,19 @@ export function normalizeRetention(value={}){
   manifestVersions:Math.max(1,Math.min(500,Math.round(Number(value.manifestVersions))||RETENTION_DEFAULTS.manifestVersions))};
 }
 
-const age=(value,now)=>{const t=Date.parse(value||'');return Number.isFinite(t)?now-t:Infinity;};
+function commandExpired({resultStatus, worker, transport, pendingReceipt, batch, receivedAt, ackedAt},policy,now){
+ if(!TERMINAL.has(resultStatus))return false;
+ if(worker){
+  if(pendingReceipt||transport?.ready===false)return false;
+  const acknowledged=Date.parse(transport?.acknowledgedAt||'');
+  return Number.isFinite(acknowledged)&&now-acknowledged>=policy.syncCommandDays*DAY;
+ }
+ if(!TERMINAL_BATCH.has(batch?.status)||batch.detection==='metadata'&&!batch.metadataCleanedAt)return false;
+ const receipts=[receivedAt,ackedAt].map(v=>Date.parse(v||'')).filter(Number.isFinite);
+ if(!receipts.length)return false;
+ const timestamps=[...receipts,Date.parse(batch.updatedAt||batch.createdAt||'')].filter(Number.isFinite);
+ return now-Math.max(...timestamps)>=policy.syncCommandDays*DAY;
+}
 const yieldRequests=()=>new Promise(resolve=>setImmediate(resolve));
 /** Count bounded physical-row pages. octet_length reads stored byte lengths without loading large TEXT bodies. */
 async function sizes(db){
@@ -61,15 +74,19 @@ const body=(db,row)=>db.db.prepare('SELECT data FROM records WHERE rowid=?').get
 
 /**
  * A Worker's capture record holds the scope's whole file list twice, as the command's baseline and the result's manifest:
- * up to 5 MB a row, 1.5 GB within the one day they are kept on a project syncing once a minute. Once Home has acknowledged
- * the receipt neither list is read again, so both are dropped in place, inside SQLite (no row is parsed here); the row
+ * up to 5 MB a row, plus a list of excluded paths. Once Home has acknowledged the receipt, these lists are dropped in
+ * place, inside SQLite (no row is parsed here). The row
  * itself still goes when the retention period ends. Returns whether the row was compacted.
  */
 export function compactSyncCommand(db,id){
- const changed=db.db.prepare(`UPDATE records SET data=json_set(data,'$.command.baselineEntries',json('null'),'$.result.manifest.entries',json('null'),'$.compacted',json('true'))
-  WHERE kind='sourceSyncCommands' AND id=? AND json_extract(data,'$.command.action')='capture' AND json_extract(data,'$.compacted') IS NULL
+ const changed=db.db.prepare(`UPDATE records SET data=json_remove(json_set(data,'$.command.baselineEntries',json('null'),'$.result.manifest.entries',json('null'),'$.compacted',json('true')),'$.result.manifest.excluded')
+  WHERE kind='sourceSyncCommands' AND id=? AND json_extract(data,'$.command.action')='capture'
   AND json_extract(data,'$.result.status') IN ('completed','partial_conflict','cancelled','blocked')
-  AND (json_type(data,'$.command.baselineEntries')='object' OR json_type(data,'$.result.manifest.entries')='object')`).run(id).changes>0;
+  AND (json_type(data,'$.command.baselineEntries')='object' OR json_type(data,'$.result.manifest.entries')='object'
+   OR json_type(data,'$.result.manifest.excluded')='array')
+  AND EXISTS(SELECT 1 FROM records t WHERE t.kind='sourceSyncTransport' AND t.id=records.id
+   AND json_extract(t.data,'$.acknowledgedAt') IS NOT NULL)
+  AND NOT EXISTS(SELECT 1 FROM records r WHERE r.kind='sourceSyncReceipts' AND r.id=records.id)`).run(id).changes>0;
  if(changed)db.recordChanged?.('sourceSyncCommands');
  return changed;
 }
@@ -88,40 +105,36 @@ export async function compactAcknowledgedCommands(db,{chunk=5}={}){
 /** Which records and blobs the policy lets go right now. Pure: nothing is deleted. */
 export async function retentionPlan(db,{policy=RETENTION_DEFAULTS,blobRoot=null,now=Date.now()}={}){
  const p=normalizeRetention(policy),plan={records:[],blobs:[],bytes:0,blobBytes:0,kept:{}};
- const drop=(kind,id,bytes)=>{plan.records.push({kind,id,bytes});plan.bytes+=bytes;};
+ const drop=(kind,id,bytes,commandId)=>{plan.records.push({kind,id,bytes,...(commandId?{commandId}:{})});plan.bytes+=bytes;};
  // Metadata queries stay bounded even when the corresponding command or manifest has megabytes of entries.
- const batches=new Map();for await(const r of field(db,'sourceSyncBatches',['status','updatedAt','createdAt']))batches.set(r.id,{status:r.f0,updatedAt:r.f1,createdAt:r.f2});
+ const batches=new Map();for await(const r of field(db,'sourceSyncBatches',['status','updatedAt','createdAt','detection','metadataCleanedAt']))
+  batches.set(r.id,{status:r.f0,updatedAt:r.f1,createdAt:r.f2,detection:r.f3,metadataCleanedAt:r.f4});
  const transports=new Map();for await(const r of field(db,'sourceSyncTransport',['ready','acknowledgedAt']))transports.set(r.id,{ready:r.f0===0?false:r.f0,acknowledgedAt:r.f1,r:r.r});
  const receipts=new Set();for await(const r of field(db,'sourceSyncReceipts',[]))receipts.add(r.id);
  // Downloads precede command persistence; captures publish their hashes only when finished.
  let blobsBusy=[...transports.values()].some(t=>t.ready===false);
  // Copy hashes so V8 does not retain a whole body via string slices. Home never needs blob references.
  const referenced=new Set(),remember=text=>{for(const h of text.match(HASH)||[])referenced.add(Buffer.from(h,'latin1').toString('latin1'));};
- const commandFields=["!CASE WHEN json_type(data,'$.command') IN ('object','array','true') THEN 1 ELSE json_extract(data,'$.command') END",'result.status','batchId','receivedAt','ackedAt','lastSentAt','id'];
+ const commandFields=["!json_type(data,'$.command')='object'",'result.status','batchId','receivedAt','ackedAt','status'];
  for await(const r of field(db,'sourceSyncCommands',commandFields)){
-  const id=r.f6;let reclaim=false,at=null;
-  if(r.f0){
-   if(!TERMINAL.has(r.f1))blobsBusy=true;
-   // Worker shape: the executed command, its result and the transport that carried the receipt to Home.
-   const t=transports.get(id);
-   reclaim=TERMINAL.has(r.f1)&&Boolean(t?.acknowledgedAt)&&!receipts.has(id);at=t?.acknowledgedAt;
-  }else{
-   // Home shape: the issued command, acknowledged by its Worker, inside a batch that has ended.
-   const batch=batches.get(r.f2);
-   reclaim=(!batch||TERMINAL_BATCH.has(batch.status))&&TERMINAL.has(r.f1);at=r.f3||r.f4||batch?.updatedAt||batch?.createdAt||r.f5;
-  }
-  if(reclaim&&age(at,now)>=p.syncCommandDays*DAY){
+  const id=r.id,worker=r.f0===1,t=transports.get(id);
+  if(worker&&!TERMINAL.has(r.f1))blobsBusy=true;
+  if(r.f5!=='reconciling'&&commandExpired({resultStatus:r.f1,worker,transport:t,pendingReceipt:receipts.has(id),
+    batch:batches.get(r.f2),receivedAt:r.f3,ackedAt:r.f4},p,now)){
    drop('sourceSyncCommands',id,recordBytes(db,r));
-   const t=transports.get(id);if(t)drop('sourceSyncTransport',id,recordBytes(db,t));
+   if(t)drop('sourceSyncTransport',id,recordBytes(db,t),id);
   }else if(blobRoot)remember(body(db,r));
  }
  // Compacted captures no longer name their files' blobs; the Worker's latest snapshot of each scope still does.
  if(blobRoot)for await(const r of field(db,'sourceSyncWatchStates',[]))remember(body(db,r));
  // Home-side receipt-ack cache and Worker-side journals/cancellations belong to their command.
  const dropped=new Set(plan.records.filter(x=>x.kind==='sourceSyncCommands').map(x=>x.id));
- for(const kind of ['sourceSyncReceiptAcks','sourceSyncJournals','sourceSyncCancellations'])for await(const r of field(db,kind,['commandId','status'])){
-  const owner=r.f0||String(r.id).split(':')[0];
-  if(dropped.has(owner)&&r.f1!=='prepared')drop(kind,r.id,recordBytes(db,r));
+ for(const kind of ['sourceSyncReceiptAcks','sourceSyncJournals','sourceSyncCancellations','sourceSyncUploads','sourceSyncUploadReceipts']){
+  const direct=kind==='sourceSyncUploads'||kind==='sourceSyncUploadReceipts';
+  for await(const r of field(db,kind,direct?[]:['commandId','status'])){
+   const owner=direct?r.id:r.f0||r.id.split(':')[0];
+   if(dropped.has(owner)&&!['preparing','prepared'].includes(r.f1))drop(kind,r.id,recordBytes(db,r),owner);
+  }
  }
  // Manifest versions: the newest N per repository stay, as does anything a binding or an open conflict still names.
  const named=new Set();
@@ -166,31 +179,84 @@ export async function dataStats(db,{policy,blobRoot=null,now=Date.now()}={}){
  return {dbBytes:pageSize*pages,dbFreeBytes:pageSize*free,kinds,blobs,reclaimableBytes:plan.bytes+plan.blobBytes,lastCleanupAt:maintenance?.lastCleanupAt||null,lastVacuumAt:maintenance?.lastVacuumAt||null,policy:normalizeRetention(policy)};
 }
 
-/** Delete what the plan names, a few hundred rows per transaction with a yield between, then unlink blobs the same way. */
+/**
+ * Recheck commands and their dependents in the deletion transaction. Only versions and blobs still depend on the full
+ * plan's revision, since their references may be spread across many records.
+ */
 export async function cleanupData(db,{policy,blobRoot=null,now=Date.now(),batch=200,pause=()=>new Promise(resolve=>setImmediate(resolve)),log=()=>{}}={}){
+ const retention=normalizeRetention(policy);
  let revision=db.readRevision(RETENTION_KINDS);
- const plan=await retentionPlan(db,{policy,blobRoot,now});
+ const plan=await retentionPlan(db,{policy:retention,blobRoot,now});
  const deleted={};let bytes=0,deferred=false;
- // A plan is safe only while its inputs are unchanged. Yielding never grants permission to delete from a stale plan.
- const current=()=>{if(revision!=null&&db.readRevision(RETENTION_KINDS)===revision)return true;deferred=true;return false;};
- for(let i=0;i<plan.records.length;i+=batch){
-  if(!current())break;
-  const slice=plan.records.slice(i,i+batch);
-  db.transaction(()=>{for(const x of slice){const record=db.get(x.kind,x.id);if(!record)continue;
-   // The command body can go, but a lost ACK must remain replayable by its authenticated Worker and exact result hash.
-   if(x.kind==='sourceSyncCommands'&&!record.command&&record.nodeId&&TERMINAL.has(record.result?.status)){
-    const receiptHash=contentHash(JSON.stringify(record.result)),id=`${record.id}:${receiptHash}`;
-    db.put('sourceSyncRetiredReceipts',{id,projectId:record.projectId,nodeId:record.nodeId,ack:{type:'source_sync_receipt_ack',commandId:record.id,receiptHash}});
+ const current=()=>revision!==null&&db.readRevision(RETENTION_KINDS)===revision;
+ const dataVersion=db.db.prepare('PRAGMA data_version');
+ const refreshRevision=observedVersion=>{
+  const value=db.readRevision(RETENTION_KINDS);
+  return dataVersion.get().data_version===observedVersion?value:null;
+ };
+ const commandIds=[],dependents=new Map(),versions=[];
+ for(const x of plan.records){
+  if(x.kind==='sourceSyncCommands')commandIds.push(x.id);
+  else if(x.commandId&&!COMMAND_PAYLOADS.includes(x.kind)){
+   if(!dependents.has(x.commandId))dependents.set(x.commandId,[]);
+   dependents.get(x.commandId).push(x);
+  }else if(x.kind==='sourceSyncVersions')versions.push(x);
+ }
+ const rowSize=db.db.prepare('SELECT octet_length(data) AS bytes FROM records WHERE kind=? AND id=?');
+ const remove=(kind,id)=>{
+  const row=rowSize.get(kind,id);if(!row)return;
+  db.remove(kind,id);bytes+=row.bytes;deleted[kind]=(deleted[kind]||0)+1;
+ };
+ const chunk=Math.min(batch,8);
+ for(let i=0;i<commandIds.length;i+=chunk){
+  const observedVersion=dataVersion.get().data_version;
+  let keepPlan=current();
+  db.transaction(()=>{
+   keepPlan=keepPlan&&dataVersion.get().data_version===observedVersion;
+   for(const id of commandIds.slice(i,i+chunk)){
+    const command=db.get('sourceSyncCommands',id);if(!command||command.status==='reconciling')continue;
+    const worker=Boolean(command.command);
+    if(!commandExpired({resultStatus:command.result?.status,worker,
+     transport:worker?db.get('sourceSyncTransport',id):null,
+     pendingReceipt:worker&&Boolean(db.get('sourceSyncReceipts',id)),
+     batch:worker?null:db.get('sourceSyncBatches',command.batchId||''),
+     receivedAt:command.receivedAt,ackedAt:command.ackedAt},retention,now))continue;
+    // Preserve the exact result hash and owner before any command or upload body is removed.
+    if(!worker&&command.nodeId){
+     const receiptHash=contentHash(JSON.stringify(command.result)),key=`${id}:${receiptHash}`;
+     db.put('sourceSyncRetiredReceipts',{id:key,projectId:command.projectId,nodeId:command.nodeId,
+      ack:{type:'source_sync_receipt_ack',commandId:id,receiptHash}});
+    }
+    for(const x of dependents.get(id)||[]){
+     const record=db.get(x.kind,x.id);
+     if(!record||(record.commandId||record.ack?.commandId||x.id.split(':')[0])!==id)continue;
+     if(x.kind==='sourceSyncJournals'&&['preparing','prepared'].includes(record.status))continue;
+     if(x.kind==='sourceSyncReceiptAcks'&&record.nodeId&&record.ack?.commandId&&record.ack?.receiptHash)
+      db.put('sourceSyncRetiredReceipts',record);
+     remove(x.kind,x.id);
+    }
+    // These records use the command ID as their key, even if an upload arrived after the plan's scan.
+    for(const kind of COMMAND_PAYLOADS)remove(kind,id);
+    remove('sourceSyncCommands',id);
    }
-   if(x.kind==='sourceSyncReceiptAcks'&&record.nodeId&&record.ack?.commandId&&record.ack?.receiptHash)db.put('sourceSyncRetiredReceipts',record);
-   bytes+=x.bytes||0;db.remove(x.kind,x.id);deleted[x.kind]=(deleted[x.kind]||0)+1;
-  }});
-  revision=db.readRevision(RETENTION_KINDS);
+  });
+  revision=keepPlan?refreshRevision(observedVersion):null;
+  await pause();
+ }
+ for(let i=0;i<versions.length;i+=batch){
+  const observedVersion=dataVersion.get().data_version;
+  if(!current()){deferred=true;break;}
+  db.transaction(()=>{
+   if(dataVersion.get().data_version!==observedVersion){deferred=true;return;}
+   for(const x of versions.slice(i,i+batch))remove(x.kind,x.id);
+  });
+  if(deferred)break;
+  revision=refreshRevision(observedVersion);
   await pause();
  }
  let blobsDeleted=0,blobBytes=0;
  for(let i=0;i<plan.blobs.length;i++){
-  if(deferred||!current())break;
+  if(deferred||!current()){deferred=true;break;}
   // One local unlink is synchronous so a new capture cannot publish/reuse a hash between validation and deletion.
   const b=plan.blobs[i];try{unlinkSync(join(blobRoot,b.name));blobsDeleted++;blobBytes+=b.bytes;}catch(error){if(error.code!=='ENOENT')log(`blob ${b.name}: ${error.message}`);}
   if(i%50===49)await pause();
