@@ -79,7 +79,7 @@ import { ProjectGitVersions } from './project-git-versions.mjs';
 import {SourceSyncHome} from './source-sync-transport.mjs';
 import {RepositoryDevices} from './project-repository-devices.mjs';
 import {syncIndicator} from './sync-indicator.mjs';
-import {dataStats,cleanupData,vacuumIfWasteful,normalizeRetention} from './data-retention.mjs';
+import {dataStats,cleanupData,normalizeRetention} from './data-retention.mjs';
 import {acceptSourceProvenance} from './source-sync-provenance.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
 import { roleResponsibility } from './role-definition.mjs';
@@ -2077,14 +2077,8 @@ const heartbeat = setInterval(() => {
   for (const r of viewers) r.write(': keepalive\n\n');
 }, 15000);
 const chatScheduler = setInterval(scheduleChat, 1000);
-/** Data retention on Home: a pass a minute after start and daily; VACUUM only while nothing runs (see src/data-retention.mjs). */
+/** Data retention on Home: a pass a minute after start and daily. Physical compaction is a separate maintenance operation. */
 function retentionPolicy() { return normalizeRetention(db.get('settings', 'main')?.retention || {}); }
-const homeQuiet = () => db.activeRuns().length === 0 && queries.size === 0 && !db.listSourceSyncCommands({ pending: true }).length
-  && !db.db.prepare("SELECT 1 FROM records WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('queued','starting','running','waiting_user','stopping') LIMIT 1").get();
-let homeVacuumRetry = null;
-function homeVacuumWhenQuiet() { clearTimeout(homeVacuumRetry); homeVacuumRetry = null;
-  if (!homeQuiet()) { homeVacuumRetry = setTimeout(homeVacuumWhenQuiet, 10 * 60000); homeVacuumRetry.unref(); return { vacuumed: false, deferred: true }; }
-  try { const result = vacuumIfWasteful(db); if (result.vacuumed) console.log(`Data: VACUUM ${Math.round(result.before / 1048576)} MB -> ${Math.round(result.after / 1048576)} MB`); return result; } catch (e) { console.error('Data: VACUUM failed', e.message); return { vacuumed: false, error: e.message }; } }
 async function runHomeMaintenance() {
   try { const runInputs=await compactRunInputs(db);
     if(runInputs.compacted)console.log(`Data: compressed inputs of ${runInputs.compacted} completed runs (${runInputs.beforeBytes-runInputs.afterBytes} bytes saved)`);
@@ -2092,7 +2086,7 @@ async function runHomeMaintenance() {
     const n = Object.values(summary.deleted).reduce((a, b) => a + b, 0); if (n) console.log(`Data: removed ${n} records (${Math.round(summary.bytes / 1048576)} MB)`);
     const syncCache = await sourceSync.storage.sweep(); if (syncCache.blobsDeleted) console.log(`Data: sync cache dropped ${syncCache.blobsDeleted} files (${Math.round(syncCache.blobBytes / 1048576)} MB)`);
     const media = await mediaCache.sweep().catch(e => ({ error: e.message })); if (media.deleted) console.log(`Data: media cache dropped ${media.deleted} files (${Math.round(media.freed / 1048576)} MB)`);
-    return { ...summary, runInputs, syncCache, mediaCache: media, vacuum: homeVacuumWhenQuiet() }; }
+    return { ...summary, runInputs, syncCache, mediaCache: media }; }
   catch (e) { console.error('Data: cleanup failed', e.message); return { error: e.message }; }
 }
 const maintenanceFirst = setTimeout(() => void runHomeMaintenance(), 60000); maintenanceFirst.unref();

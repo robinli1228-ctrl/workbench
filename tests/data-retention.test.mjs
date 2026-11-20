@@ -95,6 +95,7 @@ test('VACUUM returns freed pages to the file system, only when enough of the fil
   const dir = mkdtempSync(join(tmpdir(), 'wb-vacuum-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const db = new Store(join(dir, 'store.sqlite'));
+  db.put('sourceSyncBatches', { id: 'b', status: 'completed', updatedAt: ago(5) });
   for (let i = 0; i < 400; i++) db.put('sourceSyncCommands', { id: `c${i}`, projectId: 'p1', batchId: 'b', ackedAt: ago(5), receivedAt: ago(5), result: { status: 'completed' }, pad: 'p'.repeat(20000) });
   db.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   const full = statSync(join(dir, 'store.sqlite')).size;
@@ -123,4 +124,47 @@ test('the plan reads sync commands one at a time: 150 MB of them fit a 64 MB hea
     assert.equal(run.status, 0, run.stderr.split('\n').filter(line => /heap|Error/.test(line)).slice(0, 3).join('\n'));
     assert.match(run.stdout, /kept 0/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('concurrent writes do not stop command retirement, and a reopened batch keeps its uploads and receipts', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'wb-retention-race-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { SourceSyncHome } = await load('source-sync-transport.mjs');
+  const { contentHash } = await load('source-sync-manifest.mjs');
+  const db = new Store(join(dir, 'home.sqlite'));
+  t.after(() => db.close());
+  const sent = [];
+  const home = new SourceSyncHome({ db, data: dir, online: () => true, socket: () => ({send: m => sent.push(JSON.parse(m))}), change: () => {} });
+  const result = { status: 'completed', manifest: { entries: entries(1), excluded: [{path: 'tmp', reason: 'excluded'}] } };
+  for (const id of ['old', 'reopened', 'recent', 'unconfirmed']) {
+    db.put('sourceSyncBatches', { id, status: 'completed', updatedAt: id === 'recent' ? ago(0.1) : ago(3) });
+    db.put('sourceSyncCommands', { id, projectId: 'p1', nodeId: 'n1', batchId: id, action: 'capture',
+      ...(id === 'unconfirmed' ? {} : { receivedAt: ago(3), result }) });
+    db.put('sourceSyncUploads', { id, projectId: 'p1', bundle: { manifest: result.manifest } });
+    db.put('sourceSyncUploadReceipts', { id, projectId: 'p1', result });
+  }
+  const receiptHash = contentHash(JSON.stringify(result));
+  const ack = { type: 'source_sync_receipt_ack', commandId: 'old', receiptHash };
+  db.put('sourceSyncReceiptAcks', { id: 'old:'+receiptHash, projectId: 'p1', nodeId: 'n1', ack });
+  let turn = 0;
+  const timer = setInterval(() => db.put('runs', { id: 'active', status: 'running', sequence: ++turn }), 0);
+  try {
+    const summary = await cleanupData(db, { now: NOW, batch: 1, pause: async () => {
+      db.put('sourceSyncBatches', { id: 'reopened', status: 'reconciling', updatedAt: ago(3) });
+      db.put('sourceSyncWatchStates', { id: 'watched', checkedAt: ++turn });
+    }});
+    assert.equal(summary.deleted.sourceSyncCommands, 1);
+    assert.equal(summary.deleted.sourceSyncUploads, 1);
+    assert.equal(summary.deleted.sourceSyncUploadReceipts, 1);
+    assert.ok(!summary.deferred);
+  } finally {
+    clearInterval(timer);
+  }
+  for (const id of ['reopened', 'recent', 'unconfirmed']) {
+    for (const kind of ['sourceSyncCommands', 'sourceSyncUploads', 'sourceSyncUploadReceipts']) assert.ok(db.get(kind, id));
+  }
+  const receipt = { type: 'source_sync_receipt', commandId: 'old', receiptHash };
+  await home.message('n1', receipt);
+  assert.deepEqual(sent, [ack]);
+  await assert.rejects(home.message('n2', receipt), { code: 'receipt_owner_mismatch' });
 });

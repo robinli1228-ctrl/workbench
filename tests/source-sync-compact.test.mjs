@@ -14,7 +14,7 @@ const list = n => Object.fromEntries(Array.from({ length: n }, (_, i) => [`dir/f
 
 function record(db, id, { acknowledged = false, action = 'capture', status = 'completed' } = {}) {
   const command = { id, projectId: 'p1', batchId: 'b1', repositoryId: 'r1', action, scopeKind: 'directory', baselineEntries: list(500) };
-  const result = action === 'capture' ? { status, base: { entries: {} }, manifest: { entries: list(500), excluded: [] } } : { status, files: [] };
+  const result = action === 'capture' ? { status, base: { entries: {} }, manifest: { entries: list(500), excluded: [{ path: "tmp", reason: "excluded" }] } } : { status, files: [] };
   db.put('sourceSyncCommands', { id, projectId: 'p1', command, fingerprint: contentHash(JSON.stringify(command)), status, result });
   db.put('sourceSyncTransport', { id, projectId: 'p1', batchId: 'b1', ready: true, ...(acknowledged ? { acknowledgedAt: '2026-11-08T00:00:00Z' } : {}) });
   return command;
@@ -32,6 +32,7 @@ test('an acknowledged capture keeps its status, fingerprint and counts but not t
   client.acknowledge('a'.repeat(64), { receiptHash: contentHash(JSON.stringify(receipt)) });
   const kept = db.get('sourceSyncCommands', 'a'.repeat(64));
   assert.equal(kept.command.baselineEntries, null);assert.equal(kept.result.manifest.entries, null);assert.equal(kept.compacted, true);
+  assert.equal(kept.result.manifest.excluded, undefined);
   assert.equal(kept.result.status, 'completed');assert.equal(kept.fingerprint, contentHash(JSON.stringify(command)));
   assert.ok(size() < before / 20, `${before} -> ${size()} bytes`);
   assert.equal(compactSyncCommand(db, 'a'.repeat(64)), false, 'once');
@@ -39,7 +40,13 @@ test('an acknowledged capture keeps its status, fingerprint and counts but not t
   // Not acknowledged, not a capture, or not finished: untouched.
   record(db, 'b'.repeat(64));record(db, 'c'.repeat(64), { acknowledged: true, action: 'apply' });record(db, 'd'.repeat(64), { acknowledged: true, status: 'reconciling' });
   for (let i = 0; i < 45; i++) record(db, contentHash(`old-${i}`), { acknowledged: true });
-  assert.equal(await compactAcknowledgedCommands(db, { chunk: 7 }), 45, 'earlier acknowledged captures, a chunk at a time');
+  const legacyId = contentHash('legacy-compact');
+  record(db, legacyId, { acknowledged: true });
+  const legacy = db.get('sourceSyncCommands', legacyId);
+  db.put('sourceSyncCommands', { ...legacy, compacted: true, command: { ...legacy.command, baselineEntries: null },
+    result: { ...legacy.result, manifest: { ...legacy.result.manifest, entries: null } } });
+  assert.equal(await compactAcknowledgedCommands(db, { chunk: 7 }), 46, 'earlier acknowledged captures, a chunk at a time');
+  assert.equal(db.get('sourceSyncCommands', legacyId).result.manifest.excluded, undefined);
   assert.ok(db.get('sourceSyncCommands', 'b'.repeat(64)).command.baselineEntries, 'unacknowledged capture kept whole');
   assert.ok(db.get('sourceSyncCommands', 'c'.repeat(64)).command.baselineEntries, 'apply command untouched');
   assert.ok(db.get('sourceSyncCommands', 'd'.repeat(64)).result.manifest.entries, 'unfinished capture untouched');
