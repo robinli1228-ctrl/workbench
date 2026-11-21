@@ -11,7 +11,7 @@ import {MediaStreams,PREVIEW_CHUNK} from '../src/media-streams.mjs';
 import {MediaCache} from '../src/media-cache.mjs';
 import {sniffMedia,mediaPath,statMedia,streamMedia,hashMedia,receiveMedia} from '../src/media-files.mjs';
 import {captureDirectorySnapshot} from '../src/source-sync-files.mjs';
-import {mediaPathMatches,mediaKindFromName,formatBytes,previewableUrl,webAddresses,inlineCodeMediaPath} from '../public/media.js';
+import {mediaPathMatches,mediaKindFromName,formatBytes,previewableUrl,webAddresses,inlineCodeMediaPath,messageFolders} from '../public/media.js';
 
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 /** A response stand-in that discards bytes, for driving a relay directly. */
@@ -288,6 +288,13 @@ test('development and test service addresses open in the viewer; other sites kee
   assert.equal(inlineCodeMediaPath('https://github.com/xxxxx/xxxxx/blob/main/index.html'),null);
   assert.equal(inlineCodeMediaPath('http://127.0.0.1:4317/shot.png'),null);
   assert.equal(inlineCodeMediaPath(' out/site/index.html '),'out/site/index.html');
+  // A folder with a space in its name ("TMS AI") keeps the whole path in inline code; a command with a second path or an option does not.
+  assert.equal(inlineCodeMediaPath('/xxxxx/TMS AI/.workbench/docs/report/TMS-AI-COVERAGE.html'),'/xxxxx/TMS AI/.workbench/docs/report/TMS-AI-COVERAGE.html');
+  assert.equal(inlineCodeMediaPath('~/Desktop/Screen Shot 2026-11-03 17.50.12.png'),'~/Desktop/Screen Shot 2026-11-03 17.50.12.png');
+  assert.equal(inlineCodeMediaPath('open /tmp/a.png'),null);
+  assert.equal(inlineCodeMediaPath('/tmp/a b/x.png -v'),null);
+  assert.equal(inlineCodeMediaPath('see a.png and b.png'),null);
+  assert.equal(inlineCodeMediaPath('/tmp/a b/*.png'),null);
 });
 
 test('a web page previews with the files it loads by relative path, and its ticket reads nothing outside its folder', async () => {
@@ -461,4 +468,10 @@ test('a failed extension preserves the previously verified prefix', async () => 
     assert.equal((await h.mediaCache.prefix(ticket)).size,1000);
     assert.deepEqual(h.ranges,[[0,999],[1000,1999]]);
   } finally {await h.close();}
+});
+
+test('a bare file name can be found in the folder of another path in the same message', () => {
+  assert.deepEqual(messageFolders('Input: reuse .workbench/docs/plan-20261119/PLAN.md section 6 and REPORT.html in the same folder'),['.workbench/docs/plan-20261119']);
+  assert.deepEqual(messageFolders('see /xxxxx/a/b.png and C:\\xxxxx\\c.pdf'),['/xxxxx/a','C:\\xxxxx']);
+  assert.deepEqual(messageFolders('https://github.com/xxxxx/xxxxx/blob/main/index.html T89/T91 src/*.js .git/.hidden REPORT.html'),[]);
 });
