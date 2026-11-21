@@ -143,6 +143,21 @@ function spacedCodePath(path){
   return path.split(/ +/).slice(1).some(word=>/^(?:[-/~]|[A-Za-z]:[\\/]|\.{1,2}\/)/.test(word))?null:path;
 }
 
+/**
+ * Folders of the file paths written in one message (".workbench/docs/plan/PLAN.md"). A bare file name that the turn's
+ * tools never touched is then looked up in them ("PLAN.md section 6 and TMS-REPORT.html in the same folder"); only a
+ * single existing match is used. URLs, wildcards and data-like words are not paths.
+ */
+export function messageFolders(text) {
+  const folders=new Set();
+  for(const [word] of String(text||'').matchAll(WORD)){
+    if(word.length>MAX_PATH||/^[a-z][a-z0-9+.-]*:\/\//i.test(word)||wildcardPath(word))continue;
+    const cut=Math.max(word.lastIndexOf('/'),word.lastIndexOf('\\'));
+    if(cut>0&&/^[^.\\/][^\\/]*\.[a-z0-9]{1,8}$/i.test(word.slice(cut+1)))folders.add(word.slice(0,cut));
+  }
+  return [...folders];
+}
+
 /** Replace file paths that name media or large binary files with cards; code blocks, links and buttons are left alone. */
 export function linkMedia(root,context) {
   if(!root)return root;
@@ -152,8 +167,13 @@ export function linkMedia(root,context) {
   const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes=[];let node;
   while((node=walker.nextNode()))if(!node.parentElement.closest('a,pre,button,.media-card'))nodes.push(node);
   let described=0;
+  const hrefs=[...root.querySelectorAll('a[href]')].map(link=>{const raw=link.getAttribute('href')||'';try{return decodeURIComponent(raw);}catch{return raw;}});
+  // Up to four folders: more than that is a listing, not a hint where a bare name lives.
+  const folders=[...new Set([...messageFolders(root.textContent),...hrefs.filter(href=>!href.includes(' ')).flatMap(messageFolders),
+    ...hrefs.filter(href=>href.includes(' ')&&/[\\/]/.test(href)&&!/^[a-z][a-z0-9+.-]*:/i.test(href)).map(href=>href.replace(/[\\/][^\\/]*$/,'')).filter(Boolean)])];
+  const cardContext=folders.length&&folders.length<=4?{...context,folders}:context;
   // Cards in a message show a preview (image thumbnail, video first frame) once the file is described.
-  const card=path=>{const item=mediaCard(path,context,{describe:described++<12,preview:true});return item;};
+  const card=path=>{const item=mediaCard(path,cardContext,{describe:described++<12,preview:true});return item;};
   for(const text of nodes){
     const value=text.textContent,exact=text.parentElement.tagName==='CODE'&&Boolean(inlineCodeMediaPath(value));
     const matches=exact?[{index:value.indexOf(value.trim()),path:value.trim()}]:mediaPathMatches(value);if(!matches.length)continue;
@@ -185,8 +205,14 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
   const kind=mediaKindFromName(path),card=el('button','media-card');card.type='button';card.dataset.kind=kind;card.title=path;card.setAttribute('translate','no');
   const icon=el('span','media-card-icon',ICON[kind]),text=el('span','media-card-text'),name=el('span','media-card-name',baseName(path)),meta=el('span','media-card-meta',t(kind==='file'?'Click to download or send':'Click to open'));
   text.append(name,meta);card.append(icon,text);
-  const bare=!/[\\/]/.test(path);
-  const resolvePath=()=>{const ref=resolveToolFile(path,context.filePaths?.()||[]);card.title=ref.path;return ref;};
+  const bare=!/[\\/]/.test(path),folders=bare?context.folders||[]:[];let found=null;
+  const resolvePath=()=>{const ref=found?{path:found,matched:true}:resolveToolFile(path,context.filePaths?.()||[]);card.title=ref.path;return ref;};
+  // A bare name the turn never touched: the one folder of this message that holds a file of that name.
+  const inFolders=async()=>{
+    const hits=(await Promise.all(folders.map(async folder=>{const candidate=`${folder}${folder.includes('/')||!folder.includes('\\')?'/':'\\'}${path}`;
+      try{const info=await describeQueued(context,candidate);return info?.available?{candidate,info}:null;}catch{return null;}}))).filter(Boolean);
+    if(hits.length!==1)return null;found=hits[0].candidate;card.title=found;return hits[0].info;
+  };
   const show=info=>{
     if(!info.available){card.dataset.state=info.reason;meta.textContent=t(REASONS[info.reason]||'Unavailable');return;}
     card.dataset.state=info.copyOf?'copy':'ready';card.dataset.kind=info.kind;icon.textContent=ICON[info.kind]||ICON.file;markImageOpener(card,info.kind==='image');
@@ -196,14 +222,16 @@ export function mediaCard(path,context,{describe=true,preview=false}={}) {
     if(preview&&info.url&&info.kind==='image')attachPreview(card,info,()=>describeQueued(context,resolvePath().path,{fresh:true}));
   };
   const describePath=async()=>{const ref=resolvePath();if(ref.reason)return {available:false,reason:ref.reason};const info=await describeQueued(context,ref.path);
-    return bare&&!ref.matched&&info.reason==='media_missing'?{...info,reason:'file_unresolved'}:info;};
+    if(!bare||ref.matched||info.reason!=='media_missing')return info;
+    return await inFolders()||{...info,reason:'file_unresolved'};};
   const ref=resolvePath();
   if(ref.reason)show({available:false,reason:ref.reason});
   else if(bare&&context.loadFilePaths&&!context.filePaths?.().length){card.dataset.state='pending';meta.textContent=t('Click to locate file');}
   else if(describe)void describePath().then(show).catch(()=>{});
   card.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();void (async()=>{
     try{if(bare)await context.loadFilePaths?.();}catch{show({available:false,reason:'file_lookup_failed'});return;}
-    const ref=resolvePath();if(ref.reason){show({available:false,reason:ref.reason});return;}
+    let ref=resolvePath();if(ref.reason){show({available:false,reason:ref.reason});return;}
+    if(bare&&!ref.matched&&folders.length){const info=await describePath().catch(()=>null);if(info&&!info.available){show(info);return;}ref=resolvePath();}
     // Open immediately; the shared viewer owns loading and metadata errors, which are not path-lookup failures.
     try{show(await openMediaViewer(ref.path,context,{at:messageTime(card),from:card}));}catch{ /* The viewer shows the original metadata error. */ }
   })();});

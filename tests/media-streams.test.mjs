@@ -11,7 +11,7 @@ import {MediaStreams,PREVIEW_CHUNK} from '../src/media-streams.mjs';
 import {MediaCache} from '../src/media-cache.mjs';
 import {sniffMedia,mediaPath,statMedia,streamMedia,hashMedia,receiveMedia} from '../src/media-files.mjs';
 import {captureDirectorySnapshot} from '../src/source-sync-files.mjs';
-import {mediaPathMatches,mediaKindFromName,formatBytes,previewableUrl,webAddresses,inlineCodeMediaPath} from '../public/media.js';
+import {mediaPathMatches,mediaKindFromName,formatBytes,previewableUrl,webAddresses,inlineCodeMediaPath,messageFolders} from '../public/media.js';
 
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 /** A response stand-in that discards bytes, for driving a relay directly. */
@@ -468,4 +468,10 @@ test('a failed extension preserves the previously verified prefix', async () => 
     assert.equal((await h.mediaCache.prefix(ticket)).size,1000);
     assert.deepEqual(h.ranges,[[0,999],[1000,1999]]);
   } finally {await h.close();}
+});
+
+test('a bare file name can be found in the folder of another path in the same message', () => {
+  assert.deepEqual(messageFolders('Input: reuse .workbench/docs/plan-20261119/PLAN.md section 6 and REPORT.html in the same folder'),['.workbench/docs/plan-20261119']);
+  assert.deepEqual(messageFolders('see /xxxxx/a/b.png and C:\\xxxxx\\c.pdf'),['/xxxxx/a','C:\\xxxxx']);
+  assert.deepEqual(messageFolders('https://github.com/xxxxx/xxxxx/blob/main/index.html T89/T91 src/*.js .git/.hidden REPORT.html'),[]);
 });
