@@ -4570,4 +4570,3 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
   /* Only a row with an avatar leaves room for it in the name line. */
   #chat-feed .chat-row:is(:not(.human), .is-reminder):has(> .chat-avatar) .chat-message-header { min-height: 24px; align-items: center; padding-left: 31px; }
 }
-}
