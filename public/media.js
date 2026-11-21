@@ -129,7 +129,18 @@ function linkWebPages(root) {
 /** Inline code that is exactly one media or page path (a web address such as https://…/index.html is not one), or null. */
 export function inlineCodeMediaPath(value) {
   const path=String(value||'').trim();
-  return EXACT.test(path)&&!/^[a-z][a-z0-9+.-]*:/i.test(path)&&!wildcardPath(path)?path:null;
+  if(EXACT.test(path))return !/^[a-z][a-z0-9+.-]*:/i.test(path)&&!wildcardPath(path)?path:null;
+  return spacedCodePath(path);
+}
+/**
+ * A path in inline code may hold spaces (a folder named "TMS AI"): the whole span is one path when it starts like a path
+ * (/, ~/, ./, ../ or a drive letter), has a separator, ends in a media extension and reads as one argument: no later word
+ * starts a new path or an option (`open /tmp/a.png` and `cp a.png -v` stay commands, their own paths matched as usual).
+ */
+const SPACED_CODE=new RegExp(`^(?:/|~/|\\.{1,2}/|[A-Za-z]:[\\\\/])[^\\n\\r\\t\`<>"]*[\\\\/][^\\n\\r\\t\`<>"/\\\\]+\\.(?:${EXT})$`,'i');
+function spacedCodePath(path){
+  if(!/ /.test(path)||path.length>MAX_PATH||!SPACED_CODE.test(path)||wildcardPath(path))return null;
+  return path.split(/ +/).slice(1).some(word=>/^(?:[-/~]|[A-Za-z]:[\\/]|\.{1,2}\/)/.test(word))?null:path;
 }
 
 /** Replace file paths that name media or large binary files with cards; code blocks, links and buttons are left alone. */
