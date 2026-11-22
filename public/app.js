@@ -1,5 +1,6 @@
 // First: a share link points the saved selection at the shared chat or session before anything below reads it.
 import './share-mode.js';
+import {rememberPlace} from './last-place.js';
 import {copyText,pendingAction,bindPendingAction,bindCopyFeedback} from './role-icons.js';
 import {createSharePanel} from './share-settings.js';
 import {createDocumentPreview} from './side-preview.js';
@@ -653,6 +654,7 @@ function render() {
   if(app.selectedConversationId)sessionStorage.setItem('agent-workbench.conversation',app.selectedConversationId);
   else sessionStorage.removeItem('agent-workbench.conversation');
   if (app.selectedTaskId) sessionStorage.setItem('agent-workbench.task', app.selectedTaskId);
+  rememberPlace();
   renderProjects();
   teamCopyUI.sync();
   renderRoles();

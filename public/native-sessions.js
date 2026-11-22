@@ -1,4 +1,5 @@
 import { trackLoading } from './load-bar.js';
+import {rememberPlace} from './last-place.js';
 import {copyText,bindCopyFeedback} from './role-icons.js';
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
@@ -644,7 +645,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  /** Opening a session's history shows the top bar; quiet re-reads of the one on screen do not. */
  function read(item,options={}){return options.quiet?readDetail(item,options):trackLoading(readDetail(item,options));}
  async function readDetail(item,{quiet=false}={}){if(item.conversationBinding){const group=groupNativeSessions(items).find(g=>g.id===`conversation:${item.conversationBinding.id}`);if(group)item=group.latest;}
-  const ticket=++detailVersion;historyLoading={key:key(item),sessionId:nativeId(item),ticket};selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}renderTitle();renderList();
+  const ticket=++detailVersion;historyLoading={key:key(item),sessionId:nativeId(item),ticket};selected=item;try{sessionStorage.setItem(SELECTION_KEY,key(item));}catch{}rememberPlace();renderTitle();renderList();
   const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(item))),chain=group?[group.latest,...group.history]:[item];
   const restart=()=>{timeline.reset(item,chain.slice(chain.findIndex(row=>key(row)===key(item))+1));detailSignature=detailMeta='';};
   if(!quiet){onPreview?.();preview.close();takeover.detach();restart();scroll.replaceChildren(transcriptSkeleton());content.replaceChildren(scroll);}
@@ -923,7 +924,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    await api(`${endpoint(value.nodeId)}/delete`,{method:'POST',json:{runtime:value.runtime,...(nativeId(value)?{sessionId:nativeId(value)}:{}),...(value.entryId?{entryId:value.entryId}:{})}});
    mark('delete','done');
    forgetPage(key(value));
-   if(selected&&key(selected)===key(value)){try{sessionStorage.removeItem(SELECTION_KEY);}catch{}resetDetail();}
+   if(selected&&key(selected)===key(value)){try{sessionStorage.removeItem(SELECTION_KEY);}catch{}rememberPlace();resetDetail();}
    void load({quiet:true});
   }});
  }
@@ -1555,7 +1556,7 @@ const hasProcess=turn=>{const rows=processRows(turn);return rows.some(r=>r.kind=
  /** Segmented buttons share one mode transition; selecting the active side does not reload history. */
  const switches=[...mode.querySelectorAll('button[data-mode]')];
  // 会话整体由导航隐藏；保留已显示的底部，避免返回时先露出没有底部的旧正文。
- function selectMode(value){if(!['groups','sessions'].includes(value)||value===modeValue)return;modeValue=value;try{sessionStorage.setItem(MODE_KEY,value);}catch{}for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===value));document.body.dataset.navigationMode=value;if(active()){populate();takeover.resume();}else{version++;detailVersion++;loading=pendingRefresh=false;takeover.suspend();dialog.close();}onModeChange();if(active())void load();}
+ function selectMode(value){if(!['groups','sessions'].includes(value)||value===modeValue)return;modeValue=value;try{sessionStorage.setItem(MODE_KEY,value);}catch{}rememberPlace();for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===value));document.body.dataset.navigationMode=value;if(active()){populate();takeover.resume();}else{version++;detailVersion++;loading=pendingRefresh=false;takeover.suspend();dialog.close();}onModeChange();if(active())void load();}
  for(const control of switches)control.setAttribute('aria-pressed',String(control.dataset.mode===modeValue));document.body.dataset.navigationMode=modeValue;
  for(const control of switches)control.addEventListener('click',()=>selectMode(control.dataset.mode));
  mode.addEventListener('keydown',event=>{const index=event.key==='ArrowLeft'||event.key==='Home'?0:event.key==='ArrowRight'||event.key==='End'?1:null;if(index===null)return;event.preventDefault();switches[index].focus();selectMode(switches[index].dataset.mode);});
