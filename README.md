@@ -26,6 +26,8 @@ Workbench makes those handoffs part of the project workflow:
 
 Address a role directly with `@role`, or ask the project manager to coordinate the work. A role combines a device, CLI, model, reasoning setting, and responsibility. Changing its model or reasoning setting on the same device and CLI updates queued work for that role; an active turn finishes with its original settings. You choose the team and its workflow.
 
+If a Worker takes over five seconds on a single repository preflight read, the run log names the step. Stop cancels that wait before the CLI starts.
+
 ## A typical collaboration
 
 Ask the manager:

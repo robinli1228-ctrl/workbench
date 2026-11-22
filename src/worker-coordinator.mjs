@@ -1,4 +1,32 @@
 import { tr } from './i18n.mjs';
+/** Only detach read-only preparation. Writers and owned CLI processes keep their slot until cleanup finishes. */
+export function launchPreparation(reportSlow) {
+  const controller = new AbortController();
+  const { signal } = controller;
+  return {
+    preparing: true,
+    get stopRequested() { return signal.aborted; },
+    stop() { controller.abort(); },
+    signal,
+    async read(stage, operation) {
+      signal.throwIfAborted();
+      let cancel;
+      const stopped = new Promise((_, reject) => {
+        cancel = () => reject(signal.reason);
+        signal.addEventListener('abort', cancel, { once: true });
+      });
+      const timer = setTimeout(() => reportSlow(stage), 5000);
+      timer.unref();
+      try {
+        return await Promise.race([operation(), stopped]);
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', cancel);
+      }
+    },
+  };
+}
+
 /** Deterministic gate of the node supervisor; communication may be forwarded, but the role binding and the designated commit cannot be changed. */
 export function validateLaunch({ request, roleSnapshot, delivery, currentPlanVersion }) {
   if (!request || request.projectId !== roleSnapshot?.projectId || request.targetRoleId !== roleSnapshot.id) throw new Error(tr('workerCoordinator.callDoesNotMatchRole'));

@@ -46,7 +46,7 @@ export class FolderAccess {
  /** A reconnect must not revive a cached envelope that Home revoked while this Worker was offline. */
  reconcile(activeIds){const active=new Set(activeIds);for(const receipt of this.db.list('folderGrantReceipts'))if(receipt.activatedAt&&!receipt.cancelledAt&&!active.has(receipt.id))this.cancel(receipt);}
  /** Home marks only persisted live bindings active; Worker rechecks its receipt and physical identity. */
- async grantedRoot(){
+ async grantedRoot(signal){
   const envelope=this.context.getStore(),grant=envelope?.grant;
   if(!this.local||envelope?.active!==true||!grant||grant.nodeId!==this.nodeId||grant.scope!==envelope.scope)return null;
   const receipt=this.db.get('folderGrantReceipts',grant.id);
@@ -56,15 +56,16 @@ export class FolderAccess {
   return this.db.transaction(()=>{
    const current=this.db.get('folderGrantReceipts',grant.id);
    if(!current||current.cancelledAt||current.scope!==grant.scope||current.root!==grant.root||!sameIdentity(current,grant))throw Error('Folder binding changed or was cancelled');
+   signal?.throwIfAborted();
    if(!envelope.previewOnly&&!current.activatedAt)this.db.put('folderGrantReceipts',{...current,activatedAt:Date.now()});
    return canonical;
   });
  }
- async allowedRoots(){const extra=await this.grantedRoot();return extra?[...this.roots,extra]:this.roots;}
- async resolve(path){
+ async allowedRoots(signal){const extra=await this.grantedRoot(signal);return extra?[...this.roots,extra]:this.roots;}
+ async resolve(path,signal){
   if(typeof path!=='string'||!isAbsolute(path)||path.includes('\0'))throw Error('Select an absolute folder path');
   const root=await realpath(path);
-  if(!(await this.allowedRoots()).some(allowed=>inside(allowed,root)))throw Error('Folder is not authorized for this project or session');
+  if(!(await this.allowedRoots(signal)).some(allowed=>inside(allowed,root)))throw Error('Folder is not authorized for this project or session');
   if(!(await stat(root)).isDirectory())throw Error('Select a folder');
   return root;
  }

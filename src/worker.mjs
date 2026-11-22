@@ -41,7 +41,7 @@ import { writeHandoff } from './wb-tools.mjs';
 import {handoffReadPaths} from './handoff-paths.mjs';
 import { resolveNodeKind } from './node-kind.mjs';
 import { normalizeRemoteDesktopUrl } from './remote-desktop.mjs';
-import { validateLaunch, afterProcessExit, recordDeliveryResult, recoverDeliveryCommands, continuationSource, workspaceTakenByLaterRun } from './worker-coordinator.mjs';
+import { launchPreparation, validateLaunch, afterProcessExit, recordDeliveryResult, recoverDeliveryCommands, continuationSource, workspaceTakenByLaterRun } from './worker-coordinator.mjs';
 import {CliSessionRecovery,driverIdentity} from './cli-session-recovery.mjs';
 import { publishDelivery, receiveDelivery } from './git-delivery.mjs';
 import { composeAgentInstructions, englishExecutionRules, executionRules } from './platform-prompts.mjs';
@@ -163,7 +163,7 @@ const warmSessions = new WarmSessions({idleMs:3600000,max:capacity,changed:()=>{
 const cliRecovery=new CliSessionRecovery({db,warmSessions,activeSessions:sessions,emit});
 const recoveryBinding=m=>({taskId:m.run.taskId||m.task.id,projectId:m.run.projectId,roleId:m.run.roleId,nodeId:identity.nodeId,roleSessionId:m.run.roleSessionId||null,
   nativeSessionId:m.run.resumeNativeSessionId||db.get('runs',m.run.continuationRunId||'')?.nativeSession?.id||null,priorRunId:m.run.continuationRunId||null,runId:m.run.id});
-async function checkNativeDriver(m){const binding=recoveryBinding(m);if(!binding.nativeSessionId&&!binding.priorRunId)return;if(!cliRecoveryEnabled){const owned=sessions.get(binding.runId),pid=(owned?.preparing?owned.session:owned)?.proc?.pid;if(cliRecovery.records(binding).some(r=>r.pid!==pid&&!warmSessions.owns(r.pid)&&managedRunProcessState(r)!=='exited'))throw Error(tr('worker.nativeSessionStillHasProcess'));return;}const result=await cliRecovery.check(binding);if(result.state!=='ready'){const error=Error(result.reason||tr('cliRecovery.waiting'));error.code='CLI_RECOVERY_WAIT';error.recovery=result;throw error;}}
+async function checkNativeDriver(m,preparation){const binding=recoveryBinding(m);if(!binding.nativeSessionId&&!binding.priorRunId)return;if(!cliRecoveryEnabled){const owned=sessions.get(binding.runId),pid=(owned?.preparing?owned.session:owned)?.proc?.pid;if(cliRecovery.records(binding).some(r=>r.pid!==pid&&!warmSessions.owns(r.pid)&&managedRunProcessState(r)!=='exited'))throw Error(tr('worker.nativeSessionStillHasProcess'));return;}const result=await cliRecovery.check(binding,preparation);if(result.state!=='ready'){const error=Error(result.reason||tr('cliRecovery.waiting'));error.code='CLI_RECOVERY_WAIT';error.recovery=result;throw error;}}
 /** Slot reservations count before asynchronous preparation; retained processes are reclaimed, never active work. */
 let nativeTurns=null;
 /** Side questions (src/native-side-ask.mjs): read-only, one temporary session each, removed on close, expiry or restart. */
@@ -275,8 +275,8 @@ function folderEnvelope(m){
  return scope?{...envelope,scope}:null;
 }
 /** Writable space must stay under configured or identity-scoped roots; Git uses a worktree at a fixed baseline. */
-async function workspace(project, run) {
-  const root = await projectRoot(run.projectRoot ?? project.root);
+async function workspace(project, run, resolveRoot = projectRoot) {
+  const root = await resolveRoot(run.projectRoot ?? project.root);
   assertNativeSwitchAccess(db,{workspace:root});
   if (run.execution?.isolated) return prepareExecutionWorkspace(root,run,run.repositories||[]);
   if (run.projectScope) return { folder:root, baseCommit:null };
@@ -337,7 +337,8 @@ async function command(m) {
     if(deferred?.cliRecoveryWait)emit(c.runId,'status',{status:'starting',cliRecoveryWait:false,cliRecovery:null,error:null});
     send({ type: 'command_ack', id: c.id });
     let bridge, ending=false, disconnectNoted=false;
-    const reservation = { preparing: true, stopRequested: false };
+    const reservation = launchPreparation(stage => emit(c.runId, 'log', { text: 'Waiting for launch preparation: ' + stage }));
+    const readRoot = path => reservation.read('resolve project folder', () => folderAccess.resolve(path, reservation.signal));
     sessions.set(c.runId,reservation);
     try {
       const policy=discussionPolicy(m.run),discussionTurn=policy.turnPurpose!=='task';
@@ -353,48 +354,48 @@ async function command(m) {
       const issue = runtimeIssue({ capabilities: { runtimeDiscovery: true }, runtimes }, m.run.roleSnapshot?.runtime || 'codex', m.task.model);
       if (issue) throw new Error(issue);
       // A compaction of this role's session finishes before its process is checked or reused.
-      if(compacting.has(m.run.roleSessionId))await compacting.get(m.run.roleSessionId);
-      await checkNativeDriver(m);
+      if(compacting.has(m.run.roleSessionId))await reservation.read('previous compaction', () => compacting.get(m.run.roleSessionId));
+      await checkNativeDriver(m,reservation);
       if(reservation.stopRequested){emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.taskHadNotStartedWas')});return;}
       if (db.activeRuns().some(r => r.id !== c.runId && r.status === 'reconciling')) throw new Error(tr('worker.workerFullHasProcessesAwaiting'));
       if (executionConflict(m.run,db.activeRuns().filter(r=>r.id!==c.runId).map(r=>({...r,nodeId:identity.nodeId})),{concurrent:m.run.concurrentWrites===true})) throw new Error(tr('worker.projectWorkspaceExclusiveOperationStill'));
       emit(c.runId, 'status', { status: 'starting' });
       if(reservation.stopRequested || homeDisconnected || ws?.readyState!==1){emit(c.runId,'status',{status:'interrupted',error:tr('worker.interruptedByStopDisconnectWhile')});return;}
       let executionRepositories = m.run.repositories || [];
-      for (const repository of executionRepositories) if (repository.localRoot) await projectRoot(repository.localRoot);
+      for (const repository of executionRepositories) if (repository.localRoot) await readRoot(repository.localRoot);
       let source;
       if (m.run.deliveryId && (m.delivery?.projectId !== m.run.projectId || m.delivery?.status !== 'ready')) throw new Error(tr('worker.crossDeviceDeliveryDoesNot'));
       if (m.run.sourceRunId && !m.run.deliveryId) {
         source = db.get('runs', m.run.sourceRunId);
         if (source?.projectId !== m.run.projectId || source.status !== 'succeeded' || !source.workspace) throw new Error(tr('worker.referencedExecutionDoesNotBelong'));
-        source = { ...source, workspace: await projectRoot(source.workspace) };
+        source = { ...source, workspace: await readRoot(source.workspace) };
       }
       // Read-only reviews inspect the source workspace directly; writing roles use a new workspace and must not overwrite the source output.
       const continued = m.run.continuationRunId ? continuationSource(db, m.run,pid=>warmSessions.owns(pid)) : null;
       const prepared = continued
-        ? { folder: await projectRoot(continued.workspace), baseCommit: continued.baseCommit }
+        ? { folder: await readRoot(continued.workspace), baseCommit: continued.baseCommit }
         : m.run.resumeWorkspace && !m.run.deliveryId
-        ? { folder: await projectRoot(m.run.resumeWorkspace), baseCommit: null }
+        ? { folder: await readRoot(m.run.resumeWorkspace), baseCommit: null }
         : m.run.deliveryId && m.delivery.items
-        ? await receiveProjectDelivery(await projectRoot(m.run.projectRoot),c.runId,executionRepositories.map(r=>({...r,credential:m.gitCredentials?.[r.id]})),m.delivery)
+        ? await receiveProjectDelivery(await readRoot(m.run.projectRoot),c.runId,executionRepositories.map(r=>({...r,credential:m.gitCredentials?.[r.id]})),m.delivery)
         : m.run.deliveryId
-        ? await receiveDelivery({ root: await projectRoot(m.run.projectRoot), runId: c.runId, delivery: m.delivery })
+        ? await receiveDelivery({ root: await readRoot(m.run.projectRoot), runId: c.runId, delivery: m.delivery })
         : source && m.task.mode === 'read-only'
         ? { folder: source.workspace, baseCommit: source.baseCommit }
-        : m.run.switchOperationId ? {folder:await projectRoot(m.run.resumeWorkspace||m.run.projectRoot),baseCommit:null}
-        : await workspace(m.project, m.run);
+        : m.run.switchOperationId ? {folder:await readRoot(m.run.resumeWorkspace||m.run.projectRoot),baseCommit:null}
+        : await workspace(m.project, m.run, readRoot);
       const { folder, baseCommit } = prepared;
       if(m.run.resumeNativeSessionId && folder!==m.run.resumeWorkspace)throw new Error(tr('worker.nativeSessionWorkingDirectoryDiffers'));
       executionRepositories = prepared.repositories || continued?.repositories || executionRepositories;
       const nativeHistory=m.run.resumeNativeSessionId&&m.run.roleId?db.readNativeDriverRecords(recoveryBinding(m)).records:[];
       const priorWorkspace=m.run.resumeWorkspace?nativeHistory.findLast(r=>r.id!==c.runId&&r.projectId===m.run.projectId&&r.roleSessionId===m.run.roleSessionId
         &&r.workspace===folder&&r.nativeSession?.id===m.run.resumeNativeSessionId):null;
-      executionRepositories=await resolveExecutionRepositories({workspace:folder,projectRoot:m.run.projectRoot??m.project.root,repositories:executionRepositories,
+      executionRepositories=await reservation.read('resolve repository mapping', () => resolveExecutionRepositories({workspace:folder,projectRoot:m.run.projectRoot??m.project.root,repositories:executionRepositories,
         previousRepositories:continued?.repositories||(source&&m.task.mode==='read-only'?source.repositories:null)||priorWorkspace?.repositories||[],
-        resuming:Boolean(continued||m.run.resumeWorkspace&&!m.run.deliveryId||source&&m.task.mode==='read-only')});
-      for(const repository of executionRepositories)if(repository.localRoot)await projectRoot(repository.localRoot);
+        resuming:Boolean(continued||m.run.resumeWorkspace&&!m.run.deliveryId||source&&m.task.mode==='read-only'),signal:reservation.signal}));
+      for(const repository of executionRepositories)if(repository.localRoot)await readRoot(repository.localRoot);
       const inputBaselines=executionInputBaselines(m.run,continued);
-      let inputRepositoryVersions=await inspectExecutionInput(executionRepositories,m.run.repositories||[],inputBaselines);
+      let inputRepositoryVersions=await inspectExecutionInput(executionRepositories,m.run.repositories||[],inputBaselines,reservation);
       const workspaceRunId = continued ? continued.workspaceRunId || continued.id : c.runId;
       emit(c.runId, 'status', { status: 'starting', workspace: folder, baseCommit, workspaceRunId, repositories:executionRepositories, projectScope:m.run.projectScope, ...(source ? { sourceWorkspace: source.workspace } : {}) });
       emit(c.runId,'status',{inputRepositoryVersions,inputVersionsObservedAt:new Date().toISOString()});
@@ -423,7 +424,7 @@ async function command(m) {
       // The scope was frozen by Home at admission; this Worker re-checks it against its own CLI/OS before any input is sent.
       const permissionScope = m.run.permissionScope ?? null;
       if (permissionScope !== null && !supportedPermissionScopes(runtimeType, platform()).includes(permissionScope)) throw new Error(`Permission scope ${permissionScope} is not supported for ${runtimeType} on this device.`);
-      const root = await projectRoot(m.run.projectRoot ?? m.project.root);
+      const root = await readRoot(m.run.projectRoot ?? m.project.root);
       const knowledge = join(m.run.execution?.isolated ? folder : root,'.workbench');
       await mkdir(join(knowledge, 'docs'), { recursive: true });await mkdir(join(knowledge, 'handoffs'), { recursive: true });
       const homeHttp = homeUrl.replace(/^ws/i, 'http').replace(/\/worker\/?$/, '');
@@ -472,25 +473,25 @@ async function command(m) {
       const wbCommand=turnToolCommand(contextFile,join(base,'src','wb-cli.mjs'),process.execPath,{boundCli:runtimeType==='codex'&&m.run.discussionProtocol===2,...(explicitTurn?{turnId:c.runId}:{})});
       let endRun, finalStatus;
       const ended = new Promise(resolve => { endRun = resolve; });
-      const native = await nativeEnvironment(runtimeType);
+      const native = await reservation.read('locate CLI', () => nativeEnvironment(runtimeType));
       if(m.run.resumeNativeSessionId) {
         const prior=m.run.resumeNativeSession;
         if(!prior || prior.id!==m.run.resumeNativeSessionId || prior.runtime!==runtimeType || prior.user!==native.user || prior.home!==native.home)throw new Error(tr('worker.nativeSessionIdentityHasChanged'));
-        await findSessionHistory(prior,folder);
-        await checkNativeDriver(m);
+        await reservation.read('read native session history', () => findSessionHistory(prior,folder));
+        await checkNativeDriver(m,reservation);
       }
       db.put('runtimeEnvironments',{id:c.runId,env:resumeEnvironment(wbEnv)});
       // File authorship without captured write evidence remains unknown; never block CLI input on a full-tree snapshot.
       emit(c.runId, 'status', { nativeSession: native });
       // The turn purpose goes into the dynamic input, so switching between Q&A and business stages does not needlessly recycle the warm process.
-      const executionConfiguration=m.run.minimalInstructions===1?await currentExecutionConfiguration(c.runId):null;
+      const executionConfiguration=m.run.minimalInstructions===1?await reservation.read('fetch execution configuration', () => currentExecutionConfiguration(c.runId)):null;
       if(reservation.stopRequested||homeDisconnected||quitting||ws?.readyState!==1)throw new Error(tr('worker.interruptedByStopDisconnectBefore'));
       const components=executionConfiguration?executionInstructionComponents({run:m.run,configuration:executionConfiguration}):undefined;
       const priorInput=nativeHistory.findLast(r=>r.id!==c.runId && r.projectId===m.run.projectId && r.roleSessionId===m.run.roleSessionId && r.nativeSession?.id===m.run.resumeNativeSessionId);
       // Grok skips an untrusted folder's AGENTS.md, so its rules carry the project rules the other CLIs load themselves.
       // Without a file the component is left out, unless an earlier turn of this session sent one that must now be revoked.
       if(components&&runtimeType==='grok') {
-        const projectRules=await grokProjectRules(folder,{grokHome:wbEnv.GROK_HOME||process.env.GROK_HOME||join(homedir(),'.grok'),env:wbEnv});
+        const projectRules=await reservation.read('read Grok project rules', () => grokProjectRules(folder,{grokHome:wbEnv.GROK_HOME||process.env.GROK_HOME||join(homedir(),'.grok'),env:wbEnv}));
         if(projectRules||priorInput?.instructionComponents?.projectRules?.empty===false)components.projectRules=projectRules;
       }
       const roleInstructions = components?Object.values(components).filter(Boolean).join('\n\n'):traditionalInput(executionText('worker.projectDescriptionRepositoriesForRun', { p1: runWithLanguage('en',()=>composeAgentInstructions(m.platformPrompt,m.run.roleSnapshot?.instructions??'')), p2: String(m.project.description||'').slice(0,4000), p3: executionRepositories.filter(r=>r.localRoot).map(r=>`${r.key}: ${r.localRoot}`).join('\n'), p4: runtimeGuidance(runtimeType), p5: m.task.runtimeInstructions||'' }));
@@ -666,7 +667,7 @@ async function command(m) {
     else if (!terminal.has(r.status)) {
       db.put('runs',{...r,stopRequested:true});
       const s = sessions.get(c.runId);
-      if (s?.preparing) {s.stopRequested = true;db.put('runs',{...r,stopRequested:true});}
+      if (s?.preparing) s.stop();
       else if (s) { emit(c.runId, 'status', { status: 'stopping' }); void s.stop(); }
       else if(r.cliRecoveryWait)emit(c.runId,'status',{status:'interrupted',cliRecoveryWait:false,processSettled:true,error:tr('worker.taskHadNotStartedWas')});
       else emit(c.runId, 'status', { status: 'reconciling', error: tr('worker.originalProcessNotControlledBy') });
@@ -1380,7 +1381,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
   clearInterval(sourceSyncTimer);sourceSync.watch.close();
   void warmSessions.closeAll();
   for(const controller of organizerControllers)controller.abort();
-  for (const s of sessions.values()) { if (typeof s.stop === 'function' && !s.preparing) void s.stop(); else s.stopRequested = true; }
+  for (const s of sessions.values()) { if (typeof s.stop === 'function') void s.stop(); }
   await nativeTurns.stopAll();
   setTimeout(() => { ws?.close(); db.close(); process.exit(0); }, 1500);
 });
