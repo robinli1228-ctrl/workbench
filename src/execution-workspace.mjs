@@ -7,19 +7,19 @@ import { tr } from './i18n.mjs';
 import {gitPrintsAnything} from './git-changes.mjs';
 
 const exec = promisify(execFile);
-const git = async (root,args) => (await exec('git',args,{cwd:root,timeout:30000,maxBuffer:1024*1024,env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}})).stdout.trim();
+const git = async (root,args,signal) => (await exec('git',args,{cwd:root,...(signal?{signal,killSignal:'SIGKILL'}:{}),timeout:30000,maxBuffer:1024*1024,env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}})).stdout.trim();
 const internal = [':(exclude).workbench',':(exclude).attachments',':(exclude).worktrees',':(exclude).wb-bridge-*'];
 
 /** Resolve a worktree's owning repository, not an enclosing repository inherited by a plain subdirectory. */
-async function repositoryIdentity(root) {
+async function repositoryIdentity(root,signal) {
   try {
-    if(await realpath(await git(root,['rev-parse','--show-toplevel']))!==root)return null;
-    return await realpath(resolve(root,await git(root,['rev-parse','--git-common-dir'])));
+    if(await realpath(await git(root,['rev-parse','--show-toplevel'],signal))!==root)return null;
+    return await realpath(resolve(root,await git(root,['rev-parse','--git-common-dir'],signal)));
   } catch {return null;}
 }
 
 /** Native resume preserves cwd; repair its repository mapping without silently selecting the newer bound copy. */
-export async function resolveExecutionRepositories({workspace,projectRoot,repositories=[],previousRepositories=[],resuming=false}) {
+export async function resolveExecutionRepositories({workspace,projectRoot,repositories=[],previousRepositories=[],resuming=false,signal}) {
   if(!resuming)return repositories;
   const folder=await realpath(workspace),root=await realpath(projectRoot);
   if(folder===root)return Promise.all(repositories.map(async repo=>{
@@ -31,21 +31,22 @@ export async function resolveExecutionRepositories({workspace,projectRoot,reposi
     if(!repo.localRoot){result.push(repo);continue;}
     if(!/^[a-zA-Z0-9_-]{1,64}$/.test(repo.key))throw new Error(tr('executionWorkspace.invalidRepositoryIdentifier'));
     const previous=previousRepositories.find(item=>item.id===repo.id);
-    const bound=await realpath(repo.localRoot),identity=await repositoryIdentity(previous?.localRoot?await realpath(previous.localRoot):bound);
+    const bound=await realpath(repo.localRoot),identity=await repositoryIdentity(previous?.localRoot?await realpath(previous.localRoot):bound,signal);
     let actual;
+    signal?.throwIfAborted();
     const child=join(folder,repo.key);
     for(const candidate of [...(repositories.length===1&&identity?[folder]:[]),child]) {
       let canonical;
       try {canonical=await realpath(candidate);}catch(error){if(error.code==='ENOENT')continue;throw error;}
       if(!within(folder,canonical))throw new Error(tr('executionWorkspace.resumeRepositoryIdentityMismatch',{key:repo.key}));
-      if(await repositoryIdentity(canonical)===identity){actual=canonical;break;}
+      if(await repositoryIdentity(canonical,signal)===identity){actual=canonical;break;}
       if(candidate===child)throw new Error(tr('executionWorkspace.resumeRepositoryIdentityMismatch',{key:repo.key}));
     }
     if(!actual) {
       // Explicit external mappings survive; a missing old in-workspace copy must not fall back to the project binding.
       if(previous?.localRoot&&!within(root,await realpath(previous.localRoot))) {
         actual=await realpath(previous.localRoot);
-        if(await repositoryIdentity(actual)!==identity)throw new Error(tr('executionWorkspace.resumeRepositoryIdentityMismatch',{key:repo.key}));
+        if(await repositoryIdentity(actual,signal)!==identity)throw new Error(tr('executionWorkspace.resumeRepositoryIdentityMismatch',{key:repo.key}));
       }
     }
     if(!actual)throw new Error(tr('executionWorkspace.resumeRepositoryMissing',{key:repo.key}));
@@ -55,13 +56,14 @@ export async function resolveExecutionRepositories({workspace,projectRoot,reposi
 }
 
 /** One local startup snapshot; bound HEAD is a comparison, never a replacement for the actual execution version. */
-export async function inspectExecutionInput(repositories,boundRepositories=[],baselines=[]) {
-  const inspected=await inspectExecutionRepositories(repositories.filter(repo=>repo.localRoot)),result=[];
+export async function inspectExecutionInput(repositories,boundRepositories=[],baselines=[],preparation) {
+  const read=preparation?.read ?? directRead;
+  const inspected=await inspectExecutionRepositories(repositories.filter(repo=>repo.localRoot),preparation),result=[];
   for(const repo of repositories) {
     const value=inspected.find(item=>item.id===repo.id),binding=boundRepositories.find(item=>item.id===repo.id);
-    const localRoot=repo.localRoot?await realpath(repo.localRoot):null;
-    const boundRoot=binding?.localRoot?await realpath(binding.localRoot):null;
-    const boundCommit=boundRoot===localRoot?value?.commit||null:boundRoot?await git(boundRoot,['rev-parse','HEAD']).catch(()=>null):null;
+    const localRoot=repo.localRoot?await read('resolve input folder',()=>realpath(repo.localRoot)):null;
+    const boundRoot=binding?.localRoot?await read('resolve bound folder',()=>realpath(binding.localRoot)):null;
+    const boundCommit=boundRoot===localRoot?value?.commit||null:boundRoot?await read('read bound Git revision',()=>git(boundRoot,['rev-parse','HEAD'],preparation?.signal).catch(()=>null)):null;
     result.push({id:repo.id,key:repo.key,...value,localRoot,commit:value?.commit||null,dirty:value?.dirty??null,
       ...(!localRoot?{unavailable:true}:{}),boundCommit,expectedCommit:baselines.find(item=>item.id===repo.id)?.commit||null});
   }
@@ -96,18 +98,20 @@ export async function verifyExecutionVersions(repositories,versions) {
   return {ready:true};
 }
 
+const directRead = (_stage, operation) => operation();
+
 /** Snapshots accept only complete Git repositories; uncommitted input cannot be silently replaced by a clean HEAD. */
-export async function inspectExecutionRepositories(repositories) {
+export async function inspectExecutionRepositories(repositories,{read=directRead,signal}={}) {
   const result=[];
   for (const repository of repositories) {
-    const root=await realpath(repository.localRoot);
-    try { await access(join(root,'.git')); } catch(e) {
+    const root=await read('resolve Git folder',()=>realpath(repository.localRoot));
+    try { await read('check Git directory',()=>access(join(root,'.git'))); } catch(e) {
       if(e.code!=='ENOENT') throw e;
       result.push({id:repository.id,key:repository.key,nonGit:true,dirty:true});continue;
     }
-    if (await realpath(await git(root,['rev-parse','--show-toplevel'])) !== root) throw new Error(tr('executionWorkspace.notIndependentRepositoryRoot', { key: repository.key }));
-    const commit=await git(root,['rev-parse','HEAD']);
-    const dirty=await gitPrintsAnything(root,['status','--porcelain','--untracked-files=all','--','.',...internal],{env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}});
+    if (await read('read Git toplevel',async()=>realpath(await git(root,['rev-parse','--show-toplevel'],signal))) !== root) throw new Error(tr('executionWorkspace.notIndependentRepositoryRoot', { key: repository.key }));
+    const commit=await read('read Git revision',()=>git(root,['rev-parse','HEAD'],signal));
+    const dirty=await read('git status',()=>gitPrintsAnything(root,['status','--porcelain','--untracked-files=all','--','.',...internal],{signal,env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}}));
     result.push({id:repository.id,key:repository.key,commit,dirty});
   }
   return result;

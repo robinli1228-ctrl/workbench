@@ -139,7 +139,7 @@ export class CliSessionRecovery {
     const result=this.inspect(binding,{records,readOnly:true,identity:facts.identity,rows:facts.rows}),incomplete=partial||facts.partial||records.some(r=>!terminal.has(r.status)&&!r.pid);
     return {state:incomplete?'unknown':result.state,processes:result.processes,partial:incomplete,readOnly:true};
   }
-  async check(binding){
+  async check(binding,preparation){
     const key=binding.roleSessionId||`${binding.projectId}:${binding.roleId}`;
     if(this.pending.has(key))return {state:'stopping',canStop:false,reason:tr('cliRecovery.stopPending')};
     let result;
@@ -147,7 +147,8 @@ export class CliSessionRecovery {
       const records=this.records(binding);
       // Admission must not block the Worker event loop with a separate ps for every historical turn.
       // One fresh async snapshot preserves startup identities; signalling still rechecks each live process.
-      const facts=this.identity===terminalProcessIdentity?await this.processFacts(records):{identity:this.identity,rows:this.rows,partial:false};
+      const readFacts=()=>this.identity===terminalProcessIdentity?this.processFacts(records):{identity:this.identity,rows:this.rows,partial:false};
+      const facts=preparation?await preparation.read('inspect previous CLI processes',readFacts):await readFacts();
       if(facts.partial)return {state:'unknown',canStop:false,reason:tr('cliRecovery.identityUnknown'),processes:[]};
       result=this.inspect(binding,{records,identity:facts.identity,rows:facts.rows});
     }catch(error){return {state:'unknown',canStop:false,reason:error.message,processes:[]};}

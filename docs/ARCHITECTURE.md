@@ -859,3 +859,5 @@ Brand assets use `assets/app-icon.svg` as their source: blue-and-silver stacked 
 Timer action receipts retain exact retries from the pre-action namespace. Learned Claude model windows are cached only for the same native session and model, with a bounded in-memory session cache; no other session supplies the window.
 
 The stacked-terminal icon uses a blue separating contour and a slightly darker cool-grey rear window to keep both panes distinct at small sizes. SVG and PNG exports remain shared across page and installed-app surfaces.
+
+A managed launch owns an abort signal during preparation. Stop wakes pending read-only folder, Git and session checks. Git probes receive the same signal. File writes and owned process cleanup retain the reservation until they settle. A single preflight read pending for five seconds records its stage in the run log.
