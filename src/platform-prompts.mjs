@@ -128,7 +128,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   '371634dcbb64e3ba26e4efa97ce713f5157c8e96238095cc5d59e370c3070be4',
   // Defaults before roles did the work themselves by default and only large changes went to another role for review.
   '342f158b0dd8fd1a5164f29a33e9cf11f23e413c2f14eb242e6ee25c15a7fd46',
-  '27ee23b1eb278a7f50f4bdab63cd61b5b72746813ad2de478ca37af720b4642f'
+  '27ee23b1eb278a7f50f4bdab63cd61b5b72746813ad2de478ca37af720b4642f',
+  // Defaults before assigned roles were told to ask the user themselves instead of handing questions back to the assigner.
+  '4f906515d978c321ea255a3b7ddffc0e41173ba06283bbe588e4a2c47e641569',
+  'bc2d3bd4edf94c519583b14f630dfff94c26c54dbf860ae0e89fe6fb8ac204c3'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */

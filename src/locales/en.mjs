@@ -1750,6 +1750,7 @@ When to ask the user:
 - when you genuinely cannot finish and need the user's support;
 - when a major choice would be costly to get wrong.
 Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.
+Ask the user yourself even when the supervisor or a teammate assigned the work; do not hand the question back to the assigner to relay.
 
 Drive the work:
 - Push each task to a verifiable result; do and check what you can yourself before naming gaps.
