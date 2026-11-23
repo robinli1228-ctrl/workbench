@@ -472,26 +472,29 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  function renderList(){
   if(listOrder.active())return;
   const activity=getData().sidebarExecutions||[];
-  const isRunning=item=>Boolean(nativeId(item))&&activity.some(run=>run.nodeId===item.nodeId&&run.runtime===item.runtime&&run.sessionId===nativeId(item));
+  const marks=item=>Boolean(nativeId(item))?activity.filter(run=>run.nodeId===item.nodeId&&run.runtime===item.runtime&&run.sessionId===nativeId(item)):[];
+  // Running wins over asking; a session whose only live turn waits for the user's answer shows the breathing question mark.
+  const isRunning=item=>marks(item).some(run=>!run.waiting),isAsking=item=>!isRunning(item)&&marks(item).some(run=>run.waiting);
   const roster=getData().workers||[],ordered=listOrder.ordered(groupNativeSessions(items),group=>group.id.startsWith('conversation:')?group.id:key(group.latest)),signature=JSON.stringify([key(selected),ordered,activity,roster.map(w=>[w.id,w.name,w.platform,w.nodeKind])]);
   if(signature===listSignature)return;listSignature=signature;
   const byId=new Map(roster.map(w=>[w.id,w])),cloudNumbers=new Map(roster.filter(w=>workerKind(w)==='cloud').map((w,index)=>[w.id,index+1]));
   const scroll=list.scrollTop;list.replaceChildren();
   const row=(item,latest)=>{
-   const running=isRunning(item);
-   const b=el('button',`project-item${key(selected)===key(item)?' active':''}${running?' is-running':''}`);b.type='button';b.dataset.orderId=key(item);b.title=`${displayTitle(item)}\n${workerName(item.nodeId)}${running?` · ${t('In progress')}`:''}`;
-   b.setAttribute('aria-label',`${displayTitle(item)}${running?` · ${t('In progress')}`:''}`);
+   const running=isRunning(item),waiting=isAsking(item),state=running?` · ${t('In progress')}`:waiting?` · ${t('Waiting for your answer')}`:'';
+   const b=el('button',`project-item${key(selected)===key(item)?' active':''}${running?' is-running':''}${waiting?' is-asking':''}`);b.type='button';b.dataset.orderId=key(item);b.title=`${displayTitle(item)}\n${workerName(item.nodeId)}${state}`;
+   b.setAttribute('aria-label',`${displayTitle(item)}${state}`);
    // Two lines with a right column: title | device, time | running spinner (drawn by CSS when the row is running).
    const copy=el('span','project-item-copy has-status'),title=el('strong','',displayTitle(item));title.translate=false;
    const worker=byId.get(item.nodeId),deviceIcon=worker?machineIconEl(worker,cloudNumbers.get(item.nodeId)):el('span','');deviceIcon.classList.add('native-session-device','list-device-slot');
    const when=el('small','native-session-time',time(item.createdAt||item.modifiedAt));when.translate=false;
-   const status=el('span','list-run-status');status.setAttribute('aria-hidden','true');copy.append(title,deviceIcon,when,status);b.append(agentIconEl(item.runtime),copy);b.addEventListener('click',()=>read(item));if(!latest)delete b.dataset.orderId;return b;
+   const status=el('span','list-run-status');status.setAttribute('aria-hidden','true');if(waiting)status.innerHTML=UI_ICON.question;copy.append(title,deviceIcon,when,status);b.append(agentIconEl(item.runtime),copy);b.addEventListener('click',()=>read(item));if(!latest)delete b.dataset.orderId;return b;
   };
   for(const group of ordered){
    const entry=row(group.latest,true);
    if(group.id.startsWith('conversation:'))entry.dataset.orderId=group.id;
    if(group.history.some(item=>key(item)===key(selected)))entry.classList.add('active');
-   if(group.history.some(isRunning)){entry.classList.add('is-running');entry.title+=` · ${t('An older session is running')}`;}
+   if(group.history.some(isRunning)){entry.classList.remove('is-asking');entry.querySelector('.list-run-status').replaceChildren();entry.classList.add('is-running');entry.title+=` · ${t('An older session is running')}`;}
+   else if(!entry.classList.contains('is-running')&&group.history.some(isAsking)){entry.classList.add('is-asking');entry.querySelector('.list-run-status').innerHTML=UI_ICON.question;}
    if(entry.classList.contains('active'))entry.setAttribute('aria-current','true');
    list.append(entry);
   }
