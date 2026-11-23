@@ -261,8 +261,8 @@ const LEAN_EDITS = {
 };
 
 const ASK_DIRECT_EDITS = {
-  zh: [["问的时候，CLI 有提问工具（AskUserQuestion / request_user_input）就用它，这一轮会停下等用户回答。\n", "问的时候，CLI 有提问工具（AskUserQuestion / request_user_input）就用它，这一轮会停下等用户回答。\n任务是总管或同伴派来的也一样，自己直接问用户，不要把问题交回指派者转问。\n"]],
-  en: [["Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\n", "Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\nAsk the user yourself even when the supervisor or a teammate assigned the work; do not hand the question back to the assigner to relay.\n"]]
+  zh: [["问的时候，CLI 有提问工具（AskUserQuestion / request_user_input）就用它，这一轮会停下等用户回答。\n", "问的时候，CLI 有提问工具（AskUserQuestion / request_user_input）就用它，这一轮会停下等用户回答。\n别人派的任务也自己问，不要交回指派者转问。\n"]],
+  en: [["Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\n", "Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\nAsk directly on assigned work too; do not pass the question back to the assigner.\n"]]
 };
 
 const SYNCED_WORKTREES = {
