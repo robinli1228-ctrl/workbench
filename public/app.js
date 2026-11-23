@@ -681,12 +681,13 @@ function renderProjects() {
   if(projectOrder.active())return;
   dom.projectList.replaceChildren();
   const icons = projectIconAssignments(app.data.projects);
-  const executing=new Set((app.data.sidebarExecutions||[]).flatMap(item=>item.conversationIds||item.projectIds));
+  // Running wins over asking: a chat with one run working and another waiting for an answer shows the spinner.
+  const marks=app.data.sidebarExecutions||[],executing=new Set(marks.filter(item=>!item.waiting).flatMap(item=>item.conversationIds||item.projectIds)),asking=new Set(marks.filter(item=>item.waiting).flatMap(item=>item.conversationIds||item.projectIds));
   const conversations=app.data.conversations?.length?app.data.conversations:app.data.projects.map(p=>({id:p.id,projectId:p.id,title:p.name,isDefault:true}));
   for (const chat of projectOrder.ordered(conversations)) {
     const project=app.data.projects.find(p=>p.id===chat.projectId);if(!project)continue;
-    const active=chat.id===(app.selectedConversationId||app.selectedProjectId),running=executing.has(chat.id);
-    const button = create('button', `project-item${active ? ' active' : ''}${running?' is-running':''}`);
+    const active=chat.id===(app.selectedConversationId||app.selectedProjectId),running=executing.has(chat.id),waiting=!running&&asking.has(chat.id);
+    const button = create('button', `project-item${active ? ' active' : ''}${running?' is-running':''}${waiting?' is-asking':''}`);
     button.type = 'button';
     button.dataset.orderId=chat.id;
     // Names, titles and accessible labels are user data; the count below is translated explicitly.
@@ -695,9 +696,9 @@ function renderProjects() {
     const icon = projectIconEl(icons[project.id]);
     // Same right column as the session list: nothing beside the name, the running spinner beside the second line.
     const copy = create('span', 'project-item-copy has-status'), status = create('span', 'list-run-status');
-    status.setAttribute('aria-hidden', 'true');
+    status.setAttribute('aria-hidden', 'true');if(waiting)status.innerHTML=UI_ICON.question;
     copy.append(create('strong', '', chat.title), create('span', 'list-device-slot'), create('small', '', chat.isDefault?(project.supervisorRoleId ? t(count===1?'{count} code repository':'{count} code repositories', { count }) : t(count===1?'{count} node workspace':'{count} node workspaces', { count })):project.name), status);
-    button.title = `${chat.title} · ${project.name}${running?` · ${t('In progress')}`:''}`;
+    button.title = `${chat.title} · ${project.name}${running?` · ${t('In progress')}`:waiting?` · ${t('Waiting for your answer')}`:''}`;
     button.setAttribute('aria-label', button.title);
     if (active) button.setAttribute('aria-current', 'page');
     button.append(icon, copy);

@@ -1980,6 +1980,7 @@ export default {
   "collecting": "收集中",
   "CLI busy": "CLI 忙碌",
   "Waiting for approval": "等待审批",
+  "Waiting for your answer": "等待你回答",
   "Worker upgrade required": "需要升级 Worker",
   "Manual takeover": "人工接管中",
   "Reservation expired": "预留已失效",

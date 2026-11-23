@@ -38,7 +38,9 @@ export function workspaceState(snapshot,requestedProjectId,requestedConversation
   const state={...snapshot};
   // Share execution identities across projects, never history bodies or idle CLI occupancy.
   const online=new Set((snapshot.workers||[]).filter(w=>w.online).map(w=>w.id));
-  const executing=value=>online.has(value.nodeId)&&['preparing','starting','running','stopping'].includes(value.status);
+  // A run or turn waiting for the user's answer stays in the list marks, flagged so the page shows it as asking, not running.
+  const executing=value=>online.has(value.nodeId)&&['preparing','starting','running','waiting_user','stopping'].includes(value.status);
+  const waiting=value=>value.status==='waiting_user'?{waiting:true}:{};
   const sessions=snapshot.roleSessions||[],byId=new Map(sessions.map(s=>[s.id,s]));
   const identity=(nodeId,runtime,sessionId)=>JSON.stringify([nodeId,runtime,sessionId]);
   const owners=new Map();
@@ -51,9 +53,9 @@ export function workspaceState(snapshot,requestedProjectId,requestedConversation
   state.sidebarExecutions=[
     ...snapshot.runs.filter(executing).map(r=>({id:`run:${r.id}`,projectIds:[r.projectId],conversationIds:[conversationIdOf(r)],nodeId:r.nodeId,
       runtime:r.nativeSession?.runtime||r.roleSnapshot?.runtime||byId.get(r.roleSessionId)?.runtime||null,
-      sessionId:r.nativeSession?.id||r.resumeNativeSessionId||byId.get(r.roleSessionId)?.nativeSessionId||null})),
+      sessionId:r.nativeSession?.id||r.resumeNativeSessionId||byId.get(r.roleSessionId)?.nativeSessionId||null,...waiting(r)})),
     ...(snapshot.nativeTurnExecutions||[]).filter(executing).map(turn=>({id:`native:${turn.id}`,
-      projectIds:[...new Set(sessions.filter(s=>s.nodeId===turn.nodeId&&s.runtime===turn.runtime&&s.nativeSessionId===turn.sessionId).map(s=>s.projectId))],conversationIds:[...(owners.get(identity(turn.nodeId,turn.runtime,turn.sessionId))||[])],nodeId:turn.nodeId,runtime:turn.runtime,sessionId:turn.sessionId}))
+      projectIds:[...new Set(sessions.filter(s=>s.nodeId===turn.nodeId&&s.runtime===turn.runtime&&s.nativeSessionId===turn.sessionId).map(s=>s.projectId))],conversationIds:[...(owners.get(identity(turn.nodeId,turn.runtime,turn.sessionId))||[])],nodeId:turn.nodeId,runtime:turn.runtime,sessionId:turn.sessionId,...waiting(turn)}))
   ].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0); // marks are a set; a fixed order keeps scoped and full reads byte-identical
   delete state.nativeTurnExecutions;
   // The selected conversation's queue pause; Home drops the record once its queue empties.

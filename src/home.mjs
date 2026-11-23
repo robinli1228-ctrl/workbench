@@ -544,7 +544,7 @@ function snapshot(scope=null) {
     chatQueuePauses:db.list('chatQueuePauses'),
     roleSessions:db.list('roleSessions').filter(session=>!session.historyClearedAt).map(({nativeSession,...session})=>session),
     // Sidebar decoration only needs active native identities, never complete tool logs.
-    nativeTurnExecutions:db.db.prepare("SELECT id,json_extract(data,'$.nodeId') AS nodeId,json_extract(data,'$.runtime') AS runtime,json_extract(data,'$.sessionId') AS sessionId,json_extract(data,'$.status') AS status FROM records INDEXED BY native_turn_active WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('starting','running','stopping')").all(),
+    nativeTurnExecutions:db.db.prepare("SELECT id,json_extract(data,'$.nodeId') AS nodeId,json_extract(data,'$.runtime') AS runtime,json_extract(data,'$.sessionId') AS sessionId,json_extract(data,'$.status') AS status FROM records INDEXED BY native_turn_live WHERE kind='nativeTurns' AND json_extract(data,'$.status') IN ('starting','running','waiting_user','stopping')").all(),
     scheduledJobs: db.list('scheduledJobs'),scheduledOccurrences:db.list('scheduledOccurrences').slice(-200),runReports:page?page.runReports:db.list('runReports'),runAlerts:db.list('runAlerts').filter(a=>a.status==='open'),
     requests: progress.requests,
     deliveries: db.list('deliveries').map(({ fingerprint, ...r }) => r),
