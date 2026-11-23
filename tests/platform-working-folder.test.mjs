@@ -260,6 +260,11 @@ const LEAN_EDITS = {
   ]
 };
 
+const ASK_DIRECT_EDITS = {
+  zh: [["问的时候，CLI 有提问工具（AskUserQuestion / request_user_input）就用它，这一轮会停下等用户回答。\n", "问的时候，CLI 有提问工具（AskUserQuestion / request_user_input）就用它，这一轮会停下等用户回答。\n别人派的任务也自己问，不要交回指派者转问。\n"]],
+  en: [["Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\n", "Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\nAsk directly on assigned work too; do not pass the question back to the assigner.\n"]]
+};
+
 const SYNCED_WORKTREES = {
   zh: "- 项目开启同步后，项目文件夹里的文件会在设备之间自动同步，包括角色建的 worktree；.git、构建产物等 Git 忽略的文件默认不同步，范围见 wb help sync。默认直接在绑定目录里改；除非确有必要，例如大体量修改，或和别人的工作明显重叠，尽量不新建 worktree，代码合并后尽快删除自己建的 worktree。平台安排你在隔离执行目录（.worktrees/run-*）里工作时，就在那里做，不要删它。\n- Git 状态（提交、分支、暂存区）不同步：本机 git status 里可能有别的设备同步过来的修改，不代表有人没提交，不要撤销或丢弃。提交时只暂存自己负责的文件，并先用 git log -1 确认 HEAD 就是这些修改所基于的版本；不是的话，先和改动的人协调。\n",
   en: "- Once sync is on for the project, the files in the project folder sync between devices automatically, role-created worktrees included; .git, build outputs and other Git-ignored files do not sync by default (scope: wb help sync). Work in the bound folder by default; unless it is really needed, such as a large change or work that clearly overlaps someone else's, avoid creating a worktree, and delete any worktree you created soon after the code is merged. When the platform places you in an isolated run folder (.worktrees/run-*), work there and do not delete it.\n- Git state (commits, branches, the index) does not sync: this device's git status may include changes synced from another device; that does not mean someone left work uncommitted, so do not revert or discard them. When committing, stage only the files you own, and first check with git log -1 that HEAD is the commit those changes were based on; if it is not, coordinate with whoever made them first.\n"
@@ -269,7 +274,10 @@ for (const [lang, heading, next, help] of [['zh', '工作目录：', '找人协�
   test(`${lang}: working-folder rules, upgrade from the previous default, and wb help sync`, () => runWithLanguage(lang, () => {
     const current = defaultPlatformPrompt();
     const undo = edits => (text => edits.reduce((rebuilt, [old, now]) => { assert.ok(rebuilt.includes(now), now.slice(0, 40)); return rebuilt.replace(now, old); }, text));
-    const beforeOwn = undo(OWN_WORK_EDITS[lang])(current);
+    const beforeAsk = undo(ASK_DIRECT_EDITS[lang])(current);
+    assert.equal(createHash('sha256').update(beforeAsk.trim()).digest('hex'), { zh: 'bc2d3bd4edf94c519583b14f630dfff94c26c54dbf860ae0e89fe6fb8ac204c3', en: '4f906515d978c321ea255a3b7ddffc0e41173ba06283bbe588e4a2c47e641569' }[lang]);
+    assert.equal(normalizePlatformSettings({ platformPrompt: beforeAsk }).platformPrompt, current, 'a saved copy of that default follows the new one');
+    const beforeOwn = undo(OWN_WORK_EDITS[lang])(beforeAsk);
     assert.equal(createHash('sha256').update(beforeOwn.trim()).digest('hex'), { zh: '342f158b0dd8fd1a5164f29a33e9cf11f23e413c2f14eb242e6ee25c15a7fd46', en: '27ee23b1eb278a7f50f4bdab63cd61b5b72746813ad2de478ca37af720b4642f' }[lang]);
     assert.equal(normalizePlatformSettings({ platformPrompt: beforeOwn }).platformPrompt, current, 'a saved copy of that default follows the new one');
     const beforeReserved = undo(RESERVED_NAME_EDITS[lang])(beforeOwn);
