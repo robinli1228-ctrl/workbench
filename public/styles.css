@@ -4572,12 +4572,12 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
 }
 
 /* Left list states (2026-11-23): running = light green card + the spinner; waiting for the user's answer = light blue card
-   + a breathing question mark in the spinner's place. Both tints are 5% colour over the card (95% transparent), selected or not. */
+   + a breathing question mark in the spinner's place. Both tints are 2% colour over the card (98% transparent), selected or not. */
 :is(html, #wb-list-state) :is(#project-list, #native-session-list) .project-item.is-running {
-  background: linear-gradient(rgb(34 197 94 / 5%), rgb(34 197 94 / 5%)), var(--card-surface);
+  background: linear-gradient(rgb(34 197 94 / 2%), rgb(34 197 94 / 2%)), var(--card-surface);
 }
 :is(html, #wb-list-state) :is(#project-list, #native-session-list) .project-item.is-asking {
-  background: linear-gradient(rgb(59 130 246 / 5%), rgb(59 130 246 / 5%)), var(--card-surface);
+  background: linear-gradient(rgb(59 130 246 / 2%), rgb(59 130 246 / 2%)), var(--card-surface);
 }
 .project-item.is-asking .list-run-status { display: grid; place-items: center; color: #2f6fdb; animation: list-ask-breathe 2s ease-in-out infinite; }
 .project-item.is-asking .list-run-status svg { width: 15px; height: 15px; stroke-width: 2.2; }
