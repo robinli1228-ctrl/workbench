@@ -413,13 +413,18 @@ export class SourceSync {
       if(!sides.some(s=>s.endpointId?s.endpointId===observed.endpointId:s.nodeId===capture.nodeId)&&!entryEqual(current,expected))sides.push(observed);
     }
     const acceptedCandidate=side=>batch.kind==='resolution'&&c.scopeKind==='directory'&&side.nodeId===batch.proposal.sourceNodeId&&side.root===batch.proposal.sourceRoot&&entryEqual(side.entry,batch.proposal.entry);
-    const changed=sides.length!==c.sides.length||sides.some((side,i)=>c.sides[i]?.unknown||!c.sides[i]||!entryEqual(side.entry,c.sides[i].entry)&&!acceptedCandidate(side));
+    // The user's choice overwrites with the chosen device's current file, even if a device changed since the choice.
+    const chosen=batch.kind==='resolution'&&batch.proposal?.humanChoice?captures.find(v=>v.nodeId===batch.proposal.sourceNodeId&&(!batch.proposal.sourceRoot||v.root===batch.proposal.sourceRoot)):null;
+    const chosenEntry=chosen?getEntry(chosen.result.manifest.entries,c.path):null;
+    // A chosen deletion still wins while the file stays deleted there; a chosen file deleted since reopens the conflict.
+    const chosenWins=Boolean(chosen)&&(Boolean(chosenEntry)||!batch.proposal.entry);
+    const changed=!chosenWins&&(sides.length!==c.sides.length||sides.some((side,i)=>c.sides[i]?.unknown||!c.sides[i]||!entryEqual(side.entry,c.sides[i].entry)&&!acceptedCandidate(side)));
     if(batch.kind==='evidence'||changed){
       if(changed)this.db.put('sourceSyncConflictHistory',{...c,id:`${c.id}:${c.generation}`});
       this.db.put('sourceSyncConflicts',{...c,sides,receiving,evidencePending:false,generation:c.generation+Number(changed),status:'open',proposal:null,attempts:changed?0:c.attempts,staleCount:(c.staleCount||0)+Number(batch.kind==='resolution')});
       this.db.put('sourceSyncBatches',{...batch,status:batch.kind==='evidence'?'evidence_ready':'blocked',reason:changed?'conflict_changed':null});return;
     }
-    const canonical=this.db.get('sourceSyncManifests',`${c.projectId}:${c.repositoryId}`),entry=batch.proposal.entry;
+    const canonical=this.db.get('sourceSyncManifests',`${c.projectId}:${c.repositoryId}`),entry=chosenWins?chosenEntry:batch.proposal.entry;
     const author=batch.proposal.runId?this.db.get('runs',batch.proposal.runId):null,origin=author?.repositories?.find(r=>r.id===c.repositoryId);
     const entries={...canonical.entries,[c.path]:entry},version={...canonical,entries,origins:{...canonical.origins,[c.path]:origin?{nodeId:author.nodeId,root:origin.localRoot,sourceRunId:author.id}:{nodeId:batch.proposal.sourceNodeId||batch.sourceNodeId,...(batch.proposal.sourceRoot?{root:batch.proposal.sourceRoot}:{})}},digest:manifestDigest(entries,canonical.scopePolicy),revision:canonical.revision+1};
     this.db.put('sourceSyncManifests',version);const id=identity(batch.id,version.digest);this.db.put('sourceSyncVersions',{...version,id});

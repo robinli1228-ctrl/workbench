@@ -99,13 +99,18 @@ export class SourceSyncMetadata {
         if(op.decision==='resolution'){
           const c=this.db.get('sourceSyncConflicts',b.conflictIds[0]);
           const sides=b.nodeIds.map(n=>this.sync.side(b.projectId,op.repositoryId,n,read(op,n),b.bindings.find(x=>x.nodeId===n&&x.repositoryId===op.repositoryId)));
-          const candidate=s=>b.kind==='resolution'&&s.nodeId===b.proposal.sourceNodeId&&s.root===b.proposal.sourceRoot&&entryEqual(s.entry,b.proposal.entry);
-          const changed=sides.some(s=>!candidate(s)&&!entryEqual(s.entry,c.sides.find(old=>old.nodeId===s.nodeId&&old.root===s.root)?.entry));
+          // The user's choice overwrites with the chosen device's current file, even if a device changed since the choice.
+          const pickedSide=b.kind==='resolution'&&b.proposal?.humanChoice?sides.find(s=>s.nodeId===b.proposal.sourceNodeId):null;
+          // A chosen deletion still wins while the file stays deleted there; a chosen file deleted since reopens the conflict.
+          const chosen=Boolean(pickedSide)&&(Boolean(pickedSide.entry)||!b.proposal.entry);
+          const proposal=chosen?{...b.proposal,entry:pickedSide.entry||null}:b.proposal;
+          const candidate=s=>b.kind==='resolution'&&s.nodeId===proposal.sourceNodeId&&s.root===proposal.sourceRoot&&entryEqual(s.entry,proposal.entry);
+          const changed=!chosen&&sides.some(s=>!candidate(s)&&!entryEqual(s.entry,c.sides.find(old=>old.nodeId===s.nodeId&&old.root===s.root)?.entry));
           if(changed||b.kind==='evidence'){
             const updated=this.sync.recordConflict({...c,sides,receiving:sides,batchId:b.id});this.db.put('sourceSyncConflicts',{...updated,status:'needs_input',reason:'conflict_changed'});this.db.put('sourceSyncBatches',{...b,status:b.kind==='evidence'?'evidence_ready':'blocked',reason:'conflict_changed'});return;
           }
           if(!sides.some(candidate)){this.sync.blockPreparation(b,'candidate_changed');return;}
-          for(const side of sides)if(!entryEqual(side.entry,b.proposal.entry))changes.set(`${op.repositoryId}:${side.nodeId}`,[{path:op.path,before:op.observed[side.nodeId],after:b.proposal.entry}]);
+          for(const side of sides)if(!entryEqual(side.entry,proposal.entry))changes.set(`${op.repositoryId}:${side.nodeId}`,[{path:op.path,before:op.observed[side.nodeId],after:proposal.entry}]);
           continue;
         }
         if(op.decision==='initialize_overwrite'){
