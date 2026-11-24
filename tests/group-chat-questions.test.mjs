@@ -100,3 +100,39 @@ test('Claude may not leave a question nobody can answer: none between turns, one
   assert.equal(writes.at(-1).response.response.behavior, 'deny', 'a question after the turn ended is refused at once');
   assert.equal(events.filter(e => e.type === 'question').length, 1);
 });
+
+// Claude called AskUserQuestion but its permission request never came: the turn must not wait on a question nobody sees.
+const toolCall = { type: 'assistant', message: { id: 'msg-q', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask1', name: 'AskUserQuestion', input: ask.request.input }] } };
+const echoed = session => session.receive({ type: 'user', isReplay: true, uuid: session.echoUuid, session_id: session.echoSession, message: { role: 'user', content: 'hi' } });
+const traces = events => events.filter(e => e.type === 'log' && e.text.startsWith('[question]')).map(e => e.text);
+
+test('a question whose permission request never comes is shown from the tool call; the answer goes on as the next message', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { session, events, writes } = claude(true);
+  session.sendTurn('hi');echoed(session);session.receive(toolCall);
+  assert.equal(events.some(e => e.type === 'question'), false, 'the request normally follows at once');
+  t.mock.timers.tick(8000);
+  const question = events.find(e => e.type === 'question');
+  assert.equal(question.id, 'toolu_ask1');assert.equal(question.questions[0].question, 'Deploy now?');
+  assert.equal(events.filter(e => e.type === 'status').at(-1).status, 'waiting_user');
+  session.answerQuestion({ id: 'toolu_ask1', answers: { q1: ['No'] } });
+  assert.equal(writes.at(-1).request.subtype, 'interrupt', 'the tool cannot take the answer, so the turn is interrupted');
+  assert.ok(events.some(e => e.type === 'question_resolved' && e.id === 'toolu_ask1'));
+  session.receive({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '' });
+  const next = writes.at(-1);
+  assert.equal(next.type, 'user');assert.match(next.message.content, /"Deploy now\?"="No"/);
+  assert.equal(session.done, false, 'the same run carries on with the answer');
+  assert.ok(!events.some(e => e.type === 'status' && ['succeeded', 'failed'].includes(e.status)));
+  assert.deepEqual(traces(events).map(text => text.split(' ').slice(1, 4).join(' ')), ['AskUserQuestion called (olu_ask1);', 'no permission request', 'answer cannot reach', 'turn interrupted; sending']);
+});
+
+test('a permission request in time is the normal question; one arriving late is attached to the question already shown', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const quick = claude(true);quick.session.sendTurn('hi');echoed(quick.session);quick.session.receive(toolCall);quick.session.receive(ask);t.mock.timers.tick(8000);
+  assert.deepEqual(quick.events.filter(e => e.type === 'question').map(e => e.id), ['perm-ask'], 'no second card from the tool call');
+  const late = claude(true);late.session.sendTurn('hi');echoed(late.session);late.session.receive(toolCall);t.mock.timers.tick(8000);
+  late.session.receive({ ...ask, request: { ...ask.request, tool_use_id: 'toolu_ask1' } });
+  assert.equal(late.events.filter(e => e.type === 'question').length, 1);
+  late.session.answerQuestion({ id: 'toolu_ask1', answers: { q1: ['Yes'] } });
+  assert.deepEqual(late.writes.at(-1).response.response, { behavior: 'allow', updatedInput: { ...ask.request.input, answers: { 'Deploy now?': 'Yes' } } }, 'the late request takes the answer');
+});
