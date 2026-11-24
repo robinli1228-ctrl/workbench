@@ -333,7 +333,8 @@ export class SourceSyncHome {
       const stages=this.db.listSourceSyncCommands({batchId:c.batchId,action:'stage'}).map(x=>x.id===c.id?{...x,result}:x);
       const reads=this.db.listSourceSyncCommands({batchId:c.batchId,action:'read'}),read=metadataReadLookup(reads);
       if(c.action==='stage'&&stages.every(x=>x.result?.status==='completed'))for(const op of batch.metadataOperations||[]){
-        if(op.source)continue;
+        // A recheck of an open conflict is only compared, never staged.
+        if(op.source||op.decision==='recheck')continue;
         const sides=batch.nodeIds.map(n=>read(op.repositoryId,n,op.path));
         if(!['resolution','initialize_overwrite'].includes(op.decision)&&contentEqual(sides[0],sides[1]))continue;
         for(const entry of sides.filter(Boolean))await this.storage.receive(c.projectId,entry,Readable.from(await storage.read(c.projectId,entry.hash)));
@@ -466,7 +467,9 @@ export class SourceSyncHome {
       const c=this.db.get('sourceSyncConflicts',route.split('/')[1]),input=await body(req,100000);
       if(c?.projectId!==projectId||c.detection!=='metadata'||c.generation!==input.generation||input.confirmed!==true||['resolved','cancelled'].includes(c.status))throw syncError('conflict_changed');
       const side=c.sides.find(s=>s.nodeId===input.sourceNodeId);if(!side||side.unknown)throw syncError('invalid_scope');
-      value=this.sync.resolve(c,{id:contentHash(JSON.stringify([c.id,c.generation,side.nodeId])),entry:side.entry,sourceNodeId:side.nodeId,sourceRoot:side.root});
+      // Same as choosing the device in the list: its current file overwrites the other device.
+      const [chosen]=await this.chooseVersions(projectId,[{repositoryId:c.repositoryId,path:c.path,sourceNodeId:side.nodeId}]);
+      if(chosen?.status!=='applying')throw syncError(chosen?.status||'conflict_changed');value=chosen;
     }
     else if(req.method==='POST'&&/^conflicts\/[^/]+\/(assign|review)$/.test(route)){
       const id=route.split('/')[1],input=await body(req,100000);if(this.db.get('sourceSyncConflicts',id)?.projectId!==projectId)throw syncError('conflict_missing');

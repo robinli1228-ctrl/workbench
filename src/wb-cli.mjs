@@ -94,7 +94,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if(cmd==='sync'){
       if(!sourceSync)throw new Error(tr('sourceSync.failure',{code:'worker_unsupported',detail:''}));
-      if(!['status','read','request','assign','propose'].includes(sub)||rest.length>1)throw new Error(tr('sourceSync.toolGuide'));
+      if(!['status','read','request','propose'].includes(sub)||rest.length>1)throw new Error(tr('sourceSync.toolGuide'));
       return out(await agentRequest('/api/agent/source-sync',{runId:process.env.WB_RUN_ID,action:sub,input:rest.length?JSON.parse(rest[0]):{}}));
     }
     if(cmd==='discuss') {
@@ -102,7 +102,7 @@ export async function main(argv = process.argv.slice(2)) {
       return out(await agentRequest('/api/agent/discussions',{runId:process.env.WB_RUN_ID,action:'peers',input:rest.length?JSON.parse(rest[0]):{view:'summary'}}));
     }
     if (cmd === 'capabilities') return out({protocol:2,sourceSyncTools:sourceSync?1:0,sessionTools:1,timerTools:1,transfer:1,
-      tools:[...(sourceSync?['sync status','sync read','sync request','sync propose',...(supervisor?['sync assign']:[])]:[]),'task list','task show','task create','task update','discuss peers','call','wait','note','timer',
+      tools:[...(sourceSync?['sync status','sync read','sync request','sync propose']:[]),'task list','task show','task create','task update','discuss peers','call','wait','note','timer',
         'history','history search','history read','history summary','memory search','device ls','device read','deliver','session current',...(process.env.WB_PLATFORM_ASSISTANT==='1'?['setup catalog','setup propose']:[])]});
     if (cmd === 'session' && sub === 'current') return out(await agentRequest('/api/agent/sessions/current',{runId:process.env.WB_RUN_ID}));
     // Configuration cards belong to the platform assistant; project roles read the team with wb discuss peers.

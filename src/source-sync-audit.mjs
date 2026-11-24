@@ -56,6 +56,8 @@ export class SourceSyncAudit {
       const results=applies.flatMap(c=>{const f=files.get(c)?.get(o.path);return f?[{...f,nodeId:c.nodeId}]:[];});
       const applied=results.find(f=>f.nodeId===target&&f.status==='applied');
       const conflict=conflictByPath.get(k);
+      // A re-read of a conflict writes a row only once it settles (confirm_equal); while open it is not a sync attempt.
+      if(o.decision==='recheck'&&conflict)continue;
       const pending=pendingByPath.get(k);
       const waiting=cs.find(c=>!c.result&&['waiting_idle','waiting_device','reconciling'].includes(c.status));
       const equal=!o.source&&compared&&(left?.hash||null)===(right?.hash||null);
