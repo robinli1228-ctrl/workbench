@@ -30,3 +30,21 @@ for(const detection of ['metadata',null]){
     assert.equal(f.db.list('roomMessages').length,0);
   });
 }
+
+test('metadata: the conflict dialog device button also overwrites with the latest file',async t=>{
+  const f=await fixture(t);await f.write('a','base');await f.sync();await f.write('a','left');await f.write('b','right');await f.sync();
+  const c=f.db.list('sourceSyncConflicts')[0];
+  const result=await f.home.chooseVersions('p',[{repositoryId:c.repositoryId,path:c.path,sourceNodeId:'a'}]);assert.equal(result[0].status,'applying');
+  await f.write('a','newest');await f.pump();assert.equal(await f.read('b'),'newest');assert.equal(f.db.get('sourceSyncConflicts',c.id).status,'resolved');
+});
+test('content hash: conflicts can no longer be assigned to a role',async t=>{
+  const f=await fixture(t,{detection:null});await f.write('a','base');await f.sync();await f.write('a','left');await f.write('b','right');await f.sync();
+  const c=f.db.list('sourceSyncConflicts')[0];assert.throws(()=>f.home.conflicts.assign(c.id,c.generation,'r',{kind:'human'}),e=>e.code==='assignment_not_allowed');
+});
+test('content hash: choosing a deleted version deletes the file on the other device even after it changed again',async t=>{
+  const {unlink}=await import('node:fs/promises');
+  const f=await fixture(t,{detection:null});await f.write('a','base');await f.sync();
+  await unlink(join(f.dir,'a','file.txt'));await f.write('b','kept');assert.equal((await f.sync()).status,'partial_conflict');f.home.conflicts.tick();
+  assert.equal(pick(f,'a')[0].status,'applying');await f.write('b','edited again');await f.pump();
+  await assert.rejects(f.read('b'),{code:'ENOENT'});assert.equal(f.db.list('sourceSyncConflicts')[0].status,'resolved');
+});

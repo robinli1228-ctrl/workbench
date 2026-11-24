@@ -89,8 +89,10 @@ export class SourceSyncMetadata {
           const c=this.db.get('sourceSyncConflicts',b.conflictIds[0]);
           const sides=b.nodeIds.map(n=>this.sync.side(b.projectId,op.repositoryId,n,read(op,n),b.bindings.find(x=>x.nodeId===n&&x.repositoryId===op.repositoryId)));
           // The user's choice overwrites with the chosen device's current file, even if a device changed since the choice.
-          const chosen=b.kind==='resolution'&&b.proposal?.humanChoice?sides.find(s=>s.nodeId===b.proposal.sourceNodeId&&s.entry)?.entry:null;
-          const proposal=chosen?{...b.proposal,entry:chosen}:b.proposal;
+          const pickedSide=b.kind==='resolution'&&b.proposal?.humanChoice?sides.find(s=>s.nodeId===b.proposal.sourceNodeId):null;
+          // A chosen deletion still wins while the file stays deleted there; a chosen file deleted since reopens the conflict.
+          const chosen=Boolean(pickedSide)&&(Boolean(pickedSide.entry)||!b.proposal.entry);
+          const proposal=chosen?{...b.proposal,entry:pickedSide.entry||null}:b.proposal;
           const candidate=s=>b.kind==='resolution'&&s.nodeId===proposal.sourceNodeId&&s.root===proposal.sourceRoot&&entryEqual(s.entry,proposal.entry);
           const changed=!chosen&&sides.some(s=>!candidate(s)&&!entryEqual(s.entry,c.sides.find(old=>old.nodeId===s.nodeId&&old.root===s.root)?.entry));
           if(changed||b.kind==='evidence'){

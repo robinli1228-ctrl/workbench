@@ -1,9 +1,6 @@
-import {randomUUID} from 'node:crypto';
-import {contentHash,manifestDigest,validateEntry,syncError} from './source-sync-manifest.mjs';
+import {contentHash,validateEntry,syncError} from './source-sync-manifest.mjs';
 import {terminal} from './store.mjs';
 import {tr} from './i18n.mjs';
-import {isRoleConfigured} from './default-roles.mjs';
-import {sourceScopeBinding} from './source-sync-scopes.mjs';
 
 /** A device choice means its project folder; isolated outputs cannot stand in for missing folder evidence. */
 export const deviceSides=c=>{const seen=new Map();for(const s of [...c.sides,...c.receiving||[]])if(!s.sourceRunId&&!seen.has(s.nodeId))seen.set(s.nodeId,s);return [...seen.values()];};
@@ -29,6 +26,9 @@ export class SourceSyncConflicts {
    * handed to a model. Repair runs started before this change still finish through finish().
    */
   tick(){
+    // Once per Home start: repair, peer and supervisor-assignment tasks posted before conflicts stopped going to models.
+    if(!this.retiredTasksCancelled){this.retiredTasksCancelled=true;
+      for(const task of this.db.list('tasks').filter(t=>(t.sourceConflictId||t.sourceConflictPeerId||t.sourceConflictAssignmentRequestId)&&!t.currentRunId&&!['done','completed','succeeded','failed','cancelled'].includes(t.status)))this.db.put('tasks',{...task,status:'cancelled'});}
     for(const conflict of this.db.list('sourceSyncConflicts').filter(c=>c.status==='open'&&c.detection!=='metadata')){
       const config=this.db.get('sourceSyncConfigs',conflict.projectId);if(!config?.enabled||config.generation!==conflict.syncGeneration)continue;
       if(this.db.activeRuns().some(r=>r.sourceConflictId===conflict.id))continue;
@@ -39,32 +39,8 @@ export class SourceSyncConflicts {
   }
   /** Hand the conflict to the user; no model is asked to resolve it. */
   escalate(c,reason){return this.db.put('sourceSyncConflicts',{...c,status:'needs_input',reason});}
-  assign(id,generation,roleId,actor){return this.db.transaction(()=>{
-    const c=this.db.get('sourceSyncConflicts',id),role=this.db.get('roles',roleId);
-    if(!c||c.generation!==generation||['resolved','cancelled'].includes(c.status))throw syncError('conflict_changed');
-    if(actor.kind==='agent'&&actor.roleId!==this.db.get('projects',c.projectId)?.supervisorRoleId)throw syncError('assignment_not_allowed');
-    if(['verifying','resolved_pending_sync'].includes(c.status))throw syncError('sync_busy');
-    if(role?.projectId!==c.projectId||!role.enabled||role.archivedAt||!isRoleConfigured(role)||!sourceScopeBinding(this.db,c.projectId,c.repositoryId,role.nodeId))throw syncError('modifier_unavailable');
-    if(c.ownerRoleId===roleId&&['queued','resolving','verifying','resolved_pending_sync'].includes(c.status))return c;
-    if(this.db.activeRuns().some(r=>r.sourceConflictId===c.id))throw syncError('owner_still_running');
-    if(c.ownerTaskId){const task=this.db.get('tasks',c.ownerTaskId);if(task)this.db.put('tasks',{...task,status:'cancelled'});}
-    const attempts=(c.attempts||0)+1;if(attempts>2&&actor.kind!=='human')return this.escalate(c,'repair_limit');
-    const canonical=this.db.get('sourceSyncManifests',`${c.projectId}:${c.repositoryId}`);if(!canonical)throw syncError('baseline_missing');
-    const written=(c.writers||[]).findIndex(w=>w.roleId===roleId),own=c.sides[written]||c.sides.find(s=>s.nodeId===role.nodeId)||c.sides[0];if(own.unknown)throw syncError('evidence_missing');
-    const entries={...canonical.entries,[c.path]:own.entry},digest=manifestDigest(entries,canonical.scopePolicy),assignmentId=randomUUID(),directory=c.scopeKind==='directory';
-    const version={...canonical,id:contentHash(assignmentId),entries,digest};this.db.put('sourceSyncVersions',version);
-    const sourceInputs=[{repositoryId:c.repositoryId,baseCommit:canonical.baseCommit,generation:c.syncGeneration,manifestRevision:canonical.revision,manifestHash:digest,manifestId:version.id}];
-    const peerRoleIds=[...new Set((c.writers||[]).map(w=>w.roleId).filter(id=>id&&id!==roleId))],peerTaskIds=[];
-    for(const peerId of peerRoleIds){const peerRole=this.db.get('roles',peerId);if(!peerRole?.enabled||peerRole.archivedAt||!isRoleConfigured(peerRole))continue;const peerMessageId=`sync-peer-${c.id}-${generation}-${roleId}-${peerRole.id}`;const message=this.db.get('roomMessages',peerMessageId)||this.rooms.postSystemTask(c.projectId,{id:peerMessageId,roleId:peerRole.id,
-      source:{kind:'peer',conflictId:c.id,generation},text:tr('sourceSync.peerTask',{id:c.id,path:c.path,owner:role.name})});peerTaskIds.push(message.taskIds[0]);}
-    const peerTaskId=peerTaskIds[0]||null;
-    const repo=this.db.get('repositories',c.repositoryId);
-    const message=this.rooms.postSystemTask(c.projectId,{id:`sync-repair-${c.id}-${generation}-${attempts}`,roleId,
-      source:{kind:'repair',conflictId:c.id,generation,assignmentId},sourceInputs:directory?[]:sourceInputs,
-      execution:directory?null:{isolated:true,batchId:`sync-${c.id}`,purpose:'develop',repositoryKeys:[repo.key],writeRepositories:[repo.key],baselines:[{id:repo.id,key:repo.key,commit:canonical.baseCommit}],inputs:[]},
-      text:tr('sourceSync.repairTask',{id:c.id,path:c.path,generation,hashes:JSON.stringify(conflictHashes(c)),peerTaskId:peerTaskIds.join(', ')||'none'})+(directory?`\nDirectory synchronization conflict. Read both saved versions with wb sync read. The candidate is read from ${sourceScopeBinding(this.db,c.projectId,c.repositoryId,role.nodeId).localRoot}/${c.path}; isolated changes must be delivered there first. Only this file will be proposed; distribution still requires review and fresh destination checks.`:'')});
-    return this.db.put('sourceSyncConflicts',{...c,status:'queued',ownerRoleId:roleId,ownerTaskId:message.taskIds[0],assignmentId,peerTaskId,peerTaskIds,attempts,proposal:null,reason:null});
-  });}
+  /** Retired: conflicts are never handed to a model; the user chooses a device in the sync panel. */
+  assign(){throw syncError('assignment_not_allowed');}
   owns(run,c){return run?.projectId===c.projectId&&run.roleId===c.ownerRoleId&&run.sourceConflictId===c.id&&run.sourceConflictGeneration===c.generation&&run.sourceConflictAssignmentId===c.assignmentId;}
   propose(run,input){return this.db.transaction(()=>{
     const c=this.db.get('sourceSyncConflicts',input.conflictId);if(!c||c.status==='cancelled'||!this.owns(run,c)||input.generation!==c.generation||terminal.has(run.status))throw syncError('conflict_changed');
