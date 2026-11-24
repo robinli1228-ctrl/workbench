@@ -3,9 +3,12 @@ import {bindQuotaDetails} from './role-icons.js';
 
 const valid=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0;
 
-/** Never borrow counters from an archived session, another device, or the role's old model. */
+/**
+ * Never borrow counters from an archived session, another device, or the role's old model. The role's main session of the
+ * open group chat counts (its key is the chat's id, the project id for the default chat), not a review or source session.
+ */
 export function contextForRole(role,data) {
-  const session=(data.roleSessions||[]).find(s=>s.roleId===role.id&&s.projectId===role.projectId&&s.conversationId===role.projectId&&s.nodeId===role.nodeId&&s.runtime===role.runtime&&s.status!=='archived'&&!s.candidateFor&&!s.historyClearedAt);
+  const session=(data.roleSessions||[]).find(s=>s.roleId===role.id&&s.projectId===role.projectId&&s.conversationId===(s.groupConversationId||role.projectId)&&s.nodeId===role.nodeId&&s.runtime===role.runtime&&s.status!=='archived'&&!s.candidateFor&&!s.historyClearedAt);
   const runs=session?(data.runs||[]).filter(r=>r.roleId===role.id&&r.projectId===role.projectId&&r.nodeId===role.nodeId&&r.roleSessionId===session.id&&!r.historyClearedAt&&!r.switchOperationId&&r.roleSnapshot?.runtime===role.runtime&&r.contextUsage&&(!r.contextUsage.sessionId||r.contextUsage.sessionId===session.nativeSessionId)):[];
   runs.sort((a,b)=>Date.parse(b.contextUsage.observedAt||b.createdAt)-Date.parse(a.contextUsage.observedAt||a.createdAt)||Date.parse(b.createdAt)-Date.parse(a.createdAt));
   const latest=runs[0],sample=(latest?.model||latest?.roleSnapshot?.model)===role.model?latest.contextUsage:{},used=valid(sample.usedTokens)?sample.usedTokens:null;
