@@ -37,7 +37,7 @@ export class SourceSyncMetadata {
       const baselines=this.db.metadataBaselines(b.projectId,repositoryId,b.generation),baselineMap=new Map(baselines.map(x=>[x.path,x]));
       const conflicts=this.db.listProject('sourceSyncConflicts',b.projectId).filter(c=>c.repositoryId===repositoryId&&c.syncGeneration===b.generation&&!['resolved','cancelled'].includes(c.status));
       const active=conflicts.length?this.sync.activeResolutions(b.projectId):new Set();
-      for(const path of new Set([...baselines.map(v=>v.path),...Object.keys(snapshots[a].entries),...Object.keys(snapshots[bnode].entries)])){
+      for(const path of new Set([...baselines.map(v=>v.path),...Object.keys(snapshots[a].entries),...Object.keys(snapshots[bnode].entries),...conflicts.map(c=>c.path)])){
         if(b.kind==='initialize'&&!b.initialization.paths.includes(path))continue;
         const op={repositoryId,path,observed:{[a]:snapshots[a].entries[path]||absent(),[bnode]:snapshots[bnode].entries[path]||absent()}};
         // Exclusion (including oversize and unavailable traversal) is never evidence of deletion.
@@ -47,10 +47,12 @@ export class SourceSyncMetadata {
         if(conflict&&!retryOwnInitialization){
           // Metadata cannot tell equal content: a conflict whose two files now have the same size is read again on both
           // devices, and settles once their hashes match (advance). Both deleted settles at once.
-          if(b.kind!=='initialize'&&this.sync.convergeable(conflict,active)){
+          if(b.kind!=='initialize'&&this.sync.convergeable(conflict,active)&&this.sync.coversConflict(b,conflict)){
             const [left,right]=[op.observed[a],op.observed[bnode]];
             if(!left.exists&&!right.exists){this.baseline(b,op,op.observed);this.sync.converged(conflict,b.id);continue;}
-            if(left.exists&&right.exists&&left.size===right.size){conflictIds.add(conflict.id);operations.push({...op,decision:'recheck',conflictId:conflict.id,source:null});continue;}
+            // Read again only when either file changed since the last re-read found them different.
+            const same=(x,y)=>x?.exists===y?.exists&&x?.size===y?.size&&x?.mtimeNs===y?.mtimeNs,checked=conflict.recheckedObserved;
+            if(left.exists&&right.exists&&left.size===right.size&&!(checked&&same(checked[a],left)&&same(checked[bnode],right))){conflictIds.add(conflict.id);operations.push({...op,decision:'recheck',conflictId:conflict.id,source:null});continue;}
           }
           conflictIds.add(conflict.id);if(b.kind==='initialize')pending.push({repositoryId,path,reason:'unresolved_conflicts'});continue;}
         const base=baselineMap.get(path);if(b.kind==='initialize'&&!base?.pending)continue;const decision=base?.pending?'baseline_required':decideMetadata(base?{a:base.endpoints[a],b:base.endpoints[bnode]}:null,{a:op.observed[a],b:op.observed[bnode]});
@@ -60,7 +62,7 @@ export class SourceSyncMetadata {
         op.decision=decision==='baseline_required'?(b.initialization.mode==='overwrite'?'initialize_overwrite':'compare'):decision;op.source=decision==='a'?a:decision==='b'?bnode:null;op.target=op.source===a?bnode:a;operations.push(op);
       }
     }
-    const readBytes=operations.reduce((n,o)=>n+(o.source?o.observed[o.source].size||0:Object.values(o.observed).reduce((sum,m)=>sum+(m.size||0),0)),0);if(!b.boundedTransfers&&readBytes>SOURCE_SYNC_LIMITS.batchBytes){this.sync.blockPreparation(b,'batch_too_large');return;}
+    const readBytes=operations.filter(o=>o.decision!=='recheck').reduce((n,o)=>n+(o.source?o.observed[o.source].size||0:Object.values(o.observed).reduce((sum,m)=>sum+(m.size||0),0)),0);if(!b.boundedTransfers&&readBytes>SOURCE_SYNC_LIMITS.batchBytes){this.sync.blockPreparation(b,'batch_too_large');return;}
     const next={...b,metadataOperations:operations,pendingMetadata:pending,conflictIds:[...conflictIds],status:'reading'};this.db.put('sourceSyncBatches',next);this.sync.audit.observe(next);
     for(const binding of b.bindings){const paths=operations.filter(o=>o.repositoryId===binding.repositoryId&&(o.source?o.source===binding.nodeId:true)&&o.observed[binding.nodeId].exists).map(o=>({path:o.path,expected:o.observed[binding.nodeId],compare:!o.source}));if(paths.length)this.sync.commandParts(b,binding,'read',{paths},'paths',p=>p.expected.size||0);}
     this.advance(next);
@@ -116,6 +118,7 @@ export class SourceSyncMetadata {
         if(op.decision==='recheck'){
           const c=this.db.get('sourceSyncConflicts',op.conflictId);
           if(c&&contentEqual(read(op,b.nodeIds[0]),read(op,b.nodeIds[1]))&&this.sync.convergeable(c,this.sync.activeResolutions(b.projectId))){this.baseline(b,op,op.observed);this.sync.converged(c,b.id);conflicts.delete(c.id);}
+          else if(c&&!['resolved','cancelled'].includes(c.status))this.db.put('sourceSyncConflicts',{...c,recheckedObserved:op.observed});
           continue;
         }
         if(!op.source){const [a,other]=b.nodeIds,left=read(op,a),right=read(op,other);

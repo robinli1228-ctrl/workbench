@@ -8,7 +8,6 @@ import {buildSourceBindings,sourceScopeBinding} from './source-sync-scopes.mjs';
 
 const stamp=()=>new Date().toISOString(),done=new Set(['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready']);
 const getEntry=(entries,path)=>Object.hasOwn(entries,path)?entries[path]:null;
-const BATCH_SETTLED=new Set(['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready']);
 const identity=(...parts)=>contentHash(JSON.stringify(parts));
 
 /**
@@ -81,8 +80,13 @@ export class SourceSync {
    * user, not an initialization proof, not assigned to a role and with no resolution batch in flight.
    */
   convergeable(conflict,active){return ['open','needs_input'].includes(conflict.status)&&!conflict.initialization&&!active.has(conflict.id);}
-  activeResolutions(projectId){return new Set(this.records('sourceSyncBatches',projectId).filter(b=>['resolution','evidence'].includes(b.kind)&&!BATCH_SETTLED.has(b.status)).flatMap(b=>b.conflictIds||[]));}
-  converged(conflict,batchId){this.db.put('sourceSyncConflicts',{...conflict,status:'resolved',resolution:'converged',resolvedAt:stamp(),resolutionBatchId:batchId});}
+  activeResolutions(projectId){return new Set(this.records('sourceSyncBatches',projectId).filter(b=>['resolution','evidence'].includes(b.kind)&&!done.has(b.status)).flatMap(b=>b.conflictIds||[]));}
+  /** Every device of the project and every device the conflict involves took part in this batch. */
+  coversConflict(batch,conflict){const nodes=new Set(batch.nodeIds),config=this.config(batch.projectId);
+    return [...(config?.nodeIds||[]),...(conflict.sides||[]).map(s=>s.nodeId),...(conflict.receiving||[]).map(s=>s.nodeId)].every(nodeId=>!nodeId||nodes.has(nodeId));}
+  /** Settle as resolved; repair tasks for it that have not started are cancelled, as when sync is turned off. */
+  converged(conflict,batchId){this.db.put('sourceSyncConflicts',{...conflict,status:'resolved',resolution:'converged',resolvedAt:stamp(),resolutionBatchId:batchId});
+    for(const task of this.db.listProject('tasks',conflict.projectId).filter(t=>[t.sourceConflictId,t.sourceConflictPeerId,t.sourceConflictAssignmentRequestId].includes(conflict.id)&&!t.currentRunId&&!['done','completed','cancelled','failed'].includes(t.status)))this.db.put('tasks',{...task,status:'cancelled'});}
   recordConflict(input){
     const id=identity(input.projectId,input.repositoryId,input.syncGeneration,input.path),prior=this.db.get('sourceSyncConflicts',id);
     if(prior&&!['resolved','cancelled'].includes(prior.status))input={...input,
@@ -95,7 +99,7 @@ export class SourceSync {
     const pendingCopyEntries=input.detection==='metadata'&&prior?.detection==='metadata'&&!prior.copiesReleasedAt
       ? [...new Map([...(prior.pendingCopyEntries||[]),prior.base,...(prior.sides||[]).map(s=>s.entry),...(prior.receiving||[]).map(s=>s.entry),prior.proposal?.entry].filter(Boolean).map(e=>[e.hash,e])).values()] : [];
     if(prior)this.db.put('sourceSyncConflictHistory',{...prior,id:`${id}:${prior.generation}`});
-    return this.db.put('sourceSyncConflicts',{...prior,...input,...(input.detection==='metadata'?{copiesReleasedAt:null,copiesCheckedAt:null,copiesNextCheckAt:null,pendingCopyEntries}:{}),id,generation:(prior?.generation||0)+1,status:'open',proposal:null,createdAt:stamp()});
+    return this.db.put('sourceSyncConflicts',{...prior,...(prior?.status==='resolved'?{resolution:null,resolvedAt:null,resolutionBatchId:null}:{}),...input,...(input.detection==='metadata'?{copiesReleasedAt:null,copiesCheckedAt:null,copiesNextCheckAt:null,pendingCopyEntries}:{}),id,generation:(prior?.generation||0)+1,status:'open',proposal:null,createdAt:stamp()});
   }
   resolve(conflict,proposal){return this.specialBatch(conflict,'resolution',proposal);}
   refreshEvidence(conflict){return this.specialBatch(conflict,'evidence');}
@@ -319,7 +323,7 @@ export class SourceSync {
         const complete=nodes.size>1&&[...nodes].every(nodeId=>captures.some(c=>c.nodeId===nodeId));
         for(const conflict of this.records('sourceSyncConflicts',batch.projectId).filter(c=>c.repositoryId===repositoryId&&c.syncGeneration===batch.generation&&!['resolved','cancelled'].includes(c.status))){
           const seen=captures.map(c=>getEntry(c.result.manifest.entries,conflict.path));
-          if(complete&&this.convergeable(conflict,active)&&!captures.some(c=>leftOn(c.nodeId).has(conflict.path))&&seen.every(entry=>entryEqual(entry,seen[0]))){
+          if(complete&&this.convergeable(conflict,active)&&this.coversConflict(batch,conflict)&&!captures.some(c=>leftOn(c.nodeId).has(conflict.path))&&seen.every(entry=>entryEqual(entry,seen[0]))){
             if(seen[0]){entries[conflict.path]=seen[0];origins[conflict.path]={nodeId:captures[0].nodeId,commandId:captures[0].id};}else{delete entries[conflict.path];delete origins[conflict.path];}
             this.converged(conflict,batch.id);continue;
           }
