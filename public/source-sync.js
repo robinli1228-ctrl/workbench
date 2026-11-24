@@ -256,7 +256,7 @@ export function sourceSyncPanel({api:request,getData,getProject,refreshState=()=
     const {body,note,id,v}=modal('Source conflict');let pageVersion=0;
     try{const c=await api(endpoint(id)+'/conflicts/'+conflictId);if(!valid(id,v))return;
       const path=el('h3','',c.path);path.setAttribute('translate','no');body.append(path,el('p','',status(c.status)),el('p','workspace-note',t('Repair owner: {name}',{name:(getData().roles||[]).find(r=>r.id===c.ownerRoleId)?.name||c.ownerRoleId||t('Not assigned')})));
-      if(c.reason)body.append(el('p','workspace-note',c.reason));
+      if(c.reason&&c.reason!=='user_choice')body.append(el('p','workspace-note',c.reason));
       const field=el('label','',t('File version')),select=el('select');select.setAttribute('aria-label',t('File version'));for(const side of [{nodeId:'base'},...c.sides,...(c.proposal?[{nodeId:'proposal'}]:[])]){
         const label=side.nodeId==='base'?t('Common base'):side.nodeId==='proposal'?t('Proposed resolution'):`${name(side.nodeId)} · ${t(side.sourceRunId?'Isolated output':'Project folder')}${side.sourceRunId?' · '+side.sourceRunId.slice(0,8):''}`;
         const o=el('option','',label);o.value=side.endpointId||side.nodeId;if(side.root)o.title=side.root;select.append(o);

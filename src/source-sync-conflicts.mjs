@@ -1,5 +1,4 @@
 import {randomUUID} from 'node:crypto';
-import {attributeSourceChange} from './source-sync-provenance.mjs';
 import {contentHash,manifestDigest,validateEntry,syncError} from './source-sync-manifest.mjs';
 import {terminal} from './store.mjs';
 import {tr} from './i18n.mjs';
@@ -25,33 +24,21 @@ export function sourceVerificationProof(events) {
 export class SourceSyncConflicts {
   constructor({db,rooms,sync,reachability=()=>false}){Object.assign(this,{db,rooms,sync,reachability});}
   open(input){const old=this.db.get('sourceSyncConflicts',input.id);return old||this.db.put('sourceSyncConflicts',input);}
+  /**
+   * A conflict waits for the user's choice in the sync panel (with the evidence read first when it is pending); it is never
+   * handed to a model. Repair runs started before this change still finish through finish().
+   */
   tick(){
     for(const conflict of this.db.list('sourceSyncConflicts').filter(c=>c.status==='open'&&c.detection!=='metadata')){
       const config=this.db.get('sourceSyncConfigs',conflict.projectId);if(!config?.enabled||config.generation!==conflict.syncGeneration)continue;
       if(this.db.activeRuns().some(r=>r.sourceConflictId===conflict.id))continue;
-      if((conflict.staleCount||0)>=2){this.escalate(conflict,'repeated_stale_proposal');continue;}
       if(conflict.evidencePending){this.sync.refreshEvidence?.(conflict);continue;}
-      const records=this.db.listProject('sourceSyncProvenance',conflict.projectId);
-      const writers=conflict.sides.map(side=>side.unknown?{certainty:'unknown',roleId:null}:attributeSourceChange({records,repositoryId:conflict.repositoryId,path:conflict.path,afterHash:side.entry?.hash??null,nodeId:side.nodeId,sourceRunId:side.sourceRunId,root:conflict.scopeKind==='directory'?side.root:undefined}));
-      const c=this.db.put('sourceSyncConflicts',{...conflict,writers});
-      const originalTasks=writers.map(w=>w.runId&&this.db.get('runs',w.runId)).filter(Boolean).map(r=>this.db.get('tasks',r.taskId)).filter(Boolean);
-      if(originalTasks.some(t=>t.requiresIndependentReview||t.reviewerRoleId||t.execution?.acceptance?.reviewerRoleId))c.requiresIndependentReview=true;
-      this.db.put('sourceSyncConflicts',c);
-      const owner=writers.map(w=>w.roleId&&this.db.get('roles',w.roleId)).find(r=>r?.enabled&&!r.archivedAt&&isRoleConfigured(r)&&sourceScopeBinding(this.db,c.projectId,c.repositoryId,r.nodeId)&&this.reachability(r));
-      if(owner)this.assign(c.id,c.generation,owner.id,{kind:'automatic'});else this.escalate(c,'modifier_unavailable');
+      this.db.put('sourceSyncConflicts',{...conflict,status:'needs_input',reason:'user_choice'});
     }
     for(const run of this.db.conflictRuns().filter(r=>terminal.has(r.status)))this.finish(run.id);
   }
-  escalate(c,reason){
-    const supervisorId=this.db.get('projects',c.projectId)?.supervisorRoleId;
-    const supervisor=supervisorId?this.db.get('roles',supervisorId):null;
-    if(c.detection!=='metadata'&&reason!=='independent_review_required'&&supervisor?.enabled&&!supervisor.archivedAt&&isRoleConfigured(supervisor)&&this.db.get('workspaces',`${c.projectId}:${supervisor.nodeId}`)){
-      const id=`sync-assignment-${c.id}-${c.generation}`,prior=this.db.get('roomMessages',id);
-      if(!prior)this.rooms.postSystemTask(c.projectId,{id,roleId:supervisor.id,source:{kind:'assignment',conflictId:c.id,generation:c.generation},
-        text:tr('sourceSync.assignmentTask',{id:c.id,path:c.path,reason})});
-    }
-    return this.db.put('sourceSyncConflicts',{...c,status:'needs_input',reason});
-  }
+  /** Hand the conflict to the user; no model is asked to resolve it. */
+  escalate(c,reason){return this.db.put('sourceSyncConflicts',{...c,status:'needs_input',reason});}
   assign(id,generation,roleId,actor){return this.db.transaction(()=>{
     const c=this.db.get('sourceSyncConflicts',id),role=this.db.get('roles',roleId);
     if(!c||c.generation!==generation||['resolved','cancelled'].includes(c.status))throw syncError('conflict_changed');
@@ -106,8 +93,9 @@ export class SourceSyncConflicts {
     this.db.put('sourceSyncConflicts',{...updated,status:'open',ownerTaskId:null,assignmentId:null,proposal:null});
   }
   /**
-   * The user picks one device's saved version for each chosen file (the page decides which device is newer). It goes out like
-   * a reviewed resolution: every device is read again first, and a file that changed since is reopened instead of overwritten.
+   * The user picks one device for each chosen file (the page decides which device is newer). That device's current file
+   * overwrites the others: every device is read again first, and a change made since on any device does not reopen the
+   * conflict (the chosen device's latest version wins). Only a chosen file that no longer exists reopens it.
    * A file without a conflict record yet, one already being applied, or one a role is repairing right now is left alone and
    * reported. Unstarted repair tasks for a chosen file are cancelled.
    */
@@ -127,7 +115,7 @@ export class SourceSyncConflicts {
         if(!side)return report('side_missing');
         for(const taskId of [c.ownerTaskId,...(c.peerTaskIds||[])].filter(Boolean)){const task=this.db.get('tasks',taskId);if(task&&!task.currentRunId&&!done.has(task.status))this.db.put('tasks',{...task,status:'cancelled'});}
         // A fresh id per choice: picking the same device again after a blocked attempt starts a new batch, not the old one.
-        const choices=(c.choices||0)+1,proposal={id:contentHash(JSON.stringify([c.id,c.generation,side.nodeId,side.endpointId||side.root||'',choices])),entry:side.entry,sourceNodeId:side.nodeId,sourceRoot:side.root};
+        const choices=(c.choices||0)+1,proposal={id:contentHash(JSON.stringify([c.id,c.generation,side.nodeId,side.endpointId||side.root||'',choices])),entry:side.entry,sourceNodeId:side.nodeId,sourceRoot:side.root,humanChoice:true};
         const chosen=this.db.put('sourceSyncConflicts',{...c,choices,...(c.detection==='metadata'?{}:{status:'verifying',review:{kind:'human_choice',nodeId:side.nodeId,at:new Date().toISOString()}})});
         const batch=this.sync.resolve(chosen,proposal);
         if(c.detection!=='metadata')this.db.put('sourceSyncConflicts',{...chosen,resolutionBatchId:batch.id});
