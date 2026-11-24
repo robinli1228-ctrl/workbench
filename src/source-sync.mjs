@@ -74,6 +74,19 @@ export class SourceSync {
     });
   }
   /** One current conflict per path; changed evidence advances its generation and preserves the old record. */
+  /**
+   * Conflicts that later converge: both devices end up with the same content (two roles wrote the same document, or one
+   * copied it across with wb device write). Only a conflict nobody is acting on settles by itself: open or waiting for the
+   * user, not an initialization proof, not assigned to a role and with no resolution batch in flight.
+   */
+  convergeable(conflict,active){return ['open','needs_input'].includes(conflict.status)&&!conflict.initialization&&!active.has(conflict.id);}
+  activeResolutions(projectId){return new Set(this.records('sourceSyncBatches',projectId).filter(b=>['resolution','evidence'].includes(b.kind)&&!done.has(b.status)).flatMap(b=>b.conflictIds||[]));}
+  /** Every device of the project and every device the conflict involves took part in this batch. */
+  coversConflict(batch,conflict){const nodes=new Set(batch.nodeIds),config=this.config(batch.projectId);
+    return [...(config?.nodeIds||[]),...(conflict.sides||[]).map(s=>s.nodeId),...(conflict.receiving||[]).map(s=>s.nodeId)].every(nodeId=>!nodeId||nodes.has(nodeId));}
+  /** Settle as resolved; repair tasks for it that have not started are cancelled, as when sync is turned off. */
+  converged(conflict,batchId){this.db.put('sourceSyncConflicts',{...conflict,status:'resolved',resolution:'converged',resolvedAt:stamp(),resolutionBatchId:batchId});
+    for(const task of this.db.listProject('tasks',conflict.projectId).filter(t=>[t.sourceConflictId,t.sourceConflictPeerId,t.sourceConflictAssignmentRequestId].includes(conflict.id)&&!t.currentRunId&&!['done','completed','cancelled','failed'].includes(t.status)))this.db.put('tasks',{...task,status:'cancelled'});}
   recordConflict(input){
     const id=identity(input.projectId,input.repositoryId,input.syncGeneration,input.path),prior=this.db.get('sourceSyncConflicts',id);
     if(prior&&!['resolved','cancelled'].includes(prior.status))input={...input,
@@ -86,7 +99,7 @@ export class SourceSync {
     const pendingCopyEntries=input.detection==='metadata'&&prior?.detection==='metadata'&&!prior.copiesReleasedAt
       ? [...new Map([...(prior.pendingCopyEntries||[]),prior.base,...(prior.sides||[]).map(s=>s.entry),...(prior.receiving||[]).map(s=>s.entry),prior.proposal?.entry].filter(Boolean).map(e=>[e.hash,e])).values()] : [];
     if(prior)this.db.put('sourceSyncConflictHistory',{...prior,id:`${id}:${prior.generation}`});
-    return this.db.put('sourceSyncConflicts',{...prior,...input,...(input.detection==='metadata'?{copiesReleasedAt:null,copiesCheckedAt:null,copiesNextCheckAt:null,pendingCopyEntries}:{}),id,generation:(prior?.generation||0)+1,status:'open',proposal:null,createdAt:stamp()});
+    return this.db.put('sourceSyncConflicts',{...prior,...(prior?.status==='resolved'?{resolution:null,resolvedAt:null,resolutionBatchId:null}:{}),...input,...(input.detection==='metadata'?{copiesReleasedAt:null,copiesCheckedAt:null,copiesNextCheckAt:null,pendingCopyEntries}:{}),id,generation:(prior?.generation||0)+1,status:'open',proposal:null,createdAt:stamp()});
   }
   resolve(conflict,proposal){return this.specialBatch(conflict,'resolution',proposal);}
   refreshEvidence(conflict){return this.specialBatch(conflict,'evidence');}
@@ -304,7 +317,19 @@ export class SourceSync {
       const captures=this.captures(batch,repositoryId).sort((a,b)=>Number(b.nodeId===batch.sourceNodeId)-Number(a.nodeId===batch.sourceNodeId));
       const entries={...canonical.entries},origins={...canonical.origins},blocked=new Set();
       const byNode=leftScope.get(repositoryId)||new Map(),leftOn=nodeId=>byNode.get(nodeId)||new Set();
-      if(batch.scopeKind==='directory')for(const conflict of this.records('sourceSyncConflicts',batch.projectId).filter(c=>c.repositoryId===repositoryId&&c.syncGeneration===batch.generation&&!['resolved','cancelled'].includes(c.status)))blocked.add(conflict.path);
+      if(batch.scopeKind==='directory'){
+        // A conflict whose every device now holds the same content (or none) is settled here instead of waiting for the user.
+        const active=this.activeResolutions(batch.projectId),nodes=new Set(batch.bindings.filter(b=>b.repositoryId===repositoryId).map(b=>b.nodeId));
+        const complete=nodes.size>1&&[...nodes].every(nodeId=>captures.some(c=>c.nodeId===nodeId));
+        for(const conflict of this.records('sourceSyncConflicts',batch.projectId).filter(c=>c.repositoryId===repositoryId&&c.syncGeneration===batch.generation&&!['resolved','cancelled'].includes(c.status))){
+          const seen=captures.map(c=>getEntry(c.result.manifest.entries,conflict.path));
+          if(complete&&this.convergeable(conflict,active)&&this.coversConflict(batch,conflict)&&!captures.some(c=>leftOn(c.nodeId).has(conflict.path))&&seen.every(entry=>entryEqual(entry,seen[0]))){
+            if(seen[0]){entries[conflict.path]=seen[0];origins[conflict.path]={nodeId:captures[0].nodeId,commandId:captures[0].id};}else{delete entries[conflict.path];delete origins[conflict.path];}
+            this.converged(conflict,batch.id);continue;
+          }
+          blocked.add(conflict.path);
+        }
+      }
       for(const c of captures){let ack=this.db.get('sourceSyncDevices',`${id}:${c.nodeId}`);if(!ack||ack.generation!==batch.generation)throw syncError('baseline_missing');
         const binding=batch.bindings.find(b=>b.nodeId===c.nodeId&&b.repositoryId===repositoryId);
         if(binding.readOnlyExport){const sourceBase=binding.sourceBaseManifestId?this.db.get('sourceSyncVersions',binding.sourceBaseManifestId):c.result.base;if(!sourceBase)throw syncError('baseline_missing');ack={...ack,entries:sourceBase.entries};}
