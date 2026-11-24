@@ -333,7 +333,8 @@ export class SourceSyncHome {
       const stages=this.db.listSourceSyncCommands({batchId:c.batchId,action:'stage'}).map(x=>x.id===c.id?{...x,result}:x);
       const reads=this.db.listSourceSyncCommands({batchId:c.batchId,action:'read'}),read=metadataReadLookup(reads);
       if(c.action==='stage'&&stages.every(x=>x.result?.status==='completed'))for(const op of batch.metadataOperations||[]){
-        if(op.source)continue;
+        // A recheck of an open conflict is only compared, never staged.
+        if(op.source||op.decision==='recheck')continue;
         const sides=batch.nodeIds.map(n=>read(op.repositoryId,n,op.path));
         if(!['resolution','initialize_overwrite'].includes(op.decision)&&contentEqual(sides[0],sides[1]))continue;
         for(const entry of sides.filter(Boolean))await this.storage.receive(c.projectId,entry,Readable.from(await storage.read(c.projectId,entry.hash)));

@@ -8,6 +8,7 @@ import {buildSourceBindings,sourceScopeBinding} from './source-sync-scopes.mjs';
 
 const stamp=()=>new Date().toISOString(),done=new Set(['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready']);
 const getEntry=(entries,path)=>Object.hasOwn(entries,path)?entries[path]:null;
+const BATCH_SETTLED=new Set(['completed','partial_conflict','blocked','cancelled','preview_ready','evidence_ready']);
 const identity=(...parts)=>contentHash(JSON.stringify(parts));
 
 /**
@@ -74,6 +75,14 @@ export class SourceSync {
     });
   }
   /** One current conflict per path; changed evidence advances its generation and preserves the old record. */
+  /**
+   * Conflicts that later converge: both devices end up with the same content (two roles wrote the same document, or one
+   * copied it across with wb device write). Only a conflict nobody is acting on settles by itself: open or waiting for the
+   * user, not an initialization proof, not assigned to a role and with no resolution batch in flight.
+   */
+  convergeable(conflict,active){return ['open','needs_input'].includes(conflict.status)&&!conflict.initialization&&!active.has(conflict.id);}
+  activeResolutions(projectId){return new Set(this.records('sourceSyncBatches',projectId).filter(b=>['resolution','evidence'].includes(b.kind)&&!BATCH_SETTLED.has(b.status)).flatMap(b=>b.conflictIds||[]));}
+  converged(conflict,batchId){this.db.put('sourceSyncConflicts',{...conflict,status:'resolved',resolution:'converged',resolvedAt:stamp(),resolutionBatchId:batchId});}
   recordConflict(input){
     const id=identity(input.projectId,input.repositoryId,input.syncGeneration,input.path),prior=this.db.get('sourceSyncConflicts',id);
     if(prior&&!['resolved','cancelled'].includes(prior.status))input={...input,
@@ -304,7 +313,19 @@ export class SourceSync {
       const captures=this.captures(batch,repositoryId).sort((a,b)=>Number(b.nodeId===batch.sourceNodeId)-Number(a.nodeId===batch.sourceNodeId));
       const entries={...canonical.entries},origins={...canonical.origins},blocked=new Set();
       const byNode=leftScope.get(repositoryId)||new Map(),leftOn=nodeId=>byNode.get(nodeId)||new Set();
-      if(batch.scopeKind==='directory')for(const conflict of this.records('sourceSyncConflicts',batch.projectId).filter(c=>c.repositoryId===repositoryId&&c.syncGeneration===batch.generation&&!['resolved','cancelled'].includes(c.status)))blocked.add(conflict.path);
+      if(batch.scopeKind==='directory'){
+        // A conflict whose every device now holds the same content (or none) is settled here instead of waiting for the user.
+        const active=this.activeResolutions(batch.projectId),nodes=new Set(batch.bindings.filter(b=>b.repositoryId===repositoryId).map(b=>b.nodeId));
+        const complete=nodes.size>1&&[...nodes].every(nodeId=>captures.some(c=>c.nodeId===nodeId));
+        for(const conflict of this.records('sourceSyncConflicts',batch.projectId).filter(c=>c.repositoryId===repositoryId&&c.syncGeneration===batch.generation&&!['resolved','cancelled'].includes(c.status))){
+          const seen=captures.map(c=>getEntry(c.result.manifest.entries,conflict.path));
+          if(complete&&this.convergeable(conflict,active)&&!captures.some(c=>leftOn(c.nodeId).has(conflict.path))&&seen.every(entry=>entryEqual(entry,seen[0]))){
+            if(seen[0]){entries[conflict.path]=seen[0];origins[conflict.path]={nodeId:captures[0].nodeId,commandId:captures[0].id};}else{delete entries[conflict.path];delete origins[conflict.path];}
+            this.converged(conflict,batch.id);continue;
+          }
+          blocked.add(conflict.path);
+        }
+      }
       for(const c of captures){let ack=this.db.get('sourceSyncDevices',`${id}:${c.nodeId}`);if(!ack||ack.generation!==batch.generation)throw syncError('baseline_missing');
         const binding=batch.bindings.find(b=>b.nodeId===c.nodeId&&b.repositoryId===repositoryId);
         if(binding.readOnlyExport){const sourceBase=binding.sourceBaseManifestId?this.db.get('sourceSyncVersions',binding.sourceBaseManifestId):c.result.base;if(!sourceBase)throw syncError('baseline_missing');ack={...ack,entries:sourceBase.entries};}
