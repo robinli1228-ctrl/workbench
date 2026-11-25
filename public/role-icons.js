@@ -210,6 +210,24 @@ export function agentWatermarkEl(runtime) {
 }
 
 const STROKE = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+/**
+ * Avatars of the platform's own messages in group chat: a soft tinted tile with one glyph per kind of notice, so a device
+ * dropping out, a stall check or a reminder reads at a glance. Unknown kinds use the bell.
+ */
+const NOTICE_GLYPHS={
+  plug:'<path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5"/>',
+  unplug:'<path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5M3 3l18 18"/>',
+  pulse:'<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+  sync:'<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/>',
+  bell:'<path d="M6 9a6 6 0 1 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9zM10.3 20.5a2 2 0 0 0 3.4 0"/>',
+  sparkle:'<path d="M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9zM18.5 15.5l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z"/>',
+  alarm:'<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.5 1.5M4.5 4 2.5 6M19.5 4l2 2"/>'
+};
+const NOTICE_KINDS={connection_restored:['plug','green'],connection_lost:['unplug','red'],stall_check:['pulse','amber'],source_conflict:['sync','blue'],
+  call_outcome:['bell','indigo'],task_return:['bell','indigo'],task_start:['bell','indigo'],proactive_followup:['bell','indigo'],reminder:['alarm','violet'],welcome:['sparkle','indigo']};
+export function noticeIcon(kind){const [glyph,tone]=NOTICE_KINDS[kind]||['bell','indigo'];
+  return {tone,svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}>${NOTICE_GLYPHS[glyph]}</svg>`};}
+
 export const UI_ICON = {
   concurrent: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M16 3h5v5M8 3H3v5M12 22v-8.3a4 4 0 0 0-1.2-2.9L3 3M15 9l6-6"/></svg>`,
   close: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="m6 6 12 12M18 6 6 18"/></svg>`,

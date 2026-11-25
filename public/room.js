@@ -5,7 +5,7 @@ import {renderSessionQueue} from './session-queue.js';
 import { t, dateLocale, getLanguage } from './i18n.js';
 import { trackLoading } from './load-bar.js';
 import {shareGuestName} from './share-mode.js';
-import { agentIconEl, UI_ICON, workerDisplayName, closeIcon } from './role-icons.js';
+import { agentIconEl, UI_ICON, workerDisplayName, closeIcon, noticeIcon } from './role-icons.js';
 import { renderMarkdown, renderMessageMarkdown } from './markdown.js';
 import { linkMedia, openImageLightbox, openVideoLightbox, markImageOpener, fileGlyph } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
@@ -1206,7 +1206,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     row.dataset.messageId=m.id;if(discussionKey)row.dataset.discussion=discussionKey;
     const role = agent ? (data.roles || []).find(r => r.id === m.roleId) || (data.runs || []).find(r => r.id === m.runId)?.roleSnapshot : null;
     if (agent) row.append(avatarFor(role, m.senderName));
-    else if (reminder) { const icon = create('span', 'chat-avatar chat-avatar-reminder'); icon.innerHTML = system ? UI_ICON.refresh : UI_ICON.history; row.append(icon); }
+    else if (reminder) { const icon = create('span', 'chat-avatar chat-avatar-reminder'),notice=noticeIcon(!system?'reminder':m.kind||(m.id?.startsWith('welcome-')?'welcome':''));icon.dataset.tone=notice.tone;icon.innerHTML=notice.svg; row.append(icon); }
     const col = create('div', 'chat-col');
     const header = create('div', 'chat-message-header');
     // A role's card shows when its run started (the footer says how long it took); other cards their send time.
