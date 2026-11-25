@@ -2332,6 +2332,7 @@ dom.projectForm.addEventListener('submit', async (event) => {
   const values = formValues(dom.projectForm);
   pendingProjectRequest ||= crypto.randomUUID(); values.requestId=pendingProjectRequest;
   values.supervisor = setupUI.selection();
+  values.syncDevices = values.syncDevices === 'on' && Boolean(String(values.localRoot || '').trim()) && !dom.projectForm.querySelector('.project-sync-devices')?.hidden;
   for (const key of ['root', 'repoUrl', 'nodeId', 'supervisorNodeId', 'supervisorRuntime', 'supervisorModel', 'supervisorEffort']) delete values[key];
   button.disabled = true;
   try {

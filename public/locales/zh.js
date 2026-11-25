@@ -1981,6 +1981,7 @@ export default {
   "CLI busy": "CLI 忙碌",
   "Waiting for approval": "等待审批",
   "Waiting for your answer": "等待你回答",
+  "Also create the folder on {devices} and sync the files there": "同时在 {devices} 上建同名文件夹，并把文件同步过去",
   "Worker upgrade required": "需要升级 Worker",
   "Manual takeover": "人工接管中",
   "Reservation expired": "预留已失效",

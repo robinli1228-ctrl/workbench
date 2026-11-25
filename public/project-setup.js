@@ -30,11 +30,15 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
   const folderLabel=create('label','full-width','Existing project folder (optional)'),folderRow=create('div','native-workspace-row'),localRoot=create('input'),pickFolder=create('button','secondary','Select folder');
   localRoot.name='localRoot';localRoot.placeholder='Leave blank to create the default project folder';pickFolder.type='button';folderRow.append(localRoot,pickFolder);folderLabel.append(folderRow);form.elements.folderName.closest('label').after(folderLabel);
   const folderNote=create('p','workspace-note full-width','Only the selected folder is bound; existing files are kept. Browsing does not grant CLI permissions.');folderLabel.after(folderNote);
+  // A picked folder can be mirrored on the other online servers: same folder name under each one's default folder, then synced.
+  const syncLabel=create('label','checkbox-label full-width project-sync-devices'),syncBox=create('input'),syncText=create('span');syncBox.type='checkbox';syncBox.name='syncDevices';syncBox.checked=true;syncLabel.append(syncBox,syncText);syncLabel.hidden=true;folderNote.after(syncLabel);
+  const syncTargets=()=>{const source=form.elements.supervisorNodeId.value;return (getData().workers||[]).filter(w=>w.online&&w.id!==source&&w.nodeKind!=='local'&&w.capabilities?.directoryCreate===1&&w.capabilities?.workspaceBindings===1&&w.capabilities?.sourceSync===1&&w.capabilities?.sourceSyncDirectory===1);};
+  const syncChoice=()=>{const targets=syncTargets();syncLabel.hidden=!localRoot.value.trim()||!targets.length||localRoot.disabled;syncText.textContent=t('Also create the folder on {devices} and sync the files there',{devices:targets.map(w=>w.name||w.id).join(', ')});};
   const permissionLabel=create('label','','Permission scope'),permissionSelect=create('select'),permissionNote=create('p','workspace-note full-width');permissionSelect.name='supervisorPermissionScope';permissionSelect.required=true;permissionLabel.append(permissionSelect);form.elements.supervisorEffort.closest('label').after(permissionLabel,permissionNote);
   let folderVersion=0;
   pickFolder.addEventListener('click',()=>{const nodeId=form.elements.supervisorNodeId.value,ticket=++folderVersion;openFolder?.(nodeId,localRoot.value,path=>{if(ticket!==folderVersion||form.elements.supervisorNodeId.value!==nodeId)return;localRoot.value=path;localRoot.dispatchEvent(new Event('input',{bubbles:true}));});});
   form.elements.supervisorNodeId.addEventListener('change',()=>{folderVersion++;localRoot.value='';permissionSelect.value='';delete permissionSelect.dataset.touched;});
-  localRoot.addEventListener('input',()=>folderVersion++);
+  localRoot.addEventListener('input',()=>{folderVersion++;syncChoice();});
   permissionSelect.addEventListener('change',()=>{permissionSelect.dataset.touched='1';choices();});
   const cards = document.querySelector('#setup-proposals');
   const busy = new Set();
@@ -62,6 +66,7 @@ export function projectSetupUI({ api, getData, getProject, refreshState, create,
     const local=worker?.nodeKind==='local'&&worker.capabilities?.localFolderSelection===1;
     localRoot.disabled=pickFolder.disabled=!local;
     folderNote.textContent=local?'Only the selected folder is bound; existing files are kept. Browsing does not grant CLI permissions.':'Upgrade the local Worker to select this folder';
+    syncChoice();
     renderPermissionScope(permissionSelect,permissionNote,{worker,runtime:runtime?.type,isNew:true});
     select('supervisorModel', runtime?.models || [], 'Select manager model', last.runtime === form.elements.supervisorRuntime.value ? last.model : '');
     const model = runtime?.models?.find(m => m.id === form.elements.supervisorModel.value);
