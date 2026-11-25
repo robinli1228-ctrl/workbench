@@ -235,7 +235,7 @@ const outputChanged=()=>{if(!changeTimer){changeTimer=setTimeout(change,100);cha
 const send = (ws, payload) => { if (ws?.readyState === 1) ws.send(JSON.stringify(payload)); };
 const online = id => sockets.get(id)?.readyState === 1&&!reconnectingNodes.has(id);
 const sourceSync=new SourceSyncHome({db,data,diagnostics:slowOperations,online,socket:id=>online(id)?sockets.get(id):null,change,rooms,query:workerQuery,watchUpload:(nodeId,req)=>mediaStreams.watchUpload(nodeId,req)});
-const projectSyncSetup=new ProjectSyncSetup({db,query:workerQuery,sourceSync,online,change});
+const projectSyncSetup=new ProjectSyncSetup({db,query:workerQuery,sourceSync,online,change});projectSyncSetup.recover();
 const projectFiles=new ProjectFiles({db,online,query:workerQuery});
 // wb device ls / read / write for roles and Sessions-page CLIs: the device's level in the project or session settings
 // decides the scope the Worker gets; at most two requests per device at a time, and a write goes in 48 KB parts, so a

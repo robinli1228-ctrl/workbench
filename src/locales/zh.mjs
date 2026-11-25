@@ -623,6 +623,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'projectSyncSetup.failed': "没能在其他设备上建好项目文件夹：{reason}",
   'projectSyncSetup.reason.no_device': "没有可以建文件夹的其他服务器。",
   'projectSyncSetup.reason.display_mac_required': "同步需要设备里有一台 Mac。",
+  'projectSyncSetup.reason.interrupted': "Home 中途重启了，没有做完。请到设备管理 → 项目文件同步里看一下。",
   'projectSyncSetup.reason.other': "{error}。可以在设备管理 → 项目文件同步里手动开启。",
   'projectSyncSetup.skipped.local': "{device} 是本地电脑，请在项目设置里为它绑定文件夹。",
   'projectSyncSetup.skipped.upgrade': "{device} 需要先升级 Worker 才能加入。",

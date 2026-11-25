@@ -47,26 +47,45 @@ export class ProjectSyncSetup {
     let enabled=false,error=null;
     if(!joined.length)error='no_device';
     else if(!display)error='display_mac_required';
-    else try{
+    else{
       const sync=this.sourceSync.sync,repositoryIds=[projectFileScopeId(projectId)];
-      const preview=sync.preview(projectId,{requestId:`auto-${randomUUID()}`,nodeIds,repositoryIds,scopeKind:'directory',mode:'continuous',contentMode:'source-only',displayNodeId:display});
-      await this.sourceSync.tick?.();
-      let batch=preview;const deadline=Date.now()+PREVIEW_WAIT_MS;
-      while(!SETTLED.has(batch.status)&&Date.now()<deadline){await this.sleepFor(POLL_MS);batch=this.db.get('sourceSyncBatches',preview.id)||batch;}
-      if(batch.status!=='preview_ready')throw Object.assign(new Error(batch.reason||batch.status),{code:batch.reason||'preview_not_ready'});
-      sync.configure(projectId,{enabled:true,revision:sync.config(projectId).revision,previewBatchId:preview.id});
-      await this.sourceSync.tick?.();enabled=true;
-    }catch(e){error=e.code||String(e.message||e).slice(0,200);}
+      // A repository picked in the same dialog binds inside the folder while the preview runs, which changes the bindings
+      // (binding_changed): preview again with the new ones.
+      for(let attempt=1;attempt<=3&&!enabled;attempt++){
+        try{
+          if(sync.config(projectId).enabled){enabled=true;error=null;break;}
+          const preview=sync.preview(projectId,{requestId:`auto-${randomUUID()}`,nodeIds,repositoryIds,scopeKind:'directory',mode:'continuous',contentMode:'source-only',displayNodeId:display});
+          await this.tick();
+          let batch=preview;const deadline=Date.now()+PREVIEW_WAIT_MS;
+          while(!SETTLED.has(batch.status)&&Date.now()<deadline){await this.sleepFor(POLL_MS);batch=this.db.get('sourceSyncBatches',preview.id)||batch;}
+          if(batch.status!=='preview_ready')throw Object.assign(new Error(batch.reason||batch.status),{code:batch.reason||'preview_not_ready'});
+          sync.configure(projectId,{enabled:true,revision:sync.config(projectId).revision,previewBatchId:preview.id});
+          enabled=true;error=null;
+        }catch(e){error=e.code||String(e.message||e).slice(0,200);
+          // Turned on by hand meanwhile: that is the outcome asked for.
+          if(sync.config(projectId).enabled){enabled=true;error=null;break;}
+          if(!['binding_changed','configuration_changed'].includes(error))break;}
+      }
+      if(enabled)await this.tick();
+    }
     record({status:enabled?'enabled':'failed',joined,skipped,error,finishedAt:new Date().toISOString()});
     this.notice(projectId,sourceNodeId,{joined,skipped,enabled,error});
     return {joined,skipped,enabled,error};
+  }
+  async tick(){try{await this.sourceSync.tick?.();}catch(error){console.error('Project sync setup tick:',error.message);}}
+  /** A setup cut short by a Home restart is reported as not finished, so the person who asked for it hears about it. */
+  recover(){
+    for(const project of this.db.list('projects').filter(p=>p.syncSetup?.status==='running')){
+      this.db.put('projects',{...project,syncSetup:{...project.syncSetup,status:'failed',error:'interrupted',updatedAt:new Date().toISOString()}});
+      this.notice(project.id,project.syncSetup.sourceNodeId,{joined:project.syncSetup.joined||[],skipped:[],enabled:Boolean(this.sourceSync.sync?.config(project.id)?.enabled),error:'interrupted'});
+    }
   }
   /** One Workbench notice in the project's default chat saying what was set up and what was not. */
   notice(projectId,sourceNodeId,{joined,skipped,enabled,error}){
     const name=id=>this.db.get('workers',id)?.name||id;
     const lines=[];
     if(enabled)lines.push(tr('projectSyncSetup.enabled',{source:name(sourceNodeId),devices:joined.map(j=>`${name(j.nodeId)} (${j.localRoot})`).join(', ')}));
-    else lines.push(tr('projectSyncSetup.failed',{reason:tr(`projectSyncSetup.reason.${['no_device','display_mac_required'].includes(error)?error:'other'}`,{error:error||''})}));
+    else lines.push(tr('projectSyncSetup.failed',{reason:tr(`projectSyncSetup.reason.${['no_device','display_mac_required','interrupted'].includes(error)?error:'other'}`,{error:error||''})}));
     for(const s of skipped)lines.push(tr(`projectSyncSetup.skipped.${s.reason}`,{device:name(s.nodeId),error:s.error||''}));
     const at=new Date().toISOString();
     this.db.put('roomMessages',{id:`project-sync-setup-${projectId}`,projectId,sender:'system',senderName:'Workbench',kind:'project_sync',text:lines.join('\n'),taskIds:[],createdAt:at});

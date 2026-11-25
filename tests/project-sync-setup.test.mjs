@@ -49,3 +49,19 @@ test('a server that needs an update is left out and named; with no device left s
   assert.equal(result.enabled,false);assert.equal(result.error,'no_device');assert.deepEqual(result.skipped,[{nodeId:'b',reason:'upgrade'}]);
   assert.equal(f.home.sync.config('p').enabled,false);assert.equal(f.db.get('projects','p').syncSetup.status,'failed');
 });
+
+test('a repository bound inside the folder during the preview makes the setup preview again instead of failing', async t => {
+  const f=await fixture(t);let added=false;
+  const pump=f.setup.sleepFor;f.setup.sleepFor=async()=>{if(!added){added=true;await mkdir(join(f.picked,'code'));f.db.put('repositoryWorkspaces',{id:'repo1:a',projectId:'p',nodeId:'a',repositoryId:'repo1',localRoot:join(f.picked,'code')});}await pump();};
+  const result=await f.setup.run('p','a');
+  assert.equal(added,true);assert.equal(result.enabled,true,JSON.stringify(result));
+  assert.deepEqual(f.home.sync.config('p').bindings.find(b=>b.nodeId==='a').scopePolicy.excludeRoots,['code']);
+});
+
+test('a setup cut short by a Home restart is reported as unfinished', async t => {
+  const f=await fixture(t);
+  f.db.put('projects',{...f.db.get('projects','p'),syncSetup:{status:'running',sourceNodeId:'a'}});
+  f.setup.recover();
+  assert.equal(f.db.get('projects','p').syncSetup.status,'failed');assert.equal(f.db.get('projects','p').syncSetup.error,'interrupted');
+  assert.match(f.db.get('roomMessages','project-sync-setup-p').text,/restart/);
+});
