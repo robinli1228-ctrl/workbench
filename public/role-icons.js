@@ -223,7 +223,7 @@ const NOTICE_GLYPHS={
   sparkle:'<path d="M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9zM18.5 15.5l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z"/>',
   alarm:'<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.5 1.5M4.5 4 2.5 6M19.5 4l2 2"/>'
 };
-const NOTICE_KINDS={connection_restored:['plug','green'],connection_lost:['unplug','red'],stall_check:['pulse','amber'],source_conflict:['sync','blue'],
+const NOTICE_KINDS={connection_restored:['plug','green'],connection_lost:['unplug','red'],stall_check:['pulse','amber'],source_conflict:['sync','blue'],project_sync:['sync','blue'],
   call_outcome:['bell','indigo'],task_return:['bell','indigo'],task_start:['bell','indigo'],proactive_followup:['bell','indigo'],reminder:['alarm','violet'],welcome:['sparkle','indigo']};
 export function noticeIcon(kind){const [glyph,tone]=NOTICE_KINDS[kind]||['bell','indigo'];
   return {tone,svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}>${NOTICE_GLYPHS[glyph]}</svg>`};}
