@@ -86,7 +86,7 @@ export class RepositoryDevices {
         containsCommit = state.localCommit;
       }
     }
-    const checked = await this.query({ nodeId }, 'repository_setup', { operationId: `${randomUUID()}-0`, repoUrl: repo.repoUrl, localRoot, clone: false, credential, ...(containsCommit ? { containsCommit } : {}) }, 90000);
+    const checked = await this.query({ nodeId, projectId }, 'repository_setup', { operationId: `${randomUUID()}-0`, repoUrl: repo.repoUrl, localRoot, clone: false, credential, ...(containsCommit ? { containsCommit } : {}) }, 90000);
     this.admin.check(projectId); this.syncFence(repo);
     const binding = bindRepository(this.db, repo, nodeId, checked);
     this.change(); await this.refresh(projectId); return { status: 'ready', localRoot: binding.localRoot };

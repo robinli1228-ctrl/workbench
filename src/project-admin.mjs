@@ -70,7 +70,7 @@ export class ProjectAdmin {
             if(!/^[a-f0-9]{40,64}$/.test(containsCommit||''))throw new Error(tr('projectAdmin.baselineVersionUnavailable'));
           }
           const credential = await this.hosting.auth(repo.accountId, repo.repoUrl);
-          const checked = await this.query({ nodeId }, 'repository_setup', { operationId: `${randomUUID()}-0`, repoUrl: repo.repoUrl, localRoot,
+          const checked = await this.query({ nodeId, projectId }, 'repository_setup', { operationId: `${randomUUID()}-0`, repoUrl: repo.repoUrl, localRoot,
             clone: input.clone !== false, credential, ...(containsCommit ? { containsCommit } : {}) }, 90000);
           prepared.push({nodeId,checked}); results.push({ nodeId, status: 'ready', localRoot:checked.localRoot });
         } catch (e) { results.push({ nodeId, status: 'blocked', error: e.message }); }
