@@ -86,7 +86,7 @@ Use different `PORT`, `DATA_DIR` and `WORKER_DATA_DIR` values to run a second, i
 
 1. Pick an always-on machine for the Home. Keep it on loopback and put an HTTPS reverse proxy in front, or set `HOST=xxxxx` together with `API_TOKEN=xxxxx` (a non-loopback `HOST` without `API_TOKEN` is rejected at startup). The Home does not terminate TLS.
 2. Generate a strong Worker token and set it on the Home: `WORKER_TOKEN=xxxxx`. Treat it like a password.
-3. On each other machine (laptop, Linux server), clone the same version of the code, install Node.js (>= 22.16), Git and the CLIs, and log in to the CLIs.
+3. On each other machine (laptop, Linux server), clone the same version of the code, install Node.js (>= 22.16), Git and the CLIs, and log in to the CLIs. Run `npm ci --omit=dev` in the release directory. The install hook makes the bundled Linux `ccusage` executable by the Worker user. If a deployment uses `--ignore-scripts`, run `node src/prepare-ccusage.mjs` explicitly after installation, as the SSH onboarding helper does.
 4. Start a Worker on each machine:
 
    ```sh

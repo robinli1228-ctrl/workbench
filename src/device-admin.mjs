@@ -381,6 +381,7 @@ if(alive){ console.log(JSON.stringify({started:false,alreadyRunning:true})); }
 else {
 for(const [name,content] of Object.entries(files)){const file=join(dir,name);await mkdir(dirname(file),{recursive:true});await writeFile(file,content);}
 await chmod(join(dir,'bin/wb'),0o755); execFileSync('npm',['ci','--omit=dev','--ignore-scripts'],{cwd:dir,stdio:'pipe',timeout:120000});
+execFileSync(process.execPath,['src/prepare-ccusage.mjs'],{cwd:dir,stdio:'pipe',timeout:10000});
 config.WORKER_DATA_DIR=data; config.PATH=join(homedir(),'.local/bin')+':'+join(homedir(),'.grok/bin')+':'+process.env.PATH; await writeFile(join(dir,'worker-config.json'),JSON.stringify(config),{mode:0o600});
 const launcher="import {readFileSync,openSync} from 'node:fs';import {spawn} from 'node:child_process';import {join} from 'node:path';const dir="+JSON.stringify(dir)+";const config=JSON.parse(readFileSync(join(dir,'worker-config.json'),'utf8'));function start(){const log=openSync(join(dir,'worker.log'),'a',0o600);const child=spawn(process.execPath,['src/worker.mjs'],{cwd:dir,env:{...process.env,...config},stdio:['ignore',log,log]});child.on('exit',()=>setTimeout(start,5000));}start();";
 await writeFile(join(dir,'launch.mjs'),launcher); const log=await open(join(dir,'launcher.log'),'a',0o600);

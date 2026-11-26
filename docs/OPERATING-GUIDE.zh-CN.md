@@ -86,7 +86,7 @@ npm run worker       # Worker，在另一个终端中
 
 1. 选一台常开的机器运行 Home。让它保持在回环地址并在前面放一个 HTTPS 反向代理，或者同时设置 `HOST=xxxxx` 与 `API_TOKEN=xxxxx`（设置了非回环的 `HOST` 却没有 `API_TOKEN` 时，启动会被拒绝）。Home 不终止 TLS。
 2. 生成一个强度足够的 Worker 令牌，并在 Home 上设置：`WORKER_TOKEN=xxxxx`。请像对待密码一样对待它。
-3. 在其他每台机器（笔记本、Linux 服务器）上，克隆同一版本的代码，安装 Node.js（>= 22.16）、Git 和 CLI，并登录这些 CLI。
+3. 在其他每台机器（笔记本、Linux 服务器）上，克隆同一版本的代码，安装 Node.js（>= 22.16）、Git 和 CLI，并登录这些 CLI。在发布目录运行 `npm ci --omit=dev`。安装脚本会给 Linux 随包附带的 `ccusage` 补上执行权限，让 Worker 用户可以运行它。如果部署使用了 `--ignore-scripts`，安装后像 SSH 接入助手一样显式运行 `node src/prepare-ccusage.mjs`。
 4. 在每台机器上启动 Worker：
 
    ```sh
