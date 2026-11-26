@@ -4589,3 +4589,4 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
 .chat-avatar.chat-avatar-reminder { display: block; padding: 0; background: transparent; box-shadow: 0 1px 2px rgb(16 24 40 / 12%), 0 2px 6px rgb(16 24 40 / 8%); }
 .chat-avatar.chat-avatar-reminder svg { display: block; width: 100%; height: 100%; }
 #chat-feed .chat-row.is-reminder > .chat-avatar.chat-avatar-reminder svg { width: 100%; height: 100%; }
+.task-state-waiting { color: #8a94a6; }
