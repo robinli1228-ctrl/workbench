@@ -4583,3 +4583,4 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
 .project-item.is-asking .list-run-status svg { width: 15px; height: 15px; stroke-width: 2.2; }
 @keyframes list-ask-breathe { 0%, 100% { opacity: .35; transform: scale(.88); } 50% { opacity: 1; transform: scale(1.08); } }
 @media (prefers-reduced-motion: reduce) { .project-item.is-asking .list-run-status { animation: none; } }
+.task-state-waiting { color: #8a94a6; }

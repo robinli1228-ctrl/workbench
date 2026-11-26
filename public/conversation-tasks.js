@@ -1,13 +1,13 @@
 import {t,dateLocale,onLanguageChange} from './i18n.js';
 import {setActionIcon,UI_ICON} from './role-icons.js';
-import {taskList,taskStatus,taskStep,taskPatch,taskCardVisible,stepDescription,stepPreview,MAX_STEP_DESCRIPTION} from './conversation-task-state.js';
+import {taskList,taskStatus,taskStep,taskPatch,taskCardVisible,stepDescription,stepPreview,MAX_STEP_DESCRIPTION,taskActivity,idleDays} from './conversation-task-state.js';
 const el=(tag,cls='',text)=>Object.assign(document.createElement(tag),{className:cls,...(text===undefined?{}:{textContent:text})});
 const raw=node=>{node.setAttribute('translate','no');return node;};
 const date=value=>value?new Date(value).toLocaleString(dateLocale()):'—';
 const labels={title:'Title',description:'Task description',plan:'Plan',ownerRoleId:'Owner',status:'Status',resultSummary:'Result summary',messageIds:'Related messages'};
 
 /** One bounded read per existing state refresh; scope and editor identity guard every async response. */
-export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
+export function createConversationTaskUI({api,getScope,getRoles,openMessage,getActivity=()=>({})}){
   const host=document.querySelector('#conversation-task-card'),heading=el('div','task-card-heading'),list=el('div','task-list'),notice=el('p','workspace-note');
   const title=el('h3','',t('Task list')),unfinished=el('input');unfinished.type='checkbox';unfinished.checked=true;
   const toggle=el('label','task-closed-toggle');toggle.append(unfinished,el('span','',t('Only unfinished')));
@@ -27,7 +27,11 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage}){
       const body=el('span','artifact-row-body');body.append(raw(el('strong','',`T${item.number} · ${item.title}`)));
       if(taskStep(item))body.append(raw(el('small','',taskStep(item))));
       const meta=el('span','task-list-meta'),identity=el('span','task-list-identity');
-      identity.append(raw(el('span','task-owner',roleName(item.ownerRoleId))),el('span',`task-state task-state-${item.status}`,t(taskStatus(item.status))));
+      // In progress but nobody on it right now: grey "Waiting", with the days since it last changed.
+      const waiting=taskActivity(item,getActivity())==='waiting',days=waiting?idleDays(item.updatedAt):0;
+      const state=el('span',`task-state task-state-${waiting?'waiting':item.status}`,waiting?(days>=1?t('Waiting · {days} d',{days}):t('Waiting')):t(taskStatus(item.status)));
+      if(waiting)state.title=t('Not closed, but no one is working on it right now.');
+      identity.append(raw(el('span','task-owner',roleName(item.ownerRoleId))),state);
       const time=el('time','',date(item.updatedAt));if(item.updatedAt)time.dateTime=item.updatedAt;meta.append(identity,time);body.append(meta);row.append(body);row.onclick=()=>open(item);list.append(row);
     }
     if(!list.children.length)list.append(el('p','workspace-note',t('No tasks to show.')));
