@@ -4629,3 +4629,12 @@ dialog:is(.message-queue-dialog, .native-ask-dialog, #wb-tray-dialog)::backdrop 
 .native-ask-dialog .native-ask-option { grid-template-columns: 24px minmax(0, 1fr); align-items: start; row-gap: 3px; padding: 10px 12px; border-color: var(--card-hairline); }
 .native-ask-dialog .native-ask-option.is-picked { border-color: rgb(79 91 206 / 35%); }
 .native-ask-dialog .native-ask-desc { grid-column: 2; white-space: normal; line-height: 1.6; }
+/* A little depth, kept quiet: a faint cool ground fading to white, a light band behind each title bar (a touch of the accent
+   behind the question, which waits on the user), and soft option rows. */
+.chat-tray { background: linear-gradient(180deg, #f8f9fd, #fff 72%); box-shadow: 0 -4px 14px rgb(16 24 40 / 7%), inset 0 1px 0 rgb(255 255 255 / 90%); }
+#message-queue summary { background: rgb(16 24 40 / 2.2%); }
+.chat-tray .native-ask .native-ask-head { background: rgb(79 91 206 / 4%); }
+.chat-tray .native-ask .native-ask-title svg { color: var(--accent); opacity: .85; }
+.chat-tray .native-ask-option:not(.is-picked) { border-color: rgb(16 24 40 / 5%); background: rgb(16 24 40 / 1.6%); }
+.chat-tray .native-ask-option:not(.is-picked):hover { background: rgb(16 24 40 / 3.5%); }
+.chat-tray .native-ask-options { gap: 6px; }
