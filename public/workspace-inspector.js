@@ -85,7 +85,7 @@ export function createWorkspaceInspector({api,documentPreview,getProject,getData
       if(result.shared){document.querySelector('#artifact-detail-meta').textContent=`${fileState(result)}\n${result.path||''}`;
         if(result.content===null){content.textContent=t(result.preview==='binary'?'Binary file; preview unavailable.':result.preview==='too_large'?(result.reason==='serialized_response_limit'?'Text preview exceeds the serialized response size limit.':'Local file exceeds the 600 KB text preview limit.'):result.syncState==='pending'?'Waiting for local synchronization':'Local file not found.');return;}}
       content.replaceChildren(markdown?renderMarkdown(simplifiedCliOutput(result.content)):el('pre','artifact-code',result.content));
-      sideItem={title:file.name,subtitle:file.path||'',copyText:result.content,render:()=>{const box=el('div','artifact-side-content');box.append(markdown?renderMarkdown(simplifiedCliOutput(result.content)):el('pre','artifact-code',result.content));return box;}};
+      sideItem={title:file.name,subtitle:file.path||'',copyText:markdown?simplifiedCliOutput(result.content):result.content,render:()=>{const box=el('div','artifact-side-content');box.append(markdown?renderMarkdown(simplifiedCliOutput(result.content)):el('pre','artifact-code',result.content));return box;}};
       side.hidden=!canOpenSide();
       if(result.syncState==='conflict'||result.syncState==='pending')content.prepend(el('p','workspace-note',t(result.syncState==='conflict'?'Conflict detected; showing actual local file.':'Showing local changes; synchronization pending.')));
     }catch(error){
