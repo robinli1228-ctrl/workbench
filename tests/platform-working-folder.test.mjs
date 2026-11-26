@@ -265,6 +265,11 @@ const ASK_DIRECT_EDITS = {
   en: [["Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\n", "Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\nAsk directly on assigned work too; do not pass the question back to the assigner.\n"]]
 };
 
+const MEMORY_SEARCH_EDITS = {
+  zh: [["- 收到任务就推进到可验证的结果，能查能做的先自己做完，再说缺什么。\n", "- 收到任务就推进到可验证的结果，能查能做的先自己做完，再说缺什么。\n- 碰到报错、要用账号或密钥、在另一台设备上操作或拿不准环境时，先用 wb memory search 关键词查平台记忆；本项目的事用 wb history 关键词查群聊记录。\n"]],
+  en: [["- Push each task to a verifiable result; do and check what you can yourself before naming gaps.\n", "- Push each task to a verifiable result; do and check what you can yourself before naming gaps.\n- When you hit an error, need an account or secret, work on another device or are unsure of the environment, first search platform memory with wb memory search WORDS; for this project's own matters, search the group chats with wb history WORDS.\n"]]
+};
+
 const SYNCED_WORKTREES = {
   zh: "- 项目开启同步后，项目文件夹里的文件会在设备之间自动同步，包括角色建的 worktree；.git、构建产物等 Git 忽略的文件默认不同步，范围见 wb help sync。默认直接在绑定目录里改；除非确有必要，例如大体量修改，或和别人的工作明显重叠，尽量不新建 worktree，代码合并后尽快删除自己建的 worktree。平台安排你在隔离执行目录（.worktrees/run-*）里工作时，就在那里做，不要删它。\n- Git 状态（提交、分支、暂存区）不同步：本机 git status 里可能有别的设备同步过来的修改，不代表有人没提交，不要撤销或丢弃。提交时只暂存自己负责的文件，并先用 git log -1 确认 HEAD 就是这些修改所基于的版本；不是的话，先和改动的人协调。\n",
   en: "- Once sync is on for the project, the files in the project folder sync between devices automatically, role-created worktrees included; .git, build outputs and other Git-ignored files do not sync by default (scope: wb help sync). Work in the bound folder by default; unless it is really needed, such as a large change or work that clearly overlaps someone else's, avoid creating a worktree, and delete any worktree you created soon after the code is merged. When the platform places you in an isolated run folder (.worktrees/run-*), work there and do not delete it.\n- Git state (commits, branches, the index) does not sync: this device's git status may include changes synced from another device; that does not mean someone left work uncommitted, so do not revert or discard them. When committing, stage only the files you own, and first check with git log -1 that HEAD is the commit those changes were based on; if it is not, coordinate with whoever made them first.\n"
@@ -274,7 +279,10 @@ for (const [lang, heading, next, help] of [['zh', '工作目录：', '找人协�
   test(`${lang}: working-folder rules, upgrade from the previous default, and wb help sync`, () => runWithLanguage(lang, () => {
     const current = defaultPlatformPrompt();
     const undo = edits => (text => edits.reduce((rebuilt, [old, now]) => { assert.ok(rebuilt.includes(now), now.slice(0, 40)); return rebuilt.replace(now, old); }, text));
-    const beforeAsk = undo(ASK_DIRECT_EDITS[lang])(current);
+    const beforeMemory = undo(MEMORY_SEARCH_EDITS[lang])(current);
+    assert.equal(createHash('sha256').update(beforeMemory.trim()).digest('hex'), { zh: '88dc45f7e62b484aa31a070d59e245003d16bf070cf8aed37431c95a4860281c', en: 'ff3c4b8f0e58458d73c995772436685c35e6c6e2d3676d2071526641c367b470' }[lang]);
+    assert.equal(normalizePlatformSettings({ platformPrompt: beforeMemory }).platformPrompt, current, 'a saved copy of that default follows the new one');
+    const beforeAsk = undo(ASK_DIRECT_EDITS[lang])(beforeMemory);
     assert.equal(createHash('sha256').update(beforeAsk.trim()).digest('hex'), { zh: 'bc2d3bd4edf94c519583b14f630dfff94c26c54dbf860ae0e89fe6fb8ac204c3', en: '4f906515d978c321ea255a3b7ddffc0e41173ba06283bbe588e4a2c47e641569' }[lang]);
     assert.equal(normalizePlatformSettings({ platformPrompt: beforeAsk }).platformPrompt, current, 'a saved copy of that default follows the new one');
     const beforeOwn = undo(OWN_WORK_EDITS[lang])(beforeAsk);

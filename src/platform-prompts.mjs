@@ -131,7 +131,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   '27ee23b1eb278a7f50f4bdab63cd61b5b72746813ad2de478ca37af720b4642f',
   // Defaults before assigned roles were told to ask the user themselves instead of handing questions back to the assigner.
   '4f906515d978c321ea255a3b7ddffc0e41173ba06283bbe588e4a2c47e641569',
-  'bc2d3bd4edf94c519583b14f630dfff94c26c54dbf860ae0e89fe6fb8ac204c3'
+  'bc2d3bd4edf94c519583b14f630dfff94c26c54dbf860ae0e89fe6fb8ac204c3',
+  // Defaults before roles were told when to search platform memory (wb memory search) and the group chats (wb history).
+  'ff3c4b8f0e58458d73c995772436685c35e6c6e2d3676d2071526641c367b470',
+  '88dc45f7e62b484aa31a070d59e245003d16bf070cf8aed37431c95a4860281c'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */
