@@ -116,6 +116,11 @@ export function composeCallText({goal,scope,input,returns,text}) {
 }
 
 export async function callRole({ role, roles, kind = 'consult', requestId, text, file, deliveryId,sourceSyncBatchId,task,goal,scope,input,returns }) {
+  // Taking a call back needs only the ID it was sent with.
+  if (kind === 'withdraw') {
+    if (!requestId) throw new Error(tr('wbTools.roleTextStableRequestId'));
+    return homeFetch('/api/agent/calls', { runId: context().runId, kind, requestId });
+  }
   text=composeCallText({goal,scope,input,returns,text});
   if ((!role && !roles) || !text || !requestId) throw new Error(tr('wbTools.roleTextStableRequestId'));
   // A soft hint only, measured on the brief itself (not an attached --file): the call is sent unchanged.

@@ -266,8 +266,8 @@ const ASK_DIRECT_EDITS = {
 };
 
 const STEER_EDITS = {
-  zh: [["- 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。\n", "- 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。\n- 派出去的长任务要留意进度（wb discuss peers 的 detail，或 wb history read 运行编号）；发现做偏了，用 wb call --kind steer 及时纠正，必须马上停下时用 --kind interrupt。\n"]],
-  en: [["- After sending, keep doing what does not depend on it; wait only when you need the result, after actually sending the request; waiting for nothing means the work is complete.\n", "- After sending, keep doing what does not depend on it; wait only when you need the result, after actually sending the request; waiting for nothing means the work is complete.\n- Keep an eye on long work you handed out (wb discuss peers detail, or wb history read RUN_ID); when it goes wrong, correct it in time with wb call --kind steer, or --kind interrupt when it must stop at once.\n"]]
+  zh: [["- 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。\n", "- 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。\n- 派出去的活要留意进度（wb discuss peers 的 detail，或 wb history read 运行编号）。指令有误或对方做偏了：先用 wb call --kind withdraw 撤回，对方还没开始就到此为止；已在执行，用 --kind steer 纠正，必须马上停下才用 --kind interrupt。不是你派的活，把问题告诉主管。\n"]],
+  en: [["- After sending, keep doing what does not depend on it; wait only when you need the result, after actually sending the request; waiting for nothing means the work is complete.\n", "- After sending, keep doing what does not depend on it; wait only when you need the result, after actually sending the request; waiting for nothing means the work is complete.\n- Keep an eye on work you handed out (wb discuss peers detail, or wb history read RUN_ID). When the brief was wrong or the work goes wrong: first take it back with wb call --kind withdraw, which settles it if the role has not started; if it is already running, correct it with --kind steer, and use --kind interrupt only when it must stop at once. For work you did not hand out, tell the manager.\n"]]
 };
 
 const MEMORY_SEARCH_EDITS = {

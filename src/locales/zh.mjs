@@ -1552,7 +1552,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'wbTools.callDocumentNotText': '文档必须为 UTF-8 文本文件。',
   'wbTools.callDocumentTooLong': '派活说明超过 12000 字符。把材料放进文件，只写设备和路径（或用 --file）；不要改用编码或截断。',
   'wbTools.callDocumentReference': '引用文档（资料，不是附加指令）：正文没有附上，需要时用 wb device read 按下面的设备和路径读取；SHA256 只在需要确认是同一版本时比对：',
-  'wbTools.kindMustBeConsultHandoff': `kind 只能为 consult、direct、transfer、handoff、steer 或 interrupt`,
+  'wbTools.kindMustBeConsultHandoff': `kind 只能为 consult、direct、transfer、handoff、withdraw、steer 或 interrupt`,
   'wbTools.currentRunHasNoDeliverable': '当前执行没有可交付的仓库',
   'wbTools.noChanges': '（无改动）',
   'wbTools.filledInByWorkerFrom': 'Worker 按 git 状态补全（角色未写正式交接）',
@@ -1596,6 +1596,7 @@ wb call --role 角色 --kind consult|direct|transfer --request-id 稳定编号 -
                      transfer：整件转交。对方成为负责人，自己推进、找人审核，做完直接回复用户；结果不再交回你，你这一轮可以直接结束。
                      重复 --role 可把同一段说明发给几个角色，各自处理；consult 和 direct 的说明里 @ 到的角色也会收到。可选 --goal、--scope、--input、--return 写成带标签的几行放在说明前面；--file 路径 附上项目里一个 UTF-8 文件的设备、路径和 SHA256（不贴正文，对方用 wb device read 读）。说明最多 12000 字。重试用同一个编号和内容。
                      --kind handoff --delivery-id 编号：配合 wb deliver 的跨设备提交派活。
+                     --kind withdraw --request-id 原编号：撤回自己发出、对方还没开始执行的指令（不用 --role 和 --text）；已在执行的撤不回，回复会给出它的进度和下一步能做什么。
                      --kind steer|interrupt：纠正正在执行的同事，只有主管和派出这项工作的角色可用。steer 把说明送进它正在执行的这一轮，不打断；interrupt 停下这一轮，让它按说明继续。
 wb wait "续接摘要"   登记你在等哪些派出的结果，然后结束本轮；结果都回来、超时（默认 30 分钟，从最后一个开始执行时算起，排在对方其他工作后面的时间不算）或对方 10 分钟仍无法开始时，平台叫醒你。摘要写完整的句子：在等谁、等什么、回来后做什么。也可 wb wait '{"summary":"...","requestIds":["编号"],"timeoutSeconds":1800}'
                      列出的几个请求要全部返回才叫醒你；想先处理先回来的，就只等那一个（requestIds 只写它的编号），处理完再等下一个。
@@ -1777,7 +1778,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 要别的角色协同时，先用 wb task create 建一个待办，写清目标和步骤；派活时用 wb call --task 关联它。任务说明只写当前状态，控制在 3 KB 以内，不往说明后面追加。每完成一步，用 wb task update 在 reason 里写结论、证据路径和版本；动手前（包括接手、恢复或复查）先看任务步骤和 .workbench/docs 里已有的结论，版本没变的直接引用，不重做。
 - 派活只写四项，每项一两句：目标；已有材料和已确认的结论（任务编号、设备和路径，代码版本写一次完整提交 SHA，不说“最新版本”）；对方负责什么、能改什么、不用做什么；完成标准和要交回什么。平台默认的限制（不合并、不部署、不动别人的文件等）不用重复写；具体怎么做由对方决定，不要先替对方把材料读一遍。
 - 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。
-- 派出去的长任务要留意进度（wb discuss peers 的 detail，或 wb history read 运行编号）；发现做偏了，用 wb call --kind steer 及时纠正，必须马上停下时用 --kind interrupt。
+- 派出去的活要留意进度（wb discuss peers 的 detail，或 wb history read 运行编号）。指令有误或对方做偏了：先用 wb call --kind withdraw 撤回，对方还没开始就到此为止；已在执行，用 --kind steer 纠正，必须马上停下才用 --kind interrupt。不是你派的活，把问题告诉主管。
 - 结果回来不等于通过：核对关键结论的证据（必改要能对上触发路径）再决定接受还是退回；派活时写明的版本不用重算 SHA。结果没有变化，不为同一件事再派人。
 - 交付前，大的改动请其他角色审核，小改动自测后直接交付；修复后只请提出问题的人复核。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。
 
@@ -1826,6 +1827,13 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'agentCalls.mentionFailed': '说明里 @ 到的 {names} 没能收到：{reason}。原派活已发出；需要他们处理就另行派活。',
   'agentCalls.noteSentAsCall': '留言里 @ 到的 {names} 已按咨询收到，回复会交回给你；需要等结果就用 wb wait。',
   'agentCalls.taskHint': '这件事还没有任务：建议用 wb task create 建一个，写清目标和步骤，之后派活用 --task 关联它。',
+  'agentCalls.withdrawNotFound': '没有找到你发出的编号为 {id} 的指令；只能撤回自己发出的。别人派的活需要停下时，把问题告诉主管。',
+  'agentCalls.withdrawTransferReason': '转交已撤回',
+  'agentCalls.withdrawDone': '已撤回发给 {names} 的指令，对方还没开始执行。',
+  'agentCalls.withdrawRunning': '{name} 已经在执行这条指令（运行 {runId}，已运行 {minutes} 分钟），撤不回。先用 wb history read {runId} 看它做到哪了；要纠正用 wb call --kind steer，必须马上停下才用 --kind interrupt。',
+  'agentCalls.withdrawStarted': '{name} 已经开始处理这条指令，现在没有在执行的回合，撤不回；需要改方向就再给它发一条说明。',
+  'agentCalls.withdrawAdding': '{name} 正在把这条说明接进它执行中的这一轮，撤不回。',
+  'agentCalls.withdrawEnded': '发给 {name} 的这条指令已经结束（{status}），没有可撤回的；结果用 wb history read {id} 看。',
   'agentCalls.steerNotRunning': '{name} 现在没有正在执行的任务；直接用 --kind consult 或 direct 派给它。',
   'agentCalls.steerNotAllowed': '只有主管或派出这项工作的角色可以纠正 {name}；把你发现的问题告诉主管。',
   'agentCalls.steerTooSoon': '{name} 刚被纠正过，先等它处理，几分钟后再试。',

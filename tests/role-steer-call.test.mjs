@@ -230,3 +230,53 @@ test('a correction the turn took is not a result to wait for; one it could not t
   event(f.db, 'r-b', 'supplement_failed', { id: f.db.get('coordinationRequests', other.requestId).taskId, error: 'busy' });
   assert.equal(f.db.get('roomMessages', other.messageId).steer.state, 'queued_first');
 });
+
+// ---- wb call --kind withdraw: take back a call the target has not started; one already running answers with what to do next.
+test('a call the target has not started is taken back, also from a later turn of the sender', () => {
+  const e = env(), { db, calls } = e;
+  e.working('r-sup', 'Builder', 'r-b');
+  // Two more calls wait behind Builder's running turn; one already has its task in the queue.
+  const plain = e.call('r-sup', { role: 'Builder', kind: 'direct', requestId: 'r-sup:next-1', text: 'then do Y' });
+  const admitted = e.call('r-sup', { role: 'Builder', kind: 'direct', requestId: 'r-sup:next-2', text: 'then do Z' });
+  const taskId = calls.reconcile(admitted.requestId).taskId;
+  const first = e.call('r-sup', { kind: 'withdraw', requestId: 'next-1' });
+  assert.deepEqual(first.withdrawn.map(item => item.name), ['Builder']); assert.equal(first.note, tr('agentCalls.withdrawDone', { names: 'Builder' }));
+  assert.equal(db.get('coordinationRequests', plain.requestId).status, 'cancelled'); assert.equal(db.get('coordinationRequests', plain.requestId).cancelReason, 'withdrawn');
+  assert.ok(db.get('roomMessages', plain.messageId).withdrawn.at);
+  // The manager's next turn names the same short ID.
+  db.put('runs', { ...db.get('runs', 'r-sup'), id: 'r-sup-2', status: 'running' });
+  const later = createAgentCalls({ db, calls, rooms: new Rooms(db) }, db.get('runs', 'r-sup-2'), { kind: 'withdraw', requestId: 'next-2' });
+  assert.equal(later.withdrawn.length, 1); assert.equal(db.get('tasks', taskId).status, 'cancelled'); assert.equal(db.get('coordinationRequests', admitted.requestId).status, 'cancelled');
+  assert.equal(db.get('runs', 'r-b').status, 'running', 'the turn in progress is not touched');
+});
+
+test('a call already running is not taken back: the answer gives its run and the next step', () => {
+  const e = env(), { db } = e;
+  const work = e.working('r-sup', 'Builder', 'r-b');
+  const answer = e.call('r-sup', { kind: 'withdraw', requestId: work });
+  assert.deepEqual(answer.withdrawn, []);
+  assert.match(answer.note, /r-b/); assert.match(answer.note, /--kind steer/); assert.match(answer.note, /--kind interrupt/);
+  assert.equal(db.get('coordinationRequests', work).status, 'running'); assert.ok(!db.get('runs', 'r-b').stopRequested);
+  db.put('runs', { ...db.get('runs', 'r-b'), status: 'succeeded', result: 'done' });
+  db.put('coordinationRequests', { ...db.get('coordinationRequests', work), status: 'succeeded', result: 'done' });
+  assert.equal(e.call('r-sup', { kind: 'withdraw', requestId: work }).note, tr('agentCalls.withdrawEnded', { name: 'Builder', status: 'succeeded', id: work }));
+});
+
+test('only the sender takes a call back', () => {
+  const e = env();
+  e.working('r-sup', 'Builder', 'r-b'); e.working('r-sup', 'Checker', 'r-c');
+  const queued = e.call('r-sup', { role: 'Builder', kind: 'direct', requestId: 'r-sup:next-3', text: 'then do Y' });
+  assert.throws(() => e.call('r-c', { kind: 'withdraw', requestId: 'next-3' }), new RegExp(tr('agentCalls.withdrawNotFound', { id: 'next-3' }).slice(0, 10)));
+  assert.equal(e.db.get('coordinationRequests', queued.requestId).status, 'queued');
+});
+
+test('a transfer taken back before the new owner started gives the task back to its sender', async () => {
+  const { ConversationTasks } = await import('../src/conversation-tasks.mjs');
+  const e = env(), { db } = e;
+  e.working('r-sup', 'Builder', 'r-b');
+  const task = new ConversationTasks(db).create({ projectId: P, conversationId: P }, { requestId: 'task-1', title: 'Import', description: 'brief', ownerRoleId: 'sup' }, { roleId: 'sup', runId: 'r-sup' });
+  const sent = e.call('r-sup', { role: 'Builder', kind: 'transfer', requestId: 'r-sup:hand-1', text: 'take over the import', task: 'T1' });
+  assert.equal(db.get('conversationTasks', task.id).ownerRoleId, 'b');
+  assert.equal(e.call('r-sup', { kind: 'withdraw', requestId: 'hand-1' }).withdrawn.length, 1);
+  assert.equal(db.get('conversationTasks', task.id).ownerRoleId, 'sup'); assert.equal(db.get('coordinationRequests', sent.requestId).status, 'cancelled');
+});
