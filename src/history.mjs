@@ -1,3 +1,4 @@
+import { runProgressText } from './run-progress.mjs';
 import { createHash } from 'node:crypto';
 import { tr } from './i18n.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
@@ -190,7 +191,10 @@ export class History {
     check(run);check(request);
     if (run && run.projectId !== projectId || request && request.projectId !== projectId) throw new Error(tr('history.contentDoesNotExistDoes2'));
     // An explicit Run is an immutable historical reference; only a request ID means reading the final result of the whole continuation chain.
-    if (run) return { identity: run.id, requestId: run.requestId || null, runId: run.id, content: run.result ?? run.error ?? '' };
+    // A run still going reads as what it has done so far, so a teammate can follow a long turn; a run hidden by review
+    // isolation shows nothing of it.
+    const live = run => run && !run.reviewRedacted ? runProgressText(this.db, run) : '';
+    if (run) return { identity: run.id, requestId: run.requestId || null, runId: run.id, content: live(run) || (run.result ?? run.error ?? '') };
     if (!run && request?.currentRunId) run = this.db.get('runs', request.currentRunId);
     check(run);
     if (!run && !request) throw new Error(tr('history.contentDoesNotExistDoes3'));
@@ -213,7 +217,7 @@ export class History {
         run = finalRun;
       }
     }
-    const content = request?.result ?? run?.result ?? run?.error ?? '';
+    const content = request?.result ?? (live(run) || (run?.result ?? run?.error ?? ''));
     return { identity: `${request?.id || ''}:${run?.id || ''}`, requestId: request?.id || run?.requestId || null,
       runId: run?.id || request?.currentRunId || null, content };
   }

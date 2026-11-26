@@ -37,7 +37,7 @@ export function buildRunContext({run,task,role={},environment={},conversation=nu
     source:{kind:run.backgroundFollowup?'platform':task?.coordinationKind&&task.coordinationKind!=='direct'?'role_call':'human',messageId:run.sourceMessageId||null,requestId:run.requestId||null},
     followup:run.backgroundFollowup?{...run.proactiveFollowup,state:run.followupState||[]}:null,
     ...(conversationTask?{conversationTask}:{}),
-    instruction,schedulingRoster:(task?.schedulingRoster||[]).map(r=>({id:r.id,name:r.name})),steering:task?.steering||null,rules:{roleRevision:role.revision||null},environment,
+    instruction,schedulingRoster:(task?.schedulingRoster||[]).map(r=>({id:r.id,name:r.name})),steering:task?.steering||null,...(task?.roleSteer?{roleSteer:{byRole:task.roleSteer.byRole}}:{}),rules:{roleRevision:role.revision||null},environment,
     context:{status:conversation?.version?(uncovered.length||conversation.partialThrough?'supplemented':'ready'):'unavailable',version:conversation?.version||null,
       organizer:organizer?{status:organizer.status,error:organizer.error||null,retryAt:organizer.retryAt||null}:null,
       snapshotThroughMessageId:messages.at(-1)?.id||null,partialThrough:conversation?.partialThrough||null,
@@ -74,7 +74,7 @@ function renderReceipts(receipts) {
  * a wait continuation, a stall or timer reminder and other system tasks are the platform's own.
  */
 export function turnOrigin(db,task,request) {
-  if(task?.steering)return {kind:'human'};
+  if(task?.steering)return task.roleSteer?{kind:'role',name:task.roleSteer.byRole||null}:{kind:'human'};
   const seen=new Set();
   for(let r=request;r&&!seen.has(r.id);r=r.reassignedFrom?db.get('coordinationRequests',r.reassignedFrom):null) {
     seen.add(r.id);
@@ -131,13 +131,15 @@ const ownerReminder=packet=>packet.conversationTask&&packet.roleId&&packet.conve
 
 /** The direction-change notice is true only when the steer stopped a running turn; a steer that just went first changed nothing. */
 const interrupted=packet=>Boolean(packet.steering&&(!Array.isArray(packet.steering.waitForRunIds)||packet.steering.waitForRunIds.length));
+/** Who changed the direction: the user, or the teammate that interrupted this role's turn (wb call --kind interrupt). */
+const directionNotice=packet=>packet.roleSteer?tr('runContext.roleInterruptedTurn',{name:packet.roleSteer.byRole||''}):tr('runContext.userChangedDirectionTurnImmediate');
 
 /** The message and the platform's additions, each addition named so the Worker can title it and the page can show it apart. */
 export function renderRunInputParts(packet) {
   const origin=packet.origin||{kind:'human'};
   const reference=item=>`- ${JSON.stringify(item.author)} [${item.id}]:\n${item.text}${item.truncated?`\n  wb history read ${item.id}`:''}`;
   const home=[
-    interrupted(packet)&&['steering',tr('runContext.userChangedDirectionTurnImmediate')],
+    interrupted(packet)&&['steering',directionNotice(packet)],
     packet.conversationTask&&['task',[taskText(packet.conversationTask,false),ownerReminder(packet)].filter(Boolean).join('\n')],
     packet.followup&&['followup',tr('followup.context',{context:JSON.stringify(packet.followup)})],
     packet.discussionResolution&&['discussion',tr('runContext.questionOnOriginalTaskHas',{p1:JSON.stringify(packet.discussionResolution)})],
@@ -155,7 +157,7 @@ export function renderRunPrompt(packet,{minimal=false}={}) {
   const taskContext=packet.conversationTask?[taskText(packet.conversationTask,true),ownerReminder(packet)].filter(Boolean).join('\n'):'';
   if(minimal)return [packet.instruction,taskContext,
     packet.followup?tr('followup.context',{context:JSON.stringify(packet.followup)}):'',
-    interrupted(packet)?tr('runContext.userChangedDirectionTurnImmediate'):'',
+    interrupted(packet)?directionNotice(packet):'',
     packet.discussionResolution?tr('runContext.questionOnOriginalTaskHas',{p1:JSON.stringify(packet.discussionResolution)}):'',
     packet.schedulingRoster?.length?tr('runContext.rolesTurnMustCoverFixed',{p1:packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(', ')}):'',
     ...(packet.references||[]).map(item=>`${JSON.stringify(item.author)} [${item.id}]:\n${item.text}${item.truncated?`\n${item.readCommand}`:''}`),
@@ -166,7 +168,7 @@ export function renderRunPrompt(packet,{minimal=false}={}) {
   if(packet.followup)lines.push(tr('followup.context',{context:JSON.stringify(packet.followup)}));
   if(packet.discussionResolution)lines.push(tr('runContext.questionOnOriginalTaskHas', { p1: JSON.stringify(packet.discussionResolution) }));
   if(packet.schedulingRoster?.length)lines.push(tr('runContext.rolesTurnMustCoverFixed', { p1: packet.schedulingRoster.map(r=>`${JSON.stringify(r.name)} [${r.id}]`).join(tr('runContext.text')) }));
-  if(interrupted(packet))lines.unshift(tr('runContext.userChangedDirectionTurnImmediate'));
+  if(interrupted(packet))lines.unshift(directionNotice(packet));
   const context={...packet.context};
   const showMessage=item=>tr('runContext.text3', { id: item.id, author: JSON.stringify(item.author), text: item.text, p4: item.truncated?tr('runContext.excerptCharactersFullTextPass', { length: item.text.length, totalLength: item.totalLength, readCommand: item.readCommand }):'', p5: item.attachments?.length?tr('runContext.attachmentsBodyDoesNotInclude', { p1: item.attachments.map(a=>a.name).join(tr('runContext.text2')) }):'' });
   if(packet.inheritedContext) {

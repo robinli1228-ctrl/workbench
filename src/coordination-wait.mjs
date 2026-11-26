@@ -69,7 +69,8 @@ export function waitDependencies(db,request,{uncarried=false}={}) {
       const carried=previous.waitEvent?.requestIds||previous.waitRequestIds;
       if(Array.isArray(carried))carried.forEach(id=>reported.add(id));else legacy.add(previous.id);
     }
-    for(const child of db.list('coordinationRequests').filter(r=>owners.has(r.parentRequestId)&&!r.continuationOf))
+    // A correction taken into a teammate's running turn has no reply of its own; that turn's result comes back through its own call.
+    for(const child of db.list('coordinationRequests').filter(r=>owners.has(r.parentRequestId)&&!r.continuationOf&&!(r.roleSteer&&r.mergedIntoRunId)))
       if(child.parentRequestId===request.id||!['succeeded','failed','cancelled'].includes(currentContinuation(db,child.id)?.status)
         ||uncarried&&!reported.has(child.id)&&!legacy.has(child.parentRequestId))ids.add(child.id);
   }

@@ -62,7 +62,8 @@ const QUEUE_GRACE_MS=2*3600000;
 function waitDeadline(db,parent,children) {
   const saved=Date.parse(parent.waitDeadlineAt),length=saved-Date.parse(parent.waitStartedAt||'');
   const open=children.filter(c=>!callTerminal.has(c.status));
-  if(open.some(c=>['queued','waiting_delivery'].includes(c.status)))return saved+QUEUE_GRACE_MS;
+  // A correction waiting first in its target's queue is behind the very turn being watched; it does not buy the wait more time.
+  if(open.some(c=>!c.roleSteer&&['queued','waiting_delivery'].includes(c.status)))return saved+QUEUE_GRACE_MS;
   if(!Number.isFinite(length))return saved;
   const started=Math.max(0,...open.map(c=>Date.parse(db.get('runs',c.currentRunId||'')?.createdAt||'')||0));
   return Math.max(saved,started+length);
@@ -405,7 +406,9 @@ export class RoleCalls {
     // Work the user interrupted (by steering the role doing it) wakes the caller to look at that run and decide.
     const interrupted=ready?children.filter(c=>c.status==='cancelled'&&c.cancelReason==='user_interrupted'):[];
     const reason=interrupted.length?'interrupted':ready?'results':expired?'timeout':'blocked';
-    if(!parent.waitEvent)this.db.put('coordinationRequests',{...parent,waitEvent:{id:`wait:${parent.id}`,reason,observedAt:new Date(time).toISOString(),requestIds:children.map(r=>r.id)}});
+    // A teammate's correction (wb call --kind interrupt) names who stopped the work; a user's steer names nobody.
+    const interruptedBy=[...new Set(interrupted.map(r=>r.interruptedByRole).filter(Boolean))].join(', ');
+    if(!parent.waitEvent)this.db.put('coordinationRequests',{...parent,waitEvent:{id:`wait:${parent.id}`,reason,...(interruptedBy?{by:interruptedBy}:{}),observedAt:new Date(time).toISOString(),requestIds:children.map(r=>r.id)}});
     // The user cancelled or redirected the work this wait served: keep the late replies, close the wait, start nothing.
     const source=parent.parentRequestId?this.db.get('coordinationRequests',parent.parentRequestId):null;
     if(source&&(source.status==='cancelled'||source.steeringTaskId)) {
@@ -417,7 +420,9 @@ export class RoleCalls {
     try {
       // Creating the continuation and linking it to the wait must roll back together before recording a retry/failure.
       this.db.transaction(()=>{
-      const header = reason==='interrupted'?tr('minimal.waitInterrupted',{resumeSummary:parent.resumeSummary,requestIds:interrupted.map(r=>r.id).join(', '),
+      // The role that interrupted its own handed-out work already sent the correction; it is only told the old call ended.
+      const self=interruptedBy&&interruptedBy===(parent.targetSnapshot?.name||this.db.get('roles',parent.targetRoleId)?.name);
+      const header = reason==='interrupted'?tr(self?'minimal.waitInterruptedBySelf':interruptedBy?'minimal.waitInterruptedByRole':'minimal.waitInterrupted',{resumeSummary:parent.resumeSummary,requestIds:interrupted.map(r=>r.id).join(', '),by:interruptedBy,
           roles:[...new Set(interrupted.map(r=>r.targetSnapshot?.name||this.db.get('roles',r.targetRoleId)?.name||r.targetRoleId))].join(', ')})
         :reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')})
         :reason==='blocked'?tr('minimal.waitBlocked',{resumeSummary:parent.resumeSummary,requestIds:blocked.map(x=>x.request.id).join(', '),reasons:blocked.map(x=>`${x.request.id}: ${x.block.reason}`).join('; ')})

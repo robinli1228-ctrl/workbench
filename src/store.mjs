@@ -557,6 +557,12 @@ export class Store {
     });
   }
   events(runId, after = 0, limit = -1) { return this.db.prepare('SELECT data FROM events WHERE run_id=? AND seq>? ORDER BY seq LIMIT ?').all(runId,after,limit).map(r => JSON.parse(r.data)); }
+  /** The newest events of a run, oldest first: a running turn's recent steps without reading its whole log. */
+  recentEvents(runId, limit = 200, type = null) {
+    const rows = type ? this.db.prepare("SELECT data FROM events WHERE run_id=? AND json_extract(data,'$.type')=? ORDER BY seq DESC LIMIT ?").all(runId,type,limit)
+      : this.db.prepare('SELECT data FROM events WHERE run_id=? ORDER BY seq DESC LIMIT ?').all(runId,limit);
+    return rows.map(r => JSON.parse(r.data)).reverse();
+  }
   /** Manual acceptance only applies to the latest successful execution; a stale page cannot confirm the result of another round. */
   acceptTask(taskId, runId) {
     return this.transaction(() => {

@@ -1393,7 +1393,9 @@ const server = http.createServer(async (req, res) => {
           return json(res,result);
         }
         if (pathname === '/api/agent/calls') {
-          const result=callWithMentions({db,calls,rooms},run,b);
+          const result=callWithMentions({db,calls,rooms,steering,online},run,b);
+          // A correction (--kind steer|interrupt) reaches the teammate's device now, like a user's steer.
+          for(const nodeId of result.dispatchNodeIds||[])dispatch(nodeId);
           scheduleChat(); change(); return json(res,result,201);
         }
         if (pathname === '/api/agent/wait') {

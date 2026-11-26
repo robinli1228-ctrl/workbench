@@ -948,7 +948,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   function messageCardMeta(message) {
     const outbound=message.sender!=='agent'||['handoff','discussion'].includes(message.kind);
     const kind=message.kind==='discussion'?'Question':message.kind==='handoff'
-      ? ({consult:'Question',direct:'Instruction',transfer:'Transfer',note:'Notice'}[message.handoff?.kind]||'Instruction')
+      ? ({consult:'Question',direct:'Instruction',transfer:'Transfer',note:'Notice',steer:'Correction',interrupt:'Interruption'}[message.handoff?.kind]||'Instruction')
       : message.sender==='agent'?'Reply':'Message';
     // A send still on its way says so.
     if(message.localSend==='stored')return {kind,status:'Completed'};
@@ -1326,7 +1326,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const kindLabel=t('{kind} · {status}',{kind:t(cardMeta.kind),status:t(cardMeta.status)}),kindEl=create('span','chat-card-kind');
     // A finished role card: the kind as a small icon, then how long its run took to it, like the running card's timer.
     if(cardMeta.done){
-      const icon=create('span','chat-card-kind-icon');icon.innerHTML=UI_ICON[{Reply:'replied',Question:'question',Instruction:'send',Transfer:'transfer',Notice:'notice'}[cardMeta.kind]||'replied'];
+      const icon=create('span','chat-card-kind-icon');icon.innerHTML=UI_ICON[{Reply:'replied',Question:'question',Instruction:'send',Transfer:'transfer',Notice:'notice',Correction:'send',Interruption:'stop'}[cardMeta.kind]||'replied'];
       icon.querySelector('svg')?.setAttribute('aria-hidden','true');icon.setAttribute('role','img');icon.setAttribute('aria-label',kindLabel);icon.title=kindLabel;kindEl.append(icon);
       if(cardMeta.duration){const took=create('span','elapsed-time',cardMeta.duration);took.title=t('Took {time}',{time:cardMeta.duration});kindEl.append(took);}
     }else kindEl.textContent=kindLabel+(cardMeta.duration?` · ${cardMeta.duration}`:'');

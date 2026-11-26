@@ -116,12 +116,17 @@ export function composeCallText({goal,scope,input,returns,text}) {
 }
 
 export async function callRole({ role, roles, kind = 'consult', requestId, text, file, deliveryId,sourceSyncBatchId,task,goal,scope,input,returns }) {
+  // Taking a call back needs only the ID it was sent with.
+  if (kind === 'withdraw') {
+    if (!requestId) throw new Error(tr('wbTools.roleTextStableRequestId'));
+    return homeFetch('/api/agent/calls', { runId: context().runId, kind, requestId });
+  }
   text=composeCallText({goal,scope,input,returns,text});
   if ((!role && !roles) || !text || !requestId) throw new Error(tr('wbTools.roleTextStableRequestId'));
   // A soft hint only, measured on the brief itself (not an attached --file): the call is sent unchanged.
   const lengthNote=text.length>1500?tr('wbTools.callTextLong',{chars:text.length}):null;
   if(role!==undefined&&roles!==undefined||roles!==undefined&&(!Array.isArray(roles)||!roles.length||roles.some(r=>typeof r!=='string'||!r.trim())))throw new Error(tr('wbTools.invalidCallTargets'));
-  if (!['consult', 'handoff','direct','transfer'].includes(kind)) throw new Error(tr('wbTools.kindMustBeConsultHandoff'));
+  if (!['consult', 'handoff','direct','transfer','steer','interrupt'].includes(kind)) throw new Error(tr('wbTools.kindMustBeConsultHandoff'));
   if(file!==undefined) {
     // Only where the document is travels with the call: the receiver reads it with wb device read when it needs it, instead
     // of the whole text being pasted into the brief and read a second time. The digest tells it whether it has the same version.

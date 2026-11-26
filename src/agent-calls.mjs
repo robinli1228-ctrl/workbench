@@ -4,6 +4,8 @@ import {isSupervisorName} from './default-roles.mjs';
 import {tr} from './i18n.mjs';
 import {conversationIdOf,agentConversationInput} from './group-conversations.mjs';
 import {mentionNames} from './rooms.mjs';
+import {supplementPending} from './role-steering.mjs';
+import {runProgress} from './run-progress.mjs';
 
 /**
  * Roles of the project @-mentioned in a role's text that would not have it otherwise: not the writer, the role that called it
@@ -52,11 +54,91 @@ export function noteWithMentions(ctx,run,text) {
   return ctx.rooms.agentNote(run,text);
 }
 
+// A teammate that was just corrected gets time to act on it before the next correction.
+const STEER_GAP_MS=3*60*1000;
+/** Roles that handed the work of this run out: the caller of its request (through wakes and transfers) and the run that sent it. */
+function assigners(db,run) {
+  const ids=new Set();
+  for(let request=db.get('coordinationRequests',run.requestId||''),seen=new Set();request&&!seen.has(request.id);request=db.get('coordinationRequests',request.continuationOf||'')) {
+    seen.add(request.id);
+    for(const id of [request.parentRequestId,request.transferredFrom]){const source=id&&db.get('coordinationRequests',id);if(source?.targetRoleId)ids.add(source.targetRoleId);}
+    const sender=request.sourceRunId&&db.get('runs',request.sourceRunId);if(sender?.roleId)ids.add(sender.roleId);
+  }
+  return ids;
+}
+
+/**
+ * wb call --kind steer|interrupt: correct a teammate whose turn is running. steer adds the text to that turn (Claude, Codex)
+ * or, when the turn cannot take it, puts it first in the role's queue; interrupt stops the turn and the role continues from
+ * the text. Only the manager, or the role that handed that work out, may do this, and not twice within a few minutes.
+ */
+function steerTeammate({db,calls,steering,online=()=>true},run,request,target,kind) {
+  if(!steering)throw new Error(tr('roleCalls.invalidCallType'));
+  const admitted=calls.reconcile(request.id),task=admitted?.taskId&&db.get('tasks',admitted.taskId);
+  if(!task)throw new Error(admitted?.error||tr('agentCalls.steerNotRunning',{name:target.name}));
+  db.put('tasks',{...task,roleSteer:{kind,byRoleId:run.roleId,byRole:run.roleSnapshot.name,at:new Date().toISOString()}});
+  // The request carries the mark too: waits and their deadlines treat a correction differently from handed-out work.
+  db.put('coordinationRequests',{...db.get('coordinationRequests',request.id),roleSteer:kind});
+  const conversationId=conversationIdOf(run);
+  if(kind==='steer'){
+    const added=steering.supplement(run.projectId,task.id,{conversationId},{online});
+    if(!added)throw new Error(tr('agentCalls.steerNotRunning',{name:target.name}));
+    return added.supplementing?{steer:'added',dispatchNodeIds:[added.nodeId].filter(Boolean),note:tr('agentCalls.steerAdded',{name:target.name})}
+      :{steer:'queued_first',dispatchNodeIds:[],note:tr('agentCalls.steerQueuedFirst',{name:target.name})};
+  }
+  const result=steering.request(run.projectId,task.id,`role-steer-${createHash('sha256').update(request.id).digest('hex').slice(0,24)}`,{conversationId});
+  return {steer:'interrupting',dispatchNodeIds:[...new Set((result.waitForRunIds||[]).map(id=>db.get('runs',id)?.nodeId).filter(Boolean))],note:tr('agentCalls.steerInterrupting',{name:target.name})};
+}
+
+/**
+ * wb call --kind withdraw --request-id ID: take back a call this role sent that its target has not started. The ID is the one
+ * given when sending, also from an earlier turn. A call already running cannot be taken back: the answer says how far it is
+ * and that it can be corrected (steer) or stopped (interrupt), so the role decides the next step from one reply.
+ */
+function withdrawCalls({db,calls},run,input) {
+  const id=String(input.requestId||'');
+  if(!/^[a-zA-Z0-9:_-]{1,200}$/.test(id))throw new Error(tr('roleCalls.invalidCallId'));
+  const conversationId=conversationIdOf(run),own=message=>message?.callFingerprint&&message.projectId===run.projectId&&message.roleId===run.roleId&&conversationIdOf(message)===conversationId;
+  // This turn's call, the full ID, or the newest call of an earlier turn of this role that was sent with the same short ID.
+  const message=[`call:${run.id}:${id}`,`call:${id}`].map(key=>db.get('roomMessages',key)).find(own)
+    ||db.db.prepare("SELECT data FROM records WHERE kind='roomMessages' AND id GLOB ? ORDER BY rowid DESC").all(`call:*:${id}`).map(row=>JSON.parse(row.data)).find(own);
+  if(!message)throw new Error(tr('agentCalls.withdrawNotFound',{id}));
+  return db.transaction(()=>{
+    const withdrawn=[],notes=[];
+    // The copy sent to roles @-mentioned in the brief ("<id>-cc") goes back with it.
+    const copy=db.get('roomMessages',`${message.id}-cc`),requestIds=[message,own(copy)?copy:null].filter(Boolean).flatMap(m=>m.requestIds||[m.requestId]);
+    for(const requestId of requestIds) {
+      const request=db.get('coordinationRequests',requestId);if(!request)continue;
+      const name=request.targetSnapshot?.name||db.get('roles',request.targetRoleId)?.name||request.targetRoleId,task=request.taskId?db.get('tasks',request.taskId):null;
+      const active=db.activeRuns().find(r=>r.id===request.currentRunId||r.requestId===request.id||task&&r.taskId===task.id);
+      if(['succeeded','failed','cancelled'].includes(request.status))notes.push(tr('agentCalls.withdrawEnded',{name,status:request.status,id:request.id}));
+      else if(task&&supplementPending(db,task))notes.push(tr('agentCalls.withdrawAdding',{name}));
+      else if(active)notes.push(tr('agentCalls.withdrawRunning',{name,runId:active.id,minutes:runProgress(db,active,{steps:0}).runningMinutes??'?'}));
+      else if(request.currentRunId||task&&(task.currentRunId||task.status!=='ready')||task?.steering)notes.push(tr('agentCalls.withdrawStarted',{name}));
+      else {
+        calls.cancel(request.id,{cause:'withdrawn'});withdrawn.push({requestId:request.id,targetRoleId:request.targetRoleId,name});
+        // A transfer handed the whole task over; taken back before the new owner started, the task is the sender's again.
+        const handed=request.transferredFrom&&request.conversationTaskId?db.get('conversationTasks',request.conversationTaskId):null;
+        if(handed&&handed.ownerRoleId===request.targetRoleId&&!['done','cancelled'].includes(handed.status)){
+          const revision=handed.revision+1,time=new Date().toISOString();
+          new ConversationTasks(db).persist({...handed,ownerRoleId:run.roleId,revision,updatedAt:time,history:[...handed.history,{revision,at:time,actor:{type:'role',roleId:run.roleId,runId:run.id},
+            reason:tr('agentCalls.withdrawTransferReason'),changes:{ownerRoleId:{from:handed.ownerRoleId,to:run.roleId}}}]},handed);
+        }
+      }
+    }
+    for(const m of [message,own(copy)?copy:null].filter(Boolean)){const ids=withdrawn.map(item=>item.requestId).filter(id=>(m.requestIds||[m.requestId]).includes(id));if(ids.length)db.put('roomMessages',{...db.get('roomMessages',m.id),withdrawn:{at:new Date().toISOString(),requestIds:ids}});}
+    return {messageId:message.id,withdrawn,note:[withdrawn.length?tr('agentCalls.withdrawDone',{names:withdrawn.map(item=>item.name).join(', ')}):'',...notes].filter(Boolean).join(' ')};
+  });
+}
+
 /** One shared instruction is published atomically; each recipient retains its own queue, request and reply lifecycle. */
-export function createAgentCalls({db,calls,rooms},run,input) {
+export function createAgentCalls({db,calls,rooms,steering,online},run,input) {
   agentConversationInput(run,input);
   const kind=input.kind||'consult';
-  if(!['consult','direct','handoff','transfer'].includes(kind))throw new Error(tr('roleCalls.invalidCallType'));
+  if(kind==='withdraw')return withdrawCalls({db,calls},run,input);
+  if(!['consult','direct','handoff','transfer','steer','interrupt'].includes(kind))throw new Error(tr('roleCalls.invalidCallType'));
+  // A correction is stored as a consultation of its one target; the flag on its task makes it a steer.
+  const steer=['steer','interrupt'].includes(kind)?kind:null;
   // A transfer hands the whole task over: the recipient owns it, replies to the user itself and is not tied to this turn.
   const transfer=kind==='transfer';
   if(input.role!==undefined&&input.roles!==undefined)throw new Error(tr('wbTools.invalidCallTargets'));
@@ -74,9 +156,26 @@ export function createAgentCalls({db,calls,rooms},run,input) {
     if(transfer&&targets.length!==1)throw new Error(tr('wbTools.invalidCallTargets'));
     if(transfer&&targets[0].id===run.roleId)throw new Error(tr('roleCalls.transferToSelf'));
     if(transfer&&input.deliveryId)throw new Error(tr('roleCalls.transferNoDelivery'));
+    if(steer) {
+      const target=targets[0],conversationId=conversationIdOf(run);
+      if(targets.length!==1||input.deliveryId||input.sourceSyncBatchId||input.task!==undefined)throw new Error(tr('wbTools.invalidCallTargets'));
+      if(target.id===run.roleId)throw new Error(tr('agentCalls.steerSelf'));
+      const active=db.activeRuns().filter(r=>r.projectId===run.projectId&&conversationIdOf(r)===conversationId&&r.roleId===target.id);
+      if(!db.get('roomMessages',`call:${input.requestId||''}`)?.callFingerprint) {
+        if(!active.length)throw new Error(tr('agentCalls.steerNotRunning',{name:target.name}));
+        if(!run.roleSnapshot.systemSupervisor&&!active.some(r=>assigners(db,r).has(run.roleId)))throw new Error(tr('agentCalls.steerNotAllowed',{name:target.name}));
+        const steers=db.listProject('tasks',run.projectId).filter(t=>conversationIdOf(t)===conversationId&&t.roleId===target.id&&t.roleSteer);
+        // This role's own correction still waiting in the target's queue: an interrupt takes its place instead of running after it.
+        const waiting=steer==='interrupt'?steers.filter(t=>t.roleSteer.byRoleId===run.roleId&&t.status==='ready'&&!t.currentRunId&&!t.steering&&!supplementPending(db,t)):[];
+        if(steers.some(t=>!waiting.includes(t)&&Date.now()-Date.parse(t.roleSteer.at)<STEER_GAP_MS))throw new Error(tr('agentCalls.steerTooSoon',{name:target.name}));
+        for(const t of waiting){const cancelled=rooms.cancel(t.id);if(cancelled?.requestId||t.requestId)calls.cancel(cancelled?.requestId||t.requestId);}
+      }
+    }
     const id=input.requestId||'';
     if(typeof id!=='string'||!/^[a-zA-Z0-9:_-]{1,200}$/.test(id))throw new Error(tr('roleCalls.invalidCallId'));
     if(typeof input.text!=='string'||!input.text.trim()||input.text.length>12000)throw new Error(tr('roleCalls.callSummaryMustBe1'));
+    // The stored call is a consultation; kind keeps what the role asked for (the chat card and a retry's fingerprint).
+    const callKind=steer?'consult':kind;
     const messageId=`call:${id}`,fingerprint=JSON.stringify({runId:run.id,targets:targets.map(r=>r.id).sort(),kind,text:input.text,deliveryId:input.deliveryId||null,sourceSyncBatchId:input.sourceSyncBatchId||null,...(input.task!==undefined?{task:input.task}:{})});
     const existing=db.get('roomMessages',messageId);
     const response=message=>{
@@ -84,7 +183,7 @@ export function createAgentCalls({db,calls,rooms},run,input) {
       const requests=requestIds.map(id=>db.get('coordinationRequests',id));
       if(requests.some(r=>!r||r.projectId!==run.projectId))throw new Error(tr('roleCalls.callIdConflictsWithDifferent'));
       return {requestId:requestIds[0],requestIds,messageId,status:requests.length===1?requests[0].status:'accepted',requests:requests.map(r=>({requestId:r.id,targetRoleId:r.targetRoleId,status:r.status})),
-        note:transfer?tr('home.transferredToOwner',{name:requests[0].targetSnapshot?.name||''}):tr('home.deliveredDirectlyTargetRoleWhen')};
+        note:transfer?tr('home.transferredToOwner',{name:requests[0].targetSnapshot?.name||''}):message.steer?.note||tr('home.deliveredDirectlyTargetRoleWhen'),...(message.steer?{steer:message.steer.state}:{})};
     };
     if(existing?.callFingerprint){
       if(existing.projectId!==run.projectId||existing.callFingerprint!==fingerprint)throw new Error(tr('roleCalls.callIdConflictsWithDifferent'));
@@ -101,24 +200,26 @@ export function createAgentCalls({db,calls,rooms},run,input) {
       if(target.archivedAt)throw new Error(tr('home.targetRoleArchivedCannotBe'));
       const role=target,summary=input.text;
       // Work goes straight to the role on its own device, in its own workspace; only a plan stage may not add cross-device work.
-      if(!['consult','transfer'].includes(kind)&&!run.roleSnapshot.systemSupervisor&&role.nodeId!==run.nodeId&&run.planId)throw new Error(tr('home.forNewCrossDeviceWork'));
+      if(!['consult','transfer'].includes(callKind)&&!run.roleSnapshot.systemSupervisor&&role.nodeId!==run.nodeId&&run.planId)throw new Error(tr('home.forNewCrossDeviceWork'));
       const requestId=targets.length===1?id:`multi:${createHash('sha256').update(JSON.stringify([id,target.id])).digest('hex')}`;
       const request=transfer
         ?calls.create({id:requestId,projectId:run.projectId,targetRoleId:role.id,sourceRunId:run.id,originNodeId:run.nodeId,
           sourceMessageId:run.sourceMessageId,kind:'direct',transferredFrom:parent.id,summary,sourceSyncBatchId:input.sourceSyncBatchId,attachments:run.attachments||[]})
         :calls.create({id:requestId,projectId:run.projectId,targetRoleId:role.id,parentRequestId:parent.id,sourceRunId:run.id,originNodeId:run.nodeId,
-          sourceMessageId:run.sourceMessageId,kind,summary,deliveryId:input.deliveryId,sourceSyncBatchId:input.sourceSyncBatchId,attachments:run.attachments||[],
+          sourceMessageId:run.sourceMessageId,kind:callKind,summary,deliveryId:input.deliveryId,sourceSyncBatchId:input.sourceSyncBatchId,attachments:steer?[]:run.attachments||[],
           // The caller's execution pins its own device's versions; a role on another device works from its own workspace.
-          ...(kind==='consult'||role.nodeId!==run.nodeId&&!run.roleSnapshot.systemSupervisor?{}:{planId:run.planId,planVersion:run.planVersion,stepId:run.stepId,execution:run.execution})});
+          ...(callKind==='consult'||role.nodeId!==run.nodeId&&!run.roleSnapshot.systemSupervisor?{}:{planId:run.planId,planVersion:run.planVersion,stepId:run.stepId,execution:run.execution})});
       if(linked&&transfer)taskList.transfer(run,linked.id,role.id);
       recipients.push({id:role.id,name:role.name});
       return db.put('coordinationRequests',{...request,...(linked?{conversationTaskId:linked.id}:{}),callMessageId:messageId});
     });
     if(existing)return response(existing);
+    const steered=steer?steerTeammate({db,calls,steering,online},run,requests[0],targets[0],steer):null;
     const toRoles=[...new Map(recipients.map(r=>[r.id,r])).values()];
     const message=db.put('roomMessages',{id:messageId,projectId:run.projectId,conversationId:conversationIdOf(run),sender:'agent',senderName:run.roleSnapshot.name,roleId:run.roleId,kind:'handoff',runId:run.id,
       requestId:requests[0].id,requestIds:requests.map(r=>r.id),callFingerprint:fingerprint,taskIds:[],text:input.text,replyToId:rooms.replySourceFor(run)?.id||null,
-      handoff:{kind,fromRoleId:run.roleId,fromRole:run.roleSnapshot.name,toRoleId:toRoles[0].id,toRole:toRoles[0].name,toRoles,summary:input.text},createdAt:new Date().toISOString()});
+      handoff:{kind,fromRoleId:run.roleId,fromRole:run.roleSnapshot.name,toRoleId:toRoles[0].id,toRole:toRoles[0].name,toRoles,summary:input.text},
+      ...(steered?{steer:{state:steered.steer,note:steered.note}}:{}),createdAt:new Date().toISOString()});
     rooms.touch(run.projectId,conversationIdOf(run));
     // Nudges at the moment of dispatch; the call itself is sent unchanged either way.
     const hints=[];
@@ -126,7 +227,9 @@ export function createAgentCalls({db,calls,rooms},run,input) {
     if(['direct','transfer'].includes(kind)&&!linked&&!parent.conversationTaskId)hints.push(tr('agentCalls.taskHint'));
     // Only an owning root turn can transfer; do not suggest a handover that the permission checks would reject.
     if(kind==='direct'&&run.roleSnapshot?.systemSupervisor&&linked&&targets.length===1&&linked.ownerRoleId===run.roleId&&targets[0].id!==run.roleId&&!parent.parentRequestId&&!run.planId&&!parent.planId&&!['done','cancelled'].includes(linked.status))hints.push(tr('agentCalls.transferHint'));
-    const result=response(message);
-    return hints.length?{...result,hint:hints.join(' ')}:result;
+    const result=hints.length?{...response(message),hint:hints.join(' ')}:response(message);
+    // Home sends the supplement or the stop to these devices right away; the list is not part of the role's answer.
+    if(steered?.dispatchNodeIds.length)Object.defineProperty(result,'dispatchNodeIds',{value:steered.dispatchNodeIds,enumerable:false});
+    return result;
   });
 }
