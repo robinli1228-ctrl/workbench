@@ -4584,12 +4584,8 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
 @keyframes list-ask-breathe { 0%, 100% { opacity: .35; transform: scale(.88); } 50% { opacity: 1; transform: scale(1.08); } }
 @media (prefers-reduced-motion: reduce) { .project-item.is-asking .list-run-status { animation: none; } }
 
-/* Platform notices in group chat (2026-11-25): a soft tinted tile with one glyph per kind (device back / dropped out, stall
-   check, sync, task notice, welcome, scheduled reminder). Same size as role avatars; phones use the 24px tile. */
-.chat-avatar.chat-avatar-reminder { --tone: 79 91 206; display: grid; place-items: center; color: rgb(var(--tone)); background: rgb(var(--tone) / 11%); box-shadow: inset 0 0 0 1px rgb(var(--tone) / 18%); }
-.chat-avatar.chat-avatar-reminder[data-tone="green"] { --tone: 22 150 88; }
-.chat-avatar.chat-avatar-reminder[data-tone="red"] { --tone: 214 69 65; }
-.chat-avatar.chat-avatar-reminder[data-tone="amber"] { --tone: 201 120 10; }
-.chat-avatar.chat-avatar-reminder[data-tone="blue"] { --tone: 37 118 220; }
-.chat-avatar.chat-avatar-reminder[data-tone="violet"] { --tone: 130 82 214; }
-.chat-avatar.chat-avatar-reminder svg { width: 20px; height: 20px; stroke-width: 1.9; }
+/* Platform notices in group chat (2026-11-25): an illustrated tile per kind of notice (the picture brings its own gradient
+   ground). Same size as role avatars; phones use the 24px tile in the name line. */
+.chat-avatar.chat-avatar-reminder { display: block; padding: 0; background: transparent; box-shadow: 0 1px 3px rgb(16 24 40 / 14%); }
+.chat-avatar.chat-avatar-reminder svg { display: block; width: 100%; height: 100%; }
+#chat-feed .chat-row.is-reminder > .chat-avatar.chat-avatar-reminder svg { width: 100%; height: 100%; }
