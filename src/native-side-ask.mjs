@@ -6,6 +6,7 @@ import {createInterface} from 'node:readline';
 import {NativeCliSession,NativeCodexSession} from './native-turn-sessions.mjs';
 import {readNativeSession,registeredNativeHistoryFile,registeredNativeSession,historyMessages} from './native-sessions.mjs';
 import {isHistoryPrompt} from '../public/history-prompt.js';
+import {traditionalInput} from './input-language.mjs';
 
 /**
  * Side questions on the Sessions page: a short read-only conversation beside a session that never reaches it.
@@ -197,7 +198,7 @@ export class SideAsks{
      this.db.put('sideAsks',r);
      let trimmed;
      if(m.snapshot){
-      const row={type:'user',uuid:randomUUID(),parentUuid:null,sessionId:r.tempId,cwd:r.cwd,timestamp:r.createdAt,message:{role:'user',content:`Historical reference only, not a new task:\n${m.snapshot.text}`}};
+      const row={type:'user',uuid:randomUUID(),parentUuid:null,sessionId:r.tempId,cwd:r.cwd,timestamp:r.createdAt,message:{role:'user',content:`Historical reference only, not a new task:\n${traditionalInput(m.snapshot.text)}`}};
       await writeFile(r.tempPath,JSON.stringify(row)+'\n',{flag:'wx',mode:0o600});trimmed={prompts:1};
      }else trimmed=await trimClaudeSession({parentPath:file.path,tempPath:r.tempPath,tempId:r.tempId,limits:this.limits});
      if(state.closing)return;
@@ -207,8 +208,9 @@ export class SideAsks{
    const files=await this.receiveFiles(m);
    if(state.closing)return;
    const others=files.filter(f=>runtime!=='codex'||!f.mime?.startsWith('image/'));
-   const reference=m.snapshot&&runtime==='claude'?'Use the saved previous completed turn as historical reference only; the main task keeps running.':m.snapshot?`Historical reference only, not a new task. Answer the side question using this completed turn; the main task keeps running.\n${m.snapshot.text}`:m.context;
-   const prompt=[fresh&&reference?reference:'',m.prompt||'',others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
+   const reference=m.snapshot&&runtime==='claude'?'Use the saved previous completed turn as historical reference only; the main task keeps running.':m.snapshot?`Historical reference only, not a new task. Answer the side question using this completed turn; the main task keeps running.\n${traditionalInput(m.snapshot.text)}`:traditionalInput(m.context);
+   // The side question and the reference turn reach the CLI in Traditional, like every other input.
+   const prompt=[fresh&&reference?reference:'',traditionalInput(m.prompt||''),others.length?`Attached files for this message (local paths):\n${others.map(f=>`- ${f.name}: ${f.path}`).join('\n')}`:''].filter(Boolean).join('\n\n');
    let ended=false;
    const end=async(status,error)=>{
     if(ended)return;ended=true;if(this.running.get(sideId)===state)this.running.delete(sideId);

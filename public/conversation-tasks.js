@@ -1,9 +1,13 @@
 import {t,dateLocale,onLanguageChange} from './i18n.js';
 import {setActionIcon,UI_ICON} from './role-icons.js';
+import {simplifiedCliOutput as zh} from './output-language.js';
 import {taskList,taskStatus,taskStep,taskPatch,taskCardVisible,stepDescription,stepPreview,MAX_STEP_DESCRIPTION,taskActivity,idleDays} from './conversation-task-state.js';
 const el=(tag,cls='',text)=>Object.assign(document.createElement(tag),{className:cls,...(text===undefined?{}:{textContent:text})});
 const raw=node=>{node.setAttribute('translate','no');return node;};
 const date=value=>value?new Date(value).toLocaleString(dateLocale()):'—';
+// Roles write tasks in Traditional Chinese; the page shows them in Simplified like replies. An edit box shows the Simplified
+// text, and a field left as shown keeps its saved original, so opening and saving never rewrites what was not touched.
+const kept=(value,original)=>value===zh(original??'')?original:value;
 const labels={title:'Title',description:'Task description',plan:'Plan',ownerRoleId:'Owner',status:'Status',resultSummary:'Result summary',messageIds:'Related messages'};
 
 /** One bounded read per existing state refresh; scope and editor identity guard every async response. */
@@ -24,8 +28,8 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage,getA
     list.replaceChildren();
     for(const item of taskList(items,!unfinished.checked)){
       const row=el('button','artifact-row task-list-row');row.type='button';row.dataset.taskId=item.id;
-      const body=el('span','artifact-row-body');body.append(raw(el('strong','',`T${item.number} · ${item.title}`)));
-      if(taskStep(item))body.append(raw(el('small','',taskStep(item))));
+      const body=el('span','artifact-row-body');body.append(raw(el('strong','',zh(`T${item.number} · ${item.title}`))));
+      if(taskStep(item))body.append(raw(el('small','',zh(taskStep(item)))));
       const meta=el('span','task-list-meta'),identity=el('span','task-list-identity');
       // In progress but nobody on it right now: grey "Waiting", with the days since it last changed.
       const waiting=taskActivity(item,getActivity())==='waiting',days=waiting?idleDays(item.updatedAt):0;
@@ -65,7 +69,7 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage,getA
     const target={...scope},version=generation,dialog=el('dialog','task-detail-dialog'),form=el('form','task-edit-form');
     dialog.id='conversation-task-detail';
     const top=el('div','dialog-heading'),close=button('Close',()=>dialog.close(),'icon-button');setActionIcon(close,'close','Close');
-    top.append(raw(el('h2','',record?`T${record.number} · ${record.title}`:t('Add task'))),close);
+    top.append(raw(el('h2','',record?zh(`T${record.number} · ${record.title}`):t('Add task'))),close);
     const error=el('p','task-form-error'),stale=el('p','workspace-note');error.setAttribute('role','alert');stale.setAttribute('role','status');
     const state={dialog,record,stale,requestId:crypto.randomUUID(),saving:false};editor=state;
     // One form keeps drafts across tabs. Reveal hidden invalid fields before native validation focuses them.
@@ -84,12 +88,12 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage,getA
     const roleOptions=[['',t('Unassigned')],...roles.map(r=>[r.id,r.name])];
     // Retain an archived current owner when editing unrelated fields.
     if(record?.ownerRoleId&&!roles.some(r=>r.id===record.ownerRoleId))roleOptions.push([record.ownerRoleId,roleName(record.ownerRoleId)]);
-    const titleInput=field(basic,'Title',record?.title,{required:true,maxLength:200});
-    const description=field(basic,'Task description',record?.description,{area:true,required:true,maxLength:12000});
+    const titleInput=field(basic,'Title',zh(record?.title??''),{required:true,maxLength:200});
+    const description=field(basic,'Task description',zh(record?.description??''),{area:true,required:true,maxLength:12000});
     basic.append(el('p','workspace-note',t('Changing the owner also requires a new handover description.')));
     const grid=el('div','form-grid');basic.append(grid);
     const owner=select(grid,'Owner',roleOptions,record?.ownerRoleId),status=select(grid,'Status',statuses(),record?.status||'todo');
-    const summary=field(basic,'Result summary',record?.resultSummary,{area:true,maxLength:8000});
+    const summary=field(basic,'Result summary',zh(record?.resultSummary??''),{area:true,maxLength:8000});
     const updateSummary=()=>{summary.parentElement.hidden=status.value!=='done';};status.onchange=updateSummary;updateSummary();
     const planBox=sections.steps,toolbar=el('div','task-steps-toolbar'),stepsBox=el('div','task-steps'),emptySteps=el('p','workspace-note',t('No steps yet. Add a step to build the plan.'));planBox.append(toolbar,emptySteps,stepsBox);
     let stepEditors=[],currentIndex=record?.plan?.currentStep||0;
@@ -101,11 +105,11 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage,getA
     }
     function stepEditor(step={description:'',status:'todo'}){
       const box=el('details','task-plan-step');box.open=!stepDescription(step).trim();
-      const heading=el('summary'),number=el('span','task-step-number'),name=raw(el('span','task-step-name',stepPreview(step,24)||t('Step description')));heading.append(number,name);box.append(heading);
+      const heading=el('summary'),number=el('span','task-step-number'),name=raw(el('span','task-step-name',zh(stepPreview(step,24))||t('Step description')));heading.append(number,name);box.append(heading);
       const status=select(heading,'Step status',statuses().slice(0,3),step.status||'todo');status.parentElement.className='task-step-status';status.parentElement.querySelector('span').remove();
       status.onclick=event=>event.stopPropagation();status.onkeydown=event=>event.stopPropagation();
       const body=el('div','task-step-fields');box.append(body);
-      const description=field(body,'Step description',stepDescription(step),{area:true,required:true,maxLength:MAX_STEP_DESCRIPTION});description.parentElement.className='task-step-description';description.parentElement.querySelector('span').remove();description.placeholder=t('Step description');
+      const original=stepDescription(step),description=field(body,'Step description',zh(original),{area:true,required:true,maxLength:MAX_STEP_DESCRIPTION});description.parentElement.className='task-step-description';description.parentElement.querySelector('span').remove();description.placeholder=t('Step description');
       const bottom=el('div','task-step-bottom'),more=el('details','task-step-more'),settings=el('div','task-step-settings'),moreHeading=el('summary','task-step-assignments');moreHeading.title=t('Edit collaboration and review settings');
       const assignment=(icon,label)=>{const group=el('span','task-step-assignment'),glyph=el('span','task-step-glyph'),value=raw(el('span','task-step-assignment-value'));glyph.innerHTML=UI_ICON[icon];glyph.setAttribute('aria-hidden','true');group.append(glyph,el('span','task-step-meta-label',t(label)),value);moreHeading.append(group);return value;};
       const collaborationValue=assignment('roles','Collaboration'),reviewValue=assignment('check','Review');
@@ -115,12 +119,12 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage,getA
       const reviewers=select(settings,'Reviewers',roleOptions.slice(1),step.review?.roleIds||[],true);
       const count=field(settings,'Review count',step.review?.count||0,{type:'number'});count.min='0';count.max='20';
       const sequential=field(settings,'Sequential review','',{type:'checkbox'});sequential.checked=step.review?.sequential===true;
-      const values=()=>({description:description.value,roleId:role.value||null,status:status.value,
+      const values=()=>({description:kept(description.value,original),roleId:role.value||null,status:status.value,
         collaborators:[...collaborators.selectedOptions].map(o=>o.value),review:{roleIds:[...reviewers.selectedOptions].map(o=>o.value),count:Number(count.value),sequential:sequential.checked},handoffRoleId:handoff.value||null});
       const initial=values();
       // Editing one step must not insert default collaboration/review fields into untouched historical steps.
       const setCurrent=button('Set as current step',()=>currentOptions(stepEditors.indexOf(entry)));settings.append(setCurrent);
-      const entry={box,description,number,setCurrent,read:()=>{const {title,...rest}=step;return {...rest,description:description.value,...Object.fromEntries(Object.entries(values()).filter(([key,value])=>JSON.stringify(value)!==JSON.stringify(initial[key])))};}};
+      const entry={box,description,number,setCurrent,read:()=>{const {title,...rest}=step;return {...rest,description:kept(description.value,original),...Object.fromEntries(Object.entries(values()).filter(([key,value])=>JSON.stringify(value)!==JSON.stringify(initial[key])))};}};
       const remove=button('Remove step',()=>{const old=stepEditors.indexOf(entry),selected=currentIndex;stepEditors=stepEditors.filter(s=>s!==entry);box.remove();currentOptions(old<selected?selected-1:selected);},'icon-button task-step-remove');setActionIcon(remove,'trash','Remove step');bottom.append(remove);
       description.oninput=()=>{name.textContent=stepPreview({description:description.value},24)||t('Step description');};
       const updateAssignments=()=>{collaborationValue.textContent=[...new Set([role.value,...[...collaborators.selectedOptions].map(o=>o.value)].filter(Boolean))].map(roleName).join(', ')||t('Unassigned');reviewValue.textContent=([...reviewers.selectedOptions].map(o=>roleName(o.value)).join(', ')||t('Unassigned'))+(reviewers.selectedOptions.length?` · ${t(sequential.checked?'Sequential review':'Parallel review')}`:'');};
@@ -151,7 +155,7 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage,getA
     const history=sections.history;history.classList.add('task-change-history');
     for(const change of [...(record?.history||[])].reverse()){
       const detail=el('details'),heading=raw(el('summary','',`${date(change.at)} · ${change.actor.type==='user'?t('User'):roleName(change.actor.roleId)} · v${change.revision}`));detail.open=true;detail.append(heading);
-      if(change.reason)detail.append(raw(el('p','',change.reason)));
+      if(change.reason)detail.append(raw(el('p','',zh(change.reason))));
       for(const [key,value] of Object.entries(change.changes)){
         const part=el('div','task-change');part.append(el('strong','',t(labels[key]||key)));
         const display=v=>{
@@ -166,7 +170,7 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage,getA
             `${t('Hand over to')}: ${roleName(step.handoffRoleId)}`].filter(Boolean).join('\n'))].join('\n\n');
           return Array.isArray(v)?v.join('\n'):String(v);
         };
-        part.append(el('small','',t('Before')),raw(el('pre','',display(value.from))),el('small','',t('After')),raw(el('pre','',display(value.to))));detail.append(part);
+        part.append(el('small','',t('Before')),raw(el('pre','',zh(display(value.from)))),el('small','',t('After')),raw(el('pre','',zh(display(value.to)))));detail.append(part);
       }history.append(detail);
     }
     if(!record?.history?.length)history.append(el('p','workspace-note',t('No changes yet.')));
@@ -179,7 +183,7 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage,getA
     form.onsubmit=async event=>{
       event.preventDefault();if(state.saving||editor!==state||version!==generation)return;
       const invalid=form.querySelector(':invalid');if(invalid){const key=Object.keys(sections).find(name=>sections[name].contains(invalid));if(key)showTab(key);for(let node=invalid.parentElement;node&&node!==form;node=node.parentElement)if(node.tagName==='DETAILS')node.open=true;invalid.reportValidity();return;}
-      const draft={title:titleInput.value,description:description.value,ownerRoleId:owner.value||null,status:status.value,plan:readPlan(),...(status.value==='done'?{resultSummary:summary.value}:{})};
+      const draft={title:kept(titleInput.value,record?.title),description:kept(description.value,record?.description),ownerRoleId:owner.value||null,status:status.value,plan:readPlan(),...(status.value==='done'?{resultSummary:kept(summary.value,record?.resultSummary)}:{})};
       const patch=record?taskPatch(record,draft):draft;
       if(record&&Object.keys(patch).length===1){error.textContent=t('No changes to save.');return;}
       const body=record?{...patch,id:record.id,reason:reason.value,conversationId:target.conversationId}:{...patch,requestId:state.requestId,conversationId:target.conversationId,reason:reason.value};

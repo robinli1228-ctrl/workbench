@@ -1,5 +1,6 @@
 import { t } from './i18n.js';
 import { setActionIcon, UI_ICON } from './role-icons.js';
+import { simplifiedCliOutput } from './output-language.js';
 
 export const MEMORY_TYPES = ['decision', 'environment', 'credential', 'lesson', 'procedure', 'personal', 'other'];
 const TYPE_LABELS = { decision: 'Decision', environment: 'Environment', credential: 'Account or secret', lesson: 'Lesson', procedure: 'Procedure', personal: 'Personal details', other: 'Other' };
@@ -51,7 +52,7 @@ export function platformMemoryUI({ api, getData, create, formatTime, visible = (
   function row(entry) {
     const node = create('div', 'settings-row platform-memory-row'), main = create('span', 'settings-row-main');
     const meta = [memoryTypeLabel(entry.type), entry.runtime, entry.device, entry.sourceProject ? t('From {project}', { project: entry.sourceProject }) : '', entry.edited ? t('Edited by people') : '', formatTime(entry.updatedAt)].filter(Boolean).join(' · ');
-    main.append(raw(create('strong', 'platform-memory-content', entry.content)), raw(create('small', '', meta)));
+    main.append(raw(create('strong', 'platform-memory-content', simplifiedCliOutput(entry.content))), raw(create('small', '', meta)));
     const glyph = create('span', 'settings-row-icon'); glyph.innerHTML = UI_ICON.memory;
     const actions = create('span', 'settings-row-actions');
     actions.append(icon('edit', 'Edit memory', () => openDialog(entry)), icon('trash', 'Delete memory', () => void remove(entry)));

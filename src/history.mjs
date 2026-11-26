@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { tr } from './i18n.mjs';
 import {conversationIdOf,resolveConversationId,assertConversationRecord} from './group-conversations.mjs';
+import OpenCC from 'opencc-js';
+const toSimplified=OpenCC.Converter({from:'t',to:'cn'});
+const foldScript=value=>/\p{Script=Han}/u.test(value)?toSimplified(value):value;
 import { isSupervisorName } from './default-roles.mjs';
 
 const MAX_SEARCH_LIMIT = 100;
@@ -111,8 +114,9 @@ export class History {
       const kind={message:'roomMessages',run:'runs',request:'coordinationRequests'}[after[1]];
       assertConversationRecord({projectId,conversationId},kind?this.db.get(kind,after[2]):null);
     }
-    const needle = query.trim().toLocaleLowerCase('zh');
-    const includes = value => !needle || String(value || '').toLocaleLowerCase('zh').includes(needle);
+    // Models search in Traditional, people write in Simplified: both sides are compared in Simplified.
+    const needle = foldScript(query.trim().toLocaleLowerCase('zh'));
+    const includes = value => !needle || foldScript(String(value || '').toLocaleLowerCase('zh')).includes(needle);
     const scope = searchScope(this.db, projectId, { role, file, since, until });
     const byRole = (...roleIds) => !scope.names || roleIds.some(id => id && scope.names.ids.has(id));
     const named = id => scope.roleOf(id)?.name || null;

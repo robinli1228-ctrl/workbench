@@ -461,7 +461,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   return true;}
  function workers(){return(getData().workers||[]).filter(w=>['all','created','group'].includes(device.value)||(device.value==='other'?!['local','cloud'].includes(w.nodeKind):w.nodeKind===device.value));}
  /** Keep the selected name in the shared header, including after state refreshes and selection resets. */
- function renderTitle(){onSelect();if(!active()||document.body.dataset.workspaceView==='settings')return;const title=document.querySelector('#workspace-title');title.translate=!selected;title.textContent=selected?displayTitle(selected):t('Native sessions');gear.disabled=!selected;}
+ function renderTitle(){onSelect();if(!active()||document.body.dataset.workspaceView==='settings')return;const title=document.querySelector('#workspace-title');title.translate=!selected;title.textContent=selected?simplifiedCliOutput(displayTitle(selected)):t('Native sessions');gear.disabled=!selected;}
  function resetDetail(){detailVersion++;selected=null;renderTitle();detailSignature=detailMeta='';timeline.clear();takeover.detach();content.replaceChildren(el('div','native-empty',t('Select a native session to view its details.')));resetSide();}
  function resetSide(){
   delete side.dataset.sessionKey;sideBadge.hidden=true;outputs.clear();gitKey=null;renaming=null;
@@ -484,7 +484,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    const b=el('button',`project-item${key(selected)===key(item)?' active':''}${running?' is-running':''}${waiting?' is-asking':''}`);b.type='button';b.dataset.orderId=key(item);b.title=`${displayTitle(item)}\n${workerName(item.nodeId)}${state}`;
    b.setAttribute('aria-label',`${displayTitle(item)}${state}`);
    // Two lines with a right column: title | device, time | running spinner (drawn by CSS when the row is running).
-   const copy=el('span','project-item-copy has-status'),title=el('strong','',displayTitle(item));title.translate=false;
+   const copy=el('span','project-item-copy has-status'),title=el('strong','',simplifiedCliOutput(displayTitle(item)));title.translate=false;
    const worker=byId.get(item.nodeId),deviceIcon=worker?machineIconEl(worker,cloudNumbers.get(item.nodeId)):el('span','');deviceIcon.classList.add('native-session-device','list-device-slot');
    const when=el('small','native-session-time',time(item.createdAt||item.modifiedAt));when.translate=false;
    const status=el('span','list-run-status');status.setAttribute('aria-hidden','true');if(waiting)status.innerHTML=UI_ICON.question;copy.append(title,deviceIcon,when,status);b.append(agentIconEl(item.runtime),copy);b.addEventListener('click',()=>read(item));if(!latest)delete b.dataset.orderId;return b;
@@ -555,7 +555,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    if(m.role==='user'&&isCompactSummary(m.text,m.compact)){
     const row=el('details','nt-system nt-compact native-chat-row'),head=el('summary','');row.dataset.role='system';row.dataset.text=`compact:${m.timestamp||m.id||''}`;if(m.id)row.dataset.historyId=m.id;if(m.timestamp)row.dataset.at=m.timestamp;
     head.append(el('span','nt-system-mark','\u21E3'),el('span','',t('Context compacted; the session continues from a summary')),el('span','nt-compact-toggle',t('Show summary')),el('span','nt-compact-toggle is-open',t('Hide summary')));
-    const body=el('div','nt-compact-body');row.addEventListener('toggle',()=>{if(row.open&&!body.childElementCount){const md=renderMarkdown(text);md.classList?.add('markdown-body');body.append(md);}},{once:false});
+    const body=el('div','nt-compact-body');row.addEventListener('toggle',()=>{if(row.open&&!body.childElementCount){const md=renderMarkdown(simplifiedCliOutput(text));md.classList?.add('markdown-body');body.append(md);}},{once:false});
     row.append(head,body);return row;}
    const interruption=nativeInterruptionText(m,item.runtime);
    if(interruption){const row=el('div','nt-system native-chat-row',t('Interrupted'));row.title=interruption;row.dataset.nativeInterruption=interruption;
