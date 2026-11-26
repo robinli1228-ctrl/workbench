@@ -4606,3 +4606,86 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
   :is(html, #wb-project-cards) body[data-project-sidebar="collapsed"] #project-list .project-item { padding: 3px; }
   :is(html, #wb-project-cards) body[data-project-sidebar="collapsed"] #project-list .project-item .project-item-icon { width: 36px; height: 36px; }
 }
+
+/* Composer tray (2026-11-26, group chat): what waits for the user rises out of the composer's top line as one drawer — the
+   queue on top, a question right above the input. Flush on the line with round top corners; the shade sits inside the
+   drawer just above the line, so the input stays flat. Each part has the same title bar: icon and title on the left,
+   actions and "View all" on the right. */
+.chat-tray { position: relative; margin: 0 16px; border: 1px solid var(--card-hairline); border-bottom: 0; border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: #fff; overflow: hidden; box-shadow: 0 -4px 14px rgb(16 24 40 / 7%); animation: chat-tray-rise .24s cubic-bezier(.2, .8, .2, 1); }
+.chat-tray::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 14px; background: linear-gradient(to top, rgb(16 24 40 / 8%), transparent); pointer-events: none; }
+.chat-tray:not(:has(> :not([hidden]))) { display: none; }
+.chat-tray > #message-queue.message-queue, .chat-tray > .native-ask { margin: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.chat-tray > :not([hidden]) ~ :not([hidden]) { border-top: 1px solid var(--card-hairline); }
+@keyframes chat-tray-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .chat-tray { animation: none; } }
+@media (max-width: 760px) { .chat-tray { margin-inline: 8px; } }
+/* Title bars */
+#message-queue summary { gap: 8px; min-height: 40px; padding: 0 10px 0 14px; }
+.message-queue-icon { display: grid; place-items: center; flex: none; width: 20px; height: 20px; color: var(--muted); }
+.message-queue-icon svg { width: 17px; height: 17px; }
+:is(#message-queue summary, .message-queue-dialog-head) .message-queue-pause { margin-left: auto; }
+:is(#message-queue summary, .message-queue-dialog-head) .message-queue-paused + .message-queue-all, :is(#message-queue summary, .message-queue-dialog-head) .message-queue-title + .message-queue-all,
+:is(#message-queue summary, .message-queue-dialog-head) .message-queue-title + .message-queue-close, :is(#message-queue summary, .message-queue-dialog-head) .message-queue-paused + .message-queue-close { margin-left: auto; }
+:is(html, #wb-control-weight) body :is(.message-queue-all, .message-queue-close, .native-ask-tools .icon-button) { display: grid; place-items: center; width: 28px; min-width: 28px; height: 28px; min-height: 28px;
+  padding: 5px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; box-shadow: none; }
+:is(html, #wb-control-weight) body :is(.message-queue-all, .message-queue-close, .native-ask-tools .icon-button):hover:not(:disabled) { color: var(--accent); background: var(--accent-tint, #eef0ff); }
+:is(.message-queue-all, .message-queue-close, .native-ask-tools .icon-button) svg { width: 16px; height: 16px; }
+.native-ask-tools .icon-button:disabled { opacity: .35; }
+.native-ask-tools { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.native-ask-tools .native-ask-pager { margin: 0 2px; }
+.chat-tray .native-ask { padding: 0 14px 12px; }
+.chat-tray .native-ask .native-ask-head { min-height: 40px; margin: 0 -14px 10px; padding: 0 10px 0 14px; color: var(--text-strong); font-size: 13.5px; }
+.chat-tray .native-ask .native-ask-title { font-weight: 650; }
+.chat-tray .native-ask .native-ask-title svg { color: var(--muted); }
+/* "View all" dialogs: everything in full, nothing cut off */
+dialog:is(.message-queue-dialog, .native-ask-dialog, #wb-tray-dialog) { width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; border: 0; border-radius: 16px; overflow: auto; box-shadow: 0 20px 50px rgb(16 24 40 / 25%); }
+dialog:is(.message-queue-dialog, .native-ask-dialog, #wb-tray-dialog)::backdrop { background: rgb(15 20 30 / 32%); }
+.message-queue-dialog-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 0 12px 0 18px; border-bottom: 1px solid var(--card-hairline); background: #fff; color: var(--text-strong); font-size: 15px; font-weight: 650; }
+.message-queue-dialog .message-queue-list { max-height: none; padding: 8px; }
+.message-queue-dialog .message-queue-item { align-items: flex-start; }
+.message-queue-dialog .message-queue-info strong { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; font-size: 13.5px; }
+.native-ask-dialog .native-ask.is-full { margin: 0; padding: 0 18px 18px; border: 0; border-radius: 0; box-shadow: none; }
+.native-ask-dialog .native-ask-head { position: sticky; top: 0; z-index: 1; min-height: 52px; margin: 0 -18px 12px; padding: 0 12px 0 18px; background: #fff; color: var(--text-strong); font-size: 15px; }
+.native-ask-dialog .native-ask-title { font-weight: 650; }
+.native-ask-dialog .native-ask-text { font-size: 15px; }
+.native-ask-dialog .native-ask-option { grid-template-columns: 24px minmax(0, 1fr); align-items: start; row-gap: 3px; padding: 10px 12px; border-color: var(--card-hairline); }
+.native-ask-dialog .native-ask-option.is-picked { border-color: rgb(79 91 206 / 35%); }
+.native-ask-dialog .native-ask-desc { grid-column: 2; white-space: normal; line-height: 1.6; }
+/* Clean surfaces: a white tray (its depth comes from the hairline, the shadow and a crisp top edge), white rows split by
+   hairlines, options with a hairline border. The only colour is a faint accent band behind the question, which waits on the
+   user. No warm tint on queued messages in the tray or its dialog (error rows keep their red tint). */
+.chat-tray { background: #fff; box-shadow: 0 -4px 14px rgb(16 24 40 / 7%), inset 0 1px 0 rgb(255 255 255 / 90%); }
+#message-queue summary { background: #fff; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-list { gap: 0; padding: 2px 6px 6px; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card), :is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card):hover { background: #fff; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card):hover { background: rgb(16 24 40 / 2.5%); }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item + .message-queue-item { box-shadow: 0 -1px 0 rgb(16 24 40 / 6%); }
+.chat-tray .native-ask .native-ask-head { background: rgb(79 91 206 / 3.5%); }
+.chat-tray .native-ask .native-ask-title svg { color: var(--accent); opacity: .85; }
+:is(.chat-tray, .native-ask-dialog) .native-ask-option:not(.is-picked) { border-color: rgb(16 24 40 / 8%); background: #fff; }
+:is(.chat-tray, .native-ask-dialog) .native-ask-option:not(.is-picked):hover { border-color: rgb(79 91 206 / 22%); background: rgb(79 91 206 / 3%); }
+.chat-tray .native-ask-options { gap: 6px; }
+/* Queue title bar buttons line up with the row buttons below: pause over Edit, View all (or Close) over Cancel, with the
+   Steer column left empty between them. Rows: 30px buttons, 8px apart, 14px from the edge (36px on phones). */
+#message-queue summary { padding-right: 15px; }
+.message-queue-dialog-head { padding-right: 17px; }
+:is(#message-queue summary, .message-queue-dialog-head) .message-queue-pause { margin-right: 40px; }
+@media (max-width: 760px) {
+  #message-queue summary { padding-right: 21px; }
+  #message-queue summary .message-queue-pause { margin-right: 64px; }
+}
+
+/* Quoted source inside a chat card (2026-11-26): see-through, so the card's own colour shows — white 26% on your light
+   indigo messages, a 3% shade on role and platform cards. */
+.chat-row.human .quoted-message { background: rgb(255 255 255 / 26%); }
+.chat-row:not(.human) .quoted-message, .chat-row.human.is-reminder .quoted-message { background: rgb(16 24 40 / 3%); }
+.chat-row button.quoted-message:hover { background: rgb(79 91 206 / 8%); }
+/* Light tints (user, 2026-11-26): queue rows 2% grey with 4px gaps, the queue title bar 2.6% grey, the question title bar 2.6% light blue. */
+#message-queue summary { background: rgb(16 24 40 / 2.6%); }
+:is(.chat-tray, .message-queue-dialog) .message-queue-list { gap: 4px; padding: 6px; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item + .message-queue-item { box-shadow: none; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card) { background: rgb(16 24 40 / 2%); }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card):hover { background: rgb(16 24 40 / 4%); }
+.chat-tray .native-ask .native-ask-head { background: rgb(37 128 235 / 2.6%); }
+.chat-tray .native-ask .native-ask-title svg { color: #2f7ad8; opacity: .9; }
