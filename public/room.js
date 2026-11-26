@@ -177,9 +177,20 @@ export function unlinkedLiveTasks(messages, tasks, runs, projectId) {
   }).sort((a,b)=>String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
 }
 
+const QUEUE_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 17.5h7"/><circle cx="4.5" cy="6" r="1.2"/><circle cx="4.5" cy="12" r="1.2"/><circle cx="4.5" cy="17.5" r="1.2"/></svg>';
 /** Show existing dispatches without creating a separate queue; request retries reuse the ID to avoid repeated interruptions. */
 function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued,getConversationId,getSending=()=>[]}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
+  // "View all" moves the live list into a dialog, where every item shows in full; closing puts it back in the tray.
+  const allDialog=create('dialog','message-queue-dialog'),allHead=create('div','message-queue-dialog-head');allDialog.append(allHead);
+  let fullView=false,foldedByQuestion=null;
+  allDialog.addEventListener('close',()=>{fullView=false;allHead.replaceChildren();panel.append(list);if(lastData)view.update(lastData,currentProject);});
+  allDialog.addEventListener('click',e=>{if(e.target===allDialog)allDialog.close();});
+  // Page data holds only the first 80 characters of a queued message; the dialog reads each one's full text once.
+  const fullText=new Map();
+  const readFull=ids=>{for(const id of ids){if(fullText.has(id))continue;fullText.set(id,null);
+    api(`/api/tasks/${encodeURIComponent(id)}/detail`).then(r=>{fullText.set(id,r?.task?.prompt||'');if(fullView&&lastData)view.update(lastData,currentProject);}).catch(()=>fullText.delete(id));}};
+  const openAll=()=>{fullView=true;if(!allDialog.isConnected)document.body.append(allDialog);allDialog.append(list);readFull([...displayedTaskIds]);if(lastData)view.update(lastData,currentProject);allDialog.showModal();};
   // The displayed queue owns these tasks until its next render, including while a drag is active.
   let displayedTaskIds=new Set();
   const commands=new Map(),pending=new Set(),steeringPending=new Set(),steeringErrors=new Map();let currentProject=null,lastData=null,optimistic=null,pausing=false;
@@ -192,10 +203,13 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       catch(error){setError(error.message);}
       finally{optimistic=null;if(lastData)view.update(lastData,currentProject);}
     }});
-  const view={hasTask:id=>displayedTaskIds.has(id),update(data,projectId){
+  const view={hasTask:id=>displayedTaskIds.has(id),
+  /** While a question waits right above the input, the queue folds to its title bar; it opens again as it was once answered. */
+  questionWaiting(on){if(on&&foldedByQuestion===null){foldedByQuestion=panel.open;panel.open=false;}else if(!on&&foldedByQuestion!==null){panel.open=foldedByQuestion;foldedByQuestion=null;}},
+  update(data,projectId){
     lastData=data;if(order.active())return;
     // Open on each project, as the Sessions queue: queued messages and waits are shown only here. A fold stays for this project.
-    if(currentProject!==projectId){panel.open=true;currentProject=projectId;optimistic=null;}
+    if(currentProject!==projectId){panel.open=true;currentProject=projectId;optimistic=null;foldedByQuestion=null;}
     const rank=new Map((optimistic||[]).map((id,index)=>[id,index]));
     const runs=new Map((data.runs||[]).map(run=>[run.id,run]));
     let tasks=(data.tasks||[]).filter(task=>{
@@ -226,10 +240,13 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     for(const sending of getSending())items.push({id:`sending:${sending.id}`,sending});
     displayedTaskIds=new Set(tasks.map(task=>task.id));
     list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&items.length>1);
-    panel.hidden=!items.length;list.replaceChildren();
-    const title=create('span','message-queue-title',t('Queue · {v}', { v: items.length }));
+    panel.hidden=!items.length;list.replaceChildren();if(!items.length&&allDialog.open)allDialog.close();
     // Pause/resume at the right of the title, as on the Sessions queue: paused messages wait after the running replies end.
-    const paused=Boolean(data.chatQueuePaused)&&items.some(item=>item.task||item.sending),head=[title];panel.classList.toggle('is-paused',paused);
+    const paused=Boolean(data.chatQueuePaused)&&items.some(item=>item.task||item.sending);panel.classList.toggle('is-paused',paused);
+    // The same title bar in the tray and, while it is open, in the "View all" dialog: icon, title, pause, then View all or Close.
+    const titleBar=inDialog=>{
+    const icon=create('span','message-queue-icon');icon.innerHTML=QUEUE_ICON;
+    const title=create('span','message-queue-title',t('Queue · {v}', { v: items.length })),head=[icon,title];
     if(paused)head.push(create('span','message-queue-paused',t('Paused')));
     if(data.capabilities?.queuePause&&tasks.length){
       const toggle=create('button',`icon-button message-queue-pause${paused?' is-paused':''}`),label=t(paused?'Resume the queue':'Pause the queue: keep these messages after the current replies end');
@@ -240,7 +257,11 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
         catch(error){setError(error.message);}finally{pausing=false;if(lastData)view.update(lastData,currentProject);}};
       head.push(toggle);
     }
-    summary.replaceChildren(...head);
+    const end=create('button',`icon-button ${inDialog?'message-queue-close':'message-queue-all'}`);end.type='button';
+    if(inDialog){closeIcon(end);end.title=t('Close');end.onclick=()=>allDialog.close();}
+    else{end.innerHTML=UI_ICON.fullscreen;end.title=t('View all');end.onclick=e=>{e.preventDefault();e.stopPropagation();openAll();};}
+    end.setAttribute('aria-label',end.title);head.push(end);return head;};
+    summary.replaceChildren(...titleBar(false));if(fullView)allHead.replaceChildren(...titleBar(true));
     for(const [i,item] of items.entries()) {
       if(item.wait) {
         const wait=item.wait,row=create('div','message-queue-item is-wait'),info=create('div','message-queue-info');
@@ -262,7 +283,7 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
       const supplementing=Boolean(task.supplementing)&&!['succeeded','failed','interrupted','cancelled'].includes(runs.get(task.supplementing.runId)?.status);
       const row=create('div','message-queue-item'),info=create('div','message-queue-info');
       if(data.capabilities?.queueOrder&&!task.steering&&!supplementing&&!steeringPending.has(task.id)){row.dataset.orderId=task.id;row.title=t('Long press to drag and reorder');}
-      const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||t('Role')} · ${task.title||task.prompt}`);title.title=task.prompt||task.title;
+      const title=create('strong','',`${i+1}. @${task.roleSnapshot?.name||t('Role')} · ${fullView?fullText.get(task.id)||task.prompt||task.title:task.title||task.prompt}`);title.title=task.prompt||task.title;
       info.append(title);row.append(info);
       // Supervisor plans/consultations are not messages the user just sent and must not pose as a manual steering entry.
       const human=!task.planId&&!task.scheduledJobId&&!task.continuationRunId&&!task.requiresCoordination;
@@ -329,13 +350,15 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   const askCard=createAskCard({t,shouldFocus:()=>!document.activeElement||document.activeElement===document.body,onSend:async(entry,body)=>{
     try{await api(`/api/approvals/${encodeURIComponent(entry.key)}`,{method:'POST',json:{...(body.skip?{skip:true}:{answers:body.answers}),commandId:crypto.randomUUID()}});await refreshState({quiet:true});return true;}
     catch(error){setError(error.message);return false;}}});
-  form.before(askCard.node);
+  // The question waits in the composer tray, right above the input and under the queue.
+  document.querySelector('.chat-tray').append(askCard.node);
   /** The oldest waiting question of this chat; the others follow once it is answered. */
   function renderQuestions(){
     const chatOf=run=>run.conversationId||data.tasks?.find(task=>task.id===run.taskId)?.conversationId||run.projectId;
     const waiting=(data.approvals||[]).filter(a=>a.kind==='question'&&a.status==='pending'&&Array.isArray(a.questions)&&a.questions.length).map(a=>({a,run:data.runs?.find(r=>r.id===a.runId)}))
       .filter(({run})=>run&&run.projectId===projectId&&chatOf(run)===(conversationId||projectId)&&run.status==='waiting_user').sort((x,y)=>String(x.a.createdAt||'').localeCompare(String(y.a.createdAt||'')));
     const first=waiting[0];
+    messageQueue.questionWaiting(Boolean(first));
     askCard.render(first?{key:first.a.id,title:t('Question from {role}',{role:first.run.roleSnapshot?.name||t('Role')})+(waiting.length>1?` · ${t('{v} waiting',{v:waiting.length})}`:''),question:{id:first.a.questionId||first.a.id,questions:first.a.questions}}:null);
   }
   const roleDialog = document.querySelector('#role-dialog');
