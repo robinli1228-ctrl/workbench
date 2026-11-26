@@ -672,6 +672,8 @@ function render() {
   projectsUI.refreshConcurrent();
   setupUI.refresh();
   platformUI.refresh(); spacesUI.refresh(); memoryUI.refresh();
+  // The open usage page follows devices going on or offline and devices being added or removed.
+  if (app.view === 'settings' && app.settingsTab === 'usage') tokenUI.refresh();
   if(!nativeSessionUI.active())void room.refresh(app.data, app.selectedProjectId,app.selectedConversationId);
   nativeSessionUI.sync();
 }

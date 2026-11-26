@@ -1,4 +1,4 @@
-import { t, dateLocale } from './i18n.js';
+import { t, dateLocale, getLanguage } from './i18n.js';
 const TYPES=[
   {key:'inputTokens',label:'Input',color:'#0866ff'},
   {key:'outputTokens',label:'Output',color:'#00a8e8'},
@@ -13,7 +13,7 @@ const AGENTS=[
   {name:'Agy',color:'#6645ed',match:/gemini/},
   {name:'Grok',color:'#b07f00',match:/grok/}
 ];
-const OTHER_COLOR='#94a3b8',UNCLASSIFIED_COLOR='#cbd5e1',DEVICE_COLORS=['#475569','#a8b3c4','#7c8798','#d0d6df'],TOP_MODELS=5;
+const OTHER_COLOR='#94a3b8',UNCLASSIFIED_COLOR='#cbd5e1',DEVICE_COLORS=['#475569','#a8b3c4','#64748b','#cbd5e1','#334155','#94a3b8'],TOP_MODELS=5;
 const tokens=value=>Number.isFinite(Number(value))&&Number(value)>0?Number(value):0;
 const sum=items=>items.reduce((total,item)=>total+item.value,0);
 
@@ -63,8 +63,9 @@ export function usageShares(model){
   const agents=[...AGENTS.map(({name,color})=>({name,color})).filter(agent=>byAgent.get(agent.name)).map(agent=>({...agent,value:byAgent.get(agent.name)})).sort((a,b)=>b.value-a.value),
     ...[{name:'Other',color:OTHER_COLOR},{name:'Unclassified',color:UNCLASSIFIED_COLOR}].filter(agent=>byAgent.get(agent.name)).map(agent=>({...agent,value:byAgent.get(agent.name)}))];
   const named=model.models.filter(item=>item.modelName!=='Unclassified').map(item=>({name:item.modelName,value:item.totalTokens,color:item.color})).sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name));
-  const rest=named.slice(TOP_MODELS),unclassified=model.models.find(item=>item.modelName==='Unclassified');
-  const models=[...named.slice(0,TOP_MODELS),...(rest.length?[{name:'Other',count:rest.length,value:sum(rest),color:OTHER_COLOR}]:[]),...(unclassified?[{name:'Unclassified',value:unclassified.totalTokens,color:UNCLASSIFIED_COLOR}]:[])];
+  // A single model past the fifth is shown by name; Other only folds two or more.
+  const shown=named.length>TOP_MODELS+1?TOP_MODELS:named.length,rest=named.slice(shown),unclassified=model.models.find(item=>item.modelName==='Unclassified');
+  const models=[...named.slice(0,shown),...(rest.length?[{name:'Other',count:rest.length,value:sum(rest),color:OTHER_COLOR}]:[]),...(unclassified?[{name:'Unclassified',value:unclassified.totalTokens,color:UNCLASSIFIED_COLOR}]:[])];
   return {devices,agents,models,modelCount:named.length};
 }
 
@@ -75,14 +76,15 @@ export function refreshMessage(report){
 
 const SVG='http://www.w3.org/2000/svg';
 const svg=(tag,attrs={})=>{const node=document.createElementNS(SVG,tag);for(const[key,value]of Object.entries(attrs))node.setAttribute(key,value);return node;};
-// One annulus segment in a 200x200 box, clockwise from 12 o'clock.
-const arc=(inner,outer,from,to)=>{const at=(r,a)=>`${(100+r*Math.sin(a)).toFixed(2)} ${(100-r*Math.cos(a)).toFixed(2)}`,large=to-from>Math.PI?1:0;
-  return `M${at(outer,from)}A${outer} ${outer} 0 ${large} 1 ${at(outer,to)}L${at(inner,to)}A${inner} ${inner} 0 ${large} 0 ${at(inner,from)}Z`;};
+// One annulus segment in a 200x200 box, clockwise from 12 o'clock. Each edge is drawn as two half arcs through the midpoint,
+// so a near-full or full ring never has start and end on one point (SVG drops such an arc) and needs no seam.
+const arc=(inner,outer,from,to)=>{const at=(r,a)=>`${(100+r*Math.sin(a)).toFixed(2)} ${(100-r*Math.cos(a)).toFixed(2)}`,mid=(from+to)/2;
+  return `M${at(outer,from)}A${outer} ${outer} 0 0 1 ${at(outer,mid)}A${outer} ${outer} 0 0 1 ${at(outer,to)}L${at(inner,to)}A${inner} ${inner} 0 0 0 ${at(inner,mid)}A${inner} ${inner} 0 0 0 ${at(inner,from)}Z`;};
 
 /** The platform token page reads aggregated data only; charts load no third-party scripts. Every registered device is read. */
 export function tokenUsageUI({api,getData,create}){
   const form=document.querySelector('#token-usage-form'),feedback=document.querySelector('#token-usage-feedback');
-  let loaded=false,loadedFor='',report=null,statusDrawn='';
+  let loaded=false,requestedFor='',report=null,statusDrawn='',chartLanguage='';
   // 等可见布局完成后定位最新日期；用户随后仍可自由向左查看历史。
   const showLatest=()=>requestAnimationFrame(()=>{const chart=document.querySelector('#token-usage-daily');chart.scrollLeft=chart.scrollWidth;});
   const format=value=>Number(value||0).toLocaleString(dateLocale());
@@ -97,7 +99,7 @@ export function tokenUsageUI({api,getData,create}){
     const host=document.querySelector('#token-usage-total .usage-total-devices');if(!host)return;
     const states=new Map((report?.devices||[]).map(device=>[device.id,device]));
     // State refreshes arrive often; redraw only when a device, its online state or its collection state changed.
-    const drawn=JSON.stringify(workers().map(worker=>[worker.id,worker.name,worker.online,states.get(worker.id)?.state]));
+    const drawn=JSON.stringify([getLanguage(),...workers().map(worker=>[worker.id,worker.name,worker.online,states.get(worker.id)?.state])]);
     if(drawn===statusDrawn&&host.childElementCount)return;statusDrawn=drawn;
     host.replaceChildren(...workers().map(worker=>{
       const device=states.get(worker.id),item=create('span',`usage-device-status ${worker.online?'is-online':'is-offline'}`);
@@ -114,8 +116,8 @@ export function tokenUsageUI({api,getData,create}){
       let from=0;
       for(const item of drawn){
         const to=from+item.value/total*Math.PI*2;
-        // A ring with one segment is two halves without the white gap, since an arc cannot start and end at one point.
-        const path=svg('path',drawn.length===1?{d:arc(inner,outer,0,Math.PI)+arc(inner,outer,Math.PI,Math.PI*2),fill:item.color}:{d:arc(inner,outer,from,to),fill:item.color,class:'usage-donut-gap'});
+        // A lone segment is the whole ring and needs no white gap.
+        const path=svg('path',{d:arc(inner,outer,from,to),fill:item.color,...(drawn.length>1?{class:'usage-donut-gap'}:{})});
         const title=svg('title');title.textContent=`${item.label} · ${format(item.value)} tokens (${percent(item.value,total)})`;path.append(title);chart.append(path);from=to;
       }
     }
@@ -134,7 +136,7 @@ export function tokenUsageUI({api,getData,create}){
   }
   function chartCard(title,chart,list){const card=create('article','usage-chart-card'),body=create('div','usage-chart-body');body.append(chart,list);card.append(create('h4','',title),body);return card;}
   function render(data){
-    report=data;
+    report=data;chartLanguage=getLanguage();
     const model=usageChartModel(data),shares=usageShares(model),summary=document.querySelector('#token-usage-total');
     const value=create('div','usage-total-value');value.append(create('strong','',format(model.totalTokens)),create('span','usage-total-unit','tokens'));
     summary.replaceChildren(create('span','usage-total-label',model.partial?'Total usage of collected devices (partial)':'Total usage of all devices'),create('small','',t('Input {v} · Output {v2} · Cache {v3}', { v: format(model.total.inputTokens), v2: format(model.total.outputTokens), v3: format(Number(model.total.cacheCreationTokens||0)+Number(model.total.cacheReadTokens||0)) })),value,create('div','usage-total-devices'));
@@ -160,21 +162,25 @@ export function tokenUsageUI({api,getData,create}){
   }
   let pending=0;
   async function load(refresh){
-    const values=Object.fromEntries(new FormData(form)),ids=nodeIds(),ticket=++pending;
+    const values=Object.fromEntries(new FormData(form)),ids=nodeIds();
     if(!ids.length){feedback.hidden=false;feedback.textContent='No device to read';return;}
-    feedback.hidden=false;feedback.textContent=refresh?'Backfilling from online devices…':'Loading history…';form.querySelectorAll('button').forEach(button=>button.disabled=true);
+    // A collect also locks the dates, so a quicker read cannot replace its result; a read only locks the button.
+    const ticket=++pending,locked=form.querySelectorAll(refresh?'button, input':'button');requestedFor=ids.join(',');
+    form.querySelectorAll('button, input').forEach(control=>control.disabled=false);
+    feedback.hidden=false;feedback.textContent=refresh?'Backfilling from online devices…':'Loading history…';locked.forEach(control=>control.disabled=true);
     try{
       const data=refresh?await api('/api/token-usage/refresh',{method:'POST',json:{from:values.from,to:values.to,nodeIds:ids}}):await api(`/api/token-usage?from=${encodeURIComponent(values.from)}&to=${encodeURIComponent(values.to)}&nodeIds=${encodeURIComponent(ids.join(','))}`);
       // A later query (a changed date while this one ran) wins.
       if(ticket!==pending)return;
-      render(data);loadedFor=ids.join(',');feedback.textContent=refresh?refreshMessage(data):(usageChartModel(data).partial?t('Loaded {from} to {to}; some devices not collected yet', { from: data.from, to: data.to }):t('Loaded {from} to {to}', { from: data.from, to: data.to }));loaded=true;
-    }catch(error){if(ticket===pending)feedback.textContent=error.message;}finally{if(ticket===pending)form.querySelectorAll('button').forEach(button=>button.disabled=false);}
+      render(data);feedback.textContent=refresh?refreshMessage(data):(usageChartModel(data).partial?t('Loaded {from} to {to}; some devices not collected yet', { from: data.from, to: data.to }):t('Loaded {from} to {to}', { from: data.from, to: data.to }));loaded=true;
+    }catch(error){if(ticket===pending)feedback.textContent=error.message;}finally{if(ticket===pending)form.querySelectorAll('button, input').forEach(control=>control.disabled=false);}
   }
   // Dates query on change; Enter in a date field does the same instead of reloading the page.
   form.addEventListener('submit',event=>{event.preventDefault();void load(false);});
   form.addEventListener('change',event=>{if(event.target.matches('input[type=date]')&&form.checkValidity())void load(false);});
   document.querySelector('#token-usage-refresh').addEventListener('click',()=>void load(true));
-  // A device added or removed reloads the shown range; a device going on or offline only repaints its status.
-  const devicesChanged=()=>{if(loaded&&nodeIds().join(',')!==loadedFor)void load(false);else deviceStatus();};
+  // A device added or removed reloads the shown range (once per device set, even if that read fails); a language switch redraws
+  // the charts from the last report; a device going on or offline only repaints its status.
+  const devicesChanged=()=>{if(loaded&&nodeIds().join(',')!==requestedFor)void load(false);else if(report&&chartLanguage!==getLanguage())render(report);else deviceStatus();};
   return {refresh:devicesChanged,show({resetScroll=false}={}){if(!loaded)void load(false);else{devicesChanged();if(resetScroll)showLatest();}}};
 }

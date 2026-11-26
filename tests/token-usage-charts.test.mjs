@@ -42,6 +42,14 @@ test('agents add up across devices and the model donut keeps the top five', () =
   assert.notEqual(shares.models.find(m=>m.name==='Other').color,shares.models.find(m=>m.name==='Unclassified').color);
 });
 
+test('a sixth model is shown by name rather than as Other of one', () => {
+  const names=['m1','m2','m3','m4','m5','m6'],breakdown=Object.fromEntries(names.map((name,i)=>[name,100-i*10]));
+  const six=usageShares(usageChartModel({devices:[device('a','Macbook',[day('2026-11-01',breakdown)])],total:{}}));
+  assert.deepEqual(six.models.map(m=>m.name),names);
+  const seven=usageShares(usageChartModel({devices:[device('a','Macbook',[day('2026-11-01',{...breakdown,m7:5})])],total:{}}));
+  assert.deepEqual(seven.models.map(m=>[m.name,m.value]),[['m1',100],['m2',90],['m3',80],['m4',70],['m5',60],['Other',55]]);
+});
+
 test('the report reads one device or several, and still refuses none', () => {
   const db=new Store(':memory:');
   for(const id of ['n1','n2','n3'])db.put('workers',{id,name:id});
