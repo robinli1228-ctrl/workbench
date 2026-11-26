@@ -74,29 +74,34 @@ export class RoleSteering {
       const task=this.db.get('tasks',taskId);
       if(!task||task.projectId!==projectId||conversationIdOf(task)!==conversationId)return null;
       if(supplementPending(this.db,task))return {supplementing:true,runId:task.supplementing.runId};
-      const message=this.db.get('roomMessages',task.sourceMessageId);
-      if(task.origin!=='chat'||task.status!=='ready'||task.currentRunId||task.steering||message?.sender!=='human'||!message.taskIds?.includes(task.id)||task.scheduledJobId||task.planId||task.continuationRunId)return null;
-      if(!SUPPLEMENT_RUNTIMES.has(task.roleSnapshot?.runtime))return null;
+      // A role's own steer (wb call --kind steer|interrupt) is a call, not a human chat message: its text is the call's brief.
+      const byRole=task.roleSteer||null,message=this.db.get('roomMessages',task.sourceMessageId);
+      if(task.origin!=='chat'||task.status!=='ready'||task.currentRunId||task.steering||task.scheduledJobId||task.planId||task.continuationRunId)return null;
+      if(!byRole&&(message?.sender!=='human'||!message.taskIds?.includes(task.id)))return null;
+      if(!SUPPLEMENT_RUNTIMES.has(task.roleSnapshot?.runtime))return byRole?this.#first(task):null;
       if(task.requestId&&this.db.get('coordinationRequests',task.requestId)?.status!=='queued')return null;
       const active=this.db.activeRuns().filter(r=>r.projectId===projectId&&conversationIdOf(r)===conversationId&&r.roleId===task.roleId);
       if(!active.length)return null;
       const run=active.length===1?active[0]:null;
       const takes=run&&run.status==='running'&&run.roleSessionId&&!run.discussionDeliveryId&&!run.switchOperationId&&!run.diagnosis&&!run.stopRequested
-        // Only a turn whose reply is posted to the chat can answer the message: not a private follow-up, an explicitly published
-        // collaboration turn, a background follow-up, a handoff wait or a read-only review.
-        &&!run.explicitPublish&&!run.backgroundFollowup&&!run.handoffWait&&!run.execution?.purpose&&!privateFollowup(this.db,run)
-        &&run.nodeId===task.roleSnapshot.nodeId&&run.roleSnapshot?.runtime===task.roleSnapshot.runtime&&!message.attachments?.length&&!String(message.text||'').trimStart().startsWith('/')
+        // A user's message must be answered by a turn whose reply is posted to the chat: not a private follow-up, an explicitly
+        // published collaboration turn, a background follow-up, a handoff wait or a read-only review. A role's correction
+        // needs no answer of its own, so it goes into any working turn except the platform's own background follow-ups.
+        &&(byRole?!run.backgroundFollowup&&!privateFollowup(this.db,run)
+          :!run.explicitPublish&&!run.backgroundFollowup&&!run.handoffWait&&!run.execution?.purpose&&!privateFollowup(this.db,run)&&!message.attachments?.length&&!String(message.text||'').trimStart().startsWith('/'))
+        &&run.nodeId===task.roleSnapshot.nodeId&&run.roleSnapshot?.runtime===task.roleSnapshot.runtime
         &&online(run.nodeId)&&this.db.get('workers',run.nodeId)?.capabilities?.groupSupplement===1;
-      if(!takes){
-        this.db.put('tasks',{...task,queueOrder:frontOfQueue(this.db,task)});
-        return {queuedFirst:true};
-      }
+      if(!takes)return this.#first(task);
       const at=new Date().toISOString(),id=`supplement-${task.id}-${run.id}`;
+      const text=byRole?tr('roleSteering.roleSteerText',{name:byRole.byRole,text:task.prompt||''}):tr('roleSteering.supplementText',{text:message.text||''});
       this.db.put('tasks',{...task,supplementing:{runId:run.id,at},waitingReason:tr('roleSteering.addingToCurrentTurn')});
-      if(!this.db.get('commands',id))this.db.put('commands',{id,type:'supplement',runId:run.id,nodeId:run.nodeId,taskId:task.id,text:tr('roleSteering.supplementText',{text:message.text||''}),acked:false,createdAt:at});
+      if(!this.db.get('commands',id))this.db.put('commands',{id,type:'supplement',runId:run.id,nodeId:run.nodeId,taskId:task.id,text,acked:false,createdAt:at});
       return {supplementing:true,runId:run.id,nodeId:run.nodeId};
     });
   }
+
+  /** The turn cannot take the message now: it goes first in the role's queue and starts right after the turn. */
+  #first(task) {this.db.put('tasks',{...task,queueOrder:frontOfQueue(this.db,task)});return {queuedFirst:true};}
 
   request(projectId,taskId,commandId,input={}) {
     const conversationId=resolveConversationId(this.db,projectId,input.conversationId);
@@ -109,8 +114,8 @@ export class RoleSteering {
         if(task.steering.commandId!==commandId)throw new Error(tr('roleSteering.messageHasAlreadyStartedImmediate'));
         return task.steering;
       }
-      const message=this.db.get('roomMessages',task.sourceMessageId);
-      if(task.origin!=='chat'||task.status!=='ready'||task.currentRunId||message?.sender!=='human'||!message.taskIds?.includes(task.id)||task.scheduledJobId||task.planId||task.continuationRunId)throw new Error(tr('roleSteering.onlyHumanMessagesHaveNot'));
+      const byRole=task.roleSteer||null,message=this.db.get('roomMessages',task.sourceMessageId);
+      if(task.origin!=='chat'||task.status!=='ready'||task.currentRunId||!byRole&&(message?.sender!=='human'||!message.taskIds?.includes(task.id))||task.scheduledJobId||task.planId||task.continuationRunId)throw new Error(tr('roleSteering.onlyHumanMessagesHaveNot'));
       const role=this.db.get('roles',task.roleId);
       if(!role?.enabled||role.archivedAt)throw new Error(tr('roleSteering.roleDisabledArchived'));
       if(this.db.list('tasks').some(t=>t.projectId===projectId&&conversationIdOf(t)===conversationId&&t.roleId===task.roleId&&t.steering&&t.status==='ready'&&!t.currentRunId))throw new Error(tr('roleSteering.roleAlreadyHasSteeringMessage'));
@@ -131,6 +136,8 @@ export class RoleSteering {
         active.some(run=>run.id===r.currentRunId));
       for(const request of requests) {
         for(const id of this.calls.cancel(request.id,{preserveRunningChildren:true,cause:'user_interrupted'}))stopped.add(id);
+        // Interrupted by a role, not the user: whoever waits for this work is told by whom.
+        if(byRole){const cancelled=this.db.get('coordinationRequests',request.id);if(cancelled?.cancelReason==='user_interrupted')this.db.put('coordinationRequests',{...cancelled,interruptedByRole:byRole.byRole});}
         let current=request;
         while(current&&!blocked.has(current.id)) {
           blocked.add(current.id);if(current.planId)planIds.add(current.planId);

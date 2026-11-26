@@ -134,7 +134,10 @@ const LEGACY_PLATFORM_DEFAULTS = new Set([
   'bc2d3bd4edf94c519583b14f630dfff94c26c54dbf860ae0e89fe6fb8ac204c3',
   // Defaults before roles were told when to search platform memory (wb memory search) and the group chats (wb history).
   'ff3c4b8f0e58458d73c995772436685c35e6c6e2d3676d2071526641c367b470',
-  '88dc45f7e62b484aa31a070d59e245003d16bf070cf8aed37431c95a4860281c'
+  '88dc45f7e62b484aa31a070d59e245003d16bf070cf8aed37431c95a4860281c',
+  // Defaults before roles were told to follow long work they handed out and correct it with wb call --kind steer|interrupt.
+  'cb5089e5fc403994ceb405ef8610ee249bdd276fd75bb06ba62c0243d11b21f4',
+  '34bb536ccad14af56ef07246ddb71e498b2cdd5296fcec24d0623bb3d04a9948'
 ]);
 
 /** Text saved while a built-in default was shown in another language still counts as "the default" and follows the current language; customised text is kept verbatim. */

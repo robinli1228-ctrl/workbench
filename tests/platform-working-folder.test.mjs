@@ -265,6 +265,11 @@ const ASK_DIRECT_EDITS = {
   en: [["Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\n", "Ask with the question tool (AskUserQuestion / request_user_input) if your CLI has one.\nAsk directly on assigned work too; do not pass the question back to the assigner.\n"]]
 };
 
+const STEER_EDITS = {
+  zh: [["- 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。\n", "- 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。\n- 派出去的长任务要留意进度（wb discuss peers 的 detail，或 wb history read 运行编号）；发现做偏了，用 wb call --kind steer 及时纠正，必须马上停下时用 --kind interrupt。\n"]],
+  en: [["- After sending, keep doing what does not depend on it; wait only when you need the result, after actually sending the request; waiting for nothing means the work is complete.\n", "- After sending, keep doing what does not depend on it; wait only when you need the result, after actually sending the request; waiting for nothing means the work is complete.\n- Keep an eye on long work you handed out (wb discuss peers detail, or wb history read RUN_ID); when it goes wrong, correct it in time with wb call --kind steer, or --kind interrupt when it must stop at once.\n"]]
+};
+
 const MEMORY_SEARCH_EDITS = {
   zh: [["- 收到任务就推进到可验证的结果，能查能做的先自己做完，再说缺什么。\n", "- 收到任务就推进到可验证的结果，能查能做的先自己做完，再说缺什么。\n- 碰到报错、要用账号或密钥、在另一台设备上操作或拿不准环境时，先用 wb memory search 关键词查平台记忆；本项目的事用 wb history 关键词查群聊记录。\n"]],
   en: [["- Push each task to a verifiable result; do and check what you can yourself before naming gaps.\n", "- Push each task to a verifiable result; do and check what you can yourself before naming gaps.\n- When you hit an error, need an account or secret, work on another device or are unsure of the environment, first search platform memory with wb memory search WORDS; for this project's own matters, search the group chats with wb history WORDS.\n"]]
@@ -279,7 +284,10 @@ for (const [lang, heading, next, help] of [['zh', '工作目录：', '找人协�
   test(`${lang}: working-folder rules, upgrade from the previous default, and wb help sync`, () => runWithLanguage(lang, () => {
     const current = defaultPlatformPrompt();
     const undo = edits => (text => edits.reduce((rebuilt, [old, now]) => { assert.ok(rebuilt.includes(now), now.slice(0, 40)); return rebuilt.replace(now, old); }, text));
-    const beforeMemory = undo(MEMORY_SEARCH_EDITS[lang])(current);
+    const beforeSteer = undo(STEER_EDITS[lang])(current);
+    assert.equal(createHash('sha256').update(beforeSteer.trim()).digest('hex'), { zh: '34bb536ccad14af56ef07246ddb71e498b2cdd5296fcec24d0623bb3d04a9948', en: 'cb5089e5fc403994ceb405ef8610ee249bdd276fd75bb06ba62c0243d11b21f4' }[lang]);
+    assert.equal(normalizePlatformSettings({ platformPrompt: beforeSteer }).platformPrompt, current, 'a saved copy of that default follows the new one');
+    const beforeMemory = undo(MEMORY_SEARCH_EDITS[lang])(beforeSteer);
     assert.equal(createHash('sha256').update(beforeMemory.trim()).digest('hex'), { zh: '88dc45f7e62b484aa31a070d59e245003d16bf070cf8aed37431c95a4860281c', en: 'ff3c4b8f0e58458d73c995772436685c35e6c6e2d3676d2071526641c367b470' }[lang]);
     assert.equal(normalizePlatformSettings({ platformPrompt: beforeMemory }).platformPrompt, current, 'a saved copy of that default follows the new one');
     const beforeAsk = undo(ASK_DIRECT_EDITS[lang])(beforeMemory);

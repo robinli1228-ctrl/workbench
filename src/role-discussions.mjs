@@ -7,6 +7,7 @@ import {executionConflict} from './execution-workspace.mjs';
 import {concurrentWritesAllowed,concurrentPeers} from './concurrent-writes.mjs';
 import {discussionPolicy,supportsDiscussion,discussionTargetStatus} from './discussion-policy.mjs';
 import {buildTeamContext} from './team-context.mjs';
+import {runProgress} from './run-progress.mjs';
 import {conversationIdOf,groupConversationIdOfSession,assertConversationRecord} from './group-conversations.mjs';
 import { tr, isMessage } from './i18n.mjs';
 import {roleSwitchWaitReason} from './role-switch-policy.mjs';
@@ -311,7 +312,9 @@ export class RoleDiscussions {
         const activeRuns=runs.filter(run=>run.roleId===r.id).map(run=>({id:run.id,taskId:run.taskId,turnPurpose:run.turnPurpose||'task',status:run.status,
           workspace:run.workspace||null,workspaceStatus:run.workspace?'reported':'pending',plannedWorkspace:run.resumeWorkspace||run.projectRoot||null,updatedAt:run.updatedAt,
           repositories:(run.repositories||[]).map(repo=>({id:repo.id,key:repo.key,localRoot:repo.localRoot||null})),repositoryStatus:run.workspace?'reported':'planned',
-          plannedWriteRepositories:run.execution?.writeRepositories||null,title:run.inputTask?.title||tasks.find(t=>t.id===run.taskId)?.title||null}));
+          plannedWriteRepositories:run.execution?.writeRepositories||null,title:run.inputTask?.title||tasks.find(t=>t.id===run.taskId)?.title||null,
+          // What the turn is doing right now, so a teammate can follow a long task and correct it in time (wb call --kind steer).
+          ...(({replySoFar,...progress})=>progress)(runProgress(this.db,run,{steps:3}))}));
         const activeTasks=tasks.filter(t=>t.roleId===r.id&&(['in_progress','waiting_discussion','ready'].includes(t.status)||activeRuns.some(run=>run.taskId===t.id)))
           .map(t=>({id:t.id,title:t.title,status:t.status,waitingReason:t.waitingReason||null}));
         return {id:r.id,name:r.name,nodeId:r.nodeId,runtime:r.runtime,model:r.model||null,enabled:Boolean(r.enabled&&!r.archivedAt),online:member?.online??null,

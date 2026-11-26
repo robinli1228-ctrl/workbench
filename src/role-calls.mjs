@@ -405,7 +405,9 @@ export class RoleCalls {
     // Work the user interrupted (by steering the role doing it) wakes the caller to look at that run and decide.
     const interrupted=ready?children.filter(c=>c.status==='cancelled'&&c.cancelReason==='user_interrupted'):[];
     const reason=interrupted.length?'interrupted':ready?'results':expired?'timeout':'blocked';
-    if(!parent.waitEvent)this.db.put('coordinationRequests',{...parent,waitEvent:{id:`wait:${parent.id}`,reason,observedAt:new Date(time).toISOString(),requestIds:children.map(r=>r.id)}});
+    // A teammate's correction (wb call --kind interrupt) names who stopped the work; a user's steer names nobody.
+    const interruptedBy=[...new Set(interrupted.map(r=>r.interruptedByRole).filter(Boolean))].join(', ');
+    if(!parent.waitEvent)this.db.put('coordinationRequests',{...parent,waitEvent:{id:`wait:${parent.id}`,reason,...(interruptedBy?{by:interruptedBy}:{}),observedAt:new Date(time).toISOString(),requestIds:children.map(r=>r.id)}});
     // The user cancelled or redirected the work this wait served: keep the late replies, close the wait, start nothing.
     const source=parent.parentRequestId?this.db.get('coordinationRequests',parent.parentRequestId):null;
     if(source&&(source.status==='cancelled'||source.steeringTaskId)) {
@@ -417,7 +419,7 @@ export class RoleCalls {
     try {
       // Creating the continuation and linking it to the wait must roll back together before recording a retry/failure.
       this.db.transaction(()=>{
-      const header = reason==='interrupted'?tr('minimal.waitInterrupted',{resumeSummary:parent.resumeSummary,requestIds:interrupted.map(r=>r.id).join(', '),
+      const header = reason==='interrupted'?tr(interruptedBy?'minimal.waitInterruptedByRole':'minimal.waitInterrupted',{resumeSummary:parent.resumeSummary,requestIds:interrupted.map(r=>r.id).join(', '),by:interruptedBy,
           roles:[...new Set(interrupted.map(r=>r.targetSnapshot?.name||this.db.get('roles',r.targetRoleId)?.name||r.targetRoleId))].join(', ')})
         :reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')})
         :reason==='blocked'?tr('minimal.waitBlocked',{resumeSummary:parent.resumeSummary,requestIds:blocked.map(x=>x.request.id).join(', '),reasons:blocked.map(x=>`${x.request.id}: ${x.block.reason}`).join('; ')})

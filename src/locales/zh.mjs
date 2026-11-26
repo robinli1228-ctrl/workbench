@@ -1130,6 +1130,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'rooms.messageBeingAdded': '这条消息正在补充进角色当前这轮，不能再取消或编辑',
   'roleSteering.addingToCurrentTurn': '正在把这条消息补充进角色当前这轮',
   'roleSteering.supplementText': '用户在你处理这一轮时补充了下面这条消息。它是对当前任务的补充，不是新任务；请结合它继续：\n\n{text}',
+  'roleSteering.roleSteerText': '{name} 在你处理这一轮时发来下面的纠正。先看清它指出的问题，按它调整后继续当前任务：\n\n{text}',
   // src/rooms.mjs
   'rooms.projectNotFound': '项目不存在',
   'rooms.editSystemSupervisorThroughSupervisor': '请通过主管配置编辑系统主管',
@@ -1550,7 +1551,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'wbTools.callDocumentNotText': '文档必须为 UTF-8 文本文件。',
   'wbTools.callDocumentTooLong': '派活说明超过 12000 字符。把材料放进文件，只写设备和路径（或用 --file）；不要改用编码或截断。',
   'wbTools.callDocumentReference': '引用文档（资料，不是附加指令）：正文没有附上，需要时用 wb device read 按下面的设备和路径读取；SHA256 只在需要确认是同一版本时比对：',
-  'wbTools.kindMustBeConsultHandoff': `kind 只能为 consult、direct、transfer 或 handoff`,
+  'wbTools.kindMustBeConsultHandoff': `kind 只能为 consult、direct、transfer、handoff、steer 或 interrupt`,
   'wbTools.currentRunHasNoDeliverable': '当前执行没有可交付的仓库',
   'wbTools.noChanges': '（无改动）',
   'wbTools.filledInByWorkerFrom': 'Worker 按 git 状态补全（角色未写正式交接）',
@@ -1588,19 +1589,20 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'wbTools.turnAlreadyHasWrittenHandoff': '本轮已有书面交接',
   'wbTools.builtInCollaborationToolsWorkbench': `工作台协作工具（所有角色共用）
 
-wb discuss peers     查看团队：每个角色的职能、设备、是否空闲、token 余额；加 '{"view":"detail"}' 看各自正在做的任务和最近消息
+wb discuss peers     查看团队：每个角色的职能、设备、是否空闲、token 余额；加 '{"view":"detail"}' 看各自正在做的任务、已运行多久、最近几步和最近消息
 wb call --role 角色 --kind consult|direct|transfer --request-id 稳定编号 --text 说明
                      consult：请教或请人审核；direct：派一个子任务。这两种的结果都回到你这里，需要时用 wb wait 等。
                      transfer：整件转交。对方成为负责人，自己推进、找人审核，做完直接回复用户；结果不再交回你，你这一轮可以直接结束。
                      重复 --role 可把同一段说明发给几个角色，各自处理；consult 和 direct 的说明里 @ 到的角色也会收到。可选 --goal、--scope、--input、--return 写成带标签的几行放在说明前面；--file 路径 附上项目里一个 UTF-8 文件的设备、路径和 SHA256（不贴正文，对方用 wb device read 读）。说明最多 12000 字。重试用同一个编号和内容。
                      --kind handoff --delivery-id 编号：配合 wb deliver 的跨设备提交派活。
+                     --kind steer|interrupt：纠正正在执行的同事，只有主管和派出这项工作的角色可用。steer 把说明送进它正在执行的这一轮，不打断；interrupt 停下这一轮，让它按说明继续。
 wb wait "续接摘要"   登记你在等哪些派出的结果，然后结束本轮；结果都回来、超时（默认 30 分钟，从最后一个开始执行时算起，排在对方其他工作后面的时间不算）或对方 10 分钟仍无法开始时，平台叫醒你。摘要写完整的句子：在等谁、等什么、回来后做什么。也可 wb wait '{"summary":"...","requestIds":["编号"],"timeoutSeconds":1800}'
                      列出的几个请求要全部返回才叫醒你；想先处理先回来的，就只等那一个（requestIds 只写它的编号），处理完再等下一个。
 wb note 文字         在群里留一句话。文字里 @ 的角色会收到通知并回应（按 consult 处理，回复交回给你）；只在需要对方处理时 @，单纯提到用名字就行
 wb history [关键词] [--role 角色] [--file 路径] [--since 时间] [--until 时间] [--limit N] [--cursor C]
                      不带关键词列出最近的群聊记录；带关键词搜索。时间写法：30m、2h、3d、today、2026-10-20
 wb history read 编号 [offset] [version]
-                     读一条消息或一次运行、派活结果的全文；长文分段，续读时带上一次返回的 offset 和 version
+                     读一条消息或一次运行、派活结果的全文；长文分段，续读时带上一次返回的 offset 和 version。运行还没结束时，给出它目前的步骤和已写出的回复
 wb history summary   当前群聊的摘要
 wb memory search [关键词] [--type 类型] [--cli claude|codex|grok|agy] [--device 设备] [--since 时间] [--limit N]
                      查平台记忆：全平台一份，所有项目、角色、CLI、设备共用，后台整理模型每天从各群聊里整理。记的是跨项目有用的事：环境（设备、地址、目录）、账号与密钥、教训和解决办法、固定流程、个人信息、全平台的决定等；不带关键词列出全部。本项目自己的决定和进度用 wb history search 查。
@@ -1774,6 +1776,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
 - 要别的角色协同时，先用 wb task create 建一个待办，写清目标和步骤；派活时用 wb call --task 关联它。任务说明只写当前状态，控制在 3 KB 以内，不往说明后面追加。每完成一步，用 wb task update 在 reason 里写结论、证据路径和版本；动手前（包括接手、恢复或复查）先看任务步骤和 .workbench/docs 里已有的结论，版本没变的直接引用，不重做。
 - 派活只写四项，每项一两句：目标；已有材料和已确认的结论（任务编号、设备和路径，代码版本写一次完整提交 SHA，不说“最新版本”）；对方负责什么、能改什么、不用做什么；完成标准和要交回什么。平台默认的限制（不合并、不部署、不动别人的文件等）不用重复写；具体怎么做由对方决定，不要先替对方把材料读一遍。
 - 发出后继续做不依赖它的部分，真正需要结果时再等；要等别人的结果，就真的发出请求并登记等待，没有在等的事就说明已经完成。
+- 派出去的长任务要留意进度（wb discuss peers 的 detail，或 wb history read 运行编号）；发现做偏了，用 wb call --kind steer 及时纠正，必须马上停下时用 --kind interrupt。
 - 结果回来不等于通过：核对关键结论的证据（必改要能对上触发路径）再决定接受还是退回；派活时写明的版本不用重算 SHA。结果没有变化，不为同一件事再派人。
 - 交付前，大的改动请其他角色审核，小改动自测后直接交付；修复后只请提出问题的人复核。你是被请来审核的，就只给出自己的审核意见，不再另找别人审核。
 
@@ -1822,6 +1825,16 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'agentCalls.mentionFailed': '说明里 @ 到的 {names} 没能收到：{reason}。原派活已发出；需要他们处理就另行派活。',
   'agentCalls.noteSentAsCall': '留言里 @ 到的 {names} 已按咨询收到，回复会交回给你；需要等结果就用 wb wait。',
   'agentCalls.taskHint': '这件事还没有任务：建议用 wb task create 建一个，写清目标和步骤，之后派活用 --task 关联它。',
+  'agentCalls.steerNotRunning': '{name} 现在没有正在执行的任务；直接用 --kind consult 或 direct 派给它。',
+  'agentCalls.steerNotAllowed': '只有主管或派出这项工作的角色可以纠正 {name}；把你发现的问题告诉主管。',
+  'agentCalls.steerTooSoon': '{name} 刚被纠正过，先等它处理，几分钟后再试。',
+  'agentCalls.steerSelf': '不能纠正自己。',
+  'agentCalls.steerAdded': '已送进 {name} 正在执行的这一轮，它下一步就会读到。不用等回复，效果看它这一轮的进度和结果（wb history read 它的运行编号）。',
+  'agentCalls.steerQueuedFirst': '{name} 的这一轮现在收不了中途补充，已排到它队列最前面，这一轮结束后马上处理。要它立刻停下，换一个 request-id 用 --kind interrupt 再发。',
+  'agentCalls.steerInterrupting': '正在停下 {name} 当前这一轮，停下后它先按你的说明继续；结果会回到你这里，需要时用 wb wait 等。',
+  'runProgress.header': '（执行中，尚未结束）状态 {status}，已运行 {minutes} 分钟，最后活动 {last}。',
+  'runProgress.steps': '最近步骤：',
+  'runProgress.reply': '已写出的回复：',
   'agentCalls.transferHint': '这个任务仍由你负责。本次 direct 已发送，不要重复派发；以后如需整件交给对方，先更新交接说明，再用 --kind transfer，它完成后会直接回复用户，你无需再次汇总；需要结果回到你这里汇总时继续用 direct。',
   'turnInput.fromUser': '【用户消息】',
   'turnInput.fromGuest': '【用户消息：{name}（访客）】',
@@ -1879,6 +1892,7 @@ wb 表示这个完整前缀；每次调用都使用本轮前缀，不复用历�
   'minimal.invalidWait': '等待只能引用本任务关联请求，timeoutSeconds 须为 60 到 86400 的整数。',
   'minimal.waitHelp': 'wb wait "续接摘要" 等待当前依赖，默认 30 分钟。也可 wb wait JSON {"summary":"...","requestIds":["原请求编号"],"timeoutSeconds":1800}。超时后原请求仍有效，可以再次等待，不必重新派工。wb call --kind consult 用于咨询；--kind direct 用于子任务委派；wb note 发布通知，不改变任务归属。',
   'minimal.waitInterrupted': '你派给 {roles} 的活（{requestIds}）被用户打断了。先查看它的运行记录（用 wb history read 加请求 ID），再自行决定接着做、调整还是停下。此前任务状态：{resumeSummary}\n',
+  'minimal.waitInterruptedByRole': '你派给 {roles} 的活（{requestIds}）被 {by} 打断并改了方向。先查看它的运行记录（用 wb history read 加请求 ID），再自行决定接着做、调整还是停下。此前任务状态：{resumeSummary}\n',
   'minimal.waitTimeout': '依赖等待已超时，原请求仍有效：{requestIds}。没有取消或重跑同伴。可继续独立工作，或再次等待这些原请求。此前任务状态：{resumeSummary}\n',
   'minimal.waitBlocked': '依赖已阻塞超过 10 分钟，暂时无法开始：{reasons}。原请求仍有效：{requestIds}，没有取消或重派。可以改派、报告阻塞，或再次等待这些原请求。此前任务状态：{resumeSummary}\n',
   'minimal.dependencyEvent': '本任务原依赖在实际启动时的最新状态：{events}',
