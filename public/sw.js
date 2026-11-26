@@ -4,7 +4,7 @@ const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
-  '/share-mode.js', '/jump-to-bottom.js', '/last-place.js', '/share-settings.js',
+  '/share-mode.js', '/jump-to-bottom.js', '/last-place.js', '/auto-save.js', '/share-settings.js',
   '/group-conversations.js',
   '/model-usage.js',
   '/quota-state.js',

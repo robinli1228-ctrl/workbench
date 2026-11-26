@@ -35,7 +35,6 @@ export default {
   "Syncing": "同步中",
   "Confirm equal": "双端一致确认",
   "No records": "没有记录",
-  "Apply filters": "应用筛选",
   "Records expire after 30 days. Times use Home; file times are shown unchanged.": "记录保留 30 天。排序按 Home 时间；文件时间保持原值展示。",
   "Sync record details": "同步记录详情",
   "More attempts": "更多尝试",

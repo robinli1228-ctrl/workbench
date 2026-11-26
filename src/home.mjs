@@ -710,6 +710,7 @@ function pageFileMap() {
   files['/share-mode.js']='share-mode.js';
   files['/jump-to-bottom.js']='jump-to-bottom.js';
   files['/last-place.js']='last-place.js';
+  files['/auto-save.js']='auto-save.js';
   files['/share-settings.js']='share-settings.js';
   files['/native-history-timeline.js']='native-history-timeline.js';
   files['/native-session-groups.js']='native-session-groups.js';
