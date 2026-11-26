@@ -4629,12 +4629,32 @@ dialog:is(.message-queue-dialog, .native-ask-dialog, #wb-tray-dialog)::backdrop 
 .native-ask-dialog .native-ask-option { grid-template-columns: 24px minmax(0, 1fr); align-items: start; row-gap: 3px; padding: 10px 12px; border-color: var(--card-hairline); }
 .native-ask-dialog .native-ask-option.is-picked { border-color: rgb(79 91 206 / 35%); }
 .native-ask-dialog .native-ask-desc { grid-column: 2; white-space: normal; line-height: 1.6; }
-/* A little depth, kept quiet: a faint cool ground fading to white, a light band behind each title bar (a touch of the accent
-   behind the question, which waits on the user), and soft option rows. */
-.chat-tray { background: linear-gradient(180deg, #f8f9fd, #fff 72%); box-shadow: 0 -4px 14px rgb(16 24 40 / 7%), inset 0 1px 0 rgb(255 255 255 / 90%); }
-#message-queue summary { background: rgb(16 24 40 / 2.2%); }
-.chat-tray .native-ask .native-ask-head { background: rgb(79 91 206 / 4%); }
+/* Clean surfaces: a white tray (its depth comes from the hairline, the shadow and a crisp top edge), white rows split by
+   hairlines, options with a hairline border. The only colour is a faint accent band behind the question, which waits on the
+   user. No warm tint on queued messages in the tray or its dialog (error rows keep their red tint). */
+.chat-tray { background: #fff; box-shadow: 0 -4px 14px rgb(16 24 40 / 7%), inset 0 1px 0 rgb(255 255 255 / 90%); }
+#message-queue summary { background: #fff; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-list { gap: 0; padding: 2px 6px 6px; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card), :is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card):hover { background: #fff; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card):hover { background: rgb(16 24 40 / 2.5%); }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item + .message-queue-item { box-shadow: 0 -1px 0 rgb(16 24 40 / 6%); }
+.chat-tray .native-ask .native-ask-head { background: rgb(79 91 206 / 3.5%); }
 .chat-tray .native-ask .native-ask-title svg { color: var(--accent); opacity: .85; }
-.chat-tray .native-ask-option:not(.is-picked) { border-color: rgb(16 24 40 / 5%); background: rgb(16 24 40 / 1.6%); }
-.chat-tray .native-ask-option:not(.is-picked):hover { background: rgb(16 24 40 / 3.5%); }
+:is(.chat-tray, .native-ask-dialog) .native-ask-option:not(.is-picked) { border-color: rgb(16 24 40 / 8%); background: #fff; }
+:is(.chat-tray, .native-ask-dialog) .native-ask-option:not(.is-picked):hover { border-color: rgb(79 91 206 / 22%); background: rgb(79 91 206 / 3%); }
 .chat-tray .native-ask-options { gap: 6px; }
+/* Queue title bar buttons line up with the row buttons below: pause over Edit, View all (or Close) over Cancel, with the
+   Steer column left empty between them. Rows: 30px buttons, 8px apart, 14px from the edge (36px on phones). */
+#message-queue summary { padding-right: 15px; }
+.message-queue-dialog-head { padding-right: 17px; }
+:is(#message-queue summary, .message-queue-dialog-head) .message-queue-pause { margin-right: 40px; }
+@media (max-width: 760px) {
+  #message-queue summary { padding-right: 21px; }
+  #message-queue summary .message-queue-pause { margin-right: 64px; }
+}
+
+/* Quoted source inside a chat card (2026-11-26): see-through, so the card's own colour shows — white 26% on your light
+   indigo messages, a 3% shade on role and platform cards. */
+.chat-row.human .quoted-message { background: rgb(255 255 255 / 26%); }
+.chat-row:not(.human) .quoted-message, .chat-row.human.is-reminder .quoted-message { background: rgb(16 24 40 / 3%); }
+.chat-row button.quoted-message:hover { background: rgb(79 91 206 / 8%); }
