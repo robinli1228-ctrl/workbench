@@ -939,14 +939,14 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     return {kind,status:progress?t(progress.label):'Completed',duration:completed&&run?duration:'',startedAt,done:completed,state:progress?.state||'completed'};
   }
 
-  /** Copy the original message text without the rendered action buttons, time or quote summary. */
+  /** Copy the message text as shown (Simplified), without the rendered action buttons, time or quote summary. */
   function copyMessageButton(text,key) {
     const copy = iconAction('copy', 'Copy', async b => {
       b.disabled = true;
       try {
         const value=typeof text==='function'?text():text;
         if (!value) { b.disabled=false;return; }
-        await copyText(b,value);
+        await copyText(b,simplifiedCliOutput(value));
         b.disabled=false;
       } catch {
         b.disabled = false;
@@ -1004,7 +1004,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     return content;
   }
   function sideMessageButton(text,name,markdown=true,attachments=[],runId=null){
-    return sideButton('chat-icon-btn message-fullscreen-side',t('Open on the right'),()=>({title:name||t('Message'),copyText:text,render:()=>fullMessageContent(text,markdown,attachments,runId)}));
+    return sideButton('chat-icon-btn message-fullscreen-side',t('Open on the right'),()=>({title:name||t('Message'),copyText:simplifiedCliOutput(text),render:()=>fullMessageContent(text,markdown,attachments,runId)}));
   }
   /** Update only the same run that is open; stop auto-scrolling after the user scrolls up manually. */
   function updateLiveFullscreen() {
@@ -1042,7 +1042,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       // Pin the text and source visible at click time, so later live replies do not replace the side preview.
       const side=sideButton('chat-icon-btn message-fullscreen-side',t('Open on the right'),()=>{
         const snapshot=view.text,source=view.runId;
-        return {title:name||t('Message'),copyText:snapshot,render:()=>fullMessageContent(snapshot,markdown,attachments,source)};
+        return {title:name||t('Message'),copyText:simplifiedCliOutput(snapshot),render:()=>fullMessageContent(snapshot,markdown,attachments,source)};
       },{before:()=>messageFullscreen.close()});
       header.append(heading,copy,side,close);
       const body = create('div', 'message-fullscreen-body');
