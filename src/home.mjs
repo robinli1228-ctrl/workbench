@@ -1224,8 +1224,8 @@ const server = http.createServer(async (req, res) => {
         return json(res,tokenUsage.report({from:url.searchParams.get('from'),to:url.searchParams.get('to'),nodeIds}));
       }
       if (pathname === '/api/token-usage/refresh' && req.method === 'POST') {
-        const b=await body(req),nodeIds=[...new Set(b.nodeIds||[])];
-        if(nodeIds.length!==2)throw new Error(tr('home.selectTwoDifferentDevices'));
+        const b=await body(req),nodeIds=[...new Set(Array.isArray(b.nodeIds)?b.nodeIds:[])];
+        if(!nodeIds.length)throw new Error(tr('tokenUsage.selectUsageDevices'));
         await Promise.allSettled(nodeIds.map(nodeId=>tokenUsage.collect(nodeId,{from:b.from||null,to:b.to||null})));
         return json(res,tokenUsage.report({from:b.from,to:b.to,nodeIds}));
       }

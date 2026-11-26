@@ -95,7 +95,7 @@ export class TokenUsage{
   }
   report({from,to,nodeIds}){
     const range=dates(from,to),wanted=[...new Set(nodeIds||[])];
-    if(wanted.length!==2)throw new Error(tr('tokenUsage.selectTwoDifferentDevices'));
+    if(!wanted.length)throw new Error(tr('tokenUsage.selectUsageDevices'));
     const rows=this.db.list('tokenUsageDaily');
     const devices=wanted.map(id=>{
       const worker=this.db.get('workers',id);if(!worker)throw new Error(tr('tokenUsage.statisticsDeviceNotFound'));

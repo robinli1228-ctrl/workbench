@@ -1,4 +1,4 @@
-import { t, dateLocale } from './i18n.js';
+import { t, dateLocale, getLanguage } from './i18n.js';
 const TYPES=[
   {key:'inputTokens',label:'Input',color:'#0866ff'},
   {key:'outputTokens',label:'Output',color:'#00a8e8'},
@@ -6,7 +6,23 @@ const TYPES=[
   {key:'cacheReadTokens',label:'Cache read',color:'#29c9c0'}
 ];
 const MODEL_COLORS=['#0866ff','#00a8e8','#6645ed','#29a39a','#ed8b23','#d95082','#57872e','#8359aa','#b96a32','#c44242'];
+// Agents are told apart by model name; ccusage records which agents ran on a day but not their amounts.
+const AGENTS=[
+  {name:'Claude',color:'#d97757',match:/claude|opus|sonnet|haiku|fable/},
+  {name:'Codex',color:'#10a37f',match:/^(gpt|o\d|codex)|codex/},
+  {name:'Agy',color:'#6645ed',match:/gemini/},
+  {name:'Grok',color:'#b07f00',match:/grok/}
+];
+const OTHER_COLOR='#94a3b8',UNCLASSIFIED_COLOR='#cbd5e1',DEVICE_COLORS=['#475569','#a8b3c4','#64748b','#cbd5e1','#334155','#94a3b8'],TOP_MODELS=5;
 const tokens=value=>Number.isFinite(Number(value))&&Number(value)>0?Number(value):0;
+const sum=items=>items.reduce((total,item)=>total+item.value,0);
+
+/** The agent behind a model name; usage without a model breakdown stays unclassified. */
+export function agentOf(modelName){
+  if(modelName==='Unclassified')return 'Unclassified';
+  const name=String(modelName||'').toLowerCase().split('/').at(-1);
+  return AGENTS.find(agent=>agent.match.test(name))?.name||'Other';
+}
 
 /** Combine selected devices by date and model; unknown historical shares keep an explicit remainder. */
 function modelDays(devices){
@@ -23,7 +39,7 @@ function modelDays(devices){
     days.set(row.date,day);
   }
   const totals=new Map();for(const day of days.values())for(const[name,value]of day.values)totals.set(name,(totals.get(name)||0)+value);
-  const models=[...totals].sort(([a],[b])=>a==='Unclassified'?1:b==='Unclassified'?-1:a.localeCompare(b)).map(([modelName,totalTokens],index)=>({modelName,totalTokens,color:modelName==='Unclassified'?'#94a3b8':MODEL_COLORS[index]||`hsl(${index*137.508%360} 65% 45%)`}));
+  const models=[...totals].sort(([a],[b])=>a==='Unclassified'?1:b==='Unclassified'?-1:a.localeCompare(b)).map(([modelName,totalTokens],index)=>({modelName,totalTokens,color:modelName==='Unclassified'?UNCLASSIFIED_COLOR:MODEL_COLORS[index]||`hsl(${index*137.508%360} 65% 45%)`}));
   return {models,days:[...days.values()].sort((a,b)=>a.date.localeCompare(b.date)).map(day=>({date:day.date,totalTokens:day.totalTokens,segments:models.filter(model=>day.values.has(model.modelName)).map(model=>({...model,value:day.values.get(model.modelName)}))}))};
 }
 
@@ -37,39 +53,99 @@ export function usageChartModel(report){
   return {devices,models,partial:devices.some(device=>device.unavailable),days,dailyMax:Math.max(1,...days.map(day=>day.totalTokens)),totalTokens:Number(report.total?.totalTokens||0),total:report.total||{}};
 }
 
+/**
+ * Shares for the two donuts: devices on the inner ring and agents summed across devices on the outer ring; the five largest
+ * models keep their daily-chart colours and the rest fold into Other.
+ */
+export function usageShares(model){
+  const devices=model.devices.map((device,index)=>({name:device.name,value:tokens(device.total?.totalTokens),color:DEVICE_COLORS[index%DEVICE_COLORS.length]}));
+  const byAgent=new Map();for(const item of model.models){const name=agentOf(item.modelName);byAgent.set(name,(byAgent.get(name)||0)+item.totalTokens);}
+  const agents=[...AGENTS.map(({name,color})=>({name,color})).filter(agent=>byAgent.get(agent.name)).map(agent=>({...agent,value:byAgent.get(agent.name)})).sort((a,b)=>b.value-a.value),
+    ...[{name:'Other',color:OTHER_COLOR},{name:'Unclassified',color:UNCLASSIFIED_COLOR}].filter(agent=>byAgent.get(agent.name)).map(agent=>({...agent,value:byAgent.get(agent.name)}))];
+  const named=model.models.filter(item=>item.modelName!=='Unclassified').map(item=>({name:item.modelName,value:item.totalTokens,color:item.color})).sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name));
+  // A single model past the fifth is shown by name; Other only folds two or more.
+  const shown=named.length>TOP_MODELS+1?TOP_MODELS:named.length,rest=named.slice(shown),unclassified=model.models.find(item=>item.modelName==='Unclassified');
+  const models=[...named.slice(0,shown),...(rest.length?[{name:'Other',count:rest.length,value:sum(rest),color:OTHER_COLOR}]:[]),...(unclassified?[{name:'Unclassified',value:unclassified.totalTokens,color:UNCLASSIFIED_COLOR}]:[])];
+  return {devices,agents,models,modelCount:named.length};
+}
+
 export function refreshMessage(report){
   const failed=(report.devices||[]).filter(device=>device.state?.status!=='ready'&&device.state?.error);
   return failed.length?t('Collection incomplete: {v}', { v: failed.map(device=>t('{name}: {error}', { name: device.name, error: device.state.error })).join(t('; ')) }):'Collection complete; offline devices keep their history and will backfill when back online.';
 }
 
-/** The platform token page reads aggregated data only; charts load no third-party scripts. */
+const SVG='http://www.w3.org/2000/svg';
+const svg=(tag,attrs={})=>{const node=document.createElementNS(SVG,tag);for(const[key,value]of Object.entries(attrs))node.setAttribute(key,value);return node;};
+// One annulus segment in a 200x200 box, clockwise from 12 o'clock. Each edge is drawn as two half arcs through the midpoint,
+// so a near-full or full ring never has start and end on one point (SVG drops such an arc) and needs no seam.
+const arc=(inner,outer,from,to)=>{const at=(r,a)=>`${(100+r*Math.sin(a)).toFixed(2)} ${(100-r*Math.cos(a)).toFixed(2)}`,mid=(from+to)/2;
+  return `M${at(outer,from)}A${outer} ${outer} 0 0 1 ${at(outer,mid)}A${outer} ${outer} 0 0 1 ${at(outer,to)}L${at(inner,to)}A${inner} ${inner} 0 0 0 ${at(inner,mid)}A${inner} ${inner} 0 0 0 ${at(inner,from)}Z`;};
+
+/** The platform token page reads aggregated data only; charts load no third-party scripts. Every registered device is read. */
 export function tokenUsageUI({api,getData,create}){
   const form=document.querySelector('#token-usage-form'),feedback=document.querySelector('#token-usage-feedback');
-  let loaded=false;
+  let loaded=false,requestedFor='',report=null,statusDrawn='',chartLanguage='';
   // 等可见布局完成后定位最新日期；用户随后仍可自由向左查看历史。
   const showLatest=()=>requestAnimationFrame(()=>{const chart=document.querySelector('#token-usage-daily');chart.scrollLeft=chart.scrollWidth;});
   const format=value=>Number(value||0).toLocaleString(dateLocale());
   const compact=value=>new Intl.NumberFormat(dateLocale(),{notation:'compact',maximumFractionDigits:1}).format(Number(value||0));
+  const percent=(value,total)=>`${total?(value/total*100).toFixed(1):'0.0'}%`;
   const date=value=>{const d=new Date();d.setDate(d.getDate()+value);return new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit'}).format(d);};
   form.elements.from.value ||= date(-29);form.elements.to.value ||= date(0);
-  function options(){
-    const workers=getData().workers||[],selects=[form.elements.nodeA,form.elements.nodeB],old=selects.map(s=>s.value);
-    for(let i=0;i<selects.length;i++){
-      selects[i].replaceChildren(...workers.map(worker=>{const option=create('option','',`${worker.name}${worker.online?t(' · Online'):t(' · Offline')}`);option.value=worker.id;return option;}));
-      selects[i].value=workers.some(w=>w.id===old[i])?old[i]:(workers[i]?.id||workers[0]?.id||'');
-    }
+  const workers=()=>{const all=getData().workers||[],usage=all.filter(worker=>worker.capabilities?.tokenUsage===1);return usage.length?usage:all;};
+  const nodeIds=()=>workers().map(worker=>worker.id);
+  // Online state follows the live device list; collection progress from the last report sits in the tooltip.
+  function deviceStatus(){
+    const host=document.querySelector('#token-usage-total .usage-total-devices');if(!host)return;
+    const states=new Map((report?.devices||[]).map(device=>[device.id,device]));
+    // State refreshes arrive often; redraw only when a device, its online state or its collection state changed.
+    const drawn=JSON.stringify([getLanguage(),...workers().map(worker=>[worker.id,worker.name,worker.online,states.get(worker.id)?.state])]);
+    if(drawn===statusDrawn&&host.childElementCount)return;statusDrawn=drawn;
+    host.replaceChildren(...workers().map(worker=>{
+      const device=states.get(worker.id),item=create('span',`usage-device-status ${worker.online?'is-online':'is-offline'}`);
+      item.append(create('i',''),create('span','',`${worker.name} ${worker.online?t('Online'):t('Offline')}`));
+      item.title=device?.state?.status==='ready'?t('Collected through {lastCollectedDate}',{lastCollectedDate:device.state.lastCollectedDate}):device?.state?.error||t('Not collected yet');
+      return item;
+    }));
   }
-  function render(report){
-    const model=usageChartModel(report),summary=document.querySelector('#token-usage-total');
-    summary.replaceChildren(create('span','usage-total-label',model.partial?'Total usage of collected devices (partial)':'Total usage of selected devices'),create('strong','',format(model.totalTokens)),create('span','usage-total-unit','tokens'),create('small','',t('Input {v} · Output {v2} · Cache {v3}', { v: format(model.total.inputTokens), v2: format(model.total.outputTokens), v3: format(Number(model.total.cacheCreationTokens||0)+Number(model.total.cacheReadTokens||0)) })));
-    const pies=document.querySelector('#token-usage-pies');pies.replaceChildren();
-    for(const device of model.devices){
-      let cursor=0;const stops=device.segments.map(segment=>{const start=cursor;cursor+=segment.percent;return `${segment.color} ${start}% ${cursor}%`;});
-      const card=create('article','usage-device-card'),pie=create('div','usage-pie');pie.style.background=device.total.totalTokens?`conic-gradient(${stops.join(',')})`:'#e7edf1';pie.setAttribute('role','img');pie.setAttribute('aria-label',device.unavailable?t('{name} not collected yet', { name: device.name }):t('{name} token breakdown', { name: device.name }));
-      const center=create('span','usage-pie-center',device.unavailable?'—':compact(device.total.totalTokens));center.title=device.unavailable?'Not collected yet':`${format(device.total.totalTokens)} tokens`;pie.append(center);
-      const info=create('div','usage-device-info');info.append(create('strong','',device.name),create('p','workspace-note',`${device.online?t('Online'):t('Offline')} · ${device.state?.status==='ready'?t('Collected through {lastCollectedDate}', { lastCollectedDate: device.state.lastCollectedDate }):device.state?.error||t('Not collected yet')}`));
-      const legend=create('div','usage-legend');if(!device.unavailable)for(const segment of device.segments){const item=create('span','');item.style.setProperty('--legend-color',segment.color);item.textContent=`${segment.label} ${format(segment.value)} (${segment.percent}%)`;legend.append(item);}info.append(legend);card.append(pie,info);pies.append(card);
+  function donut(rings,center,sub,label){
+    const chart=svg('svg',{viewBox:'0 0 200 200',class:'usage-donut',role:'img','aria-label':label});
+    for(const{items,inner,outer}of rings){
+      const total=sum(items),drawn=items.filter(item=>item.value>0);
+      if(!total){chart.append(svg('circle',{cx:100,cy:100,r:(inner+outer)/2,class:'usage-donut-empty','stroke-width':outer-inner}));continue;}
+      let from=0;
+      for(const item of drawn){
+        const to=from+item.value/total*Math.PI*2;
+        // A lone segment is the whole ring and needs no white gap.
+        const path=svg('path',{d:arc(inner,outer,from,to),fill:item.color,...(drawn.length>1?{class:'usage-donut-gap'}:{})});
+        const title=svg('title');title.textContent=`${item.label} · ${format(item.value)} tokens (${percent(item.value,total)})`;path.append(title);chart.append(path);from=to;
+      }
     }
+    const main=svg('text',{x:100,y:sub?98:106,class:'usage-donut-value'});main.textContent=center;
+    const small=svg('text',{x:100,y:119,class:'usage-donut-unit'});small.textContent=sub;chart.append(main,small);
+    return chart;
+  }
+  function legend(groups){
+    const list=create('div','usage-chart-legend');
+    for(const group of groups){
+      if(group.title)list.append(create('span','usage-chart-legend-title',group.title));
+      const total=sum(group.items);
+      for(const item of group.items){const row=create('span','usage-chart-legend-row'),swatch=create('i','');swatch.style.background=item.color;const name=create('span','usage-chart-legend-name',item.label);name.translate=false;row.append(swatch,name,create('em','',`${compact(item.value)} · ${percent(item.value,total)}`));row.title=`${format(item.value)} tokens`;list.append(row);}
+    }
+    return list;
+  }
+  function chartCard(title,chart,list){const card=create('article','usage-chart-card'),body=create('div','usage-chart-body');body.append(chart,list);card.append(create('h4','',title),body);return card;}
+  function render(data){
+    report=data;chartLanguage=getLanguage();
+    const model=usageChartModel(data),shares=usageShares(model),summary=document.querySelector('#token-usage-total');
+    const value=create('div','usage-total-value');value.append(create('strong','',format(model.totalTokens)),create('span','usage-total-unit','tokens'));
+    summary.replaceChildren(create('span','usage-total-label',model.partial?'Total usage of collected devices (partial)':'Total usage of all devices'),create('small','',t('Input {v} · Output {v2} · Cache {v3}', { v: format(model.total.inputTokens), v2: format(model.total.outputTokens), v3: format(Number(model.total.cacheCreationTokens||0)+Number(model.total.cacheReadTokens||0)) })),value,create('div','usage-total-devices'));
+    deviceStatus();
+    const named=item=>({...item,label:item.name==='Other'&&item.count?t('Other ({n} models)',{n:item.count}):item.name==='Other'||item.name==='Unclassified'?t(item.name):item.name});
+    const devices=shares.devices.map(named),agents=shares.agents.map(named),models=shares.models.map(named);
+    document.querySelector('#token-usage-pies').replaceChildren(
+      chartCard(t('Devices and agents'),donut([{items:devices,inner:56,outer:68},{items:agents,inner:76,outer:96}],compact(model.totalTokens),'tokens',t('Devices and agents')),legend([{title:t('Devices (inner ring)'),items:devices},{title:t('Agents (outer ring)'),items:agents}])),
+      chartCard(t('Tokens by model'),donut([{items:models,inner:64,outer:96}],String(shares.modelCount),t('models in range'),t('Tokens by model')),legend([{items:models}])));
     const key=document.querySelector('#token-usage-device-key');key.replaceChildren(...model.models.map(item=>{const label=create('span','',t(item.modelName));label.style.setProperty('--legend-color',item.color);label.title=`${format(item.totalTokens)} tokens`;return label;}));
     const chart=document.querySelector('#token-usage-daily');chart.replaceChildren();
     document.querySelector('#token-usage-model-note')?.remove();
@@ -84,16 +160,27 @@ export function tokenUsageUI({api,getData,create}){
     }
     showLatest();
   }
+  let pending=0;
   async function load(refresh){
-    const values=Object.fromEntries(new FormData(form)),nodeIds=[values.nodeA,values.nodeB].filter(Boolean);
-    if(new Set(nodeIds).size!==nodeIds.length){feedback.hidden=false;feedback.textContent='Please select two different devices';return;}
-    feedback.hidden=false;feedback.textContent=refresh?'Backfilling from online devices…':'Loading history…';form.querySelectorAll('button').forEach(button=>button.disabled=true);
+    const values=Object.fromEntries(new FormData(form)),ids=nodeIds();
+    if(!ids.length){feedback.hidden=false;feedback.textContent='No device to read';return;}
+    // A collect also locks the dates, so a quicker read cannot replace its result; a read only locks the button.
+    const ticket=++pending,locked=form.querySelectorAll(refresh?'button, input':'button');requestedFor=ids.join(',');
+    form.querySelectorAll('button, input').forEach(control=>control.disabled=false);
+    feedback.hidden=false;feedback.textContent=refresh?'Backfilling from online devices…':'Loading history…';locked.forEach(control=>control.disabled=true);
     try{
-      const report=refresh?await api('/api/token-usage/refresh',{method:'POST',json:{from:values.from,to:values.to,nodeIds}}):await api(`/api/token-usage?from=${encodeURIComponent(values.from)}&to=${encodeURIComponent(values.to)}&nodeIds=${encodeURIComponent(nodeIds.join(','))}`);
-      render(report);feedback.textContent=refresh?refreshMessage(report):(usageChartModel(report).partial?t('Loaded {from} to {to}; some devices not collected yet', { from: report.from, to: report.to }):t('Loaded {from} to {to}', { from: report.from, to: report.to }));loaded=true;
-    }catch(error){feedback.textContent=error.message;}finally{form.querySelectorAll('button').forEach(button=>button.disabled=false);}
+      const data=refresh?await api('/api/token-usage/refresh',{method:'POST',json:{from:values.from,to:values.to,nodeIds:ids}}):await api(`/api/token-usage?from=${encodeURIComponent(values.from)}&to=${encodeURIComponent(values.to)}&nodeIds=${encodeURIComponent(ids.join(','))}`);
+      // A later query (a changed date while this one ran) wins.
+      if(ticket!==pending)return;
+      render(data);feedback.textContent=refresh?refreshMessage(data):(usageChartModel(data).partial?t('Loaded {from} to {to}; some devices not collected yet', { from: data.from, to: data.to }):t('Loaded {from} to {to}', { from: data.from, to: data.to }));loaded=true;
+    }catch(error){if(ticket===pending)feedback.textContent=error.message;}finally{if(ticket===pending)form.querySelectorAll('button, input').forEach(control=>control.disabled=false);}
   }
+  // Dates query on change; Enter in a date field does the same instead of reloading the page.
   form.addEventListener('submit',event=>{event.preventDefault();void load(false);});
+  form.addEventListener('change',event=>{if(event.target.matches('input[type=date]')&&form.checkValidity())void load(false);});
   document.querySelector('#token-usage-refresh').addEventListener('click',()=>void load(true));
-  return {refresh:options,show({resetScroll=false}={}){options();if(!loaded)void load(false);else if(resetScroll)showLatest();}};
+  // A device added or removed reloads the shown range (once per device set, even if that read fails); a language switch redraws
+  // the charts from the last report; a device going on or offline only repaints its status.
+  const devicesChanged=()=>{if(loaded&&nodeIds().join(',')!==requestedFor)void load(false);else if(report&&chartLanguage!==getLanguage())render(report);else deviceStatus();};
+  return {refresh:devicesChanged,show({resetScroll=false}={}){if(!loaded)void load(false);else{devicesChanged();if(resetScroll)showLatest();}}};
 }

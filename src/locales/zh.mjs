@@ -595,7 +595,6 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'home.attachmentDoesNotBelongCurrent': '附件不属于当前执行',
   'home.workerCredentialsRequired2': '需要 Worker 凭据',
   'home.attachmentDoesNotBelongCurrent2': '附件不属于当前传输',
-  'home.selectTwoDifferentDevices': '请选择两台不同设备',
   'home.proposalHasAlreadyBeenHandled': '建议已处理',
   'home.deviceNotFound': '设备不存在',
   'home.currentExecutionHasEndedStopping': '当前执行已结束或正在停止，不能再调用协同工具',
@@ -1503,7 +1502,7 @@ mode 为 parallel 或 serial；purpose 为 plan/audit/develop/test/merge/migrati
   'tokenUsage.deviceNotFound': '设备不存在',
   'tokenUsage.deviceOfflineUsageWillBe': '设备离线，重新上线后自动补录',
   'tokenUsage.deviceDoesNotProvideCcusage': '设备未提供 ccusage',
-  'tokenUsage.selectTwoDifferentDevices': '请选择两台不同设备',
+  'tokenUsage.selectUsageDevices': '请至少选择一台设备',
   'tokenUsage.statisticsDeviceNotFound': '统计设备不存在',
   // src/turn-context.mjs
   'turnContext.toolContextForTurnNo': '本轮工具上下文已失效',

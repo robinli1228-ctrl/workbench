@@ -269,11 +269,10 @@
             </section>
 
             <section class="settings-panel" data-settings-panel="usage" id="settings-usage-panel" hidden>
-              <div class="settings-panel-heading"><h3>Token Usage</h3><p>Reads the local ccusage daily summaries of two devices. Online devices update on a schedule; data from offline periods is backfilled when they come back online.</p></div>
+              <div class="settings-panel-heading"><h3>Token Usage</h3><p>Reads the local ccusage daily summaries of every device. Online devices update on a schedule; data from offline periods is backfilled when they come back online.</p></div>
               <form id="token-usage-form" class="form-grid">
-                <label>Start date<input type="date" name="from" required></label><label>End date<input type="date" name="to" required></label>
-                <label>Device 1<select name="nodeA" required></select></label><label>Device 2<select name="nodeB" required></select></label>
-                <div class="form-actions full-width"><button class="secondary" type="submit">Query saved records</button><button class="primary" id="token-usage-refresh" type="button">Collect / backfill now</button></div>
+                <label class="usage-date"><span>Start</span><input type="date" name="from" aria-label="Start date" required></label><label class="usage-date"><span>End</span><input type="date" name="to" aria-label="End date" required></label>
+                <button class="primary" id="token-usage-refresh" type="button">Collect / backfill now</button>
               </form>
               <p id="token-usage-feedback" class="form-feedback" hidden></p>
               <section id="token-usage-total" class="usage-total"></section>

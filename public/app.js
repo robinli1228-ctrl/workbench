@@ -165,7 +165,7 @@ const room = createRoomUI({ api, documentPreview, openSideAsk:message=>inspector
 for(const [selector,icon,label] of [
   ['#close-settings-page, dialog button.icon-button[id^="close-"], #folder-close, #close-project-form','close'],['#show-device-enroll','plus'],
   ['[data-prompt-edit]','edit'],['#edit-conversation-organizer','edit','Edit background organizing'],['#edit-memory-organizer','edit','Edit memory organizing'],['#manage-role-templates','edit','Manage role templates'],['#edit-api-token','edit'],
-  ['#token-usage-form [type=submit]','search'],['#token-usage-refresh','refresh'],['#open-project-timers','history'],
+  ['#token-usage-refresh','refresh'],['#open-project-timers','history'],
   ['#refresh-followup','refresh'],['#view-followup','log'],['#data-refresh','refresh'],['#check-software-updates','refresh'],
   ['#copy-setup-guide','copy'],['#toggle-setup-guide','overview']
 ])document.querySelectorAll(selector).forEach(button=>setActionIcon(button,icon,label));
@@ -672,6 +672,8 @@ function render() {
   projectsUI.refreshConcurrent();
   setupUI.refresh();
   platformUI.refresh(); spacesUI.refresh(); memoryUI.refresh();
+  // The open usage page follows devices going on or offline and devices being added or removed.
+  if (app.view === 'settings' && app.settingsTab === 'usage') tokenUI.refresh();
   if(!nativeSessionUI.active())void room.refresh(app.data, app.selectedProjectId,app.selectedConversationId);
   nativeSessionUI.sync();
 }
