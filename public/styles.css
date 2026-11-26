@@ -4590,3 +4590,19 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
 .chat-avatar.chat-avatar-reminder svg { display: block; width: 100%; height: 100%; }
 #chat-feed .chat-row.is-reminder > .chat-avatar.chat-avatar-reminder svg { width: 100%; height: 100%; }
 .task-state-waiting { color: #8a94a6; }
+
+/* Group chat cards (2026-11-26, user chose option A): the project's own colour as a light rounded tile behind its coloured
+   line icon, and a card with a faint top-to-bottom shade, a fine hairline and a soft two-layer shadow that lifts on hover.
+   Selection marker, running and waiting tints are unchanged. */
+:is(html, #wb-project-cards) #project-list .project-item { grid-template-columns: 38px minmax(0, 1fr); gap: 12px; padding-left: 14px;
+  border: 1px solid rgb(16 24 40 / 7%); box-shadow: 0 1px 2px rgb(16 24 40 / 5%), 0 3px 10px rgb(16 24 40 / 5%); transition: transform .15s ease, box-shadow .15s ease; }
+:is(html, #wb-project-cards) #project-list .project-item:not(.is-running):not(.is-asking) { background: linear-gradient(180deg, #fff, #fbfcfe); }
+:is(html, #wb-project-cards) #project-list .project-item:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgb(16 24 40 / 6%), 0 8px 18px rgb(16 24 40 / 8%); }
+:is(html, #wb-project-cards) #project-list .project-item .project-item-icon { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center;
+  color: var(--project-icon-color); background: var(--project-icon-background); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 60%), 0 1px 2px rgb(16 24 40 / 8%); filter: none; }
+:is(html, #wb-project-cards) #project-list .project-item .project-item-icon svg { width: 21px; height: 21px; }
+@media (prefers-reduced-motion: reduce) { :is(html, #wb-project-cards) #project-list .project-item { transition: none; } :is(html, #wb-project-cards) #project-list .project-item:hover { transform: none; } }
+@media (min-width: 1001px) {
+  :is(html, #wb-project-cards) body[data-project-sidebar="collapsed"] #project-list .project-item { padding: 3px; }
+  :is(html, #wb-project-cards) body[data-project-sidebar="collapsed"] #project-list .project-item .project-item-icon { width: 36px; height: 36px; }
+}
