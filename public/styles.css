@@ -4658,3 +4658,11 @@ dialog:is(.message-queue-dialog, .native-ask-dialog, #wb-tray-dialog)::backdrop 
 .chat-row.human .quoted-message { background: rgb(255 255 255 / 26%); }
 .chat-row:not(.human) .quoted-message, .chat-row.human.is-reminder .quoted-message { background: rgb(16 24 40 / 3%); }
 .chat-row button.quoted-message:hover { background: rgb(79 91 206 / 8%); }
+/* Light tints (user, 2026-11-26): queue rows 2% grey with 4px gaps, the queue title bar 2.6% grey, the question title bar 2.6% light blue. */
+#message-queue summary { background: rgb(16 24 40 / 2.6%); }
+:is(.chat-tray, .message-queue-dialog) .message-queue-list { gap: 4px; padding: 6px; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item + .message-queue-item { box-shadow: none; }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card) { background: rgb(16 24 40 / 2%); }
+:is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card):hover { background: rgb(16 24 40 / 4%); }
+.chat-tray .native-ask .native-ask-head { background: rgb(37 128 235 / 2.6%); }
+.chat-tray .native-ask .native-ask-title svg { color: #2f7ad8; opacity: .9; }
