@@ -8,6 +8,12 @@ import { ClaudeContextUsage } from './context-usage.mjs';
 import { normalizeRuntimeQuota } from './runtime-quota.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
+
+/** Seconds Claude gets to send AskUserQuestion's permission request before the question is shown from the tool call. */
+export const QUESTION_FALLBACK_MS=8000;
+/** AskUserQuestion input as the page's question card. */
+export function pageQuestions(input){return (input?.questions||[]).map((q,i)=>({id:`q${i+1}`,header:String(q.header||'').slice(0,40),question:String(q.question||'').slice(0,2000),multiSelect:q.multiSelect===true,allowOther:true,
+  options:(Array.isArray(q.options)?q.options:[]).slice(0,8).map(o=>({label:String(o?.label||'').slice(0,200),description:String(o?.description||'').slice(0,600)}))}));}
 import { homedir } from 'node:os';
 
 const MAX_TOOL_OUTPUT = 12000;
@@ -145,6 +151,7 @@ export class CliPrintSession {
   reuse(options) {
     if(!this.keepAlive || !this.done || !this.proc || this.proc.killed || this.proc.exitCode!==null || this.proc.signalCode!==null)throw new Error(tr('cliPrintSession.cliProcessCannotBeReused'));
     Object.assign(this,options);this.done=false;this.stopping=false;this.awaitingBackground=false;
+    clearTimeout(this.questionWatch?.timer);this.questionWatch=null;this.pendingAnswer=null;this.questionToolIds=new Set();
     this.answer='';this.textBuffer='';this.finalText='';this.bestAnswer='';this.runtimeError='';this.emittedFinal=false;
     this.claudeMessages.clear();this.claudeMessageAliases.clear();this.messageId=null;this.bestAnswerId=null;this.messageSerial=0;
     this.lastThinkingAt=0;
@@ -384,6 +391,10 @@ export class CliPrintSession {
         this.runtimeError = this.runtimeError || extractText(m.error) || tr('cliPrintSession.runtimeReturnedErrorResultCheck');
         this.emit('log', { text: this.runtimeError });
       } else if(historicalError||m.status==='SUCCESS' || m.subtype==='success') this.runtimeError='';
+      if(this.keepAlive&&this.pendingAnswer&&!this.stopping){
+        // The turn interrupted to deliver an answer the question tool could not take: the same run carries on with it.
+        const answer=this.pendingAnswer;this.pendingAnswer=null;this.runtimeError='';this.flushText();this.questionTrace('turn interrupted; sending the answer');this.sendTurn(answer);return;
+      }
       if(this.keepAlive) {
         // A message added to this reply still waits in the CLI's queue: the CLI answers it next, still within this turn.
         if(!this.runtimeError&&this.inputsQueued?.()){this.resultHeld=true;this.flushText();return;}
@@ -419,6 +430,7 @@ export class CliPrintSession {
     if (Array.isArray(m.message?.content)) {
       for (const block of m.message.content) {
         if (block?.type === 'tool_use' || block?.name) this.emit('tool', { text: block.name || block.type || tr('cliPrintSession.working2'), item: block });
+        if(ownerMessage&&type==='assistant'&&this.runtime==='claude'&&block?.type==='tool_use'&&block.name==='AskUserQuestion'&&block.id&&Array.isArray(block.input?.questions)&&block.input.questions.length)this.watchQuestion(block);
         if(block?.type==='tool_result'&&block.tool_use_id){const output=boundedToolOutput(block.content);this.emit('tool',{text:tr('cliPrintSession.toolResult'),item:{id:block.tool_use_id,type:'tool_result',status:block.is_error?'failed':'completed',is_error:Boolean(block.is_error),output:output.value,...(output.truncated?{outputTruncated:true}:{})}});}
       }
     }
@@ -477,25 +489,60 @@ export class CliPrintSession {
     const {request_id:requestId,request={}}=message,reply=response=>this.write({type:'control_response',response:{subtype:'success',request_id:requestId,response}});
     if(request.subtype!=='can_use_tool')return this.write({type:'control_response',response:{subtype:'error',request_id:requestId,error:'Unsupported control request'}});
     if(request.tool_name!=='AskUserQuestion'||!Array.isArray(request.input?.questions)||!request.input.questions.length)return reply({behavior:'allow',updatedInput:request.input});
+    const toolUseId=typeof request.tool_use_id==='string'?request.tool_use_id:null;
+    this.questionTrace(`permission request received${toolUseId?` for ${toolUseId.slice(-8)}`:''}`);
+    // The page already shows this question from the tool call (no request had come): the answer can now go back to the tool.
+    if(this.question?.fallback&&!this.question.requestId&&(!toolUseId||toolUseId===this.question.toolUseId)){this.question={...this.question,requestId,input:request.input};this.questionTrace('request attached to the question already shown');return;}
     // Only the running turn can wait for an answer, one question at a time; otherwise Claude would wait on a question nobody sees.
     if(this.done||this.stopping||this.question)return reply({behavior:'deny',message:this.question?'Another question is already waiting for the user; ask one at a time.':'No turn is waiting for an answer now; continue without asking.'});
-    const id=requestId,questions=request.input.questions.map((q,i)=>({id:`q${i+1}`,header:String(q.header||'').slice(0,40),question:String(q.question||'').slice(0,2000),multiSelect:q.multiSelect===true,allowOther:true,
-      options:(Array.isArray(q.options)?q.options:[]).slice(0,8).map(o=>({label:String(o?.label||'').slice(0,200),description:String(o?.description||'').slice(0,600)}))}));
-    this.question={id,requestId,input:request.input,questions};
+    clearTimeout(this.questionWatch?.timer);this.questionWatch=null;
+    const id=requestId,questions=pageQuestions(request.input);
+    this.question={id,requestId,toolUseId,input:request.input,questions};
     this.emit('question',{id,questions});this.emit('status',{status:'waiting_user'});
+  }
+  /** Diagnostics in the run log: which step of a question was reached, so a question that never shows can be traced. */
+  questionTrace(text){this.emit('log',{text:`[question] ${text}`});}
+  /**
+   * Claude called AskUserQuestion. Normally its permission request follows at once and becomes the page's question. If none
+   * comes within a few seconds, the turn would wait on a question nobody sees: the question is shown from the tool call itself.
+   */
+  watchQuestion(block){
+    // Each tool call is watched once (its message can come again as a partial and a full snapshot).
+    this.questionToolIds??=new Set();if(!this.questionsSupported||this.question||this.questionToolIds.has(block.id))return;this.questionToolIds.add(block.id);
+    this.questionTrace(`AskUserQuestion called (${String(block.id).slice(-8)}); waiting for its permission request`);
+    clearTimeout(this.questionWatch?.timer);
+    const watch={toolUseId:block.id,timer:setTimeout(()=>{
+      if(this.questionWatch!==watch)return;this.questionWatch=null;
+      if(this.done||this.stopping||this.question)return;
+      this.questionTrace(`no permission request after ${QUESTION_FALLBACK_MS/1000} s; showing the question from the tool call`);
+      this.question={id:block.id,requestId:null,toolUseId:block.id,input:block.input,questions:pageQuestions(block.input),fallback:true};
+      this.emit('question',{id:block.id,questions:this.question.questions});this.emit('status',{status:'waiting_user'});
+    },QUESTION_FALLBACK_MS)};
+    watch.timer.unref?.();this.questionWatch=watch;
   }
   write(message){try{this.proc?.stdin?.write(`${JSON.stringify(message)}\n`);}catch{}}
   /** Answers go back as the tool's updatedInput ("question" -> "label, label" or the typed text); skip denies with a reason so the turn carries on. */
   answerQuestion({id,answers={},skip=false}={}){
     const q=this.question;if(!q||(id&&q.id!==id))throw new Error('This question is no longer waiting for an answer');
     this.question=null;
+    // Shown from the tool call and its request never came: the tool cannot take the answer, so this turn is interrupted and
+    // the answer goes to Claude as the next message of the same run.
+    if(!q.requestId){
+      const given=q.questions.map((question,i)=>[question.question,[].concat(answers[question.id]??answers[String(i)]??[]).map(String).filter(Boolean).join(', ')]).filter(([,a])=>a);
+      this.pendingAnswer=skip||!given.length?'The user skipped your questions (the question tool could not return the answer, so this comes as a message). Continue without the answers, using your best judgement.'
+        :`The user answered your questions (the question tool could not return the answer, so it comes as this message): ${given.map(([question,a])=>`"${question}"="${a}"`).join('; ')}. Continue with these answers.`;
+      this.questionTrace('answer cannot reach the tool; interrupting the turn to send it as the next message');
+      this.write({type:'control_request',request_id:`interrupt-${Date.now()}`,request:{subtype:'interrupt'}});
+      this.emit('question_resolved',{id:q.id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});return;
+    }
+    this.questionTrace(skip?'question skipped by the user':'answer sent back to the tool');
     if(skip)this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'The user skipped these questions. Continue without the answers, using your best judgement.'}}});
     else{const map={};q.questions.forEach((question,i)=>{const given=[].concat(answers[question.id]??answers[String(i)]??[]).map(String).filter(Boolean);if(given.length)map[q.input.questions[i].question]=given.join(', ');});
       this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'allow',updatedInput:{...q.input,answers:map}}}});}
     this.emit('question_resolved',{id:q.id});if(!this.done&&!this.stopping)this.emit('status',{status:'running'});
   }
   /** A stop answers a waiting question with a denial, so Claude is not left holding it. */
-  dropQuestion(){if(!this.question)return;const q=this.question;this.question=null;this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'Interrupted by the user.'}}});this.emit('question_resolved',{id:q.id,status:'expired'});}
+  dropQuestion(){clearTimeout(this.questionWatch?.timer);this.questionWatch=null;this.pendingAnswer=null;if(!this.question)return;const q=this.question;this.question=null;if(q.requestId)this.write({type:'control_response',response:{subtype:'success',request_id:q.requestId,response:{behavior:'deny',message:'Interrupted by the user.'}}});this.emit('question_resolved',{id:q.id,status:'expired'});}
   async stop() {
     if (this.done) return;
     this.stopping = true;
