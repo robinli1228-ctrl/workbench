@@ -1712,6 +1712,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     return data.workspaces?.find(b => b.projectId === editingProjectId && b.nodeId === nodeId);
   }
 
+  // The role name a template filled in; a name typed over it is kept when another template is picked.
+  let presetName = '';
   function populateRole(role) {
     editingRoleId = role?.id || null; roleForm.reset();
     editingRoleSnapshot = role ? { ...role } : null;
@@ -1728,6 +1730,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     presets.disabled = Boolean(role);
     document.querySelector('#role-archive').hidden = !role;
     for (const key of ['name', 'mode', 'responsibility', 'instructions']) roleForm.elements[key].value = value[key] ?? (key === 'mode' ? 'workspace-write' : '');
+    presetName = roleForm.elements.name.value;
     for(const key of ['responsibility','instructions'])renderRetiredCommandWarning(roleCommandWarnings[key],roleForm.elements[key].value,t);
     roleForm.elements.preset.value = rolePreset(role?.templateKey)?.key || 'custom';
     preferredModel = value.model || '';
@@ -1868,7 +1871,10 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     if (editingRoleId) return;
     const preset = rolePreset(roleForm.elements.preset.value);
     if (preset) {
-      for (const key of ['name', 'mode', 'responsibility', 'instructions']) roleForm.elements[key].value = preset[key] || '';
+      // A template fills the prompt and settings; the name only while it is empty or still the one a template put there.
+      const name = roleForm.elements.name;
+      if (!name.value.trim() || name.value === presetName) { name.value = preset.name || ''; presetName = name.value; }
+      for (const key of ['mode', 'responsibility', 'instructions']) roleForm.elements[key].value = preset[key] || '';
       roleForm.elements.autoApprove.checked = preset.autoApprove !== false;
       renderModelOptions();
     }
