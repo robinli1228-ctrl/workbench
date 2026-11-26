@@ -1988,6 +1988,7 @@ export default {
   "Previous question": "上一题",
   "Next question": "下一题",
   "View all": "查看全部",
+  "Back to bottom": "回到底部",
   "Worker upgrade required": "需要升级 Worker",
   "Manual takeover": "人工接管中",
   "Reservation expired": "预留已失效",
