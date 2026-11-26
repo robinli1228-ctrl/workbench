@@ -62,7 +62,8 @@ const QUEUE_GRACE_MS=2*3600000;
 function waitDeadline(db,parent,children) {
   const saved=Date.parse(parent.waitDeadlineAt),length=saved-Date.parse(parent.waitStartedAt||'');
   const open=children.filter(c=>!callTerminal.has(c.status));
-  if(open.some(c=>['queued','waiting_delivery'].includes(c.status)))return saved+QUEUE_GRACE_MS;
+  // A correction waiting first in its target's queue is behind the very turn being watched; it does not buy the wait more time.
+  if(open.some(c=>!c.roleSteer&&['queued','waiting_delivery'].includes(c.status)))return saved+QUEUE_GRACE_MS;
   if(!Number.isFinite(length))return saved;
   const started=Math.max(0,...open.map(c=>Date.parse(db.get('runs',c.currentRunId||'')?.createdAt||'')||0));
   return Math.max(saved,started+length);
@@ -419,7 +420,9 @@ export class RoleCalls {
     try {
       // Creating the continuation and linking it to the wait must roll back together before recording a retry/failure.
       this.db.transaction(()=>{
-      const header = reason==='interrupted'?tr(interruptedBy?'minimal.waitInterruptedByRole':'minimal.waitInterrupted',{resumeSummary:parent.resumeSummary,requestIds:interrupted.map(r=>r.id).join(', '),by:interruptedBy,
+      // The role that interrupted its own handed-out work already sent the correction; it is only told the old call ended.
+      const self=interruptedBy&&interruptedBy===(parent.targetSnapshot?.name||this.db.get('roles',parent.targetRoleId)?.name);
+      const header = reason==='interrupted'?tr(self?'minimal.waitInterruptedBySelf':interruptedBy?'minimal.waitInterruptedByRole':'minimal.waitInterrupted',{resumeSummary:parent.resumeSummary,requestIds:interrupted.map(r=>r.id).join(', '),by:interruptedBy,
           roles:[...new Set(interrupted.map(r=>r.targetSnapshot?.name||this.db.get('roles',r.targetRoleId)?.name||r.targetRoleId))].join(', ')})
         :reason==='timeout'?tr('minimal.waitTimeout',{resumeSummary:parent.resumeSummary,requestIds:children.map(r=>r.id).join(', ')})
         :reason==='blocked'?tr('minimal.waitBlocked',{resumeSummary:parent.resumeSummary,requestIds:blocked.map(x=>x.request.id).join(', '),reasons:blocked.map(x=>`${x.request.id}: ${x.block.reason}`).join('; ')})

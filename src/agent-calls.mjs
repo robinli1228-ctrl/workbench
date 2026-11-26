@@ -4,6 +4,7 @@ import {isSupervisorName} from './default-roles.mjs';
 import {tr} from './i18n.mjs';
 import {conversationIdOf,agentConversationInput} from './group-conversations.mjs';
 import {mentionNames} from './rooms.mjs';
+import {supplementPending} from './role-steering.mjs';
 
 /**
  * Roles of the project @-mentioned in a role's text that would not have it otherwise: not the writer, the role that called it
@@ -75,6 +76,8 @@ function steerTeammate({db,calls,steering,online=()=>true},run,request,target,ki
   const admitted=calls.reconcile(request.id),task=admitted?.taskId&&db.get('tasks',admitted.taskId);
   if(!task)throw new Error(admitted?.error||tr('agentCalls.steerNotRunning',{name:target.name}));
   db.put('tasks',{...task,roleSteer:{kind,byRoleId:run.roleId,byRole:run.roleSnapshot.name,at:new Date().toISOString()}});
+  // The request carries the mark too: waits and their deadlines treat a correction differently from handed-out work.
+  db.put('coordinationRequests',{...db.get('coordinationRequests',request.id),roleSteer:kind});
   const conversationId=conversationIdOf(run);
   if(kind==='steer'){
     const added=steering.supplement(run.projectId,task.id,{conversationId},{online});
@@ -118,8 +121,11 @@ export function createAgentCalls({db,calls,rooms,steering,online},run,input) {
       if(!db.get('roomMessages',`call:${input.requestId||''}`)?.callFingerprint) {
         if(!active.length)throw new Error(tr('agentCalls.steerNotRunning',{name:target.name}));
         if(!run.roleSnapshot.systemSupervisor&&!active.some(r=>assigners(db,r).has(run.roleId)))throw new Error(tr('agentCalls.steerNotAllowed',{name:target.name}));
-        const recent=db.list('tasks').some(t=>t.projectId===run.projectId&&conversationIdOf(t)===conversationId&&t.roleId===target.id&&t.roleSteer&&Date.now()-Date.parse(t.roleSteer.at)<STEER_GAP_MS);
-        if(recent)throw new Error(tr('agentCalls.steerTooSoon',{name:target.name}));
+        const steers=db.listProject('tasks',run.projectId).filter(t=>conversationIdOf(t)===conversationId&&t.roleId===target.id&&t.roleSteer);
+        // This role's own correction still waiting in the target's queue: an interrupt takes its place instead of running after it.
+        const waiting=steer==='interrupt'?steers.filter(t=>t.roleSteer.byRoleId===run.roleId&&t.status==='ready'&&!t.currentRunId&&!t.steering&&!supplementPending(db,t)):[];
+        if(steers.some(t=>!waiting.includes(t)&&Date.now()-Date.parse(t.roleSteer.at)<STEER_GAP_MS))throw new Error(tr('agentCalls.steerTooSoon',{name:target.name}));
+        for(const t of waiting){const cancelled=rooms.cancel(t.id);if(cancelled?.requestId||t.requestId)calls.cancel(cancelled?.requestId||t.requestId);}
       }
     }
     const id=input.requestId||'';

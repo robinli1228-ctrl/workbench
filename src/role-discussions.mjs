@@ -314,7 +314,8 @@ export class RoleDiscussions {
           repositories:(run.repositories||[]).map(repo=>({id:repo.id,key:repo.key,localRoot:repo.localRoot||null})),repositoryStatus:run.workspace?'reported':'planned',
           plannedWriteRepositories:run.execution?.writeRepositories||null,title:run.inputTask?.title||tasks.find(t=>t.id===run.taskId)?.title||null,
           // What the turn is doing right now, so a teammate can follow a long task and correct it in time (wb call --kind steer).
-          ...(({replySoFar,...progress})=>progress)(runProgress(this.db,run,{steps:3}))}));
+          // Only for a run this role may read: not one in another chat or hidden by review isolation.
+          ...(visible=>visible&&!visible.reviewRedacted?(({replySoFar,...progress})=>progress)(runProgress(this.db,run,{steps:3})):{})(this.db.get('runs',run.id))}));
         const activeTasks=tasks.filter(t=>t.roleId===r.id&&(['in_progress','waiting_discussion','ready'].includes(t.status)||activeRuns.some(run=>run.taskId===t.id)))
           .map(t=>({id:t.id,title:t.title,status:t.status,waitingReason:t.waitingReason||null}));
         return {id:r.id,name:r.name,nodeId:r.nodeId,runtime:r.runtime,model:r.model||null,enabled:Boolean(r.enabled&&!r.archivedAt),online:member?.online??null,

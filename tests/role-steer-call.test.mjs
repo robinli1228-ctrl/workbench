@@ -124,3 +124,109 @@ test('wb discuss peers (detail) shows what each running teammate is doing', asyn
   assert.equal(active.id, 'r-b'); assert.deepEqual(active.recentSteps, ['Edit: src/orders.mjs']);
   assert.equal(typeof active.runningMinutes, 'number'); assert.ok(active.startedAt); assert.equal(active.replySoFar, undefined, 'the team list stays short');
 });
+
+// ---- Findings of the review of the first version.
+test('review isolation: a run this role may not read shows no progress', () => {
+  const e = env(); e.working('r-sup', 'Builder', 'r-b');
+  event(e.db, 'r-b', 'tool', { text: 'Bash', item: { id: 'a', type: 'tool_use', name: 'Bash', input: { command: 'cat findings.md' } } });
+  e.db.put('runs', { ...e.db.get('runs', 'r-b'), reviewRedacted: true, result: null });
+  assert.equal(new History(e.db).read(P, { kind: 'result', id: 'r-b' }).content, '');
+});
+
+test('a run still going reads as progress even when a message already set its result', () => {
+  const e = env(); e.working('r-sup', 'Builder', 'r-b');
+  event(e.db, 'r-b', 'tool', { text: 'Bash', item: { id: 'a', type: 'tool_use', name: 'Bash', input: { command: 'npm test' } } });
+  e.db.put('runs', { ...e.db.get('runs', 'r-b'), result: 'first note' });
+  assert.match(new History(e.db).read(P, { kind: 'result', id: 'r-b' }).content, /npm test/);
+});
+
+test('steps survive a long stretch of streamed text, and the reply keeps its newest part', () => {
+  const e = env(); e.working('r-sup', 'Builder', 'r-b');
+  event(e.db, 'r-b', 'tool', { text: 'Bash', item: { id: 'a', type: 'tool_use', name: 'Bash', input: { command: 'npm test' } } });
+  for (let i = 0; i < 260; i++) event(e.db, 'r-b', 'text', { text: `word${i} ` });
+  const progress = runProgress(e.db, e.db.get('runs', 'r-b'), { replyChars: 40 });
+  assert.deepEqual(progress.recentSteps, ['Bash: npm test']);
+  assert.ok(progress.replySoFar.startsWith('…')); assert.ok(progress.replySoFar.endsWith('word259'));
+});
+
+test('a role\'s interrupt reaches the target as that role\'s correction, not as the user changing direction', async () => {
+  const { turnOrigin, renderRunPrompt } = await import('../src/run-context.mjs');
+  const e = env(); e.working('r-sup', 'Builder', 'r-b');
+  const sent = e.call('r-sup', { role: 'Builder', kind: 'interrupt', text: 'stop: wrong branch' });
+  const request = e.db.get('coordinationRequests', sent.requestId), task = e.db.get('tasks', request.taskId);
+  assert.deepEqual(turnOrigin(e.db, task, request), { kind: 'role', name: 'Supervisor' });
+  const prompt = renderRunPrompt({ instruction: 'stop: wrong branch', steering: task.steering, roleSteer: { byRole: 'Supervisor' }, context: {} }, { minimal: true });
+  assert.match(prompt, new RegExp(tr('runContext.roleInterruptedTurn', { name: 'Supervisor' }).slice(0, 20)));
+  assert.doesNotMatch(prompt, new RegExp(tr('runContext.userChangedDirectionTurnImmediate').slice(0, 12)));
+});
+
+test('a role\'s interrupt does not end the plans around the turn', () => {
+  const e = env(); e.working('r-sup', 'Builder', 'r-b');
+  const root = e.calls.forRun(e.db.get('runs', 'r-sup')).id;
+  e.db.put('executionPlans', { id: 'plan-1', projectId: P, parentRequestId: root, status: 'running', stages: [] });
+  e.call('r-sup', { role: 'Builder', kind: 'interrupt', text: 'stop' });
+  assert.equal(e.db.get('executionPlans', 'plan-1').status, 'running');
+});
+
+test('interrupting a wake turn: the caller that waited for the original call is told which role stopped it', () => {
+  const e = env(), { db, calls } = e;
+  e.working('r-sup', 'Builder', 'r-b');
+  const child = e.working('r-b', 'Checker', 'r-c');
+  const builderRequest = db.get('runs', 'r-b').requestId;
+  // Checker's first turn ended in a wait and it is now running its wake.
+  db.put('runs', { ...db.get('runs', 'r-c'), status: 'succeeded' });
+  const role = db.get('roles', 'c');
+  db.put('coordinationRequests', { id: 'wake-c', projectId: P, conversationId: P, kind: 'continuation', continuationOf: child, targetRoleId: 'c', targetSnapshot: role, parentRequestId: null, rootRequestId: db.get('coordinationRequests', child).rootRequestId, status: 'running', taskId: 't-wake', currentRunId: 'r-c2', createdAt: at() });
+  db.put('coordinationRequests', { ...db.get('coordinationRequests', child), status: 'waiting_call', continuationRequestId: 'wake-c' });
+  db.put('tasks', { id: 't-wake', projectId: P, origin: 'chat', roleId: 'c', roleSnapshot: role, status: 'in_progress', currentRunId: 'r-c2', requestId: 'wake-c', createdAt: at() });
+  db.put('runs', { id: 'r-c2', projectId: P, taskId: 't-wake', roleId: 'c', roleSnapshot: role, nodeId: 'w1', status: 'running', roleSessionId: 'rs-c', requestId: 'wake-c', lastSeq: 0, createdAt: at() });
+  db.put('runs', { ...db.get('runs', 'r-b'), status: 'succeeded' });
+  db.put('coordinationRequests', { ...db.get('coordinationRequests', builderRequest), status: 'waiting_call', waitRequestIds: [child], resumeSummary: 'waiting for the check' });
+  e.call('r-sup', { role: 'Checker', kind: 'interrupt', text: 'wrong repository' });
+  assert.equal(db.get('coordinationRequests', child).interruptedByRole, 'Supervisor'); assert.equal(db.get('coordinationRequests', 'wake-c').interruptedByRole, 'Supervisor');
+  db.put('runs', { ...db.get('runs', 'r-c2'), status: 'interrupted' }); calls.finish('r-c2'); calls.resume(builderRequest);
+  assert.equal(db.get('coordinationRequests', builderRequest).waitEvent.by, 'Supervisor');
+});
+
+test('a correction works inside a scheduled job\'s chain', () => {
+  const e = env();
+  const root = e.calls.forRun(e.db.get('runs', 'r-sup')).id;
+  e.db.put('coordinationRequests', { ...e.db.get('coordinationRequests', root), scheduledJobId: 'job-1' });
+  e.working('r-sup', 'Builder', 'r-b');
+  assert.equal(e.call('r-sup', { role: 'Builder', kind: 'steer', text: 'skip the cache' }).steer, 'added');
+});
+
+test('a correction waiting first in the queue does not extend its sender\'s wait', () => {
+  const e = env(), { db, calls } = e;
+  e.working('r-sup', 'Grokker', 'r-g');
+  const first = e.call('r-sup', { role: 'Grokker', kind: 'steer', text: 'use the staging API' });
+  assert.equal(first.steer, 'queued_first');
+  const root = calls.forRun(db.get('runs', 'r-sup')).id, now = Date.now();
+  calls.wait(db.get('runs', 'r-sup'), 'Waiting for Grokker to finish the import.', { timeoutSeconds: 600 });
+  db.put('runs', { ...db.get('runs', 'r-sup'), status: 'succeeded' });
+  calls.resume(root, now + 15 * 60000);
+  assert.equal(db.get('coordinationRequests', root).waitEvent?.reason, 'timeout', 'the queued correction does not add the two-hour queue grace');
+});
+
+test('an interrupt right after one\'s own queued correction takes its place', () => {
+  const e = env(), { db } = e;
+  e.working('r-sup', 'Grokker', 'r-g');
+  const first = e.call('r-sup', { role: 'Grokker', kind: 'steer', text: 'use the staging API' });
+  const second = e.call('r-sup', { role: 'Grokker', kind: 'interrupt', text: 'stop now: use the staging API' });
+  assert.equal(second.steer, 'interrupting');
+  assert.equal(db.get('tasks', db.get('coordinationRequests', first.requestId).taskId).status, 'cancelled');
+  assert.equal(db.get('coordinationRequests', first.requestId).status, 'cancelled');
+});
+
+test('a correction the turn took is not a result to wait for; one it could not take says so on its card', () => {
+  const e = env(), { db, calls } = e;
+  e.working('r-sup', 'Builder', 'r-b');
+  const sent = e.call('r-sup', { role: 'Builder', kind: 'steer', text: 'use the orders table' }), taskId = db.get('coordinationRequests', sent.requestId).taskId;
+  const root = db.get('coordinationRequests', calls.forRun(db.get('runs', 'r-sup')).id);
+  event(db, 'r-b', 'supplement', { id: taskId });
+  assert.ok(!calls.dependencies(root).some(r => r.id === sent.requestId), 'only the handed-out work is waited for');
+  const f = env(); f.working('r-sup', 'Builder', 'r-b');
+  const other = f.call('r-sup', { role: 'Builder', kind: 'steer', text: 'use the orders table' });
+  event(f.db, 'r-b', 'supplement_failed', { id: f.db.get('coordinationRequests', other.requestId).taskId, error: 'busy' });
+  assert.equal(f.db.get('roomMessages', other.messageId).steer.state, 'queued_first');
+});
