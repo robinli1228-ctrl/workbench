@@ -211,22 +211,32 @@ export function agentWatermarkEl(runtime) {
 
 const STROKE = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
 /**
- * Avatars of the platform's own messages in group chat, in the style of the CLI avatars (Claude, Agy): a flat rounded tile in
- * one colour with one bold white mark, one per kind of notice. Unknown kinds use the bell.
+ * Avatars of the platform's own messages in group chat, in the style of the CLI avatars (Claude, Agy): a rounded tile in one
+ * colour (a slight top-to-bottom shade, a fine light rim) with one bold white mark that casts a soft shadow, and at most one
+ * small accent in a second colour. One per kind of notice; unknown kinds use the bell. Ids are per tile, so many avatars on a
+ * page never share a definition.
  */
+let noticeSerial=0;
 const NOTICE_MARKS={
-  plug:'<path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5"/>',
-  unplug:'<path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5M3.5 3.5l17 17"/>',
-  pulse:'<path d="M3 12h4l3-7 4 14 3-7h4"/>',
-  sync:'<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/>',
-  bell:'<path d="M6 9a6 6 0 1 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9zM10.3 20.5a2 2 0 0 0 3.4 0"/>',
-  sparkle:'<path d="M12 3l2 5.2 5.2 2-5.2 2L12 17.4l-2-5.2-5.2-2 5.2-2z" fill="#fff"/><path d="M18.6 15.6l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" fill="#fff"/>',
-  alarm:'<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.5 1.5M4.5 4 2.5 6M19.5 4l2 2"/>'
+  plug:{mark:'<path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5"/>',accent:'<path d="M19.6 2.6l-1.9 3h1.6l-1 2.6 2.8-3.6h-1.6l1.2-2z" fill="#FDE68A" stroke="none"/>'},
+  unplug:{mark:'<path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5"/>',accent:'<path d="M3.5 3.5l17 17" stroke="#FECACA"/>'},
+  pulse:{mark:'<path d="M3 12h4l3-7 4 14 3-7h3"/>',accent:'<circle cx="21" cy="12" r="1.9" fill="#FDE68A" stroke="none"/>'},
+  sync:{mark:'<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5"/>',accent:'<path d="M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5" stroke="#BAE6FD"/>'},
+  bell:{mark:'<path d="M6 9a6 6 0 1 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9zM10.3 20.5a2 2 0 0 0 3.4 0"/>',accent:'<circle cx="18.4" cy="4.6" r="2.8" fill="#FB7185" stroke="#fff" stroke-width="1.4"/>'},
+  sparkle:{mark:'<path d="M11 3.2l2 5.2 5.2 2-5.2 2L11 17.6l-2-5.2-5.2-2 5.2-2z" fill="#fff"/>',accent:'<path d="M18.6 14.8l.9 2.2 2.2.9-2.2.9-.9 2.2-.9-2.2-2.2-.9 2.2-.9z" fill="#FDE68A" stroke="#FDE68A" stroke-width="1"/>'},
+  alarm:{mark:'<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.5 1.5"/>',accent:'<path d="M4.5 4 2.5 6M19.5 4l2 2" stroke="#FDE68A"/>'}
 };
-const NOTICE_KINDS={connection_restored:['plug','#2F9E6B'],connection_lost:['unplug','#D2544E'],stall_check:['pulse','#D9822B'],source_conflict:['sync','#3B7FC4'],project_sync:['sync','#3B7FC4'],
-  call_outcome:['bell','#5B5BD6'],task_return:['bell','#5B5BD6'],task_start:['bell','#5B5BD6'],proactive_followup:['bell','#5B5BD6'],reminder:['alarm','#7C5CC4'],welcome:['sparkle','#C2639A']};
-export function noticeIcon(kind){const [mark,color]=NOTICE_KINDS[kind]||NOTICE_KINDS.task_return;
-  return {tone:mark,svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="${color}"/><g transform="translate(3.6 3.6) scale(.7)" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${NOTICE_MARKS[mark]}</g></svg>`};}
+// [mark, top colour, base colour]
+const NOTICE_KINDS={connection_restored:['plug','#3DB37E','#278A5C'],connection_lost:['unplug','#E26A62','#BF443F'],stall_check:['pulse','#EB9A47','#C9711F'],
+  source_conflict:['sync','#4E95D8','#2F6DB0'],project_sync:['sync','#4E95D8','#2F6DB0'],
+  call_outcome:['bell','#7272E6','#4A4AC4'],task_return:['bell','#7272E6','#4A4AC4'],task_start:['bell','#7272E6','#4A4AC4'],proactive_followup:['bell','#7272E6','#4A4AC4'],
+  reminder:['alarm','#9475D8','#6C4DB5'],welcome:['sparkle','#D57AAE','#B0558A']};
+export function noticeIcon(kind){const [name,top,base]=NOTICE_KINDS[kind]||NOTICE_KINDS.task_return,{mark,accent}=NOTICE_MARKS[name],id=`wbn${++noticeSerial}`;
+  return {tone:name,svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${top}"/><stop offset="1" stop-color="${base}"/></linearGradient>`
+    +`<filter id="${id}s" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy=".7" stdDeviation=".55" flood-color="#000" flood-opacity=".22"/></filter></defs>`
+    +`<rect width="24" height="24" rx="6" fill="url(#${id}g)"/><rect x=".4" y=".4" width="23.2" height="23.2" rx="5.6" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width=".8"/>`
+    +`<path d="M6 .5h12a5.5 5.5 0 0 1 5.5 5.5v1.2C17 9 7 9 .5 7.2V6A5.5 5.5 0 0 1 6 .5z" fill="#fff" opacity=".08"/>`
+    +`<g transform="translate(3.6 3.6) scale(.7)" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#${id}s)">${mark}${accent}</g></svg>`};}
 
 export const UI_ICON = {
   concurrent: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M16 3h5v5M8 3H3v5M12 22v-8.3a4 4 0 0 0-1.2-2.9L3 3M15 9l6-6"/></svg>`,
