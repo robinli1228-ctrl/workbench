@@ -211,47 +211,22 @@ export function agentWatermarkEl(runtime) {
 
 const STROKE = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
 /**
- * Avatars of the platform's own messages in group chat: small illustrated tiles (gradient ground, layered shapes, a light
- * sheen), one picture per kind of notice so a device dropping out, a stall check or a reminder reads at a glance. Each tile
- * gets its own gradient ids, so many avatars on one page never share or lose a definition. Unknown kinds use the bell.
+ * Avatars of the platform's own messages in group chat, in the style of the CLI avatars (Claude, Agy): a flat rounded tile in
+ * one colour with one bold white mark, one per kind of notice. Unknown kinds use the bell.
  */
-let noticeSerial=0;
-const SHEEN='<path d="M0 10A10 10 0 0 1 10 0h20a10 10 0 0 1 10 10v5c-11 5-29 4-40-1z" fill="#fff" opacity=".16"/>';
-const NOTICE_ART={
-  // Device back: plug seated in its socket, a spark of power and a live dot.
-  plug:{from:'#4ade80',to:'#047857',art:id=>`<rect x="5.5" y="15" width="11" height="12" rx="3.2" fill="#ecfdf5"/><rect x="8.3" y="18.4" width="2" height="5" rx="1" fill="#065f46"/><rect x="11.8" y="18.4" width="2" height="5" rx="1" fill="#065f46"/>
-    <path d="M16.5 18.2h4.2M16.5 23.8h4.2" stroke="#d1fae5" stroke-width="2.2" stroke-linecap="round"/><rect x="20.2" y="14" width="10.5" height="14" rx="3.6" fill="#fff"/><path d="M30.7 21h3.3a2 2 0 0 1 2 2v9" fill="none" stroke="#ecfdf5" stroke-width="2.4" stroke-linecap="round"/>
-    <path d="M24.6 4.8l-4.4 6.6h3.2l-1.9 5 5.4-7.1h-3.3l2.2-4.5z" fill="#fde047" stroke="#ca8a04" stroke-width=".6" stroke-linejoin="round"/><circle cx="25.4" cy="21" r="2.2" fill="#22c55e"/><circle cx="25.4" cy="21" r="3.6" fill="none" stroke="#86efac" stroke-width="1"/>`},
-  // Device dropped out: plug pulled from the socket, the gap crackling, a loose cable.
-  unplug:{from:'#fb7185',to:'#be123c',art:id=>`<rect x="4.5" y="14" width="10" height="12" rx="3.2" fill="#fff1f2"/><rect x="7" y="17.4" width="1.9" height="5" rx=".95" fill="#9f1239"/><rect x="10.2" y="17.4" width="1.9" height="5" rx=".95" fill="#9f1239"/>
-    <g transform="rotate(14 27 21)"><rect x="23" y="14" width="10" height="13" rx="3.4" fill="#fff"/><path d="M23 17.6h-3.6M23 23.2h-3.6" stroke="#ffe4e6" stroke-width="2.1" stroke-linecap="round"/><path d="M33 20.5c3 0 3.5 3 2.2 5.2-1.3 2.4-.4 4.8 1.4 6" fill="none" stroke="#ffe4e6" stroke-width="2.2" stroke-linecap="round"/></g>
-    <path d="M17.2 11.5l1.6 2.6-1.8 1.5 1.9 2.3M15.9 27.6l1.8-1.9 1.6 1.4 1.4-2.2" fill="none" stroke="#fde68a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="31.5" cy="8.6" r="4.2" fill="#fff"/><path d="M30 7.1l3 3M33 7.1l-3 3" stroke="#e11d48" stroke-width="1.6" stroke-linecap="round"/>`},
-  // Stall check: a screen whose heartbeat has gone flat, looked at through a magnifier.
-  pulse:{from:'#fcd34d',to:'#ea580c',art:id=>`<rect x="5" y="7.5" width="24" height="17" rx="3.2" fill="#fff"/><rect x="7.4" y="9.9" width="19.2" height="12.2" rx="1.8" fill="#fff7ed"/><path d="M14.5 27.5h5M17 24.5v3" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
-    <path d="M8.6 17h3.4l1.8-4.2 2.6 8 1.8-3.8h8.6" fill="none" stroke="#ea580c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="26.8" cy="26.6" r="5.6" fill="#fffbeb" fill-opacity=".92" stroke="#7c2d12" stroke-width="2.2"/><path d="M24.6 25.4a2.6 2.6 0 0 1 2.4-1.6" fill="none" stroke="#fdba74" stroke-width="1.4" stroke-linecap="round"/><path d="M30.9 30.7l4 4" stroke="#7c2d12" stroke-width="3" stroke-linecap="round"/>`},
-  // Sync: two copies of a page with the arrows that keep them the same.
-  sync:{from:'#7dd3fc',to:'#1d4ed8',art:id=>`<rect x="7.5" y="6.5" width="15" height="19" rx="2.6" fill="#fff" opacity=".62"/><path d="M10.5 11h8M10.5 14.5h6" stroke="#1e40af" stroke-width="1.3" stroke-linecap="round" opacity=".5"/>
-    <rect x="15.5" y="12.5" width="16" height="20" rx="2.8" fill="#fff"/><path d="M18.8 17.5h9.4M18.8 21h9.4M18.8 24.5h6" stroke="#93c5fd" stroke-width="1.6" stroke-linecap="round"/>
-    <circle cx="12.2" cy="28.4" r="7.2" fill="#facc15" stroke="#fff" stroke-width="1.6"/><path d="M8.9 27.6a3.5 3.5 0 0 1 6.2-1.7l.6.8M15.9 24.6v2.2h-2.2M15.5 29.2a3.5 3.5 0 0 1-6.2 1.7l-.6-.8M8.5 32.2V30h2.2" fill="none" stroke="#713f12" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`},
-  // Task notice: a ringing bell with a waiting badge.
-  bell:{from:'#c4b5fd',to:'#4338ca',art:id=>`<path d="M9.2 13.4a3.6 3.6 0 0 0-1.6 3.8M30.8 13.4a3.6 3.6 0 0 1 1.6 3.8M6 10.8a7.6 7.6 0 0 0-2.4 7.4M34 10.8a7.6 7.6 0 0 1 2.4 7.4" fill="none" stroke="#e0e7ff" stroke-width="1.7" stroke-linecap="round"/>
-    <path d="M20 7.2c-4.3 0-7.4 3.3-7.4 7.6v5.1c0 1.6-.8 3-2.1 4l-.9.7h20.8l-.9-.7a5 5 0 0 1-2.1-4v-5.1c0-4.3-3.1-7.6-7.4-7.6z" fill="url(#${id}b)"/><path d="M15.2 15.4c0-2.6 1.6-4.5 3.8-5" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity=".8"/>
-    <rect x="9" y="24.4" width="22" height="3.2" rx="1.6" fill="#fde68a"/><circle cx="20" cy="30.6" r="2.6" fill="#fde68a"/><circle cx="29.4" cy="9.4" r="4.6" fill="#f43f5e" stroke="#fff" stroke-width="1.6"/><path d="M29.4 7.4v2.4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><circle cx="29.4" cy="11.4" r=".8" fill="#fff"/>
-    <defs><linearGradient id="${id}b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#e0e7ff"/></linearGradient></defs>`},
-  // Welcome: a rocket lifting off among stars.
-  rocket:{from:'#f9a8d4',to:'#7c3aed',art:id=>`<path d="M8 9l.8 1.8L10.6 11.6l-1.8.8L8 14.2l-.8-1.8L5.4 11.6l1.8-.8zM31.5 27l.6 1.3 1.3.6-1.3.6-.6 1.3-.6-1.3-1.3-.6 1.3-.6z" fill="#fff"/><circle cx="33" cy="9" r="1" fill="#fff"/><circle cx="7" cy="31" r=".9" fill="#fff" opacity=".8"/>
-    <g transform="rotate(40 20 20)"><path d="M17.4 26.5q2.6 9 5.2 0z" fill="#f97316"/><path d="M18.6 26.5q1.4 5.2 2.8 0z" fill="#fde047"/><path d="M15.4 20.5l-4.4 6.2 5.2-1.2zM24.6 20.5l4.4 6.2-5.2-1.2z" fill="#f472b6"/>
-    <path d="M20 5.5c4 3.4 5.6 8.6 4.8 14.4l-1 6.6h-7.6l-1-6.6C14.4 14.1 16 8.9 20 5.5z" fill="url(#${id}r)"/><circle cx="20" cy="15.4" r="3" fill="#38bdf8" stroke="#1e3a8a" stroke-width="1.3"/><circle cx="19" cy="14.4" r=".9" fill="#e0f2fe"/></g>
-    <defs><linearGradient id="${id}r" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#e9d5ff"/></linearGradient></defs>`},
-  // Scheduled reminder: an alarm clock ringing on its little feet.
-  alarm:{from:'#5eead4',to:'#6d28d9',art:id=>`<path d="M11.5 31.5l-2.4 3M28.5 31.5l2.4 3" stroke="#ede9fe" stroke-width="2.2" stroke-linecap="round"/><path d="M5.4 12.6a5.6 5.6 0 0 1 7.8-5.4zM34.6 12.6a5.6 5.6 0 0 0-7.8-5.4z" fill="#fde68a" stroke="#fff" stroke-width="1"/>
-    <circle cx="20" cy="21.5" r="11" fill="#fff"/><circle cx="20" cy="21.5" r="8.4" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/><path d="M20 15v6.5l4.2 2.6" fill="none" stroke="#4c1d95" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20" cy="21.5" r="1.4" fill="#f43f5e"/>
-    <path d="M20 13.6v1.2M27.9 21.5h-1.2M20 29.4v-1.2M12.1 21.5h1.2" stroke="#8b5cf6" stroke-width="1.3" stroke-linecap="round"/><path d="M3.6 21.5h2M34.4 21.5h2M5.4 27.6l1.6-.9M34.6 27.6L33 26.7" stroke="#ede9fe" stroke-width="1.5" stroke-linecap="round"/>`}
+const NOTICE_MARKS={
+  plug:'<path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5"/>',
+  unplug:'<path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5M3.5 3.5l17 17"/>',
+  pulse:'<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+  sync:'<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/>',
+  bell:'<path d="M6 9a6 6 0 1 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9zM10.3 20.5a2 2 0 0 0 3.4 0"/>',
+  sparkle:'<path d="M12 3l2 5.2 5.2 2-5.2 2L12 17.4l-2-5.2-5.2-2 5.2-2z" fill="#fff"/><path d="M18.6 15.6l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" fill="#fff"/>',
+  alarm:'<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.5 1.5M4.5 4 2.5 6M19.5 4l2 2"/>'
 };
-const NOTICE_KINDS={connection_restored:['plug','green'],connection_lost:['unplug','red'],stall_check:['pulse','amber'],source_conflict:['sync','blue'],project_sync:['sync','blue'],
-  call_outcome:['bell','indigo'],task_return:['bell','indigo'],task_start:['bell','indigo'],proactive_followup:['bell','indigo'],reminder:['alarm','violet'],welcome:['rocket','indigo']};
-export function noticeIcon(kind){const [name,tone]=NOTICE_KINDS[kind]||['bell','indigo'],art=NOTICE_ART[name],id=`wbn${++noticeSerial}`;
-  return {tone,svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" aria-hidden="true"><defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${art.from}"/><stop offset="1" stop-color="${art.to}"/></linearGradient></defs><rect width="40" height="40" rx="10" fill="url(#${id})"/>${SHEEN}${art.art(id)}</svg>`};}
+const NOTICE_KINDS={connection_restored:['plug','#2F9E6B'],connection_lost:['unplug','#D2544E'],stall_check:['pulse','#D9822B'],source_conflict:['sync','#3B7FC4'],project_sync:['sync','#3B7FC4'],
+  call_outcome:['bell','#5B5BD6'],task_return:['bell','#5B5BD6'],task_start:['bell','#5B5BD6'],proactive_followup:['bell','#5B5BD6'],reminder:['alarm','#7C5CC4'],welcome:['sparkle','#C2639A']};
+export function noticeIcon(kind){const [mark,color]=NOTICE_KINDS[kind]||NOTICE_KINDS.task_return;
+  return {tone:mark,svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="${color}"/><g transform="translate(3.6 3.6) scale(.7)" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${NOTICE_MARKS[mark]}</g></svg>`};}
 
 export const UI_ICON = {
   concurrent: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ${STROKE}><path d="M16 3h5v5M8 3H3v5M12 22v-8.3a4 4 0 0 0-1.2-2.9L3 3M15 9l6-6"/></svg>`,
