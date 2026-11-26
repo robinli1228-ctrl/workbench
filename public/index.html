@@ -155,8 +155,7 @@
                     <label>Project name<input name="name" required maxlength="80"></label>
                     <label>Project folder name<input id="project-folder-name" readonly></label>
                     <label class="full-width">Project description<textarea name="description" rows="3" maxlength="12000"></textarea></label>
-                    <div class="form-actions full-width"><button class="primary" id="save-project-settings" type="submit">Save</button></div>
-                  </form>
+                                      </form>
                   <p id="project-settings-feedback" class="settings-list-note" role="status" hidden></p>
                 </section>
                 <section class="settings-list" id="project-group-actions" aria-labelledby="project-actions-heading" hidden>
@@ -229,7 +228,7 @@
                     <div class="settings-row"><span class="settings-row-label">Enable stall reminders</span><span class="settings-row-value"></span>
                       <label class="settings-switch" title="Enable stall reminders"><input type="checkbox" name="enabled" aria-label="Enable stall reminders"><span aria-hidden="true"></span></label></div>
                     <div class="settings-row"><span class="settings-row-label">Silence duration (minutes)</span><span class="settings-row-value"></span><input class="settings-row-number" type="number" name="silenceMinutes" min="1" max="10080" step="1" value="15" required aria-label="Silence duration (minutes)"></div>
-                    <div class="settings-row"><span class="settings-row-label">Status</span><span class="settings-row-value" id="followup-status" role="status"></span><button type="submit" class="primary">Save</button></div>
+                    <div class="settings-row"><span class="settings-row-label">Status</span><span class="settings-row-value" id="followup-status" role="status"></span></div>
                   </form>
                   <p id="followup-feedback" class="settings-list-note" role="status" hidden></p>
                 </section>
@@ -352,7 +351,7 @@
                   <div class="settings-row"><span class="settings-row-label">Keep finished sync records (days)</span><span class="settings-row-value"></span><input class="settings-row-number" name="syncCommandDays" type="number" min="0" max="365" step="0.5" required aria-label="Keep finished sync records (days)"></div>
                   <div class="settings-row"><span class="settings-row-label">Keep unreferenced sync snapshots (days)</span><span class="settings-row-value"></span><input class="settings-row-number" name="blobDays" type="number" min="0" max="365" step="1" required aria-label="Keep unreferenced sync snapshots (days)"></div>
                   <div class="settings-row"><span class="settings-row-label">Manifest versions kept per repository</span><span class="settings-row-value"></span><input class="settings-row-number" name="manifestVersions" type="number" min="1" max="500" step="1" required aria-label="Manifest versions kept per repository"></div>
-                  <div class="settings-row"><span class="settings-row-label">Runs a minute after start and daily<small>Shrinking the database file requires separate maintenance</small></span><span class="settings-row-value"></span><button class="secondary" id="data-clean-all" type="button">Clean up all</button><button class="primary" type="submit">Save</button></div>
+                  <div class="settings-row"><span class="settings-row-label">Runs a minute after start and daily<small>Shrinking the database file requires separate maintenance</small></span><span class="settings-row-value"></span><button class="secondary" id="data-clean-all" type="button">Clean up all</button></div>
                 </form>
                 <p id="data-feedback" class="settings-list-note" hidden></p>
               </section>

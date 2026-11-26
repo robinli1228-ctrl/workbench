@@ -1,5 +1,6 @@
 import {t,dateLocale} from './i18n.js';
 import {formatBytes} from './media.js';
+import {autoSave} from './auto-save.js';
 
 /**
  * Settings → Data: what Home and each device store, how much the retention policy would let go, and a cleanup on demand.
@@ -14,7 +15,7 @@ export function createDataSettingsUI({api}){
   const panel=document.querySelector('#settings-data-panel');if(!panel)return {show(){}};
   const form=panel.querySelector('#data-retention-form'),feedback=panel.querySelector('#data-feedback'),table=panel.querySelector('#data-table'),cleanAll=panel.querySelector('#data-clean-all'),refresh=panel.querySelector('#data-refresh');
   const performanceTable=panel.querySelector('#performance-table'),performanceFeedback=panel.querySelector('#performance-feedback'),performanceRefresh=panel.querySelector('#performance-refresh');
-  let loading=false,busy=false,last=null,performanceLoading=false;
+  let loading=false,busy=false,last=null,performanceLoading=false,saver=null;
   const note=(text,error=false)=>{feedback.hidden=!text;feedback.textContent=text;feedback.classList.toggle('is-error',error);};
   const mb=bytes=>formatBytes(bytes||0);
   function row(label,stats,{target,online=true,disabled=false,reason=''}){
@@ -43,7 +44,8 @@ export function createDataSettingsUI({api}){
     for(const d of data.devices||[])table.append(row(d.name||d.nodeId,d.stats||null,{target:d.nodeId,online:d.online,disabled:!d.online||d.upgrade,reason:!d.online?t('Offline'):d.upgrade?t('Upgrade this Worker to see its data'):d.error?t('Unavailable: {message}',{message:d.error}):''}));
     const reclaimable=(data.home?.reclaimableBytes||0)+(data.devices||[]).reduce((sum,d)=>sum+(d.stats?.reclaimableBytes||0),0);
     cleanAll.disabled=busy||!reclaimable;cleanAll.textContent=reclaimable?t('Clean up all ({size})',{size:mb(reclaimable)}):t('Nothing to clean up');
-    const r=data.retention||{};form.elements.syncCommandDays.value=r.syncCommandDays??1;form.elements.blobDays.value=r.blobDays??7;form.elements.manifestVersions.value=r.manifestVersions??20;
+    // A field being typed in keeps its value; the rest show what Home has saved.
+    if(!form.contains(document.activeElement)){const r=data.retention||{};form.elements.syncCommandDays.value=r.syncCommandDays??1;form.elements.blobDays.value=r.blobDays??7;form.elements.manifestVersions.value=r.manifestVersions??20;saver?.reset();}
   }
   /** Performance reads are independent of Worker storage queries, with no polling while settings are closed. */
   async function loadPerformance(){
@@ -70,9 +72,10 @@ export function createDataSettingsUI({api}){
     catch(e){note(t('Cleanup failed: {message}',{message:e.message}),true);}
     finally{busy=false;await load({keepNote:true});}
   }
-  form.addEventListener('submit',async e=>{e.preventDefault();const f=form.elements;
-    try{await api('/api/settings/retention',{method:'POST',json:{syncCommandDays:Number(f.syncCommandDays.value),blobDays:Number(f.blobDays.value),manifestVersions:Number(f.manifestVersions.value)}});note(t('Retention saved.'));await load();}
-    catch(err){note(t('Unable to save: {message}',{message:err.message}),true);}});
+  // Retention applies as soon as a field is committed; there is no Save button.
+  saver=autoSave(form,async()=>{const f=form.elements;
+    try{await api('/api/settings/retention',{method:'POST',json:{syncCommandDays:Number(f.syncCommandDays.value),blobDays:Number(f.blobDays.value),manifestVersions:Number(f.manifestVersions.value)}});note(t('Retention saved.'));await load({keepNote:true});}
+    catch(err){note(t('Unable to save: {message}',{message:err.message}),true);return false;}});
   cleanAll.addEventListener('click',()=>void cleanup('all'));
   refresh.addEventListener('click',()=>{void load();void loadPerformance();});
   performanceRefresh?.addEventListener('click',()=>void loadPerformance());

@@ -27,6 +27,7 @@ import {createSharePanel} from './share-settings.js';
 import {share} from './share-mode.js';
 import {createAskCard} from './ask-card.js';
 import {answerContent,answerPlainText,answerRows} from './question-answer.js';
+import {autoSave} from './auto-save.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -825,9 +826,10 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   dialog.replaceChildren();const heading=el('div','dialog-heading');heading.append(el('h2','',t('Session settings')),closeButton(()=>dialog.close()));dialog.append(heading);
   const body=el('div','native-settings-dialog');
   const nameCard=el('section','native-settings-section');nameCard.append(el('h3','',t('Name')));
-  const blocked=renameBlock(value),nameForm=el('form','native-rename-form'),nameInput=el('input'),nameSave=el('button','primary',t('Save')),nameNote=el('p','native-side-hint',blocked?t(blocked):'');
-  nameInput.type='text';nameInput.maxLength=120;nameInput.value=value.title||'';nameInput.setAttribute('aria-label',t('Session name'));nameInput.disabled=Boolean(blocked);nameSave.type='submit';nameSave.disabled=Boolean(blocked);
-  nameForm.append(nameInput,nameSave);nameForm.addEventListener('submit',async e=>{e.preventDefault();nameSave.disabled=true;nameNote.className='native-side-hint';nameNote.textContent=t('Saving…');try{await renameSession(value,nameInput.value);nameNote.textContent=t('Saved');}catch(error){nameNote.className='global-error';nameNote.textContent=t(error.message);}finally{nameSave.disabled=false;}});
+  const blocked=renameBlock(value),nameForm=el('form','native-rename-form'),nameInput=el('input'),nameNote=el('p','native-side-hint',blocked?t(blocked):'');
+  nameInput.type='text';nameInput.maxLength=120;nameInput.value=value.title||'';nameInput.setAttribute('aria-label',t('Session name'));nameInput.disabled=Boolean(blocked);nameInput.name='title';
+  // The name applies when the field is committed (blur or Enter); there is no Save button.
+  nameForm.append(nameInput);autoSave(nameForm,async()=>{nameNote.className='native-side-hint';nameNote.textContent=t('Saving…');try{await renameSession(value,nameInput.value);nameNote.textContent=t('Saved');}catch(error){nameNote.className='global-error';nameNote.textContent=t(error.message);return false;}});
   nameCard.append(nameForm,nameNote);
   // Repository and AGENTS.md (moved here from the old Resources tab): the same live cards, with refresh and edit.
   const repo=el('section','native-side-card native-git-card');repo.dataset.nativeGit='';

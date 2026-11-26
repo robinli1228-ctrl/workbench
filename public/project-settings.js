@@ -2,6 +2,7 @@ import { t } from './i18n.js';
 import { workerDisplayName } from './role-icons.js';
 import { createFolderControl } from './create-folder.js';
 import { saveConcurrentWrites } from './concurrent-writes.js';
+import { autoSave } from './auto-save.js';
 
 /** Node folder selection and repository settings share the existing authenticated API and never upload local browser files. */
 export function projectSettings({ api, getData, getProject, getConversationId=()=>getProject()?.id, refreshState, create, setError, openSettings, closeSettings, openTask }) {
@@ -43,10 +44,12 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     concurrentBox.disabled=false;
   });
   const followupForm=document.querySelector('#proactive-followup-form'),followupFeedback=document.querySelector('#followup-feedback'),followupStatus=document.querySelector('#followup-status'),viewFollowup=document.querySelector('#view-followup');
-  let followupVersion=0,followupConfig=null,followupProject=null;
+  let followupVersion=0,followupConfig=null,followupProject=null,followupSaver=null;
+  // Read from the fields themselves: they are disabled while loading, which would hide them from FormData.
+  const followupValues=()=>JSON.stringify([followupForm.elements.enabled.checked,followupForm.elements.silenceMinutes.value]);
   function followupDisabled(value){for(const element of followupForm.elements)element.disabled=value;document.querySelector('#refresh-followup').disabled=value;viewFollowup.disabled=value||!followupConfig?.execution?.taskId;}
   function showFollowup(value){
-    followupConfig=value;followupForm.elements.enabled.checked=value.enabled;followupForm.elements.silenceMinutes.value=value.silenceMinutes;
+    followupConfig=value;followupForm.elements.enabled.checked=value.enabled;followupForm.elements.silenceMinutes.value=value.silenceMinutes;followupSaver?.reset();
     const execution=value.execution;
     followupStatus.textContent=execution?[t(execution.progress?.label||execution.status),execution.waitingReason||execution.error||''].filter(Boolean).join(' · '):value.waitingReason||t(value.enabled?(value.anchorMessageId?'Waiting for chat silence':'Waiting for a new complete message'):'Stall reminders are off');
     viewFollowup.disabled=!execution?.taskId;
@@ -58,13 +61,16 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     catch(error){if(version===followupVersion&&getProject()?.id===id){followupStatus.textContent=error.message;}}
     finally{if(version===followupVersion&&getProject()?.id===id){followupDisabled(!followupConfig);document.querySelector('#refresh-followup').disabled=false;}}
   }
-  followupForm.addEventListener('submit',async event=>{
-    event.preventDefault();const id=followupProject,version=followupVersion;if(!followupConfig||id!==getProject()?.id)return;
-    const input={conversationId:followupConfig.conversationId||id,enabled:followupForm.elements.enabled.checked,silenceMinutes:Number(followupForm.elements.silenceMinutes.value),revision:followupConfig.revision};followupDisabled(true);followupFeedback.hidden=true;
-    try{const value=await api(`/api/projects/${encodeURIComponent(id)}/proactive-followup`,{method:'POST',json:input});if(version!==followupVersion||getProject()?.id!==id)return;showFollowup(value);followupFeedback.textContent=t('Saved');followupFeedback.hidden=false;}
-    catch(error){if(version===followupVersion&&getProject()?.id===id){followupFeedback.textContent=error.message;followupFeedback.hidden=false;}}
-    finally{if(version===followupVersion&&getProject()?.id===id)followupDisabled(false);}
-  });
+  // Changes apply at once (no Save button); the reply's revision and status are kept, and a field changed meanwhile is not overwritten.
+  followupSaver=autoSave(followupForm,async()=>{
+    const id=followupProject,version=followupVersion;if(!followupConfig||id!==getProject()?.id)return false;
+    const sent=followupValues();
+    const input={conversationId:followupConfig.conversationId||id,enabled:followupForm.elements.enabled.checked,silenceMinutes:Number(followupForm.elements.silenceMinutes.value),revision:followupConfig.revision};followupFeedback.hidden=true;
+    try{const value=await api(`/api/projects/${encodeURIComponent(id)}/proactive-followup`,{method:'POST',json:input});if(version!==followupVersion||getProject()?.id!==id)return;
+      if(followupValues()===sent){showFollowup(value);followupSaver.reset();}else followupConfig={...followupConfig,revision:value.revision};
+      followupFeedback.textContent=t('Saved');followupFeedback.hidden=false;}
+    catch(error){if(version===followupVersion&&getProject()?.id===id){followupFeedback.textContent=error.message;followupFeedback.hidden=false;}return false;}
+  },{snapshot:followupValues});
   document.querySelector('#refresh-followup').addEventListener('click',()=>void loadFollowup());
   viewFollowup.addEventListener('click',()=>{const execution=followupConfig?.execution;if(followupProject===getProject()?.id&&execution?.taskId)openTask?.(execution.taskId,execution.runId);});
   const option = (label, value) => { const o = create('option', '', label); o.value = value; return o; };
@@ -214,11 +220,10 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     concurrentFeedback.hidden=true;showConcurrent();
     form.elements.name.value = p.name || '';
     form.elements.description.value = p.description || '';
+    basicSaver.reset();
     feedback.hidden = true;
     folderFeedback.hidden = true; deleteFeedback.hidden = true;
-    const saveBtn = document.querySelector('#save-project-settings');
     const delBtn = document.querySelector('#delete-project');
-    if (saveBtn) saveBtn.disabled = false;
     if (delBtn) delBtn.disabled = false;
     return true;
   }
@@ -233,48 +238,46 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     const name = p?.name || form.elements.name.value || 'this project';
     if (!confirm(t('Delete project "{name}"? This cannot be undone.', { name }))) return;
     busy = true;
-    const del = document.querySelector('#delete-project'), save = document.querySelector('#save-project-settings');
-    del.disabled = true; if (save) save.disabled = true; deleteFeedback.hidden = true;
+    const del = document.querySelector('#delete-project');
+    del.disabled = true; deleteFeedback.hidden = true;
     try {
       await api(`/api/projects/${encodeURIComponent(settingsId)}`, { method: 'DELETE' });
       closeSettings();
       await refreshState({ quiet: true });
     } catch (e) { deleteFeedback.textContent = e.message; deleteFeedback.hidden = false; }
-    finally { busy = false; del.disabled = false; if (save) save.disabled = false; }
+    finally { busy = false; del.disabled = false; }
   });
+  /** Name and description apply when a field is committed (blur or Enter); there is no Save button. */
   async function saveProjectSettings() {
-    if (busy) return;
     const name = String(form.elements.name.value || '').trim();
     if (!name) {
       feedback.textContent = 'Please enter a project name.';
       feedback.hidden = false;
-      form.elements.name.focus();
-      return;
+      return false;
     }
+    // A delete in progress wins; the change is tried again on the next edit.
+    if (busy) return false;
+    const id = settingsId, del = document.querySelector('#delete-project');
     busy = true;
-    const save = document.querySelector('#save-project-settings');
-    const del = document.querySelector('#delete-project');
-    if (save) save.disabled = true;
     if (del) del.disabled = true;
     feedback.hidden = true;
     try {
-      await api(`/api/projects/${encodeURIComponent(settingsId)}`, {
+      await api(`/api/projects/${encodeURIComponent(id)}`, {
         method: 'POST',
         json: { name, description: form.elements.description.value }
       });
-      feedback.textContent = t('Saved');
-      feedback.hidden = false;
+      if (settingsId === id) { feedback.textContent = t('Saved'); feedback.hidden = false; }
       await refreshState({ quiet: true });
     } catch (e) {
-      feedback.textContent = e.message;
-      feedback.hidden = false;
+      if (settingsId === id) { feedback.textContent = e.message; feedback.hidden = false; }
+      return false;
     } finally {
       busy = false;
-      if (save) save.disabled = false;
       if (del) del.disabled = false;
     }
   }
-  form.addEventListener('submit', event => { event.preventDefault(); void saveProjectSettings(); });
+
+  const basicSaver = autoSave(form, saveProjectSettings);
 
   return {
     openFolder,
