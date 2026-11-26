@@ -1,5 +1,6 @@
 import { trackLoading } from './load-bar.js';
 import {rememberPlace} from './last-place.js';
+import {attachJumpToBottom} from './jump-to-bottom.js';
 import {copyText,bindCopyFeedback} from './role-icons.js';
 import {t as globalT,dateLocale,getLanguage} from './i18n.js';
 import pageZh from './locales/native-takeover-zh.js';
@@ -540,6 +541,8 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  }
  /** History scrolls above a persistent footer, so quiet refreshes never discard a takeover draft. */
  const scroll=el('div','native-session-scroll');
+ // The panel's children are replaced as sessions open, so the button lives in the workspace and follows the scroll area.
+ attachJumpToBottom(scroll,document.querySelector('main.workspace'));
  // With a snapshot the refresh asks only for rows appended since it (`delta`); a Worker that cannot answers with the latest page.
  const readPage=(item,cursor,snapshot)=>api(`${endpoint(item.nodeId)}?${new URLSearchParams({runtime:item.runtime,sessionId:nativeId(item),historyPage:'1',...(toolPreview(item)?{toolPreview:'1'}:{}),...(cursor?{cursor}:{}),...(snapshot?{snapshot,delta:'1'}:{})})}`);
  /** Settings read from appended rows refine the ones already known; a field the new rows do not mention keeps its value. */

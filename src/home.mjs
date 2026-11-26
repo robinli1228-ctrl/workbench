@@ -706,6 +706,7 @@ function pageFileMap() {
   files['/data-settings.js']='data-settings.js';
   files['/remote-access-settings.js']='remote-access-settings.js';
   files['/share-mode.js']='share-mode.js';
+  files['/jump-to-bottom.js']='jump-to-bottom.js';
   files['/last-place.js']='last-place.js';
   files['/share-settings.js']='share-settings.js';
   files['/native-history-timeline.js']='native-history-timeline.js';

@@ -10,6 +10,7 @@ import { renderMarkdown, renderMessageMarkdown } from './markdown.js';
 import { linkMedia, openImageLightbox, openVideoLightbox, markImageOpener, fileGlyph } from './media.js';
 import {simplifiedCliOutput} from './output-language.js';
 import {createAskCard} from './ask-card.js';
+import {attachJumpToBottom} from './jump-to-bottom.js';
 import {executionProgress} from './execution-progress.js';
 import {setChatCardState,highlightLatestChatCard} from './chat-card-state.js';
 import { createHistoryViewer } from './history-view.js';
@@ -318,6 +319,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   const feed = document.querySelector('#chat-feed');
   // Configuration, plans and messages share one scroll area so status cards do not permanently crowd out the body.
   const scroller = document.querySelector('#chat-scroll');
+  attachJumpToBottom(scroller, document.querySelector('#content-grid'));
   const form = document.querySelector('#chat-form');
   const input = form.elements.text;
   const send = form.querySelector('[type="submit"]');send.innerHTML=UI_ICON.send;
