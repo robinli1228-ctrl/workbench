@@ -1,6 +1,6 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {giteeRepository} from './repository.mjs';
-import {traditionalInput} from './input-language.mjs';
+import {traditionalInput,traditionalAnswers} from './input-language.mjs';
 
 /**
  * Takeover turns: the user continues one exact native CLI session from the Sessions page.
@@ -649,7 +649,7 @@ export class NativeTurnRunner{
  /** The page's answer reaches the session that asked; a stale answer is reported on the turn instead of being dropped silently. */
  answer(id,{questionId=null,answers={},skip=false}={}){
   const state=this.turns.get(id);
-  try{if(!state?.session||typeof state.session.answerQuestion!=='function')throw Error('This question is no longer waiting for an answer');state.session.answerQuestion({id:questionId,answers,skip});}
+  try{if(!state?.session||typeof state.session.answerQuestion!=='function')throw Error('This question is no longer waiting for an answer');state.session.answerQuestion({id:questionId,answers:traditionalAnswers(answers),skip});}
   catch(error){this.event(id,{kind:'log',text:error.message});this.event(id,{kind:'question_resolved',id:questionId});}
  }
  release(runtime,sessionId){const key=`${runtime}/${sessionId}`;for(const [id,state] of this.turns)if(state.key===key)void this.stop(id);return this.close(key,'released');}

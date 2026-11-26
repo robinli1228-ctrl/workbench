@@ -67,7 +67,7 @@ import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseli
 import { runOrganizer, runModelPrompt } from './conversation-organizer.mjs';
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
-import { executionText, traditionalInput, sentText } from './input-language.mjs';
+import { executionText, traditionalInput, traditionalAnswers, sentText } from './input-language.mjs';
 import {SourceSyncClient} from './source-sync-transport.mjs';
 import {syncError} from './source-sync-manifest.mjs';
 import {prepareSourceInputs,sourceOverlayUnchanged} from './source-sync-input.mjs';
@@ -687,7 +687,7 @@ async function command(m) {
     try {
       const s = sessions.get(c.runId);
       if (!s?.questionsSupported || s.stopping || s.done) throw new Error(tr('worker.questionNoLongerWaiting'));
-      s.answerQuestion({ id, answers: c.answers || {}, skip: c.skip === true });
+      s.answerQuestion({ id, answers: traditionalAnswers(c.answers || {}), skip: c.skip === true });
     } catch (e) { emit(c.runId, 'question_resolved', { id, status: 'expired' }); emit(c.runId, 'log', { text: e.message }); }
   }
   send({ type: 'command_ack', id: c.id });
@@ -1056,7 +1056,8 @@ async function query(m,emit=send) {
         if(busy())throw new Error(tr('home.projectStillExecutingOnDevice'));
         await warmSessions.closeProject(input.projectId);
         const workspace=await projectRoot(input.workspace),nativeSession={...await nativeEnvironment(role.runtime),id:null};
-        const instructions=[runWithLanguage('en',()=>composeAgentInstructions(input.platformPrompt,[role.instructions,input.supervisorPrompt].filter(Boolean).join('\n\n'))),executionText('roleTerminal.manualContext')].filter(Boolean).join('\n\n');
+        // The terminal role gets its rules in Traditional, like the group-chat turns of the same role.
+        const instructions=traditionalInput([runWithLanguage('en',()=>composeAgentInstructions(input.platformPrompt,[role.instructions,input.supervisorPrompt].filter(Boolean).join('\n\n'))),executionText('roleTerminal.manualContext')].filter(Boolean).join('\n\n'));
         const roleSettings={runtime:role.runtime,model:role.model,effort:role.effort||null,instructions,...(role.permissionScope?{permissionScope:role.permissionScope,toolRoots:[base]}:{})};
         freshTerminalArgs({...roleSettings,workspace});
         // Preparation can race a dispatch, a duplicate request or revocation while directories are checked.

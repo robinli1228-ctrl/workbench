@@ -1,5 +1,6 @@
 import { t, dateLocale } from './i18n.js';
 import { setActionIcon, closeIcon } from './role-icons.js';
+import { simplifiedCliOutput } from './output-language.js';
 
 /** Converts a stored UTC value to the browser-local wall clock needed by datetime-local; the ISO string cannot be sliced directly. */
 export function localDateTimeValue(value) {
@@ -183,7 +184,7 @@ export function createScheduledJobsUI({ api, getData, getProject, getConversatio
     for (const job of jobs) {
       const card = create('article', 'timer-job-card');
       const head = create('div', 'timer-job-head');
-      const title = create('div', 'timer-job-title', job.name); title.translate = false;
+      const title = create('div', 'timer-job-title', simplifiedCliOutput(job.name)); title.translate = false;
       const tools = create('div', 'timer-job-tools');
       tools.append(create('span', job.enabled ? 'timer-status is-on' : 'timer-status', job.enabled ? 'Enabled' : 'Paused'));
       head.append(title, tools);

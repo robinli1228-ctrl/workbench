@@ -21,6 +21,23 @@ export function sentText(key,params={}) {
   return traditionalInput(tr(key)).replace(/\{(\w+)\}/g,(match,name)=>Object.hasOwn(params,name)?String(params[name]??''):match);
 }
 
+/**
+ * Records a CLI reads through wb tools (chat tasks, chat history) as it reads its turn input: the prose fields people wrote
+ * in Simplified come back in Traditional. Ids, paths, versions and every other field stay exactly as stored.
+ */
+const PROSE_FIELDS=new Set(['title','description','resultSummary','reason','summary','content','text','question','answer','note']);
+export function traditionalRecord(value,depth=0){
+  if(depth>8||!value||typeof value!=='object')return value;
+  if(Array.isArray(value))return value.map(item=>traditionalRecord(item,depth+1));
+  return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,typeof item==='string'&&PROSE_FIELDS.has(key)?traditionalInput(item):traditionalRecord(item,depth+1)]));
+}
+
+/** A question's answers as the CLI gets them: typed text in Traditional like any other input (picked labels are the CLI's own). */
+export function traditionalAnswers(answers){
+  if(!answers||typeof answers!=='object')return answers;
+  return Object.fromEntries(Object.entries(answers).map(([key,value])=>[key,Array.isArray(value)?value.map(v=>typeof v==='string'?traditionalInput(v):v):typeof value==='string'?traditionalInput(value):value]));
+}
+
 /** Convert a send-only prose copy, not executable text or strings that must match files and tools exactly. */
 export function traditionalInput(text) {
   if(typeof text!=='string'||!text)return text;

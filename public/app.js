@@ -1790,7 +1790,7 @@ function renderRunArtifacts(run) {
     const report = create('div', 'run-artifact-report');
     const verdict={passed:'Passed',failed:'Not passed',blocked:'Blocked',needs_input:'User decision needed'}[run.report.verdict]||'To verify';
     report.append(create('h3', '', 'Delivery Report'),create('p','',t('Business verdict: {v}',{v:t(verdict)})), create('p', '', run.report.summary || ''));
-    if (run.report.evidence?.length) report.append(create('pre', 'run-log-pre', run.report.evidence.join('\n')));
+    if (run.report.evidence?.length) report.append(create('pre', 'run-log-pre', simplifiedCliOutput(run.report.evidence.join('\n'))));
     section.append(report);
   }
   if (run) section.append(renderDeliveries(run));

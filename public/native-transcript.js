@@ -3,6 +3,7 @@ import {copyText} from './role-icons.js';
  * Pure DOM helpers; the data still comes from the turn events (live-scene rows) that the Sessions page already loads. */
 import {stripAnsi} from './run-log-data.js';
 import {formatElapsed} from './elapsed.js';
+import {simplifiedCliOutput} from './output-language.js';
 
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
 const MAX_DIFF_LINES=4000,MAX_PREVIEW=400000;
@@ -149,10 +150,10 @@ export function stepTitle(step,t){
  if(step.kind==='read')return {verb:t('Read'),target:basename(step.path),title:step.path||''};
  if(step.kind==='edit'){const file=step.files[0]||'';return {verb:t(step.files.length>1?'Edited {n} files':'Edited',{n:step.files.length}),target:step.files.length>1?step.files.map(basename).join(', '):basename(file),title:step.files.join('\n'),stat:stat(step.added,step.removed)};}
  if(step.kind==='write')return {verb:t('Created'),target:basename(step.path),title:step.path||'',stat:stat(step.added,0)};
- if(step.kind==='command')return {verb:t('Ran'),target:(step.description||String(step.command||'').split('\n')[0]).slice(0,120),title:String(step.command||'')};
+ if(step.kind==='command')return {verb:t('Ran'),target:step.description?simplifiedCliOutput(step.description).slice(0,120):String(step.command||'').split('\n')[0].slice(0,120),title:String(step.command||'')};
  if(step.kind==='search')return {verb:t('Searched'),target:String(step.query||'').slice(0,120),title:String(step.query||'')};
  if(step.kind==='web'){let host=step.url;try{host=new URL(step.url).host;}catch{}return {verb:t('Fetched'),target:String(host||'').slice(0,120),title:String(step.url||'')};}
- if(step.kind==='agent')return {verb:t('Delegated'),target:String(step.description||'').slice(0,120),title:String(step.description||'')};
+ if(step.kind==='agent'){const text=simplifiedCliOutput(String(step.description||''));return {verb:t('Delegated'),target:text.slice(0,120),title:text};}
  return {verb:step.name,target:step.path?basename(step.path):'',title:step.path||''};
 }
 

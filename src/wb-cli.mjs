@@ -6,6 +6,7 @@ import { agentRequest } from './agent-bridge.mjs';
 import { setupCatalog, setupPropose } from './setup-tools.mjs';
 import { conversationTask, helpText, historySearchInput, memorySearchInput, chatPost, callRole, waitForRole, requestDelivery, parseDeliveryArgs } from './wb-tools.mjs';
 import { tr } from './i18n.mjs';
+import { traditionalRecord } from './input-language.mjs';
 
 function out(data) {
   process.stdout.write(`${typeof data === 'string' ? data : JSON.stringify(data, null, 2)}\n`);
@@ -68,9 +69,9 @@ export async function main(argv = process.argv.slice(2)) {
         const args=[...tail],option=key=>{const at=args.indexOf(key);if(at<0)return undefined;const value=args.splice(at,2)[1];if(!value)throw new Error(tr('wbCli.nativeHistoryUsage'));return value;};
         const project=option('--project'),chat=option('--chat');
         if(args.includes('--tasks')){args.splice(args.indexOf('--tasks'),1);const status=option('--status');if(args.length)throw new Error(tr('wbCli.nativeHistoryUsage'));
-          return out(await agentRequest('/api/agent/native-history',{action:'tasks',project,chat,...(status?{status}:{})}));}
-        if(args[0]==='read'){if(!args[1]||args.length>4||args[2]!==undefined&&!/^\d+$/.test(args[2]))throw new Error(tr('wbCli.nativeHistoryUsage'));return out(await agentRequest('/api/agent/native-history',{action:'read',project,chat,id:args[1],offset:args[2]===undefined?0:Number(args[2]),version:args[3]}));}
-        return out(await agentRequest('/api/agent/native-history',{action:'search',project,chat,...historySearchInput(args[0]==='search'?args.slice(1):args)}));
+          return out(traditionalRecord(await agentRequest('/api/agent/native-history',{action:'tasks',project,chat,...(status?{status}:{})})));}
+        if(args[0]==='read'){if(!args[1]||args.length>4||args[2]!==undefined&&!/^\d+$/.test(args[2]))throw new Error(tr('wbCli.nativeHistoryUsage'));return out(traditionalRecord(await agentRequest('/api/agent/native-history',{action:'read',project,chat,id:args[1],offset:args[2]===undefined?0:Number(args[2]),version:args[3]})));}
+        return out(traditionalRecord(await agentRequest('/api/agent/native-history',{action:'search',project,chat,...historySearchInput(args[0]==='search'?args.slice(1):args)})));
       }
       // Showing the user a page applies to sessions-page CLIs too; it is static text and needs no Run.
       if(['help','-h','--help'].includes(cmd)&&sub==='preview')return out(tr('wbTools.helpPreview'));
@@ -86,10 +87,10 @@ export async function main(argv = process.argv.slice(2)) {
     const supervisor = process.env.WB_SYSTEM_SUPERVISOR === '1';
     const sourceSync=process.env.WB_SOURCE_SYNC==='1';
     if(cmd==='task'){
-      if(sub==='list'&&(!rest.length||rest.length===2&&rest[0]==='--status'))return out(await conversationTask('list',rest.length?{status:rest[1]}:{}));
-      if(sub==='show'&&rest.length===1)return out(await conversationTask('show',{id:rest[0]}));
-      if(sub==='create'&&rest.length===1)return out(await conversationTask('create',JSON.parse(rest[0])));
-      if(sub==='update'&&rest.length===2)return out(await conversationTask('update',{...JSON.parse(rest[1]),id:rest[0]}));
+      if(sub==='list'&&(!rest.length||rest.length===2&&rest[0]==='--status'))return out(traditionalRecord(await conversationTask('list',rest.length?{status:rest[1]}:{})));
+      if(sub==='show'&&rest.length===1)return out(traditionalRecord(await conversationTask('show',{id:rest[0]})));
+      if(sub==='create'&&rest.length===1)return out(traditionalRecord(await conversationTask('create',JSON.parse(rest[0]))));
+      if(sub==='update'&&rest.length===2)return out(traditionalRecord(await conversationTask('update',{...JSON.parse(rest[1]),id:rest[0]})));
       throw new Error(tr('conversationTasks.help'));
     }
     if(cmd==='sync'){
@@ -109,14 +110,14 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'setup' && process.env.WB_PLATFORM_ASSISTANT === '1' && sub === 'catalog') return out(await setupCatalog());
     if (cmd === 'setup' && process.env.WB_PLATFORM_ASSISTANT === '1' && sub === 'propose') return out(await setupPropose(JSON.parse(rest.join(' '))));
     if (cmd === 'setup') throw new Error(tr('wbCli.setupAssistantOnly'));
-    if (cmd === 'history' && sub === 'search') return out(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(rest)}));
+    if (cmd === 'history' && sub === 'search') return out(traditionalRecord(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(rest)})));
     if (cmd === 'history' && sub === 'read') {
       if(!rest[0]||rest.length>3)throw new Error(tr('wbCli.historyReadUsage'));
-      return out(await agentRequest('/api/agent/history/read',{runId:process.env.WB_RUN_ID,kind:'auto',id:rest[0],offset:rest[1]===undefined?0:Number(rest[1]),version:rest[2]}));
+      return out(traditionalRecord(await agentRequest('/api/agent/history/read',{runId:process.env.WB_RUN_ID,kind:'auto',id:rest[0],offset:rest[1]===undefined?0:Number(rest[1]),version:rest[2]})));
     }
     if (cmd === 'history' && sub === 'summary') return out(await agentRequest('/api/agent/conversation/summary',{runId:process.env.WB_RUN_ID,...sessionOptions(rest)}));
     // Bare wb history lists the latest messages; any other words are search terms, as with wb history search.
-    if (cmd === 'history') return out(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(tail)}));
+    if (cmd === 'history') return out(traditionalRecord(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(tail)})));
     if (cmd === 'memory') {
       if (sub !== 'search') throw new Error(tr('platformMemory.searchUsage'));
       return out(await agentRequest('/api/agent/memory/search',{runId:process.env.WB_RUN_ID,...memorySearchInput(rest)}));
