@@ -369,9 +369,10 @@ async function historyPage(file,runtime,id,cursor,snapshot,limits=HISTORY_PAGE,{
   // Quiet refresh must verify the previous snapshot, even when its last page had no older cursor.
   if(snapshot&&delta){
    // Only what was appended since the snapshot: from the start of the line that was still being written then (re-read whole
-   // now) to the end. Nothing new is an empty answer. More than one reply may carry (raw bytes, or rows heavier than a page:
-   // the Worker socket takes 1 MB) falls back to the latest page below, marked so the page replaces what it shows.
-   const from=prior.size,to=info.size,start=to-from>2*limits.bytes?null:await lineStartAt(h,from,limits.lookbackChunk);
+   // now) to the end. Nothing new is an empty answer. Raw bytes are bounded by the scan budget, not the reply size: a CLI that
+   // reads screenshots appends megabytes of image data that leave no chat row. Rows heavier than a page (the Worker socket
+   // takes 1 MB) or more than the scan budget fall back to the latest page below, marked so the page can replace what it shows.
+   const from=prior.size,to=info.size,start=to-from>limits.scan?null:await lineStartAt(h,from,limits.lookbackChunk);
    const messages=[],rows=[];let weight=0;
    if(start!==null){
     const buffer=Buffer.alloc(to-start);if(buffer.length)await h.read(buffer,0,buffer.length,start);

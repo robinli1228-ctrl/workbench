@@ -114,15 +114,27 @@ test('a refresh with the last snapshot gets only the rows appended since, a half
   const again = await read();
   const ids = new Map(again.messages.map(m => [m.text, m.id]));
   for (const m of [...grew.messages, ...finished.messages]) assert.equal(m.id, ids.get(m.text));
+  // Screenshots a CLI read add megabytes of image data but no heavy row: still a delta, not a fallback.
+  const image = i => JSON.stringify({ type: 'user', uuid: `img${i}`, timestamp: `2026-10-22T01:01:${String(i).padStart(2, '0')}.000Z`, cwd: workspace,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(i >= 10 ? 1000000 : 900000) } }] }] } });
+  appendFileSync(file, [image(1), image(2), image(3), row('assistant', 'looked at the shots', 6)].join('\n') + '\n');
+  const shots = await read(finished.historySnapshot);
+  assert.equal(shots.delta, true, 'about 2.7 MB of images in one refresh is still a delta'); assert.equal(shots.deltaFallback, undefined);
+  assert.ok(shots.messages.some(m => m.text === 'looked at the shots'));
+  assert.ok(Buffer.byteLength(JSON.stringify(shots)) < 1024 * 1024, 'the image data is not sent');
   // Rows heavier than one page (under the raw-byte limit) fall back to the latest page too, marked as such, and stay under the 1 MB socket.
   appendFileSync(file, Array.from({ length: 130 }, (_, i) => row('assistant', 'y'.repeat(11000), 10 + (i % 50))).join('\n') + '\n');
-  const heavy = await read(finished.historySnapshot);
+  const heavy = await read(shots.historySnapshot);
   assert.equal(heavy.delta, undefined); assert.equal(heavy.deltaFallback, true);
   assert.ok(Buffer.byteLength(JSON.stringify(heavy)) < 1024 * 1024, 'the reply fits the Worker socket');
-  // A burst larger than one reply in raw bytes falls back as well.
+  // Two megabytes of long replies whose rows still fit one reply arrive as a delta.
   appendFileSync(file, Array.from({ length: 40 }, (_, i) => row('assistant', 'x'.repeat(50000), 10 + i)).join('\n') + '\n');
-  const burst = await read(heavy.historySnapshot);
-  assert.equal(burst.delta, undefined); assert.equal(burst.deltaFallback, true); assert.ok(burst.messages.length > 0);
+  const long = await read(heavy.historySnapshot);
+  assert.equal(long.delta, true); assert.ok(Buffer.byteLength(JSON.stringify(long)) < 1024 * 1024);
+  // More appended than the scan budget (12 MB) falls back to the latest page.
+  appendFileSync(file, Array.from({ length: 14 }, (_, i) => image(10 + i)).join('\n') + '\n' + row('assistant', 'after the burst', 7) + '\n');
+  const burst = await read(long.historySnapshot);
+  assert.equal(burst.delta, undefined); assert.equal(burst.deltaFallback, true); assert.ok(burst.messages.some(m => m.text === 'after the burst'));
 });
 
 test('a history page holds up to 45 prompts and 768 KB of rows, and its reply fits the 1 MB Worker socket', async t => {
