@@ -78,8 +78,18 @@ export class MediaStreams {
     let root;
     if(!isAbsolute(path))root=path.startsWith('.workbench/docs/')?projectRoot:run.workspace;
     else root=[run.workspace,run.projectRoot,projectRoot,...repositories].filter(Boolean).map(r=>resolve(r)).sort((a,b)=>b.length-a.length).find(r=>beneath(r,resolve(path)));
-    if(!root)throw failure('invalid_media_path');
-    return {projectId:run.projectId,nodeId:run.nodeId,root:resolve(root),path};
+    if(root)return {projectId:run.projectId,nodeId:run.nodeId,root:resolve(root),path};
+    // A role on one device often names where the user opens a synced file on another (a Mac path written by a role on the
+    // server). Such a path is read on the device whose project or repository folder holds it, within that folder only.
+    const other=isAbsolute(path)?this.otherDeviceRoot(run,resolve(path)):null;
+    if(!other)throw failure('invalid_media_path');
+    return {projectId:run.projectId,nodeId:other.nodeId,root:other.root,path};
+  }
+  /** The deepest project or repository folder of another device of this project that holds the path. */
+  otherDeviceRoot(run,target) {
+    const bound=[...this.db.listProject('workspaces',run.projectId),...this.db.listProject('repositoryWorkspaces',run.projectId)]
+      .filter(b=>b.nodeId&&b.nodeId!==run.nodeId&&b.localRoot).map(b=>({nodeId:b.nodeId,root:resolve(b.localRoot)}));
+    return bound.filter(b=>beneath(b.root,target)).sort((a,b)=>b.root.length-a.root.length)[0]||null;
   }
   /** Native-session paths resolve only inside that registered session's working directory. */
   sourceForNative(nodeId,record,path) {

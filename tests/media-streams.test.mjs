@@ -106,6 +106,25 @@ test('a 25 MB video streams in ranges and downloads in full through the relay', 
   } finally {await h.close();}
 });
 
+test('a path on another device of the project opens from that device; anything outside every project folder still does not', async () => {
+  const h=await harness();
+  try {
+    // A role on the server names where the user opens the file on the Mac.
+    await mkdir(join(h.target,'.workbench','docs','demo'),{recursive:true});
+    await writeFile(join(h.target,'.workbench','docs','demo','preview.html'),'<!doctype html><title>x</title>');
+    const source=h.media.sourceForRun(h.run,join(h.target,'.workbench','docs','demo','preview.html'));
+    assert.equal(source.nodeId,'mac');assert.equal(source.root,h.target);
+    const info=await h.media.describe(source);
+    assert.equal(info.available,true);assert.equal(info.sourceNodeId,'mac');assert.equal(info.name,'preview.html');
+    // The server's own folder still wins for its own paths, and a path under no project folder of any device is refused.
+    assert.equal(h.media.sourceForRun(h.run,join(h.source,'out','a.mp4')).nodeId,'srv');
+    assert.throws(()=>h.media.sourceForRun(h.run,join(h.root,'elsewhere','a.html')),/invalid_media_path/);
+    // A hidden folder inside the Mac's project folder stays blocked by the device's own path rules.
+    await mkdir(join(h.target,'.runtime'),{recursive:true});await writeFile(join(h.target,'.runtime','a.html'),'x');
+    assert.equal((await h.media.describe(h.media.sourceForRun(h.run,join(h.target,'.runtime','a.html')))).reason,'invalid_media_path');
+  } finally {await h.close();}
+});
+
 test('tickets pin one file version and expire; device state is reported, never guessed', async () => {
   const h=await harness();
   try {
