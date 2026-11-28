@@ -64,7 +64,7 @@ import { createRunInput, instructionDelivery,executionInstructionComponents,exec
 import {workMaterialsFolder} from './work-materials.mjs';
 import { inspectGitRepositoryVersion, alignRepository } from './git-version.mjs';
 import { prepareProjectBaseline, advanceProjectBaseline } from './project-baseline.mjs';
-import { runOrganizer, runModelPrompt } from './conversation-organizer.mjs';
+import { runOrganizer, runModelPrompt, sweepOrganizerFolders } from './conversation-organizer.mjs';
 import { runtimeGitEnvironment, nativeGitConfigKey } from './hosting.mjs';
 import { tr, getLanguage, setLanguage, initLanguage, runWithLanguage } from './i18n.mjs';
 import { executionText, traditionalInput, traditionalAnswers, sentText } from './input-language.mjs';
@@ -85,6 +85,8 @@ initLanguage(data); // saved language (data/language.json, written when Home ann
 await mkdir(data, { recursive: true, mode: 0o700 });
 // Acquire ownership before opening business state; the lock module releases only this process's receipt on exit.
 acquireWorkerLock(data);
+// Organizer folders left by runs a crash or kill cut off; with the lock held and before any request is taken, no run can be using one.
+await sweepOrganizerFolders(data);
 const db = new Store(join(data, 'worker.sqlite'));
 const identity = db.get('identity', 'node') || db.put('identity', { id: 'node', nodeId: process.env.NODE_ID || randomUUID() });
 // External session queue: turn facts per role session and short-lived reservations; nothing here writes to a CLI.

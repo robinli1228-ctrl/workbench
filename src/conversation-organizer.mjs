@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, realpath, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, realpath, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { tr, isMessage } from './i18n.mjs';
@@ -73,6 +73,19 @@ export async function preemptOrganizers(controllers) {
   const active=[...controllers];
   for(const controller of active)controller.abort(tr('conversationOrganizer.conversationOrganizingYieldedWorkTask'));
   await Promise.all(active.map(controller=>controller.finished));
+}
+
+/**
+ * Each organizer run works in its own empty `summary-*` folder under the Worker's data and removes it when it ends. A run
+ * cut off by a crash or a kill leaves its folder behind; when the Worker starts no run can be using one, so all go.
+ */
+export async function sweepOrganizerFolders(dataRoot) {
+  let removed = 0;
+  for (const entry of await readdir(resolve(dataRoot), { withFileTypes: true }).catch(() => [])) {
+    if (!entry.isDirectory() || !/^summary-[A-Za-z0-9]{6}$/.test(entry.name)) continue;
+    await rm(join(resolve(dataRoot), entry.name), { recursive: true, force: true }).then(() => removed++, () => {});
+  }
+  return removed;
 }
 
 /** A short-lived non-interactive process; no bridge and no working-role session, and after a timeout it waits for the process to exit before returning the slot. */
