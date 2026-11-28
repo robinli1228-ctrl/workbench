@@ -368,7 +368,8 @@ socket.setTimeout(3000);socket.once('connect',()=>finish(true));socket.once('err
       const { readdir } = await import('node:fs/promises');
       const files = {};
       for (const name of await readdir(join(this.base,'src'))) if (name.endsWith('.mjs')) files[`src/${name}`] = await readFile(join(this.base,'src',name),'utf8');
-      for (const name of ['package.json','package-lock.json','bin/wb']) files[name] = await readFile(join(this.base,name),'utf8');
+      // bin/wb-codex-proxy lets CODEX_BIN route Codex through WORKBENCH_CODEX_PROXY on this device too (see .env.example).
+      for (const name of ['package.json','package-lock.json','bin/wb','bin/wb-codex-proxy']) files[name] = await readFile(join(this.base,name),'utf8');
       // Preserve source identity in source-only installs; dirty or legacy copies remain explicitly unknown.
       files['software-build.json']=JSON.stringify(await createBuildManifest(this.base,Object.keys(files)).catch(()=>null));
       const config = { HOME_URL:d.homeUrl, WORKER_TOKEN:this.workerToken, WORKER_ROOTS:d.workspaceRoot, WORKSPACE_ROOT:d.workspaceRoot, NODE_NAME:d.name, NODE_ID:d.nodeId, NODE_KIND:'cloud' };
@@ -380,7 +381,7 @@ let alive=false; try {const pid=Number(await readFile(join(data,'worker.lock'),'
 if(alive){ console.log(JSON.stringify({started:false,alreadyRunning:true})); }
 else {
 for(const [name,content] of Object.entries(files)){const file=join(dir,name);await mkdir(dirname(file),{recursive:true});await writeFile(file,content);}
-await chmod(join(dir,'bin/wb'),0o755); execFileSync('npm',['ci','--omit=dev','--ignore-scripts'],{cwd:dir,stdio:'pipe',timeout:120000});
+await chmod(join(dir,'bin/wb'),0o755); await chmod(join(dir,'bin/wb-codex-proxy'),0o755); execFileSync('npm',['ci','--omit=dev','--ignore-scripts'],{cwd:dir,stdio:'pipe',timeout:120000});
 execFileSync(process.execPath,['src/prepare-ccusage.mjs'],{cwd:dir,stdio:'pipe',timeout:10000});
 config.WORKER_DATA_DIR=data; config.PATH=join(homedir(),'.local/bin')+':'+join(homedir(),'.grok/bin')+':'+process.env.PATH; await writeFile(join(dir,'worker-config.json'),JSON.stringify(config),{mode:0o600});
 const launcher="import {readFileSync,openSync} from 'node:fs';import {spawn} from 'node:child_process';import {join} from 'node:path';const dir="+JSON.stringify(dir)+";const config=JSON.parse(readFileSync(join(dir,'worker-config.json'),'utf8'));function start(){const log=openSync(join(dir,'worker.log'),'a',0o600);const child=spawn(process.execPath,['src/worker.mjs'],{cwd:dir,env:{...process.env,...config},stdio:['ignore',log,log]});child.on('exit',()=>setTimeout(start,5000));}start();";
