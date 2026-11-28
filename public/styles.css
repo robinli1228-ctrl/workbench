@@ -4598,7 +4598,7 @@ html[data-share-mode="ro"] #chat-form, html[data-share-mode="ro"] .native-sessio
    drawer just above the line, so the input stays flat. Each part has the same title bar: icon and title on the left,
    actions and "View all" on the right. */
 .chat-tray { position: relative; margin: 0 16px; border: 1px solid var(--card-hairline); border-bottom: 0; border-radius: var(--r-lg) var(--r-lg) 0 0;
-  background: #fff; overflow: hidden; box-shadow: 0 -4px 14px rgb(16 24 40 / 7%); animation: chat-tray-rise .24s cubic-bezier(.2, .8, .2, 1); }
+  background: #fff; overflow: hidden; animation: chat-tray-rise .24s cubic-bezier(.2, .8, .2, 1); }
 .chat-tray::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 14px; background: linear-gradient(to top, rgb(16 24 40 / 8%), transparent); pointer-events: none; }
 .chat-tray:not(:has(> :not([hidden]))) { display: none; }
 .chat-tray > #message-queue.message-queue, .chat-tray > .native-ask { margin: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
@@ -4638,10 +4638,9 @@ dialog:is(.message-queue-dialog, .native-ask-dialog, #wb-tray-dialog)::backdrop 
 .native-ask-dialog .native-ask-option { grid-template-columns: 24px minmax(0, 1fr); align-items: start; row-gap: 3px; padding: 10px 12px; border-color: var(--card-hairline); }
 .native-ask-dialog .native-ask-option.is-picked { border-color: rgb(79 91 206 / 35%); }
 .native-ask-dialog .native-ask-desc { grid-column: 2; white-space: normal; line-height: 1.6; }
-/* Clean surfaces: a white tray (its depth comes from the hairline, the shadow and a crisp top edge), white rows split by
+/* Clean surfaces: a white tray with a hairline border and shading only inside its bottom edge, white rows split by
    hairlines, options with a hairline border. The only colour is a faint accent band behind the question, which waits on the
    user. No warm tint on queued messages in the tray or its dialog (error rows keep their red tint). */
-.chat-tray { background: #fff; box-shadow: 0 -4px 14px rgb(16 24 40 / 7%), inset 0 1px 0 rgb(255 255 255 / 90%); }
 #message-queue summary { background: #fff; }
 :is(.chat-tray, .message-queue-dialog) .message-queue-list { gap: 0; padding: 2px 6px 6px; }
 :is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card), :is(.chat-tray, .message-queue-dialog) .message-queue-item:not(.is-error-card):hover { background: #fff; }
