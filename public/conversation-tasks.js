@@ -1,7 +1,7 @@
 import {t,dateLocale,onLanguageChange} from './i18n.js';
 import {setActionIcon,UI_ICON} from './role-icons.js';
 import {simplifiedCliOutput as zh} from './output-language.js';
-import {taskList,taskStatus,taskStep,taskPatch,taskCardVisible,stepDescription,stepPreview,MAX_STEP_DESCRIPTION,taskActivity,idleDays} from './conversation-task-state.js';
+import {taskList,taskStatus,taskStep,taskPatch,taskCardVisible,stepDescription,stepPreview,MAX_STEP_DESCRIPTION,taskActivity,activityIndex,idleDays} from './conversation-task-state.js';
 const el=(tag,cls='',text)=>Object.assign(document.createElement(tag),{className:cls,...(text===undefined?{}:{textContent:text})});
 const raw=node=>{node.setAttribute('translate','no');return node;};
 const date=value=>value?new Date(value).toLocaleString(dateLocale()):'—';
@@ -26,13 +26,14 @@ export function createConversationTaskUI({api,getScope,getRoles,openMessage,getA
   }
   function render(){
     list.replaceChildren();
+    const activity=activityIndex(getActivity());
     for(const item of taskList(items,!unfinished.checked)){
       const row=el('button','artifact-row task-list-row');row.type='button';row.dataset.taskId=item.id;
       const body=el('span','artifact-row-body');body.append(raw(el('strong','',zh(`T${item.number} · ${item.title}`))));
       if(taskStep(item))body.append(raw(el('small','',zh(taskStep(item)))));
       const meta=el('span','task-list-meta'),identity=el('span','task-list-identity');
       // In progress but nobody on it right now: grey "Waiting", with the days since it last changed.
-      const waiting=taskActivity(item,getActivity())==='waiting',days=waiting?idleDays(item.updatedAt):0;
+      const waiting=taskActivity(item,activity)==='waiting',days=waiting?idleDays(item.updatedAt):0;
       const state=el('span',`task-state task-state-${waiting?'waiting':item.status}`,waiting?(days>=1?t('Waiting · {days} d',{days}):t('Waiting')):t(taskStatus(item.status)));
       if(waiting)state.title=t('Not closed, but no one is working on it right now.');
       identity.append(raw(el('span','task-owner',roleName(item.ownerRoleId))),state);

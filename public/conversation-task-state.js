@@ -8,12 +8,22 @@ const CALL_DONE=new Set(['succeeded','failed','cancelled']),RUN_LIVE=new Set(['q
  * that is not for another task. Otherwise it only waits ("In progress" in its record, nobody on it), which the list shows
  * as waiting with how long it has been since it last changed.
  */
-export function taskActivity(task,{requests=[],runs=[]}={}){
+export function taskActivity(task,activity={}){
   if(task?.status!=='in_progress')return null;
-  if(requests.some(r=>r.conversationTaskId===task.id&&!CALL_DONE.has(r.status)))return 'active';
-  const byId=new Map(requests.map(r=>[r.id,r]));
-  const ownerOnIt=runs.some(r=>r.roleId===task.ownerRoleId&&RUN_LIVE.has(r.status)&&!(byId.get(r.requestId)?.conversationTaskId&&byId.get(r.requestId).conversationTaskId!==task.id));
+  const index=activity.openTasks?activity:activityIndex(activity);
+  if(index.openTasks.has(task.id))return 'active';
+  const ownerOnIt=(index.liveByRole.get(task.ownerRoleId)||[]).some(r=>{const linked=index.taskOfRequest.get(r.requestId);return !linked||linked===task.id;});
   return ownerOnIt?'active':'waiting';
+}
+/**
+ * What the task list needs from the chat's requests and runs, built once per render rather than once per task: tasks with an
+ * open call, live turns by role, and the task each request is linked to. (Requests and runs keep the chat's whole history.)
+ */
+export function activityIndex({requests=[],runs=[]}={}){
+  const openTasks=new Set(),taskOfRequest=new Map(),liveByRole=new Map();
+  for(const r of requests){if(r.conversationTaskId){taskOfRequest.set(r.id,r.conversationTaskId);if(!CALL_DONE.has(r.status))openTasks.add(r.conversationTaskId);}}
+  for(const r of runs)if(RUN_LIVE.has(r.status)){if(!liveByRole.has(r.roleId))liveByRole.set(r.roleId,[]);liveByRole.get(r.roleId).push(r);}
+  return {openTasks,taskOfRequest,liveByRole};
 }
 /** Whole days since the task last changed, for "Waiting · 3 d"; under a day there is no count. */
 export function idleDays(updatedAt,now=Date.now()){const at=Date.parse(updatedAt||'');return Number.isFinite(at)?Math.floor((now-at)/86400000):0;}

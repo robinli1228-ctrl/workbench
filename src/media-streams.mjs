@@ -85,11 +85,16 @@ export class MediaStreams {
     if(!other)throw failure('invalid_media_path');
     return {projectId:run.projectId,nodeId:other.nodeId,root:other.root,path};
   }
-  /** The deepest project or repository folder of another device of this project that holds the path. */
+  /**
+   * The deepest project or repository folder of another device of this project that holds the path. Removed or unknown
+   * devices are skipped (their folder records can outlive them), and of equally deep folders a usable device wins, so a
+   * new Mac bound at the same path as an old one opens the file.
+   */
   otherDeviceRoot(run,target) {
     const bound=[...this.db.listProject('workspaces',run.projectId),...this.db.listProject('repositoryWorkspaces',run.projectId)]
-      .filter(b=>b.nodeId&&b.nodeId!==run.nodeId&&b.localRoot).map(b=>({nodeId:b.nodeId,root:resolve(b.localRoot)}));
-    return bound.filter(b=>beneath(b.root,target)).sort((a,b)=>b.root.length-a.root.length)[0]||null;
+      .filter(b=>b.nodeId&&b.nodeId!==run.nodeId&&b.localRoot&&this.db.get('workers',b.nodeId)&&!this.db.get('removedDevices',b.nodeId))
+      .map(b=>({nodeId:b.nodeId,root:resolve(b.localRoot)}));
+    return bound.filter(b=>beneath(b.root,target)).sort((a,b)=>b.root.length-a.root.length||Number(Boolean(this.usable(a.nodeId)))-Number(Boolean(this.usable(b.nodeId))))[0]||null;
   }
   /** Native-session paths resolve only inside that registered session's working directory. */
   sourceForNative(nodeId,record,path) {
