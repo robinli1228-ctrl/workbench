@@ -1,0 +1,9 @@
+#!/bin/sh
+# Only Codex and its descendants inherit this route. Keep Worker loopback callbacks local.
+set -eu
+: "${WORKBENCH_CODEX_PROXY:?Set WORKBENCH_CODEX_PROXY to the HTTP proxy URL}"
+export http_proxy="$WORKBENCH_CODEX_PROXY" https_proxy="$WORKBENCH_CODEX_PROXY"
+export HTTP_PROXY="$http_proxy" HTTPS_PROXY="$https_proxy"
+no_proxy="localhost,127.0.0.1,::1${no_proxy:+,$no_proxy}${NO_PROXY:+,$NO_PROXY}"
+export no_proxy NO_PROXY="$no_proxy"
+exec "${WORKBENCH_CODEX_EXECUTABLE:-codex}" "$@"

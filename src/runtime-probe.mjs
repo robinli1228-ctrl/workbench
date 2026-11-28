@@ -36,11 +36,21 @@ export async function inspectCodex() {
   const transient = key => Object.assign(new Error(tr(key)), { transient: true });
   proc.on('error', () => fail(transient('runtimeProbe.appServerCouldNotStart')));
   proc.on('exit', () => fail(transient('runtimeProbe.appServerHasExited')));
-  const timer = setTimeout(() => { fail(transient('runtimeProbe.cliStatusProbeTimedOut')); proc.kill(); }, 15000);
+  let stage = 'initialize';
+  const timeout = () => Object.assign(new Error(tr('runtimeProbe.cliStatusProbeTimedOut') + ' (' + stage + ')'), { transient: true });
+  const timer = setTimeout(() => { fail(timeout()); proc.kill(); }, 15000);
   lines.on('line', line => {
-    try { const m = JSON.parse(line), p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.error ? p.reject(new Error(tr('runtimeProbe.cliDoesNotSupportRequired'))) : p.resolve(m.result); } catch {}
+    let message;
+    try { message = JSON.parse(line); } catch { return; }
+    const request = pending.get(message.id);
+    if (!request) return;
+    pending.delete(message.id);
+    if (!message.error) return request.resolve(message.result);
+    // Codex can report its route discovery deadline before our own timer expires.
+    if (stage === 'account/read' && /workspace routing discovery timed out/i.test(message.error.message || '')) return request.reject(timeout());
+    request.reject(new Error(tr('runtimeProbe.cliDoesNotSupportRequired')));
   });
-  const call = (method, params) => new Promise((resolve, reject) => { if(transportError)return reject(transportError);const key = ++id; pending.set(key, { resolve, reject }); proc.stdin.write(`${JSON.stringify({ id: key, method, params })}\n`); });
+  const call = (method, params) => new Promise((resolve, reject) => { if(transportError)return reject(transportError);stage = method; const key = ++id; pending.set(key, { resolve, reject }); proc.stdin.write(`${JSON.stringify({ id: key, method, params })}\n`); });
   proc.stdin.on('error', () => fail(transient('runtimeProbe.cliConnectionWasClosedDisconnect')));
   try {
     await call('initialize', { clientInfo: { name: 'agent_workbench_probe', version: '0.3.0' } });
