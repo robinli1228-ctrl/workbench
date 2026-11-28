@@ -1,3 +1,4 @@
+import {traditionalInput} from './input-language.mjs';
 import {createHash} from 'node:crypto';
 import {conversationIdOf,resolveConversationId,assertConversationRecord,agentConversationInput} from './group-conversations.mjs';
 import {reviewView} from './collaboration-sessions.mjs';
@@ -15,6 +16,16 @@ const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('h
 const taskView=record=>record.plan?{...record,plan:{...record.plan,steps:record.plan.steps.map(({title,...step})=>({...step,description:stepDescription({title,...step})}))}}:record;
 
 /** Home-only planning records, distinct from executable tasks. Every entry point has an explicit conversation lens. */
+/** The stored value where `incoming` is only its Traditional copy (strings, and the same places in arrays and objects). */
+function unechoed(incoming,stored,depth=0){
+  if(depth>6||incoming===stored)return incoming;
+  if(typeof incoming==='string'&&typeof stored==='string')return incoming===traditionalInput(stored)?stored:incoming;
+  if(Array.isArray(incoming)&&Array.isArray(stored))return incoming.map((item,i)=>i<stored.length?unechoed(item,stored[i],depth+1):item);
+  if(incoming&&stored&&typeof incoming==='object'&&typeof stored==='object'&&!Array.isArray(incoming)&&!Array.isArray(stored))
+    return Object.fromEntries(Object.entries(incoming).map(([key,item])=>[key,Object.hasOwn(stored,key)?unechoed(item,stored[key],depth+1):item]));
+  return incoming;
+}
+
 export class ConversationTasks {
   constructor(db){this.db=db;}
   /** One small Home-only aggregate per chat. Upgrade initializes it once; mutations update it in their transaction. */
@@ -117,7 +128,11 @@ export class ConversationTasks {
     if(action==='list'){keys(input,['status']);return this.list(scope,input).filter(t=>this.visible(t,run)).map(taskView);}
     if(action==='show'){keys(input,['id']);const value=this.show(scope,input.id);if(!this.visible(value,run))fail('notFound',404);return taskView(value);}
     if(action==='create')return taskView(this.create(scope,input,actor));
-    if(action==='update'){const {id,...patch}=input,value=this.show(scope,id);if(!this.visible(value,run))fail('notFound',404);return taskView(this.update(scope,id,patch,actor));}
+    if(action==='update'){const {id,...patch}=input,value=this.show(scope,id);if(!this.visible(value,run))fail('notFound',404);
+      // A role reads task text in Traditional (wb task show). Sending that copy back unchanged is no change: it must not
+      // count as a rewritten description for a handover, bump the description, or look like an edited plan.
+      const view=taskView(value);for(const key of Object.keys(patch))if(Object.hasOwn(view,key))patch[key]=unechoed(patch[key],view[key]);
+      return taskView(this.update(scope,id,patch,actor));}
     fail('usage');
   }
   /** Called inside createAgentCalls' transaction, after admission succeeds. No partial ownership on a rejected call. */

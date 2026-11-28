@@ -405,13 +405,15 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     previewDialog.className = 'message-fullscreen';
     previewDialog.setAttribute('aria-label', 'Full attachment text');
     const header = create('div', 'message-fullscreen-heading');
-    header.append(create('strong', '', name), copyMessageButton(text), iconAction('close', 'Close attachment preview', () => previewDialog.close()));
+    // A Markdown file is shown rendered in Simplified, any other file as it is: Copy takes the same text.
+    const markdown=/\.(md|markdown)$/i.test(name);
+    header.append(create('strong', '', name), copyMessageButton(text,undefined,{raw:!markdown}), iconAction('close', 'Close attachment preview', () => previewDialog.close()));
     if (downloadUrl) header.insertBefore(iconAction('original', 'Download original', () => {
       const link = create('a'); link.href = downloadUrl; link.download = name; link.click();
     }), header.lastChild);
     const body = create('div', 'message-fullscreen-body');
     const content = create('div', 'message-fullscreen-content');
-    content.append(/\.(md|markdown)$/i.test(name) ? renderMarkdown(simplifiedCliOutput(text)) : create('pre', 'attachment-text', text));
+    content.append(markdown ? renderMarkdown(simplifiedCliOutput(text)) : create('pre', 'attachment-text', text));
     body.append(content); previewDialog.replaceChildren(header, body);
     if (!previewDialog.open) previewDialog.showModal();
   }
@@ -492,7 +494,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     const requestIds=new Map();
     function showPaths(files) {
       paths.replaceChildren();
-      for(const file of files||[]) {const row=create('div','attachment-transfer-path');row.append(create('code','',file.path),copyMessageButton(file.path));paths.append(row);}
+      for(const file of files||[]) {const row=create('div','attachment-transfer-path');row.append(create('code','',file.path),copyMessageButton(file.path,undefined,{raw:true}));paths.append(row);}
     }
     function targetChanged() {
       action.disabled=!select.value;action.textContent='Transfer file';paths.replaceChildren();
@@ -972,13 +974,14 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
   }
 
   /** Copy the message text as shown (Simplified), without the rendered action buttons, time or quote summary. */
-  function copyMessageButton(text,key) {
+  /** Copy what is shown: replies in Simplified like the card; with `raw`, text shown as it is (file bodies, paths) is copied as it is. */
+  function copyMessageButton(text,key,{raw=false}={}) {
     const copy = iconAction('copy', 'Copy', async b => {
       b.disabled = true;
       try {
         const value=typeof text==='function'?text():text;
         if (!value) { b.disabled=false;return; }
-        await copyText(b,simplifiedCliOutput(value));
+        await copyText(b,raw?value:simplifiedCliOutput(value));
         b.disabled=false;
       } catch {
         b.disabled = false;

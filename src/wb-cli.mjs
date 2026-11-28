@@ -6,7 +6,10 @@ import { agentRequest } from './agent-bridge.mjs';
 import { setupCatalog, setupPropose } from './setup-tools.mjs';
 import { conversationTask, helpText, historySearchInput, memorySearchInput, chatPost, callRole, waitForRole, requestDelivery, parseDeliveryArgs } from './wb-tools.mjs';
 import { tr } from './i18n.mjs';
-import { traditionalRecord } from './input-language.mjs';
+import { traditionalInput, traditionalRecord } from './input-language.mjs';
+
+/** A history page as the CLI reads it: like other records, except a page that begins inside a code block keeps that code. */
+const historyPage=result=>{const converted=traditionalRecord(result);if(result?.codeFence&&typeof result.content==='string')converted.content=traditionalInput(`${result.codeFence}\n${result.content}`).slice(result.codeFence.length+1);return converted;};
 
 function out(data) {
   process.stdout.write(`${typeof data === 'string' ? data : JSON.stringify(data, null, 2)}\n`);
@@ -70,7 +73,7 @@ export async function main(argv = process.argv.slice(2)) {
         const project=option('--project'),chat=option('--chat');
         if(args.includes('--tasks')){args.splice(args.indexOf('--tasks'),1);const status=option('--status');if(args.length)throw new Error(tr('wbCli.nativeHistoryUsage'));
           return out(traditionalRecord(await agentRequest('/api/agent/native-history',{action:'tasks',project,chat,...(status?{status}:{})})));}
-        if(args[0]==='read'){if(!args[1]||args.length>4||args[2]!==undefined&&!/^\d+$/.test(args[2]))throw new Error(tr('wbCli.nativeHistoryUsage'));return out(traditionalRecord(await agentRequest('/api/agent/native-history',{action:'read',project,chat,id:args[1],offset:args[2]===undefined?0:Number(args[2]),version:args[3]})));}
+        if(args[0]==='read'){if(!args[1]||args.length>4||args[2]!==undefined&&!/^\d+$/.test(args[2]))throw new Error(tr('wbCli.nativeHistoryUsage'));return out(historyPage(await agentRequest('/api/agent/native-history',{action:'read',project,chat,id:args[1],offset:args[2]===undefined?0:Number(args[2]),version:args[3]})));}
         return out(traditionalRecord(await agentRequest('/api/agent/native-history',{action:'search',project,chat,...historySearchInput(args[0]==='search'?args.slice(1):args)})));
       }
       // Showing the user a page applies to sessions-page CLIs too; it is static text and needs no Run.
@@ -113,7 +116,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (cmd === 'history' && sub === 'search') return out(traditionalRecord(await agentRequest('/api/agent/history/search',{runId:process.env.WB_RUN_ID,...historySearchInput(rest)})));
     if (cmd === 'history' && sub === 'read') {
       if(!rest[0]||rest.length>3)throw new Error(tr('wbCli.historyReadUsage'));
-      return out(traditionalRecord(await agentRequest('/api/agent/history/read',{runId:process.env.WB_RUN_ID,kind:'auto',id:rest[0],offset:rest[1]===undefined?0:Number(rest[1]),version:rest[2]})));
+      return out(historyPage(await agentRequest('/api/agent/history/read',{runId:process.env.WB_RUN_ID,kind:'auto',id:rest[0],offset:rest[1]===undefined?0:Number(rest[1]),version:rest[2]})));
     }
     if (cmd === 'history' && sub === 'summary') return out(await agentRequest('/api/agent/conversation/summary',{runId:process.env.WB_RUN_ID,...sessionOptions(rest)}));
     // Bare wb history lists the latest messages; any other words are search terms, as with wb history search.

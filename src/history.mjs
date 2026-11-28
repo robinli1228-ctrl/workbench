@@ -5,6 +5,8 @@ import {conversationIdOf,resolveConversationId,assertConversationRecord} from '.
 import OpenCC from 'opencc-js';
 const toSimplified=OpenCC.Converter({from:'t',to:'cn'});
 const foldScript=value=>/\p{Script=Han}/u.test(value)?toSimplified(value):value;
+/** The fence (``` or ~~~, as written) of a code block still open at the end of the text, or null. */
+function openFence(text){let fence=null;for(const line of text.split('\n')){const marker=line.match(/^\s{0,3}(`{3,}|~{3,})/);if(!marker)continue;if(!fence)fence=marker[1];else if(marker[1][0]===fence[0]&&marker[1].length>=fence.length)fence=null;}return fence;}
 import { isSupervisorName } from './default-roles.mjs';
 
 const MAX_SEARCH_LIMIT = 100;
@@ -116,8 +118,9 @@ export class History {
       assertConversationRecord({projectId,conversationId},kind?this.db.get(kind,after[2]):null);
     }
     // Models search in Traditional, people write in Simplified: both sides are compared in Simplified.
-    const needle = foldScript(query.trim().toLocaleLowerCase('zh'));
-    const includes = value => !needle || foldScript(String(value || '').toLocaleLowerCase('zh')).includes(needle);
+    // Folding depends on context (a character can fold differently inside a word), so a literal match counts as well.
+    const raw = query.trim().toLocaleLowerCase('zh'), needle = foldScript(raw);
+    const includes = value => { if (!raw) return true; const text = String(value || '').toLocaleLowerCase('zh'); return text.includes(raw) || /\p{Script=Han}/u.test(raw) && foldScript(text).includes(needle); };
     const scope = searchScope(this.db, projectId, { role, file, since, until });
     const byRole = (...roleIds) => !scope.names || roleIds.some(id => id && scope.names.ids.has(id));
     const named = id => scope.roleOf(id)?.name || null;
@@ -173,7 +176,10 @@ export class History {
     if (version && version !== currentVersion) throw new Error(tr('history.sourceTextVersionHasChanged'));
     const parts = graphemes(content);
     const end = Math.min(parts.length, start + pageLimit);
-    return { kind, id, messageId: resolved.messageId || null, runId: resolved.runId || null,
+    // A later page may begin inside a fenced code block; the reader is told which fence is open there, so text sent on to a
+    // CLI keeps that code as it is (wb converts prose only).
+    const codeFence = start ? openFence(parts.slice(0, start).join('')) : null;
+    return { kind, id, messageId: resolved.messageId || null, runId: resolved.runId || null, ...(codeFence ? { codeFence } : {}),
       requestId: resolved.requestId || null, content: parts.slice(start, end).join(''), totalLength: parts.length,
       nextOffset: end < parts.length ? end : null, complete: end >= parts.length, version: currentVersion };
   }
