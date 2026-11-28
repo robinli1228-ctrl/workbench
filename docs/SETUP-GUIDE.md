@@ -94,6 +94,7 @@ Check: top right → Basic settings → the device list shows this machine with 
 | `NODE_KIND` | `local` or `cloud`; Linux defaults to `cloud`, other systems to `local` |
 | `NODE_ID` | Device identity; normally unset, generated on first start and stored in the data directory |
 | `CODEX_BIN` / `CLAUDE_BIN` / `GROK_BIN` / `AGY_BIN` | Absolute paths of the CLIs; a service manager's `PATH` differs from an interactive shell, so set them or extend the service `PATH` |
+| `WORKBENCH_CODEX_PROXY` | Optional, Unix: an HTTP proxy for Codex only. Set `CODEX_BIN` to the absolute path of `bin/wb-codex-proxy` in the Worker's install folder; the wrapper sets the proxy variables for Codex and its children (loopback stays direct) and runs `codex`, or `WORKBENCH_CODEX_EXECUTABLE` when the real executable is outside `PATH`. Probes and runs then use the same route |
 | `CLAUDE_MODEL_ID` | Model ID to announce when `CLAUDE_BIN` is an Anthropic-compatible launcher |
 | `CLAUDE_CONFIG_DIR` | Claude's real config directory when a wrapper changes `HOME`; otherwise native session histories are not found |
 | `REMOTE_DESKTOP_URL`, `CCUSAGE_BIN` | Optional, see `src/worker.mjs` and `src/token-usage.mjs` |

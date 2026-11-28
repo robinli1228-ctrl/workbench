@@ -95,6 +95,7 @@ npm run worker     # Worker（另一个终端）
 | `NODE_KIND` | `local` 或 `cloud`；Linux 默认 `cloud`，其他系统默认 `local` |
 | `NODE_ID` | 设备身份；通常不用设，首次启动自动生成并存入数据目录 |
 | `CODEX_BIN` / `CLAUDE_BIN` / `GROK_BIN` / `AGY_BIN` | CLI 可执行文件的绝对路径；服务管理器里的 `PATH` 往往和交互式 shell 不同，建议显式设置，或把包含它们的目录加进服务的 `PATH` |
+| `WORKBENCH_CODEX_PROXY` | 可选，仅 Unix：只给 Codex 用的 HTTP 代理。把 `CODEX_BIN` 设为 Worker 安装目录里 `bin/wb-codex-proxy` 的绝对路径；这个脚本只为 Codex 及其子进程设置代理变量（本机回环地址直连），再运行 `codex`，真实程序不在 `PATH` 里时用 `WORKBENCH_CODEX_EXECUTABLE` 指定。检测和执行走同一条线路 |
 | `CLAUDE_MODEL_ID` | 当 `CLAUDE_BIN` 指向兼容 Anthropic 的启动脚本时，对外声明的模型 ID |
 | `CLAUDE_CONFIG_DIR` | 包装器改变了 `HOME` 时，指向 Claude 实际的配置目录，否则原生会话历史找不到 |
 | `REMOTE_DESKTOP_URL`、`CCUSAGE_BIN` | 可选，见 `src/worker.mjs`、`src/token-usage.mjs` |
