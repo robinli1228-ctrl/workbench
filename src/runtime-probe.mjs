@@ -36,11 +36,16 @@ export async function inspectCodex() {
   const transient = key => Object.assign(new Error(tr(key)), { transient: true });
   proc.on('error', () => fail(transient('runtimeProbe.appServerCouldNotStart')));
   proc.on('exit', () => fail(transient('runtimeProbe.appServerHasExited')));
-  const timer = setTimeout(() => { fail(transient('runtimeProbe.cliStatusProbeTimedOut')); proc.kill(); }, 15000);
+  let stage = 'initialize';
+  const timer = setTimeout(() => {
+    const error = transient('runtimeProbe.cliStatusProbeTimedOut');
+    error.message += ' (' + stage + ')';
+    fail(error); proc.kill();
+  }, 15000);
   lines.on('line', line => {
     try { const m = JSON.parse(line), p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.error ? p.reject(new Error(tr('runtimeProbe.cliDoesNotSupportRequired'))) : p.resolve(m.result); } catch {}
   });
-  const call = (method, params) => new Promise((resolve, reject) => { if(transportError)return reject(transportError);const key = ++id; pending.set(key, { resolve, reject }); proc.stdin.write(`${JSON.stringify({ id: key, method, params })}\n`); });
+  const call = (method, params) => new Promise((resolve, reject) => { if(transportError)return reject(transportError);stage = method; const key = ++id; pending.set(key, { resolve, reject }); proc.stdin.write(`${JSON.stringify({ id: key, method, params })}\n`); });
   proc.stdin.on('error', () => fail(transient('runtimeProbe.cliConnectionWasClosedDisconnect')));
   try {
     await call('initialize', { clientInfo: { name: 'agent_workbench_probe', version: '0.3.0' } });
