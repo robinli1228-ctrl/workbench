@@ -67,7 +67,7 @@ export function platformAdminUI({api,getData,refreshState,create}) {
    */
   // The card is redrawn on every state change, so the draft, the request in flight and its result live outside it.
   // A draft is what the field shows (kept across redraws); a pending value was committed and waits to be sent.
-  const capacityDrafts=new Map(),capacityPending=new Map(),capacityState=new Map();
+  const capacityDrafts=new Map(),capacityPending=new Map(),capacityState=new Map(),capacitySent=new Map();
   function capacityRow(worker) {
     const form=create('form','device-capacity-inline'),label=create('label','','Maximum running CLIs'),input=create('input'),note=create('p','form-feedback');
     input.type='number';input.min='1';input.max='64';input.step='1';input.required=true;
@@ -86,12 +86,13 @@ export function platformAdminUI({api,getData,refreshState,create}) {
   /** One save per device at a time; a value committed meanwhile is sent right after. The card may be redrawn while it runs. */
   async function saveCapacity(id) {
     if(capacityState.get(id)?.busy)return;
-    const worker=(getData().workers||[]).find(item=>item.id===id),value=Number(capacityPending.get(id));
-    if(!worker||!capacityPending.has(id)||!Number.isFinite(value)||value===(worker.desiredCapacity??worker.capacity)){capacityPending.delete(id);if(Number(capacityDrafts.get(id))===value)capacityDrafts.delete(id);return;}
+    // Compared with what this page last saved, if it saved: a state refresh begun before that save can still carry the old limit.
+    const worker=(getData().workers||[]).find(item=>item.id===id),value=Number(capacityPending.get(id)),saved=capacitySent.has(id)?capacitySent.get(id):worker?.desiredCapacity??worker?.capacity;
+    if(!worker||!capacityPending.has(id)||!Number.isFinite(value)||value===saved){capacityPending.delete(id);if(Number(capacityDrafts.get(id))===value)capacityDrafts.delete(id);return;}
     const show=next=>{capacityState.set(id,next);const live=document.querySelector(`form[data-capacity-node="${CSS.escape(id)}"] .form-feedback`);if(live)text(live,next.note);};
     show({busy:true,note:'Processing…'});
     try{
-      const result=await api(`/api/workers/${encodeURIComponent(id)}/capacity`,{method:'POST',json:{capacity:value}});
+      const result=await api(`/api/workers/${encodeURIComponent(id)}/capacity`,{method:'POST',json:{capacity:value}});capacitySent.set(id,value);
       if(Number(capacityPending.get(id))===value)capacityPending.delete(id);
       if(Number(capacityDrafts.get(id))===value)capacityDrafts.delete(id);
       show({note:result.applied?'Saved and applied to the connected Worker.':'Saved; waiting for the Worker to apply this limit. It will be applied on reconnection if the device is offline.'});

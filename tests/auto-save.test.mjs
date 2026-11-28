@@ -49,3 +49,14 @@ test('reset takes values loaded from the server as already saved', async () => {
   form.value = 'server'; saver.reset(); form.fire('change'); await tick();
   assert.deepEqual(sent, []);
 });
+
+test('a reset while a save runs keeps the new baseline: the old save does not hide the next change', async () => {
+  const form = fakeForm(), sent = [];let release;
+  const saver = autoSave(form, () => { sent.push(form.value); return sent.length === 1 ? new Promise(resolve => { release = resolve; }) : undefined; }, { snapshot: () => form.value });
+  form.value = 'off'; form.fire('change'); await tick();
+  // The form is filled for another chat whose value is "on", while the first save is still running.
+  form.value = 'on'; saver.reset();
+  release(); await tick(); await tick();
+  form.value = 'off'; form.fire('change'); await tick();
+  assert.deepEqual(sent, ['off', 'off'], 'the change on the new content is saved');
+});
