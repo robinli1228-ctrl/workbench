@@ -119,12 +119,12 @@ export class Store {
     if(this.file===':memory:')return Infinity;
     const info=statfsSync(dirname(this.file));return info.bavail*info.bsize;
   }
-  /** A timer occurrence needs only the statuses of calls tied to its own message. */
+  /**
+   * A timer occurrence needs only the statuses of calls tied to its own message. An occurrence without one (older failed
+   * occurrences can omit it) has no calls: a missing or null ID must not match every call that has no source message.
+   */
   callStatusesForSourceMessage(messageId) {
-    if (messageId == null) {
-      // Older failed occurrences can omit the message ID. Keep missing and explicit null distinct.
-      return this.db.prepare("SELECT json_extract(data,'$.status') AS status FROM records WHERE kind='coordinationRequests' AND json_type(data,'$.sourceMessageId') IS ?").all(messageId === undefined ? null : 'null');
-    }
+    if (typeof messageId !== 'string' || !messageId) return [];
     return this.db.prepare("SELECT json_extract(data,'$.status') AS status FROM records WHERE kind='coordinationRequests' AND json_extract(data,'$.sourceMessageId')=?").all(messageId);
   }
   list(kind) { return this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind).map(r => this.decodeRecord(kind,r.data)); }
