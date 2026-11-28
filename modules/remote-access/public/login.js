@@ -19,6 +19,11 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
   try {
     const response = await fetch('/_access/logout', { method: 'POST', cache: 'no-store' });
     if (!response.ok && response.status !== 401) throw new Error('退出失败，请重试');
+    // Leaving also removes what the page saved in this browser for opening quickly (public/boot-cache.js, history-cache.js).
+    try { localStorage.removeItem('agent-workbench.copies-until'); } catch {}
+    await Promise.all([globalThis.caches?.delete('agent-workbench-owner'), ...['agent-workbench-boot', 'agent-workbench-history'].map(name => new Promise(resolve => {
+      try { const request = indexedDB.deleteDatabase(name); request.onsuccess = request.onerror = request.onblocked = () => resolve(); } catch { resolve(); }
+    }))]).catch(() => {});
     location.replace('/_access/login');
   } catch (error) { status.textContent = error.message; }
 });

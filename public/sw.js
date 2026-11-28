@@ -4,7 +4,7 @@ const STATIC = [
   '/native-side-ask.js', '/group-side-ask.js', '/source-sync-audit.js',
   '/conversation-tasks.js', '/conversation-task-state.js',
   '/remote-access-settings.js',
-  '/share-mode.js', '/jump-to-bottom.js', '/last-place.js', '/auto-save.js', '/share-settings.js',
+  '/share-mode.js', '/jump-to-bottom.js', '/last-place.js', '/auto-save.js', '/boot-cache.js', '/share-settings.js',
   '/group-conversations.js',
   '/model-usage.js',
   '/quota-state.js',
@@ -48,17 +48,61 @@ self.addEventListener('activate', event => {
   ]));
 });
 
+const OWNER = 'agent-workbench-owner';
+/** The owner's page from the cache when this browser is marked for it and the address is the plain page; else the network. */
+async function openPage(event, request, url) {
+  const cache = await caches.open(CACHE);
+  let marked = url.pathname === '/' && !url.search && await caches.has(OWNER);
+  if (marked) {
+    // The mark carries the time the owner's login ends: past it, the copies go and the gateway answers.
+    const until = await (await caches.open(OWNER)).match('/owner').then(mark => mark?.json()).then(mark => Number(mark?.until) || 0).catch(() => 0);
+    if (until && Date.now() > until) { marked = false; await forget(); }
+  }
+  const cached = marked ? await cache.match('/') : null;
+  if (!cached) return fetch(request).catch(async () => (await cache.match('/')) || Response.error());
+  event.waitUntil(checkPage(event.resultingClientId, url));
+  return cached;
+}
+/** The owner's mark and everything the page saved for opening quickly (boot-cache.js, history-cache.js). */
+async function forget() {
+  await caches.delete(OWNER);
+  await Promise.all(['agent-workbench-boot', 'agent-workbench-history'].map(name => new Promise(resolve => {
+    try { const request = indexedDB.deleteDatabase(name); request.onsuccess = request.onerror = request.onblocked = () => resolve(); } catch { resolve(); }
+  })));
+}
+/**
+ * The network's answer for the page just opened from the cache. The login page (401), a share notice (410) or a redirect
+ * to a share address means access as the owner has ended: the mark and the saved copies go, and the page is opened again,
+ * this time from the network. Offline, or while Home restarts (any other answer), the cached page stands.
+ */
+async function checkPage(clientId, url) {
+  let response;
+  try { response = await fetch(url.href, { credentials: 'include', redirect: 'manual', cache: 'no-store', headers: { accept: 'text/html' }, signal: AbortSignal.timeout(20000) }); }
+  catch { return; }
+  const ended = response.status === 401 || response.status === 410 || response.type === 'opaqueredirect' || response.status >= 300 && response.status < 400;
+  if (!ended) return;
+  await forget();
+  const wanted = clientId ? await self.clients.get(clientId) : null;
+  const pages = wanted ? [wanted] : (await self.clients.matchAll({ type: 'window' })).filter(client => { const at = new URL(client.url); return at.pathname === '/' && !at.search; });
+  // A browser without client.navigate is asked to reload itself (app.js listens).
+  for (const client of pages) {
+    try { if (typeof client.navigate !== 'function') throw new Error('unsupported'); await client.navigate(client.url); }
+    catch { client.postMessage({ type: 'wb-reopen' }); }
+  }
+}
+
 self.addEventListener('fetch', event => {
   const request = event.request;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   // Cache public static assets only; APIs carrying chats, tasks and credentials always go to Home.
   if (url.origin !== self.location.origin || !staticPaths.has(url.pathname)) return;
-  // Opening the page goes to the network first: through remote access the gateway answers a navigation itself (a share
-  // link's address, the owner leaving a share address, the notice for an expired link, the login page). The cached page
-  // is only the offline fallback; scripts and styles below stay cache-first.
+  // Opening the page: through remote access the gateway answers a navigation itself (a share link's address, the owner
+  // leaving a share address, the notice for an expired link, the login page), so a navigation goes to the network first and
+  // the cached page is only the offline fallback. The one exception is the owner's own page on a browser that page marked
+  // (see boot-cache.js): it opens from the cached copy at once, and the network answer is checked behind it.
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(async () => (await (await caches.open(CACHE)).match('/')) || Response.error()));
+    event.respondWith(openPage(event, request, url));
     return;
   }
   // Cache first: Home puts a fingerprint of every page file into CACHE, so a changed file always arrives as a new service
