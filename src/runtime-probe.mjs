@@ -37,13 +37,18 @@ export async function inspectCodex() {
   proc.on('error', () => fail(transient('runtimeProbe.appServerCouldNotStart')));
   proc.on('exit', () => fail(transient('runtimeProbe.appServerHasExited')));
   let stage = 'initialize';
-  const timer = setTimeout(() => {
-    const error = transient('runtimeProbe.cliStatusProbeTimedOut');
-    error.message += ' (' + stage + ')';
-    fail(error); proc.kill();
-  }, 15000);
+  const timeout = () => Object.assign(new Error(tr('runtimeProbe.cliStatusProbeTimedOut') + ' (' + stage + ')'), { transient: true });
+  const timer = setTimeout(() => { fail(timeout()); proc.kill(); }, 15000);
   lines.on('line', line => {
-    try { const m = JSON.parse(line), p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.error ? p.reject(new Error(tr('runtimeProbe.cliDoesNotSupportRequired'))) : p.resolve(m.result); } catch {}
+    let message;
+    try { message = JSON.parse(line); } catch { return; }
+    const request = pending.get(message.id);
+    if (!request) return;
+    pending.delete(message.id);
+    if (!message.error) return request.resolve(message.result);
+    // Codex can report its route discovery deadline before our own timer expires.
+    if (stage === 'account/read' && /workspace routing discovery timed out/i.test(message.error.message || '')) return request.reject(timeout());
+    request.reject(new Error(tr('runtimeProbe.cliDoesNotSupportRequired')));
   });
   const call = (method, params) => new Promise((resolve, reject) => { if(transportError)return reject(transportError);stage = method; const key = ++id; pending.set(key, { resolve, reject }); proc.stdin.write(`${JSON.stringify({ id: key, method, params })}\n`); });
   proc.stdin.on('error', () => fail(transient('runtimeProbe.cliConnectionWasClosedDisconnect')));
