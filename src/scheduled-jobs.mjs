@@ -261,7 +261,7 @@ export class ScheduledJobs {
   #withStatus(item) {
     if (item.status === 'cancelled') return item;
     const tasks = (item.taskIds || []).map(id => this.db.get('tasks', id)).filter(Boolean);
-    const calls = this.db.list('coordinationRequests').filter(call => call.sourceMessageId === item.messageId);
+    const calls = this.db.callStatusesForSourceMessage(item.messageId);
     if(tasks.length && tasks.every(task=>task.status==='ready'&&!task.currentRunId) && calls.every(call=>['queued','waiting_delivery'].includes(call.status))) return {...item,status:'queued'};
     if (tasks.some(task => TASK_ACTIVE.has(task.status)) || calls.some(call => !CALL_TERMINAL.has(call.status))) return { ...item, status: 'running' };
     if (tasks.some(task => task.status === 'blocked') || calls.some(call => call.status === 'failed')) return { ...item, status: 'failed' };
