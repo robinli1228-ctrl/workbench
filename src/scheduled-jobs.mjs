@@ -284,7 +284,8 @@ export class ScheduledJobs {
         const task = this.db.get('tasks', taskId);
         if (task?.status === 'ready' && !task.currentRunId) {
           this.rooms.cancel(taskId); cancelled = true;
-          for (const request of this.db.list('coordinationRequests').filter(request => request.taskId === taskId || request.sourceMessageId === item.messageId)) {
+          // Calls of this occurrence only: by its task, or by its own message when it has one (never every call without a source message).
+          for (const request of this.db.list('coordinationRequests').filter(request => request.taskId === taskId || typeof item.messageId === 'string' && item.messageId && request.sourceMessageId === item.messageId)) {
             if (!request.currentRunId && ['queued', 'waiting_delivery'].includes(request.status)) {
               this.db.put('coordinationRequests', { ...request, status: 'cancelled', updatedAt: iso(this.#now()) });
             }
