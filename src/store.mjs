@@ -82,6 +82,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS records_chat_tasks ON records(id) WHERE kind='tasks' AND ${chatTask};
       CREATE INDEX IF NOT EXISTS records_role_steering ON records(json_extract(data,'$.projectId'),json_extract(data,'$.roleId')) WHERE kind='tasks' AND json_extract(data,'$.steering') IS NOT NULL;
       CREATE INDEX IF NOT EXISTS records_schedulable_requests ON records(id) WHERE kind='coordinationRequests' AND ${schedulableRequest};
+      CREATE INDEX IF NOT EXISTS records_call_source_status ON records(json_extract(data,'$.sourceMessageId'),json_extract(data,'$.status')) WHERE kind='coordinationRequests';
       CREATE INDEX IF NOT EXISTS records_pending_call_results ON records(id) WHERE kind='coordinationRequests' AND ${pendingCallResult};
       CREATE INDEX IF NOT EXISTS records_conflict_runs ON records(json_extract(data,'$.sourceConflictId')) WHERE kind='runs' AND json_extract(data,'$.sourceConflictId') IS NOT NULL;
       CREATE INDEX IF NOT EXISTS records_unresolved_recoveries ON records(id) WHERE kind='cliRecoveries' AND ${unresolvedRecovery};
@@ -117,6 +118,14 @@ export class Store {
   readResultFreeBytes(){
     if(this.file===':memory:')return Infinity;
     const info=statfsSync(dirname(this.file));return info.bavail*info.bsize;
+  }
+  /** A timer occurrence needs only the statuses of calls tied to its own message. */
+  callStatusesForSourceMessage(messageId) {
+    if (messageId == null) {
+      // Older failed occurrences can omit the message ID. Keep missing and explicit null distinct.
+      return this.db.prepare("SELECT json_extract(data,'$.status') AS status FROM records WHERE kind='coordinationRequests' AND json_type(data,'$.sourceMessageId') IS ?").all(messageId === undefined ? null : 'null');
+    }
+    return this.db.prepare("SELECT json_extract(data,'$.status') AS status FROM records WHERE kind='coordinationRequests' AND json_extract(data,'$.sourceMessageId')=?").all(messageId);
   }
   list(kind) { return this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind).map(r => this.decodeRecord(kind,r.data)); }
   /** Native provenance needs identity and location only, not frozen prompts or result bodies. */
