@@ -18,17 +18,22 @@ const iconButton=(cls,svg,label)=>{const b=el('button',`icon-button native-icon-
 export function createAskCard({t,onSend,shouldFocus=()=>true}) {
   const root=el('section','native-ask');root.hidden=true;root.setAttribute('aria-label',t('Question'));
   // "View all": the same question drawn in full in a dialog, sharing the picks and the typed reply with the card.
-  const dialog=el('dialog','native-ask-dialog'),full=el('section','native-ask is-full');dialog.append(full);
-  dialog.addEventListener('close',()=>{full.replaceChildren();if(state)render(current,{force:true});});
+  const dialog=el('dialog','native-ask-dialog'),full=el('section','native-ask is-full');dialog.append(full);dialog.setAttribute('aria-label',t('Question'));
+  // While an answer is on its way the card stays hidden: closing the dialog (its close event comes a moment later) or a
+  // refresh must not bring back a question that is being answered, with Send enabled for a second answer.
+  let sending=null;
+  dialog.addEventListener('close',()=>{full.replaceChildren();if(state&&!sending)render(current,{force:true});});
   dialog.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
   let state=null,built='',current=null;
   // A failed send (onSend resolves false) brings the card back with what was picked and typed.
-  const send=async(entry,body)=>{const kept=state;root.hidden=true;if(dialog.open)dialog.close();const sent=await onSend(entry,body);
+  const send=async(entry,body)=>{const kept=state;if(sending)return;sending=kept;root.hidden=true;if(dialog.open)dialog.close();
+    let sent;try{sent=await onSend(entry,body);}finally{sending=null;}
     if(sent===false&&kept&&(!state||state===kept)){state=kept;built='';render(entry);}else if(state===kept){state=null;built='';root.replaceChildren();}};
   function render(entry,{force=false}={}) {
     const q=entry?.question;current=entry;
     if(!q){root.hidden=true;if(dialog.open)dialog.close();if(built){root.replaceChildren();built='';}state=null;return;}
     if(state?.key!==entry.key||state.questionId!==q.id)state={key:entry.key,questionId:q.id,index:0,picked:{},typed:{}};
+    if(sending&&sending===state)return;
     const drawn=JSON.stringify([entry.key,q.id,state.index,entry.title||'']);
     root.hidden=false;if(drawn===built&&!force)return;built=drawn;
     draw(root,entry,false);
@@ -38,14 +43,16 @@ export function createAskCard({t,onSend,shouldFocus=()=>true}) {
     const q=entry.question,st=state,total=q.questions.length,question=q.questions[st.index]||q.questions[0];
     const head=el('div','native-ask-head'),title=el('span','native-ask-title');title.innerHTML=ASK_ICON;title.append(el('span','',entry.title||t('Question')));head.append(title);
     const tools=el('span','native-ask-tools');head.append(tools);
-    const go=index=>{st.index=Math.max(0,Math.min(total-1,index));render(entry,{force:true});(inDialog?full:root).querySelector('.native-ask-other')?.focus({preventScroll:true});};
+    // Only with a mouse: on a phone focusing the reply field opens the keyboard over the options the user wants to read.
+    const typeFocus=node=>{if(matchMedia?.('(pointer: fine)').matches)node?.focus({preventScroll:true});};
+    const go=index=>{st.index=Math.max(0,Math.min(total-1,index));render(entry,{force:true});typeFocus((inDialog?full:root).querySelector('.native-ask-other'));};
     if(total>1){
       const prev=iconButton('native-ask-prev',PREV,t('Previous question')),next=iconButton('native-ask-next',NEXT,t('Next question'));
       prev.disabled=st.index===0;next.disabled=st.index===total-1;prev.onclick=()=>go(st.index-1);next.onclick=()=>go(st.index+1);
       tools.append(prev,el('span','native-ask-pager',`${st.index+1}/${total}`),next);
     }
     if(inDialog){const close=closeIcon(iconButton('native-ask-close','',t('Close')));close.onclick=()=>dialog.close();tools.append(close);}
-    else{const expand=iconButton('native-ask-expand',UI_ICON.fullscreen,t('View all'));expand.onclick=()=>{dialog.isConnected||document.body.append(dialog);draw(full,entry,true);dialog.showModal();full.querySelector('.native-ask-other')?.focus({preventScroll:true});};tools.append(expand);}
+    else{const expand=iconButton('native-ask-expand',UI_ICON.fullscreen,t('View all'));expand.onclick=()=>{dialog.isConnected||document.body.append(dialog);draw(full,entry,true);dialog.showModal();typeFocus(full.querySelector('.native-ask-other'));};tools.append(expand);}
     const text=el('p','native-ask-text',simplifiedCliOutput(question.question));text.translate=false;
     const list=el('div','native-ask-options');
     const answerOf=()=>{const typed=(st.typed[question.id]||'').trim();return [...(st.picked[question.id]||[]),...(typed?[typed]:[])];};

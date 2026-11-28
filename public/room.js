@@ -184,7 +184,7 @@ const QUEUE_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUpdate,editQueued,getConversationId,getSending=()=>[]}) {
   const panel=document.querySelector('#message-queue'),summary=panel.querySelector('summary'),list=panel.querySelector('.message-queue-list');
   // "View all" moves the live list into a dialog, where every item shows in full; closing puts it back in the tray.
-  const allDialog=create('dialog','message-queue-dialog'),allHead=create('div','message-queue-dialog-head');allDialog.append(allHead);
+  const allDialog=create('dialog','message-queue-dialog'),allHead=create('div','message-queue-dialog-head');allDialog.append(allHead);allDialog.setAttribute('aria-label',t('Queue'));
   let fullView=false,foldedByQuestion=null;
   allDialog.addEventListener('close',()=>{fullView=false;allHead.replaceChildren();panel.append(list);if(lastData)view.update(lastData,currentProject);});
   allDialog.addEventListener('click',e=>{if(e.target===allDialog)allDialog.close();});
@@ -243,6 +243,8 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     // A send that will wait is listed here at once, last, until Home's queued tasks for it arrive.
     for(const sending of getSending())items.push({id:`sending:${sending.id}`,sending});
     displayedTaskIds=new Set(tasks.map(task=>task.id));
+    // A message queued while the dialog is open is read in full too.
+    if(fullView)readFull([...displayedTaskIds]);
     list.classList.toggle('is-orderable',Boolean(data.capabilities?.queueOrder)&&items.length>1);
     panel.hidden=!items.length;list.replaceChildren();if(!items.length&&allDialog.open)allDialog.close();
     // Pause/resume at the right of the title, as on the Sessions queue: paused messages wait after the running replies end.
@@ -265,7 +267,9 @@ function createMessageQueue({api,refreshState,create,setError,cliRecoveryUI,onUp
     if(inDialog){closeIcon(end);end.title=t('Close');end.onclick=()=>allDialog.close();}
     else{end.innerHTML=UI_ICON.fullscreen;end.title=t('View all');end.onclick=e=>{e.preventDefault();e.stopPropagation();openAll();};}
     end.setAttribute('aria-label',end.title);head.push(end);return head;};
-    summary.replaceChildren(...titleBar(false));if(fullView)allHead.replaceChildren(...titleBar(true));
+    summary.replaceChildren(...titleBar(false));
+    // Redrawn on every refresh: a focused button in the dialog's title bar keeps the focus (keyboard users stay in place).
+    if(fullView){const focused=allHead.contains(document.activeElement)?[...document.activeElement.classList].find(name=>name.startsWith('message-queue-')):null;allHead.replaceChildren(...titleBar(true));if(focused)allHead.querySelector(`.${focused}`)?.focus();}
     for(const [i,item] of items.entries()) {
       if(item.wait) {
         const wait=item.wait,row=create('div','message-queue-item is-wait'),info=create('div','message-queue-info');
@@ -1234,7 +1238,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
     row.dataset.messageId=m.id;if(discussionKey)row.dataset.discussion=discussionKey;
     const role = agent ? (data.roles || []).find(r => r.id === m.roleId) || (data.runs || []).find(r => r.id === m.runId)?.roleSnapshot : null;
     if (agent) row.append(avatarFor(role, m.senderName));
-    else if (reminder) { const icon = create('span', 'chat-avatar chat-avatar-reminder'),notice=noticeIcon(!system?'reminder':m.kind||(m.id?.startsWith('welcome-')?'welcome':''));icon.dataset.tone=notice.tone;icon.innerHTML=notice.svg; row.append(icon); }
+    else if (reminder) { const icon = create('span', 'chat-avatar chat-avatar-reminder'),notice=noticeIcon(!system?'reminder':m.kind||(m.id?.startsWith('welcome-')?'welcome':''),m.id||'');icon.dataset.tone=notice.tone;icon.innerHTML=notice.svg; row.append(icon); }
     const col = create('div', 'chat-col');
     const header = create('div', 'chat-message-header');
     // A role's card shows when its run started (the footer says how long it took); other cards their send time.

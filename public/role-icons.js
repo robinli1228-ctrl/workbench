@@ -231,7 +231,9 @@ const NOTICE_KINDS={connection_restored:['plug','#3DB37E','#278A5C'],connection_
   source_conflict:['sync','#4E95D8','#2F6DB0'],project_sync:['sync','#4E95D8','#2F6DB0'],
   call_outcome:['bell','#7272E6','#4A4AC4'],task_return:['bell','#7272E6','#4A4AC4'],task_start:['bell','#7272E6','#4A4AC4'],proactive_followup:['bell','#7272E6','#4A4AC4'],
   reminder:['alarm','#9475D8','#6C4DB5'],welcome:['sparkle','#D57AAE','#B0558A']};
-export function noticeIcon(kind){const [name,top,base]=NOTICE_KINDS[kind]||NOTICE_KINDS.task_return,{mark,accent}=NOTICE_MARKS[name],id=`wbn${++noticeSerial}`;
+// The gradient and shadow ids come from the message the icon belongs to, so a row drawn again gives the same markup (the
+// chat keeps rows whose markup did not change) while two icons on the page never share an id.
+export function noticeIcon(kind,key=''){const [name,top,base]=NOTICE_KINDS[kind]||NOTICE_KINDS.task_return,{mark,accent}=NOTICE_MARKS[name],id=key?`wbn-${String(key).replace(/[^A-Za-z0-9_-]/g,'_').slice(0,80)}`:`wbn${++noticeSerial}`;
   return {tone:name,svg:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${top}"/><stop offset="1" stop-color="${base}"/></linearGradient>`
     +`<filter id="${id}s" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy=".7" stdDeviation=".55" flood-color="#000" flood-opacity=".22"/></filter></defs>`
     +`<rect width="24" height="24" rx="6" fill="url(#${id}g)"/><rect x=".4" y=".4" width="23.2" height="23.2" rx="5.6" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width=".8"/>`

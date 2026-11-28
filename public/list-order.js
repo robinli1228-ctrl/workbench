@@ -25,6 +25,9 @@ export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{},per
   const read=key=>{try{return ids(JSON.parse(localStorage.getItem(key)||'[]'));}catch{return [];}};
   const items=()=>[...container.children].filter(item=>item.dataset.orderId);
   const announce=document.createElement('p');announce.className='list-order-announcement';announce.setAttribute('role','status');announce.setAttribute('aria-live','polite');document.body.append(announce);
+  // A list shown in a modal dialog (the queue's View all) draws its drag copy and speaks inside that dialog: the page behind
+  // a modal is drawn below it and is inert.
+  const host=()=>{const target=container.closest('dialog')||document.body;if(announce.parentElement!==target)target.append(announce);return target;};
 
   function scrollParent() {
     for(let node=container;node;node=node.parentElement)if(/auto|scroll/.test(getComputedStyle(node).overflowY)&&node.scrollHeight>node.clientHeight+1)return node;
@@ -51,11 +54,11 @@ export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{},per
     g.initialScroll=g.scroller.scrollTop;
     g.offsetX=g.x-rect.left;g.offsetY=g.y-rect.top;
     g.ghost=g.item.cloneNode(true);g.ghost.removeAttribute('id');for(const el of g.ghost.querySelectorAll('[id]'))el.removeAttribute('id');
-    g.ghost.classList.add('list-order-ghost');g.ghost.setAttribute('aria-hidden','true');g.ghost.inert=true;g.ghost.style.width=`${rect.width}px`;document.body.append(g.ghost);
+    g.ghost.classList.add('list-order-ghost');g.ghost.setAttribute('aria-hidden','true');g.ghost.inert=true;g.ghost.style.width=`${rect.width}px`;host().append(g.ghost);
     g.item.classList.add('list-order-placeholder');container.classList.add('is-reordering');document.body.classList.add('is-list-reordering');
     window.getSelection()?.removeAllRanges();
     try{container.setPointerCapture(g.pointerId);}catch{}
-    announce.textContent=t('Drag to change the order. Release to save; Escape to cancel.');relocate();frame=requestAnimationFrame(scrollTick);
+    host();announce.textContent=t('Drag to change the order. Release to save; Escape to cancel.');relocate();frame=requestAnimationFrame(scrollTick);
   }
   function finish(save) {
     const g=gesture;if(!g)return;gesture=null;clearTimeout(g.timer);cancelAnimationFrame(frame);let saved=false;
@@ -64,11 +67,11 @@ export function createListOrder({container,scope,onEnd=()=>{},onError=()=>{},per
       const after=items().map(item=>item.dataset.orderId),bounds=container.getBoundingClientRect();
       const inside=g.x>=bounds.left-24&&g.x<=bounds.right+24&&g.y>=bounds.top-24&&g.y<=bounds.bottom+24;
       if(save&&inside&&g.key===storageKey()&&JSON.stringify(after)!==JSON.stringify(g.before)&&persist){
-        saved=true;announce.textContent=t('Queue order saved.');
+        saved=true;host();announce.textContent=t('Queue order saved.');
         Promise.resolve().then(()=>persist(after,g.before)).catch(error=>onError(error?.message||String(error)));
       } else if(save&&inside&&g.key===storageKey()&&JSON.stringify(after)!==JSON.stringify(g.before)){
-        try{localStorage.setItem(g.key,JSON.stringify(mergeListOrder(read(g.key),g.before,after)));saved=true;announce.textContent=t('Order saved in this browser.');}
-        catch{announce.textContent=t('Could not save the order in this browser.');onError(announce.textContent);}
+        try{localStorage.setItem(g.key,JSON.stringify(mergeListOrder(read(g.key),g.before,after)));saved=true;host();announce.textContent=t('Order saved in this browser.');}
+        catch{host();announce.textContent=t('Could not save the order in this browser.');onError(announce.textContent);}
       }
       g.ghost.remove();g.item.classList.remove('list-order-placeholder');container.classList.remove('is-reordering');document.body.classList.remove('is-list-reordering');
       try{if(container.hasPointerCapture(g.pointerId))container.releasePointerCapture(g.pointerId);}catch{}
