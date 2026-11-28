@@ -52,25 +52,43 @@ const OWNER = 'agent-workbench-owner';
 /** The owner's page from the cache when this browser is marked for it and the address is the plain page; else the network. */
 async function openPage(event, request, url) {
   const cache = await caches.open(CACHE);
-  const cached = !url.search && await caches.has(OWNER) ? await cache.match('/') : null;
+  let marked = url.pathname === '/' && !url.search && await caches.has(OWNER);
+  if (marked) {
+    // The mark carries the time the owner's login ends: past it, the copies go and the gateway answers.
+    const until = await (await caches.open(OWNER)).match('/owner').then(mark => mark?.json()).then(mark => Number(mark?.until) || 0).catch(() => 0);
+    if (until && Date.now() > until) { marked = false; await forget(); }
+  }
+  const cached = marked ? await cache.match('/') : null;
   if (!cached) return fetch(request).catch(async () => (await cache.match('/')) || Response.error());
   event.waitUntil(checkPage(event.resultingClientId, url));
   return cached;
 }
+/** The owner's mark and everything the page saved for opening quickly (boot-cache.js, history-cache.js). */
+async function forget() {
+  await caches.delete(OWNER);
+  await Promise.all(['agent-workbench-boot', 'agent-workbench-history'].map(name => new Promise(resolve => {
+    try { const request = indexedDB.deleteDatabase(name); request.onsuccess = request.onerror = request.onblocked = () => resolve(); } catch { resolve(); }
+  })));
+}
 /**
- * The network's answer for the page just opened from the cache. Anything but the page itself (the login page, a share
- * notice, a redirect to a share address) means the gateway has something else to show: the mark is dropped and the
- * page is opened again, this time from the network. Offline, the cached page stands.
+ * The network's answer for the page just opened from the cache. The login page (401), a share notice (410) or a redirect
+ * to a share address means access as the owner has ended: the mark and the saved copies go, and the page is opened again,
+ * this time from the network. Offline, or while Home restarts (any other answer), the cached page stands.
  */
 async function checkPage(clientId, url) {
   let response;
-  try { response = await fetch(url.href, { credentials: 'include', redirect: 'manual', cache: 'no-store', headers: { accept: 'text/html' } }); }
+  try { response = await fetch(url.href, { credentials: 'include', redirect: 'manual', cache: 'no-store', headers: { accept: 'text/html' }, signal: AbortSignal.timeout(20000) }); }
   catch { return; }
-  if (response.ok) return;
-  await caches.delete(OWNER);
+  const ended = response.status === 401 || response.status === 410 || response.type === 'opaqueredirect' || response.status >= 300 && response.status < 400;
+  if (!ended) return;
+  await forget();
   const wanted = clientId ? await self.clients.get(clientId) : null;
   const pages = wanted ? [wanted] : (await self.clients.matchAll({ type: 'window' })).filter(client => { const at = new URL(client.url); return at.pathname === '/' && !at.search; });
-  for (const client of pages) await client.navigate(client.url).catch(() => {});
+  // A browser without client.navigate is asked to reload itself (app.js listens).
+  for (const client of pages) {
+    try { if (typeof client.navigate !== 'function') throw new Error('unsupported'); await client.navigate(client.url); }
+    catch { client.postMessage({ type: 'wb-reopen' }); }
+  }
 }
 
 self.addEventListener('fetch', event => {

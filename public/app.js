@@ -38,7 +38,7 @@ import { rememberSupervisorChoice, projectSetupUI } from './project-setup.js';
 import { deviceEntries, platformAdminUI } from './platform-admin.js';
 import { projectSpaceUI } from './project-space.js';
 import { platformMemoryUI } from './platform-memory.js';
-import { bootClear, bootRead, bootWrite, markOwnerPage, savedLater } from './boot-cache.js';
+import { accessSession, bootClear, bootRead, bootWrite, markOwnerPage, savedLater } from './boot-cache.js';
 import { tokenUsageUI } from './token-usage.js';
 import { createScheduledJobsUI } from './scheduled-jobs.js';
 import { formatGitVersionStatus, formatProjectGitSummary } from './git-version.js';
@@ -429,7 +429,9 @@ async function api(path, options = {}) {
       app.authPromptShown=true;
       // Access ended: the copies saved by earlier visits go, and a page drawn from one starts again without it.
       const drawnFromCopy=app.openedFromCopy&&!app.lastStateAt;app.openedFromCopy=false;
-      void bootClear().finally(()=>{if(drawnFromCopy)location.reload();});
+      // At most one reload in 15 s, so a copy that cannot be cleared never loops the page.
+      let last=0;try{last=Number(sessionStorage.getItem('agent-workbench.copy-reload')||0);}catch{}
+      void bootClear().finally(()=>{if(!drawnFromCopy||Date.now()-last<15000)return;try{sessionStorage.setItem('agent-workbench.copy-reload',String(Date.now()));}catch{}location.reload();});
       const dialog=document.querySelector('#api-token-dialog');
       if(dialog && !dialog.open)dialog.showModal();
       const feedback=document.querySelector('#api-token-error');
@@ -592,8 +594,9 @@ async function refreshState({ quiet = false } = {}) {
     // File queries may wait on a remote Worker and must not block authoritative state refresh or later SSE merging.
     void refreshRunDetails();
     app.lastStateAt = new Date().toISOString();
-    // This browser has now read the owner's state from Home: later openings may start from the saved copies.
-    if(!app.ownerMarked){app.ownerMarked=true;markOwnerPage();}
+    // This browser has now read the owner's state from Home: later openings may start from the saved copies, until the
+    // login ends. A share link's guest (its cookie can outlive the owner's login in one browser) keeps nothing instead.
+    if(!app.ownerMarked){app.ownerMarked=true;void accessSession().then(session=>{if(session?.owner)markOwnerPage(session.until);else if(session)void bootClear();});}
     saveStateLater();
     setConnection(t('Connected · {mode}', {
       mode: t(app.token ? 'Token auth · 10 s polling' : app.pollTimer ? '10 s polling' : 'Live updates')
@@ -659,7 +662,12 @@ function adoptState() {
     render();
 }
 /** The state of the chat on screen is saved for the next opening: now and then while it changes, and when the page is hidden. */
-const saveStateLater = savedLater(() => { if (app.stateCache?.state && app.lastStateAt) void bootWrite('state', app.stateCache); });
+// Unchanged polls keep their cursor, and nothing is written for them.
+let savedStateCursor = null;
+const saveStateLater = savedLater(() => {
+  if (!app.stateCache?.state || !app.lastStateAt || app.stateCache.cursor === savedStateCursor) return;
+  savedStateCursor = app.stateCache.cursor; void bootWrite('state', app.stateCache);
+});
 
 function render() {
   renderSyncDot();
@@ -2123,7 +2131,8 @@ function startPolling() {
 
 /** A resumed PWA must verify its data immediately; this does not reload the page or discard drafts. */
 function refreshAfterActivation() {
-  if (document.visibilityState === 'hidden') return;
+  // The opening read comes after the saved copy is drawn (below), so it can ask Home only for what changed since.
+  if (document.visibilityState === 'hidden' || !app.opened) return;
   void refreshState();
 }
 
@@ -2420,5 +2429,7 @@ bootRead('state').then(saved => {
   if (wantedProject && (saved.projectId !== wantedProject || (saved.conversationId || saved.projectId) !== wantedChat)) return;
   app.stateCache = saved; app.openedFromCopy = true;
   try { adoptState(); } catch { app.stateCache = null; app.openedFromCopy = false; }
-}).finally(() => refreshState().finally(() => void syncLanguage()));
+}).finally(() => { app.opened = true; return refreshState().finally(() => void syncLanguage()); });
+// The service worker found that access as the owner has ended, on a browser where it cannot reopen the page itself.
+navigator.serviceWorker?.addEventListener('message', event => { if (event.data?.type === 'wb-reopen') location.reload(); });
 startElapsedTicker();

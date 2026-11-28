@@ -1521,7 +1521,7 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       let messages = history.messages.slice(-80);
       while (messages.length > 10 && JSON.stringify(messages).length > 1500000) messages = messages.slice(Math.ceil(messages.length / 2));
       const trimmed = messages.length < history.messages.length;
-      const { fromCopy, ...rest } = history;
+      const { fromCopy, copyIds, ...rest } = history;
       void bootWrite(`room:${id}`, { ...rest, messages, hasMore: trimmed ? true : history.hasMore, nextBefore: trimmed ? messages[0].id : history.nextBefore });
     }
     unsavedCopies.clear();
@@ -1550,7 +1550,8 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       const opened = scopeId;
       if (!savedCopies.has(opened)) savedCopies.set(opened, bootRead(`room:${opened}`));
       const saved = await savedCopies.get(opened);
-      if (saved && Array.isArray(saved.messages) && !histories.get(opened)) { histories.set(opened, { ...saved, fromCopy: true }); if (opened === scopeId) renderMessages(); }
+      // The copy is read against Home once in any case (no revision), so the latest page is always current after opening.
+      if (saved && Array.isArray(saved.messages) && !histories.get(opened)) { histories.set(opened, { ...saved, revision: null, fromCopy: true, copyIds: new Set(saved.messages.map(m => m.id)) }); if (opened === scopeId) renderMessages(); }
       if (opened !== scopeId) return;
     }
     const previous = histories.get(scopeId);
@@ -1563,14 +1564,21 @@ export function createRoomUI({ api, documentPreview, refreshState, openTask, sto
       const receiptQuery=Number.isSafeInteger(previous?.receiptCursor)?`&afterReceipt=${previous.receiptCursor}`:'';
       // Opening a chat whose history is not on screen yet shows the top bar; live-update re-reads stay silent.
       const read = api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}${receiptQuery}`);
-      const result = await (previous ? read : trackLoading(read));
+      let result = await (previous ? read : trackLoading(read));
+      // A saved copy too far behind (more new messages than one read carries) is dropped: the latest page alone is shown,
+      // as on a first visit, instead of catching up page by page with a gap in the middle.
+      if (histories.get(id)?.fromCopy && result.hasMoreUpdates) {
+        histories.delete(id);
+        result = await api(`/api/projects/${encodeURIComponent(targetProjectId)}/messages?conversationId=${encodeURIComponent(targetConversationId)}`);
+      }
       const current = histories.get(id);
       if ((current?.revision ?? -1) > revision) return;
       const recentIds = new Set(result.messages.map(m => m.id));
       // A copy saved by an earlier visit may hold messages removed since: any it places inside the latest page that Home
       // no longer returns. (nextBefore names the first message of that page.)
       const edge = current?.fromCopy ? result.messages.find(m => m.id === result.nextBefore) : null;
-      const gone = m => edge && (String(m.orderAt) > String(edge.orderAt) || String(m.orderAt) === String(edge.orderAt) && (m.orderSeq ?? 0) >= (edge.orderSeq ?? 0));
+      // Only messages that came from the copy: one sent or received since it was drawn is newer than this answer.
+      const gone = m => edge && current.copyIds?.has(m.id) && (String(m.orderAt) > String(edge.orderAt) || String(m.orderAt) === String(edge.orderAt) && (m.orderSeq ?? 0) >= (edge.orderSeq ?? 0));
       histories.set(id, { ...result, messages: [...(current?.messages || []).filter(m => !recentIds.has(m.id) && !gone(m)), ...result.messages],
         hasMore: current ? current.hasMore : result.hasMore, nextBefore: current?.nextBefore || result.nextBefore, revision:result.hasMoreUpdates?null:revision });
       // A confirmed send whose copy sits outside the loaded window (an old draft restored late) is not kept drawn at the bottom.
