@@ -125,6 +125,22 @@ test('a path on another device of the project opens from that device; anything o
   } finally {await h.close();}
 });
 
+test('of two devices bound at the same folder, a removed or offline one is not chosen for another device\'s path', async () => {
+  const h=await harness();
+  try {
+    await mkdir(join(h.target,'docs'),{recursive:true});await writeFile(join(h.target,'docs','a.html'),'<p>x</p>');
+    // An old Mac, bound at the same folder, was removed; its folder record stayed behind and was listed first.
+    h.db.put('workers',{id:'old-mac',name:'Old Mac',capabilities:{mediaStream:1}});
+    h.db.put('workspaces',{id:'p1:old-mac',projectId:'p1',nodeId:'old-mac',localRoot:h.target});
+    h.db.remove('workspaces','p1:mac');h.db.put('workspaces',{id:'p1:mac',projectId:'p1',nodeId:'mac',localRoot:h.target});
+    h.db.put('removedDevices',{id:'old-mac',nodeId:'old-mac'});
+    assert.equal(h.media.sourceForRun(h.run,join(h.target,'docs','a.html')).nodeId,'mac');
+    // Not removed, only offline: the online device still wins the tie.
+    h.db.remove('removedDevices','old-mac');
+    assert.equal(h.media.sourceForRun(h.run,join(h.target,'docs','a.html')).nodeId,'mac');
+  } finally {await h.close();}
+});
+
 test('tickets pin one file version and expire; device state is reported, never guessed', async () => {
   const h=await harness();
   try {
