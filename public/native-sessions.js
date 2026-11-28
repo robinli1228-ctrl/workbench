@@ -29,6 +29,7 @@ import {share} from './share-mode.js';
 import {createAskCard} from './ask-card.js';
 import {answerContent,answerPlainText,answerRows} from './question-answer.js';
 import {autoSave} from './auto-save.js';
+import {bootRead,bootWrite} from './boot-cache.js';
 
 /** New takeover strings resolve from this page's own dictionary; every existing string keeps the global translation. */
 const t=(text,params)=>{const own=getLanguage()==='zh'&&typeof text==='string'?pageZh[text]:undefined;return own===undefined?globalT(text,params):params?own.replace(/\{(\w+)\}/g,(m,k)=>params[k]??m):own;};
@@ -267,7 +268,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  const note=el('p','workspace-note');list.before(note);note.classList.add('native-session-note');
  // A narrowed left column (dragged below ~230px, or collapsed) drops the device/tool filters; the list keeps the width.
  const sidebar=document.querySelector('#project-sidebar');if(sidebar&&'ResizeObserver' in window)new ResizeObserver(()=>{filters.classList.toggle('is-narrow',sidebar.getBoundingClientRect().width<205);}).observe(sidebar);
- let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,modeValue=(()=>{try{const saved=sessionStorage.getItem('agent-workbench.navigation-mode');return saved==='groups'||saved==='sessions'?saved:'sessions';}catch{return 'sessions';}})(),lastRefresh=0,listSignature='',detailSignature='',detailMeta='';
+ let selected=null,items=[],version=0,detailVersion=0,lastCatalog='',loading=false,pendingRefresh=false,listCopyRead=false,fromListCopy=false,modeValue=(()=>{try{const saved=sessionStorage.getItem('agent-workbench.navigation-mode');return saved==='groups'||saved==='sessions'?saved:'sessions';}catch{return 'sessions';}})(),lastRefresh=0,listSignature='',detailSignature='',detailMeta='';
  const active=()=>modeValue==='sessions';
  const endpoint=nodeId=>`/api/native-sessions/${encodeURIComponent(nodeId)}`;
  const key=item=>item?`${item.nodeId}/${item.runtime}/${item.entryId||item.id}`:'';
@@ -512,6 +513,9 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   // Publish complete catalogue snapshots as they arrive; a slow peer cannot block selecting already-read history.
   const owned=item=>['dialog','managed','takeover'].includes(item.origin);
   const matchesJob=(item,job)=>item.nodeId===job.nodeId&&item.runtime===job.runtime&&(job.scope==='group'?item.origin==='managed':job.scope==='created'?item.origin==='dialog':item.origin!=='managed');
+  // The first list of this page: the one saved in this browser is drawn at once, and the remembered session opens from
+  // its own saved copy, before any device has answered. The devices' lists then replace it as usual.
+  if(!items.length&&!listCopyRead){listCopyRead=true;const saved=await bootRead(`sessions:${device.value}:${tool.value}`);if(ticket!==version||!active())return;if(Array.isArray(saved)&&!items.length){items=saved;fromListCopy=true;}}
   const previous=items.filter(item=>owned(item)&&jobs.some(job=>matchesJob(item,job))),ordered=values=>[...new Map(values.filter(owned).map(item=>[key(item),item])).values()].sort((a,b)=>String(b.modifiedAt||b.createdAt||'').localeCompare(String(a.modifiedAt||a.createdAt||''))||key(a).localeCompare(key(b)));
   items=ordered(previous);if(selected&&!jobs.some(job=>matchesJob(selected,job)))resetDetail();renderList();
   const updateLineage=()=>{if(!selected)return;const group=groupNativeSessions(items).find(g=>[g.latest,...g.history].some(row=>key(row)===key(selected)));if(group){const chain=[group.latest,...group.history];timeline.setOlder(selected,chain.slice(chain.findIndex(row=>key(row)===key(selected))+1));}};
@@ -522,6 +526,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
    // A share link shows only its own session, never the top row in its place.
    const next=(wanted&&items.find(item=>key(item)===wanted))||(settled&&!share?listOrder.ordered(groupNativeSessions(items),group=>group.id.startsWith('conversation:')?group.id:key(group.latest))[0]?.latest:null);
    if(next)void read(next);};
+  if(fromListCopy){fromListCopy=false;autoSelect();}
   // 首次/切换筛选先显示 Home 保存的目录；不等待远端，也不把预览当成新鲜的历史核验。
   if((!quiet||!previous.length)&&getData().capabilities?.nativeCatalogCache===1){
    await Promise.all(jobs.map(async job=>{try{
@@ -535,6 +540,8 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   if(ticket!==version||!active())return;loading=false;
   results.push(...items.filter(item=>owned(item)&&failedJobs.has(`${item.nodeId}/${item.runtime}/${scopes.length>1?(item.origin==='managed'?'group':'all'):scopes[0]}`)&&!results.some(r=>key(r)===key(item))));
   items=ordered(results);
+  // A complete list is what the next opening with this filter starts from.
+  if(!errors.length&&!partial)void bootWrite(`sessions:${device.value}:${tool.value}`,items.slice(0,400));
   note.textContent=errors.length?[t('Some devices could not be read.'),...new Set(errors)].join(' '):t(partial?'Showing recent sessions. Updates automatically.':items.length?'':'No sessions in this filter. Create one using the top-right button.');
   if(selected){const next=items.find(item=>key(item)===key(selected));if(next){const sameNative=nativeId(next)===nativeId(selected);selected={...selected,...next};renderTitle();if(!dialog.open&&!(historyLoading?.key===key(selected)&&historyLoading.sessionId===nativeId(next)&&historyLoading.ticket===detailVersion)&&(!quiet||historyReadStamps.get(key(selected))!==historyStamp(next)))void read(selected,{quiet:sameNative});}else resetDetail();}renderList();autoSelect(true);
   // A mutation/focus refresh arriving during a read must run after that older snapshot settles.
