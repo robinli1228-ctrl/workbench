@@ -699,9 +699,13 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
     }
    }
    const baseSnapshot=quiet?item.historySnapshot:null,page=await readPage(item,null,baseSnapshot);if(!current())return;
-   // A background overflow must keep the loaded pages, cursor and snapshot. Only Refresh latest history may replace them;
-   // advancing the snapshot here would make the next delta silently skip the unread burst.
-   if(quiet&&page.deltaFallback){timeline.showNewer();return;}
+   // A background overflow while the reader scrolled up keeps the loaded pages, cursor and snapshot: only Refresh latest
+   // history may replace them, since advancing the snapshot would make the next delta silently skip the unread burst.
+   // A reader following the live end (at the bottom) gets the newest page in place, as Refresh latest history would do.
+   if(quiet&&page.deltaFallback){
+    if(scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight>=80){timeline.showNewer();return;}
+    restart();present(item,page,{quietly:false});rememberPage(item,page);return;
+   }
    present(item,page,{quietly:quiet});
    if(page.delta)rememberPage(item,page,{appended:true,baseSnapshot});else rememberPage(item,page);
   }catch(e){if(staleCopy(e))forgetPage(key(item));if(ticket===detailVersion){historyReadStamps.delete(key(item));if(quiet)timeline.showError(e);else{timeline.update({messages:[]});timeline.showError(e);scroll.replaceChildren(timeline.root);content.replaceChildren(scroll);renderSide(item,nativeId(item),false);}}}finally{if(historyLoading?.ticket===ticket)historyLoading=null;}
