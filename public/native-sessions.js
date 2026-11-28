@@ -830,7 +830,9 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
  /** Rename a Workbench-created session; the list, header and selected item follow at once. */
  async function renameSession(value,raw){
   const title=String(raw||'').trim();if(!title||title.length>120)throw Error('Session title is required and must be at most 120 characters');
-  if(title===(value.title||''))return title;
+  // The name shown now, not the one the dialog opened with: a second rename back to the old name must reach the device.
+  const current=items.find(item=>key(item)===key(value))?.title??value.title;
+  if(title===(current||''))return title;
   const updated=await api(`${endpoint(value.nodeId)}/title`,{method:'POST',json:{runtime:value.runtime,entryId:value.entryId,sessionId:value.sessionId||null,title}});
   for(const item of items)if(key(item)===key(value))item.title=updated.title;
   if(selected&&key(selected)===key(value))selected={...selected,title:updated.title};
@@ -841,7 +843,7 @@ export function createNativeSessionUI({api,documentPreview,getData,onModeChange,
   dialog.replaceChildren();const heading=el('div','dialog-heading');heading.append(el('h2','',t('Session settings')),closeButton(()=>dialog.close()));dialog.append(heading);
   const body=el('div','native-settings-dialog');
   const nameCard=el('section','native-settings-section');nameCard.append(el('h3','',t('Name')));
-  const blocked=renameBlock(value),nameForm=el('form','native-rename-form'),nameInput=el('input'),nameNote=el('p','native-side-hint',blocked?t(blocked):'');
+  const blocked=renameBlock(value),nameForm=el('form','native-rename-form'),nameInput=el('input'),nameNote=el('p','native-side-hint',blocked?t(blocked):'');nameNote.setAttribute('role','status');
   nameInput.type='text';nameInput.maxLength=120;nameInput.value=value.title||'';nameInput.setAttribute('aria-label',t('Session name'));nameInput.disabled=Boolean(blocked);nameInput.name='title';
   // The name applies when the field is committed (blur or Enter); there is no Save button.
   nameForm.append(nameInput);autoSave(nameForm,async()=>{nameNote.className='native-side-hint';nameNote.textContent=t('Saving…');try{await renameSession(value,nameInput.value);nameNote.textContent=t('Saved');}catch(error){nameNote.className='global-error';nameNote.textContent=t(error.message);return false;}});

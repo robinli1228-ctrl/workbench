@@ -8,20 +8,24 @@
  * again on the next change. Call reset() after filling the form from the server.
  */
 export function autoSave(form,save,{snapshot=()=>JSON.stringify([...new FormData(form)])}={}) {
-  let running=false,again=false,last=snapshot();
+  let running=false,again=false,last=snapshot(),generation=0;
   async function commit() {
     if(running){again=true;return;}
     if(!form.checkValidity()){form.reportValidity();return;}
     const now=snapshot();if(now===last)return;
     running=true;
-    try{if(await save()!==false)last=now;}
+    // A reset while the save runs (the form was filled for another project or chat) keeps its own baseline: the old
+    // save's values must not become the baseline the new content is compared with.
+    const started=generation;
+    try{if(await save()!==false&&started===generation)last=now;}
     catch{}
     finally{running=false;}
     if(again){again=false;void commit();}
   }
   form.addEventListener('change',()=>void commit());
   // Enter in a one-line field commits it; a form without a submit button would otherwise ignore it.
-  form.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.isComposing&&event.target instanceof HTMLInputElement&&event.target.type!=='checkbox'){event.preventDefault();void commit();}});
+  // Safari reports the Enter that confirms an input-method candidate with keyCode 229 and isComposing false.
+  form.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229&&event.target instanceof HTMLInputElement&&event.target.type!=='checkbox'){event.preventDefault();void commit();}});
   form.addEventListener('submit',event=>{event.preventDefault();void commit();});
-  return {commit,reset(){last=snapshot();},busy:()=>running};
+  return {commit,reset(){last=snapshot();generation++;},busy:()=>running};
 }

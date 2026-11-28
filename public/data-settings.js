@@ -45,7 +45,8 @@ export function createDataSettingsUI({api}){
     const reclaimable=(data.home?.reclaimableBytes||0)+(data.devices||[]).reduce((sum,d)=>sum+(d.stats?.reclaimableBytes||0),0);
     cleanAll.disabled=busy||!reclaimable;cleanAll.textContent=reclaimable?t('Clean up all ({size})',{size:mb(reclaimable)}):t('Nothing to clean up');
     // A field being typed in keeps its value; the rest show what Home has saved.
-    if(!form.contains(document.activeElement)){const r=data.retention||{};form.elements.syncCommandDays.value=r.syncCommandDays??1;form.elements.blobDays.value=r.blobDays??7;form.elements.manifestVersions.value=r.manifestVersions??20;saver?.reset();}
+    const r=data.retention||{};for(const [name,value] of [['syncCommandDays',r.syncCommandDays??1],['blobDays',r.blobDays??7],['manifestVersions',r.manifestVersions??20]])if(form.elements[name]!==document.activeElement)form.elements[name].value=value;
+    if(!form.contains(document.activeElement)||document.activeElement.tagName!=='INPUT')saver?.reset();
   }
   /** Performance reads are independent of Worker storage queries, with no polling while settings are closed. */
   async function loadPerformance(){

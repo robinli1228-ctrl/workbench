@@ -66,7 +66,7 @@ export function projectSettings({ api, getData, getProject, getConversationId=()
     const id=followupProject,version=followupVersion;if(!followupConfig||id!==getProject()?.id)return false;
     const sent=followupValues();
     const input={conversationId:followupConfig.conversationId||id,enabled:followupForm.elements.enabled.checked,silenceMinutes:Number(followupForm.elements.silenceMinutes.value),revision:followupConfig.revision};followupFeedback.hidden=true;
-    try{const value=await api(`/api/projects/${encodeURIComponent(id)}/proactive-followup`,{method:'POST',json:input});if(version!==followupVersion||getProject()?.id!==id)return;
+    try{const value=await api(`/api/projects/${encodeURIComponent(id)}/proactive-followup`,{method:'POST',json:input});if(version!==followupVersion||getProject()?.id!==id)return false;
       if(followupValues()===sent){showFollowup(value);followupSaver.reset();}else followupConfig={...followupConfig,revision:value.revision};
       followupFeedback.textContent=t('Saved');followupFeedback.hidden=false;}
     catch(error){if(version===followupVersion&&getProject()?.id===id){followupFeedback.textContent=error.message;followupFeedback.hidden=false;}return false;}
