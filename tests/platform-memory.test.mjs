@@ -407,3 +407,21 @@ test('counting the backlog reads only new receipts, also after a restart', async
   restarted.request(P);await restarted.drainOne({ config: { nodeId: 'n' }, canRun: () => true, query: async () => ({}) });
   assert.equal(restarted.progress(P).pending, 0, 'a deleted message stops counting');
 });
+
+test('a merge of entries from different devices applies to all of them; an update cannot drop an account entry\'s values', () => {
+  const { db, memory, tick } = setup();
+  const mac = memory.save({ type: 'lesson', content: 'wb device read 读不到 .git', nodeId: 'n-mac' });tick(1000);
+  const srv = memory.save({ type: 'lesson', content: 'wb device read 读不到 .worktrees', nodeId: 'n-srv' });tick(1000);
+  const view = id => memory.list().items.find(item => item.id === id);
+  assert.deepEqual(memory.acceptConsolidation([{ entries: [view(mac.id), view(srv.id)], signature: 'd1' }], { merge: [{ keep: srv.id, content: 'wb device read 读不到 .git 和 .worktrees', remove: [mac.id] }] }), { merged: 1, removed: 1 });
+  assert.equal(view(srv.id).nodeId, null, 'the merged entry is not tied to one device');
+  assert.equal(memory.search({ query: 'device read', device: 'xxxxx-mac' }).items[0]?.id, srv.id, 'a search for the other device still finds it');
+  // The organizer shortens an account entry and drops its token: the entry stays as it was. A rotated token is accepted.
+  post(db, 'k', 'token note');
+  const key = memory.save({ type: 'credential', content: 'xxxxx 部署令牌 tok_ABCDEFGHIJKLMNOP1234，配置在 ~/.config/xxxxx' });tick(1000);
+  memory.accept(memory.batch(P), { update: [{ id: key.id, content: 'xxxxx 部署令牌在 ~/.config/xxxxx' }] });
+  assert.match(view(key.id).content, /tok_ABCDEFGHIJKLMNOP1234/);
+  post(db, 'k2', 'rotated');
+  memory.accept(memory.batch(P), { update: [{ id: key.id, content: 'xxxxx 部署令牌 tok_ZYXWVUTSRQPONMLK9876，配置在 ~/.config/xxxxx' }] });
+  assert.match(view(key.id).content, /tok_ZYXWVUTSRQPONMLK9876/);
+});

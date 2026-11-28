@@ -15,6 +15,8 @@ export const MEMORY_RUNTIMES = ['claude', 'codex', 'grok', 'agy'];
 // The prompt travels as one command-line argument (Linux caps one at 128 KiB), so the budgets are in UTF-8 bytes.
 const CONTENT_LIMIT = 800, CREDENTIAL_LIMIT = 4000, MESSAGE_LIMIT = 4000, BATCH_BYTES = 60000, BATCH_MESSAGES = 60, KNOWN_LIMIT = 40, KNOWN_BYTES = 24000, AGENTS_BYTES = 18000, PROMPT_BYTES = 120000;
 const bytes = text => Buffer.byteLength(String(text || ''));
+/** Key-like strings (tokens, keys, passwords) in an entry; an organizer answer must not drop them from an account entry. */
+const secretsIn = text => String(text).match(/[A-Za-z0-9_\-./+=:@]{16,}/g) || [];
 // Duplicate check: groups of look-alike entries, a few per model call; signatures of groups already judged are kept this long.
 const GROUP_SIZE = 12, GROUPS_PER_CALL = 20, COMMON_LIMIT = 50, CHECKED_LIMIT = 20000;
 const PAGE_LIMIT = 100, RETRY_MINUTES = [10, 30, 60, 180, 360];
@@ -394,6 +396,9 @@ export class PlatformMemory {
         if (!entry || entry.status === 'superseded') continue; // a person's entry is corrected in place too, never copied; retired entries stay retired
         const next = fields({ type: item.type ?? entry.type, content: item.content ?? entry.content, cli: item.cli === undefined ? entry.runtime : item.cli, device: item.device === undefined ? entry.nodeId : item.device });
         if (!next) continue;
+        // Shortening must not cost an account entry its values: a rotated token replaces one, but fewer key-like strings
+        // than before means some were dropped, and the entry is left as it was.
+        if (entry.type === 'credential' && secretsIn(next.content).length < secretsIn(entry.content).length) continue;
         this.db.put('memories', { ...entry, ...next, status: 'active', sourceMessageIds: [...new Set([...(entry.sourceMessageIds || []), ...sources(item)])].slice(-20), updatedAt: iso, saidAt: saidAt(item) });
         updated++;
       }
@@ -522,7 +527,7 @@ export class PlatformMemory {
   acceptConsolidation(groups, output, time = this.clock(), current = groups.map(group => group.signature)) {
     if (!output || typeof output !== 'object' || !Array.isArray(output.merge ?? [])) throw new Error(tr('platformMemory.invalidResult'));
     const iso = time.toISOString(), sent = new Map(groups.flatMap(group => group.entries.map(entry => [entry.id, entry.updatedAt])));
-    const secrets = text => String(text).match(/[A-Za-z0-9_\-./+=:@]{16,}/g) || [];
+    const secrets = secretsIn;
     return this.db.transaction(() => {
       let merged = 0, removed = 0;const used = new Set();
       for (const item of (output.merge || []).slice(0, 100)) {
@@ -539,7 +544,10 @@ export class PlatformMemory {
         if (content.length > limitFor(type)) continue;
         if (all.filter(entry => entry.type === 'credential').some(entry => secrets(entry.content).some(secret => !content.includes(secret)))) continue;
         for (const entry of all) used.add(entry.id);
-        this.db.put('memories', { ...keep, type, content, edited: all.some(entry => entry.edited), sourceMessageIds: [...new Set(all.flatMap(entry => entry.sourceMessageIds || []))].slice(-20),
+        // Merged entries of different devices or CLIs apply to all of them: the kept entry's device and CLI are dropped
+        // so a search for any of them still finds it (its text names each one).
+        const same = key => all.every(entry => (entry[key] || null) === (keep[key] || null));
+        this.db.put('memories', { ...keep, type, content, ...(same('nodeId') ? {} : { nodeId: null }), ...(same('runtime') ? {} : { runtime: null }), edited: all.some(entry => entry.edited), sourceMessageIds: [...new Set(all.flatMap(entry => entry.sourceMessageIds || []))].slice(-20),
           saidAt: all.map(entry => entry.saidAt || entry.updatedAt).sort().at(-1), updatedAt: iso });
         for (const id of others) this.db.remove('memories', id);
         merged++; removed += others.length;
